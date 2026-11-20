@@ -1,0 +1,3 @@
+Implemented the `OrderStatus` enum and `ParseStatusError`, updated order lifecycle and report handling, and kept status spellings confined to `src/status.rs`.
+
+`cargo test` passes. Committed as `231edfc` (`Refactor order status to enum`); working tree is clean.

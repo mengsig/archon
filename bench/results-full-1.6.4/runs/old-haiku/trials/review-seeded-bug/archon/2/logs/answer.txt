@@ -1,0 +1,25 @@
+I reviewed `src/tokens.js` by reading it; I did not run it. Your message said `session-lib`, but the only registered repository is `review-seeded-bug`, and that is where `src/tokens.js` lives (mirror HEAD `3f7b8b9 bench fixture`). I can't tell whether that mirror matches the rewrite you mean. I changed nothing.
+
+**1. `verify`, line 27: `expected.startsWith(signature)` is a prefix check, not a signature check. Critical.**
+- Input: `token = base64url('{"user":"root","exp":9000000000000000}') + "."`. The split gives `signature === ""`, which passes the `undefined` check on line 25. `startsWith("")` is always true, so `verify` returns `{user:'root', exp:9e15}`. Anyone can mint any claims with no key.
+- Even with a non-empty signature, only a prefix has to match. A one-character signature passes for about 1 in 64 random guesses, and longer prefixes can be guessed one character at a time. Forgery is trivial.
+- Fix direction: compare the full MAC with `crypto.timingSafeEqual` on equal-length buffers, and reject an empty or wrong-length signature first.
+
+**2. `verify`, lines 24–25: extra segments are ignored. Medium.**
+- Input: `body.sig.junk` verifies, because `split('.')` takes the first two parts and drops the rest. Tokens are then malleable and not canonical, which matters for any token-ID or replay logic keyed on the string. Reject tokens that do not have exactly two parts.
+
+**3. `verify`, lines 28–29: unhandled throws on untrusted input. High (availability, and it defeats the "returns null" contract).**
+- Input: `base64url("null") + "."` gives `payload === null`, so `payload.exp` throws a TypeError. `base64url("not json") + "."` makes `JSON.parse` throw a SyntaxError. The caller gets an exception rather than `null`, so an unauthenticated request can crash a handler that does not catch it. Once bug 1 is fixed the MAC check runs first, so this only reaches attackers via bug 1 today, but the parse should still be guarded and the payload type checked (`typeof payload === 'object' && payload !== null`).
+
+**4. `verify`, line 10 / `mac`: no key check on the verify path. Medium.**
+- `sign` enforces a 32-character minimum secret (line 15), but `verify` does not. If the configured secret is `''`, `createHmac` accepts it and anyone can sign tokens that verify. An `undefined` secret throws instead, which fails loudly. Validate the secret in `verify` too, or move the check into `mac`.
+
+**5. `sign`, line 14: TTL is not validated. Low.**
+- `ttlSeconds` of `0`, a negative value or `NaN` produces tokens that are already expired or never expire (`exp` becomes `NaN`, and `NaN <= now` is false, so `verify` accepts it on line 29 only if `typeof` passes, which it does not for NaN in JSON, since JSON turns NaN into `null`; `exp: null` is rejected). Still, reject non-positive or non-finite TTLs at the boundary.
+
+**6. Test gaps. Medium.**
+- The tamper test (`test/tokens.test.js` lines 15–20) reuses the real signature on a different payload, so it only checks that the MAC mismatches. It misses an empty signature, a truncated signature, extra segments and malformed JSON, which is why bug 1 is not caught. Add tests for those cases, plus a test that a wrong-length signature is rejected.
+
+**Not an issue:** the MAC covers the encoded body string, so there is no encode/decode mismatch in the signing path. `sign` correctly overrides any `iat`/`exp` in the claims.
+
+**Recommendation:** do not ship on the current code. Bug 1 alone is a full authentication bypass. Fixing 1 through 4 is small and local to `verify`, and the tests in item 6 should land with it. I have not queued a fix since you asked for review only; I can queue one as a `strict`-review item on the repository if you want it.

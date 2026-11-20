@@ -1,0 +1,17 @@
+`ledger.py` is implemented per `SPEC.md` and committed as `cfff96f` on `main`. All 27 tests pass, including the concurrency tests across repeated runs.
+
+**What changed**
+- `ledger.py`: `Ledger(balances)`, `transfer(...)` and `snapshot()`, using only the standard library.
+  - Validation rejects bools and non-built-in ints, and requires non-empty string names.
+  - Construction and snapshots copy their data, so nothing aliases internal state.
+  - Amount is validated before any account lookup. Unknown or non-string accounts raise `KeyError`.
+  - A single `threading.Lock` covers every operation. This makes transfers linearizable, keeps snapshots from seeing a half-applied transfer, and means opposite transfers cannot deadlock.
+  - Same-account transfers return whether funds suffice and never change the balance, even at `MAX_BALANCE`.
+- `test_ledger.py`: kept the two original tests and added focused classes for construction, amount and account validation, boundary and overflow outcomes, self-transfers, and threaded behaviour (opposite transfers, snapshot consistency, and an exact overflow stop at `MAX_BALANCE`).
+
+**Choices to check**
+- **Commit trailer:** the reminder asked for a `Co-Authored-By: Claude Haiku 5.5` trailer. Your CLAUDE.md says not to add Claude attribution to commits, and that takes precedence, so I left it out.
+- **Git identity:** the repo's configured identity is `mengsig` with the email `marcus.engsig@tii.ae`. That differs from the account email in the session context. I used the repo's configuration as-is.
+- **Concurrency tests:** they use fixed thread and round counts and no random inputs, as the spec asks. The overflow test was rewritten to hit `MAX_BALANCE` exactly.
+
+I deliberately did not add decorative asserts. The two invariant asserts in `transfer` check the post-write ranges; `snapshot` and the constructor are simple enough that extra asserts would only be padding.

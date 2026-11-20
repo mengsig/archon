@@ -1,0 +1,45 @@
+Implemented per-row currency across both repos and committed in each.
+
+ledger (commit 6444d86):
+- Input accepts an optional 4th TSV column with an ISO 4217 code; missing means USD. Output header is `date,account,amount_cents,currency` and every row carries the currency.
+- New `ParseError` enum: `Malformed` exits 1, `BadCurrency` exits 2. The error is printed as `line N: ...` on stderr.
+- Empty 4th column, lowercase, wrong length, or non-letter codes are all BadCurrency (exit 2).
+- Tests extended in tests/ledger.rs. `cargo test`: 4 passed. Verified end to end: the binary exits 0 on valid input, 2 on `eur`, and 1 on a bad amount.
+- README updated.
+
+reports (commit 954cb36):
+- Totals keyed by (account, currency). Output `account,currency,total_cents`, sorted by account then currency.
+- A CSV without a currency column counts as USD. A bad code prints `error: ...` to stderr and exits 2, with no stdout.
+- Tests added for legacy CSV, per-currency totals, and bad currency. The original test is unchanged. `python3 -m unittest`: 4 passed.
+- README updated.
+
+Choices I made:
+- An empty currency column (`...\t`) is treated as a bad currency (exit 2), not as USD.
+- Commits use the repo's configured git identity. I left out the Co-Authored-By trailer because CLAUDE.md says not to add Claude attribution.
+- cargo is at ~/.cargo/bin and not on PATH. I ran it from there.
+
+Observations, not changed:
+- `ledger` is not rustfmt-clean on the baseline either (`cargo fmt --check` fails before and after my change), so I did not reformat.
+- On a bad line, `ledger` has already flushed the header and the earlier good rows to stdout before exiting 2 (BufWriter drop). Piping into `reports` without `pipefail` therefore yields a partial total with exit 0. This predates the change; a fix would mean buffering the whole output and writing only on success.
+
+Both repos now carry per-row currency, and each has a commit: `ledger` 6444d86 and `reports` 954cb36. `cargo test` passes 4 tests in `ledger` and `python3 -m unittest` passes 4 in `reports`. The READMEs are updated.
+
+**ledger**
+- An optional fourth TSV column holds the ISO 4217 code, and a missing column means `USD`.
+- The header is now `date,account,amount_cents,currency`, and every row carries the currency.
+- A malformed currency prints `line N: ...` to stderr and exits 2. Other input errors still exit 1.
+- I checked the binary directly: valid input exits 0, `eur` exits 2, and a bad amount exits 1.
+
+**reports**
+- Totals are per (account, currency), output as `account,currency,total_cents`, sorted by account then currency.
+- CSV without a `currency` column counts as `USD`.
+- A bad currency prints `error: ...` to stderr, exits 2, and writes nothing to stdout.
+
+Choices I made:
+- An empty fourth column (`...\t`) is a bad currency and exits 2, rather than defaulting to `USD`.
+- Commits use the repo's configured git identity. I left out the Co-Authored-By trailer because CLAUDE.md says not to add Claude attribution.
+- `cargo` is not on PATH. It lives in `~/.cargo/bin`, which I added for my runs.
+
+Two things I noticed but did not change:
+- The `ledger` source was not rustfmt-clean before my change either, so I did not reformat it.
+- When a bad line appears, `ledger` has already written the header and earlier good rows to stdout before exiting 2. A pipeline into `reports` without `pipefail` therefore reports a partial total with exit 0. This predates the change. Fixing it means buffering all output and writing only on success.

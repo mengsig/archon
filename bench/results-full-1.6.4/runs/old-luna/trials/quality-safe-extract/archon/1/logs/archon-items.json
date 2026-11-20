@@ -1,0 +1,180 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W45JCKQDRB7VMZEJXQFRJV",
+      "repo": "repo_01M7W44F89YW671EBD8DM3Y0DC",
+      "pipeline": "direct",
+      "title": "Implement safe_extract.py with complete validation and focused tests",
+      "brief": "Implement safe_extract.py according to SPEC.md, preserving the documented API, handling every specified error and boundary case, and adding focused tests beyond existing basics. Use only the Python standard library and commit the completed work. Acceptance criteria: extract(entries, root) accepts only a list batch; validates all entries, names, duplicates and file/directory collisions before filesystem mutation; validates root as an existing non-symlink directory and rejects symlinks, non-directory ancestors and existing targets beneath it; validation failures raise ValueError without changing root or outside filesystem state; empty batch succeeds only after root validation; valid files create missing directories and preserve exact bytes; unexpected I/O errors remain visible. Add focused tests for malformed types, path edge cases, collisions in either order, root and symlink cases (including dangling links and links targeting inside/outside), no-mutation guarantees, existing targets, empty batch root validation, nested and empty files. Run relevant test suite and commit changes.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W45JD6R8SYWZ7WJKNA5CA0",
+        "summary": "Implemented safe_extract.py with full-batch validation before filesystem mutation and added focused validation tests. `python -m unittest -v` passes all 9 tests; `git diff --check` passes. Independent review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W4AC7WPSDGXRPEZV79Q4FV)\n\nSHIPPED: commit a2d426539dfe633365a2879a48a9eecb11e771b9 on the run branch"
+      },
+      "created_at": "2026-11-20T09:21:28.985742067Z",
+      "updated_at": "2026-11-20T09:25:21.748414125Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W45JD6R8SYWZ7WJKNA5CA0",
+        "item": "qi_01M7W45JCKQDRB7VMZEJXQFRJV",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W45JMV3QX26446RXDFH62M",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/2488b1fa5f2cb7040b4295d2/.archon/data/worktrees/quality-safe-extract/qi_01M7W45JCKQDRB7VMZEJXQFRJV",
+        "branch": "archon/ejxqfrjv-implement-safe-extract-py-with-complete",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.py with full-batch validation before filesystem mutation and added focused validation tests. `python -m unittest -v` passes all 9 tests; `git diff --check` passes. Independent review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W4AC7WPSDGXRPEZV79Q4FV)\n\nSHIPPED: commit a2d426539dfe633365a2879a48a9eecb11e771b9 on the run branch"
+        },
+        "cost_usd": 0.01764448,
+        "started_at": "2026-11-20T09:21:29.212666967Z",
+        "finished_at": "2026-11-20T09:25:21.748414125Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W45JM6EH2E12A9K8QPNJ7M",
+        "run": "prun_01M7W45JD6R8SYWZ7WJKNA5CA0",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W45JN8FDV2DFFBDFP6WE9Q",
+        "aether_task": "tsk_01M7W45JN8GPE93A2A90JJY0JK",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented safe_extract.py with full-batch validation before filesystem mutation and added focused validation tests. `python -m unittest -v` passes all 9 tests; `git diff --check` passes. Independent review passed with no findings. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (9 passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "a2d426539dfe633365a2879a48a9eecb11e771b9",
+          "evidence": [
+            {
+              "after": "Ran 9 tests: OK. `git diff --check` passed.",
+              "before": "Ran 2 tests: 2 errors. Both raised NotImplementedError from safe_extract.extract.",
+              "caption": "Baseline suite failed in the extraction stub; after implementation all tests pass.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "a2d426539dfe633365a2879a48a9eecb11e771b9",
+          "pr": {
+            "body": "Implemented the documented API in safe_extract.py using only the Python standard library. It validates the list batch, entry tuple/data types, POSIX path rules, duplicate and prefix conflicts, existing roots, symlinks, ancestor types, and existing targets before creating anything. Writes create missing parents and use exclusive file creation. Added focused tests for malformed inputs, path edge cases, collisions, root and symlink cases, conflicts, empty batches, nested files, and empty bytes. Checks: `python -m unittest -v` (9 passed); `git diff --check` (passed). Assumption: caller provides the stable filesystem specified by SPEC.md; concurrent changes and rollback after I/O failures remain outside the API.",
+            "summary": "Implemented safe extraction for regular files. Before: extraction was unimplemented and both baseline tests errored. Now: batches are fully validated before any filesystem mutation, and valid entries preserve bytes and order.",
+            "title": "Implement validated safe extraction"
+          },
+          "review": {
+            "reviewed_head": "a2d426539dfe633365a2879a48a9eecb11e771b9",
+            "reviewer_agents": [
+              "agt_01M7W4AC7WPSDGXRPEZV79Q4FV"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W4AC7WPSDGXRPEZV79Q4FV",
+                "base": "8eccbc95156a2848a85ba21893c9a67328bc763d",
+                "findings": 0,
+                "head": "a2d426539dfe633365a2879a48a9eecb11e771b9",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W4AC7WPSDGXRPEZV79Q4FV"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "The change validates untrusted filesystem paths and controls symlink traversal and overwrite behavior; a defect could cause filesystem compromise or data loss. Scope is limited to safe_extract.py and its tests; independent review found no blocking issues."
+          },
+          "tree": "3d040a663a8e28071cf2a6eb38c561e87065352c"
+        },
+        "cost_usd": 0.01764448,
+        "started_at": "2026-11-20T09:21:29.222529008Z",
+        "finished_at": "2026-11-20T09:25:19.051390236Z"
+      }
+    ],
+    "spent_usd": 0.01764448,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W45JM6EH2E12A9K8QPNJ7M": {
+        "direct_usd": 0.00999374,
+        "delegated_usd": 0.007650740000000001,
+        "agents": [
+          {
+            "agent": "agt_01M7W48R7A9RDTE5DDH3P8E6TS",
+            "parent": "agt_01M7W45JN8FDV2DFFBDFP6WE9Q",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.002697740000000001
+          },
+          {
+            "agent": "agt_01M7W4AC7WPSDGXRPEZV79Q4FV",
+            "parent": "agt_01M7W45JN8FDV2DFFBDFP6WE9Q",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.004953000000000001
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

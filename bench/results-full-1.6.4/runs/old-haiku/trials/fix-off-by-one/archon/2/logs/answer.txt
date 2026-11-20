@@ -1,0 +1,18 @@
+I've queued the fix as item `qi_01M7W5J50H012896YQDC3KQ6ZY` on the `fix-off-by-one` repository, using the `direct` pipeline with standard review. I haven't read or changed `window.py` myself, since code changes go through the queue.
+
+The brief tells the agent to fix the root cause in `window.py` so the function is correct for all valid inputs, including edge cases. It also says not to modify the tests and to commit on the item's branch without pushing. The repository ships locally, so the commit stays local.
+
+I'll report the outcome when the item finishes.
+
+Done: Fix bug in window.py so python3 -m unittest passes. Fixed the off-by-one in sliding_windows in window.py. The range stopped at len(items) - size, so the last window was never produced. It now uses len(items) - size + 1. Before, python3 -m unittest failed with 2 failures (test_includes_the_last_window, test_whole_list_is_one_window). After, all 3 tests pass. Edge cases checked by probe: empty input returns [], size greater than length returns [], size equal to length returns one window, size 1 returns single-element windows, and size <= 0 still raises ValueError. No test files changed. Committed b43f576 on archon/dc3kq6zy-fix-bug-in-window-py-so-python3-m-unitte, not pushed. Independent reviewer agt_01M7W5JRG6GSV3YH5X4JX6HY91 passed head b43f576 with no blocking findings. Open follow-up (non-blocking): the test suite does not assert empty input or size greater than length; these are correct by probe. No servers or processes were started. Review: PASS, reviewer agt_01M7W5JRG6GSV3YH5X4JX6HY91.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W5JRG6GSV3YH5X4JX6HY91)
+
+SHIPPED: commit b43f5763076b9fb3d744a2fe4dcf214d2830b445 on the run branch
+Branch `archon/dc3kq6zy-fix-bug-in-window-py-so-python3-m-unitte` in /home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/e2ad32f45406e1ca9b1ec41a/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7W5J50H012896YQDC3KQ6ZY`; land it in `main`: `archon merge qi_01M7W5J50H012896YQDC3KQ6ZY`.
+
+Fixed the off-by-one in sliding_windows in window.py. The range stopped at len(items) - size, so the last window was never produced. It now uses len(items) - size + 1. Before, python3 -m unittest failed with 2 failures (test_includes_the_last_window, test_whole_list_is_one_window). After, all 3 tests pass. Edge cases checked by probe: empty input returns [], size greater than length returns [], size equal to length returns one window, size 1 returns single-element windows, and size <= 0 still raises ValueError. No test files changed. Committed b43f576 on archon/dc3kq6zy-fix-bug-in-window-py-so-python3-m-unitte, not pushed. Independent reviewer agt_01M7W5JRG6GSV3YH5X4JX6HY91 passed head b43f576 with no blocking findings. Open follow-up (non-blocking): the test suite does not assert empty input or size greater than length; these are correct by probe. No servers or processes were started. Review: PASS, reviewer agt_01M7W5JRG6GSV3YH5X4JX6HY91.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W5JRG6GSV3YH5X4JX6HY91)
+
+SHIPPED: commit b43f5763076b9fb3d744a2fe4dcf214d2830b445 on the run branch

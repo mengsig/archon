@@ -1,0 +1,5 @@
+- **Critical — `src/tokens.js`, `verify`:** The signature check accepts any signature that is a prefix of the expected HMAC, including an empty string. For example, `eyJ1c2VyIjoicm9vdCIsImV4cCI6OTAwMDAwMDAwMDAwMH0.` has a valid JSON payload and an empty signature; `verify` accepts it because every string starts with `''`. An attacker can forge unsigned session claims. Require an exact-length signature match and compare it safely.
+
+- **Medium — `src/tokens.js`, `verify`:** Malformed token contents can throw instead of returning `null`, contrary to the function’s stated contract. With the empty-signature bypass, a token such as `%%%.` reaches `JSON.parse` and throws. Callers that expect invalid tokens to be rejected normally may error or return a server failure. Reject malformed input without throwing.
+
+- **Low — `src/tokens.js`, `verify`:** `token.split('.')` ignores segments after the signature, so a valid token with arbitrary appended data (for example, `body.signature.extra`) still verifies. This makes token parsing non-canonical and can cause inconsistent handling across systems. Reject tokens that do not contain exactly two segments.

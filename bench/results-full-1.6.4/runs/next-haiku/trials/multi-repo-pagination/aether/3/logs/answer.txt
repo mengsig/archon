@@ -1,0 +1,36 @@
+Added cursor pagination to GET /items in inventory-api and updated inventory-client's listItems to follow next_cursor. Both repos are committed (inventory-api 93e176e, inventory-client 92b2911) and their working trees are clean.
+
+API: limit (1..100, default 20) and cursor are optional. The cursor is base64url of the last returned item id, so paging is keyset-based and stable under inserts/deletes between requests. next_cursor is null on the last page. Invalid limit or cursor returns 400 with {"error": ...}. README documents the parameters and flags the breaking change that GET /items no longer returns everything in one response. 9/9 `python3 -m unittest` tests pass, including new tests for default page size, full traversal in order, null cursor on the last and exact-fit page, and 400s for bad limit and cursor values.
+
+Client: listItems sends no cursor first, passes next_cursor back unchanged, and stops when it is null or absent. It throws on a page without an items array and on a repeated cursor, so it cannot loop forever. README updated. 8/8 `npm test` pass, including new tests for multi-page traversal, cursor passthrough, absent next_cursor, malformed page, repeated cursor and a rejected cursor. An end-to-end run of the real client against the Python API via api_cli.py returned all 57 items in order.
+
+Choices I made: the cursor is an encoded id, not an offset; the client throws on repeated cursors; client package version is unchanged at 1.4.0. Commits use the repo's configured git identity, with no attribution trailer, following the CLAUDE.md rule against Claude attribution.
+
+Cursor pagination is in place for `GET /items` in `inventory-api`, and `inventory-client`'s `listItems` now follows `next_cursor` to return every item. Both repos are committed and their tests pass.
+
+**Commits**
+- `inventory-api`: `93e176e` (Add cursor pagination to GET /items)
+- `inventory-client`: `92b2911` (Follow next_cursor in listItems)
+
+**API**
+- `limit` is an integer from 1 to 100 with a default of 20. `cursor` is optional.
+- The cursor is the base64url-encoded id of the last item on the page, so paging is keyset-based and stays stable if items are added or removed between requests.
+- `next_cursor` is `null` on the last page.
+- An invalid `limit` or `cursor` returns 400 with `{"error": "..."}`.
+- `python3 -m unittest`: 9/9 pass, including new tests for default page size, full traversal in order, null cursor on the last page, and 400s for bad input.
+
+**Client**
+- `listItems` sends no cursor on the first request, then passes `next_cursor` back unchanged until it is `null` or absent.
+- It throws on a page without an `items` array and on a repeated cursor, so a misbehaving server can't make it loop forever.
+- `npm test`: 8/8 pass, including new tests for multi-page traversal, cursor passthrough, absent `next_cursor`, and the error cases.
+- I also ran the real client against the Python API through `api_cli.py`. It returned all 57 items in order.
+
+**READMEs**
+- Both document the new parameters and response shape.
+- The API README calls out the breaking change: `GET /items` no longer returns everything in one response.
+
+**Choices I made**
+- The cursor encodes an id, not an offset.
+- The client throws on a repeated cursor rather than trusting the server to make progress.
+- I left the client's package version at 1.4.0.
+- The commits use the repo's configured git identity and carry no attribution trailer. That follows the CLAUDE.md rule against Claude attribution, which the attribution reminder defers to.

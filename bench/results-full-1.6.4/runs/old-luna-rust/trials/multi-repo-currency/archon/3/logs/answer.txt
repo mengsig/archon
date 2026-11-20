@@ -1,0 +1,34 @@
+Queued initiative **ini_01M7WGDJKB0VH55T037QKC90ZY** with one `direct` item per repository. Both share the currency and CSV contract, and each item includes the requested tests, README update, and commit.
+
+- `ledger`: `qi_01M7WGDJKE9R9GZ4E84QKZEXA9`
+- `reports`: `qi_01M7WGD N3W5483G9V134S3ZKHY`
+
+Done: Add currency parsing and CSV output to ledger. Added optional TSV currency parsing with USD default, currency-bearing CSV output, line-numbered currency errors with exit status 2, and README/tests. `cargo test`, `cargo fmt --check`, and `git diff --check` passed; independent review passed with no findings. Committed as ee862043a707badb493e6bbd318f999f7b9cc2ad. Nothing remains undone.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WGGQ9D8XKXADX8WRBMVQE6)
+
+SHIPPED: commit ee862043a707badb493e6bbd318f999f7b9cc2ad on the run branch
+Branch `archon/4qkzexa9-add-currency-parsing-and-csv-output-to-l` in /home/mengsig/.local/share/archon-bench/f164-ezf9wwc6/archon-bench/work/20261120T123040Z/c95bcc23a0a0f277538fe5a7/ledger holds it (4 files changed, 104 insertions(+), 15 deletions(-)). Review: `archon diff qi_01M7WGDJKE9R9GZ4E84QKZEXA9`; land it in `main`: `archon merge qi_01M7WGDJKE9R9GZ4E84QKZEXA9`.
+
+Freed 0.0 GiB of build output: item qi_01M7WGDJKE9R9GZ4E84QKZEXA9 ended and its cargo target directory went.
+
+Done: Group report totals by account and currency. Updated reports.py to group totals by account and currency, default legacy CSV rows to USD, and reject malformed currency codes with stderr and exit 2. Updated README and focused tests. Before: legacy output was account,total_cents; after: output is account,currency,total_cents with the required grouping and ordering. `python3 -m unittest` passed (3 tests), `git diff --check` passed, and the worktree is clean. Review passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WGFZK41E1VX5VTN9RVFX24)
+
+SHIPPED: commit 141df85480edbfa387c622cb64b91bdbe1bc335b on the run branch
+Branch `archon/34s3zkhy-group-report-totals-by-account-and-curre` in /home/mengsig/.local/share/archon-bench/f164-ezf9wwc6/archon-bench/work/20261120T123040Z/c95bcc23a0a0f277538fe5a7/reports holds it (3 files changed, 67 insertions(+), 18 deletions(-)). Review: `archon diff qi_01M7WGDN3W5483G9V134S3ZKHY`; land it in `main`: `archon merge qi_01M7WGDN3W5483G9V134S3ZKHY`.
+
+Initiative finished; coordinated result queued.
+
+Updated reports.py to group totals by account and currency, default legacy CSV rows to USD, and reject malformed currency codes with stderr and exit 2. Updated README and focused tests. Before: legacy output was account,total_cents; after: output is account,currency,total_cents with the required grouping and ordering. `python3 -m unittest` passed (3 tests), `git diff --check` passed, and the worktree is clean. Review passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WGFZK41E1VX5VTN9RVFX24)
+
+SHIPPED: commit 141df85480edbfa387c622cb64b91bdbe1bc335b on the run branch
+
+Added optional TSV currency parsing with USD default, currency-bearing CSV output, line-numbered currency errors with exit status 2, and README/tests. `cargo test`, `cargo fmt --check`, and `git diff --check` passed; independent review passed with no findings. Committed as ee862043a707badb493e6bbd318f999f7b9cc2ad. Nothing remains undone.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WGGQ9D8XKXADX8WRBMVQE6)
+
+SHIPPED: commit ee862043a707badb493e6bbd318f999f7b9cc2ad on the run branch

@@ -1,0 +1,479 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W4HQZKCY67T8716VF1003F",
+      "repo": "repo_01M7W4GRZWRHANM4V71SV06Z0Q",
+      "pipeline": "refactor",
+      "title": "Replace order status strings with OrderStatus enum",
+      "brief": "Refactor the orders crate so order status is represented by a typed enum, preserving all existing observable behavior.\n\nRequirements:\n- Add src/status.rs with pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }, deriving at least Debug, Clone, Copy, PartialEq, Eq, Hash.\n- Implement OrderStatus::as_str(self) -> &'static str with exactly \"pending\", \"paid\", \"shipped\", \"cancelled\"; Display must print the same values.\n- Implement FromStr for OrderStatus with Err = ParseStatusError. ParseStatusError must be public, implement std::error::Error, and its message must name the rejected input.\n- Implement OrderStatus::can_transition_to(self, next: OrderStatus) -> bool for exactly: Pending->Paid, Pending->Cancelled, Paid->Shipped, Paid->Cancelled. All other transitions return false.\n- Change Order::status to OrderStatus, re-export OrderStatus and ParseStatusError at crate root, and use OrderStatus throughout. Status string literals must occur only in src/status.rs.\n- Preserve existing observable behavior, including errors, report output/order, and parsing.\n- Run cargo test and ensure it passes. Commit the completed work on the local branch.\n\nAcceptance: implementation and tests cover the enum conversions/display, valid and invalid parsing including rejected-input error text, transition matrix, and affected order/report behavior; all status literals are confined to src/status.rs; cargo test passes; a commit is produced.\n\n## Amendment (2026-11-20 09:36 UTC)\n\nAutomatic repair (archond retries a refused record once). The gate refused only the ship record your finished work handed in: the ship record archond delivers is not on record: `commit` \"e9b9511b51538d811d849c5b39dc5e5a8363daa\" names no single commit in the run worktree (unknown or ambiguous): give the full hash `git rev-parse` prints\n\nYour committed work stands: change no code and redo nothing. Read `git rev-parse HEAD` and `git rev-parse HEAD^{tree}` after your last commit and hand in the ship record with those full hashes.\n\nRun any check in the foreground or wait on it, and never end your turn while one runs: Archon reads the end of your turn as your result.\n",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "baseline": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "refactor": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "review": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "verify": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W518R0RVTKZ6G9VXRWFWHM",
+        "summary": "Reviewed commit e9b95111b51538d811d849c5b39dc5e5a8363daa (tree 8112221e9973faef9a4bbca72aaa04a49f51fee7) against baseline e957827f03aa498e828ee4b71b9bdd90e5a50243. The typed status design meets the brief: transition policy is centralized in OrderStatus, lifecycle callers use typed values, and string conversion occurs at report boundaries. No behavior or structural findings; status literals are confined to src/status.rs and the worktree is clean. Independently ran cargo test with the installed stable toolchain: 2 unit and 6 integration tests passed, with doc tests passing. Prior reported build, clippy, format, and diff checks also passed. No remaining risks identified. VERDICT: PASS\n\nSHIPPED: commit e9b95111b51538d811d849c5b39dc5e5a8363daa on the run branch"
+      },
+      "created_at": "2026-11-20T09:28:07.957436679Z",
+      "updated_at": "2026-11-20T09:39:25.368860711Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W4HR1YB5XGVKW4XYDHHXTR",
+        "item": "qi_01M7W4HQZKCY67T8716VF1003F",
+        "pipeline": "refactor",
+        "shipped": false,
+        "aether_run": "run_01M7W4HRCX5XYKSNAVJV13EBTC",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/cb35cfc90a7dc88ba07e08a0/.archon/data/worktrees/refactor-order-status/qi_01M7W4HQZKCY67T8716VF1003F",
+        "branch": "archon/6vf1003f-replace-order-status-strings-with-orders",
+        "state": {
+          "state": "failed",
+          "stage_id": "refactor",
+          "error": "stage `refactor` failed: the ship record archond delivers is not on record: `commit` \"e9b9511b51538d811d849c5b39dc5e5a8363daa\" names no single commit in the run worktree (unknown or ambiguous): give the full hash `git rev-parse` prints\n\n**Stage `refactor` attempt 2: the ship record archond delivers is not on record: `commit` \"e9b9511b51538d811d849c5b39dc5e5a8363daa\" names no single commit in the run worktree (unknown or ambiguous): give the full hash `git rev-parse` prints**\n\nClippy is installed for the stable toolchain. The first retry could not find it because the toolchain’s `bin` directory was missing from `PATH`; with that directory added, the requested strict lint check passed. The full test suite also passed: 2 unit tests, 6 integration tests, and doctests.\n\nNo source changes were needed, so the branch remains at commit `e9b9511`. The worktree is clean; `rustfmt --check` and `git diff --check` pass. Nothing remains open.\n"
+        },
+        "cost_usd": 0.03375502,
+        "started_at": "2026-11-20T09:28:08.266461165Z",
+        "finished_at": "2026-11-20T09:36:35.981848816Z"
+      },
+      {
+        "id": "prun_01M7W518R0RVTKZ6G9VXRWFWHM",
+        "item": "qi_01M7W4HQZKCY67T8716VF1003F",
+        "pipeline": "refactor",
+        "shipped": true,
+        "aether_run": "run_01M7W518YXZYCM5Y5J4EDDBECE",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/cb35cfc90a7dc88ba07e08a0/.archon/data/worktrees/refactor-order-status/qi_01M7W4HQZKCY67T8716VF1003F",
+        "branch": "archon/6vf1003f-replace-order-status-strings-with-orders",
+        "state": {
+          "state": "succeeded",
+          "summary": "Reviewed commit e9b95111b51538d811d849c5b39dc5e5a8363daa (tree 8112221e9973faef9a4bbca72aaa04a49f51fee7) against baseline e957827f03aa498e828ee4b71b9bdd90e5a50243. The typed status design meets the brief: transition policy is centralized in OrderStatus, lifecycle callers use typed values, and string conversion occurs at report boundaries. No behavior or structural findings; status literals are confined to src/status.rs and the worktree is clean. Independently ran cargo test with the installed stable toolchain: 2 unit and 6 integration tests passed, with doc tests passing. Prior reported build, clippy, format, and diff checks also passed. No remaining risks identified. VERDICT: PASS\n\nSHIPPED: commit e9b95111b51538d811d849c5b39dc5e5a8363daa on the run branch"
+        },
+        "cost_usd": 0.0171059,
+        "started_at": "2026-11-20T09:36:36.728669661Z",
+        "finished_at": "2026-11-20T09:39:25.368860711Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W4HRBQVE7NH4SBEM876HRG",
+        "run": "prun_01M7W4HR1YB5XGVKW4XYDHHXTR",
+        "stage_id": "baseline",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W4HRE3W3Y1RKQE97R996EB",
+        "aether_task": "tsk_01M7W4HRE3W3Y1RKQE97R996EC",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Baseline characterization for replacing order status strings with OrderStatus is complete. Original baseline: e957827f03aa498e828ee4b71b9bdd90e5a50243. Added and committed characterization tests as 19c12f75256c8339e06b7cd5ef1c0055a1f4c335 (`test: characterize order status behavior`); production code remains unchanged and worktree is clean on the assigned branch.\n\nChecks: before adding tests, `CARGO_TARGET_DIR=... cargo test` was attempted but could not run because cargo was unavailable on PATH, then the installed rustup had no toolchain. Stable 1.100.0 was installed. After adding tests, direct toolchain invocation without `RUSTDOC` ran the six integration tests successfully but the overall command failed at doctests because rustdoc was not discoverable. The final full command, with explicit RUSTC/RUSTDOC and the required per-item CARGO_TARGET_DIR, passed: `RUSTC=/home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc RUSTDOC=/home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustdoc CARGO_TARGET_DIR=/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/cb35cfc90a7dc88ba07e08a0/.archon/data/cache/refactor-order-status/items/qi_01M7W4HQZKCY67T8716VF1003F/cargo-target /home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test` (6 integration tests pass; unit/doc test targets pass). `/home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustfmt --check tests/orders.rs` and `git diff --check` pass. Last checked tree: 2eca5ab2936fc5a4e2f8e0e673e58d99a76bad68.\n\nCharacterization coverage now pins cancellation of a paid order and exact repeated-cancellation error, report parser trimming/field-count/id/total/status errors, lexical status-count ordering, and CSV line output, alongside existing lifecycle, illegal shipping/payment, round-trip, basic count, outstanding total, ready-to-ship order, and unknown-status behavior. Public surface to preserve: root `Order`; public `billing::{pay,outstanding_cents}`, `shipping::{ship,ready_to_ship}`, `report::{status_counts,to_line,from_line}`; public Order fields and methods; status_counts ordering/shape, CSV formatting and parser errors, and operation errors. The brief explicitly changes the type of `Order::status` to `OrderStatus`, adds root exports for `OrderStatus` and `ParseStatusError`, and requires status spellings to live only in `src/status.rs`; no other contract exception is specified. No CLI or other wire/file interface exists beyond the report CSV functions. No feedback was supplied. Remaining for refactorer/verifier: enum conversion/display/parse error text, complete transition matrix, typed status behavior, and confinement of the four literals to `src/status.rs` are not baseline tests here and must be implemented and verified in the structural refactor stage; preserve the characterization tests and baseline reference.",
+        "structured": null,
+        "cost_usd": 0.0126501,
+        "started_at": "2026-11-20T09:28:08.311271795Z",
+        "finished_at": "2026-11-20T09:31:20.295988739Z"
+      },
+      {
+        "id": "stg_01M7W4QM39B646Y1R4H1Z98X13",
+        "run": "prun_01M7W4HR1YB5XGVKW4XYDHHXTR",
+        "stage_id": "refactor",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W4QM45V0AFZ2TFKJ00HM97",
+        "aether_task": "tsk_01M7W4QM45V0AFZ2TFKJ00HM98",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Added public OrderStatus and ParseStatusError in src/status.rs, changed Order.status to the enum, and updated lifecycle, billing, shipping, and reporting code to use typed statuses while preserving report strings, ordering, parsing errors, and operation errors. Added conversion/parse and full transition-matrix unit tests; adapted one characterization assertion to compare the enum’s display value because the field type changed. cargo test passed (2 unit, 6 integration, 0 doc failures). Committed as e9b95111b51538d811d849c5b39dc5e5a8363daa; worktree is clean. Baseline: e957827f03aa498e828ee4b71b9bdd90e5a50243; unchanged characterization commit: 19c12f75256c8339e06b7cd5ef1c0055a1f4c335.",
+        "structured": {
+          "baseline": "e957827f03aa498e828ee4b71b9bdd90e5a50243",
+          "characterization_commit": "19c12f75256c8339e06b7cd5ef1c0055a1f4c335",
+          "checks": [
+            "/home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustfmt src/status.rs src/order.rs src/billing.rs src/shipping.rs src/report.rs src/lib.rs tests/orders.rs",
+            "git diff --check",
+            "RUSTC=/home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc RUSTDOC=/home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustdoc CARGO_TARGET_DIR=/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/cb35cfc90a7dc88ba07e08a0/.archon/data/cache/refactor-order-status/items/qi_01M7W4HQZKCY67T8716VF1003F/cargo-target /home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test",
+            "rg -n '\"(pending|paid|shipped|cancelled)\"' src"
+          ],
+          "commit": "e9b95111b51538d811d849c5b39dc5e5a8363daa",
+          "evidence": {
+            "none": "Pure code refactor with no user-visible visual or numerical change; behavior is demonstrated by the passing test output."
+          },
+          "feedback_addressed": "No feedback was supplied.",
+          "modified_preexisting_tests": [
+            {
+              "change": "Compared the parsed status using to_string() instead of comparing OrderStatus directly to a string literal.",
+              "file": "tests/orders.rs",
+              "reason": "Required to keep the existing parser behavior assertion compiling after the brief-authorized change from String to OrderStatus; assertion still checks the same displayed status."
+            }
+          ],
+          "pr": {
+            "body": "Added OrderStatus conversions, Display, FromStr, ParseStatusError, and the exact allowed transition matrix in src/status.rs, with root re-exports. Updated Order, billing, shipping, and report parsing to use the enum. Report counts and CSV output remain string-based with lexical ordering. The only pre-existing test edit adapts a direct String field comparison to compare Display output after the explicitly requested field type change. Verified with rustfmt, git diff --check, the full cargo test command (2 unit tests, 6 integration tests, doctests passed), and confirmed all four status spellings in src are confined to src/status.rs. No remaining limitations identified.",
+            "summary": "Made order status a typed enum. Callers can now use explicit states and a centralized transition matrix; report output and errors retain their existing spellings and behavior.",
+            "title": "refactor: model order status as enum"
+          },
+          "risk": {
+            "level": "low",
+            "why": "Contained representation refactor with behavior pinned by existing characterization tests and new enum conversion, parsing, error-text, and complete transition-matrix tests. Full cargo test passed. Public Order.status type changes as explicitly required; crate-root exports are additive."
+          },
+          "tree": "8112221e9973faef9a4bbca72aaa04a49f51fee7"
+        },
+        "cost_usd": 0.01064528,
+        "started_at": "2026-11-20T09:31:20.553867469Z",
+        "finished_at": "2026-11-20T09:33:38.259010277Z"
+      },
+      {
+        "id": "stg_01M7W4VTP5J5GWTVYGTHBY4S2M",
+        "run": "prun_01M7W4HR1YB5XGVKW4XYDHHXTR",
+        "stage_id": "verify",
+        "kind": "test",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W4VTQHQNRMNS3VA3C635D8",
+        "aether_task": "tsk_01M7W4VTQHWS2F4SFRX6TBGGCR",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "fail",
+        "summary": "Verified commit e9b9511 against baseline e957827 and characterization commit 19c12f7. The worktree is clean. Direct stable-toolchain `cargo test` passed (2 unit, 6 integration, 0 doctests); `cargo build`, rustfmt check, and `git diff --check` passed. The original three integration tests remain unchanged in assertions; the characterization additions remain present, and the sole structural-stage test delta adapts the whitespace-trim parsing assertion to compare `status.to_string()`. Source comparison confirms the public operational APIs and report shape/errors are preserved, Order.status has the explicitly required enum type, new types are re-exported, allowed transition edges match the baseline lifecycle, and all four status spellings in production source occur only in src/status.rs. Clippy could not run: the installed stable Cargo reports `error: no such command: clippy`; no contributor or CI check manifests exist in this small crate to identify another lint command. Under the verification stage rule that a required check that cannot be completed is a fail, lint evidence is missing. VERDICT: FAIL",
+        "structured": {
+          "findings": [
+            {
+              "detail": "Command: `/home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo clippy --all-targets -- -D warnings`. Output: `error: no such command: clippy`; Cargo suggests installing cargo-clippy. This check could not be completed. Install the clippy component for the available stable toolchain and rerun this command.",
+              "path": "Cargo.toml:1",
+              "severity": "medium",
+              "title": "Clippy lint check unavailable"
+            }
+          ],
+          "verdict": "fail"
+        },
+        "cost_usd": 0.00451818,
+        "started_at": "2026-11-20T09:33:38.373294549Z",
+        "finished_at": "2026-11-20T09:34:47.906050228Z"
+      },
+      {
+        "id": "stg_01M7W4XYMDWMCVKSWG86271N69",
+        "run": "prun_01M7W4HR1YB5XGVKW4XYDHHXTR",
+        "stage_id": "refactor",
+        "kind": "work",
+        "attempt": 2,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W4QM45V0AFZ2TFKJ00HM97",
+        "aether_task": null,
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Clippy is installed for the stable toolchain. The first retry could not find it because the toolchain’s `bin` directory was missing from `PATH`; with that directory added, the requested strict lint check passed. The full test suite also passed: 2 unit tests, 6 integration tests, and doctests.\n\nNo source changes were needed, so the branch remains at commit `e9b9511`. The worktree is clean; `rustfmt --check` and `git diff --check` pass. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "PATH=/home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH RUSTC=/home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc CARGO_TARGET_DIR=/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/cb35cfc90a7dc88ba07e08a0/.archon/data/cache/refactor-order-status/items/qi_01M7W4HQZKCY67T8716VF1003F/cargo-target /home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo clippy --all-targets -- -D warnings",
+            "RUSTC=/home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc RUSTDOC=/home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustdoc CARGO_TARGET_DIR=/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/cb35cfc90a7dc88ba07e08a0/.archon/data/cache/refactor-order-status/items/qi_01M7W4HQZKCY67T8716VF1003F/cargo-target /home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test",
+            "/home/mengsig/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustfmt --check src/status.rs src/order.rs src/billing.rs src/shipping.rs src/report.rs src/lib.rs tests/orders.rs",
+            "git diff --check"
+          ],
+          "commit": "e9b9511b51538d811d849c5b39dc5e5a8363daa",
+          "evidence": {
+            "none": "No additional visible or numerical change occurred in the verification follow-up."
+          },
+          "pr": {
+            "body": "Implemented the enum refactor in commit e9b9511. Follow-up verification installed/confirmed the stable Clippy component and added its toolchain bin directory to PATH so Cargo could locate it. Strict Clippy and the full test suite passed, along with rustfmt and diff checks. No source changes were needed in the follow-up.",
+            "summary": "Made order status a typed enum with a centralized transition matrix while preserving report output and existing error behavior.",
+            "title": "refactor: model order status as enum"
+          },
+          "risk": {
+            "level": "low",
+            "why": "Contained representation refactor. Lifecycle behavior and report compatibility are covered by tests; strict Clippy and the full test suite passed."
+          },
+          "tree": "8112221e9973faef9a4bbca72aaa04a49f51fee7"
+        },
+        "cost_usd": 0.005941459999999999,
+        "started_at": "2026-11-20T09:34:47.949535951Z",
+        "finished_at": "2026-11-20T09:36:35.941471474Z"
+      },
+      {
+        "id": "stg_01M7W518Y1P0SJ257R7EX5TNST",
+        "run": "prun_01M7W518R0RVTKZ6G9VXRWFWHM",
+        "stage_id": "baseline",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W5190H6PADVW50HH1BY5AY",
+        "aether_task": "tsk_01M7W5190H7XR313HNP3DFVDVX",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Amendment handled without changing code or rerunning checks, as directed. Full HEAD is e9b95111b51538d811d849c5b39dc5e5a8363daa; full tree is 8112221e9973faef9a4bbca72aaa04a49f51fee7. Worktree is clean on archon/6vf1003f-replace-order-status-strings-with-orders. Existing committed work and prior verification stand.",
+        "structured": null,
+        "cost_usd": 0.0016322200000000002,
+        "started_at": "2026-11-20T09:36:36.801886977Z",
+        "finished_at": "2026-11-20T09:36:48.816541523Z"
+      },
+      {
+        "id": "stg_01M7W51MR3C6C76N7N12S33FJ5",
+        "run": "prun_01M7W518R0RVTKZ6G9VXRWFWHM",
+        "stage_id": "refactor",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W51MSD8J3P6PG53HZMJPYD",
+        "aether_task": "tsk_01M7W51MSDSCX5CRCDRTHVAXTJ",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Completed the order status enum refactor in commit e9b95111b51538d811d849c5b39dc5e5a8363daa. Existing verification and characterization results stand; per the amendment, I made no code changes and reran no checks. The worktree is clean. Full HEAD tree: 8112221e9973faef9a4bbca72aaa04a49f51fee7.",
+        "structured": {
+          "checks": [
+            "cargo test (existing verification; not rerun per amendment)"
+          ],
+          "commit": "e9b95111b51538d811d849c5b39dc5e5a8363daa",
+          "evidence": {
+            "none": "Pure refactor with no visual or numeric before/after evidence."
+          },
+          "local_commit": "e9b95111b51538d811d849c5b39dc5e5a8363daa",
+          "pr": {
+            "body": "Adds OrderStatus and ParseStatusError in src/status.rs, re-exports them from the crate root, and updates order handling to use the enum. Existing tests and verification stand. No checks were rerun after the automatic repair, as directed; the repair only required resubmitting full git hashes. Worktree is clean.",
+            "summary": "Made order status a typed enum. Callers can use valid status values and transitions while string parsing and display behavior remain compatible.",
+            "title": "refactor: model order status as enum"
+          },
+          "risk": {
+            "level": "low",
+            "why": "Contained type refactor with behavior-preserving conversion and transition rules; prior verification stands and this repair changed no code. No additional checks were run."
+          },
+          "tree": "8112221e9973faef9a4bbca72aaa04a49f51fee7"
+        },
+        "cost_usd": 0.00278546,
+        "started_at": "2026-11-20T09:36:48.899792911Z",
+        "finished_at": "2026-11-20T09:37:14.737643659Z"
+      },
+      {
+        "id": "stg_01M7W52E3R9P08QDQAB43ZWF3A",
+        "run": "prun_01M7W518R0RVTKZ6G9VXRWFWHM",
+        "stage_id": "verify",
+        "kind": "test",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W52E4EWN4DR2BC070NQ592",
+        "aether_task": "tsk_01M7W52E4EYH4SVTNA8EPT25N7",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "pass",
+        "summary": "Verified commit e9b95111b51538d811d849c5b39dc5e5a8363daa (tree 8112221e9973faef9a4bbca72aaa04a49f51fee7); worktree clean. Ran cargo test (2 unit, 6 integration passed), cargo build, cargo clippy --all-targets -- -D warnings, cargo fmt -- --check, and git diff --check; all passed using the installed stable toolchain path. The initial cargo invocations failed because cargo/rustc were absent from PATH, then succeeded after setting PATH to the installed toolchain bin. Characterization tests from 19c12f7 remain unchanged except the expected conversion of a status field assertion to .to_string() after OrderStatus typed the field. Baseline assertions for lifecycle, illegal-step error messages, reports, counts, and round-trip remain intact. New coverage checks all enum names/display/parse errors, all 16 transition pairs, whitespace trimming and parser field/id/amount/status errors, cancellation error, CSV output and lexical count ordering. Source status wire literals occur only in src/status.rs; diff --check is clean. Public changes are limited to the required Order.status type change and new public OrderStatus/ParseStatusError exports; no CLI or other external formats exist. No unexplained behavior differences found.\nVERDICT: PASS",
+        "structured": {
+          "findings": [],
+          "verdict": "pass"
+        },
+        "cost_usd": 0.00711672,
+        "started_at": "2026-11-20T09:37:14.872771499Z",
+        "finished_at": "2026-11-20T09:38:45.486056821Z"
+      },
+      {
+        "id": "stg_01M7W556PD98B05RT41SBNBB0J",
+        "run": "prun_01M7W518R0RVTKZ6G9VXRWFWHM",
+        "stage_id": "review",
+        "kind": "review",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W556PXJAJG2PGCEAM7WQQH",
+        "aether_task": "tsk_01M7W556PXJAJG2PGCEAM7WQQJ",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "pass",
+        "summary": "Reviewed commit e9b95111b51538d811d849c5b39dc5e5a8363daa (tree 8112221e9973faef9a4bbca72aaa04a49f51fee7) against baseline e957827f03aa498e828ee4b71b9bdd90e5a50243. The typed status design meets the brief: transition policy is centralized in OrderStatus, lifecycle callers use typed values, and string conversion occurs at report boundaries. No behavior or structural findings; status literals are confined to src/status.rs and the worktree is clean. Independently ran cargo test with the installed stable toolchain: 2 unit and 6 integration tests passed, with doc tests passing. Prior reported build, clippy, format, and diff checks also passed. No remaining risks identified. VERDICT: PASS",
+        "structured": {
+          "findings": [],
+          "risk": {
+            "level": "medium",
+            "why": "The change replaces the public Order.status field type and adds public API types; this is a contained API surface change required by the brief, and behavior is covered by tests."
+          },
+          "verdict": "pass"
+        },
+        "cost_usd": 0.005571500000000001,
+        "started_at": "2026-11-20T09:38:45.581701095Z",
+        "finished_at": "2026-11-20T09:39:25.030304012Z"
+      }
+    ],
+    "spent_usd": 0.05086092,
+    "gates": [],
+    "default_efforts": {
+      "baseline": "high",
+      "refactor": "high",
+      "review": "medium",
+      "verify": "high"
+    }
+  }
+]

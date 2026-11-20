@@ -1,0 +1,249 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W9QRPFPBS8W9SFM0FGZNEV",
+      "repo": "repo_01M7W9QFZKNDCJS23E03WTQ78Z",
+      "pipeline": "direct",
+      "title": "Implement retry_budget.py per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated, local socket): \"Implement `retry_budget.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nGoal: retry_budget.py implements exactly the API documented in SPEC.md in the repository root.\nAcceptance criteria:\n- Every documented function, class and parameter is implemented with the documented signature and behaviour; nothing undocumented is removed or renamed.\n- Every error case listed in SPEC.md raises the specified exception type, with the specified conditions; boundary values (zero, limits, exhausted budget, invalid inputs) follow the spec.\n- Focused tests added (standard library unittest or pytest-free) covering each error path and boundary case in SPEC.md; existing tests kept passing.\n- Standard library only; no new dependencies.\n- Keep functions under ~60 lines, validate inputs at the boundary, never swallow exceptions.\n- Commit the work on the local branch with a clear message (ship mode is local; do not push). Use the repository's configured git identity only; no attribution lines beyond the Co-Authored-By line required by the operator's attribution rule.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "operator-request"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W9QRPFPBS8W9SFM0FGZNEV",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T10:58:48.146173268Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T10:58:48.148314722Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T10:58:48.146173268Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W9QRPT76NY505YPA7AEE1R",
+        "summary": "Implemented retry_delay in retry_budget.py per SPEC.md and added 34 focused unittest cases in test_retry_budget.py (37 total with the 3 existing tests kept). Committed 1305732 on archon/m0fgznev-implement-retry-budget-py-per-spec-md-wi (not pushed), tree d8774f24d8182352e2ccee128e21458d749fcc13, under the repo's configured identity with no attribution line. Validation runs before every early return (built-in int only, minimums per spec, ValueError). attempt >= max_attempts returns None. Backoff is min(cap, base*2**(attempt-1)) with a bit-length shortcut so huge attempts never build a big power; zero base returns 0 explicitly. Retry-After is an uncapped floor. Budget test is strict (elapsed+delay >= budget returns None, no shortening). Checks: before, the stub failed all 3 existing tests (NotImplementedError); after, `python3 -I -m unittest -v` gives 37 OK, py_compile with -W error passes, no lines over 79 columns. No flake8/pyflakes is installed, so no linter ran. Review: reviewer agt_01M7W9TWDVQSVM4F33KPMSPETJ passed head 1305732 with no findings and confirmed risk low; it also brute-forced 190,080 argument combinations against the spec formula with 0 mismatches. Nothing is left running; the reviewer's leftover process was already gone. Open: none. Note for the ship record: the reviewer's spot-check brute force was run in a temp copy and is not committed.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9TWDVQSVM4F33KPMSPETJ)\n\nSHIPPED: commit 130573262b35635fae53c9de50bdd6946175e6d9 on the run branch"
+      },
+      "created_at": "2026-11-20T10:58:48.143162254Z",
+      "updated_at": "2026-11-20T11:01:12.260555243Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W9QRPT76NY505YPA7AEE1R",
+        "item": "qi_01M7W9QRPFPBS8W9SFM0FGZNEV",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W9QRXBKQPY1HBY1R5VMJDR",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/4cbd33b8a9b11f043a4eebbc/.archon/data/worktrees/quality-retry-budget/qi_01M7W9QRPFPBS8W9SFM0FGZNEV",
+        "branch": "archon/m0fgznev-implement-retry-budget-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented retry_delay in retry_budget.py per SPEC.md and added 34 focused unittest cases in test_retry_budget.py (37 total with the 3 existing tests kept). Committed 1305732 on archon/m0fgznev-implement-retry-budget-py-per-spec-md-wi (not pushed), tree d8774f24d8182352e2ccee128e21458d749fcc13, under the repo's configured identity with no attribution line. Validation runs before every early return (built-in int only, minimums per spec, ValueError). attempt >= max_attempts returns None. Backoff is min(cap, base*2**(attempt-1)) with a bit-length shortcut so huge attempts never build a big power; zero base returns 0 explicitly. Retry-After is an uncapped floor. Budget test is strict (elapsed+delay >= budget returns None, no shortening). Checks: before, the stub failed all 3 existing tests (NotImplementedError); after, `python3 -I -m unittest -v` gives 37 OK, py_compile with -W error passes, no lines over 79 columns. No flake8/pyflakes is installed, so no linter ran. Review: reviewer agt_01M7W9TWDVQSVM4F33KPMSPETJ passed head 1305732 with no findings and confirmed risk low; it also brute-forced 190,080 argument combinations against the spec formula with 0 mismatches. Nothing is left running; the reviewer's leftover process was already gone. Open: none. Note for the ship record: the reviewer's spot-check brute force was run in a temp copy and is not committed.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9TWDVQSVM4F33KPMSPETJ)\n\nSHIPPED: commit 130573262b35635fae53c9de50bdd6946175e6d9 on the run branch"
+        },
+        "cost_usd": 0.03888774,
+        "started_at": "2026-11-20T10:58:48.332678174Z",
+        "finished_at": "2026-11-20T11:01:12.260555243Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W9QRX37G1K3BAH43YC66B3",
+        "run": "prun_01M7W9QRPT76NY505YPA7AEE1R",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W9QRY2TJK2T997K6J2J4CG",
+        "aether_task": "tsk_01M7W9QRY2TJK2T997K6J2J4CH",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented retry_delay in retry_budget.py per SPEC.md and added 34 focused unittest cases in test_retry_budget.py (37 total with the 3 existing tests kept). Committed 1305732 on archon/m0fgznev-implement-retry-budget-py-per-spec-md-wi (not pushed), tree d8774f24d8182352e2ccee128e21458d749fcc13, under the repo's configured identity with no attribution line. Validation runs before every early return (built-in int only, minimums per spec, ValueError). attempt >= max_attempts returns None. Backoff is min(cap, base*2**(attempt-1)) with a bit-length shortcut so huge attempts never build a big power; zero base returns 0 explicitly. Retry-After is an uncapped floor. Budget test is strict (elapsed+delay >= budget returns None, no shortening). Checks: before, the stub failed all 3 existing tests (NotImplementedError); after, `python3 -I -m unittest -v` gives 37 OK, py_compile with -W error passes, no lines over 79 columns. No flake8/pyflakes is installed, so no linter ran. Review: reviewer agt_01M7W9TWDVQSVM4F33KPMSPETJ passed head 1305732 with no findings and confirmed risk low; it also brute-forced 190,080 argument combinations against the spec formula with 0 mismatches. Nothing is left running; the reviewer's leftover process was already gone. Open: none. Note for the ship record: the reviewer's spot-check brute force was run in a temp copy and is not committed.",
+        "structured": {
+          "checks": [
+            "python3 -I -m unittest -v (37 tests OK, run in the worktree)",
+            "python3 -W error -m py_compile retry_budget.py test_retry_budget.py",
+            "awk line-length check: no lines over 79 columns",
+            "before: original stub on base 211c423 — python3 -I -m unittest: 3 errors (NotImplementedError)"
+          ],
+          "commit": "130573262b35635fae53c9de50bdd6946175e6d9",
+          "evidence": [
+            {
+              "after": "python3 -I -m unittest -v\nRan 37 tests\nOK",
+              "before": "python3 -I -m unittest\nRan 3 tests\nFAILED (errors=3)  # each raises NotImplementedError",
+              "caption": "Before: original stub on base 211c423 fails the existing tests",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "130573262b35635fae53c9de50bdd6946175e6d9",
+          "pr": {
+            "body": "Approach: retry_delay validates every argument first (built-in int only, minimums, ValueError), then returns None if attempt >= max_attempts. Backoff is min(cap, base*2**(attempt-1)) computed via a bit-length shortcut so huge attempts never allocate a large power; zero base returns 0. Retry-After is a floor not limited by cap. Retry is refused when elapsed+delay >= budget; delay is never shortened.\n\nKey files: retry_budget.py (validation and backoff helpers), test_retry_budget.py (existing 3 tests kept, 34 added covering each error path, attempt and budget boundaries, saturation, Retry-After floor).\n\nChecks: unittest 37 OK; py_compile -W error OK; no lines over 79 columns. No linter installed. Reviewer brute-force over 190,080 argument combinations against the spec formula: 0 mismatches (temp copy, not committed).\n\nAssumptions: type errors raise ValueError, as SPEC.md says for invalid values (not TypeError). Subclasses of int such as IntEnum are rejected, matching 'built-in int'. No commit-message attribution line was added, per the stage contract and CLAUDE.md.",
+            "summary": "made retry_delay follow SPEC.md. now validates all args, caps backoff, applies Retry-After floor, and refuses retries past budget. before: NotImplementedError stub, 3 failing tests; now: 37 tests pass.",
+            "title": "Implement retry_delay per SPEC.md with focused tests"
+          },
+          "review": {
+            "reviewed_head": "130573262b35635fae53c9de50bdd6946175e6d9",
+            "reviewer_agents": [
+              "agt_01M7W9TWDVQSVM4F33KPMSPETJ"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W9TWDVQSVM4F33KPMSPETJ",
+                "base": "211c423795bc4a5483d175a99204a4bb40ef178a",
+                "findings": 0,
+                "head": "1305732",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W9TWDVQSVM4F33KPMSPETJ"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "low",
+            "why": "Pure new function body plus unit tests in two files; no concurrency, security, persistence or public API break. Reviewer confirmed low."
+          },
+          "tree": "d8774f24d8182352e2ccee128e21458d749fcc13"
+        },
+        "cost_usd": 0.03888774,
+        "started_at": "2026-11-20T10:58:48.355512558Z",
+        "finished_at": "2026-11-20T11:01:08.845660223Z"
+      }
+    ],
+    "spent_usd": 0.03888774,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W9QRX37G1K3BAH43YC66B3": {
+        "direct_usd": 0.03044054,
+        "delegated_usd": 0.0084472,
+        "agents": [
+          {
+            "agent": "agt_01M7W9TWDVQSVM4F33KPMSPETJ",
+            "parent": "agt_01M7W9QRY2TJK2T997K6J2J4CG",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0084472
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T10:58:48.146173268Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T10:58:48.148314722Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T10:58:48.146173268Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

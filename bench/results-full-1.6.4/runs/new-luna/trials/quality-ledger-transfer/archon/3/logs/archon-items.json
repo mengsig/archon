@@ -1,0 +1,240 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WANXHFGH742M2E60WSRR1H",
+      "repo": "repo_01M7WAN9E8X525TF8SR53F2BE3",
+      "pipeline": "direct",
+      "title": "Implement ledger.py to SPEC.md",
+      "brief": "Implement ledger.py according to SPEC.md. Preserve the documented API and handle every specified error and boundary case. Add focused tests beyond the existing basic coverage, using only the Python standard library. Run the relevant test suite and fix failures. Commit the completed changes on the task branch; do not push. Acceptance: implementation matches SPEC.md, focused tests cover specified errors and boundaries, tests pass, and the work is committed.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7WANXHFGH742M2E60WSRR1H",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T11:15:16.160321275Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T11:15:16.162685408Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T11:15:16.160321275Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WANXJ88QRJZ0RCN1VM9THS",
+        "summary": "Implemented the SPEC.md ledger API with input validation, bounded atomic transfers, copied snapshots, and per-ledger locking. Added focused validation, boundary, isolation, and opposite-transfer tests. The final checks passed (8 unittest cases, py_compile, diff check); committed as 434f0165a0a7f9eaf2941aa001cc321ebdd1b01d with a clean worktree. Independent review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WARXTD0E9MSH47WVVJTKTM)\n\nSHIPPED: commit 434f0165a0a7f9eaf2941aa001cc321ebdd1b01d on the run branch"
+      },
+      "created_at": "2026-11-20T11:15:16.143664355Z",
+      "updated_at": "2026-11-20T11:17:59.808097246Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WANXJ88QRJZ0RCN1VM9THS",
+        "item": "qi_01M7WANXHFGH742M2E60WSRR1H",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WANXTXAGX9H6WFMDEAXDC3",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/8e128c746caa6e922ade3b9d/.archon/data/worktrees/quality-ledger-transfer/qi_01M7WANXHFGH742M2E60WSRR1H",
+        "branch": "archon/60wsrr1h-implement-ledger-py-to-spec-md",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the SPEC.md ledger API with input validation, bounded atomic transfers, copied snapshots, and per-ledger locking. Added focused validation, boundary, isolation, and opposite-transfer tests. The final checks passed (8 unittest cases, py_compile, diff check); committed as 434f0165a0a7f9eaf2941aa001cc321ebdd1b01d with a clean worktree. Independent review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WARXTD0E9MSH47WVVJTKTM)\n\nSHIPPED: commit 434f0165a0a7f9eaf2941aa001cc321ebdd1b01d on the run branch"
+        },
+        "cost_usd": 0.01478212,
+        "started_at": "2026-11-20T11:15:16.397506832Z",
+        "finished_at": "2026-11-20T11:17:59.808097246Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WANXT11HBAVZCEATNY60Q2",
+        "run": "prun_01M7WANXJ88QRJZ0RCN1VM9THS",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WANXVA7GQVWVTRQM9A4093",
+        "aether_task": "tsk_01M7WANXVAX30FJ1AKAJ8NGTFJ",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented the SPEC.md ledger API with input validation, bounded atomic transfers, copied snapshots, and per-ledger locking. Added focused validation, boundary, isolation, and opposite-transfer tests. The final checks passed (8 unittest cases, py_compile, diff check); committed as 434f0165a0a7f9eaf2941aa001cc321ebdd1b01d with a clean worktree. Independent review passed with no findings. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (8 passed)",
+            "python -m py_compile ledger.py test_ledger.py (passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "434f0165a0a7f9eaf2941aa001cc321ebdd1b01d",
+          "evidence": [
+            {
+              "after": "Ran 8 tests in 0.002s; OK.",
+              "before": "Ran 2 tests; both errored with NotImplementedError.",
+              "caption": "Baseline test run before implementation failed because Ledger raised NotImplementedError; final suite passes all eight tests.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "434f0165a0a7f9eaf2941aa001cc321ebdd1b01d",
+          "pr": {
+            "body": "Implemented the documented API in ledger.py using a per-ledger lock to serialize transfer checks and writes with snapshots. Added focused standard-library tests for constructor and amount validation, validation order, unknown accounts, ceiling and same-account behavior, copy isolation, and opposite-direction concurrent transfers. Checks: python -m unittest -v (8 passed), python -m py_compile ledger.py test_ledger.py (passed), git diff --check (passed). Assumption: dict subclasses and str subclasses are accepted where the spec says dict/string; balances and amounts require exact built-in int as specified. No known limitations.",
+            "summary": "Implemented bounded atomic ledger transfers with thread-safe snapshots. Before: Ledger methods were unimplemented and the two basic tests errored. Now: validation, failure atomicity, ceiling rules, snapshot isolation, and concurrent opposite transfers are covered.",
+            "title": "Implement atomic ledger transfers"
+          },
+          "review": {
+            "reviewed_head": "434f0165a0a7f9eaf2941aa001cc321ebdd1b01d",
+            "reviewer_agents": [
+              "agt_01M7WARXTD0E9MSH47WVVJTKTM"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7WARXTD0E9MSH47WVVJTKTM",
+                "base": "b3eed12eb437c1aa406315a715b601ea59691f89",
+                "findings": 0,
+                "head": "434f0165a0a7f9eaf2941aa001cc321ebdd1b01d",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7WARXTD0E9MSH47WVVJTKTM"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "low",
+            "why": "Small contained in-memory behavior change in ledger.py with focused tests in test_ledger.py; no persistence, API break, or cross-cutting changes. Per-ledger locking is straightforward and the independent reviewer confirmed it does not raise risk to high. All listed checks passed."
+          },
+          "tree": "3c8e4d03f79498adda55f06d2ae1185f6029a454"
+        },
+        "cost_usd": 0.01478212,
+        "started_at": "2026-11-20T11:15:16.417024803Z",
+        "finished_at": "2026-11-20T11:17:56.953987037Z"
+      }
+    ],
+    "spent_usd": 0.01478212,
+    "gates": [],
+    "delegations": {
+      "stg_01M7WANXT11HBAVZCEATNY60Q2": {
+        "direct_usd": 0.0110716,
+        "delegated_usd": 0.003710520000000001,
+        "agents": [
+          {
+            "agent": "agt_01M7WARXTD0E9MSH47WVVJTKTM",
+            "parent": "agt_01M7WANXVA7GQVWVTRQM9A4093",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.003710520000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T11:15:16.160321275Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T11:15:16.162685408Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T11:15:16.160321275Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

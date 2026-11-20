@@ -1,0 +1,16 @@
+Fixed the off-by-one in window.py and committed it as 97d5e05 on main. The loop bound was range(len(items) - size), which dropped the final window; it is now range(len(items) - size + 1). `python3 -m unittest` passes all 3 tests (-v run: OK). I did not modify test_window.py. Edge cases checked by hand: empty input returns [], size > len returns [], size == len returns one window, size 1 returns single items, and tuples slice correctly. The existing ValueError for size <= 0 is unchanged. The commit has no Co-Authored-By trailer, because the repo's CLAUDE.md says not to add Claude attribution. The working tree is clean; I removed the __pycache__ my runs created.
+
+The bug is fixed and committed as `97d5e05` on `main`. `python3 -m unittest` now passes all 3 tests.
+
+The loop bound in `window.py` was `range(len(items) - size)`, which stopped one window short and dropped the last one. It is now `range(len(items) - size + 1)`. The tests were not changed.
+
+I also checked these cases by hand:
+- Empty input returns `[]`.
+- A size larger than the input returns `[]`.
+- A size equal to the input length returns one window.
+- Size 1 returns each item on its own.
+- Tuples slice correctly.
+
+The existing `ValueError` for non-positive sizes is unchanged.
+
+The commit has no `Co-Authored-By` trailer, because the repo's CLAUDE.md says not to add Claude attribution and that takes precedence over the attribution reminder. The working tree is clean.

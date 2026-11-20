@@ -1,0 +1,26 @@
+I found the bug and queued the fix as item `qi_01M7W8J5EHQEKMBZW8V0TJDV3G`. I did not edit the repository or commit myself, because my role is to route changes through Archon.
+
+**The bug:** in `window.py`, `sliding_windows` builds its windows with `range(len(items) - size)`. The stop should be `len(items) - size + 1`. As written, it drops the last window and returns `[]` when `len(items) == size`. That is why `python3 -m unittest` reports 2 failures out of 3 tests.
+
+**What the item does:**
+- Pipeline `direct`, with `review: standard` because the change is small but touches shared logic.
+- It changes only `window.py`, leaves `test_window.py` untouched, and keeps the `ValueError` for `size <= 0`.
+- It checks these edge cases: `size > len(items)` returns `[]`, empty `items` returns `[]`, and `size == len(items)` returns one window.
+- It commits on the local branch (the repository ships `local`) and tags the item `notify`, so you will hear when it finishes.
+
+I have not confirmed that the tests pass after the fix; that will show in the item's outcome.
+
+Something in the orchestrator's workspace wrote into its read-only mirror of `fix-off-by-one` (changed __pycache__/). Archon put the mirror back at its base commit: a change to a repository ships only as a queued item.
+
+Done: Fix off-by-one in sliding_windows so python3 -m unittest passes. Fixed the off-by-one in sliding_windows (window.py): the range stop changed from len(items) - size to len(items) - size + 1, so the final window is no longer dropped and size == len(items) returns one window. size <= 0 still raises ValueError. Committed 77b19e6 on archon/v0tjdv3g-fix-off-by-one-in-sliding-windows-so-pyt under the configured identity (mengsig); no tests changed, no push. Checks: `python3 -m unittest` before: 2 failures (test_includes_the_last_window, test_whole_list_is_one_window); after: 3 tests, OK. Edge cases verified: [1,2,3],4 -> []; [],1 -> []; [1,2],2 -> [[1,2]]; [1,2,3],1 -> [[1],[2],[3]]; [],3 -> []. Reviewer agt_01M7W8JS8G6YD7Y3BWREY5C4GA (claude-haiku-5-5, medium) read base 5dedd7f to head 77b19e6: pass, no findings, risk low; it also compared against a reference for lengths 0-7 and sizes 1-9. Left open: nothing blocking. The reviewer's leftover claude -p process (pid 4132184) stops when this task ends. REVIEW: pass by agt_01M7W8JS8G6YD7Y3BWREY5C4GA.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8JS8G6YD7Y3BWREY5C4GA)
+
+SHIPPED: commit 77b19e6fe0234150bcf8edb317b7eebe5eb101aa on the run branch
+Branch `archon/v0tjdv3g-fix-off-by-one-in-sliding-windows-so-pyt` in /home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/edc2006cd3d3d422da0ec270/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7W8J5EHQEKMBZW8V0TJDV3G`; land it in `main`: `archon merge qi_01M7W8J5EHQEKMBZW8V0TJDV3G`.
+
+Fixed the off-by-one in sliding_windows (window.py): the range stop changed from len(items) - size to len(items) - size + 1, so the final window is no longer dropped and size == len(items) returns one window. size <= 0 still raises ValueError. Committed 77b19e6 on archon/v0tjdv3g-fix-off-by-one-in-sliding-windows-so-pyt under the configured identity (mengsig); no tests changed, no push. Checks: `python3 -m unittest` before: 2 failures (test_includes_the_last_window, test_whole_list_is_one_window); after: 3 tests, OK. Edge cases verified: [1,2,3],4 -> []; [],1 -> []; [1,2],2 -> [[1,2]]; [1,2,3],1 -> [[1],[2],[3]]; [],3 -> []. Reviewer agt_01M7W8JS8G6YD7Y3BWREY5C4GA (claude-haiku-5-5, medium) read base 5dedd7f to head 77b19e6: pass, no findings, risk low; it also compared against a reference for lengths 0-7 and sizes 1-9. Left open: nothing blocking. The reviewer's leftover claude -p process (pid 4132184) stops when this task ends. REVIEW: pass by agt_01M7W8JS8G6YD7Y3BWREY5C4GA.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8JS8G6YD7Y3BWREY5C4GA)
+
+SHIPPED: commit 77b19e6fe0234150bcf8edb317b7eebe5eb101aa on the run branch

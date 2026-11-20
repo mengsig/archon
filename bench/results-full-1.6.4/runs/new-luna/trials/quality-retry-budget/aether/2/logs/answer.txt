@@ -1,0 +1,3 @@
+Implemented `retry_delay` per the spec, with validation, capped exponential backoff, uncapped Retry-After floors, and strict budget checks. Added focused boundary tests; all 9 tests pass.
+
+Committed as `dbe745a` (`Implement bounded retry delay scheduling`). Working tree is clean.

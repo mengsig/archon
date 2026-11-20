@@ -1,0 +1,14 @@
+Queued as **qi_01M7W80V9G1N0DBZTM32D288MC**. The `direct` pipeline will fix `window.py`, run `python3 -m unittest`, and commit the change locally. I’ll report the outcome when the run finishes.
+
+Done: Fix window.py for all inputs and commit. Fixed sliding_windows to include the final valid start index, so exact-size inputs yield one window and ordinary inputs include their last window. `python3 -m unittest` passed (3 tests); `git diff --check` passed. Committed as 2bf4ae2362f1f962e06293728f1db595c5075db8. Independent review passed with no findings. Working tree is clean.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W83RPWBRM55S6HDQ333E8W)
+
+SHIPPED: commit 2bf4ae2362f1f962e06293728f1db595c5075db8 on the run branch
+Branch `archon/32d288mc-fix-window-py-for-all-inputs-and-commit` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/682d87d8010ef99d6c6c5b37/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7W80V9G1N0DBZTM32D288MC`; land it in `main`: `archon merge qi_01M7W80V9G1N0DBZTM32D288MC`.
+
+Fixed sliding_windows to include the final valid start index, so exact-size inputs yield one window and ordinary inputs include their last window. `python3 -m unittest` passed (3 tests); `git diff --check` passed. Committed as 2bf4ae2362f1f962e06293728f1db595c5075db8. Independent review passed with no findings. Working tree is clean.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W83RPWBRM55S6HDQ333E8W)
+
+SHIPPED: commit 2bf4ae2362f1f962e06293728f1db595c5075db8 on the run branch

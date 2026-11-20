@@ -1,0 +1,1 @@
+I’m queuing this as a two member initiative: one item for `ledger` and one for `reports`, sharing the CSV compatibility contract. Each repository ships locally, so the agents will commit their changes without pushing. The initiative will use the standard review setting.

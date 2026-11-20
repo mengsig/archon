@@ -1,0 +1,34 @@
+Queued initiative `ini_01M7W337P6STPYCQ374SXYQ5HX` with both repository changes under one shared contract:
+
+- `ledger`: `qi_01M7W337P7MCZKV4VJ3HFSS90R`
+- `reports`: `qi_01M7W337Q2W45HQ59REE9RKJ76`
+
+Each item includes its requested README update, test command, and commit.
+
+Done: Group report totals by currency. Added currency-aware aggregation to reports: legacy three-column CSV defaults to USD, present currency codes are validated and malformed codes exit 2 with stderr, and totals output is grouped and sorted by account then currency. Updated README and tests. `python3 -m unittest` passed (3 tests) and `git diff --check` passed. Committed as f42c3a63df4d6b17fb696c95553ea2a21e80d4fd; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W35QWJZMB524K1GGG17SAE)
+
+SHIPPED: commit f42c3a63df4d6b17fb696c95553ea2a21e80d4fd on the run branch
+Branch `archon/ee9rkj76-group-report-totals-by-currency` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/3ed20963cc668b3e10225e89/reports holds it (3 files changed, 59 insertions(+), 14 deletions(-)). Review: `archon diff qi_01M7W337Q2W45HQ59REE9RKJ76`; land it in `main`: `archon merge qi_01M7W337Q2W45HQ59REE9RKJ76`.
+
+Done: Add currency column and validation to ledger. Added optional currency parsing to ledger with USD as the default, currency in every CSV row, and status 2 for malformed currency while preserving status 1 for other input errors. Updated the README and added parser and CLI regression tests, including mixed-invalid-field precedence. The change is committed in 2c4f8548 and fix in be2389ab; git diff checks passed. cargo test could not run because cargo is not installed/on PATH. Initial review found the precedence edge case; it was fixed and the fix passed focused re-review. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W38YT2EG02BPJRFDKWB4Z7), codex/gpt-6-luna (agent agt_01M7W3CF7TY9D9JQ80XAJ1C1R1)
+
+SHIPPED: commit be2389abd9a1aa080be63c12a459d054b8df1919 on the run branch
+Branch `archon/3hfss90r-add-currency-column-and-validation-to-le` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/3ed20963cc668b3e10225e89/ledger holds it (4 files changed, 89 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M7W337P7MCZKV4VJ3HFSS90R`; land it in `main`: `archon merge qi_01M7W337P7MCZKV4VJ3HFSS90R`.
+
+Initiative finished; coordinated result queued.
+
+Added currency-aware aggregation to reports: legacy three-column CSV defaults to USD, present currency codes are validated and malformed codes exit 2 with stderr, and totals output is grouped and sorted by account then currency. Updated README and tests. `python3 -m unittest` passed (3 tests) and `git diff --check` passed. Committed as f42c3a63df4d6b17fb696c95553ea2a21e80d4fd; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W35QWJZMB524K1GGG17SAE)
+
+SHIPPED: commit f42c3a63df4d6b17fb696c95553ea2a21e80d4fd on the run branch
+
+Added optional currency parsing to ledger with USD as the default, currency in every CSV row, and status 2 for malformed currency while preserving status 1 for other input errors. Updated the README and added parser and CLI regression tests, including mixed-invalid-field precedence. The change is committed in 2c4f8548 and fix in be2389ab; git diff checks passed. cargo test could not run because cargo is not installed/on PATH. Initial review found the precedence edge case; it was fixed and the fix passed focused re-review. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W38YT2EG02BPJRFDKWB4Z7), codex/gpt-6-luna (agent agt_01M7W3CF7TY9D9JQ80XAJ1C1R1)
+
+SHIPPED: commit be2389abd9a1aa080be63c12a459d054b8df1919 on the run branch

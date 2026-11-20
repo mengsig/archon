@@ -1,0 +1,25 @@
+Queued qi_01M7W875TBMT630D7C2E3M2TJQ: implement retry_budget.py per SPEC.md with focused tests in quality-retry-budget (direct pipeline, standard review, balanced tier at medium effort, committed on the local branch, not pushed). Because claude-code's seven-day quota is at 77% used with 31% of the window elapsed, I chose a balanced model at medium effort, one item only, to stay within quota.
+
+I queued the `retry_budget.py` work as one item, `qi_01M7W875TBMT630D7C2E3M2TJQ`, in the `quality-retry-budget` repository. I did not write or test the code myself.
+
+- **Pipeline:** `direct`, one agent that implements, checks and commits.
+- **Review:** `standard`. The spec is a small pure function, but a validation or boundary slip would be easy to miss, so one reviewer is worth it.
+- **Model:** balanced tier at medium effort. The spec is fully specified, and the claude-code seven-day quota is at 77% with 31% of the window elapsed.
+- **Shipping:** the repository ships locally. The item commits on the local branch and does not push.
+
+The brief hands the agent the full spec, the required error and boundary cases, and the requirement to run the tests before committing. I also posted the decision and the quota reason to the operator.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and replaced test_retry_budget.py with 28 focused unittest tests. Validation runs first (built-in int only, ranges, ValueError), then the attempt limit, then the saturating backoff (shift clamped to cap_ms.bit_length(), so no huge powers), then the Retry-After floor (not capped), then the strict budget check. Before: the stub raised NotImplementedError. Checks: `python3 -m unittest test_retry_budget` on head 536e7d4: 28 tests, OK. No linter is installed here, so line length (<=79) was checked by awk. Independent review (agt_01M7W88VGC2HKGE3B1QXWZWF4Y, haiku, medium) passed head 536e7d4 with no findings and rated risk low. Commit 536e7d4 is local on the run branch, not pushed. Nothing left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W88VGC2HKGE3B1QXWZWF4Y)
+
+SHIPPED: commit 536e7d4fc5df6d062fef54173cfb3d1544745b31 on the run branch
+Branch `archon/2e3m2tjq-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/066500a2d377c8fb4cb3479a/quality-retry-budget holds it (2 files changed, 168 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7W875TBMT630D7C2E3M2TJQ`; land it in `main`: `archon merge qi_01M7W875TBMT630D7C2E3M2TJQ`.
+
+retry_budget.py is implemented per SPEC.md with 28 unittest tests, all passing on head 536e7d4. The independent review passed with no findings and rated risk low. The commit is local only, on branch archon/2e3m2tjq-implement-retry-budget-py-per-spec-md-wi, not on main and not pushed. Merging it into main is your call. Cost was about $0.03.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and replaced test_retry_budget.py with 28 focused unittest tests. Validation runs first (built-in int only, ranges, ValueError), then the attempt limit, then the saturating backoff (shift clamped to cap_ms.bit_length(), so no huge powers), then the Retry-After floor (not capped), then the strict budget check. Before: the stub raised NotImplementedError. Checks: `python3 -m unittest test_retry_budget` on head 536e7d4: 28 tests, OK. No linter is installed here, so line length (<=79) was checked by awk. Independent review (agt_01M7W88VGC2HKGE3B1QXWZWF4Y, haiku, medium) passed head 536e7d4 with no findings and rated risk low. Commit 536e7d4 is local on the run branch, not pushed. Nothing left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W88VGC2HKGE3B1QXWZWF4Y)
+
+SHIPPED: commit 536e7d4fc5df6d062fef54173cfb3d1544745b31 on the run branch

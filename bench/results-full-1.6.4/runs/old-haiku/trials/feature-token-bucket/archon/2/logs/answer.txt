@@ -1,0 +1,22 @@
+I queued the rate limiter as item `qi_01M7W5C0T901X073KAPNZ1RSAY` on the `feature-token-bucket` repository. I did not edit the repository myself.
+
+- **Pipeline:** `direct`, one agent that implements, tests and commits. Archon ships it locally because this repository's ship mode is local.
+- **Review:** standard, because a rate limiter has correctness and concurrency risk.
+- **Brief:** your request verbatim, plus acceptance criteria. Every requirement in `SPEC.md` is implemented, including all error and edge cases. Tests are added for each of those in `test_ratelimit.py`, and the full suite is run. The module uses only the standard library.
+
+I'll report the outcome when the item finishes. If the spec leaves a case open, the agent will pick the minimal behaviour and note the choice in the commit message.
+
+Done: Implement rate limiter in ratelimit.py per SPEC.md. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and extended test_ratelimit.py to cover each spec error and edge case. Committed as bb52b7b on archon/pnz1rsay-implement-rate-limiter-in-ratelimit-py-p; tree b7606cc9107a948e6d558f11d8f33a068602db12; worktree clean. Check: `python3 -m unittest -v test_ratelimit` gives 18 tests, all OK (3 original, 15 new). Before the change, the 3 original tests errored on the stubs. Spec-silent choices: NaN is rejected as invalid; request size is validated before a key is created, so a rejected request never evicts; a stalled or backwards clock adds no refill. Review: independent reviewer agt_01M7W5DW8NN6RYGYKGKQATT5JK read the whole change at bb52b7b and passed it with no blocking findings. Non-blocking follow-ups: asserts are stripped under python -O; the wait_time rejection path has no eviction test; a non-numeric n raises TypeError rather than ValueError. No servers or processes left running (the reviewer's leftover claude process was stopped by PID). Not checked: float rounding right at the wait_time boundary, which is untested.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W5DW8NN6RYGYKGKQATT5JK)
+
+SHIPPED: commit bb52b7b53b5c54e7f68a2e301b994a550feefc96 on the run branch
+Branch `archon/pnz1rsay-implement-rate-limiter-in-ratelimit-py-p` in /home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/99d51e36292442f428824794/feature-token-bucket holds it (2 files changed, 200 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W5C0T901X073KAPNZ1RSAY`; land it in `main`: `archon merge qi_01M7W5C0T901X073KAPNZ1RSAY`.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and extended test_ratelimit.py to cover each spec error and edge case. Committed as bb52b7b on archon/pnz1rsay-implement-rate-limiter-in-ratelimit-py-p; tree b7606cc9107a948e6d558f11d8f33a068602db12; worktree clean. Check: `python3 -m unittest -v test_ratelimit` gives 18 tests, all OK (3 original, 15 new). Before the change, the 3 original tests errored on the stubs. Spec-silent choices: NaN is rejected as invalid; request size is validated before a key is created, so a rejected request never evicts; a stalled or backwards clock adds no refill. Review: independent reviewer agt_01M7W5DW8NN6RYGYKGKQATT5JK read the whole change at bb52b7b and passed it with no blocking findings. Non-blocking follow-ups: asserts are stripped under python -O; the wait_time rejection path has no eviction test; a non-numeric n raises TypeError rather than ValueError. No servers or processes left running (the reviewer's leftover claude process was stopped by PID). Not checked: float rounding right at the wait_time boundary, which is untested.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W5DW8NN6RYGYKGKQATT5JK)
+
+SHIPPED: commit bb52b7b53b5c54e7f68a2e301b994a550feefc96 on the run branch

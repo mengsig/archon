@@ -1,0 +1,22 @@
+All four backlog tickets (TT-101 to TT-104) are implemented, each in its own commit on `main`. The suite runs 37 tests, all passing, with `python3 -m unittest discover -s tests -t .`. The code is standard library only.
+
+Commits:
+- `f8e9b79` TT-101: Reject impossible due dates
+- `3f14575` TT-102: RFC 4180 CSV export
+- `43221f9` TT-103: Search query syntax
+- `c5c7606` TT-104: Undo
+
+**What changed**
+- **TT-101:** `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible dates, unsupported forms and offsets that overflow. The message includes the original text.
+- **TT-102:** `to_csv` quotes fields containing `,`, `"`, CR or LF, doubles embedded quotes, and ends every line with CRLF.
+- **TT-103:** `search` parses quoted phrases, `tag:NAME` and `status:open|done`, ANDed together. Bad fields, unknown statuses and unbalanced quotes raise `QueryError`.
+- **TT-104:** `TaskStore.undo()` walks a LIFO log of add, complete and delete. Ids are never reused, and failed operations are not logged.
+
+**Choices I made where the ticket was silent**
+- **TT-103:** a bare token containing `:` (such as `10:30`) is treated as a field term and raises. To search for a literal colon, quote the token (`"10:30"`).
+- **TT-103:** field names and `status:` values are matched case-insensitively.
+- **TT-104:** undoing a `complete` restores the task's previous status. For a normal complete that is "open", as the ticket says. For completing an already-done task it stays "done". I chose this over forcing "open" because it is a true revert.
+- **TT-104:** a deleted task is snapshotted at delete time, so later changes to the object you hold do not affect the restore.
+- **Commit trailer:** I left out the `Co-Authored-By: Claude` trailer. The project's CLAUDE.md says not to put any Claude attribution in commits, and that instruction takes precedence over the trailer reminder.
+
+**Tests:** I added `tests/test_dates.py`, `test_export.py`, `test_search.py` and `test_undo.py`. The existing `test_basic.py` is unchanged and still passes.

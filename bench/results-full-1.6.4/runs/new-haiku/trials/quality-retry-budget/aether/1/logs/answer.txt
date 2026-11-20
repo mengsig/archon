@@ -1,0 +1,26 @@
+Implemented `retry_delay` in retry_budget.py per SPEC.md and added focused tests; committed as d77ca08 on main (author mengsig, no attribution line, per the repo CLAUDE.md).
+
+Implementation:
+- `_validate` runs first, before any early return. Each int must be `type(x) is int` (rejects bool, float, and other types) and meet its minimum; violations raise ValueError, as the spec says.
+- Returns None when attempt >= max_attempts.
+- Backoff clamps the exponent to cap_ms.bit_length(), so huge attempt values never build a large power of two. This is exact because base_ms >= 1 implies base*2**e > cap once e reaches that bit length. Zero base or zero cap yields 0.
+- Retry-After is taken as max(backoff, retry_after_ms), uncapped.
+- Returns None when elapsed + delay >= budget; the wait is never shortened.
+
+Tests: 26 unittest cases in test_retry_budget.py, all passing (`python3 -m unittest test_retry_budget`). They cover the existing basics plus validation of every argument (bool, float, str, None, below-minimum), validation ordering before the attempt and budget early returns, attempt > max_attempts, cap/base edge cases, zero base and zero cap, huge attempt and big-int saturation, a cross-check of the clamped exponent against exact backoff for attempts 1-79, and budget boundaries (exactly at budget refused, one below allowed, Retry-After not shortened).
+
+Choices to note: wrong-type inputs raise ValueError rather than TypeError, following the spec's "invalid values raise ValueError" literally. `_validate` takes seven positional arguments, which is somewhat long; I kept it as a plain helper rather than introducing a config object.
+
+`retry_delay` is implemented in `retry_budget.py` per `SPEC.md`, with focused tests, and committed to `main` as `d77ca08`. All 26 tests pass under `python3 -m unittest test_retry_budget`.
+
+- **Validation:** every argument is checked before any early return. Each int must be a built-in `int` (so `bool` and `float` are rejected) and meet its minimum. Violations raise `ValueError`, as the spec says.
+- **Attempt limit:** returns `None` when `attempt >= max_attempts`.
+- **Backoff:** the exponent is clamped to `cap_ms.bit_length()`, so huge attempt values never build a large power of two. The result is still exact.
+- **Retry-After:** used as `max(backoff, retry_after_ms)` with no cap applied.
+- **Budget:** returns `None` when `elapsed_ms + delay >= budget_ms`. The required wait is never shortened to fit.
+
+The tests extend the existing `unittest` file and cover every validation rule, validation ordering, the boundary cases, saturation, and budget edges.
+
+Two choices to be aware of:
+- Wrong-type inputs raise `ValueError` rather than `TypeError`, following the spec's wording literally.
+- The commit has no Claude attribution line, because the repo's CLAUDE.md says not to add one and that takes precedence over the attribution reminder.

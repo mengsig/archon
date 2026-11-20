@@ -1,0 +1,239 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W9SYB96Z83KRKZY2QFH3NP",
+      "repo": "repo_01M7W9SCMCF4P10WZANZKPTYTD",
+      "pipeline": "direct",
+      "title": "Implement retry_budget.py to SPEC.md",
+      "brief": "Implement retry_budget.py according to SPEC.md. Preserve the documented API and handle every specified error and boundary case. Add focused tests that cover the cases missing from the existing basic tests, using only the Python standard library. Run the relevant test suite and commit the completed work. Acceptance criteria: behavior matches every requirement and error/boundary case in SPEC.md; the documented API remains compatible; focused tests exercise the newly covered cases and pass; changes are committed on the item branch. Do not introduce third-party dependencies.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W9SYB96Z83KRKZY2QFH3NP",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T10:59:59.481411535Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T10:59:59.540986895Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T10:59:59.481411535Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W9SYXJ624EBXC5DXPWJJ2W",
+        "summary": "Implemented retry_delay per SPEC.md and added focused boundary tests. Before: all 3 existing tests errored on the stub; after: all 10 tests pass. Final checks: PYTHONDONTWRITEBYTECODE=1 python -m unittest -v (10 passed) and git diff --check (passed). Committed as 0dd2449c21652e02b60d00a1581d18191ec07cd5; no open issues.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W9WCK23R7JPXQMAF4CVS2H)\n\nSHIPPED: commit 0dd2449c21652e02b60d00a1581d18191ec07cd5 on the run branch"
+      },
+      "created_at": "2026-11-20T10:59:59.465982344Z",
+      "updated_at": "2026-11-20T11:02:07.736781663Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W9SYXJ624EBXC5DXPWJJ2W",
+        "item": "qi_01M7W9SYB96Z83KRKZY2QFH3NP",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W9SZ9NXRDRDWE2543TZRTN",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/5b7c3965ffa3057afe16d527/.archon/data/worktrees/quality-retry-budget/qi_01M7W9SYB96Z83KRKZY2QFH3NP",
+        "branch": "archon/y2qfh3np-implement-retry-budget-py-to-spec-md",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented retry_delay per SPEC.md and added focused boundary tests. Before: all 3 existing tests errored on the stub; after: all 10 tests pass. Final checks: PYTHONDONTWRITEBYTECODE=1 python -m unittest -v (10 passed) and git diff --check (passed). Committed as 0dd2449c21652e02b60d00a1581d18191ec07cd5; no open issues.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W9WCK23R7JPXQMAF4CVS2H)\n\nSHIPPED: commit 0dd2449c21652e02b60d00a1581d18191ec07cd5 on the run branch"
+        },
+        "cost_usd": 0.01150144,
+        "started_at": "2026-11-20T11:00:00.320017875Z",
+        "finished_at": "2026-11-20T11:02:07.736781663Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W9SZ8A6B9JDJFQ2J20W57W",
+        "run": "prun_01M7W9SYXJ624EBXC5DXPWJJ2W",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W9SZAJ8XPBASN7H5BKRRTN",
+        "aether_task": "tsk_01M7W9SZAJV8YEX2EGGTSX1RD0",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented retry_delay per SPEC.md and added focused boundary tests. Before: all 3 existing tests errored on the stub; after: all 10 tests pass. Final checks: PYTHONDONTWRITEBYTECODE=1 python -m unittest -v (10 passed) and git diff --check (passed). Committed as 0dd2449c21652e02b60d00a1581d18191ec07cd5; no open issues.",
+        "structured": {
+          "checks": [
+            "PYTHONDONTWRITEBYTECODE=1 python -m unittest -v (10 passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "0dd2449c21652e02b60d00a1581d18191ec07cd5",
+          "evidence": [
+            {
+              "after": "Ran 10 tests; OK.",
+              "before": "Ran 3 tests; FAILED (errors=3), each raised NotImplementedError.",
+              "caption": "Baseline tests failed on the original NotImplementedError stub; final focused suite passes all 10 tests.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "0dd2449c21652e02b60d00a1581d18191ec07cd5",
+          "pr": {
+            "body": "Implemented the documented pure function in retry_budget.py. Validation occurs before exhausted-attempt returns and rejects bool, float, and out-of-range integers. Backoff saturates without huge power construction; Retry-After remains a minimum and is not capped; next-start budget comparison is strict. Extended test_retry_budget.py using unittest only. Final checks: PYTHONDONTWRITEBYTECODE=1 python -m unittest -v (10 passed), git diff --check (passed). Baseline: all 3 original tests errored because the implementation raised NotImplementedError. No third-party dependencies or open issues.",
+            "summary": "Implemented bounded retries with strict input validation, saturated exponential backoff, an uncapped Retry-After floor, and budget boundary enforcement. Before: retry_delay was an unimplemented stub; now: all specified return, error, and boundary behavior is covered by passing tests.",
+            "title": "Implement bounded retry budget scheduling"
+          },
+          "review": {
+            "reviewed_head": "0dd2449c21652e02b60d00a1581d18191ec07cd5",
+            "reviewer_agents": [
+              "agt_01M7W9WCK23R7JPXQMAF4CVS2H"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W9WCK23R7JPXQMAF4CVS2H",
+                "base": "78af5ce1dd159878d09d6e646cd5ea5e1df47cf4",
+                "findings": 0,
+                "head": "0dd2449c21652e02b60d00a1581d18191ec07cd5",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W9WCK23R7JPXQMAF4CVS2H"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "low",
+            "reviewer": "agt_01M7W9WCK23R7JPXQMAF4CVS2H",
+            "why": "Small, contained pure-function implementation and focused tests; no external state, concurrency, persistence, or dependency changes. Independent review passed with no findings."
+          },
+          "tree": "2c816892d1913ccea3d4010348865be421282be8"
+        },
+        "cost_usd": 0.01150144,
+        "started_at": "2026-11-20T11:00:00.394062463Z",
+        "finished_at": "2026-11-20T11:02:04.351082469Z"
+      }
+    ],
+    "spent_usd": 0.01150144,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W9SZ8A6B9JDJFQ2J20W57W": {
+        "direct_usd": 0.00854714,
+        "delegated_usd": 0.0029543,
+        "agents": [
+          {
+            "agent": "agt_01M7W9WCK23R7JPXQMAF4CVS2H",
+            "parent": "agt_01M7W9SZAJ8XPBASN7H5BKRRTN",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.0029543
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T10:59:59.481411535Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T10:59:59.540986895Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T10:59:59.481411535Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

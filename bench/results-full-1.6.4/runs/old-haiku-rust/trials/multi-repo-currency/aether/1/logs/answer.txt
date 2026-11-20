@@ -1,0 +1,24 @@
+Both repositories now handle currency, with one commit each. `cargo test` and `python3 -m unittest` both pass, and the two tools work end to end.
+
+**ledger** (commit `885e815`)
+- Lines take an optional fourth column. Without it the currency is `USD`. The header is `date,account,amount_cents,currency` and every row carries its currency.
+- A malformed currency exits with status 2 and prints `line N: bad currency ...` to stderr. Other input errors still exit 1.
+- `parse_line` now returns a `ParseError` enum (`Malformed` or `Currency`) that carries the exit code.
+- New tests cover the default, an explicit `EUR`, malformed codes, and the exit codes for other errors.
+
+**reports** (commit `c47a7f3`)
+- Output is `account,currency,total_cents`, sorted by account then currency.
+- A CSV with no `currency` column counts as `USD`.
+- A malformed currency prints `error: bad currency ...` to stderr and exits 2. Only that case is caught, so a bad amount still fails as before.
+- New tests cover multiple currencies, legacy CSV, and malformed codes. The existing test is unchanged and still passes.
+
+Both READMEs describe the new input, output and exit statuses.
+
+Choices I made:
+- The currency is trimmed like the other columns, so `EUR ` is accepted.
+- An empty fourth column (a trailing tab) is treated as malformed and exits 2, not as `USD`.
+- I did not add the `Co-Authored-By` trailer from the attribution reminder. Your CLAUDE.md says not to put Claude attribution in commits, and I followed that. Say if you want it added.
+
+Not changed:
+- A non-integer amount in `reports` still produces a Python traceback with exit 1. That was already the behaviour, and it is outside this request.
+- The `ledger` header is printed before any error, as before.

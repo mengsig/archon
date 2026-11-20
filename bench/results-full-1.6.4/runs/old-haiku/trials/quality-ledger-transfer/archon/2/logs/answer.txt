@@ -1,0 +1,23 @@
+I've queued the work as item `qi_01M7W6MTBFSDGN277DQ5BK2XY3` on the `direct` pipeline, with strict review. I didn't edit the repository myself.
+
+- **Scope:** `ledger.py` implements the documented API from `SPEC.md`: validation, copy-on-input and copy-on-snapshot, transfers with exact rollback on failure, same-account transfers, and thread-safe operations that avoid deadlock.
+- **Tests:** the brief asks for focused tests covering every error and boundary case in the spec, plus a deterministic multi-thread test. They must use only the standard library, with no timing thresholds and no randomness.
+- **Review:** strict, because the spec includes concurrency requirements.
+- **Commit:** the repository ships locally, so the work will be committed there using the existing git identity. Nothing is pushed.
+
+I'll report the outcome when the item finishes.
+
+Done: Implement ledger.py per SPEC.md with focused tests. Implemented ledger.py per SPEC.md and extended test_ledger.py with focused tests. Commits on archon/q5bk2xy3-implement-ledger-py-per-spec-md-with-foc: d215b3e (implementation and tests) and 00aee8e (test harness fix: concurrency workers are daemon threads so a deadlock fails the test instead of hanging interpreter exit; join timeout documented as a deadlock guard). Public API unchanged: Ledger(balances), transfer, snapshot, MAX_BALANCE. One threading.Lock per ledger guards validation, checks, both writes and snapshot. Checks: python3 -B -m unittest -v runs 27 tests, all OK, and repeated runs were OK. Review: reviewer 2 failed the first head on the two harness defects, both fixed; a delta reviewer passed 00aee8e; reviewers 1 and 3 passed d215b3e whole. Open non-blocking follow-ups: run_threads does not propagate worker exceptions; the split-lock mutant is only probabilistically caught; no overdraft race test; joins run sequentially, so a deadlock takes up to 30 s per thread to report. No processes left running. Nothing pushed.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W6PK4Q7T44JN47VQGRT2QP), claude-code/claude-haiku-5-5 (agent agt_01M7W6PQXVED1W1AENE5YMRE1W), claude-code/claude-haiku-5-5 (agent agt_01M7W6PWMFZXDBV1A84NMZ83X8), claude-code/claude-haiku-5-5 (agent agt_01M7W6SB5ZDG285ETZ7QF1PY8G)
+
+SHIPPED: commit 00aee8ed5c9db461131d7cc4fca26a771d4e000d on the run branch
+Branch `archon/q5bk2xy3-implement-ledger-py-per-spec-md-with-foc` in /home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/0add6e3b64d488d4b26521b9/quality-ledger-transfer holds it (2 files changed, 243 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M7W6MTBFSDGN277DQ5BK2XY3`; land it in `main`: `archon merge qi_01M7W6MTBFSDGN277DQ5BK2XY3`.
+
+Implemented ledger.py per SPEC.md and extended test_ledger.py with focused tests. Commits on archon/q5bk2xy3-implement-ledger-py-per-spec-md-with-foc: d215b3e (implementation and tests) and 00aee8e (test harness fix: concurrency workers are daemon threads so a deadlock fails the test instead of hanging interpreter exit; join timeout documented as a deadlock guard). Public API unchanged: Ledger(balances), transfer, snapshot, MAX_BALANCE. One threading.Lock per ledger guards validation, checks, both writes and snapshot. Checks: python3 -B -m unittest -v runs 27 tests, all OK, and repeated runs were OK. Review: reviewer 2 failed the first head on the two harness defects, both fixed; a delta reviewer passed 00aee8e; reviewers 1 and 3 passed d215b3e whole. Open non-blocking follow-ups: run_threads does not propagate worker exceptions; the split-lock mutant is only probabilistically caught; no overdraft race test; joins run sequentially, so a deadlock takes up to 30 s per thread to report. No processes left running. Nothing pushed.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W6PK4Q7T44JN47VQGRT2QP), claude-code/claude-haiku-5-5 (agent agt_01M7W6PQXVED1W1AENE5YMRE1W), claude-code/claude-haiku-5-5 (agent agt_01M7W6PWMFZXDBV1A84NMZ83X8), claude-code/claude-haiku-5-5 (agent agt_01M7W6SB5ZDG285ETZ7QF1PY8G)
+
+SHIPPED: commit 00aee8ed5c9db461131d7cc4fca26a771d4e000d on the run branch

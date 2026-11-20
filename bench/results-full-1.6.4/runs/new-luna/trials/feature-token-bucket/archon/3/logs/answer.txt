@@ -1,0 +1,14 @@
+Queued as `qi_01M7W8PFZ9EWJS01ECZX8VMK5P` on the `direct` pipeline. The brief covers the spec’s validation, clock, refill, and LRU edge cases, and asks the worker to run checks and commit the implementation.
+
+Done: Implement the specified token bucket and keyed limiter. Implemented and committed the specified token bucket and keyed LRU limiter. Added validation and edge-case tests, including non-finite numeric inputs after review found that gap. Final unittest suite passes (8 tests); `git diff --check` passes; final worktree is clean. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8SJQVE46BX5MPS5P89NFD), codex/gpt-6-luna (agent agt_01M7W8VWV1NK07139F3Q5DTJPK)
+
+SHIPPED: commit ce5a1db4ea66f9949aace3bf39337f70f15cd17b on the run branch
+Branch `archon/zx8vmk5p-implement-the-specified-token-bucket-and` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/cd7b0c72646d4b4d7b407b53/feature-token-bucket holds it (2 files changed, 117 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W8PFZ9EWJS01ECZX8VMK5P`; land it in `main`: `archon merge qi_01M7W8PFZ9EWJS01ECZX8VMK5P`.
+
+Implemented and committed the specified token bucket and keyed LRU limiter. Added validation and edge-case tests, including non-finite numeric inputs after review found that gap. Final unittest suite passes (8 tests); `git diff --check` passes; final worktree is clean. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8SJQVE46BX5MPS5P89NFD), codex/gpt-6-luna (agent agt_01M7W8VWV1NK07139F3Q5DTJPK)
+
+SHIPPED: commit ce5a1db4ea66f9949aace3bf39337f70f15cd17b on the run branch

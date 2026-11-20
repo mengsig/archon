@@ -1,0 +1,16 @@
+The rate limiter is implemented per `SPEC.md` in `ratelimit.py`, and the work is committed on `main` as `5677d7b`. All 12 tests pass (the 3 original ones plus 9 new spec tests).
+
+**What's in place**
+- `TokenBucket` and `KeyedLimiter` follow the spec, standard library only. Time comes only from the injected `clock`.
+- Clock going backwards: the bucket keeps its reference point at the latest time it has seen, so no tokens are added or removed until the clock passes that point.
+- LRU eviction: `try_acquire` and `wait_time` both count as a use, and an evicted key returns full.
+- Invalid `n` is checked before the key map is touched, so a bad request cannot evict another key.
+- Each operation has a couple of assertions on token bounds and key-count limits.
+
+**Choices beyond the spec text**
+- `capacity` and `refill_per_sec` must also be finite. I reject NaN and infinity because they would silently corrupt the refill math. The spec only says `<= 0` raises.
+- `KeyedLimiter` validates `capacity` and `refill_per_sec` eagerly at construction, as the spec's error list implies, rather than on first use.
+
+**Not verified**
+- `wait_time` returns the exact time in theory. Floating-point rounding could mean a `try_acquire` made right at that moment still returns `False` by a hair. I didn't add a tolerance because the spec doesn't ask for one.
+- The tests run with `python3 -m unittest` from the repo directory. Running with `-I` fails to import the test module, which is expected for that flag.

@@ -1,0 +1,298 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W7A4ZH44VYG4H73VFPWJPK",
+      "repo": "repo_01M7W79VF0FPA352FHJT0KG8EX",
+      "pipeline": "adaptive",
+      "title": "Implement safe_extract.py per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nGoal: implement `extract(entries, root) -> list[str]` in safe_extract.py exactly as SPEC.md specifies. Validate the ENTIRE batch before creating any file or directory: malformed entries, non-string names, non-bytes data, non-list batches (ValueError, even empty; do not consume iterators), invalid names (leading '/', backslash, colon, NUL, empty/'.'/'..' components; no normalization; literal '%' legal), duplicate names, file/directory collisions in either order, root must be an existing real directory (not a symlink), no symlink component below root including dangling ones, existing ancestors must be directories, targets must be absent. Validation failure must leave the filesystem unchanged. Empty batch returns [] after root validation. Valid batches create missing parents and write exact bytes, including empty files. Return names in input order. Unexpected I/O errors must propagate visibly. Keep functions under 60 lines, at least two meaningful assertions per non-trivial function, no swallowed exceptions, standard library only.\n\nTests: extend test_safe_extract.py with focused tests for every error and boundary case above (including symlink-in-ancestor, dangling symlink target, generator rejection without consumption, collision order both ways, percent-sign names, empty files, empty batch with invalid root). Run the test suite and make sure it passes before committing.\n\nCommit the work in the repository with a commit message; do not push. Do not add any attribution lines mentioning Claude or generation tools; use the repository's configured git identity.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W7A4ZH44VYG4H73VFPWJPK",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-20T10:16:24.822015404Z"
+              },
+              "effort": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-20T10:16:24.822015404Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:security",
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged: the learned route's effort"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W7A50BYV5M8AEA2V1M3B5S",
+        "summary": "Implemented extract(entries, root) in safe_extract.py per SPEC.md, with 38 focused tests in test_safe_extract.py. Two commits on archon/3vfpwjpk-implement-safe-extract-py-per-spec-md-wi, not pushed: de6206a (feat: implementation and tests) and 991097b (fix: roots below a regular file and non-UTF-8 names now raise ValueError). Head 991097b1b20e0e1f08631f2d45f3abc7ed422e23, tree eef2a20b81fcb5f596a0d5370aac3c999dc43629. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_safe_extract → 38 tests OK. Review: review-1 failed de6206a on one blocking defect (NotADirectoryError for a root under a file); fixed in 991097b and passed by delta reviewer review-delta. review-2 and review-3 passed the whole change at de6206a. Non-blocking follow-ups left open: no invariant asserts in extract and validation helpers; root paths that traverse a symlink above root are accepted; case-sensitive batch conflicts on case-insensitive filesystems; over-long names raise OSError; NUL and leading-'/' rules only partly covered by tests; no test for I/O error propagation. No processes were started; the reviewers' leftover claude processes stop when this task ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W7CMKBWD3B0MFA4V8QPBNN), claude-code/claude-haiku-5-5 (agent agt_01M7W7CT7FKKVVWSXHQFEMKQKB), claude-code/claude-haiku-5-5 (agent agt_01M7W7D01AZ4CRVJ2Z9J7K6A5F), claude-code/claude-haiku-5-5 (agent agt_01M7W7G2ZPD53VXD7ZA258TKCV)\n\nSHIPPED: commit 991097b1b20e0e1f08631f2d45f3abc7ed422e23 on the run branch"
+      },
+      "created_at": "2026-11-20T10:16:24.817338009Z",
+      "updated_at": "2026-11-20T10:20:20.185722090Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W7A50BYV5M8AEA2V1M3B5S",
+        "item": "qi_01M7W7A4ZH44VYG4H73VFPWJPK",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M7W7A5881RHB8201GNP8HQ6H",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/f3d044a18962de0b17f7b692/.archon/data/worktrees/quality-safe-extract/qi_01M7W7A4ZH44VYG4H73VFPWJPK",
+        "branch": "archon/3vfpwjpk-implement-safe-extract-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented extract(entries, root) in safe_extract.py per SPEC.md, with 38 focused tests in test_safe_extract.py. Two commits on archon/3vfpwjpk-implement-safe-extract-py-per-spec-md-wi, not pushed: de6206a (feat: implementation and tests) and 991097b (fix: roots below a regular file and non-UTF-8 names now raise ValueError). Head 991097b1b20e0e1f08631f2d45f3abc7ed422e23, tree eef2a20b81fcb5f596a0d5370aac3c999dc43629. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_safe_extract → 38 tests OK. Review: review-1 failed de6206a on one blocking defect (NotADirectoryError for a root under a file); fixed in 991097b and passed by delta reviewer review-delta. review-2 and review-3 passed the whole change at de6206a. Non-blocking follow-ups left open: no invariant asserts in extract and validation helpers; root paths that traverse a symlink above root are accepted; case-sensitive batch conflicts on case-insensitive filesystems; over-long names raise OSError; NUL and leading-'/' rules only partly covered by tests; no test for I/O error propagation. No processes were started; the reviewers' leftover claude processes stop when this task ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W7CMKBWD3B0MFA4V8QPBNN), claude-code/claude-haiku-5-5 (agent agt_01M7W7CT7FKKVVWSXHQFEMKQKB), claude-code/claude-haiku-5-5 (agent agt_01M7W7D01AZ4CRVJ2Z9J7K6A5F), claude-code/claude-haiku-5-5 (agent agt_01M7W7G2ZPD53VXD7ZA258TKCV)\n\nSHIPPED: commit 991097b1b20e0e1f08631f2d45f3abc7ed422e23 on the run branch"
+        },
+        "cost_usd": 0.0934806,
+        "started_at": "2026-11-20T10:16:25.052269066Z",
+        "finished_at": "2026-11-20T10:20:20.185722090Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W7A57Q5AGVXPV06V2QEF96",
+        "run": "prun_01M7W7A50BYV5M8AEA2V1M3B5S",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W7A5937T3FSZPYENWAAPG1",
+        "aether_task": "tsk_01M7W7A593XDYX7334MBSCGVJW",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "critical",
+        "effort_source": "learned",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged: the learned route's effort",
+        "summary": "Implemented extract(entries, root) in safe_extract.py per SPEC.md, with 38 focused tests in test_safe_extract.py. Two commits on archon/3vfpwjpk-implement-safe-extract-py-per-spec-md-wi, not pushed: de6206a (feat: implementation and tests) and 991097b (fix: roots below a regular file and non-UTF-8 names now raise ValueError). Head 991097b1b20e0e1f08631f2d45f3abc7ed422e23, tree eef2a20b81fcb5f596a0d5370aac3c999dc43629. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_safe_extract → 38 tests OK. Review: review-1 failed de6206a on one blocking defect (NotADirectoryError for a root under a file); fixed in 991097b and passed by delta reviewer review-delta. review-2 and review-3 passed the whole change at de6206a. Non-blocking follow-ups left open: no invariant asserts in extract and validation helpers; root paths that traverse a symlink above root are accepted; case-sensitive batch conflicts on case-insensitive filesystems; over-long names raise OSError; NUL and leading-'/' rules only partly covered by tests; no test for I/O error propagation. No processes were started; the reviewers' leftover claude processes stop when this task ends.",
+        "structured": {
+          "checks": [
+            "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_safe_extract (38 tests, OK, on 991097b)"
+          ],
+          "commit": "991097b1b20e0e1f08631f2d45f3abc7ed422e23",
+          "evidence": {
+            "none": "New module with no visible change; the evidence is the test result below."
+          },
+          "local_commit": "991097b1b20e0e1f08631f2d45f3abc7ed422e23",
+          "pr": {
+            "body": "Approach: extract() validates root, entry shape, names, batch collisions and filesystem targets before any write, then writes each file with exclusive open ('xb') so existing files are never overwritten. Names are split on '/' and rejected for empty, '.', '..' components, backslash, colon, NUL, leading '/', and non-UTF-8 text. Root must be an lstat-verified real directory; ancestors below root are lstat-checked and must be real directories, and links (including dangling ones) and existing targets are rejected. Missing parents are created after validation.\n\nKey files: safe_extract.py, test_safe_extract.py.\n\nChecks: unittest, 38 tests OK on 991097b.\n\nReview: review-1 (fail on de6206a, blocking root-under-file defect, fixed in 991097b), review-2 and review-3 (pass on de6206a, whole change), review-delta (pass on 991097b, delta from de6206a).\n\nAssumptions and limits: entries must be tuples, not lists; empty-string root is rejected; names are case-sensitive; a root path may traverse a symlink above root (only components below root are checked, as SPEC.md states); TOCTOU races are out of scope per SPEC.md.\n\nOpen follow-ups (non-blocking): no invariant asserts in extract and validation helpers; some assertions in _write_file are decorative; case-insensitive filesystems can fail mid-batch on names differing only in case; over-long names raise OSError during validation; I/O error propagation and symlink-refusal messages lack tests.",
+            "summary": "Made safe regular-file extraction work per SPEC.md. Now: whole batch validated before any write; invalid roots, names, collisions and links rejected with ValueError. Before: NotImplementedError stub. Now: 38 tests pass.",
+            "title": "feat: implement safe_extract.extract per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "991097b1b20e0e1f08631f2d45f3abc7ed422e23",
+            "reviewer_agents": [
+              "agt_01M7W7CMKBWD3B0MFA4V8QPBNN",
+              "agt_01M7W7CT7FKKVVWSXHQFEMKQKB",
+              "agt_01M7W7D01AZ4CRVJ2Z9J7K6A5F",
+              "agt_01M7W7G2ZPD53VXD7ZA258TKCV"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W7CMKBWD3B0MFA4V8QPBNN",
+                "base": "edada2156c8ce208dc5129661781dcff5f483b81",
+                "findings": 5,
+                "head": "de6206a1ee2d38423828aad115f239291d099a47",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W7CT7FKKVVWSXHQFEMKQKB",
+                "base": "edada2156c8ce208dc5129661781dcff5f483b81",
+                "findings": 5,
+                "head": "de6206a1ee2d38423828aad115f239291d099a47",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W7D01AZ4CRVJ2Z9J7K6A5F",
+                "base": "edada2156c8ce208dc5129661781dcff5f483b81",
+                "findings": 7,
+                "head": "de6206a1ee2d38423828aad115f239291d099a47",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W7G2ZPD53VXD7ZA258TKCV",
+                "base": "de6206a1ee2d38423828aad115f239291d099a47",
+                "findings": 1,
+                "head": "991097b1b20e0e1f08631f2d45f3abc7ed422e23",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W7CMKBWD3B0MFA4V8QPBNN",
+              "agt_01M7W7CT7FKKVVWSXHQFEMKQKB",
+              "agt_01M7W7D01AZ4CRVJ2Z9J7K6A5F",
+              "agt_01M7W7G2ZPD53VXD7ZA258TKCV"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": "agt_01M7W7D01AZ4CRVJ2Z9J7K6A5F",
+            "why": "Security-sensitive: decides whether writes may follow links or overwrite files. review-3 and review-2 both confirmed high. Touches safe_extract.py (new, about 130 lines) and test_safe_extract.py. Behaviour change only from the stub; tests cover symlink ancestors, dangling links, collisions, invalid roots and names, and exact byte writes."
+          },
+          "tree": "eef2a20b81fcb5f596a0d5370aac3c999dc43629"
+        },
+        "cost_usd": 0.0934806,
+        "started_at": "2026-11-20T10:16:25.079563557Z",
+        "finished_at": "2026-11-20T10:20:16.341046486Z"
+      }
+    ],
+    "spent_usd": 0.0934806,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W7A57Q5AGVXPV06V2QEF96": {
+        "direct_usd": 0.04173558,
+        "delegated_usd": 0.05174502,
+        "agents": [
+          {
+            "agent": "agt_01M7W7CMKBWD3B0MFA4V8QPBNN",
+            "parent": "agt_01M7W7A5937T3FSZPYENWAAPG1",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01376867
+          },
+          {
+            "agent": "agt_01M7W7CT7FKKVVWSXHQFEMKQKB",
+            "parent": "agt_01M7W7A5937T3FSZPYENWAAPG1",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01360822
+          },
+          {
+            "agent": "agt_01M7W7D01AZ4CRVJ2Z9J7K6A5F",
+            "parent": "agt_01M7W7A5937T3FSZPYENWAAPG1",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01723672
+          },
+          {
+            "agent": "agt_01M7W7G2ZPD53VXD7ZA258TKCV",
+            "parent": "agt_01M7W7A5937T3FSZPYENWAAPG1",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.007131410000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-20T10:16:24.822015404Z"
+          },
+          "effort": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-20T10:16:24.822015404Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

@@ -1,0 +1,12 @@
+Queued as [qi_01M7W4HQZKCY67T8716VF1003F](#) in the `refactor` pipeline. Its acceptance criteria include the enum API, preserved behavior, `cargo test`, and a local commit. The item will report its outcome when finished.
+
+Done: Replace order status strings with OrderStatus enum. Reviewed commit e9b95111b51538d811d849c5b39dc5e5a8363daa (tree 8112221e9973faef9a4bbca72aaa04a49f51fee7) against baseline e957827f03aa498e828ee4b71b9bdd90e5a50243. The typed status design meets the brief: transition policy is centralized in OrderStatus, lifecycle callers use typed values, and string conversion occurs at report boundaries. No behavior or structural findings; status literals are confined to src/status.rs and the worktree is clean. Independently ran cargo test with the installed stable toolchain: 2 unit and 6 integration tests passed, with doc tests passing. Prior reported build, clippy, format, and diff checks also passed. No remaining risks identified. VERDICT: PASS
+
+SHIPPED: commit e9b95111b51538d811d849c5b39dc5e5a8363daa on the run branch
+Branch `archon/6vf1003f-replace-order-status-strings-with-orders` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/cb35cfc90a7dc88ba07e08a0/refactor-order-status holds it (7 files changed, 219 insertions(+), 25 deletions(-)). Review: `archon diff qi_01M7W4HQZKCY67T8716VF1003F`; land it in `main`: `archon merge qi_01M7W4HQZKCY67T8716VF1003F`.
+
+Freed 0.0 GiB of build output: item qi_01M7W4HQZKCY67T8716VF1003F ended and its cargo target directory went.
+
+Reviewed commit e9b95111b51538d811d849c5b39dc5e5a8363daa (tree 8112221e9973faef9a4bbca72aaa04a49f51fee7) against baseline e957827f03aa498e828ee4b71b9bdd90e5a50243. The typed status design meets the brief: transition policy is centralized in OrderStatus, lifecycle callers use typed values, and string conversion occurs at report boundaries. No behavior or structural findings; status literals are confined to src/status.rs and the worktree is clean. Independently ran cargo test with the installed stable toolchain: 2 unit and 6 integration tests passed, with doc tests passing. Prior reported build, clippy, format, and diff checks also passed. No remaining risks identified. VERDICT: PASS
+
+SHIPPED: commit e9b95111b51538d811d849c5b39dc5e5a8363daa on the run branch

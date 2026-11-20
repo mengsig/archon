@@ -1,0 +1,20 @@
+Both repos now have cursor pagination on `GET /items` and a client that follows `next_cursor` to the end. Both commits are in place, and both suites pass.
+
+**inventory-api** (commit `d0c4411`)
+- `GET /items` takes `limit` (1..100, default 20) and `cursor`. The body is `{"items": [...], "next_cursor": ...}`, ordered by `id`, with `next_cursor` null on the last page.
+- Invalid `limit` or `cursor` returns 400 with `{"error": "..."}`.
+- My choices: the cursor is the base64url encoding of the last item's id, validated strictly. `limit` must be plain digits; `cursor` must decode to digits. Pages are found with `bisect` over a presorted list.
+- `python3 -m unittest`: 9 tests pass. New tests cover page size, walking all pages, the last-page null cursor, cursor past the end, and invalid limit and cursor values.
+
+**inventory-client** (commit `bcc438a`)
+- `listItems` sends no cursor first, then passes each `next_cursor` back unchanged until it is null or absent. It throws if a page has no `items` array, or if the server repeats a cursor (so a broken server can't loop forever).
+- `npm test`: 7 tests pass. New tests cover multi-page order, the cursor sent on each request, a missing `next_cursor`, repeated cursors, and a failed page.
+- I also ran the client against the real API through a subprocess transport: it returned all 57 items in order.
+
+**READMEs:** both document the new response shape, the parameters, and the client's paging behaviour.
+
+**Decisions to check:**
+- Commits use the repos' configured identity, `mengsig <marcus.engsig@tii.ae>`. That email differs from the one in your account context, so change it if you want a different author.
+- I didn't add a `Co-Authored-By` line, because your CLAUDE.md says not to put Claude attribution in commits.
+- The client doesn't send `limit`, so it uses the server default of 20. That means 3 requests for the current 57 items. Say if you want it to request a bigger page.
+- I did not bump the client's `package.json` version (1.4.0) for this behaviour change.

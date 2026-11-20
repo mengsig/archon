@@ -1,0 +1,28 @@
+## Root cause: `updatePrice` invalidates only the product cache entry, and listing pages hold their own copies of the price
+
+The category listing reads from a separate cache entry that `updatePrice` never touches. The stale price persists until that entry's 600-second TTL expires.
+
+**The write path (`src/pricing.js:6-13`)**
+- `updatePrice` updates the store, then calls `catalog.cache.delete(productKey(sku))`.
+- That removes only `product:<sku>`. Nothing removes any `listing:<category>:<page>` key.
+
+**The read paths**
+- `Catalog.product` (`src/catalog.js:12-20`) reads `product:<sku>` and falls back to the store on a miss. After the delete, the next product-page view reloads the new price. This is why product pages update immediately.
+- `Catalog.listing` (`src/catalog.js:22-33`) caches whole pages under `listing:<category>:<page>`. It copies each row as `{ sku, name, priceCents }`, so the price is baked into the cached page. Nothing in the listing path reads the product cache, so the copied price stays until the entry expires.
+
+**Why the delay is about ten minutes**
+- `LISTING_TTL_SECONDS` is 600 (`src/config.js:7`), and `TtlCache.set` stamps `expiresAt = now + ttl`. The listing entry therefore lives for up to 600 s after it was last built, regardless of price changes.
+- The `config.js` comment says listings are cached separately because they are expensive to build. That is a sound reason to cache them, but it does not account for the stale prices they now hold.
+
+**Reproduction** (run against the repo, no files changed)
+- Built listing at t=0 with price 5000, then called `updatePrice(..., 4500)`.
+- `product('A1')` returned 4500 immediately.
+- `listing('tools')` still returned 5000 at t=599,999 ms, and returned 4500 only at t=600,000 ms.
+- The existing suite passes (3/3), but none of its tests covers a listing after a price update, so this gap is not caught.
+
+**Fix options** (not applied)
+1. **Stop caching prices inside listings (preferred).** Cache only the ordered SKU list per page, then hydrate prices from `this.product(sku)` (or a batch store lookup) when serving the listing. Prices then come from the same invalidated source as product pages, and the listing cache can keep its 600 s TTL for the expensive sort/filter work. The cost is extra lookups per page of 24 items, which can be batched.
+2. **Invalidate listings by category on write.** In `updatePrice`, look up the product's category, then delete every `listing:<category>:*` key. `TtlCache` has no prefix-delete, so this needs one added (for example, a per-category generation number embedded in `listingKey`, bumped on every price change). Simple, but it throws away the whole category cache on every price edit.
+3. **Shorten `LISTING_TTL_SECONDS`.** This only shrinks the window and adds load. It does not fix the cause.
+
+I'd recommend option 1. It removes the duplicated state that causes the bug, and it matches the rule that data should have one source of truth. Add a regression test that updates a price after a listing is cached and asserts the listing shows the new price.

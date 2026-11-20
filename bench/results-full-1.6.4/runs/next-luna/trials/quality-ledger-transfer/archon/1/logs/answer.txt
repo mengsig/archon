@@ -1,0 +1,14 @@
+Queued as **qi_01M7W674AFFD77TNR9NBCCTJBD** using the adaptive pipeline with strict review. It covers the full spec, focused deterministic tests, running checks, and committing the work.
+
+Done: Implement atomic ledger API and focused tests. Implemented the validated, lock-protected ledger and expanded focused coverage for boundaries, defensive copies, atomic failures, total preservation, and concurrent opposite transfers. `python -m unittest -v` passed (10 tests); `git diff --check` passed. Commit: 1f08c26e3cef38c062c2ad9187836cba0cc5ccb8; final checked tree: 7c38588ed8e0997d4d01aecf23ce1ac11074663c. Three independent whole-change reviewers passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W69NC52Q603HRMWYG2Y45A), codex/gpt-6-luna (agent agt_01M7W69N9V1HFAYMJNHR8PZWGT), codex/gpt-6-luna (agent agt_01M7W69NB54K1FECCNK9RNJPR6)
+
+SHIPPED: commit 1f08c26e3cef38c062c2ad9187836cba0cc5ccb8 on the run branch
+Branch `archon/nbcctjbd-implement-atomic-ledger-api-and-focused` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/19385f5e3e35da2e086ae9da/quality-ledger-transfer holds it (2 files changed, 125 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M7W674AFFD77TNR9NBCCTJBD`; land it in `main`: `archon merge qi_01M7W674AFFD77TNR9NBCCTJBD`.
+
+Implemented the validated, lock-protected ledger and expanded focused coverage for boundaries, defensive copies, atomic failures, total preservation, and concurrent opposite transfers. `python -m unittest -v` passed (10 tests); `git diff --check` passed. Commit: 1f08c26e3cef38c062c2ad9187836cba0cc5ccb8; final checked tree: 7c38588ed8e0997d4d01aecf23ce1ac11074663c. Three independent whole-change reviewers passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W69NC52Q603HRMWYG2Y45A), codex/gpt-6-luna (agent agt_01M7W69N9V1HFAYMJNHR8PZWGT), codex/gpt-6-luna (agent agt_01M7W69NB54K1FECCNK9RNJPR6)
+
+SHIPPED: commit 1f08c26e3cef38c062c2ad9187836cba0cc5ccb8 on the run branch

@@ -1,0 +1,104 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W7S9DQ2GH7YGJJA5YKC0EQ",
+      "repo": "repo_01M7W7RE5M1MJC60TA7H24EFDN",
+      "pipeline": "direct",
+      "title": "Implement atomic ledger API and edge-case tests",
+      "brief": "Implement ledger.py exactly according to SPEC.md. Preserve its documented API and use only the Python standard library. Add focused tests for every specified error, boundary, aliasing and concurrency behavior while keeping existing tests passing. Run the relevant tests. Commit the work locally as requested; do not push. Acceptance: input validation rejects non-dict, invalid/empty names, booleans and out-of-range/non-built-in-int balances; empty dict accepted and inputs/snapshots are copied. transfer validates amount before account lookup, raises KeyError for unknown accounts, safely returns False without mutation on insufficient funds or destination overflow, handles same-account transfers as specified, and maintains linearizable thread-safe transfers and snapshots without deadlocks. Include test coverage for these behaviors.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "cancelled",
+        "reason": "archon-bench: trial timeout"
+      },
+      "created_at": "2026-11-20T10:24:41.178462591Z",
+      "updated_at": "2026-11-20T10:44:14.761296136Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W7S9QBH04QB9F84H9W5KCA",
+        "item": "qi_01M7W7S9DQ2GH7YGJJA5YKC0EQ",
+        "pipeline": "direct",
+        "shipped": false,
+        "aether_run": "run_01M7W7S9Y88ES9305C1ECDKDS8",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/8d3b7a1f0b6f0ce8eec64113/.archon/data/worktrees/quality-ledger-transfer/qi_01M7W7S9DQ2GH7YGJJA5YKC0EQ",
+        "branch": "archon/a5ykc0eq-implement-atomic-ledger-api-and-edge-cas",
+        "state": {
+          "state": "cancelled",
+          "reason": "archon-bench: trial timeout"
+        },
+        "cost_usd": 0.0034026800000000004,
+        "started_at": "2026-11-20T10:24:41.375391717Z",
+        "finished_at": "2026-11-20T10:44:14.761296136Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W7S9XJT3S22KV7KN54B94H",
+        "run": "prun_01M7W7S9QBH04QB9F84H9W5KCA",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W7S9YH9T21M4DXR97AXFKV",
+        "aether_task": "tsk_01M7W7S9YH9T21M4DXR97AXFKW",
+        "state": {
+          "state": "cancelled"
+        },
+        "verdict": null,
+        "summary": "pipeline run prun_01M7W7S9QBH04QB9F84H9W5KCA finished",
+        "structured": null,
+        "cost_usd": 0.0034026800000000004,
+        "started_at": "2026-11-20T10:24:41.394489911Z",
+        "finished_at": "2026-11-20T10:44:14.974163711Z"
+      }
+    ],
+    "spent_usd": 0.0034026800000000004,
+    "gates": [],
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

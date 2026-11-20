@@ -1,0 +1,7 @@
+The root cause is a cache invalidation gap between the merchant price update and category listing cache.
+
+- Category pages use `Catalog.listing()` in [catalog.js](/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/f127432b885480e15c396ed0/.archon/data/orchestrator/repos/ask-cache-invalidation/src/catalog.js:22). It caches each category/page’s rows under a `listing:<category>:<page>` key.
+- That cache has a **600-second (10-minute) TTL** in [config.js](/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/f127432b885480e15c396ed0/.archon/data/orchestrator/repos/ask-cache-invalidation/src/config.js:1). Once a listing is cached, a price change won’t appear there until the entry expires.
+- `updatePrice()` updates the store and deletes only `product:<sku>` in [pricing.js](/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/f127432b885480e15c396ed0/.archon/data/orchestrator/repos/ask-cache-invalidation/src/pricing.js:6). That is why product reads refresh immediately while category listings remain cached.
+
+The fix is to invalidate affected listing cache entries when a price changes—across every page of the product’s category—or use a category-level version/tag so all its listing pages can be invalidated together. Lowering the TTL would only reduce the stale window; it would not remove the invalidation gap.

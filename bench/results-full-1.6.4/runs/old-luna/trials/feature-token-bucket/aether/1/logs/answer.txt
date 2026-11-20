@@ -1,0 +1,3 @@
+Implemented `TokenBucket` and `KeyedLimiter` with continuous refill, backward-clock handling, input validation, and LRU eviction. Added locks to keep bucket and key operations consistent.
+
+Committed as `39fe1a1` (`Implement token bucket rate limiter`). `git diff --check` passed; I did not run tests.

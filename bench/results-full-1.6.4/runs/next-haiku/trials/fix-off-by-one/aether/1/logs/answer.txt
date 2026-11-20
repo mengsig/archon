@@ -1,0 +1,7 @@
+Fixed the off-by-one in window.py's sliding_windows: the range bound was len(items) - size, which dropped the final window. It is now len(items) - size + 1. python3 -m unittest passes all 3 tests (they were failing 2 of 3 before). Edge cases checked: empty list returns [], size equal to length returns one window, size greater than length returns [], and size 1 returns each item as its own window. The size <= 0 ValueError is unchanged. Committed as dabce03 on main, with the Co-Authored-By line from the attribution reminder. The tests were not modified. An untracked __pycache__/ directory from the test run was left uncommitted.
+
+The bug was an off-by-one in `window.py`, and it is fixed and committed as `dabce03` on `main`. `python3 -m unittest` now passes all 3 tests; before the fix, 2 of them failed.
+
+The range bound was `len(items) - size`, which dropped the last window. I changed it to `len(items) - size + 1`. Checked by hand: an empty list returns `[]`, a size equal to the list length returns one window, a size larger than the list returns `[]`, and size 1 returns each item as its own window. The `size <= 0` check is unchanged, and the tests are untouched.
+
+The commit uses the `Co-Authored-By: Claude Haiku 5.5` line from the attribution reminder. An untracked `__pycache__/` directory from the test run was left out of the commit.

@@ -1,0 +1,6 @@
+Implemented the currency changes and committed both repositories:
+
+- `ledger`: optional fourth TSV column defaults to `USD`; CSV now includes `currency`. Invalid currency codes include the line number and exit with status 2. Commit: `00d266d`.
+- `reports`: totals by account and currency, sorted by both; legacy CSV defaults to `USD`. Invalid currency codes exit with status 2. Commit: `59cca2d`.
+
+`python3 -m unittest` passes, and a manual check confirmed currency totals and status 2 for a malformed code. I couldn’t run `cargo test` because `cargo` is not installed in the environment. Both repositories have clean working trees.

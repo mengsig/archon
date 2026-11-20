@@ -1,0 +1,250 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W763SWNKCWHT7SSWS1G41M",
+      "repo": "repo_01M7W75S22XDCHBZ33A0MSM4EN",
+      "pipeline": "direct",
+      "title": "Implement safe_extract.py per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated chat): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nGoal: implement `extract(entries, root) -> list[str]` in safe_extract.py exactly as SPEC.md specifies. Read SPEC.md in full first.\n\nRequirements:\n- Validate the ENTIRE batch before creating any file or directory. Failure must leave root and outside files unchanged.\n- Reject non-list batches (including tuples, iterators, generators, even empty) with ValueError without consuming them.\n- Reject malformed entries, non-string names, non-bytes data, empty names, leading '/', backslashes, colons, NUL, and empty, '.' or '..' components. Do not sanitize or normalize names; literal '%' is legal.\n- Reject duplicate names and file/directory collisions within the batch in either order.\n- Root must be an existing real directory, not a symlink; no existing component below root may be a symlink (including dangling ones and the target); every existing ancestor below root must be a directory; each target must be absent. Never overwrite or follow links.\n- Empty batch returns [] after root validation. Valid batches create missing parent directories and write exact bytes, including empty files. Return names in input order.\n- Unexpected I/O errors must propagate visibly; no swallowing.\n- Standard library only.\n\nTests: extend test_safe_extract.py with focused tests covering each rejection rule, both orders of collisions, symlink cases (root, intermediate component, dangling link, target), non-list batch types, empty batch, empty-file write, percent-sign names, and no-side-effect on validation failure. Keep functions under 60 lines and include meaningful asserts per the repo's CLAUDE.md conventions.\n\nCommit the work on the local branch with a clean commit message. Do not push. Do not add attribution lines beyond the user's standing rules.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W763ZVQ8ZGJ4M1XNHA29XE",
+        "summary": "Implemented safe_extract.extract per SPEC.md on archon/sws1g41m-implement-safe-extract-py-per-spec-md-wi, in 4 commits on top of a5f5550 (fc0d16e, 6b28c1e, 28992d8; not pushed). The whole batch is validated before any file or directory is created: batch type, entry shape, str names, bytes data, name rules, duplicate and file/directory collisions in either order, and on-disk state under a real root (no symlinks, including dangling; directory ancestors only; targets absent). Writes use exclusive create. Unexpected lstat/I/O errors propagate. Tests: 45 unittest cases in test_safe_extract.py, all passing on the final head (python3 -B -m unittest test_safe_extract). The regression tests for the review fixes fail on the previous commits. Review: three whole-change reviews of fc0d16e failed (validation I/O error handling, unencodable names, empty-string root); the fixes were re-reviewed in two delta reviews, the first failed on a regular-file root raising NotADirectoryError, fixed in 28992d8, and the second passed 28992d8. Left open (non-blocking): helper functions lack the asserts CLAUDE.md asks for; ExtractBasics still uses TemporaryDirectory(dir=\".\") and writes into the cwd; Path('') is indistinguishable from Path('.') and resolves to the cwd; a name component over 255 bytes or a case-only collision fails mid-write, which is outside the spec's rollback scope; the reviewer child processes left by the completed review agents are not mine and stop when the stage ends. No services were started.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W78W77YSB0CPDN981HF8D9), claude-code/claude-haiku-5-5 (agent agt_01M7W790RSY6FTQVFVQB1328EV), claude-code/claude-haiku-5-5 (agent agt_01M7W796VKX4CM6ZN7EA9GZTP7), claude-code/claude-haiku-5-5 (agent agt_01M7W7FKCD757WSY7M05K8JDY8)\n\nSHIPPED: commit 28992d8b7668d78155843965baf2dd918545679b on the run branch"
+      },
+      "created_at": "2026-11-20T10:14:12.711472992Z",
+      "updated_at": "2026-11-20T10:19:58.018361336Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W763ZVQ8ZGJ4M1XNHA29XE",
+        "item": "qi_01M7W763SWNKCWHT7SSWS1G41M",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W76479W3BVBRZZVT2MX4XH",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/84dcecdf5cefafbceadb1906/.archon/data/worktrees/quality-safe-extract/qi_01M7W763SWNKCWHT7SSWS1G41M",
+        "branch": "archon/sws1g41m-implement-safe-extract-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract per SPEC.md on archon/sws1g41m-implement-safe-extract-py-per-spec-md-wi, in 4 commits on top of a5f5550 (fc0d16e, 6b28c1e, 28992d8; not pushed). The whole batch is validated before any file or directory is created: batch type, entry shape, str names, bytes data, name rules, duplicate and file/directory collisions in either order, and on-disk state under a real root (no symlinks, including dangling; directory ancestors only; targets absent). Writes use exclusive create. Unexpected lstat/I/O errors propagate. Tests: 45 unittest cases in test_safe_extract.py, all passing on the final head (python3 -B -m unittest test_safe_extract). The regression tests for the review fixes fail on the previous commits. Review: three whole-change reviews of fc0d16e failed (validation I/O error handling, unencodable names, empty-string root); the fixes were re-reviewed in two delta reviews, the first failed on a regular-file root raising NotADirectoryError, fixed in 28992d8, and the second passed 28992d8. Left open (non-blocking): helper functions lack the asserts CLAUDE.md asks for; ExtractBasics still uses TemporaryDirectory(dir=\".\") and writes into the cwd; Path('') is indistinguishable from Path('.') and resolves to the cwd; a name component over 255 bytes or a case-only collision fails mid-write, which is outside the spec's rollback scope; the reviewer child processes left by the completed review agents are not mine and stop when the stage ends. No services were started.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W78W77YSB0CPDN981HF8D9), claude-code/claude-haiku-5-5 (agent agt_01M7W790RSY6FTQVFVQB1328EV), claude-code/claude-haiku-5-5 (agent agt_01M7W796VKX4CM6ZN7EA9GZTP7), claude-code/claude-haiku-5-5 (agent agt_01M7W7FKCD757WSY7M05K8JDY8)\n\nSHIPPED: commit 28992d8b7668d78155843965baf2dd918545679b on the run branch"
+        },
+        "cost_usd": 0.12828335000000002,
+        "started_at": "2026-11-20T10:14:12.939244005Z",
+        "finished_at": "2026-11-20T10:19:58.018361336Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W7646V1Q92N67YR2NKSKC9",
+        "run": "prun_01M7W763ZVQ8ZGJ4M1XNHA29XE",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W7647WC7PCG43S8YAZP6WW",
+        "aether_task": "tsk_01M7W7647WC7PCG43S8YAZP6WX",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented safe_extract.extract per SPEC.md on archon/sws1g41m-implement-safe-extract-py-per-spec-md-wi, in 4 commits on top of a5f5550 (fc0d16e, 6b28c1e, 28992d8; not pushed). The whole batch is validated before any file or directory is created: batch type, entry shape, str names, bytes data, name rules, duplicate and file/directory collisions in either order, and on-disk state under a real root (no symlinks, including dangling; directory ancestors only; targets absent). Writes use exclusive create. Unexpected lstat/I/O errors propagate. Tests: 45 unittest cases in test_safe_extract.py, all passing on the final head (python3 -B -m unittest test_safe_extract). The regression tests for the review fixes fail on the previous commits. Review: three whole-change reviews of fc0d16e failed (validation I/O error handling, unencodable names, empty-string root); the fixes were re-reviewed in two delta reviews, the first failed on a regular-file root raising NotADirectoryError, fixed in 28992d8, and the second passed 28992d8. Left open (non-blocking): helper functions lack the asserts CLAUDE.md asks for; ExtractBasics still uses TemporaryDirectory(dir=\".\") and writes into the cwd; Path('') is indistinguishable from Path('.') and resolves to the cwd; a name component over 255 bytes or a case-only collision fails mid-write, which is outside the spec's rollback scope; the reviewer child processes left by the completed review agents are not mine and stop when the stage ends. No services were started.",
+        "structured": {
+          "checks": [
+            "PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest -v test_safe_extract (45 tests, OK, on 28992d8)",
+            "scratch-copy run of new regression tests against fc0d16e and 6b28c1e (failures reproduced, then fixed)"
+          ],
+          "commit": "28992d8b7668d78155843965baf2dd918545679b",
+          "evidence": [
+            {
+              "caption": "unittest run on final head 28992d8 (45 tests)",
+              "kind": "output",
+              "text": "Ran 45 tests in 0.013s\n\nOK"
+            }
+          ],
+          "local_commit": "28992d8b7668d78155843965baf2dd918545679b",
+          "pr": {
+            "body": "Approach: extract validates the whole batch first (batch type, entry shape, str names, bytes data, name rules, batch duplicates and file/directory collisions in either order, on-disk state under a real root via os.lstat), then writes with exclusive create so existing targets are never overwritten. Key files: safe_extract.py, test_safe_extract.py. Checks: python3 -B -m unittest test_safe_extract, 45 tests OK on 28992d8. Review fixes in 6b28c1e and 28992d8: only ENOENT counts as absent during validation, other lstat errors propagate; unencodable names are ValueError; empty-string root is ValueError; a root below a regular file is ValueError. Assumptions and limits: Path('') is the same as Path('.') and resolves to the cwd; a case-only collision or an over-long component fails during the write phase, outside the spec's rollback scope; helper functions have no asserts yet; ExtractBasics still writes temp dirs into the cwd.",
+            "summary": "made safe batch extraction work. now can write validated regular files under a root, with nothing written when a batch is rejected. before: stub raising NotImplementedError; now: full SPEC validation with 45 unit tests.",
+            "title": "Implement safe_extract.extract per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "28992d8b7668d78155843965baf2dd918545679b",
+            "reviewer_agents": [
+              "agt_01M7W78W77YSB0CPDN981HF8D9",
+              "agt_01M7W790RSY6FTQVFVQB1328EV",
+              "agt_01M7W796VKX4CM6ZN7EA9GZTP7",
+              "agt_01M7W7FKCD757WSY7M05K8JDY8"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W78W77YSB0CPDN981HF8D9",
+                "base": "a5f5550324f9cd0f06323f5063280a098b8dc281",
+                "findings": 4,
+                "head": "fc0d16ec64b00712975866de02c740468f053b88",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W790RSY6FTQVFVQB1328EV",
+                "base": "a5f5550324f9cd0f06323f5063280a098b8dc281",
+                "findings": 6,
+                "head": "fc0d16ec64b00712975866de02c740468f053b88",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W796VKX4CM6ZN7EA9GZTP7",
+                "base": "a5f5550324f9cd0f06323f5063280a098b8dc281",
+                "findings": 4,
+                "head": "fc0d16ec64b00712975866de02c740468f053b88",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W7DMBKHGC44E7PT475JE2Q",
+                "base": "fc0d16ec64b00712975866de02c740468f053b88",
+                "findings": 3,
+                "head": "6b28c1e79ea130ff2bdf8e28c121f42153ab8720",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W7FKCD757WSY7M05K8JDY8",
+                "base": "6b28c1e79ea130ff2bdf8e28c121f42153ab8720",
+                "findings": 1,
+                "head": "28992d8b7668d78155843965baf2dd918545679b",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W78W77YSB0CPDN981HF8D9",
+              "agt_01M7W790RSY6FTQVFVQB1328EV",
+              "agt_01M7W796VKX4CM6ZN7EA9GZTP7",
+              "agt_01M7W7DMBKHGC44E7PT475JE2Q",
+              "agt_01M7W7FKCD757WSY7M05K8JDY8"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": "agt_01M7W7FKCD757WSY7M05K8JDY8",
+            "why": "New filesystem-write API that handles untrusted names and enforces symlink and path-escape rules. No existing callers, no persistence format or migration. Behaviour is new; tests cover each SPEC rule and the regression cases."
+          },
+          "tree": "84f7eb79abd9a0c5a69f3cadd42fd8382948e28e"
+        },
+        "cost_usd": 0.12828335000000002,
+        "started_at": "2026-11-20T10:14:12.955977632Z",
+        "finished_at": "2026-11-20T10:19:54.496716842Z"
+      }
+    ],
+    "spent_usd": 0.12828335000000002,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W7646V1Q92N67YR2NKSKC9": {
+        "direct_usd": 0.06501162000000002,
+        "delegated_usd": 0.06327173,
+        "agents": [
+          {
+            "agent": "agt_01M7W78W77YSB0CPDN981HF8D9",
+            "parent": "agt_01M7W7647WC7PCG43S8YAZP6WW",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01310272
+          },
+          {
+            "agent": "agt_01M7W790RSY6FTQVFVQB1328EV",
+            "parent": "agt_01M7W7647WC7PCG43S8YAZP6WW",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.02287298
+          },
+          {
+            "agent": "agt_01M7W796VKX4CM6ZN7EA9GZTP7",
+            "parent": "agt_01M7W7647WC7PCG43S8YAZP6WW",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01008273
+          },
+          {
+            "agent": "agt_01M7W7DMBKHGC44E7PT475JE2Q",
+            "parent": "agt_01M7W7647WC7PCG43S8YAZP6WW",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01080004
+          },
+          {
+            "agent": "agt_01M7W7FKCD757WSY7M05K8JDY8",
+            "parent": "agt_01M7W7647WC7PCG43S8YAZP6WW",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0064132600000000005
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

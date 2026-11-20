@@ -1,0 +1,36 @@
+Implemented `extract(entries, root)` in safe_extract.py per SPEC.md and added focused tests in test_safe_extract.py. Committed as f77ccb2 (author mengsig) on main. All 43 tests pass (`python3 -m unittest test_safe_extract`).
+
+Behavior:
+- Non-list batches (tuple, generator, iterator, None, dict) raise ValueError before anything is consumed or touched.
+- Entries must be 2-tuples with a str name and bytes data (bytearray is rejected).
+- Names are checked for empty, leading '/', backslash, colon, NUL, and empty/'.'/'..' components. They are not normalized, and percent signs are literal.
+- Duplicate names and file/directory collisions within the batch are rejected in either order.
+- The root must exist, be a real directory (not a symlink), and be str or Path. Every existing component below root must be a non-link directory, and the target must be absent. Dangling links count as existing. Missing ancestors are fine.
+- The entire batch and root are validated before any write. Writes create missing parents and use exclusive 'xb' creation, so existing files are never overwritten. Unexpected OS errors propagate.
+
+Choices I made:
+- Entries must be tuples, not lists, because the spec says "list of tuples" and strictness was the safer reading.
+- Validation errors chain their cause with `from` where an OS error is converted.
+
+Not covered:
+- Case-insensitive filesystems (for example macOS defaults): 'A' and 'a' would pass validation and then fail with FileExistsError mid-write. The spec's "exact name" model doesn't address this, so I left it alone.
+- The `__pycache__/` directory from the test run is untracked and not committed.
+
+`extract` is implemented in `safe_extract.py` per `SPEC.md`, with focused tests, and committed as `f77ccb2` on `main` under the configured `mengsig` identity. All 43 tests pass (`python3 -m unittest test_safe_extract`).
+
+**Behavior**
+- **Batch:** a non-list batch (tuple, generator, iterator, `None`, dict) raises `ValueError` before anything is consumed or touched, including when empty.
+- **Entries:** each must be a 2-tuple with a `str` name and `bytes` data. `bytearray` is rejected.
+- **Names:** empty, leading `/`, backslash, colon, NUL, and empty, `.` or `..` components are rejected. Names are not normalized, and literal `%` is allowed.
+- **Batch collisions:** duplicate names and file/directory collisions are rejected in either order.
+- **Root:** must exist, be a real directory (not a symlink), and be a `str` or `Path`.
+- **Targets:** every existing component below root must be a non-link directory, and each target must be absent. Dangling links count as existing; missing ancestors are fine.
+- **Ordering:** the whole batch and root are validated before any write. Writes create missing parents and use exclusive `'xb'` creation, so nothing is overwritten. Unexpected OS errors propagate.
+
+**Choices I made**
+- Entries must be tuples, not lists, because the spec says "list of tuples" and I read strictness as the safer reading.
+- Where an OS error is converted to `ValueError`, the original cause is chained with `from`.
+
+**Not covered**
+- Case-insensitive filesystems (macOS defaults): `'A'` and `'a'` pass validation, then the second write fails mid-batch with `FileExistsError`. The spec's exact-name model doesn't address this, so I left it alone.
+- The `__pycache__/` directory from the test run is untracked and not committed.

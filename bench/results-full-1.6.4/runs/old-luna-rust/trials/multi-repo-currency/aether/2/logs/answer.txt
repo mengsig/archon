@@ -1,0 +1,6 @@
+Implemented and committed the currency changes in both repositories. Both working trees are clean.
+
+- **ledger**: accepts an optional currency code, defaults to USD, emits it in the CSV, and exits with status 2 for malformed codes. Commit: `887ef88`.
+- **reports**: totals by account and currency, sorts both fields, and treats legacy CSV without a currency column as USD. Commit: `f5aff5f`.
+
+Verification passed: `cargo test` and `python3 -m unittest`.

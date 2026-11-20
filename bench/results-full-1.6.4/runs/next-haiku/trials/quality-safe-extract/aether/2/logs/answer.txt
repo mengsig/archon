@@ -1,0 +1,18 @@
+`safe_extract.py` is implemented per `SPEC.md` and committed as `0e9f15c` on `main`, with focused tests in `test_safe_extract.py`. All 33 tests pass (the 2 original tests plus 31 new ones) under `python3 -m unittest`.
+
+**How it works**
+- **Batch check first:** the batch must be a `list`, so tuples, generators and iterators are rejected without being consumed. Every entry is validated before anything touches the filesystem.
+- **Names:** must be non-empty relative POSIX paths with no backslash, colon, NUL, or empty/`.`/`..` component. They are not normalized. Names that can't be encoded as UTF-8 (e.g. lone surrogates) are rejected, since they would otherwise fail mid-write.
+- **Collisions:** duplicates and file/directory collisions are caught in either order.
+- **Filesystem:** the root must be an existing real directory (not a symlink). Each existing ancestor below root must be a real directory, and each target must be absent. Symlinks, including dangling ones, are rejected, so nothing is followed.
+- **Writes:** parents are created as needed. Files are opened with exclusive creation (`"xb"`), so nothing existing is overwritten, even in a race. Unexpected I/O errors propagate.
+
+**Choices I made where the spec was open**
+- Entries must be actual `tuple`s of length 2; a `list` like `["a", b"x"]` is rejected.
+- `data` must be exactly `bytes`; `bytearray` and `memoryview` are rejected.
+- Roots must be `str` or `Path`; bytes and other types are rejected.
+- The only `try` block is the `FileNotFoundError` check in a lookup helper, which is an expected path (a target that doesn't exist yet). Other errors propagate.
+
+**Not covered**
+- Overlong path components (>255 bytes) will still raise an OS error mid-write, because the spec puts I/O failures and rollback out of scope.
+- The CLAUDE.md asks for two assertions per function. Most checks are explicit `ValueError`s as the spec requires; I used `assert` only for two post-conditions, so the assert-density guideline is not fully met.

@@ -1,0 +1,31 @@
+Added the currency dimension to both repositories and committed in each.
+
+ledger (commit e122447): input lines take an optional fourth column, an ISO 4217 code (three uppercase ASCII letters). It defaults to USD when missing. Output header is `date,account,amount_cents,currency` and every row carries the currency. A malformed code prints `line N: ...` to stderr and exits 2. Other input errors still exit 1. `parse_line` now returns a `LineError` enum (`Malformed` / `BadCurrency`) so `main` can pick the exit status. Tests: `cargo test` passes, 9 tests, including new currency-default, explicit-currency, bad-code and CLI exit-status tests.
+
+reports (commit 1050c2c): totals are keyed by (account, currency) and printed as `account,currency,total_cents`, sorted by account then currency. A CSV with no `currency` column counts as USD. A malformed code prints an error naming the line to stderr and exits 2. `python3 -m unittest` passes, 5 tests, including new split-by-currency, legacy-USD and exit-2 tests.
+
+READMEs updated in both repos. An end-to-end check (ledger piped into reports) produced the expected per-currency totals. Both working trees are clean.
+
+Choices I made:
+- A present but empty currency field (e.g. a trailing tab) is treated as malformed, exit 2, not as a USD default.
+- Commits use the repo's configured git identity (mengsig). I left out the Co-Authored-By line from the attribution reminder because the project CLAUDE.md says not to mention Claude Code in commits.
+- Output for a bad line in ledger is still partial: the header and earlier rows are already written to stdout before the error, as before this change.
+
+Both repositories now handle currency, and each has a commit: `ledger` at `e122447` and `reports` at `1050c2c`. Both test suites pass: `cargo test` has 9 tests and `python3 -m unittest` has 5.
+
+**ledger**
+- Input lines take an optional fourth column, an ISO 4217 code of exactly three uppercase ASCII letters. It defaults to `USD` when missing.
+- The output header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed code prints `line N: ...` to stderr and exits 2. Other input errors still exit 1.
+
+**reports**
+- Totals are per account and currency, printed as `account,currency,total_cents`, sorted by account then currency.
+- A CSV without a `currency` column counts as `USD`.
+- A malformed code prints an error naming the line to stderr and exits 2.
+
+I also updated both READMEs and checked the pipeline end to end: ledger output piped into reports gives the expected per-currency totals.
+
+Choices I made:
+- An empty fourth column, such as a trailing tab, is treated as a malformed code (exit 2), not as the `USD` default.
+- The commits use the repo's configured git identity. I left out the Co-Authored-By line from the attribution reminder, because the project CLAUDE.md says not to mention Claude Code in commits.
+- If ledger hits a bad line partway through, the header and earlier rows are already on stdout. That behaviour predates this change and I did not alter it.

@@ -1,0 +1,22 @@
+Queued the OrderStatus refactor (qi_01M7WG19DBDNSBY79WQ6NZ5CBE) on the refactor pipeline, which runs strict review. I kept it to this single item because claude-code's seven-day quota is 77% used at 33% elapsed and would run out on 2026-11-21 05:10 UTC, before its 2026-11-25 reset. I'm not queueing more claude-code work until you say so.
+
+The OrderStatus refactor is queued as `qi_01M7WG19DBDNSBY79WQ6NZ5CBE` on the `refactor` pipeline in `refactor-order-status`. I haven't touched the repository myself. The item will commit on a local branch and won't push.
+
+- **Pipeline:** `refactor` fits because the observable behaviour must stay the same. Its review is fixed at strict, so I didn't set a review level on the item.
+- **Brief:** it carries the full spec from your message, plus the no-push and no-attribution rules.
+- **Quota:** claude-code's seven-day window is 77% used at 33% elapsed and would run out before its reset, so I kept this to one item. I posted that decision to the operator's chat and won't queue more claude-code work until they say so.
+
+I'll get the outcome when the item finishes.
+
+Done: Refactor orders status String into OrderStatus enum. Review of archon/q6nz5cbe refactor (HEAD a1afef1, worktree clean). Structural goal met: OrderStatus enum in src/status.rs with as_str, Display, FromStr (ParseStatusError naming the input), can_transition_to matching the lifecycle exactly, re-exported from the crate root; status literals appear only in src/status.rs. Behaviour preserved: pay/ship/cancel refusals are equivalent to the old checks for all four statuses, from_line keeps the 'unknown status' message with raw input, status_counts keeps (String, usize) alphabetical order. Verified: cargo test passes (2 unit, 17 characterization, 3 original); cargo clippy --all-targets -- -D warnings exits 0; tests/characterization.rs and tests/orders.rs unchanged since their baseline/characterization commits. Advisory only: ALL array in status.rs must be kept in sync with the enum manually; no assert density added per CLAUDE.md; formatting reflows in touched files; Order's Debug output now shows status: Paid. VERDICT: PASS
+
+SHIPPED: commit a1afef1c962c850a1fc108007abd955395136313 on the run branch
+Branch `archon/q6nz5cbe-refactor-orders-status-string-into-order` in /home/mengsig/.local/share/archon-bench/f164-y8j04sff/archon-bench/work/20261120T123220Z/0c313a821314dd35a12ee691/refactor-order-status holds it (7 files changed, 382 insertions(+), 26 deletions(-)). Review: `archon diff qi_01M7WG19DBDNSBY79WQ6NZ5CBE`; land it in `main`: `archon merge qi_01M7WG19DBDNSBY79WQ6NZ5CBE`.
+
+Freed 0.1 GiB of build output: item qi_01M7WG19DBDNSBY79WQ6NZ5CBE ended and its cargo target directory went.
+
+OrderStatus refactor shipped as commit a1afef1 on the run branch (local, not pushed). cargo test passes and clippy -D warnings is clean. Review passed with two points for you to decide: (1) `Order`'s Debug output now shows `status: Paid` rather than the old string form, which is a visible change against "observable behaviour must stay exactly the same"; (2) the ALL array in src/status.rs must be kept in sync with the enum by hand. I have not changed anything about either point.
+
+Review of archon/q6nz5cbe refactor (HEAD a1afef1, worktree clean). Structural goal met: OrderStatus enum in src/status.rs with as_str, Display, FromStr (ParseStatusError naming the input), can_transition_to matching the lifecycle exactly, re-exported from the crate root; status literals appear only in src/status.rs. Behaviour preserved: pay/ship/cancel refusals are equivalent to the old checks for all four statuses, from_line keeps the 'unknown status' message with raw input, status_counts keeps (String, usize) alphabetical order. Verified: cargo test passes (2 unit, 17 characterization, 3 original); cargo clippy --all-targets -- -D warnings exits 0; tests/characterization.rs and tests/orders.rs unchanged since their baseline/characterization commits. Advisory only: ALL array in status.rs must be kept in sync with the enum manually; no assert density added per CLAUDE.md; formatting reflows in touched files; Order's Debug output now shows status: Paid. VERDICT: PASS
+
+SHIPPED: commit a1afef1c962c850a1fc108007abd955395136313 on the run branch

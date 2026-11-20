@@ -1,0 +1,3 @@
+Implemented the bounded, thread-safe ledger and added boundary and concurrency tests. All 8 tests pass, and the working tree is clean.
+
+Committed as `49788a8` (`Implement atomic bounded ledger`).

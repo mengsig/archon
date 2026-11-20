@@ -1,0 +1,5 @@
+**Critical — authentication bypass** in [`src/tokens.js`, `verify`]( /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/6a80d2f624da96a23a66e680/.archon/data/orchestrator/repos/review-seeded-bug/src/tokens.js:24). The verifier accepts any signature that is a prefix of the expected HMAC. An empty signature is a prefix of every string, so an attacker can submit `<base64url({"user":"admin","exp":9999999999999})>.` and `verify` returns the forged claims. Require an exact-length signature match and compare the full MAC.
+
+**Medium — malformed tokens can throw** in `verify` at line 28. `JSON.parse` errors are uncaught, so a token with a valid HMAC over malformed JSON throws instead of returning `null`; callers that don’t catch it may fail the request. Catch parse errors and reject the token.
+
+Reviewed the mirror at commit `70e7c69`. No code was changed.

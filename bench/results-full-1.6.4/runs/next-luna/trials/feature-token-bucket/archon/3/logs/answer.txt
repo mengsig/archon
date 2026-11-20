@@ -1,0 +1,14 @@
+Queued as **qi_01M7WB99NXXTGBHDX590YHGBAF** in the `direct` pipeline. It will implement `ratelimit.py` to match `SPEC.md`, cover edge cases, run the relevant checks, and commit the change locally.
+
+Done: Implement rate limiter from SPEC.md. Implemented and committed the dependency-free token bucket and LRU keyed limiter. The committed tree passes all 8 unit tests, bytecode compilation, diff whitespace checks, and a fractional max_keys cap check. No work remains open.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 346fc48cff68f4cc961a011be5bae8c93fc247d9 on the run branch
+Branch `archon/90yhgbaf-implement-rate-limiter-from-spec-md` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/891dbbf1edfb6c659c111478/feature-token-bucket holds it (2 files changed, 116 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7WB99NXXTGBHDX590YHGBAF`; land it in `main`: `archon merge qi_01M7WB99NXXTGBHDX590YHGBAF`.
+
+Implemented and committed the dependency-free token bucket and LRU keyed limiter. The committed tree passes all 8 unit tests, bytecode compilation, diff whitespace checks, and a fractional max_keys cap check. No work remains open.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 346fc48cff68f4cc961a011be5bae8c93fc247d9 on the run branch

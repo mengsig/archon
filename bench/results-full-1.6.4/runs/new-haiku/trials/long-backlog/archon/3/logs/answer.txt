@@ -1,0 +1,85 @@
+Queued TT-101 to TT-104 as four direct items, chained with depends_on so they stack on one branch and each ticket is its own commit. The repo "tasktracker" is registered as long-backlog (the tasktracker package and BACKLOG.md live there), so I used that. Review is standard on each. They run one after another, which also keeps claude-code quota use down while the seven-day window is at 77%.
+
+I queued TT-101 through TT-104 as four `direct` items in the registered repo `long-backlog`. Nothing has run yet, and each ticket is a separate item.
+
+- **Repo:** No repo is registered as `tasktracker`. `long-backlog` holds `BACKLOG.md` and the `tasktracker/` package, so I used it.
+- **Chaining:** Each item depends on the one before it, so they stack on one branch. Each ticket gets its own commit, and nothing is pushed.
+- **Review:** `standard` on every item, since the changes touch shared code (`store.py`, `search.py`).
+- **Quota:** Running them one at a time keeps claude-code use down while its seven-day window is at 77%.
+
+Queued items: `qi_01M7W8G8KAFG89NZ68HSY9J2J0` (TT-101), `qi_01M7W8GAW1TT0ZNYY0VTE7CY6K` (TT-102), `qi_01M7W8GDGC0P1XE1WNAQX1452E` (TT-103), `qi_01M7W8GGGSA62JSW2H39G9CP7T` (TT-104).
+
+I'll act on the results as each item finishes.
+
+Done: TT-101: Reject impossible due dates in tasktracker.dates.parse_due. TT-101 implemented on archon/hsy9j2j0-tt-101-reject-impossible-due-dates-in-ta as commit b1a9760 (tree bb463dd07b133643124276d8359ea10b2214cd53), on base b526e06. Not pushed.
+
+What changed: tasktracker/dates.py adds InvalidDate(ValueError). parse_due no longer clamps impossible dates; it raises InvalidDate with the original text for impossible calendar dates, out-of-range offsets, and any unsupported form (-Nd, unsigned Nd, etc.). +0d is today; today/tomorrow remain case-insensitive with whitespace ignored. New tests/test_dates.py covers these cases.
+
+Checks: `python3 -m unittest discover -s tests -t .` passes, 11 tests, on the final head. Before: 2026-02-30 -> 2026-02-28 and 2026-13-01 -> 2026-12-01 (silent clamp); -3d/3d raised bare ValueError. After: all five impossible dates raise InvalidDate; -3d/3d raise InvalidDate. The only caller of parse_due is the test suite. Pyflakes was unavailable, so no lint run.
+
+Review: reviewer agt_01M7W8HD9Z6BN1DCZ9SXHHJT7K passed head b1a9760 with no blocking findings. Two non-blocking follow-ups, not fixed: (1) the \d regexes accept Unicode digits (e.g. fullwidth digits parse); use [0-9] to reject them. (2) 'tomorrow' at date.max raises a bare OverflowError instead of InvalidDate; wrap it like the +Nd path.
+
+Nothing left running: the reviewer's handed-off process had already exited. Worktree is clean.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8HD9Z6BN1DCZ9SXHHJT7K)
+
+SHIPPED: commit b1a9760c38c831088a8e8a719503b6064ed646a0 on the run branch
+Branch `archon/hsy9j2j0-tt-101-reject-impossible-due-dates-in-ta` in /home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/91103df6f2851618b30ac34e/long-backlog holds it (2 files changed, 65 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W8G8KAFG89NZ68HSY9J2J0`; land it in `main`: `archon merge qi_01M7W8G8KAFG89NZ68HSY9J2J0`.
+
+Done: TT-102: RFC 4180 CSV export in tasktracker.export.to_csv. TT-102 implemented and committed as 5c248cd on archon/vte7cy6k-tt-102-rfc-4180-csv-export-in-tasktracke (on top of TT-101 b1a9760, TT-101 change untouched). to_csv in tasktracker/export.py now emits RFC 4180 CSV: header id,title,tags,status,due; rows in input order; tags joined with ';'; due ISO or empty; fields containing comma, double quote, CR or LF are wrapped in quotes with quotes doubled; every line ends with CRLF. Added tests/test_export.py (6 tests). Before: rows were unquoted and LF-terminated, so a title like 'milk, eggs "big"' broke the row. After, the same input gives 'id,title,tags,status,due\r\n1,"milk, eggs ""big""",a;b,open,2026-04-01\r\n2,"x\ny",,open,\r\n'. Check: `python3 -m unittest discover -s tests -t .` passes, 17 tests OK, before and after. Full check ran on final head 5c248cd, tree d43e3cbca529e2ff9bc29e501af090493cb62bab. Review: one reviewer (agt_01M7W8KRK9HFJVRFZKVH894C77, task tsk_01M7W8KRK9HFJVRFZKVH894C78) read b1a9760...5c248cd, verdict pass, no findings. Risk medium: output bytes change (CRLF and quoting), so any consumer parsing the old LF output is affected. Nothing left open; no servers started; untracked __pycache__ dirs are not committed. Not pushed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8KRK9HFJVRFZKVH894C77)
+
+SHIPPED: commit 5c248cd137637fe1f6381dcabe054377e8a57ff2 on the run branch
+
+Done: TT-103: Search query syntax in tasktracker.search.search. TT-103 implemented on archon/aqx1452e-tt-103-search-query-syntax-in-tasktracke as commit 6d0b661 (tree 68811c592bb579823a1894ed8fee1636533198df), on top of TT-102 (5c248cd, unchanged). tasktracker/search.py now parses the query: whitespace splits terms outside double quotes, all terms must match, bare words and phrases match titles case-insensitively, tag:NAME matches an exact tag case-insensitively, status:open|done matches status, and blank queries match everything in input order. Other field terms, unknown statuses, empty tag names and unterminated quotes raise QueryError (a ValueError subclass). Tests added in tests/test_search.py (14 cases); full suite `python3 -m unittest discover -s tests -t .` gives 31 tests OK (17 before). Before/after probe on the same store: 'REPORT' went from no match to matching 'Write report'; 'tag:work' and '"fix login"' went from no match to working; '   ' went from no match to all tasks; 'due:today' and '"open' now raise QueryError. Assumptions: status values are case-sensitive; ':milk' and 'tag:' raise; a colon inside a quoted phrase is a plain phrase. Review: agent agt_01M7W8PN19CFVPH775Y00EBDJC (claude-haiku-5-5, medium) passed head 6d0b661 with no blocking findings; risk confirmed medium. Two non-blocking follow-ups left open: an empty phrase "" matches every task, and quotes mid-word are stripped silently (foo"bar:baz" becomes the title phrase foobar:baz). Nothing was pushed, and no servers or processes were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8PN19CFVPH775Y00EBDJC)
+
+SHIPPED: commit 6d0b661a3da10c740c37723b2524efc10b9a47fa on the run branch
+
+Done: TT-104: Undo for TaskStore add, complete and delete. TT-104 implemented in commit d5eb81d on archon/39g9cp7t-tt-104-undo-for-taskstore-add-complete-a, on top of TT-103 (6d0b661), not pushed. TaskStore now keeps an undo log of revert callables, one per successful add, complete or delete. undo() pops and runs the latest one, so calls walk back LIFO across all three kinds. Undo add removes the task, undo complete restores the previous status, undo delete re-inserts the same Task under its id. Ids are never reused. An empty log raises NothingToUndo (defined in tasktracker.store). Failed operations raise before recording. Changed paths: tasktracker/store.py and new tests/test_undo.py (9 tests). TT-103 search code is untouched. Check run in the worktree: `python3 -m unittest discover -s tests -t .` gives 40 tests, OK (31 existing plus 9 new). The independent reviewer agt_01M7W8SJ2CVV4RQBJ439PWJGVG passed head d5eb81d with no blocking findings, risk medium. Open follow-ups, non-blocking: undo() pops the entry before running it, so if an internal invariant assert fires the entry is lost; and one long tuple assertion line in tests/test_undo.py could be split. No processes were started. Untracked __pycache__ directories were left uncommitted. REVIEW: pass by agt_01M7W8SJ2CVV4RQBJ439PWJGVG.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8SJ2CVV4RQBJ439PWJGVG)
+
+SHIPPED: commit d5eb81d83620f41d4bc1503ed4193980865cb129 on the run branch
+
+TT-101 to TT-104 all succeeded in long-backlog, one commit each, stacked on one branch. Head is d5eb81d (TT-104), on top of 6d0b661 (TT-103), 5c248cd (TT-102) and b1a9760 (TT-101). Each passed review with no blocking findings, and the suite is at 40 tests, OK. Nothing is pushed (ship: local). Cost about $0.12 in total.
+
+Non-blocking follow-ups the reviewers left:
+- TT-101: \d accepts Unicode digits, so use [0-9]. "tomorrow" at date.max raises OverflowError instead of InvalidDate.
+- TT-102: output bytes change (CRLF and quoting), so any consumer of the old LF output is affected.
+- TT-103: an empty phrase "" matches every task, and a mid-word quote is stripped silently.
+- TT-104: undo() pops the log entry before running it, so an assertion failure loses that entry.
+
+TT-104 implemented in commit d5eb81d on archon/39g9cp7t-tt-104-undo-for-taskstore-add-complete-a, on top of TT-103 (6d0b661), not pushed. TaskStore now keeps an undo log of revert callables, one per successful add, complete or delete. undo() pops and runs the latest one, so calls walk back LIFO across all three kinds. Undo add removes the task, undo complete restores the previous status, undo delete re-inserts the same Task under its id. Ids are never reused. An empty log raises NothingToUndo (defined in tasktracker.store). Failed operations raise before recording. Changed paths: tasktracker/store.py and new tests/test_undo.py (9 tests). TT-103 search code is untouched. Check run in the worktree: `python3 -m unittest discover -s tests -t .` gives 40 tests, OK (31 existing plus 9 new). The independent reviewer agt_01M7W8SJ2CVV4RQBJ439PWJGVG passed head d5eb81d with no blocking findings, risk medium. Open follow-ups, non-blocking: undo() pops the entry before running it, so if an internal invariant assert fires the entry is lost; and one long tuple assertion line in tests/test_undo.py could be split. No processes were started. Untracked __pycache__ directories were left uncommitted. REVIEW: pass by agt_01M7W8SJ2CVV4RQBJ439PWJGVG.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8SJ2CVV4RQBJ439PWJGVG)
+
+SHIPPED: commit d5eb81d83620f41d4bc1503ed4193980865cb129 on the run branch
+
+TT-103 implemented on archon/aqx1452e-tt-103-search-query-syntax-in-tasktracke as commit 6d0b661 (tree 68811c592bb579823a1894ed8fee1636533198df), on top of TT-102 (5c248cd, unchanged). tasktracker/search.py now parses the query: whitespace splits terms outside double quotes, all terms must match, bare words and phrases match titles case-insensitively, tag:NAME matches an exact tag case-insensitively, status:open|done matches status, and blank queries match everything in input order. Other field terms, unknown statuses, empty tag names and unterminated quotes raise QueryError (a ValueError subclass). Tests added in tests/test_search.py (14 cases); full suite `python3 -m unittest discover -s tests -t .` gives 31 tests OK (17 before). Before/after probe on the same store: 'REPORT' went from no match to matching 'Write report'; 'tag:work' and '"fix login"' went from no match to working; '   ' went from no match to all tasks; 'due:today' and '"open' now raise QueryError. Assumptions: status values are case-sensitive; ':milk' and 'tag:' raise; a colon inside a quoted phrase is a plain phrase. Review: agent agt_01M7W8PN19CFVPH775Y00EBDJC (claude-haiku-5-5, medium) passed head 6d0b661 with no blocking findings; risk confirmed medium. Two non-blocking follow-ups left open: an empty phrase "" matches every task, and quotes mid-word are stripped silently (foo"bar:baz" becomes the title phrase foobar:baz). Nothing was pushed, and no servers or processes were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8PN19CFVPH775Y00EBDJC)
+
+SHIPPED: commit 6d0b661a3da10c740c37723b2524efc10b9a47fa on the run branch
+
+TT-102 implemented and committed as 5c248cd on archon/vte7cy6k-tt-102-rfc-4180-csv-export-in-tasktracke (on top of TT-101 b1a9760, TT-101 change untouched). to_csv in tasktracker/export.py now emits RFC 4180 CSV: header id,title,tags,status,due; rows in input order; tags joined with ';'; due ISO or empty; fields containing comma, double quote, CR or LF are wrapped in quotes with quotes doubled; every line ends with CRLF. Added tests/test_export.py (6 tests). Before: rows were unquoted and LF-terminated, so a title like 'milk, eggs "big"' broke the row. After, the same input gives 'id,title,tags,status,due\r\n1,"milk, eggs ""big""",a;b,open,2026-04-01\r\n2,"x\ny",,open,\r\n'. Check: `python3 -m unittest discover -s tests -t .` passes, 17 tests OK, before and after. Full check ran on final head 5c248cd, tree d43e3cbca529e2ff9bc29e501af090493cb62bab. Review: one reviewer (agt_01M7W8KRK9HFJVRFZKVH894C77, task tsk_01M7W8KRK9HFJVRFZKVH894C78) read b1a9760...5c248cd, verdict pass, no findings. Risk medium: output bytes change (CRLF and quoting), so any consumer parsing the old LF output is affected. Nothing left open; no servers started; untracked __pycache__ dirs are not committed. Not pushed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8KRK9HFJVRFZKVH894C77)
+
+SHIPPED: commit 5c248cd137637fe1f6381dcabe054377e8a57ff2 on the run branch
+
+TT-101 implemented on archon/hsy9j2j0-tt-101-reject-impossible-due-dates-in-ta as commit b1a9760 (tree bb463dd07b133643124276d8359ea10b2214cd53), on base b526e06. Not pushed.
+
+What changed: tasktracker/dates.py adds InvalidDate(ValueError). parse_due no longer clamps impossible dates; it raises InvalidDate with the original text for impossible calendar dates, out-of-range offsets, and any unsupported form (-Nd, unsigned Nd, etc.). +0d is today; today/tomorrow remain case-insensitive with whitespace ignored. New tests/test_dates.py covers these cases.
+
+Checks: `python3 -m unittest discover -s tests -t .` passes, 11 tests, on the final head. Before: 2026-02-30 -> 2026-02-28 and 2026-13-01 -> 2026-12-01 (silent clamp); -3d/3d raised bare ValueError. After: all five impossible dates raise InvalidDate; -3d/3d raise InvalidDate. The only caller of parse_due is the test suite. Pyflakes was unavailable, so no lint run.
+
+Review: reviewer agt_01M7W8HD9Z6BN1DCZ9SXHHJT7K passed head b1a9760 with no blocking findings. Two non-blocking follow-ups, not fixed: (1) the \d regexes accept Unicode digits (e.g. fullwidth digits parse); use [0-9] to reject them. (2) 'tomorrow' at date.max raises a bare OverflowError instead of InvalidDate; wrap it like the +Nd path.
+
+Nothing left running: the reviewer's handed-off process had already exited. Worktree is clean.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8HD9Z6BN1DCZ9SXHHJT7K)
+
+SHIPPED: commit b1a9760c38c831088a8e8a719503b6064ed646a0 on the run branch

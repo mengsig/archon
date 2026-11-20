@@ -1,0 +1,7 @@
+Reviewed `src/tokens.js` at mirror commit `755884b`. I found three issues:
+
+- **High — `verify`: signature-prefix acceptance.** It checks `expected.startsWith(signature)`, so any prefix of the correct signature is accepted. A token with the signature replaced by `a` will pass whenever the real signature starts with `a` (about a 1-in-64 chance); an empty signature is also accepted. This makes forgery practical by repeated guesses. Require a full-length signature comparison.
+- **Medium — `verify`: malformed tokens can throw.** The decoded payload is parsed without catching errors. For example, `verify('not-json.a', secret)` can throw a `SyntaxError` instead of returning `null`; malformed input can turn authentication into an error path or crash a request if uncaught.
+- **Medium — `sign`: claims can override identity fields.** The payload spreads `claims` before assigning `iat` and `exp`, so those two are protected, but there is no reserved-claim handling for application identity or authorization fields. For example, signing `{ user: 'ada', role: 'admin' }` issues that role as trusted token data. This is a risk if callers pass user-controlled or insufficiently validated claims; validate or constrain claims at the signing boundary.
+
+I did not modify files or run tests.

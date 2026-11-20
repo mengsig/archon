@@ -1,0 +1,10 @@
+Implemented TT-101 through TT-104 and added regression tests. The requested unittest suite passes: **8 tests, OK**.
+
+Each ticket’s implementation has its own commit:
+
+- TT-101 `73aa6d9` — Reject impossible due dates
+- TT-102 `dc5819f` — Write RFC 4180 CSV exports
+- TT-103 `7f0f76a` — Add task search query syntax
+- TT-104 `832fd14` — Add task operation undo
+
+Regression tests are in `954fe5e`. The working tree has no tracked changes; the test run left untracked `__pycache__` directories.

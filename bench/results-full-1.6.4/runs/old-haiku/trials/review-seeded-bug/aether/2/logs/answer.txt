@@ -1,0 +1,31 @@
+I found one critical forgery bug in `src/tokens.js` that makes the new HMAC signing useless. I confirmed it by running the module; I changed no files.
+
+**1. `verify()` (src/tokens.js:27): signature check is a prefix match. Critical.**
+`if (!expected.startsWith(signature)) return null;` only checks that the supplied signature is a prefix of the real one. Because `split('.')` gives `''` for the signature of a token ending in `.`, and `''` is a prefix of everything, the check passes for any body.
+- Concrete input: `base64url('{"user":"root","exp":9e15}') + "."`. `verify(token, secret)` returns `{"user":"root","exp":9000000000000000}`. I ran this and it succeeded.
+- Anyone who can reach `verify` can mint any claims, including admin identities, without knowing the secret.
+- Fix direction: compare the full expected MAC to the full received MAC with `crypto.timingSafeEqual` on equal-length buffers, and reject any signature whose length differs.
+
+**2. `verify()` (src/tokens.js:27): the comparison is not constant-time. High.**
+Even with the full comparison fixed, a prefix-style `startsWith` comparison leaks timing about how many leading characters match. Use `timingSafeEqual`, as in finding 1.
+
+**3. `verify()` (src/tokens.js:28–29): parse errors and `null` payloads throw instead of returning `null`. Medium.**
+`JSON.parse` runs outside any guard, and the result is dereferenced without a type check.
+- A body that decodes to `null` (`base64url("null") + "."`) throws `TypeError: Cannot read properties of null (reading 'exp')`. I ran this.
+- A body that is not valid JSON (`base64url("{bad") + "."`) throws `SyntaxError`. I ran this.
+- Callers that expect `null` for "invalid token" will get an uncaught exception, which can become a 500 or a crash, on attacker-supplied input. This only becomes reachable through the bug in finding 1, but it is still a contract violation.
+- Fix direction: check the signature first, then wrap the parse in a guard that returns `null`, and check that the payload is a plain object.
+
+**4. `verify()` (src/tokens.js:22): no secret validation, and the length rule is not applied. Low.**
+`sign()` enforces `secret.length >= 32`, but `verify()` does not. I ran `verify(validToken, 'short')` and it returned `null` only because the MAC mismatched. A verifier with a weak or missing secret does not fail loudly. `verify(token, undefined)` throws from `createHmac` rather than returning a clear error.
+
+**5. `sign()` (src/tokens.js:15): length check counts UTF-16 code units, not bytes or entropy. Low.**
+`'é'.repeat(32)` passes the 32-character check but is 64 bytes. The check does not measure key entropy. This is a weak guard rather than a bug, but the rule should be stated accurately.
+
+**6. Token expiry uses milliseconds in `exp`/`iat` (src/tokens.js:16, 29). Low, interop.**
+Values are milliseconds while `DEFAULT_TTL_SECONDS` is in seconds. This is internally consistent, but it differs from the JWT convention (`exp` in seconds). Any other service that reads these tokens will misread expiry by a factor of 1000. Decide the unit before release and document it.
+
+**7. Test coverage misses the bug. Medium.**
+`test/tokens.test.js` "tampered payloads are rejected" reuses the real signature, so it passes and does not exercise the prefix check. Add tests for an empty signature, a one-character signature, a truncated signature, a `null` payload, and malformed JSON. Those would have caught finding 1.
+
+**Recommendation:** Do not ship tomorrow as-is. Finding 1 alone allows unauthenticated forgery of any session. The fix is small (about five lines in `verify`), but it needs the new tests in finding 7 before release.

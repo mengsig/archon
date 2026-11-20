@@ -1,0 +1,39 @@
+The category pages stay stale because `updatePrice` only invalidates the product cache entry. The category listing cache is never touched, so it keeps serving the old price until its 600-second TTL expires.
+
+**Code path**
+
+- `src/pricing.js:6-13`, `updatePrice`: writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That removes only the `product:<sku>` entry. Nothing removes `listing:<category>:<page>` entries.
+- `src/catalog.js:12-20`, `Catalog.product`: the product page reads `product:<sku>`. That entry was just deleted, so the next read goes to the store and gets the new price. This is why the product page updates immediately.
+- `src/catalog.js:22-33`, `Catalog.listing`: category pages read `listing:<category>:<page>`. Each entry is a copy of `{sku, name, priceCents}` rows, so it holds its own price and nothing ties it to the product entry. Those rows are cached for `LISTING_TTL_SECONDS`.
+- `src/config.js:4-7`: `LISTING_TTL_SECONDS: 600`. This is the "about ten minutes". The comment says listings are cached separately because they are expensive to build (joins and sorting), so the staleness is a deliberate trade-off that was never paired with invalidation.
+
+**Reproduction**
+
+I ran the code with a fake clock, without changing anything:
+
+```
+listing before 5000
+product after 4500
+listing after update (t=0) 5000
+listing at 599s 5000
+listing at 600s 4500
+```
+
+The existing test suite passes (3/3), but none of its tests checks a listing after a price update. The test at `test/catalog.test.js:13-18` covers only the product page.
+
+**Why the delay is what it is**
+
+The listing cache is keyed by category and page, and `updatePrice` doesn't know which listing keys contain the SKU. So the only thing that bounds staleness is the TTL.
+
+**Fix options**
+
+1. Smallest change: have `updatePrice` invalidate every `listing:<category>:*` key. `store.update` already returns the product with its `category`, so the category is available. `TtlCache` has no prefix delete, so this needs a small helper, or a per-category set of listing keys. Pages of a category are sorted by name, so a price change never moves a row between pages; invalidating the whole category is correct, just slightly broader than necessary.
+2. Cleaner, probably the best long-term choice: don't cache prices inside listing rows. Cache only the ordered SKU list per page, then hydrate names and prices from the product cache or store on read. A price update then needs no listing invalidation at all, and the product and listing views can't disagree.
+3. Versioned category key: keep a per-category version, bump it in `updatePrice`, and include it in the listing key. This is more machinery than option 1 and I wouldn't start there.
+
+I'd do option 1 now, since it is small and fixes the reported symptom, and consider option 2 if listing cost is acceptable without the price baked in. Either way, add a test that updates a price and then reads the listing, and a test that the cache is still used when no price changes.
+
+**Other observations**
+
+- `src/pricing.js` reaches into `catalog.store` and `catalog.cache` directly. That is why the invalidation logic lives outside `Catalog` and is easy to miss. Moving it into a `Catalog` method would make the cache rules explicit.
+- I did not change any code and did not write files.

@@ -1,0 +1,40 @@
+The multi-currency change is queued as one initiative (`ini_01M7WFGKZKPED598R9S72J2ZQD`) with two members, both starting now:
+
+- **`ledger`** (`qi_01M7WFGKZMZB4CYKTQTVG390B7`): parses the optional fourth currency column, defaults to `USD`, emits `date,account,amount_cents,currency`, and exits 2 with the line number on a malformed code.
+- **`reports`** (`qi_01M7WFGM4GVSJCGBGB7QSSWQ0K`): totals per account and currency, accepts the old currency-less CSV as `USD`, and exits 2 on a malformed code.
+
+Both use the `direct` pipeline with standard review, since the CSV format is shared between them. The shared contract is in the initiative, so a change to the format needs your approval first.
+
+Both repositories are set to ship locally, so each commit lands on a local branch and nothing is pushed. I'll report back when the initiative finishes.
+
+Done: reports: total per account and currency. Implemented per-account, per-currency totals in reports.py on archon/7qsswq0k-reports-total-per-account-and-currency (base 3d31f7d). Reads the new header with a currency column and the old header without one (rows count as USD). Currency codes must match exactly three uppercase ASCII letters; a malformed or missing code prints to stderr and exits 2. Other input errors (missing columns, bad amount) exit 1. Output header is account,currency,total_cents, sorted by account then currency. Tests: python3 -m unittest, 8 tests OK, covering old-format USD, per-currency totals, sorting, malformed codes (exit 2 with stderr), missing currency value, bad amount and missing column. Before the change the currency column was ignored and EUR and USD were summed together. README updated. Review: one delegated reviewer (agt_01M7WFJE33JY8PM955S7XNEW18) passed head 5182c93 with no blocking findings. Left open as non-blocking follow-ups: empty stdin now exits 1 where it previously printed the header and exited 0 (undocumented, untested); output is not CSV-quoted, so an account name containing a comma corrupts its row (pre-existing); no tests cover empty input or extra fields. Nothing is left running.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFJE33JY8PM955S7XNEW18)
+
+SHIPPED: commit 5182c936d484c72b90ecf4f0731cfd320f0ef4ae on the run branch
+Branch `archon/7qsswq0k-reports-total-per-account-and-currency` in /home/mengsig/.local/share/archon-bench/f164-rqhhzj1d/archon-bench/work/20261120T122900Z/9ce0677ff8e4ab08a748a1bb/reports holds it (3 files changed, 166 insertions(+), 13 deletions(-)). Review: `archon diff qi_01M7WFGM4GVSJCGBGB7QSSWQ0K`; land it in `main`: `archon merge qi_01M7WFGM4GVSJCGBGB7QSSWQ0K`.
+
+Done: ledger: add per-row currency column. ledger: per-row currency column implemented and committed on archon/tvg390b7-ledger-add-per-row-currency-column (head 975c51e, tree a85428b2452f196dd54a1f4ff0c8aafea460bb45; base bfd799f). Input: optional fourth TSV column, exactly three uppercase ASCII letters, missing means USD. Output header is now date,account,amount_cents,currency with a currency on every row. Malformed currency exits 2 with "line N:" on stderr; other input errors still exit 1. Before: header date,account,amount_cents, no currency, bad input exit 1. Checks on the head: cargo test 10/10 pass (2 original tests kept, 8 new unit and binary tests); cargo clippy --all-targets exit 0. cargo fmt --check reports diffs in new lines and one pre-existing line; the project does not enforce rustfmt, so I left formatting alone. Review: first reviewer returned FAIL on one blocking finding (padded codes like " EUR " were trimmed and accepted). Fixed in 6393969 -> 975c51e and covered by a test. Delta re-review of 6393969..975c51e passed with no blocking findings. Risk is raised to high (rubric: CLI and output changes that break callers), above the reviewers' medium. Open items: the reports side and README updates in the sibling repo are not part of this stage. Non-blocking notes: parse_line checks date and amount before currency, so a line with both a bad date and a bad currency exits 1. Entry gains a pub currency field and parse_line's error type changes from String to ParseError, which is a public API change. Nothing is left running: the reviewer processes have been stopped.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFK0TAHWQFM2BHN3S790EE), claude-code/claude-haiku-5-5 (agent agt_01M7WFMFQX9AWSYRR3SKXFD91E)
+
+SHIPPED: commit 975c51e0972d827f39c9496c1732fd5ff912d79e on the run branch
+Branch `archon/tvg390b7-ledger-add-per-row-currency-column` in /home/mengsig/.local/share/archon-bench/f164-rqhhzj1d/archon-bench/work/20261120T122900Z/9ce0677ff8e4ab08…
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M7WFGKZMZB4CYKTQTVG390B7 ended and its cargo target directory went.
+
+Implemented per-account, per-currency totals in reports.py on archon/7qsswq0k-reports-total-per-account-and-currency (base 3d31f7d). Reads the new header with a currency column and the old header without one (rows count as USD). Currency codes must match exactly three uppercase ASCII letters; a malformed or missing code prints to stderr and exits 2. Other input errors (missing columns, bad amount) exit 1. Output header is account,currency,total_cents, sorted by account then currency. Tests: python3 -m unittest, 8 tests OK, covering old-format USD, per-currency totals, sorting, malformed codes (exit 2 with stderr), missing currency value, bad amount and missing column. Before the change the currency column was ignored and EUR and USD were summed together. README updated. Review: one delegated reviewer (agt_01M7WFJE33JY8PM955S7XNEW18) passed head 5182c93 with no blocking findings. Left open as non-blocking follow-ups: empty stdin now exits 1 where it previously printed the header and exited 0 (undocumented, untested); output is not CSV-quoted, so an account name containing a comma corrupts its row (pre-existing); no tests cover empty input or extra fields. Nothing is left running.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFJE33JY8PM955S7XNEW18)
+
+SHIPPED: commit 5182c936d484c72b90ecf4f0731cfd320f0ef4ae on the run branch
+
+ledger: per-row currency column implemented and committed on archon/tvg390b7-ledger-add-per-row-currency-column (head 975c51e, tree a85428b2452f196dd54a1f4ff0c8aafea460bb45; base bfd799f). Input: optional fourth TSV column, exactly three uppercase ASCII letters, missing means USD. Output header is now date,account,amount_cents,currency with a currency on every row. Malformed currency exits 2 with "line N:" on stderr; other input errors still exit 1. Before: header date,account,amount_cents, no currency, bad input exit 1. Checks on the head: cargo test 10/10 pass (2 original tests kept, 8 new unit and binary tests); cargo clippy --all-targets exit 0. cargo fmt --check reports diffs in new lines and one pre-existing line; the project does not enforce rustfmt, so I left formatting alone. Review: first reviewer returned FAIL on one blocking finding (padded codes like " EUR " were trimmed and accepted). Fixed in 6393969 -> 975c51e and covered by a test. Delta re-review of 6393969..975c51e passed with no blocking findings. Risk is raised to high (rubric: CLI and output changes that break callers), above the reviewers' medium. Open items: the reports side and README updates in the sibling repo are not part of this stage. Non-blocking notes: parse_line checks date and amount before currency, so a line with both a bad date and a bad currency exits 1. Entry gains a pub currency field and parse_line's error type changes from String to ParseError, which is a public API change. Nothing is left running: the reviewer processes have been stopped.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFK0TAHWQFM2BHN3S790EE), claude-code/claude-haiku-5-5 (agent agt_01M7WFMFQX9AWSYRR3SKXFD91E)
+
+SHIPPED: commit 975c51e0972d827f39c9496c1732fd5ff912d79e on the run branch

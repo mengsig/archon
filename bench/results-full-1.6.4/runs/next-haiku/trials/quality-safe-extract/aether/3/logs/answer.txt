@@ -1,0 +1,28 @@
+Implemented extract(entries, root) in safe_extract.py per SPEC.md and added focused tests in test_safe_extract.py. Committed as 59b74e5 (author mengsig). All 32 tests pass with `python3 -m unittest test_safe_extract`.
+
+Behavior:
+- A non-list batch raises ValueError, including empty ones. It is not consumed.
+- The root must be an existing real directory, not a symlink. A root under a regular file also raises ValueError.
+- Every entry is validated before anything is created: tuple of length 2, str name, bytes data, relative name with no empty, '.', or '..' components, and no leading '/', backslash, colon, or NUL. Names that cannot be encoded for the filesystem are rejected too.
+- Duplicate names and file/directory collisions are rejected in either order.
+- Filesystem checks run over the whole batch. Any symlink, dangling link, file ancestor, or existing target raises ValueError with no changes made.
+- Unexpected OSErrors propagate.
+- Files are written with exclusive-create mode, so nothing is overwritten.
+
+Choices made where the spec was silent:
+- Entries must be tuples, not lists.
+- Names that cannot be encoded for the filesystem are rejected during validation rather than failing mid-write.
+- A root path that runs through a regular file is reported as a ValueError, not an OSError.
+
+Not covered: case-insensitive filesystem aliasing (for example 'A' and 'a') and I/O failures during writing, which the spec puts out of scope. A stray __pycache__/ directory is left untracked and was not committed.
+
+`extract(entries, root)` is implemented in `safe_extract.py` per `SPEC.md`, with focused tests in `test_safe_extract.py`. All 32 tests pass (`python3 -m unittest test_safe_extract`). The work is committed as `59b74e5` under the configured git user.
+
+The whole batch and root are validated before anything is created. Any rejected input, including a symlink, dangling link, file ancestor, or existing target, raises `ValueError` with the filesystem unchanged. Files are written with exclusive-create mode, so nothing is overwritten. Unexpected `OSError`s propagate.
+
+Choices where the spec was silent:
+- Entries must be tuples; lists are rejected.
+- Names that cannot be encoded for the filesystem are rejected during validation rather than failing mid-write.
+- A root path that runs through a regular file raises `ValueError`, not `OSError`.
+
+Not covered: case-insensitive filesystem aliasing (for example `A` and `a`), and I/O failures during writing, which the spec places out of scope. A stray `__pycache__/` directory is left untracked and was not committed.

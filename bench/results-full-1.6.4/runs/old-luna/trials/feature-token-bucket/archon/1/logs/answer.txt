@@ -1,0 +1,14 @@
+Queued as `qi_01M7W25QYGJPMDDN8QMYSDRJ0J` in the `direct` pipeline. It covers the full spec, edge-case tests, and a local commit; no push is requested.
+
+Done: Implement specified token bucket and keyed rate limiter. Implemented continuous token bucket refill and per-key LRU rate limiting in ratelimit.py, with validation and edge-case tests. Final checks passed: `python -m unittest -v` (8 tests), `python -m py_compile ratelimit.py test_ratelimit.py`, and `git diff --check`; final checked tree is 6b9fc8b462484a5a3f63fa99000b28e0fc1e142d. Independent whole-change review found a NaN validation bug, which was fixed and committed; a fresh delta review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W28PEQFFRXGN2N7ACD8QP4), codex/gpt-6-luna (agent agt_01M7W2C69TWQHCAG11Y9ZPGYPK)
+
+SHIPPED: commit 66cc196327f18ea2fb2368647deddce6db46405a on the run branch
+Branch `archon/mysdrj0j-implement-specified-token-bucket-and-key` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/3a8f8bc7d2fe90e599ba08b3/feature-token-bucket holds it (2 files changed, 135 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W25QYGJPMDDN8QMYSDRJ0J`; land it in `main`: `archon merge qi_01M7W25QYGJPMDDN8QMYSDRJ0J`.
+
+Implemented continuous token bucket refill and per-key LRU rate limiting in ratelimit.py, with validation and edge-case tests. Final checks passed: `python -m unittest -v` (8 tests), `python -m py_compile ratelimit.py test_ratelimit.py`, and `git diff --check`; final checked tree is 6b9fc8b462484a5a3f63fa99000b28e0fc1e142d. Independent whole-change review found a NaN validation bug, which was fixed and committed; a fresh delta review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W28PEQFFRXGN2N7ACD8QP4), codex/gpt-6-luna (agent agt_01M7W2C69TWQHCAG11Y9ZPGYPK)
+
+SHIPPED: commit 66cc196327f18ea2fb2368647deddce6db46405a on the run branch

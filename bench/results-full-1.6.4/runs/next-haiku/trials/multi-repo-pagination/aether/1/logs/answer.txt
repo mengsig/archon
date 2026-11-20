@@ -1,0 +1,21 @@
+Pagination is in both repositories and committed. Each repo's tests pass (`python3 -m unittest`: 9 tests; `npm test`: 9 tests). An end-to-end run through the real `api_cli.py` returns all 57 items, in order, with no duplicates.
+
+**Commits**
+- `inventory-api` `d9d4739`: "Paginate GET /items with limit and cursor"
+- `inventory-client` `4f5777c`: "Follow next_cursor in listItems"
+
+**API (`inventory-api/api.py`)**
+- `limit` is an integer from 1 to 100, defaulting to 20. `cursor` is the `id` of the last item on the previous page, and the next page starts after it. Items are sorted by `id` on every request.
+- A non-numeric, empty, or out-of-range `limit`, or a malformed `cursor`, returns 400 with `{"error": "..."}`.
+- The body is `{"items": [...], "next_cursor": <string or null>}`. `next_cursor` is `null` on the last page.
+
+**Client (`inventory-client/client.js`)**
+- `listItems` sends no cursor on the first request, then passes each `next_cursor` back unchanged until it is `null` or absent.
+- It throws on a failed page, on a page without an `items` array, and on a repeated cursor. Without that last check, a misbehaving server could make it loop forever.
+
+**Decisions you may want to revisit**
+- **Cursor encoding:** I used the plain last `id` as the cursor, not a base64 or signed token. It is simple and needs no server state, but clients can read it. The README tells them to treat it as opaque. If you want it truly opaque or tamper-proof, that is a small follow-up.
+- **Commit attribution:** the system reminder asked for a `Co-Authored-By: Claude Haiku 5.5` line. CLAUDE.md says not to put Claude attribution in commits, and CLAUDE.md takes precedence. So I left it out. Commits use the repo's configured identity.
+- **Client page size:** the client uses the server default (20) and does not send `limit`, so 57 items take three requests. Passing `limit=100` would cut that to one, but I kept the first request as the spec described.
+
+**Not changed:** `get_item` uses `str.isdigit()`, which accepts some non-ASCII digits (e.g. `²`) and then crashes on `int()`. That is a pre-existing bug. The new `_parse_uint` helper avoids it, but I left `get_item` alone as out of scope.

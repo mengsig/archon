@@ -1,0 +1,6 @@
+Implemented and committed both repositories:
+
+- **ledger** — emits the currency column, defaults missing currencies to USD, and reports malformed codes with the line number and exit status 2. Commit: `8112e48`.
+- **reports** — totals by account and currency, sorts both fields, supports legacy CSV as USD, and exits with status 2 for malformed codes. Commit: `5f2bbf0`.
+
+Both requested test suites pass. End to end checks confirmed the defaults, separate totals, and malformed currency handling. Both repositories have clean working trees.

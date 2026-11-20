@@ -1,0 +1,14 @@
+Queued as [qi_01M7W276XS3TGH4C3V9HX10T10](#) in `feature-token-bucket`. The direct pipeline will implement the spec, cover its edge cases, validate, and commit the change.
+
+Done: Implement SPEC.md rate limiter in ratelimit.py. Implemented the SPEC.md token bucket and keyed LRU limiter in ratelimit.py, with validation, continuous refill, rollback-safe clock handling, wait-time queries, and focused edge-case tests. Baseline tests errored on the original stubs; all 8 tests, py_compile, and git diff --check pass on the committed head. Committed as 43dde9c; worktree is clean. No known gaps.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W2AR1BREZQPMZFAPSPZD86)
+
+SHIPPED: commit 43dde9c63b10a4be86786188339ca2c0d94c9562 on the run branch
+Branch `archon/9hx10t10-implement-spec-md-rate-limiter-in-rateli` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/cc70d001d51a72b8fd88d3fe/feature-token-bucket holds it (2 files changed, 118 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W276XS3TGH4C3V9HX10T10`; land it in `main`: `archon merge qi_01M7W276XS3TGH4C3V9HX10T10`.
+
+Implemented the SPEC.md token bucket and keyed LRU limiter in ratelimit.py, with validation, continuous refill, rollback-safe clock handling, wait-time queries, and focused edge-case tests. Baseline tests errored on the original stubs; all 8 tests, py_compile, and git diff --check pass on the committed head. Committed as 43dde9c; worktree is clean. No known gaps.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W2AR1BREZQPMZFAPSPZD86)
+
+SHIPPED: commit 43dde9c63b10a4be86786188339ca2c0d94c9562 on the run branch

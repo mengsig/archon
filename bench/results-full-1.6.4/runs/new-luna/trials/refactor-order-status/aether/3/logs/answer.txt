@@ -1,0 +1,3 @@
+Implemented and committed as `3c5296b` (`Refactor order status into enum`). `Order` now uses `OrderStatus`; parsing, transition checks, errors, and report formatting use the new type, with status-name literals confined to [status.rs](/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/a8d740fa97618e148ec13930/refactor-order-status/src/status.rs).
+
+`git diff --check` passed and the working tree is clean. I couldn’t run `cargo test`: neither `cargo` nor `rustc` is available in this shell.

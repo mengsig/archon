@@ -1,0 +1,14 @@
+Queued as **qi_01M7W5YY398GXT4X46Z23V60Q8** in `fix-off-by-one`. The agent is tasked with fixing `window.py` without changing tests, checking correctness across edge cases, running `python3 -m unittest`, and committing the fix.
+
+Done: Fix window.py for all inputs and pass unittest. Fixed the excluded final start index in sliding_windows by adding one to the range stop. For positive integer sizes, it now returns every contiguous window, including the final and full-length windows; sizes larger than the input still produce an empty list. Baseline unittest had 2 failures; final python3 -m unittest passed all 3 tests, and git diff --check passed. Commit: 00b72cca44b9e143bdb9d02cb920a110cebbf0e9. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W60N10N9PVWQF7PXMG0A5R)
+
+SHIPPED: commit 00b72cca44b9e143bdb9d02cb920a110cebbf0e9 on the run branch
+Branch `archon/z23v60q8-fix-window-py-for-all-inputs-and-pass-un` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/a8ef242cdac1fc99eebd4846/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7W5YY398GXT4X46Z23V60Q8`; land it in `main`: `archon merge qi_01M7W5YY398GXT4X46Z23V60Q8`.
+
+Fixed the excluded final start index in sliding_windows by adding one to the range stop. For positive integer sizes, it now returns every contiguous window, including the final and full-length windows; sizes larger than the input still produce an empty list. Baseline unittest had 2 failures; final python3 -m unittest passed all 3 tests, and git diff --check passed. Commit: 00b72cca44b9e143bdb9d02cb920a110cebbf0e9. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W60N10N9PVWQF7PXMG0A5R)
+
+SHIPPED: commit 00b72cca44b9e143bdb9d02cb920a110cebbf0e9 on the run branch

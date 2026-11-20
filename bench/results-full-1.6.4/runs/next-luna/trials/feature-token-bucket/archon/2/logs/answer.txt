@@ -1,0 +1,14 @@
+Queued as **qi_01M7W7THFP43P069D9447CNW61** in the `direct` pipeline. The task includes implementing the spec, checking edge cases and existing tests, keeping dependencies to the standard library, and committing the change.
+
+Done: Implement specified token bucket rate limiter. Implemented TokenBucket and KeyedLimiter per SPEC.md, including validation, fractional refill, backward-clock handling, non-consuming wait estimates, and LRU eviction; expanded focused edge-case coverage. Baseline had 3 failing stub tests; final 8 tests pass, py_compile and git diff --check pass. Committed as 200df82e09998d3246a6aeeebea339be748c2710; worktree is clean. No known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 200df82e09998d3246a6aeeebea339be748c2710 on the run branch
+Branch `archon/447cnw61-implement-specified-token-bucket-rate-li` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/d21cea85755de7cd37d94d70/feature-token-bucket holds it (2 files changed, 118 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W7THFP43P069D9447CNW61`; land it in `main`: `archon merge qi_01M7W7THFP43P069D9447CNW61`.
+
+Implemented TokenBucket and KeyedLimiter per SPEC.md, including validation, fractional refill, backward-clock handling, non-consuming wait estimates, and LRU eviction; expanded focused edge-case coverage. Baseline had 3 failing stub tests; final 8 tests pass, py_compile and git diff --check pass. Committed as 200df82e09998d3246a6aeeebea339be748c2710; worktree is clean. No known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 200df82e09998d3246a6aeeebea339be748c2710 on the run branch

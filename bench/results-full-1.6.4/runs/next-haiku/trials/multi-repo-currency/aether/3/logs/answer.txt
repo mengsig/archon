@@ -1,0 +1,22 @@
+Both repositories are changed and committed, and all tests pass in each. The ledger-to-reports pipe works end to end.
+
+**ledger** (commit `7c53c6d`)
+- Lines accept an optional fourth column. A missing column means `USD`; the code must be exactly three uppercase ASCII letters.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed currency prints `line N: bad currency "..."` to stderr and exits 2. Other input errors still exit 1.
+- Tests: 9 passing (`cargo test`), including binary-level checks of exit codes 1 and 2. Clippy is clean.
+
+**reports** (commit `0f70488`)
+- Output is `account,currency,total_cents`, sorted by account then currency.
+- CSV without a `currency` column counts as `USD`.
+- A malformed currency prints `error: line N: ...` to stderr and exits 2 with no totals on stdout.
+- Tests: 4 passing (`python3 -m unittest`).
+
+Both READMEs are updated to describe the new format and exit codes.
+
+Choices I made that you may want to change:
+- A fourth tab-separated field that is present but empty (`date<TAB>acct<TAB>1<TAB>`) is treated as a malformed currency and exits 2. I did not read it as "missing", so an empty value can't silently become USD.
+- In `reports`, a row whose `currency` value is empty or absent in a ragged row also counts as malformed.
+- The line number in `reports` errors is counted from the header (header is line 1), which is accurate for the CSV that `ledger` produces.
+- I did not bump `ledger`'s version (0.3.0) even though its output format changed.
+- The `cargo fmt --check` diffs in `ledger` are on lines I didn't touch, so I left them alone.

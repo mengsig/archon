@@ -1,0 +1,241 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WAYNWR254A8BB4WGRRY29D",
+      "repo": "repo_01M7WAY6M14N66SK6B26XTKB3Q",
+      "pipeline": "direct",
+      "title": "Implement retry_budget.py to SPEC.md and add focused tests",
+      "brief": "Implement `retry_budget.py` according to the repository's `SPEC.md`. Preserve the documented API exactly. Handle every specified error and boundary case, and add focused tests beyond the existing basics. Use only the Python standard library. Run the relevant tests and checks. Commit the completed work as requested; the repository pipeline will handle shipping. Acceptance criteria: (1) behavior and API match SPEC.md, including all specified errors and boundaries; (2) focused tests cover those cases and pass; (3) standard-library only; (4) commit is produced by the pipeline.",
+      "priority": "high",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7WAYNWR254A8BB4WGRRY29D",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T11:20:03.227835606Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T11:20:03.234740223Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T11:20:03.227835606Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WAYNX8VVQ4BKAF5QD8BGX0",
+        "summary": "Implemented SPEC.md-compliant retry scheduling with strict argument validation, saturating exponential backoff, uncapped Retry-After floors, and strict budget enforcement; added focused boundary tests. Before: retry_delay was a stub and all 3 existing tests errored. After: all 10 tests pass; py_compile and git diff --check pass. Independent review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WB1HVX7HBXY5JD1BA15KDB)\n\nSHIPPED: commit eb7d4ddd4451cbfec824e2164d2914e5a2a4f5d7 on the run branch"
+      },
+      "created_at": "2026-11-20T11:20:03.224391620Z",
+      "updated_at": "2026-11-20T11:22:21.660872337Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WAYNX8VVQ4BKAF5QD8BGX0",
+        "item": "qi_01M7WAYNWR254A8BB4WGRRY29D",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WAYP3GG22KJQ03WV8DDAKH",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/a88fd75c9ff1acf25b584eb5/.archon/data/worktrees/quality-retry-budget/qi_01M7WAYNWR254A8BB4WGRRY29D",
+        "branch": "archon/wgrry29d-implement-retry-budget-py-to-spec-md-and",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented SPEC.md-compliant retry scheduling with strict argument validation, saturating exponential backoff, uncapped Retry-After floors, and strict budget enforcement; added focused boundary tests. Before: retry_delay was a stub and all 3 existing tests errored. After: all 10 tests pass; py_compile and git diff --check pass. Independent review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WB1HVX7HBXY5JD1BA15KDB)\n\nSHIPPED: commit eb7d4ddd4451cbfec824e2164d2914e5a2a4f5d7 on the run branch"
+        },
+        "cost_usd": 0.01177064,
+        "started_at": "2026-11-20T11:20:03.418744685Z",
+        "finished_at": "2026-11-20T11:22:21.660872337Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WAYP39V10SKYBYVDMEAQ8P",
+        "run": "prun_01M7WAYNX8VVQ4BKAF5QD8BGX0",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WAYP3YH03SJBHX4HH27E94",
+        "aether_task": "tsk_01M7WAYP3YH03SJBHX4HH27E95",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented SPEC.md-compliant retry scheduling with strict argument validation, saturating exponential backoff, uncapped Retry-After floors, and strict budget enforcement; added focused boundary tests. Before: retry_delay was a stub and all 3 existing tests errored. After: all 10 tests pass; py_compile and git diff --check pass. Independent review passed with no findings. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v — 10 tests passed",
+            "python3 -m py_compile retry_budget.py test_retry_budget.py — passed",
+            "git diff --check — passed"
+          ],
+          "commit": "eb7d4ddd4451cbfec824e2164d2914e5a2a4f5d7",
+          "evidence": [
+            {
+              "after": "Ran 10 tests in 0.000s\nOK",
+              "before": "Ran 3 tests in 0.001s\nFAILED (errors=3)",
+              "caption": "Before, the three existing tests errored on NotImplementedError; after implementation, all ten focused tests pass.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "eb7d4ddd4451cbfec824e2164d2914e5a2a4f5d7",
+          "pr": {
+            "body": "Implemented the documented retry_delay API in retry_budget.py using only the standard library. Validation runs before exhaustion checks; capped backoff doubles incrementally without constructing huge powers; Retry-After remains an uncapped minimum; and a retry is rejected when its start would be at or beyond the budget. Added tests for invalid types/ranges, exhausted attempts, huge attempt counts, zero values, cap behavior, retry floors, and strict deadlines. Verified with python3 -m unittest -v (10 passed), python3 -m py_compile retry_budget.py test_retry_budget.py, and git diff --check. The pre-change suite had 3 errors because the implementation was a stub. No known limitations.",
+            "summary": "Implemented bounded retry scheduling and added focused boundary coverage. Before: the retry function raised NotImplementedError and all 3 existing tests failed. Now: all specified retry, validation, and budget behaviors are implemented and 10 tests pass.",
+            "title": "Implement bounded retry delay scheduling"
+          },
+          "review": {
+            "reviewed_head": "eb7d4ddd4451cbfec824e2164d2914e5a2a4f5d7",
+            "reviewer_agents": [
+              "agt_01M7WB1HVX7HBXY5JD1BA15KDB"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7WB1HVX7HBXY5JD1BA15KDB",
+                "base": "2194d2f1fa0704ce84c2148333f782b22b95614b",
+                "findings": 0,
+                "head": "eb7d4ddd4451cbfec824e2164d2914e5a2a4f5d7",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7WB1HVX7HBXY5JD1BA15KDB"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M7WB1HVX7HBXY5JD1BA15KDB",
+            "why": "Contained behavior change in a pure retry scheduling function. No persistence, concurrency, API break, or cross-cutting changes; checks pass and independent review found no issues."
+          },
+          "tree": "543a54aa079b957e537e4a86938d2ec310bfd6d6"
+        },
+        "cost_usd": 0.01177064,
+        "started_at": "2026-11-20T11:20:03.433318330Z",
+        "finished_at": "2026-11-20T11:22:18.955769887Z"
+      }
+    ],
+    "spent_usd": 0.01177064,
+    "gates": [],
+    "delegations": {
+      "stg_01M7WAYP39V10SKYBYVDMEAQ8P": {
+        "direct_usd": 0.00883882,
+        "delegated_usd": 0.0029318200000000003,
+        "agents": [
+          {
+            "agent": "agt_01M7WB1HVX7HBXY5JD1BA15KDB",
+            "parent": "agt_01M7WAYP3YH03SJBHX4HH27E94",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.0029318200000000003
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T11:20:03.227835606Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T11:20:03.234740223Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T11:20:03.227835606Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

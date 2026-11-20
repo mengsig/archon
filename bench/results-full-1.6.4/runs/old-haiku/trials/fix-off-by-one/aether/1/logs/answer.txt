@@ -1,0 +1,12 @@
+The bug is fixed and committed as `553e842`, and `python3 -m unittest` now passes all 3 tests.
+
+**The bug:** in `window.py`, the comprehension used `range(len(items) - size)`, which drops the final window. The fix is `range(len(items) - size + 1)`, since the last valid start index is `len(items) - size`.
+
+**Edge cases checked** beyond the tests:
+- Empty input returns `[]`.
+- A window larger than the list returns `[]`.
+- A window equal to the list length returns one window.
+- Size 1 returns each item as its own window.
+- Size ≤ 0 still raises `ValueError`.
+
+The commit uses your configured git identity (mengsig). I left off the Claude co-author trailer, because your CLAUDE.md says not to add Claude attribution to commits, and that instruction takes precedence over the attribution reminder. I also removed the `__pycache__/` directory that the test runs created, so the working tree is clean.

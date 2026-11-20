@@ -1,0 +1,22 @@
+The refactor is queued as item `qi_01M7W7N7E8DR2CEKDW1KZCPH7Q` on the `refactor-order-status` repository. I haven't touched the code myself.
+
+- **Pipeline:** `direct`, one agent makes and checks the change. Review is `standard`, since the status type is shared across the crate's public API.
+- **Shipping:** the repository ships `local`, so the agent commits on a local branch and does not push, as you asked.
+- **Acceptance:** `cargo test` passes, the status string literals appear only in `src/status.rs`, and errors, report output and ordering, and parsing match the baseline. The brief asks the agent to record that baseline before changing anything.
+
+I'll report the outcome when the item finishes.
+
+Done: Refactor order status String into OrderStatus enum. Replaced the orders crate's String order status with OrderStatus. Added src/status.rs (enum with as_str, Display, FromStr via ParseStatusError, and can_transition_to encoding the four lifecycle steps), re-exported OrderStatus and ParseStatusError from the crate root, and moved Order, billing, shipping and report onto the enum. Status string literals now appear only in src/status.rs; the three test assertions that spell status words are built from the enum's Display. Behaviour is unchanged: a probe covering all 16 state x operation combinations, the from_line parse matrix, report counts/ordering (still alphabetical), outstanding and ready_to_ship produces output byte-identical to the pre-change baseline (50 lines). Checks on head 00721678: cargo test passes (4 unit, 3 integration); cargo clippy --all-targets -D warnings exits 0. rustfmt is not clean on the original commit either, so I did not reformat. Commit 00721678 is local on archon/1kzcph7q-refactor-order-status-string-into-orders, not pushed. Public API breaks, by design: Order::status is now OrderStatus, and report::status_counts returns Vec<(OrderStatus, usize)>. Non-blocking follow-ups from review: add a shipped order to the report test so its ordering is directly tested; the reviewer also noted the status_counts API change beyond the brief. Nothing is left running; the reviewer's process had already exited. Review: pass, 0 blocking findings. REVIEW: pass by agt_01M7W7TFKPJJDFQPJXSBPR972R.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W7TFKPJJDFQPJXSBPR972R)
+
+SHIPPED: commit 00721678515a7ee996edfe9cb85da975bc08a904 on the run branch
+Branch `archon/1kzcph7q-refactor-order-status-string-into-orders` in /home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/e6cf9cc5d981c0346e0a9441/refactor-order-status holds it (7 files changed, 155 insertions(+), 38 deletions(-)). Review: `archon diff qi_01M7W7N7E8DR2C…
+
+Freed 0.0 GiB of build output: item qi_01M7W7N7E8DR2CEKDW1KZCPH7Q ended and its cargo target directory went.
+
+Replaced the orders crate's String order status with OrderStatus. Added src/status.rs (enum with as_str, Display, FromStr via ParseStatusError, and can_transition_to encoding the four lifecycle steps), re-exported OrderStatus and ParseStatusError from the crate root, and moved Order, billing, shipping and report onto the enum. Status string literals now appear only in src/status.rs; the three test assertions that spell status words are built from the enum's Display. Behaviour is unchanged: a probe covering all 16 state x operation combinations, the from_line parse matrix, report counts/ordering (still alphabetical), outstanding and ready_to_ship produces output byte-identical to the pre-change baseline (50 lines). Checks on head 00721678: cargo test passes (4 unit, 3 integration); cargo clippy --all-targets -D warnings exits 0. rustfmt is not clean on the original commit either, so I did not reformat. Commit 00721678 is local on archon/1kzcph7q-refactor-order-status-string-into-orders, not pushed. Public API breaks, by design: Order::status is now OrderStatus, and report::status_counts returns Vec<(OrderStatus, usize)>. Non-blocking follow-ups from review: add a shipped order to the report test so its ordering is directly tested; the reviewer also noted the status_counts API change beyond the brief. Nothing is left running; the reviewer's process had already exited. Review: pass, 0 blocking findings. REVIEW: pass by agt_01M7W7TFKPJJDFQPJXSBPR972R.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W7TFKPJJDFQPJXSBPR972R)
+
+SHIPPED: commit 00721678515a7ee996edfe9cb85da975bc08a904 on the run branch

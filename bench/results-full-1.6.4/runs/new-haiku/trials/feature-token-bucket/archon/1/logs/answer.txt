@@ -1,0 +1,26 @@
+Queued the rate limiter (ratelimit.py per SPEC.md) on feature-token-bucket as one `direct` item, review standard, local commit only (no push). Because claude-code's seven-day quota is 76% used at 30% elapsed, I set the implementer to balanced tier at medium effort, running one item at a time.
+
+I've queued the rate limiter as one item, `qi_01M7W24RJM51SDPEYV96S58KVB`, on the `feature-token-bucket` repository. I did not edit the code myself; the item's agent will.
+
+- **Pipeline:** `direct`, one agent that implements, tests and commits.
+- **Review:** `standard`, because the module is new and the spec's edge cases are easy to get wrong.
+- **Model:** balanced tier at medium effort. The spec is precise and the module is small, and claude-code's seven-day quota is already at 76% with 30% of the window elapsed.
+- **Shipping:** the repository ships local, so the work lands as a local commit with no push.
+- **Brief:** it carries your request verbatim, plus acceptance criteria. Each spec requirement must be implemented, the edge-case tests added, existing tests kept passing, standard library only.
+
+The spec mentions no threading or concurrency, so I did not route the item to the adaptive pipeline. I also posted the model choice to your chat as a decision. I'll report the outcome when the item finishes.
+
+Done: Implement rate limiter per SPEC.md in ratelimit.py. Implemented SPEC.md in ratelimit.py: TokenBucket (validation, starts full, continuous capped refill, non-consuming failed acquire, available, wait_time, clock-backwards rule) and KeyedLimiter (one bucket per key, LRU eviction at max_keys, try_acquire and wait_time count as use, evicted keys return full, len). Standard library only; functions under 60 lines; invalid n or parameters raise before any state changes. Added 22 tests to test_ratelimit.py for the spec's edge cases; the 3 original tests are unchanged. Checks: `python3 -m unittest -v test_ratelimit` gave 25 tests, all OK, on head a132852 (tree 2e993876f1bd6d25bbf8697723e379cde22c0bec). Review: one reviewer (agt_01M7W26VYHZM1K4VT5GY23G441) passed head a132852 with no blocking findings. Open, non-blocking: wait_time can be one float ULP short under rounding, so try_acquire(n) right after waiting wait_time(n) may fail once (e.g. TokenBucket(3, 0.7)); not covered by tests. Not pushed. Reviewer's leftover process (PID 2906168) was stopped by PID; nothing else is running.
+REVIEW: pass by agt_01M7W26VYHZM1K4VT5GY23G441 on a132852
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W26VYHZM1K4VT5GY23G441)
+
+SHIPPED: commit a1328529c9a37b15700b2a7e660127d0627003ab on the run branch
+Branch `archon/96s58kvb-implement-rate-limiter-per-spec-md-in-ra` in /home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/3ec9b0b210222fbf1b3b075f/feature-token-bucket holds it (2 files changed, 274 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W24RJM51SDPEYV96S58KVB`; land it in `main`: `archon merge qi_01M7W24RJM51SDPEYV96S58KVB`.
+
+Implemented SPEC.md in ratelimit.py: TokenBucket (validation, starts full, continuous capped refill, non-consuming failed acquire, available, wait_time, clock-backwards rule) and KeyedLimiter (one bucket per key, LRU eviction at max_keys, try_acquire and wait_time count as use, evicted keys return full, len). Standard library only; functions under 60 lines; invalid n or parameters raise before any state changes. Added 22 tests to test_ratelimit.py for the spec's edge cases; the 3 original tests are unchanged. Checks: `python3 -m unittest -v test_ratelimit` gave 25 tests, all OK, on head a132852 (tree 2e993876f1bd6d25bbf8697723e379cde22c0bec). Review: one reviewer (agt_01M7W26VYHZM1K4VT5GY23G441) passed head a132852 with no blocking findings. Open, non-blocking: wait_time can be one float ULP short under rounding, so try_acquire(n) right after waiting wait_time(n) may fail once (e.g. TokenBucket(3, 0.7)); not covered by tests. Not pushed. Reviewer's leftover process (PID 2906168) was stopped by PID; nothing else is running.
+REVIEW: pass by agt_01M7W26VYHZM1K4VT5GY23G441 on a132852
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W26VYHZM1K4VT5GY23G441)
+
+SHIPPED: commit a1328529c9a37b15700b2a7e660127d0627003ab on the run branch

@@ -1,0 +1,23 @@
+I've queued the refactor as item `qi_01M7WB7MRBHM7BVKVFZ54DD8A3` on repo `refactor-order-status`, using the `direct` pipeline with standard review. It is queued, not yet running, and I haven't edited the repository myself.
+
+- **Pipeline:** `refactor` fixes its review at strict, and the item can't override that, so I used `direct`. Its one agent makes the change, checks it and commits it.
+- **Commit:** the repo ships locally (`ship: local`), so the commit lands on the item's branch and nothing is pushed.
+- **Acceptance:** `cargo test` passes, the status string literals appear only in `src/status.rs`, and report output and parse errors match the pre-change baseline. The brief tells the agent to record that baseline before editing.
+- **Budget:** capped at the default budget, since I didn't set one.
+
+On the quota pace: claude-code's seven-day window is at 77% with about 32% of it elapsed, so it would run out on 2026-11-21 before its 2026-11-25 reset. I did not pin a provider or model for this item, so it uses the configured default, which may be claude-code. If you want to keep claude-code free for other work, I can move this item to another provider or lower its effort.
+
+Done: Refactor orders crate order status from String to OrderStatus enum. Refactored the orders crate so Order::status is an OrderStatus enum (new src/status.rs with Display, FromStr/ParseStatusError, as_str and can_transition_to), re-exported from the crate root. Status string literals now appear only in src/status.rs. Committed locally as 8421995 on archon/z54dd8a3-refactor-orders-crate-order-status-from (tree e742de8), not pushed. Before/after probe of pay/ship/cancel errors, status counts order, outstanding/ready lists, to_line and from_line (including all parse-error messages) was byte-identical. cargo fmt --check, cargo clippy --all-targets -D warnings and cargo test (3 unit + 3 integration) pass. Review: one reviewer (agt_01M7WBAP3XJ1S4Y503ZYW09KMH) passed head 8421995 and rated risk high, because Order.status and report::status_counts change public types. Open for the human: Order's derived Debug now prints `status: Pending` instead of `status: "pending"`, and downstream callers of the public types will need updating.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WBAP3XJ1S4Y503ZYW09KMH)
+
+SHIPPED: commit 8421995ffabb6d5fb46fec81c3fa164bd7e954c2 on the run branch
+Branch `archon/z54dd8a3-refactor-orders-crate-order-status-from` in /home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/d254ad8190bb312d0059a368/refactor-order-status holds it (7 files changed, 186 insertions(+), 49 deletions(-)). Review: `archon diff qi_01M7WB7MRBHM7BVKVFZ54DD8A3`; land it in `main`: `archon merge qi_01M7WB7MRBHM7BVKVFZ54DD8A3`.
+
+Freed 0.0 GiB of build output: item qi_01M7WB7MRBHM7BVKVFZ54DD8A3 ended and its cargo target directory went.
+
+Refactored the orders crate so Order::status is an OrderStatus enum (new src/status.rs with Display, FromStr/ParseStatusError, as_str and can_transition_to), re-exported from the crate root. Status string literals now appear only in src/status.rs. Committed locally as 8421995 on archon/z54dd8a3-refactor-orders-crate-order-status-from (tree e742de8), not pushed. Before/after probe of pay/ship/cancel errors, status counts order, outstanding/ready lists, to_line and from_line (including all parse-error messages) was byte-identical. cargo fmt --check, cargo clippy --all-targets -D warnings and cargo test (3 unit + 3 integration) pass. Review: one reviewer (agt_01M7WBAP3XJ1S4Y503ZYW09KMH) passed head 8421995 and rated risk high, because Order.status and report::status_counts change public types. Open for the human: Order's derived Debug now prints `status: Pending` instead of `status: "pending"`, and downstream callers of the public types will need updating.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WBAP3XJ1S4Y503ZYW09KMH)
+
+SHIPPED: commit 8421995ffabb6d5fb46fec81c3fa164bd7e954c2 on the run branch

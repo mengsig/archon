@@ -1,0 +1,16 @@
+`ledger.py` now implements `SPEC.md`, the tests are expanded, and the work is committed as `183ad0d`. All 24 tests pass on two runs (`python3 -m unittest test_ledger`).
+
+**Implementation**
+- Each `Ledger` holds one `threading.Lock`. Every `transfer` and `snapshot` runs under it, so checks and both writes are indivisible and snapshots never see a half-finished transfer. With only one lock there is no lock ordering to get wrong, so opposite transfers cannot deadlock.
+- Construction and `transfer` validate with `type(x) is int` and `type(name) is str`. That rejects booleans and `int`/`str` subclasses, which the spec's "built-in" wording calls for.
+- The input dict is copied and re-validated from the copy. `snapshot()` returns a fresh dict.
+- Amount is validated before any account lookup. Same-account transfers return `balance >= amount` and never write, so they cannot overflow.
+
+**Choices the spec did not settle**
+- A non-string account name such as `1` or `["a"]` raises `KeyError`, the same as an unknown name, rather than `ValueError`. The spec only defines the amount and balance errors, so I treated the name as an unknown account.
+- I added two post-write asserts in `transfer` that each balance stays in `[0, MAX_BALANCE]`. They are cheap and guard the invariant that matters most.
+
+**Tests**
+The original two tests are kept. The new tests cover invalid constructor inputs, boundary balances, copy isolation for input and snapshots, invalid amounts, the validate-amount-first order, overflow at and past `MAX_BALANCE`, same-account behaviour, and four threaded cases. Those cover opposite transfers, a snapshot-sum invariant under contention, exact success counts when draining one account, and a deadlock timeout. The threaded tests use fixed round counts, no randomness, and no timing calculations.
+
+Git status still shows an untracked `__pycache__/` from the test run. I did not commit it, and I left it in place.

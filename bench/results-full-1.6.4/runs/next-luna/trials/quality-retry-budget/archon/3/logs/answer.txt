@@ -1,0 +1,14 @@
+Queued as `qi_01M7WDGH3CNRWSEGK9ECGC90MW` in the `direct` pipeline. It will implement the spec, add focused tests, run them, and commit the work.
+
+Done: Implement retry_budget.py from SPEC.md with focused tests. Implemented retry_delay with full argument validation, capped exponential backoff that saturates without constructing huge powers, an uncapped Retry-After minimum, and the strict budget cutoff. Added focused boundary and invalid-input tests. `python -m unittest -v` passed all 11 tests; `python -m py_compile retry_budget.py test_retry_budget.py` and `git diff --check` passed. Independent review passed with no findings. Commit: 746238f52a3628d709be5eab95ca782eae990b29. No known gaps.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WDK9JY138JY1HCRSPX83YF)
+
+SHIPPED: commit 746238f52a3628d709be5eab95ca782eae990b29 on the run branch
+Branch `archon/ecgc90mw-implement-retry-budget-py-from-spec-md-w` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/02e296f2ae49933421acb641/quality-retry-budget holds it (2 files changed, 78 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7WDGH3CNRWSEGK9ECGC90MW`; land it in `main`: `archon merge qi_01M7WDGH3CNRWSEGK9ECGC90MW`.
+
+Implemented retry_delay with full argument validation, capped exponential backoff that saturates without constructing huge powers, an uncapped Retry-After minimum, and the strict budget cutoff. Added focused boundary and invalid-input tests. `python -m unittest -v` passed all 11 tests; `python -m py_compile retry_budget.py test_retry_budget.py` and `git diff --check` passed. Independent review passed with no findings. Commit: 746238f52a3628d709be5eab95ca782eae990b29. No known gaps.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WDK9JY138JY1HCRSPX83YF)
+
+SHIPPED: commit 746238f52a3628d709be5eab95ca782eae990b29 on the run branch

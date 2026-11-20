@@ -1,0 +1,45 @@
+**Verdict: do not ship this as-is.** The `verify` function accepts forged tokens.
+
+I reviewed `src/tokens.js` in the `review-seeded-bug` mirror, plus `src/encoding.js`. I changed nothing.
+
+**Caveats first:**
+- **No `session-lib` repo is registered.** The only registered repo is `review-seeded-bug`, and its mirror has `src/tokens.js` with HMAC-SHA256 code at base commit `85663ad` ("bench fixture"). I assumed that is the file you meant. If the production version differs (for example, uncommitted work), these findings may not apply to it.
+- **I did not get a second reviewer.** My delegation tier is fast, so I could not start the balanced-tier reviewer I wanted. I did the review directly.
+
+## Findings
+
+**1. `verify()`, `src/tokens.js:27`: critical, forgery with an empty signature.**
+The check is `expected.startsWith(signature)`, a prefix match, not an equality check.
+- Input: `base64url({"sub":"admin","exp":<far future ms>}) + "."`. `split('.')` gives `signature === ""`, and `startsWith("")` is always true.
+- Result: I ran this against the mirror's code and `verify` returned `{"sub":"admin",...}`. Any caller that trusts the payload is open to full authentication bypass with no secret.
+- Fix direction: compare full digests with `crypto.timingSafeEqual` after a length check, and reject a missing or empty signature.
+
+**2. `verify()`, `src/tokens.js:27`: medium, timing side channel.**
+Even with the prefix bug fixed, a plain `startsWith` or `===` comparison is not constant-time. `timingSafeEqual` removes that.
+
+**3. `verify()`, `src/tokens.js:28-29`: medium, exceptions instead of `null`.**
+The contract says "null otherwise", but malformed input throws:
+- Input `"!!!."` throws `SyntaxError: Unexpected end of JSON input`.
+- Input `base64url("null") + "."` throws `Cannot read properties of null (reading 'exp')`. Combined with finding 1, that is an unsigned input that crashes the request path. Otherwise it can surface as a 500 or a DoS.
+- Fix direction: validate the decoded payload is a plain object inside a try that returns `null`.
+
+**4. `verify()`, `src/tokens.js:22-26`: medium, secret not validated on verify.**
+`sign` rejects secrets under 32 characters, but `verify` does not. A missing or empty secret makes `createHmac` use an empty key, so tokens signed with an empty key would verify. I did not run this case; it follows from the code.
+
+**5. `verify()`, `src/tokens.js:24`: low, extra segments ignored.**
+`token.split('.')` drops anything after the second segment, so `body.sig.junk` is accepted. The MAC still covers `body`, so this is not directly exploitable, but strict parsing (exactly two segments) is safer.
+
+**6. `sign()`, `src/tokens.js:14-16`: low, unvalidated `ttlSeconds` and `now`.**
+`NaN` or `Infinity` TTLs serialize `exp` to `null`, so such tokens are silently rejected at verify time rather than failing at signing. Validate these inputs in `sign`.
+
+**7. `sign()`, `src/tokens.js:15`: low, weak secret check.**
+A 32-character length check does not enforce entropy: `"a".repeat(32)` passes. Document that the secret must be random, or check entropy.
+
+## What looks correct
+- The HMAC key is fixed and there is no `alg` field, so algorithm confusion is not possible.
+- `iat` and `exp` are set after the spread of caller claims, so callers cannot override them.
+- Expiry is checked against `exp` in milliseconds, consistent with `sign`.
+- `encoding.js` is a plain base64url round-trip with no issues of its own.
+
+## Suggested before shipping
+Fix findings 1 to 4 and add tests for: empty signature, truncated signature, a `null` or non-object payload, malformed JSON, and a secret shorter than 32 characters on verify.

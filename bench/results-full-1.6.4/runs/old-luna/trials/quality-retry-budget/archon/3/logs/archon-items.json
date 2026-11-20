@@ -1,0 +1,182 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WCGNQ4NV8XSWXZFDXGCZ9Z",
+      "repo": "repo_01M7WCG5TE2NBHCWZYR0357RJD",
+      "pipeline": "direct",
+      "title": "Implement retry_budget.py per SPEC.md with focused boundary tests",
+      "brief": "Implement `retry_budget.py` according to the repository's `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests beyond the existing basic coverage. Use only the Python standard library. Run the relevant tests/checks and commit the completed work on the item branch. Acceptance criteria: the implementation matches the spec including all error and boundary behavior; focused tests exercise those cases; existing tests pass; commit is present. Do not change unrelated files.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WCGNX7RV2EBW52ZE88HXRZ",
+        "summary": "Implemented retry_delay with full built-in-int validation, efficient capped exponential backoff, uncapped Retry-After floors, and strict budget checks. Added focused boundary and exhaustive small-range regression tests. `python -m unittest -v` passes all 10 tests and `git diff --check` is clean. Initial review found and helped fix an early-saturation bug; the corrective delta review passed. Commits: 834f9b4 and a779cb8.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCJS20MKAHDFVWBCHRFXS9), codex/gpt-6-luna (agent agt_01M7WCNQFT5HS2393XH66Y4KE1)\n\nSHIPPED: commit a779cb8b85b8bce54f0355a9ddd1e4978700cb53 on the run branch"
+      },
+      "created_at": "2026-11-20T11:47:21.629261920Z",
+      "updated_at": "2026-11-20T11:51:07.313905276Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WCGNX7RV2EBW52ZE88HXRZ",
+        "item": "qi_01M7WCGNQ4NV8XSWXZFDXGCZ9Z",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WCGP501WW5B1SWGMKH7YYH",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/0d28a17d6745316319bfec20/.archon/data/worktrees/quality-retry-budget/qi_01M7WCGNQ4NV8XSWXZFDXGCZ9Z",
+        "branch": "archon/fdxgcz9z-implement-retry-budget-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented retry_delay with full built-in-int validation, efficient capped exponential backoff, uncapped Retry-After floors, and strict budget checks. Added focused boundary and exhaustive small-range regression tests. `python -m unittest -v` passes all 10 tests and `git diff --check` is clean. Initial review found and helped fix an early-saturation bug; the corrective delta review passed. Commits: 834f9b4 and a779cb8.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCJS20MKAHDFVWBCHRFXS9), codex/gpt-6-luna (agent agt_01M7WCNQFT5HS2393XH66Y4KE1)\n\nSHIPPED: commit a779cb8b85b8bce54f0355a9ddd1e4978700cb53 on the run branch"
+        },
+        "cost_usd": 0.01938596,
+        "started_at": "2026-11-20T11:47:21.847694450Z",
+        "finished_at": "2026-11-20T11:51:07.313905276Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WCGP49ACVWX85T3RAQC6FF",
+        "run": "prun_01M7WCGNX7RV2EBW52ZE88HXRZ",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7WCGP585X05XPWV81EXNPMP",
+        "aether_task": "tsk_01M7WCGP585X05XPWV81EXNPMQ",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented retry_delay with full built-in-int validation, efficient capped exponential backoff, uncapped Retry-After floors, and strict budget checks. Added focused boundary and exhaustive small-range regression tests. `python -m unittest -v` passes all 10 tests and `git diff --check` is clean. Initial review found and helped fix an early-saturation bug; the corrective delta review passed. Commits: 834f9b4 and a779cb8.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (10 tests passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "a779cb8b85b8bce54f0355a9ddd1e4978700cb53",
+          "evidence": [
+            {
+              "caption": "Final focused test suite and whitespace check pass.",
+              "kind": "output",
+              "text": "Ran 10 tests in 0.031s\nOK\ngit diff --check: passed"
+            }
+          ],
+          "local_commit": "a779cb8b85b8bce54f0355a9ddd1e4978700cb53",
+          "pr": {
+            "body": "Implemented the documented pure function in retry_budget.py using only the standard library. Added tests for invalid values and validation ordering, exhaustion, zero values, uncapped Retry-After, strict budget boundaries, huge attempts, and saturation progression across small input ranges. Checks: `python -m unittest -v` (10 passed) and `git diff --check` (passed). Reviewer found an early-saturation defect in the initial commit; corrected in a779cb8 and delta review passed.",
+            "summary": "Implemented bounded retry scheduling with validation and focused boundary coverage. Before: retry_delay was unimplemented; now: waits follow the specified backoff, Retry-After, attempt, and budget rules.",
+            "title": "Implement retry budget scheduling"
+          },
+          "review": {
+            "reviewed_head": "a779cb8b85b8bce54f0355a9ddd1e4978700cb53",
+            "reviewer_agents": [
+              "agt_01M7WCJS20MKAHDFVWBCHRFXS9",
+              "agt_01M7WCNQFT5HS2393XH66Y4KE1"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7WCJS20MKAHDFVWBCHRFXS9",
+                "base": "4058e90472fc2e25e4754e328cd4f1c3cd7f6fa3",
+                "findings": 1,
+                "head": "834f9b4b6b6226c25e4b3bfdc98b88116b94a853",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7WCNQFT5HS2393XH66Y4KE1",
+                "base": "834f9b4b6b6226c25e4b3bfdc98b88116b94a853",
+                "findings": 0,
+                "head": "a779cb8b85b8bce54f0355a9ddd1e4978700cb53",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7WCJS20MKAHDFVWBCHRFXS9",
+              "agt_01M7WCNQFT5HS2393XH66Y4KE1"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M7WCNQFT5HS2393XH66Y4KE1",
+            "why": "Contained behavior change in retry_budget.py with focused tests in test_retry_budget.py. The reviewer confirmed the corrected saturation calculation and all focused tests pass."
+          },
+          "tree": "f57908da27a7f906264f39d57773daf575d5d8e5"
+        },
+        "cost_usd": 0.01938596,
+        "started_at": "2026-11-20T11:47:21.865062513Z",
+        "finished_at": "2026-11-20T11:51:04.300132762Z"
+      }
+    ],
+    "spent_usd": 0.01938596,
+    "gates": [],
+    "delegations": {
+      "stg_01M7WCGP49ACVWX85T3RAQC6FF": {
+        "direct_usd": 0.012721820000000002,
+        "delegated_usd": 0.006664140000000001,
+        "agents": [
+          {
+            "agent": "agt_01M7WCJS20MKAHDFVWBCHRFXS9",
+            "parent": "agt_01M7WCGP585X05XPWV81EXNPMP",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00418756
+          },
+          {
+            "agent": "agt_01M7WCNQFT5HS2393XH66Y4KE1",
+            "parent": "agt_01M7WCGP585X05XPWV81EXNPMP",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0024765800000000004
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

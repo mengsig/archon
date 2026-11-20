@@ -1,0 +1,7 @@
+Implemented multi-currency support in both repositories. `ledger` accepts an optional currency column, defaults to USD, and exits 2 for malformed currency codes. `reports` totals by account and currency, sorts both fields, and supports older CSV without a currency column. Updated both READMEs.
+
+- `cargo test` passed.
+- `python3 -m unittest` passed (4 tests).
+- Both repositories are clean and committed:
+  - `ledger`: `ed3ee40` — Add currency support to ledger exports
+  - `reports`: `64de830` — Group reports by currency

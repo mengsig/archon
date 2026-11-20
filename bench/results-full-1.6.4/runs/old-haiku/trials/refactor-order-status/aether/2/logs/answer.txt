@@ -1,0 +1,27 @@
+Refactored the `orders` crate's order status from `String` to an `OrderStatus` enum and committed it as eb78848 on main. `cargo test` passes (3 integration tests plus 3 new unit tests in status.rs, all green); clippy is clean. Changes:
+
+- New `src/status.rs`: `OrderStatus` (Debug, Clone, Copy, PartialEq, Eq, Hash) with `as_str`, `can_transition_to` (pending→paid, pending→cancelled, paid→shipped, paid→cancelled), `Display`, and `FromStr` with `ParseStatusError` (implements `std::error::Error`, message `unknown order status "<input>"`). The status string literals now appear only in this file.
+- `Order::status` is `OrderStatus`; `pay`, `ship`, `cancel` use `can_transition_to`, and their error messages are unchanged.
+- `lib.rs` keeps `mod status;` private and re-exports `OrderStatus` and `ParseStatusError` from the crate root.
+- `report::from_line` keeps the exact `unknown status {:?}` error text.
+
+Choices to review:
+- `report::status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. This is a public signature change. The output is still sorted by name, because the map is keyed by `as_str()`; the enum's derived `Ord` would sort by declaration order instead. The existing test still compiles.
+- `tests/orders.rs` is unchanged and still contains the lowercase status strings, since those tests check the rendered output.
+- I added no `debug_assert`s; the enum enforces the invariants at the type level.
+- `cargo` lives in `~/.cargo/bin`, which is not on the default PATH in this shell.
+- The commit uses the repo's configured git identity, `mengsig <marcus.engsig@tii.ae>`. That email differs from the `mengsig@icloud.com` in your account context, so check it if you expected the other one.
+
+The status refactor is committed as `eb78848` on `main`. `cargo test` passes: the 3 existing integration tests plus 3 new unit tests in `status.rs`. Clippy is clean.
+
+- **New `src/status.rs`:** `OrderStatus` with `as_str`, `can_transition_to` (the four allowed edges only), `Display`, and `FromStr` with `ParseStatusError`. The status string literals now appear only in this file.
+- **Behaviour preserved:** `pay`, `ship` and `cancel` use `can_transition_to`, so their error messages are unchanged. `from_line` keeps the exact `unknown status {:?}` text.
+- **Re-exports:** `OrderStatus` and `ParseStatusError` are re-exported from the crate root.
+
+Decisions for you to review:
+
+- **Public signature change:** `report::status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. It is still sorted by name. I key the map by `as_str()` because the enum's derived `Ord` would sort by declaration order.
+- **Test literals:** `tests/orders.rs` still contains the lowercase status strings, since those tests check the rendered output.
+- **Assertions:** I added no `debug_assert`s, since the enum already enforces the invariants at the type level.
+- **Toolchain:** `cargo` is in `~/.cargo/bin`, which is not on the default PATH in this shell.
+- **Commit identity:** the commit uses the repo's configured identity, `mengsig <marcus.engsig@tii.ae>`. Your account email is `mengsig@icloud.com`, so check which one you wanted.

@@ -1,0 +1,369 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WGS8BQNQN58ADCM6W99VQ6",
+      "repo": "repo_01M7WGQZ78CY2CBB1CWSPVS2ZE",
+      "pipeline": "refactor",
+      "title": "Replace order status strings with OrderStatus",
+      "brief": "Refactor the orders crate to use a proper typed order status, preserving all observable behavior. Add src/status.rs with `pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }`, deriving Debug, Clone, Copy, PartialEq, Eq, Hash. Implement `as_str(self) -> &'static str` mapping to lowercase names, Display with the same output, FromStr with `type Err = ParseStatusError` where the public error implements std::error::Error and its message names the rejected input, and `can_transition_to(self, next: OrderStatus) -> bool` allowing exactly pending→paid, pending→cancelled, paid→shipped, paid→cancelled. Change Order::status to OrderStatus; re-export OrderStatus and ParseStatusError at crate root. Use the enum throughout the crate, so the four lowercase status string literals appear only in src/status.rs (including production code; preserve current report parsing/error behavior and output/order). Keep current tests passing and add or adapt coverage for parsing, formatting, transition rules, and error input. Run `cargo test` in the worktree. Commit the completed changes as requested by the operator. Acceptance: cargo test passes; all existing observable behavior including error text, report output/order, and parsing stays the same; only src/status.rs contains those status-name literals.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "baseline": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "refactor": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "review": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "verify": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WGS9APHDNS3704198ANH49",
+        "summary": "Reviewed baseline-to-HEAD changes and current worktree. The typed OrderStatus design meets the structural goal: status-name mapping/parsing are cohesive in src/status.rs, consumers compare enum variants, and report parsing/formatting preserves existing behavior and ordering. Characterization assertions remain intact; the only pre-existing test edit is rustfmt wrapping. Confirmed the worktree is clean and rg finds the four quoted status literals only in src/status.rs. Ran cargo test (3 unit, 5 integration tests pass), cargo build, cargo clippy --all-targets -- -D warnings, cargo fmt --check, git diff --check, and cargo rustc --lib -- --crate-type lib; all pass. No findings. The required public Order.status type change is an intentional API migration; remaining coupling is limited to expected report formatting/parsing through OrderStatus.\n\nSHIPPED: commit 68c59b178ab9905279420feb43f278fdef7b27bc on the run branch"
+      },
+      "created_at": "2026-11-20T13:01:57.949373918Z",
+      "updated_at": "2026-11-20T13:07:31.185250561Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WGS9APHDNS3704198ANH49",
+        "item": "qi_01M7WGS8BQNQN58ADCM6W99VQ6",
+        "pipeline": "refactor",
+        "shipped": true,
+        "aether_run": "run_01M7WGS9MTXPV4QDDA6QNJJS39",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-ezf9wwc6/archon-bench/work/20261120T123040Z/c3bc0bab30d9f4386fe9d90e/.archon/data/worktrees/refactor-order-status/qi_01M7WGS8BQNQN58ADCM6W99VQ6",
+        "branch": "archon/m6w99vq6-replace-order-status-strings-with-orders",
+        "state": {
+          "state": "succeeded",
+          "summary": "Reviewed baseline-to-HEAD changes and current worktree. The typed OrderStatus design meets the structural goal: status-name mapping/parsing are cohesive in src/status.rs, consumers compare enum variants, and report parsing/formatting preserves existing behavior and ordering. Characterization assertions remain intact; the only pre-existing test edit is rustfmt wrapping. Confirmed the worktree is clean and rg finds the four quoted status literals only in src/status.rs. Ran cargo test (3 unit, 5 integration tests pass), cargo build, cargo clippy --all-targets -- -D warnings, cargo fmt --check, git diff --check, and cargo rustc --lib -- --crate-type lib; all pass. No findings. The required public Order.status type change is an intentional API migration; remaining coupling is limited to expected report formatting/parsing through OrderStatus.\n\nSHIPPED: commit 68c59b178ab9905279420feb43f278fdef7b27bc on the run branch"
+        },
+        "cost_usd": 0.028400640000000008,
+        "started_at": "2026-11-20T13:01:58.189031051Z",
+        "finished_at": "2026-11-20T13:07:31.185250561Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WGS9KT0JXX6P7S8CFCE9F5",
+        "run": "prun_01M7WGS9APHDNS3704198ANH49",
+        "stage_id": "baseline",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7WGS9NBSA1MZEJ69ZBD27PM",
+        "aether_task": "tsk_01M7WGS9NBSA1MZEJ69ZBD27PN",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Baseline/characterization complete for the OrderStatus refactor. Structural goal: replace Order.status String with a public typed OrderStatus, expose ParseStatusError, and centralize the four status-name literals while preserving observable behavior. Original baseline: 8113a5b9e7042807c360c8679905c8662e7a61e1. Added characterization tests only in tests/orders.rs and committed separately as d9145a155d00e0fdf59bf68e3f0384e803476723; no production files changed. The worktree is clean on archon/m6w99vq6-replace-order-status-strings-with-orders.\n\nChecks: before edits, `CARGO_TARGET_DIR=/home/mengsig/.local/share/archon-bench/f164-ezf9wwc6/archon-bench/work/20261120T123040Z/c3bc0bab30d9f4386fe9d90e/.archon/data/cache/refactor-order-status/items/qi_01M7WGS8BQNQN58ADCM6W99VQ6/cargo-target cargo test` passed (3 integration tests). After tests, the same command passed (5 integration tests). No README, CONTRIBUTING guide, Makefile, CI config, or AGENTS.md was present in the searched workspace; Cargo.toml identifies a standalone Rust 2021 crate. The last checked tree is 71a775bf6591eb2b6231b8470597781912e087c4.\n\nCoverage now pins lifecycle output/state, illegal payment/shipping messages, status counts and sorting, outstanding totals, ready-to-ship input order, report serialization/round-trip, whole-line trimming, exact unknown-status and wrong-field-count errors, and failed cancellation's exact message and unchanged state. Existing test coverage did not directly pin those report failure details or shipped cancellation behavior; enum parsing/Display/transition behavior cannot be tested until implementation and remains for refactor/verifier stages. Public surface to preserve: `Order::{new,is_open,cancel}` and public fields `id`, `customer`, `total_cents`, `status`; `billing::{pay,outstanding_cents}`, `shipping::{ship,ready_to_ship}`, and `report::{status_counts,to_line,from_line}`. Current report format is `id,customer,total_cents,status`, sorted status-count output is lexicographic, and report parser trims the entire line then requires exactly four comma-separated fields and exact known status spelling. Required signature change is `Order.status: OrderStatus`; crate-root enum/error re-exports are new surface. Only explicitly allowed contract changes are those required by this requested typed status API; no behavior changes were authorized. No feedback was supplied.",
+        "structured": null,
+        "cost_usd": 0.00572764,
+        "started_at": "2026-11-20T13:01:58.266370028Z",
+        "finished_at": "2026-11-20T13:03:05.186634277Z"
+      },
+      {
+        "id": "stg_01M7WGVB07A0PK2HS60767KV15",
+        "run": "prun_01M7WGS9APHDNS3704198ANH49",
+        "stage_id": "refactor",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7WGVB0GJGDW68ADQ49HADCS",
+        "aether_task": "tsk_01M7WGVB0GJGDW68ADQ49HADCT",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented and committed the typed OrderStatus refactor. Added the public enum, parsing error, formatting, and transition rules; changed order lifecycle and reporting code to use the enum while retaining report parsing behavior and existing error/output text. `cargo test` passed (3 unit and 5 integration tests). Characterization commit d9145a1 and baseline 8113a5b remain unchanged. Commit: 2cd38a6c41a3bb03681bec1ec0727bf5d78bdf7b; worktree clean. Existing tests were not modified. Whole-crate `cargo fmt --check` reports formatting differences in pre-existing `tests/orders.rs` plus baseline formatting in edited files; changed production Rust files were formatted individually. No feedback findings were supplied.",
+        "structured": {
+          "checks": [
+            "CARGO_TARGET_DIR=/home/mengsig/.local/share/archon-bench/f164-ezf9wwc6/archon-bench/work/20261120T123040Z/c3bc0bab30d9f4386fe9d90e/.archon/data/cache/refactor-order-status/items/qi_01M7WGS8BQNQN58ADCM6W99VQ6/cargo-target cargo test (passed: 3 unit tests, 5 integration tests, doc tests)",
+            "git diff --check (passed)",
+            "rg -n '\"(pending|paid|shipped|cancelled)\"' src (all matches are in src/status.rs)",
+            "cargo fmt --check (reports formatting differences, including pre-existing tests/orders.rs; changed production files were formatted individually)"
+          ],
+          "commit": "2cd38a6c41a3bb03681bec1ec0727bf5d78bdf7b",
+          "evidence": {
+            "none": "This is an internal representation refactor with no meaningful visual or numeric before/after artifact; behavior is demonstrated by the passing test suite."
+          },
+          "pr": {
+            "body": "Added src/status.rs with OrderStatus, ParseStatusError, FromStr, Display, as_str, and the specified transition matrix. Re-exported the public types at crate root and converted order, billing, shipping, and report code to use OrderStatus. Report parsing still trims the whole line, accepts exact known spellings, and returns the characterized errors. Verified with cargo test (3 unit and 5 integration tests passed) and git diff --check. The inherited characterization tests and baseline commit were unchanged. Whole-crate cargo fmt --check reports formatting differences in pre-existing tests/orders.rs and baseline formatting; changed production Rust files were formatted. No known open implementation work.",
+            "summary": "Replaced string-based order state with a public typed OrderStatus. Callers now represent lifecycle state as enum variants, with centralized parsing and display behavior; external report text and behavior remain unchanged.",
+            "title": "refactor: use typed order status"
+          },
+          "risk": {
+            "level": "low",
+            "why": "Contained refactor of order status representation across six production files; behavior is covered by existing characterization tests plus direct enum parsing, formatting, and transition tests. cargo test passes. No dependencies or unrelated tests changed."
+          },
+          "tree": "8f9a5fa8ea19ad24f5e37e84ef3a674319577724"
+        },
+        "cost_usd": 0.007776720000000001,
+        "started_at": "2026-11-20T13:03:05.223123451Z",
+        "finished_at": "2026-11-20T13:04:56.650946427Z"
+      },
+      {
+        "id": "stg_01M7WGYQVR4NVSC9SWJBF2QNVD",
+        "run": "prun_01M7WGS9APHDNS3704198ANH49",
+        "stage_id": "verify",
+        "kind": "test",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7WGYQW2DPXNV2PDDPXF8GJT",
+        "aether_task": "tsk_01M7WGYQW2ZN68E350741Q8NHP",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "fail",
+        "summary": "Verified commit 2cd38a6 against baseline 8113a5b and characterization commit d9145a1. Worktree is clean. `cargo test` passed (3 unit, 5 integration); `cargo build` passed; `cargo clippy --all-targets -- -D warnings` passed; `git diff --check` passed. `cargo fmt --check` failed only on the pre-existing formatting of tests/orders.rs line 40; that same assertion and formatting appear in the original baseline, and characterization tests are unchanged since d9145a1. All four status-name literals in production source are confined to src/status.rs. Source comparison confirms Order lifecycle decisions, billing/shipping errors and filters, report serialization/count ordering, line trimming, field-count errors, and status rejection text retain their contracts. The report now obtains unknown-status errors from ParseStatusError, whose Display preserves `unknown status {:?}` exactly. No unexplained behavioral differences found. Because the required repository-wide format check does not pass, verdict is fail under the stage criteria; no tracked files were modified.\nVERDICT: FAIL",
+        "structured": {
+          "findings": [
+            {
+              "detail": "Command `cargo fmt --check` exited 1 and reported `Diff in .../tests/orders.rs:40`, expanding the existing status-count expected array across lines. The identical assertion formatting is present in baseline 8113a5b (`git show 8113a5b9e7042807c360c8679905c8662e7a61e1:tests/orders.rs`, lines 34–48), so this is pre-existing, but the required format check still does not pass.",
+              "path": "tests/orders.rs:40",
+              "severity": "medium",
+              "title": "Repository-wide rustfmt check fails on baseline formatting"
+            }
+          ],
+          "verdict": "fail"
+        },
+        "cost_usd": 0.004389200000000001,
+        "started_at": "2026-11-20T13:04:56.696919424Z",
+        "finished_at": "2026-11-20T13:05:41.721290021Z"
+      },
+      {
+        "id": "stg_01M7WH03VE88TM9DC1HFQET067",
+        "run": "prun_01M7WGS9APHDNS3704198ANH49",
+        "stage_id": "refactor",
+        "kind": "work",
+        "attempt": 2,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7WGVB0GJGDW68ADQ49HADCS",
+        "aether_task": null,
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Applied rustfmt’s formatting-only change to the existing status-count assertion in [tests/orders.rs](/home/mengsig/.local/share/archon-bench/f164-ezf9wwc6/archon-bench/work/20261120T123040Z/c3bc0bab30d9f4386fe9d90e/.archon/data/worktrees/refactor-order-status/qi_01M7WGS8BQNQN58ADCM6W99VQ6/tests/orders.rs). The assertions and characterization behavior are unchanged.\n\n`cargo fmt --check`, `cargo test` (3 unit and 5 integration tests), and `git diff --check` pass. The fix is committed as `68c59b178ab9905279420feb43f278fdef7b27bc`; the worktree is clean.",
+        "structured": {
+          "checks": [
+            "cargo fmt && cargo fmt --check (passed)",
+            "CARGO_TARGET_DIR=/home/mengsig/.local/share/archon-bench/f164-ezf9wwc6/archon-bench/work/20261120T123040Z/c3bc0bab30d9f4386fe9d90e/.archon/data/cache/refactor-order-status/items/qi_01M7WGS8BQNQN58ADCM6W99VQ6/cargo-target cargo test (passed: 3 unit tests, 5 integration tests, doc tests)",
+            "git diff --check (passed)"
+          ],
+          "commit": "68c59b178ab9905279420feb43f278fdef7b27bc",
+          "evidence": {
+            "none": "The change is a code refactor and formatting-only fix without a meaningful visual or numeric before/after artifact."
+          },
+          "local_commit": "68c59b178ab9905279420feb43f278fdef7b27bc",
+          "pr": {
+            "body": "Added OrderStatus and ParseStatusError, converted lifecycle and report code to the enum, and added parsing, formatting, and transition coverage. To address the verifier finding, applied rustfmt’s formatting-only wrapping to the existing status-count assertion in tests/orders.rs; no assertions or test behavior changed. cargo fmt --check and cargo test pass. Baseline and characterization commits remain unchanged.",
+            "summary": "Replaced string-based order state with a public typed OrderStatus and centralized parsing and display. Existing report output and behavior remain intact; repository formatting now passes.",
+            "title": "refactor: use typed order status"
+          },
+          "risk": {
+            "level": "low",
+            "why": "Contained status representation refactor with lifecycle, report, parsing, and transition coverage. The additional test-file change is formatting only. cargo fmt --check and cargo test pass."
+          },
+          "tree": "0325e6c82bd485b203eb28f2e9e08cc9ab7fbb7a"
+        },
+        "cost_usd": 0.002402180000000004,
+        "started_at": "2026-11-20T13:05:41.742274075Z",
+        "finished_at": "2026-11-20T13:06:07.282768558Z"
+      },
+      {
+        "id": "stg_01M7WH0WTQ5090V32XQ1DW2MRV",
+        "run": "prun_01M7WGS9APHDNS3704198ANH49",
+        "stage_id": "verify",
+        "kind": "test",
+        "attempt": 2,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7WH0WTZ5HMZ79GWB5W45ME3",
+        "aether_task": "tsk_01M7WH0WTZ5HMZ79GWB5W45ME4",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "pass",
+        "summary": "Verified the refactor in the assigned worktree at HEAD 68c59b1; the worktree was clean before and after verification. Repository discovery found only Cargo.toml (standalone Rust 2021 crate), with no README, contributor guide, Makefile, CI config, or AGENTS.md. Ran assigned-cache cargo test (3 unit and 5 integration tests passed), cargo build, cargo clippy --all-targets -- -D warnings, cargo fmt --check, git diff --check, and cargo rustc --lib -- --crate-type lib; all passed. The five characterization integration tests are present and passed unchanged in assertions from d9145a1; only the original status-count assert was rustfmt-wrapped. The original pre-existing tests' behavioral assertions remain intact. Source review against baseline confirms Order.status's required type change and the two required root re-exports; behavior paths preserve conditions, operation order, messages, report trim/field parsing, output formatting, sorted count order, and input order. OrderStatus parsing retains the exact unknown-status error via ParseStatusError's Display. Exhaustively exercised all 16 transition pairs in the new unit test, plus all status parse/format outputs and rejected-input text. rg -n '\"(pending|paid|shipped|cancelled)\"' src found matches only in src/status.rs, including its unit tests. No unexplained contract difference or failed check. No changes were made. Verdict: pass.\nVERDICT: PASS",
+        "structured": {
+          "findings": [],
+          "verdict": "pass"
+        },
+        "cost_usd": 0.004976900000000001,
+        "started_at": "2026-11-20T13:06:07.319241714Z",
+        "finished_at": "2026-11-20T13:07:01.029495250Z"
+      },
+      {
+        "id": "stg_01M7WH2HAYBPMWMQX4RVT0A2HA",
+        "run": "prun_01M7WGS9APHDNS3704198ANH49",
+        "stage_id": "review",
+        "kind": "review",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7WH2HBFDJNYDKSJW1ME3R1G",
+        "aether_task": "tsk_01M7WH2HBFDJNYDKSJW1ME3R1H",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "pass",
+        "summary": "Reviewed baseline-to-HEAD changes and current worktree. The typed OrderStatus design meets the structural goal: status-name mapping/parsing are cohesive in src/status.rs, consumers compare enum variants, and report parsing/formatting preserves existing behavior and ordering. Characterization assertions remain intact; the only pre-existing test edit is rustfmt wrapping. Confirmed the worktree is clean and rg finds the four quoted status literals only in src/status.rs. Ran cargo test (3 unit, 5 integration tests pass), cargo build, cargo clippy --all-targets -- -D warnings, cargo fmt --check, git diff --check, and cargo rustc --lib -- --crate-type lib; all pass. No findings. The required public Order.status type change is an intentional API migration; remaining coupling is limited to expected report formatting/parsing through OrderStatus.",
+        "structured": {
+          "findings": [],
+          "risk": {
+            "level": "high",
+            "why": "The requested change intentionally changes the public Order.status type, which can break callers compiled against the prior String field; this API migration is explicitly required by the brief."
+          },
+          "verdict": "pass"
+        },
+        "cost_usd": 0.003128000000000001,
+        "started_at": "2026-11-20T13:07:01.086069677Z",
+        "finished_at": "2026-11-20T13:07:30.904427891Z"
+      }
+    ],
+    "spent_usd": 0.028400640000000008,
+    "gates": [],
+    "default_efforts": {
+      "baseline": "high",
+      "refactor": "high",
+      "review": "medium",
+      "verify": "high"
+    }
+  }
+]

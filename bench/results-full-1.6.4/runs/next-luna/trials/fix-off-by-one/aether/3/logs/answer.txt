@@ -1,0 +1,1 @@
+Fixed `sliding_windows` to include the final valid window, including when the window equals the input length. `python3 -m unittest` passes (3 tests), and the change is committed as `c8dc4e2`.

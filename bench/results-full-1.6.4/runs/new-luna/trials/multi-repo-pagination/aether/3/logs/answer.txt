@@ -1,0 +1,11 @@
+Implemented cursor pagination and client-side page fetching. Both READMEs now document the changes.
+
+- API validates `limit` (1–100, default 20) and cursors, returns items in ID order, and responds with `next_cursor: null` on the last page.
+- Client follows cursors until `next_cursor` is null or absent, preserving each cursor unchanged.
+
+Verification passed: `python3 -m unittest` (5 tests) and `npm test` (5 tests).
+
+Commits:
+
+- `inventory-api`: `7cc61c2` — Add cursor pagination to items endpoint
+- `inventory-client`: `cf45f07` — Follow item pagination cursors in client

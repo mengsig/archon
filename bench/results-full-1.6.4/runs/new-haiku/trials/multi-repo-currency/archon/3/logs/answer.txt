@@ -1,0 +1,50 @@
+Queued the multi-currency change as one initiative (ini_01M7W90RWGX0KBEDV4M2KQTJ5F): ledger item qi_01M7W90RWJTG4ZCV8RY01GCKDE and reports item qi_01M7W90RWREF06RCZRNHBC89CN, both on the direct pipeline with standard review, sharing one CSV contract. Both ship local: commits in each repo, nothing pushed. Quota: claude-code is at 77% of its seven-day window, so it may run out before the 2026-11-25 reset. I kept this to two items at default effort and will not start more claude-code work until the window is checked.
+
+I queued the multi-currency change as one initiative, `ini_01M7W90RWGX0KBEDV4M2KQTJ5F`, with a member item per repository. Both items are still queued. I have not seen them run, so nothing is verified yet.
+
+- **`ledger`** (`qi_01M7W90RWJTG4ZCV8RY01GCKDE`): optional fourth currency column, the `currency` CSV header, and exit status 2 with the line number on stderr for a malformed code.
+- **`reports`** (`qi_01M7W90RWREF06RCZRNHBC89CN`): reads old and new CSV, totals per account and currency, and exits 2 on a malformed code.
+
+Both items use the `direct` pipeline with standard review. They ship local, so each repo gets a commit and nothing is pushed. The contract is in the initiative, so the two sides should agree on the format.
+
+On quota: claude-code is at 77% of its seven-day window and may run out before the 2026-11-25 reset. I kept this to two items at default effort and posted that to the operator. I will not start more claude-code work until the window is checked.
+
+Done: reports: per-currency totals. Implemented the reports currency contract on archon/nhbc89cn-reports-per-currency-totals in commit 5fcdd7e (tree 315935cdc7bb55a3bebaeaddd1ecee74d37a37bf). reports.py reads an optional currency column (missing means USD), totals per (account, currency), and prints account,currency,total_cents sorted by account then currency. A malformed code (not exactly three uppercase ASCII letters, including empty or short rows) prints an error naming the line to stderr and exits 2. Before: the currency column was ignored and output was account,total_cents. Tests: python3 -m unittest, 6 tests OK on the final head (old format, new format, sorting, malformed codes, short row). README updated. Nothing pushed. Open follow-ups, non-blocking: a non-integer amount gives an uncaught ValueError (exit 1) with no test; one error-message line is over 100 characters. Risk stays high: the header change breaks any caller reading the amount by column position. Nothing running, no services started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W92BR1EMVQDV2DTKPV1ZMQ)
+
+SHIPPED: commit 5fcdd7ef9cee6337fae215cea60e3e973f06f971 on the run branch
+Branch `archon/nhbc89cn-reports-per-currency-totals` in /home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/557fd2dfd7da501e72fb2a90/reports holds it (3 files changed, 126 insertions(+), 14 deletions(-)). Review: `archon diff qi_01M7W90RWREF06RCZRNHBC89CN`; land it in `main`: `archon merge qi_01M7W90RWREF06RCZRNHBC89CN`.
+
+Done: ledger: currency column. Implemented the ledger currency contract on archon/y01gckde-ledger-currency-column, committed as 46bbd2e (tree a29cc85). Not pushed. Input lines take an optional fourth TSV column; it must be exactly three uppercase ASCII letters and defaults to USD. The output header is now date,account,amount_cents,currency and every row carries its currency. A malformed currency exits 2 with "line N:" on stderr; other input errors still exit 1. Parsing uses a typed ParseError (BadCurrency vs Other) so the binary can choose the exit code. Tests: 4 CLI tests in tests/cli.rs (default, explicit, malformed currency with line number, other error still 1) and new library tests in tests/ledger.rs. README updated. Checks run on the final head: cargo build ok; cargo clippy --all-targets -D warnings clean; cargo test passes (4 CLI, 7 library). cargo fmt --check flags only two pre-existing lines (is_iso_date, parse_cents) that I left alone. Review: one read-only reviewer (agt_01M7W9366K3YE2ENKY856XXWHY) passed head 46bbd2e with no blocking findings; it confirmed risk high because the output header change breaks callers that parse the old header or match it. Non-blocking follow-ups: an empty fourth column (trailing tab) is rejected with exit 2 rather than defaulting to USD; the currency field is trimmed, so " EUR " is accepted. Reports repo work (sibling item) is out of scope and not done here. Nothing left running; no servers started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9366K3YE2ENKY856XXWHY)
+
+SHIPPED: commit 46bbd2e217a07003146b12936bfc32fa6bf39c71 on the run branch
+Branch `archon/y01gckde-ledger-currency-column` in /home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/557fd2dfd7da501e72fb2a90/ledger holds it (5 files changed, 169 insertions(+), 16 deletions(-)). Review: `archon diff qi_01M7W90RWJTG4ZCV8RY01GCKDE`; land it in `main`: `archon merge qi_01M7W90RWJTG4ZCV8RY01GCKDE`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M7W90RWJTG4ZCV8RY01GCKDE ended and its cargo target directory went.
+
+Multi-currency change finished (ini_01M7W90RWGX0KBEDV4M2KQTJ5F). Both items succeeded and passed review, committed locally on their run branches, nothing pushed.
+- ledger: commit 46bbd2e on archon/y01gckde-ledger-currency-column. cargo build, clippy and cargo test pass. Malformed currency exits 2 with "line N:" on stderr; other errors still exit 1. README updated.
+- reports: commit 5fcdd7e on archon/nhbc89cn-reports-per-currency-totals. python3 -m unittest passes (6 tests). Malformed currency exits 2. README updated.
+Follow-ups, none blocking:
+- Both header changes break any caller that reads amounts by column position or expects the old header.
+- ledger rejects an empty fourth column (trailing tab) with exit 2 instead of defaulting to USD. It also trims spaces around the code, so " EUR " is accepted.
+- reports raises an uncaught ValueError (exit 1) on a non-integer amount, with no test.
+- cargo fmt --check flags two pre-existing lines in ledger that were left alone.
+Say if you want the follow-ups queued, or the branches merged.
+
+Implemented the reports currency contract on archon/nhbc89cn-reports-per-currency-totals in commit 5fcdd7e (tree 315935cdc7bb55a3bebaeaddd1ecee74d37a37bf). reports.py reads an optional currency column (missing means USD), totals per (account, currency), and prints account,currency,total_cents sorted by account then currency. A malformed code (not exactly three uppercase ASCII letters, including empty or short rows) prints an error naming the line to stderr and exits 2. Before: the currency column was ignored and output was account,total_cents. Tests: python3 -m unittest, 6 tests OK on the final head (old format, new format, sorting, malformed codes, short row). README updated. Nothing pushed. Open follow-ups, non-blocking: a non-integer amount gives an uncaught ValueError (exit 1) with no test; one error-message line is over 100 characters. Risk stays high: the header change breaks any caller reading the amount by column position. Nothing running, no services started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W92BR1EMVQDV2DTKPV1ZMQ)
+
+SHIPPED: commit 5fcdd7ef9cee6337fae215cea60e3e973f06f971 on the run branch
+
+Implemented the ledger currency contract on archon/y01gckde-ledger-currency-column, committed as 46bbd2e (tree a29cc85). Not pushed. Input lines take an optional fourth TSV column; it must be exactly three uppercase ASCII letters and defaults to USD. The output header is now date,account,amount_cents,currency and every row carries its currency. A malformed currency exits 2 with "line N:" on stderr; other input errors still exit 1. Parsing uses a typed ParseError (BadCurrency vs Other) so the binary can choose the exit code. Tests: 4 CLI tests in tests/cli.rs (default, explicit, malformed currency with line number, other error still 1) and new library tests in tests/ledger.rs. README updated. Checks run on the final head: cargo build ok; cargo clippy --all-targets -D warnings clean; cargo test passes (4 CLI, 7 library). cargo fmt --check flags only two pre-existing lines (is_iso_date, parse_cents) that I left alone. Review: one read-only reviewer (agt_01M7W9366K3YE2ENKY856XXWHY) passed head 46bbd2e with no blocking findings; it confirmed risk high because the output header change breaks callers that parse the old header or match it. Non-blocking follow-ups: an empty fourth column (trailing tab) is rejected with exit 2 rather than defaulting to USD; the currency field is trimmed, so " EUR " is accepted. Reports repo work (sibling item) is out of scope and not done here. Nothing left running; no servers started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9366K3YE2ENKY856XXWHY)
+
+SHIPPED: commit 46bbd2e217a07003146b12936bfc32fa6bf39c71 on the run branch

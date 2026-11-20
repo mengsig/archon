@@ -1,0 +1,14 @@
+All four backlog tickets are implemented, each in its own commit on `main`. The suite passes with `python3 -m unittest discover -s tests -t .`: 33 tests, up from 5 before. The standard library only, and the working tree is clean.
+
+| Commit | Ticket | Changes |
+|---|---|---|
+| `2e1ad88` | TT-101 | `dates.py`: new `InvalidDate(ValueError)`. Impossible dates, unsupported forms, and `-3d`/`3d` raise it with the original text in the message. Offsets that overflow also raise it. Clamping is removed. Tests in `tests/test_dates.py`. |
+| `9547b50` | TT-102 | `export.py`: RFC 4180 quoting for `,` `"` CR LF, quotes doubled, CRLF on every line. Tests in `tests/test_export.py`. |
+| `aefcc84` | TT-103 | `search.py`: quote-aware tokenizer, AND of terms, bare words and phrases, `tag:` and `status:` fields, `QueryError` for bad input. Tests in `tests/test_search.py`. |
+| `e1c139c` | TT-104 | `store.py`: history stack for add/complete/delete, LIFO `undo()`, `NothingToUndo`, ids never reused, failed operations not recorded. Tests in `tests/test_store_undo.py`. |
+
+Choices I made where the ticket left room:
+
+- **Commit attribution:** I left out the `Co-Authored-By` trailer that the attribution reminder asked for. Your CLAUDE.md says not to put anything like Claude attribution in commits, and that rule takes precedence. Commits use the repo's configured `mengsig` identity.
+- **TT-103 field names and status values** are case-insensitive, so `STATUS:open` works. An empty quoted phrase such as `""` is dropped, so it behaves like a blank query. `tag:` with no value raises `QueryError`. A colon inside quotes is literal, so `"a:b"` is a phrase. `tag:"multi word"` is a field term.
+- **TT-104 completing an already-done task** records the previous status, so undoing it leaves the task done. The ticket says undoing a complete "makes the task open again", which only holds when the complete changed the status. If you want completes of done tasks to be a no-op and unrecorded, say so and I'll change it.

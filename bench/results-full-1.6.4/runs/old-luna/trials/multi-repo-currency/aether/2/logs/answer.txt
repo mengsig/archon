@@ -1,0 +1,6 @@
+Implemented and committed both repositories:
+
+- `ledger` — `c0dd87c`: adds optional currency input, defaults to USD, emits the currency column, and returns exit status 2 for invalid currency codes.
+- `reports` — `ee4f01a`: totals by account and currency, supports legacy CSV as USD, and exits 2 for invalid currency codes.
+
+`python3 -m unittest` passes (3 tests). I couldn’t run `cargo test` because `cargo` is not installed in the environment. Both repositories have clean working trees.

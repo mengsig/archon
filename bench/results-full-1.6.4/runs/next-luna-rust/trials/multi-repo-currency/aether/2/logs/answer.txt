@@ -1,0 +1,6 @@
+Implemented and committed both repositories:
+
+- **ledger** — emits the currency column, defaults omitted currencies to USD, and exits with status 2 for malformed codes. Commit: `55e59a6`.
+- **reports** — totals by account and currency, supports legacy CSV as USD, and exits with status 2 for malformed codes. Commit: `15e2cc9`.
+
+`cargo test` and `python3 -m unittest` both pass. The reports test run left an untracked `__pycache__/` directory.

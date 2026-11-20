@@ -1,0 +1,641 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WAEY009T1WXVRXC49AW14C",
+      "repo": "repo_01M7WADWDGAPQQ97RR1ZY2KW3Q",
+      "pipeline": "refactor",
+      "title": "Replace order status strings with OrderStatus",
+      "brief": "Refactor the orders crate to use a dedicated status type while preserving existing observable behavior.\n\nRequirements:\n- Add src/status.rs with pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }, deriving at least Debug, Clone, Copy, PartialEq, Eq, Hash.\n- Implement OrderStatus::as_str(self) -> &'static str with lowercase names \"pending\", \"paid\", \"shipped\", \"cancelled\"; Display prints exactly the same.\n- Implement FromStr for OrderStatus with type Err = ParseStatusError. ParseStatusError must be public, implement std::error::Error, and its displayed message must name the rejected input.\n- Implement OrderStatus::can_transition_to(self, next: OrderStatus) -> bool: true only for Pending->Paid, Pending->Cancelled, Paid->Shipped, Paid->Cancelled.\n- Change Order::status to OrderStatus. Re-export OrderStatus and ParseStatusError from the crate root. Use the enum everywhere; status string literals must occur only in src/status.rs.\n- Preserve observable behavior exactly, including errors, report output and ordering, and parsing.\n- Run cargo test and ensure it passes.\n\nCommit the completed work on the local branch. Do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "baseline": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "refactor": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "review": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "verify": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7WAEY009T1WXVRXC49AW14C",
+        "entries": {
+          "baseline": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T11:11:27.248908716Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T11:11:27.265658859Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T11:11:27.248908716Z"
+              }
+            }
+          ],
+          "refactor": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T11:11:27.248908716Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T11:11:27.265658859Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T11:11:27.248908716Z"
+              }
+            }
+          ],
+          "review": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T11:11:27.248908716Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T11:11:27.265658859Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T11:11:27.248908716Z"
+              }
+            }
+          ],
+          "verify": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T11:11:27.248908716Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T11:11:27.265658859Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T11:11:27.248908716Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "review:strict"
+        ],
+        "keys": {
+          "baseline": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "high",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          },
+          "refactor": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "high",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          },
+          "review": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": true
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          },
+          "verify": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "high",
+              "checks": true
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WAEY1PMHZVXNSQM6144KM2",
+        "summary": "Reviewed the OrderStatus refactor against baseline e0c540e and the characterization tests. The structural goal is achieved: status names, strict parsing, formatting, and the allowed transition table live in src/status.rs; Order and its billing, shipping, and reporting callers use the enum. This makes status handling explicit and keeps the report’s sorted string output and CSV contract intact. The existing behavioral assertions are unchanged except for adapting a status comparison to OrderStatus, and added tests cover all statuses, invalid parsing, and every transition pair. No remaining material coupling or behavior risk found. The public Order.status type change can require downstream caller updates, so risk is high under the API-change rubric. Checks run: cargo test (7 passed), cargo clippy --all-targets -- -D warnings, cargo fmt -- --check, cargo build --all-targets, git diff --check against baseline and current diff; all passed. Confirmed exact status name literals occur only in src/status.rs and the worktree is clean. No findings.\nVERDICT: PASS\n\nSHIPPED: commit 866555a1649defa0d271137515326c024131a946 on the run branch"
+      },
+      "created_at": "2026-11-20T11:11:27.232221618Z",
+      "updated_at": "2026-11-20T11:20:03.472702203Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WAEY1PMHZVXNSQM6144KM2",
+        "item": "qi_01M7WAEY009T1WXVRXC49AW14C",
+        "pipeline": "refactor",
+        "shipped": true,
+        "aether_run": "run_01M7WAF0KVGT5YK4MHYX94QKZS",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/529fb035c547963ac9114dde/.archon/data/worktrees/refactor-order-status/qi_01M7WAEY009T1WXVRXC49AW14C",
+        "branch": "archon/c49aw14c-replace-order-status-strings-with-orders",
+        "state": {
+          "state": "succeeded",
+          "summary": "Reviewed the OrderStatus refactor against baseline e0c540e and the characterization tests. The structural goal is achieved: status names, strict parsing, formatting, and the allowed transition table live in src/status.rs; Order and its billing, shipping, and reporting callers use the enum. This makes status handling explicit and keeps the report’s sorted string output and CSV contract intact. The existing behavioral assertions are unchanged except for adapting a status comparison to OrderStatus, and added tests cover all statuses, invalid parsing, and every transition pair. No remaining material coupling or behavior risk found. The public Order.status type change can require downstream caller updates, so risk is high under the API-change rubric. Checks run: cargo test (7 passed), cargo clippy --all-targets -- -D warnings, cargo fmt -- --check, cargo build --all-targets, git diff --check against baseline and current diff; all passed. Confirmed exact status name literals occur only in src/status.rs and the worktree is clean. No findings.\nVERDICT: PASS\n\nSHIPPED: commit 866555a1649defa0d271137515326c024131a946 on the run branch"
+        },
+        "cost_usd": 0.04306054000000001,
+        "started_at": "2026-11-20T11:11:27.566538680Z",
+        "finished_at": "2026-11-20T11:20:03.472702203Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WAF0JWDEZV6G2AQCBFAD4A",
+        "run": "prun_01M7WAEY1PMHZVXNSQM6144KM2",
+        "stage_id": "baseline",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WAF0NC89JXV15KMNJTDAPN",
+        "aether_task": "tsk_01M7WAF0NC89JXV15KMNJTDAPP",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Baseline characterization complete on branch archon/c49aw14c-replace-order-status-strings-with-orders. Original baseline is e0c540e23b170b79e0485d2f74fd0116fb4d4a47 (no commits/diff after it at start). Added integration characterization tests in tests/orders.rs and committed separately as bf618f11fc9411570b7fd313b58631fb059a9e89 (`test: characterize order status behavior`); tree checked was 6d360e250b300dc1b254ad08f059617b15007dbd, worktree clean. Structural goal for the next stage: introduce OrderStatus while preserving behavior; no explicitly allowed behavior exceptions. Public surface to preserve: root re-export `Order`; public `Order { id: u32, customer: String, total_cents: u64, status: String }` currently derives Debug/Clone/PartialEq; `Order::new`, `is_open`, `cancel`; billing `pay`/`outstanding_cents`; shipping `ship`/`ready_to_ship`; report `status_counts`, `to_line`, `from_line`; exact Result error text and status counts ordering; CSV field order, whole-line trim, and parse/error behavior. New tests pin repeat/illegal payment, cancel, and shipping errors; sorted output and serialization/parse round trips for all four statuses; field count, numeric parse, and unknown-status errors. Tests revealed `from_line` trims the whole line, so trailing whitespace after the status disappears but leading whitespace remains. Known coverage gaps carried forward: integration tests do not comprehensively assert is_open/outstanding/ready-to-ship for every terminal state or test status type parsing/can_transition because those APIs do not yet exist; preserve the observed behavior and add type-specific coverage in the refactor stage. No feedback was supplied.\nChecks before edits: `cargo test` passed (3 integration tests); `cargo fmt -- --check` failed on pre-existing formatting in src/billing.rs, src/order.rs, src/report.rs, src/shipping.rs, tests/orders.rs. After adding tests: `cargo test` passed (6 integration tests); `cargo clippy --all-targets -- -D warnings` passed; post-addition `cargo fmt -- --check` still fails because of pre-existing formatting in production sources (the new tests were rustfmt-formatted); re-ran cargo test and strict Clippy after formatting the test file, both passed. Commands used PATH=/home/mengsig/.cargo/bin:$PATH and the required item CARGO_TARGET_DIR. The final full passing test/lint tree is 6d360e250b300dc1b254ad08f059617b15007dbd. No README, contributor guide, Makefile, or CI configuration was present to prescribe additional checks. No production code changed; ready for refactor stage.",
+        "structured": null,
+        "cost_usd": 0.009353020000000002,
+        "started_at": "2026-11-20T11:11:29.884839617Z",
+        "finished_at": "2026-11-20T11:13:31.312191507Z"
+      },
+      {
+        "id": "stg_01M7WAJQ76RKT46ABPVA655N8M",
+        "run": "prun_01M7WAEY1PMHZVXNSQM6144KM2",
+        "stage_id": "refactor",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WAJQ7JAM0CAAR0GVPJVK9G",
+        "aether_task": "tsk_01M7WAJQ7JAM0CAAR0GVPJVK9H",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Introduced and re-exported OrderStatus and ParseStatusError, changed Order.status to the enum, and migrated lifecycle, billing, shipping, and report code to typed statuses. Exact report text, status ordering, and CSV parsing behavior are preserved; the parser error now comes from ParseStatusError with identical display text. Added status parsing/formatting and exhaustive transition coverage. The only pre-existing test assertion changed compares the parsed status with OrderStatus::Pending because the public field type intentionally changed; all characterized behavior assertions remain. cargo test passed (7 integration tests), strict Clippy passed, and git diff --check passed. cargo fmt -- --check still reports formatting issues already present at baseline in legacy files. Baseline e0c540e23b170b79e0485d2f74fd0116fb4d4a47 and characterization commit bf618f11fc9411570b7fd313b58631fb059a9e89 are unchanged. Committed as 99468d9c8c67f7ba0230c6be6658c76e130220aa; worktree clean. No review feedback was supplied.",
+        "structured": {
+          "checks": [
+            "PATH=/home/mengsig/.cargo/bin:$PATH CARGO_TARGET_DIR=/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/529fb035c547963ac9114dde/.archon/data/cache/refactor-order-status/items/qi_01M7WAEY009T1WXVRXC49AW14C/cargo-target cargo test — passed (7 integration tests)",
+            "PATH=/home/mengsig/.cargo/bin:$PATH CARGO_TARGET_DIR=/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/529fb035c547963ac9114dde/.archon/data/cache/refactor-order-status/items/qi_01M7WAEY009T1WXVRXC49AW14C/cargo-target cargo clippy --all-targets -- -D warnings — passed",
+            "git diff --check — passed",
+            "PATH=/home/mengsig/.cargo/bin:$PATH CARGO_TARGET_DIR=/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/529fb035c547963ac9114dde/.archon/data/cache/refactor-order-status/items/qi_01M7WAEY009T1WXVRXC49AW14C/cargo-target cargo fmt -- --check — failed on pre-existing baseline formatting issues; also flags formatting in legacy touched files"
+          ],
+          "commit": "99468d9c8c67f7ba0230c6be6658c76e130220aa",
+          "evidence": [
+            {
+              "caption": "Final cargo test run passed all seven integration tests; strict Clippy also passed.",
+              "kind": "output",
+              "text": "test status_text_parsing_and_transitions_are_explicit ... ok\ntest report_parser_preserves_exact_failure_messages ... ok\ntest result: ok. 7 passed; 0 failed\nFinished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s"
+            }
+          ],
+          "pr": {
+            "body": "Added src/status.rs with the four status values, stable text conversion, strict FromStr parsing, ParseStatusError, and transition rules. Re-exported the new public types and migrated Order, billing, shipping, and report code. The public Order.status type changes as requested; serialization and error text stay the same. Tests cover all status formats and all 16 transition pairs. Verification: cargo test (7 integration tests), strict Clippy, and git diff --check passed. cargo fmt --check reports formatting debt recorded at baseline; legacy unrelated formatting was left untouched. The characterization commit and its behavioral assertions remain intact; one field assertion now uses the enum type, and type-specific tests were added. No remaining known limitations.",
+            "summary": "Replaced free-form order status strings with a typed OrderStatus. Lifecycle and reporting now share explicit status values, while reports retain their existing text, ordering, and parse errors.",
+            "title": "refactor: model order status with enum"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "The public Order.status field type changes from String to OrderStatus as explicitly required. The behavior is covered by characterization and new type tests; all tests and strict Clippy pass. The change spans lifecycle and reporting modules, but report serialization and error strings remain characterized."
+          },
+          "tree": "e0cd5add17166e4029ba01b7c7aad6564e520b26"
+        },
+        "cost_usd": 0.013093340000000002,
+        "started_at": "2026-11-20T11:13:31.366488500Z",
+        "finished_at": "2026-11-20T11:16:39.615702860Z"
+      },
+      {
+        "id": "stg_01M7WARF51WZK2SG5GQGQZ4YEG",
+        "run": "prun_01M7WAEY1PMHZVXNSQM6144KM2",
+        "stage_id": "verify",
+        "kind": "test",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WARF6D8HQDGKAA6596YT5G",
+        "aether_task": "tsk_01M7WARF6DN4YN6S9T1AKWA0SB",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "fail",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Verified commit 99468d9 against baseline e0c540e and characterization commit bf618f1. Worktree is clean; characterization tests remain present and run, with only the expected assertion type update from string to OrderStatus::Pending. `cargo test` passed (7 integration tests plus doc tests), `cargo build --all-targets` passed, `cargo clippy --all-targets -- -D warnings` passed, and `git diff --check` passed. `cargo fmt -- --check` failed; the same command against a throwaway extraction of the original baseline also failed on existing formatting in src/billing.rs, src/order.rs, src/report.rs, src/shipping.rs, and tests/orders.rs, so required clean format verification cannot be established. The source audit found status-name string literals only in src/status.rs. Comparison against the baseline confirms lifecycle transitions, report ordering and CSV serialization/parsing/error behavior are maintained; the public Order.status type is changed as required and the new OrderStatus/ParseStatusError API is added. No additional contributor or CI check instructions were present. One blocking finding: format check failure inherited from baseline. VERDICT: FAIL",
+        "structured": {
+          "findings": [
+            {
+              "blocking": true,
+              "detail": "Command: `cargo fmt -- --check` exited 1, reporting rustfmt diffs in src/billing.rs, src/order.rs, src/report.rs, and src/shipping.rs. Baseline reproduction: `cargo fmt --manifest-path \"$probe/Cargo.toml\" -- --check` against a throwaway extraction of e0c540e also exited 1, reporting the corresponding legacy diffs and tests/orders.rs. The stage requires applicable format checks to pass; this prevents proving a clean required format result. Correction: format the affected files and rerun `cargo fmt -- --check`.",
+              "path": "src/billing.rs:6",
+              "severity": "medium",
+              "title": "Formatting check fails on pre-existing formatting"
+            }
+          ],
+          "verdict": "fail"
+        },
+        "cost_usd": 0.006504080000000001,
+        "started_at": "2026-11-20T11:16:39.713071685Z",
+        "finished_at": "2026-11-20T11:17:46.517940699Z"
+      },
+      {
+        "id": "stg_01M7WATGDAQ9GDT1X5G582G9B3",
+        "run": "prun_01M7WAEY1PMHZVXNSQM6144KM2",
+        "stage_id": "refactor",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 2,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WAJQ7JAM0CAAR0GVPJVK9G",
+        "aether_task": null,
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Resolved the verifier’s formatting finding with a separate formatting commit. `cargo fmt -- --check`, `cargo test` (7 integration tests), strict Clippy, `cargo build --all-targets`, and `git diff --check` all pass. The worktree is clean; no known issues remain.",
+        "structured": {
+          "checks": [
+            "cargo fmt -- --check — passed",
+            "cargo test — passed (7 integration tests)",
+            "cargo clippy --all-targets -- -D warnings — passed",
+            "cargo build --all-targets — passed",
+            "git diff --check — passed"
+          ],
+          "commit": "866555a1649defa0d271137515326c024131a946",
+          "evidence": [
+            {
+              "caption": "Formatting check, tests, strict Clippy, all-target build, and diff check passed.",
+              "kind": "output",
+              "text": "cargo fmt -- --check: passed\ncargo test: 7 integration tests passed\ncargo clippy --all-targets -- -D warnings: passed\ncargo build --all-targets: passed\ngit diff --check: passed"
+            }
+          ],
+          "local_commit": "866555a1649defa0d271137515326c024131a946",
+          "pr": {
+            "body": "The refactor adds OrderStatus and ParseStatusError, updates Order.status and its callers, and preserves report output, sorting, parsing, and error text. The status API and all transition pairs are covered. Formatting corrections touched billing, order, report, and shipping modules. Tests, strict Clippy, all-target build, formatting check, and diff check pass. Baseline e0c540e and characterization commit bf618f1 remain in history; the one adapted characterization assertion compares the field to OrderStatus::Pending.",
+            "summary": "Introduced the OrderStatus type and migrated order lifecycle and reporting code to it while preserving characterized behavior. Resolved the verifier’s formatting finding so the formatting check passes.",
+            "title": "style: format order status modules"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "The explicitly required public Order.status type change is covered by tests. Lifecycle and reporting behavior remain characterized; all listed checks pass."
+          },
+          "tree": "6707e2c6a21060bb576c3be9c8bad7454fe4d8b8"
+        },
+        "cost_usd": 0.003548080000000002,
+        "started_at": "2026-11-20T11:17:46.538293458Z",
+        "finished_at": "2026-11-20T11:18:21.462024258Z"
+      },
+      {
+        "id": "stg_01M7WAVJJEWBNJR5CWCNFZXNG5",
+        "run": "prun_01M7WAEY1PMHZVXNSQM6144KM2",
+        "stage_id": "verify",
+        "kind": "test",
+        "only_reviews": false,
+        "attempt": 2,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WAVJKZDC3AWBNTWA7WRZ1N",
+        "aether_task": "tsk_01M7WAVJKZDC3AWBNTWA7WRZ1P",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "pass",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Verified the OrderStatus refactor against baseline e0c540e and characterization commit bf618f1. The characterization tests remain present and their behavioral assertions are unchanged; the only relevant test edits adapt status comparison to the enum and add enum parsing/transition coverage. `cargo test` passed (7 integration tests), `cargo build --all-targets`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt -- --check`, `git diff --check` against the baseline and worktree all passed. Public API comparison confirms the required `Order.status: OrderStatus` change and root re-exports; other observed behavior is preserved: exact error strings, strict lowercase parsing, whole-line trimming behavior, CSV formatting, sorted status counts, and lifecycle behavior. Status text literals occur only in src/status.rs. The worktree is clean. No blocking findings.\\nVERDICT: PASS",
+        "structured": {
+          "findings": [],
+          "verdict": "pass"
+        },
+        "cost_usd": 0.004871820000000001,
+        "started_at": "2026-11-20T11:18:21.518120991Z",
+        "finished_at": "2026-11-20T11:19:08.907190353Z"
+      },
+      {
+        "id": "stg_01M7WAX0WXVJMV4T3V9CQ8TCXJ",
+        "run": "prun_01M7WAEY1PMHZVXNSQM6144KM2",
+        "stage_id": "review",
+        "kind": "review",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WAX0XKG7Z0GDZFYQ3QB4J6",
+        "aether_task": "tsk_01M7WAX0XKG7Z0GDZFYQ3QB4J7",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "pass",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Reviewed the OrderStatus refactor against baseline e0c540e and the characterization tests. The structural goal is achieved: status names, strict parsing, formatting, and the allowed transition table live in src/status.rs; Order and its billing, shipping, and reporting callers use the enum. This makes status handling explicit and keeps the report’s sorted string output and CSV contract intact. The existing behavioral assertions are unchanged except for adapting a status comparison to OrderStatus, and added tests cover all statuses, invalid parsing, and every transition pair. No remaining material coupling or behavior risk found. The public Order.status type change can require downstream caller updates, so risk is high under the API-change rubric. Checks run: cargo test (7 passed), cargo clippy --all-targets -- -D warnings, cargo fmt -- --check, cargo build --all-targets, git diff --check against baseline and current diff; all passed. Confirmed exact status name literals occur only in src/status.rs and the worktree is clean. No findings.\nVERDICT: PASS",
+        "structured": {
+          "findings": [],
+          "risk": {
+            "level": "high",
+            "why": "Changing the public Order.status field from String to OrderStatus is a source-level API change that can require downstream caller updates."
+          },
+          "verdict": "pass"
+        },
+        "cost_usd": 0.005690200000000001,
+        "started_at": "2026-11-20T11:19:08.957034431Z",
+        "finished_at": "2026-11-20T11:20:03.225189080Z"
+      }
+    ],
+    "spent_usd": 0.04306054000000001,
+    "gates": [],
+    "plan_origins": {
+      "baseline": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T11:11:27.248908716Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T11:11:27.265658859Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T11:11:27.248908716Z"
+          }
+        }
+      ],
+      "refactor": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T11:11:27.248908716Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T11:11:27.265658859Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T11:11:27.248908716Z"
+          }
+        }
+      ],
+      "review": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T11:11:27.248908716Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T11:11:27.265658859Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T11:11:27.248908716Z"
+          }
+        }
+      ],
+      "verify": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T11:11:27.248908716Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T11:11:27.265658859Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T11:11:27.248908716Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "baseline": "high",
+      "refactor": "high",
+      "review": "medium",
+      "verify": "high"
+    }
+  }
+]

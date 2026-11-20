@@ -1,0 +1,14 @@
+Queued as `qi_01M7W90EFNKQ0XBPEP3YABQPC4` on the `direct` pipeline. The task requires fixing `window.py`, leaving tests unchanged, running `python3 -m unittest`, and committing the fix locally without pushing.
+
+Done: Fix window.py for all inputs. Fixed the sliding window range bound so every valid contiguous window is returned, including the last and the sole exact-size window. `python3 -m unittest` passes all 3 tests; `git diff --check` passes. Committed as 966370d8bed852b023cab0686538e03bf5f2cf64. No known gaps.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W91XZ3NKKRRJRT4TX7E1EG)
+
+SHIPPED: commit 966370d8bed852b023cab0686538e03bf5f2cf64 on the run branch
+Branch `archon/3yabqpc4-fix-window-py-for-all-inputs` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/6c3904d1845216d36e4be534/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7W90EFNKQ0XBPEP3YABQPC4`; land it in `main`: `archon merge qi_01M7W90EFNKQ0XBPEP3YABQPC4`.
+
+Fixed the sliding window range bound so every valid contiguous window is returned, including the last and the sole exact-size window. `python3 -m unittest` passes all 3 tests; `git diff --check` passes. Committed as 966370d8bed852b023cab0686538e03bf5f2cf64. No known gaps.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W91XZ3NKKRRJRT4TX7E1EG)
+
+SHIPPED: commit 966370d8bed852b023cab0686538e03bf5f2cf64 on the run branch

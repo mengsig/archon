@@ -1,0 +1,31 @@
+Queued the OrderStatus refactor as one item (qi_01M7WFSYXW5Y5VK0ED00EGE1AC) on the direct pipeline, repo refactor-order-status, review standard, medium effort, local commit only. Claude-code quota is at 77% of its weekly window with 33% elapsed and would run out before reset, so I kept this to one item at a time; I'll report when it finishes.
+
+I queued the `OrderStatus` refactor as one item, `qi_01M7WFSYXW5Y5VK0ED00EGE1AC`, on the `direct` pipeline for repo `refactor-order-status`. I haven't touched the repository myself.
+
+- **Pipeline and review:** `direct`, with `standard` review. The `refactor` pipeline has a fixed strict review that can't be set per item, and this change is one coupled unit, so `direct` fits.
+- **Model:** balanced tier at medium effort, because it is a mechanical type change where behaviour must stay the same.
+- **Shipping:** the repo ships local, so the work will be a local commit with no push. The brief asks for that and for `cargo test` to pass.
+- **Quota:** claude-code is at 77% of its weekly window with 33% elapsed. I kept this to one item and told the operator in chat. I'll report the outcome when the item finishes.
+
+Done: Refactor orders status String into OrderStatus enum. Refactor of the orders crate status into OrderStatus was already committed on the branch by an earlier attempt (3285a5d). I checked it against the requirements and base 5cc1ea6 and changed no code. Behaviour matches base: pay/ship/cancel accept and reject the same transitions with identical error text; is_open, outstanding_cents, ready_to_ship and status_counts ordering are unchanged; from_line keeps its field checks and messages. Status literals appear only in src/status.rs. Checks on head 3285a5d (tree 96073b8671e474bcd88cb898f9c856b1b29e0647): cargo test exit 0 (3 unit + 3 integration), cargo clippy --all-targets -D warnings exit 0, cargo fmt --check exit 0. Review: one reviewer (agt_01M7WFY3RY2PPJZY9DWCSKDDEE) read the whole change from base and returned pass, risk high; one non-blocking follow-up: no test asserts the from_line unknown-status message text. Nothing left open beyond that follow-up. Risk is high because the public field Order::status changes type, which breaks any downstream crate that reads or assigns it. Nothing was pushed and no services were started.
+head: 3285a5d16db80746e9d81e0ab6441ca4e39ae34e
+base: 5cc1ea6d2e2a361723970efa4ad5921be66a1b8a
+VERDICT: PASS
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFY3RY2PPJZY9DWCSKDDEE)
+
+SHIPPED: commit 3285a5d16db80746e9d81e0ab6441ca4e39ae34e on the run branch
+Branch `archon/00ege1ac-refactor-orders-status-string-into-order` in /home/mengsig/.local/share/archon-bench/f164-d_m8pmpw/archon-bench/work/20261120T122950Z/322370ed22187553759abfe1/refactor-order-status holds it (7 files changed, 187 insertions(+), 42 deletions(-)). Review: `archon diff qi_01M7WFSYXW5Y5VK0ED00EGE1AC`; land it in `main`: `archon merge qi_01M7WFSYXW5Y5VK0ED00EGE1AC`.
+
+Freed 0.0 GiB of build output: item qi_01M7WFSYXW5Y5VK0ED00EGE1AC ended and its cargo target directory went.
+
+OrderStatus refactor succeeded. Commit 3285a5d (base 5cc1ea6) is on the run branch, local only, nothing pushed. Checks on that head: cargo test passes (3 unit, 3 integration), clippy -D warnings and fmt --check pass. Review passed with risk high, because Order::status changes type and breaks any downstream crate that reads or assigns it. The item report says an earlier attempt had already committed this work and this run changed no code, so I have not re-verified that commit's history. One non-blocking follow-up: no test asserts the from_line unknown-status message text. I can queue that test as a separate item, or leave the branch as is.
+
+Refactor of the orders crate status into OrderStatus was already committed on the branch by an earlier attempt (3285a5d). I checked it against the requirements and base 5cc1ea6 and changed no code. Behaviour matches base: pay/ship/cancel accept and reject the same transitions with identical error text; is_open, outstanding_cents, ready_to_ship and status_counts ordering are unchanged; from_line keeps its field checks and messages. Status literals appear only in src/status.rs. Checks on head 3285a5d (tree 96073b8671e474bcd88cb898f9c856b1b29e0647): cargo test exit 0 (3 unit + 3 integration), cargo clippy --all-targets -D warnings exit 0, cargo fmt --check exit 0. Review: one reviewer (agt_01M7WFY3RY2PPJZY9DWCSKDDEE) read the whole change from base and returned pass, risk high; one non-blocking follow-up: no test asserts the from_line unknown-status message text. Nothing left open beyond that follow-up. Risk is high because the public field Order::status changes type, which breaks any downstream crate that reads or assigns it. Nothing was pushed and no services were started.
+head: 3285a5d16db80746e9d81e0ab6441ca4e39ae34e
+base: 5cc1ea6d2e2a361723970efa4ad5921be66a1b8a
+VERDICT: PASS
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFY3RY2PPJZY9DWCSKDDEE)
+
+SHIPPED: commit 3285a5d16db80746e9d81e0ab6441ca4e39ae34e on the run branch

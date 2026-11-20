@@ -1,0 +1,18 @@
+The cross repository initiative is queued as `ini_01M7W4EBP06747CTHJB3GQAAF5`. It has separate API and client items, each assigned README updates, the requested test command, and a commit in its repository. The API change has strict review; the client change has standard review.
+
+Done: Follow cursor pages in inventory client. Updated `listItems` to fetch cursor pages, preserving page and item order; the first request omits the cursor, later requests forward it unchanged, and paging stops for null or absent `next_cursor`. Updated README and added pagination tests. `npm test` passed (5/5), `git diff --check` passed; baseline `npm test` passed (3/3). Committed as 087b945dd7c83049a032415786e4297cf1e44e3d. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W4G7ERGT4Q5Z28J9ZD1YJ0)
+
+SHIPPED: commit 087b945dd7c83049a032415786e4297cf1e44e3d on the run branch
+Branch `archon/dcfhb1kt-follow-cursor-pages-in-inventory-client` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/c4b06262fd67a51f902fdf09/inventory-client holds it (3 files changed, 35 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M7W4EBPFDF3M7A6DDCFHB1KT`; land it in `main`: `archon merge qi_01M7W4EBPFDF3M7A6DDCFHB1KT`.
+
+Cancelled: Implement cursor pagination in inventory API. archon-bench: trial timeout
+
+Initiative finished; coordinated result queued.
+
+Updated `listItems` to fetch cursor pages, preserving page and item order; the first request omits the cursor, later requests forward it unchanged, and paging stops for null or absent `next_cursor`. Updated README and added pagination tests. `npm test` passed (5/5), `git diff --check` passed; baseline `npm test` passed (3/3). Committed as 087b945dd7c83049a032415786e4297cf1e44e3d. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W4G7ERGT4Q5Z28J9ZD1YJ0)
+
+SHIPPED: commit 087b945dd7c83049a032415786e4297cf1e44e3d on the run branch

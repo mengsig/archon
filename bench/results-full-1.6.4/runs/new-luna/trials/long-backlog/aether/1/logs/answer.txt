@@ -1,0 +1,8 @@
+Implemented all four tickets, added focused tests, and kept the working tree clean. The requested suite passes: **8 tests, OK**.
+
+Commits:
+
+- TT-101 `1222c0c` — reject impossible due dates
+- TT-102 `7cc8ed4` — export RFC 4180 CSV
+- TT-103 `596f396` — add structured search queries
+- TT-104 `9fa51a0` — add task operation undo

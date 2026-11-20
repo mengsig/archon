@@ -1,0 +1,14 @@
+Queued as **qi_01M7W38SYEJ6370YPMK9H54G17** in the `direct` pipeline. The worker will diagnose and fix `window.py`, leave tests unchanged, run `python3 -m unittest`, and commit locally without pushing.
+
+Done: Fix window.py so all inputs are handled correctly. Fixed sliding_windows to include the final valid window and to validate sizes through the integer-index protocol. Before: python3 -m unittest failed 2 of 3 tests; after: all 3 tests pass. Committed as 9004de8367632d570f011fbcaf9ac8893a6c8de7. Independent review passed with no findings. No remaining work.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W3AEAZ22592FF61KHW1QHX)
+
+SHIPPED: commit 9004de8367632d570f011fbcaf9ac8893a6c8de7 on the run branch
+Branch `archon/k9h54g17-fix-window-py-so-all-inputs-are-handled` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/ceb77b11ff23e898f120f410/fix-off-by-one holds it (1 file changed, 5 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7W38SYEJ6370YPMK9H54G17`; land it in `main`: `archon merge qi_01M7W38SYEJ6370YPMK9H54G17`.
+
+Fixed sliding_windows to include the final valid window and to validate sizes through the integer-index protocol. Before: python3 -m unittest failed 2 of 3 tests; after: all 3 tests pass. Committed as 9004de8367632d570f011fbcaf9ac8893a6c8de7. Independent review passed with no findings. No remaining work.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W3AEAZ22592FF61KHW1QHX)
+
+SHIPPED: commit 9004de8367632d570f011fbcaf9ac8893a6c8de7 on the run branch

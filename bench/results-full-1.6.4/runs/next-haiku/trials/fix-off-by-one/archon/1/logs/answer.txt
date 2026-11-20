@@ -1,0 +1,26 @@
+I queued the fix rather than editing `window.py` myself, because this orchestrator doesn't change repositories directly. Once the item finishes, the commit will be on a local branch in the `fix-off-by-one` repo. I haven't run the tests myself, so I can't yet confirm `python3 -m unittest` passes.
+
+**The bug:** `sliding_windows` returns `range(len(items) - size)`, which drops the last window. It should be `range(len(items) - size + 1)`.
+
+**The queued item:** `qi_01M7W35TWAJ8X4AJZP3MJPCG4Y`, on the `direct` pipeline with standard review. The brief tells the agent to:
+- apply the `+ 1` fix,
+- check the edge cases: an empty list gives `[]`, `size > len(items)` gives `[]`, and `size == 1` gives one window per item,
+- keep the `ValueError` for `size <= 0`,
+- leave the tests unchanged,
+- run `python3 -m unittest` before committing,
+- commit with the repo's configured git identity and no tool attribution.
+
+The quota note from the earlier briefing doesn't change this: a single `direct` item is one agent. I'll report the item's outcome when it finishes.
+
+Done: Fix off-by-one in sliding_windows (window.py). Fixed the off-by-one in sliding_windows (window.py): the range now ends at len(items) - size + 1, so the last window is included. Commit 4d2c4db on archon/3mjpcg4y-fix-off-by-one-in-sliding-windows-window, under the configured git identity, with no tool attribution. Before the fix, `python3 -m unittest` failed 2 of 3 tests. After it, all 3 pass. I also checked by hand that size > len gives [], empty items with size 1 gives [], size 1 gives one window per item, and size <= 0 still raises ValueError. Tests and test_window.py are unchanged. Review: one read-only reviewer (agt_01M7W36G9642BZ4JSDHNCMNP62, claude-haiku-5-5, effort low) passed head 4d2c4db with no findings. Nothing is left running and nothing is pushed. Git check: the worktree is clean and the untracked __pycache__ was removed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W36G9642BZ4JSDHNCMNP62)
+
+SHIPPED: commit 4d2c4dbb4153b9be9695239c9e8c225ee07bc7af on the run branch
+Branch `archon/3mjpcg4y-fix-off-by-one-in-sliding-windows-window` in /home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/eafe26be9a0ae7fb271b7b1c/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7W35TWAJ8X4AJZP3MJPCG4Y`; land it in `main`: `archon merge qi_01M7W35TWAJ8X4AJZP3MJPCG4Y`.
+
+Fixed the off-by-one in sliding_windows (window.py): the range now ends at len(items) - size + 1, so the last window is included. Commit 4d2c4db on archon/3mjpcg4y-fix-off-by-one-in-sliding-windows-window, under the configured git identity, with no tool attribution. Before the fix, `python3 -m unittest` failed 2 of 3 tests. After it, all 3 pass. I also checked by hand that size > len gives [], empty items with size 1 gives [], size 1 gives one window per item, and size <= 0 still raises ValueError. Tests and test_window.py are unchanged. Review: one read-only reviewer (agt_01M7W36G9642BZ4JSDHNCMNP62, claude-haiku-5-5, effort low) passed head 4d2c4db with no findings. Nothing is left running and nothing is pushed. Git check: the worktree is clean and the untracked __pycache__ was removed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W36G9642BZ4JSDHNCMNP62)
+
+SHIPPED: commit 4d2c4dbb4153b9be9695239c9e8c225ee07bc7af on the run branch

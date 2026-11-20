@@ -1,0 +1,31 @@
+Enqueued atomic initiative `ini_01M7W6HPDCWYVKRF2QYNJ9TDXS` with one direct-pipeline item per repository. Both briefs include the shared currency rules, README updates, requested test commands, and commits. The items are queued; I’ll report their outcomes when they finish.
+
+Done: Group report totals by account and currency. Updated reports.py to total by account and currency, default legacy CSV rows to USD, validate supplied currency codes, emit the new header, and sort by account then currency. Updated README and tests. Final verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest (3 passed) and git diff --check HEAD^ HEAD (passed); worktree clean. Commit f154690742df583b49d074cb264ed20433e10916, tree 5a4b5391481b7429f6b5f5bfeb8fd9b7da225d83. Nothing left open.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit f154690742df583b49d074cb264ed20433e10916 on the run branch
+Branch `archon/zqscreby-group-report-totals-by-account-and-curre` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/10b12e4ae6edc17c89e75208/reports holds it (3 files changed, 61 insertions(+), 14 deletions(-)). Review: `archon diff qi_01M7W6HPE8N5PNEFVYZQSCREBY`; land it in `main`: `archon merge qi_01M7W6HPE8N5PNEFVYZQSCREBY`.
+
+Done: Add currency column and validation to ledger. Added optional validated currency support to ledger TSV parsing, defaulting missing currency to USD and emitting it in the four-column CSV. README and regression tests cover both exit statuses and line reporting. `cargo fmt -- --check`, `cargo test` (4 tests), and `git diff --check` pass. Committed as a667b736f7f6442b9bc36ed55358c89f8b0625e1; no work remains in this stage.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit a667b736f7f6442b9bc36ed55358c89f8b0625e1 on the run branch
+Branch `archon/yxyhp5bp-add-currency-column-and-validation-to-le` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/10b12e4ae6edc17c89e75208/ledger holds it (4 files changed, 92 insertions(+), 13 deletions(-)). Review: `archon diff qi_01M7W6HPDEX8G4Z5BPYXYHP5BP`; land it in `main`: `archon merge qi_01M7W6HPDEX8G4Z5BPYXYHP5BP`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M7W6HPDEX8G4Z5BPYXYHP5BP ended and its cargo target directory went.
+
+Updated reports.py to total by account and currency, default legacy CSV rows to USD, validate supplied currency codes, emit the new header, and sort by account then currency. Updated README and tests. Final verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest (3 passed) and git diff --check HEAD^ HEAD (passed); worktree clean. Commit f154690742df583b49d074cb264ed20433e10916, tree 5a4b5391481b7429f6b5f5bfeb8fd9b7da225d83. Nothing left open.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit f154690742df583b49d074cb264ed20433e10916 on the run branch
+
+Added optional validated currency support to ledger TSV parsing, defaulting missing currency to USD and emitting it in the four-column CSV. README and regression tests cover both exit statuses and line reporting. `cargo fmt -- --check`, `cargo test` (4 tests), and `git diff --check` pass. Committed as a667b736f7f6442b9bc36ed55358c89f8b0625e1; no work remains in this stage.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit a667b736f7f6442b9bc36ed55358c89f8b0625e1 on the run branch

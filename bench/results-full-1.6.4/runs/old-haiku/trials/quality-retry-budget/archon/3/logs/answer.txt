@@ -1,0 +1,18 @@
+I've queued the work as item `qi_01M7W9QY969FFD7H59WDA5H5H2` in the `quality-retry-budget` repository, using the `direct` pipeline with standard review.
+
+The item will implement `retry_budget.py` against `SPEC.md`, keep the documented API, cover each specified error and boundary case with focused standard-library tests, run the suite, and commit locally. Nothing is pushed, and the `ship: local` setting means it won't open a PR. I'll report back when it finishes.
+
+I did not read `SPEC.md` or the existing code myself. The item's agent reads them in the repository, so I can't yet confirm how many error and boundary cases the spec lists.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and added 26 focused tests (29 total with the 3 originals) in test_retry_budget.py, stdlib only. Commit a247db7 on archon/wda5h5h2-implement-retry-budget-py-per-spec-md-wi (not pushed); tree 34e60881474e8974adbe0c607547762cef3ff6ab. Before: base stub raised NotImplementedError (3 of 3 original tests error). After: `python3 -m unittest -v test_retry_budget` runs 29 tests, all OK. Validation of every argument (built-in int only, minimums) runs before any early return; attempt >= max_attempts returns None; backoff saturates without a large power of two; Retry-After is an uncapped floor; retry refused when elapsed+delay >= budget. Review: reviewer agt_01M7W9SFPMWNW8MC3ACVFYJ685 (task tsk_01M7W9SFPMWNW8MC3ACVFYJ686) passed head a247db7 with no blocking findings; risk low. Non-blocking follow-ups: reword the _backoff saturation comment; add a test for zero delay at elapsed == budget (returns None). Nothing left running from me; the reviewer's claude process (pid 206454) is left for the runtime to stop when this run ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9SFPMWNW8MC3ACVFYJ685)
+
+SHIPPED: commit a247db7e6feefc6947491be62a075279d2368874 on the run branch
+Branch `archon/wda5h5h2-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/db0a326f134f92a233d44398/quality-retry-budget holds it (2 files changed, 161 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7W9QY969FFD7H59WDA5H5H2`; land it in `main`: `archon merge qi_01M7W9QY969FFD7H59WDA5H5H2`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and added 26 focused tests (29 total with the 3 originals) in test_retry_budget.py, stdlib only. Commit a247db7 on archon/wda5h5h2-implement-retry-budget-py-per-spec-md-wi (not pushed); tree 34e60881474e8974adbe0c607547762cef3ff6ab. Before: base stub raised NotImplementedError (3 of 3 original tests error). After: `python3 -m unittest -v test_retry_budget` runs 29 tests, all OK. Validation of every argument (built-in int only, minimums) runs before any early return; attempt >= max_attempts returns None; backoff saturates without a large power of two; Retry-After is an uncapped floor; retry refused when elapsed+delay >= budget. Review: reviewer agt_01M7W9SFPMWNW8MC3ACVFYJ685 (task tsk_01M7W9SFPMWNW8MC3ACVFYJ686) passed head a247db7 with no blocking findings; risk low. Non-blocking follow-ups: reword the _backoff saturation comment; add a test for zero delay at elapsed == budget (returns None). Nothing left running from me; the reviewer's claude process (pid 206454) is left for the runtime to stop when this run ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9SFPMWNW8MC3ACVFYJ685)
+
+SHIPPED: commit a247db7e6feefc6947491be62a075279d2368874 on the run branch

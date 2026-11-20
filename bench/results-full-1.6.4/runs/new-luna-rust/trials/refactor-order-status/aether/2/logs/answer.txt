@@ -1,0 +1,3 @@
+Implemented the `OrderStatus` enum and `ParseStatusError`, updated lifecycle operations and reports to use the type, and kept status string literals confined to `src/status.rs`.
+
+`cargo test` passes (3 integration tests). Changes committed as `d61eba6` (`Refactor order status to enum`).

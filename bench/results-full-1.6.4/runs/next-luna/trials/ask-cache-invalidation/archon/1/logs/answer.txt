@@ -1,0 +1,7 @@
+The stale category prices come from `Catalog.listing()` in [src/catalog.js](/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/16cd9541e776bd98b757487d/.archon/data/orchestrator/repos/ask-cache-invalidation/src/catalog.js:20). It caches each category and page’s rows under a `listing:<category>:<page>` key, including `priceCents`.
+
+When a merchant changes a price, `updatePrice()` in [src/pricing.js](/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/16cd9541e776bd98b757487d/.archon/data/orchestrator/repos/ask-cache-invalidation/src/pricing.js:6) deletes only the product’s `product:<sku>` cache entry. The product page therefore reloads the updated record immediately, while cached category pages remain unchanged.
+
+The delay is up to 600 seconds: `LISTING_TTL_SECONDS` is 600 in [src/config.js](/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/16cd9541e776bd98b757487d/.archon/data/orchestrator/repos/ask-cache-invalidation/src/config.js:6), and the cache expires entries after their TTL. That is the reported ten minutes.
+
+The fix is to invalidate affected category listing cache entries when a price changes. The listing key includes category and page, so the update path should remove every cached page for the product’s category (or use a category-level version/tag invalidation scheme). Reducing the TTL would only shorten the stale-price window, not fix the missing invalidation. No code was changed.

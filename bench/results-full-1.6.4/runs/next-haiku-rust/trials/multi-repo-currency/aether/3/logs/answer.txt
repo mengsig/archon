@@ -1,0 +1,38 @@
+Multi-currency change done in both repos, each committed on its own. Tests pass: `cargo test` in ledger (7 integration tests), `python3 -m unittest` in reports (5 tests). I did not run `cargo clippy` or any other lint.
+
+ledger (commit a1c3784):
+- Lines take an optional 4th TSV column. Missing means USD. The header is `date,account,amount_cents,currency`, and every row carries the currency.
+- `parse_line` returns a new `ParseError` enum with `Malformed` and `BadCurrency` variants. A bad currency code exits 2. Other malformed input still exits 1. The error text carries the line number.
+- Code must be exactly three uppercase ASCII letters. Empty or lowercase codes are rejected.
+- README updated.
+
+reports (commit 6f866e8):
+- Output is `account,currency,total_cents`, sorted by account then currency.
+- Input without a `currency` column counts as USD. A bad code prints `error: line N: bad currency ...` to stderr and exits 2.
+- Tests added for legacy CSV, per-currency totals, bad currency (including the line number), and empty currency. README updated.
+
+Choices I made:
+- Legacy input is detected from the header, not from empty cells. A row with an empty `currency` value in a file that has the column is an error, not USD.
+- Commits use the repo's configured identity (mengsig) and include the Co-Authored-By line from the attribution reminder.
+
+Caveat, noted in the reports README: `ledger` prints its header before it hits a bad line. When it exits 2 the pipeline still succeeds, and `reports` prints an empty total with exit 0. Callers need `set -o pipefail` or to check ledger's status. I did not change this, since the spec does not cover it.
+
+The multi-currency change is done in both repos and committed in each. `cargo test` passes in `ledger` (7 tests) and `python3 -m unittest` passes in `reports` (5 tests).
+
+**ledger** (commit `a1c3784`)
+- Lines take an optional fourth column for the currency. A missing column means `USD`.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed currency code (anything other than three uppercase ASCII letters) prints the line number to stderr and exits 2. Other input errors still exit 1.
+- The README is updated.
+
+**reports** (commit `6f866e8`)
+- Totals are per account and currency, output as `account,currency,total_cents`, sorted by account then currency.
+- CSV without a `currency` column counts as `USD`.
+- A bad currency code prints `error: line N: bad currency ...` to stderr and exits 2.
+- The README is updated, and the tests cover legacy input, per-currency totals, and bad codes.
+
+Choices I made:
+- Legacy input is detected from the header. In a file that has the column, an empty currency cell is an error, not `USD`.
+- Both commits use the repo's configured git identity (`mengsig`) and carry the Co-Authored-By line from the attribution reminder.
+
+Caveat: `ledger` prints its header before it reaches a bad line. When it exits 2, a pipeline into `reports` still succeeds, and `reports` prints an empty total with exit 0. Callers need `set -o pipefail` or must check `ledger`'s exit status. I documented this in the reports README but did not change the behaviour, since the spec doesn't cover it.

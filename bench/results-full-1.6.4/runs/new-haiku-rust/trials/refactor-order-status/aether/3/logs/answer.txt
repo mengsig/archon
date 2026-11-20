@@ -1,0 +1,29 @@
+Refactored the `orders` crate's order status from `String` to an `OrderStatus` enum and committed it as 9a1aac2 on `main` (the only commit, on top of b460762). `cargo test` passes (3 unit tests in status.rs, 3 integration tests, 0 doc tests) and `cargo clippy --all-targets` is clean.
+
+What changed:
+- New `src/status.rs`: `OrderStatus` (Debug, Clone, Copy, PartialEq, Eq, Hash) with `as_str`, `can_transition_to`, `Display` (via `f.pad`, so width specifiers behave as they did on String), and `FromStr`. `ParseStatusError` implements `std::error::Error` and its message is `unknown status "<input>"`. The module has unit tests for round-trip parsing, the rejected-input message, and the full transition table.
+- `Order::status` is now `OrderStatus`. `pay`, `ship` and `cancel` check `can_transition_to`. `is_open`, `outstanding_cents` and `ready_to_ship` compare enum variants.
+- `report::from_line` parses with `FromStr` and keeps its original error text. `KNOWN` is gone.
+- `lib.rs` declares `pub mod status` and re-exports `OrderStatus` and `ParseStatusError` from the crate root.
+- The status string literals now appear only in `src/status.rs`. The test file still has them in its assertions, which is expected.
+
+Behaviour checks: `cancel` was previously refused only for shipped and cancelled, which is exactly what the transition table gives, so the rules match. Error messages were verified with a throwaway probe test (since removed): `unknown status "lost"`, and the bad-id message is unchanged.
+
+Choices I made:
+- `status_counts` keeps its `Vec<(String, usize)>` signature. Changing it to return `OrderStatus` would be a public API change, and the request asked for no change in observable output. Its key is now `&'static str`, so ordering is still alphabetical by name, not by enum declaration order. Typing the return value is a possible follow-up.
+- No new `assert!`s were added. The touched functions are small, and adding asserts would have been a behaviour change beyond the brief.
+- The commit has no Co-Authored-By trailer. The project CLAUDE.md says not to add Claude attribution, and I followed it over the attribution reminder. The author is the configured git user.
+
+The order status is now an `OrderStatus` enum, committed as `9a1aac2` on `main`. `cargo test` passes and `cargo clippy --all-targets` is clean.
+
+- **New `src/status.rs`:** holds `OrderStatus` with `as_str`, `can_transition_to`, `Display` and `FromStr`, plus `ParseStatusError`. The status string literals now appear only in this file.
+- **Transitions:** `pay`, `ship` and `cancel` check `can_transition_to`. The allowed moves match what the old checks permitted, so the errors and their text are unchanged.
+- **Parsing:** `report::from_line` uses `FromStr` and keeps its original `unknown status "…"` message. The old `KNOWN` list is gone.
+- **Crate root:** `OrderStatus` and `ParseStatusError` are re-exported from `lib.rs`.
+- **Verification:** I checked the exact error text and width padding with a temporary test, then removed it.
+
+Choices I made:
+- `status_counts` still returns `Vec<(String, usize)>`. Returning `OrderStatus` would change the public API, and the brief asked for no change in output. It still sorts alphabetically by name, not by enum declaration order. Typing the return value is a possible follow-up.
+- I added unit tests in `status.rs` for round-trip parsing, the rejected-input message and the full transition table. The brief didn't ask for these.
+- I added no new `assert!`s to the existing functions, since that would be a behaviour change beyond the brief.
+- The commit has no Co-Authored-By trailer. The project CLAUDE.md says not to add Claude attribution, and I followed it over the attribution reminder.

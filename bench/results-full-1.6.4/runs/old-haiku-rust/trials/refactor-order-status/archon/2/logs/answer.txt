@@ -1,0 +1,28 @@
+I've queued the refactor as item `qi_01M7WFT69VHGV9Q2C10GSZQZ5S` on the `refactor-order-status` repository. It runs the `refactor` pipeline, which characterises current behaviour, refactors, verifies, and reviews, then ships. I did not change the repository or commit anything myself; the work happens in a fresh worktree.
+
+- **Scope:** the brief carries your full spec: `src/status.rs` with the enum, `as_str`, `Display`, `FromStr` with `ParseStatusError`, `can_transition_to`, the crate-root re-exports, and no status string literals outside `src/status.rs`.
+- **Acceptance:** `cargo test` passes, and report output, ordering and parsing are unchanged.
+- **Commit:** `ship local`, so the work is committed on a local branch and not pushed. The brief says to commit only as the repository's configured git identity.
+- **Review:** the `refactor` pipeline fixes its own review level, so I did not set `review: standard`. It rejected that setting.
+- **Notify:** tagged `notify`, so you'll hear when it finishes, whether it succeeds or fails.
+
+Done: Refactor orders crate: order status String to OrderStatus enum. Reviewed the OrderStatus refactor (HEAD 88929a5, on top of characterization c373b9c and baseline 3559fd5). The structural goal is met: src/status.rs holds the enum, as_str, Display, FromStr with ParseStatusError, and can_transition_to; the crate root re-exports both types; Order::status is OrderStatus; and status literals under src/ appear only in status.rs. The guards are equivalent to the baseline: pay only from pending, ship only from paid, cancel rejected from shipped/cancelled, and is_open unchanged. status_counts still sorts alphabetically, and from_line keeps the id/total/status error precedence and messages. tests/orders.rs and tests/characterization.rs are byte-identical to their prior commits. Checks I ran: cargo test --locked passes (3 + 14 + 3 tests, no failures); cargo clippy --all-targets -- -D warnings exits 0; git status is clean. I did not rerun fmt. Findings are advisory only: Debug output of Order changes from status: "paid" to status: Paid as a direct consequence of the allowed type change, which the PR should call out; as_str and from_str duplicate the literal table; and the public status field still allows unchecked assignment, as it did with String. Risk: medium, because the change is a public field type change across five small modules, but the blast radius is small and every guard is covered by characterization tests.
+VERDICT: PASS
+
+SHIPPED: commit 88929a557f41389805f8d4c78116e1739badb72e on the run branch
+Branch `archon/0gszqz5s-refactor-orders-crate-order-status-strin` in /home/mengsig/.local/share/archon-bench/f164-rqhhzj1d/archon-bench/work/20261120T122900Z/fa524000e9efca2762517615/refactor-order-status holds it (7 files changed, 383 insertions(+), 26 deletions(-)). Review: `archon diff qi_01M7WFT69VHGV9Q2C10GSZQZ5S`; land it in `main`: `archon merge qi_01M7WFT69VHGV9Q2C10GSZQZ5S`.
+
+Freed 0.2 GiB of build output: item qi_01M7WFT69VHGV9Q2C10GSZQZ5S ended and its cargo target directory went.
+
+Refactor of the orders crate succeeded and is committed locally at 88929a5 on branch archon/0gszqz5s-refactor-orders-crate-order-status-strin. Nothing is pushed and no PR was opened (ship: local).
+
+- src/status.rs holds OrderStatus (as_str, Display, FromStr, can_transition_to) and ParseStatusError, re-exported from the crate root. Order::status is now OrderStatus, and status literals under src/ appear only in status.rs.
+- cargo test passes (20 tests, including 14 characterization tests added first); clippy -D warnings is clean. Existing tests are byte-identical.
+- Behaviour to note: Debug output of Order changes from status: "paid" to status: Paid. This follows from the type change, and it is the one visible difference. Report output, ordering and parse errors are unchanged.
+- Not changed: status_counts still returns Vec<(String, usize)>. cargo fmt --check already failed before this work, in five files; the refactor cleared most of that, and the remaining diff is in tests/orders.rs.
+- Review verdict: PASS, risk medium because the public field type changed.
+
+Reviewed the OrderStatus refactor (HEAD 88929a5, on top of characterization c373b9c and baseline 3559fd5). The structural goal is met: src/status.rs holds the enum, as_str, Display, FromStr with ParseStatusError, and can_transition_to; the crate root re-exports both types; Order::status is OrderStatus; and status literals under src/ appear only in status.rs. The guards are equivalent to the baseline: pay only from pending, ship only from paid, cancel rejected from shipped/cancelled, and is_open unchanged. status_counts still sorts alphabetically, and from_line keeps the id/total/status error precedence and messages. tests/orders.rs and tests/characterization.rs are byte-identical to their prior commits. Checks I ran: cargo test --locked passes (3 + 14 + 3 tests, no failures); cargo clippy --all-targets -- -D warnings exits 0; git status is clean. I did not rerun fmt. Findings are advisory only: Debug output of Order changes from status: "paid" to status: Paid as a direct consequence of the allowed type change, which the PR should call out; as_str and from_str duplicate the literal table; and the public status field still allows unchecked assignment, as it did with String. Risk: medium, because the change is a public field type change across five small modules, but the blast radius is small and every guard is covered by characterization tests.
+VERDICT: PASS
+
+SHIPPED: commit 88929a557f41389805f8d4c78116e1739badb72e on the run branch

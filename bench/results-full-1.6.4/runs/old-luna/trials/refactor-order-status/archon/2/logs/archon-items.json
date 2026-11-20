@@ -1,0 +1,167 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W9PJMPE9JS546D1VVWP0BV",
+      "repo": "repo_01M7W9NZ80KZVKYPBVY92J2218",
+      "pipeline": "direct",
+      "title": "Refactor order status to OrderStatus enum",
+      "brief": "Refactor the orders crate order status from String to a typed enum. Add src/status.rs with public OrderStatus { Pending, Paid, Shipped, Cancelled } deriving Debug, Clone, Copy, PartialEq, Eq, Hash. Implement as_str(self) -> &'static str with lowercase names; Display with identical output; FromStr with type Err = ParseStatusError, a public Error type whose message names rejected input. Implement can_transition_to with exactly pending->paid/cancelled and paid->shipped/cancelled. Change Order::status to OrderStatus, re-export OrderStatus and ParseStatusError from crate root, and use enum everywhere so status string literals occur only in src/status.rs. Preserve observable behavior exactly (errors, report output and ordering, parsing). Ensure cargo test passes and commit the work. Keep compatibility of error/report formatting and sorting as currently observable; inspect existing code/tests before changes.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W9PJVT6JDEJR3R98KT4JG2",
+        "summary": "Refactored order status from String to the public OrderStatus enum, added parsing/display and transition rules, and preserved legacy error text, CSV output, and lexicographic report ordering. Committed as 6f82dca29404322b5f54646eeb5c345e7156a204. Final cargo fmt --check, cargo test (4 integration tests), and git diff --check passed on tree bcd7e0afdfbdbfa00a70024a9dfc1f8ad16abddb. Independent review passed with no blocking findings; report-only follow-ups include exhaustive transition matrix assertions. No open implementation work.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W9V2Q2NE2TFGPMEG9RSD6E)\n\nSHIPPED: commit 6f82dca29404322b5f54646eeb5c345e7156a204 on the run branch"
+      },
+      "created_at": "2026-11-20T10:58:09.383087351Z",
+      "updated_at": "2026-11-20T11:02:19.825322937Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W9PJVT6JDEJR3R98KT4JG2",
+        "item": "qi_01M7W9PJMPE9JS546D1VVWP0BV",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W9PK6ABXCSBZZDPAXW89MW",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/6715f796494f1115e96ec9c4/.archon/data/worktrees/refactor-order-status/qi_01M7W9PJMPE9JS546D1VVWP0BV",
+        "branch": "archon/1vvwp0bv-refactor-order-status-to-orderstatus-enu",
+        "state": {
+          "state": "succeeded",
+          "summary": "Refactored order status from String to the public OrderStatus enum, added parsing/display and transition rules, and preserved legacy error text, CSV output, and lexicographic report ordering. Committed as 6f82dca29404322b5f54646eeb5c345e7156a204. Final cargo fmt --check, cargo test (4 integration tests), and git diff --check passed on tree bcd7e0afdfbdbfa00a70024a9dfc1f8ad16abddb. Independent review passed with no blocking findings; report-only follow-ups include exhaustive transition matrix assertions. No open implementation work.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W9V2Q2NE2TFGPMEG9RSD6E)\n\nSHIPPED: commit 6f82dca29404322b5f54646eeb5c345e7156a204 on the run branch"
+        },
+        "cost_usd": 0.020143260000000003,
+        "started_at": "2026-11-20T10:58:09.647369938Z",
+        "finished_at": "2026-11-20T11:02:19.825322937Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W9PK59XQWNZQ897ZABGY7B",
+        "run": "prun_01M7W9PJVT6JDEJR3R98KT4JG2",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W9PK7AHHHAXXXTW128DVN1",
+        "aether_task": "tsk_01M7W9PK7AHHHAXXXTW128DVN2",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Refactored order status from String to the public OrderStatus enum, added parsing/display and transition rules, and preserved legacy error text, CSV output, and lexicographic report ordering. Committed as 6f82dca29404322b5f54646eeb5c345e7156a204. Final cargo fmt --check, cargo test (4 integration tests), and git diff --check passed on tree bcd7e0afdfbdbfa00a70024a9dfc1f8ad16abddb. Independent review passed with no blocking findings; report-only follow-ups include exhaustive transition matrix assertions. No open implementation work.",
+        "structured": {
+          "checks": [
+            "cargo fmt --check (pass)",
+            "cargo test (pass; 4 integration tests)",
+            "git diff --check (pass)"
+          ],
+          "commit": "6f82dca29404322b5f54646eeb5c345e7156a204",
+          "evidence": {
+            "none": "Pure refactor; no visible or measurable before/after output beyond behavior covered by tests."
+          },
+          "local_commit": "6f82dca29404322b5f54646eeb5c345e7156a204",
+          "pr": {
+            "body": "Added public OrderStatus and ParseStatusError in src/status.rs and re-exported them from the crate root. Updated lifecycle operations, reporting, and CSV parsing to use the enum. Kept error messages, lowercase report/CSV output, and lexicographic count ordering compatible. Added parser and transition tests. Final verification: cargo fmt --check, cargo test (4 integration tests), and git diff --check all passed.",
+            "summary": "Made order lifecycle status a typed enum. Callers now use the enum; before: raw strings, now: validated states with consistent display and parsing.",
+            "title": "Refactor order status to enum"
+          },
+          "review": {
+            "reviewed_head": "6f82dca29404322b5f54646eeb5c345e7156a204",
+            "reviewer_agents": [
+              "agt_01M7W9V2Q2NE2TFGPMEG9RSD6E"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W9V2Q2NE2TFGPMEG9RSD6E",
+                "base": "7194c6dedea98af3f79502a9f5291645ac428153",
+                "findings": 2,
+                "head": "6f82dca29404322b5f54646eeb5c345e7156a204",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W9V2Q2NE2TFGPMEG9RSD6E"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "low",
+            "reviewer": "agt_01M7W9V2Q2NE2TFGPMEG9RSD6E",
+            "why": "Contained type refactor across order lifecycle and reporting. Behavior remains compatible in errors, serialization, and sorting; format and full tests pass, and independent review found no blocking issues."
+          },
+          "tree": "bcd7e0afdfbdbfa00a70024a9dfc1f8ad16abddb"
+        },
+        "cost_usd": 0.020143260000000003,
+        "started_at": "2026-11-20T10:58:09.705502129Z",
+        "finished_at": "2026-11-20T11:02:17.784015060Z"
+      }
+    ],
+    "spent_usd": 0.020143260000000003,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W9PK59XQWNZQ897ZABGY7B": {
+        "direct_usd": 0.015307340000000004,
+        "delegated_usd": 0.0048359200000000005,
+        "agents": [
+          {
+            "agent": "agt_01M7W9V2Q2NE2TFGPMEG9RSD6E",
+            "parent": "agt_01M7W9PK7AHHHAXXXTW128DVN1",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0048359200000000005
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

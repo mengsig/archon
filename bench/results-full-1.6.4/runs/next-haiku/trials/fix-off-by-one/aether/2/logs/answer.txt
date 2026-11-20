@@ -1,0 +1,12 @@
+`python3 -m unittest` now passes all 3 tests, and the fix is committed as `6fa8272` on `main`.
+
+**The bug:** in `window.py`, the loop ran `range(len(items) - size)`, which stops one window early and drops the final window. The fix is `range(len(items) - size + 1)`. No tests were changed.
+
+**Edge cases I checked by hand:**
+- `size` larger than the list (`[1, 2]` with size 3) returns `[]`.
+- An empty list returns `[]`.
+- A list exactly as long as `size` returns one window.
+- Tuples and strings work, since they slice the same way.
+- `size <= 0` still raises `ValueError`.
+
+**Commit:** authored as `mengsig`. I left off the Co-Authored-By line from the attribution reminder. Your CLAUDE.md says not to add Claude attribution, and that reminder defers to CLAUDE.md.

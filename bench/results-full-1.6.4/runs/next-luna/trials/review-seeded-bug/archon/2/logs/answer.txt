@@ -1,0 +1,7 @@
+Reviewed `src/tokens.js` in the `session-lib` mirror. I found these issues:
+
+- **Critical — `verify`, line 27: trivial token forgery.** It checks whether the expected HMAC *starts with* the supplied signature. An empty signature passes: construct `<base64url({"user":"admin","exp":4102444800000})>.` and `verify` accepts the payload without knowing the secret. Require an exact-length, exact-value signature comparison.
+- **High — `verify`, line 27: truncated signatures are accepted.** Any prefix of the valid HMAC passes, reducing the work to guess a signature to as little as one byte (or less). Require the complete 32-byte HMAC and compare it safely.
+- **Low — `verify`, line 28: malformed tokens throw.** For example, `not-json.` passes the empty-signature check, then `JSON.parse` throws. The function’s comment says invalid tokens return `null`; uncaught exceptions can turn hostile input into request errors. Catch decoding/parsing errors and reject the token.
+
+No code was changed, and I did not run tests.

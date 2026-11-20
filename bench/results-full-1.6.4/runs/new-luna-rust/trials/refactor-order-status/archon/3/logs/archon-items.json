@@ -1,0 +1,284 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WHCCY3Y7WY0W16VY17FA6M",
+      "repo": "repo_01M7WHBJ5XNWHDHXSP11YYEW19",
+      "pipeline": "direct",
+      "title": "Refactor order status strings to OrderStatus enum",
+      "brief": "Refactor the orders crate order status from String to a typed enum.\n\nRequirements:\n- Add src/status.rs with pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }, deriving at least Debug, Clone, Copy, PartialEq, Eq, Hash.\n- Implement OrderStatus::as_str(self) -> &'static str returning exactly the lowercase strings pending, paid, shipped, cancelled, and Display printing those same strings.\n- Implement FromStr for OrderStatus with Err = ParseStatusError. ParseStatusError must be public, implement std::error::Error, and its message must name the rejected input.\n- Implement OrderStatus::can_transition_to(self, next: OrderStatus) -> bool for exactly pending->paid, pending->cancelled, paid->shipped, paid->cancelled; all other pairs false.\n- Change Order::status to OrderStatus, re-export OrderStatus and ParseStatusError from crate root, and use the enum everywhere so status string literals appear only in src/status.rs.\n- Preserve observable behavior, including existing errors, report output and ordering, and parsing behavior.\n\nRun cargo test and ensure it passes. Commit the completed work on the local item branch; do not push.\n\nAcceptance: the enum API and transitions match the specified contract; status literals occur only in src/status.rs; existing observable behavior is preserved; cargo test passes; a commit is created.\n\n## Amendment (2026-11-20 13:13 UTC)\n\nThis item continues with the stages of pipeline `adaptive` after its run failed at stage `implement`: ESCALATE: The requested `Order.status: String` → `OrderStatus` change is a breaking public API change. The assignment requires committing nothing and escalating when the change reaches a public API break. No files were modified. Baseline verification: `cargo test` passed (3 integration tests; unit and doc tests also passed). Recommend an explicit exception to the API-break escalation rule or a follow-up task that authorizes the breaking change.\nThe work that run committed is on branch `archon/vy17fa6m-refactor-order-status-strings-to-orderst` in this worktree. Continue from it; do not start over.\n",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7WHCCY3Y7WY0W16VY17FA6M",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T13:13:19.734878730Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T13:13:19.735678016Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T13:13:19.734878730Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "size": "small",
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WHE34VK941VDE8GDX88N6Q",
+        "summary": "Refactored order lifecycle state from String to public OrderStatus, with parsing, display, transition rules, and preserved report/error behavior. Added enum contract regression coverage. Verified cargo fmt --check, cargo test (4 integration tests), cargo clippy --all-targets -- -D warnings, source literal scan, and clean worktree. Commits: 5edfd2e and ce2d5c4. No reviewers required by contract.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit ce2d5c4a97e02f8623ef93c43424b71c0bc3b14c on the run branch"
+      },
+      "created_at": "2026-11-20T13:12:24.259180657Z",
+      "updated_at": "2026-11-20T13:15:58.258665061Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WHCCZ1V85K2S074NQ6E8QE",
+        "item": "qi_01M7WHCCY3Y7WY0W16VY17FA6M",
+        "pipeline": "direct",
+        "shipped": false,
+        "aether_run": "run_01M7WHCD6GKS21NJVKKFCM3JNM",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-0shouhbb/archon-bench/work/20261120T123131Z/652fd48daaf76b53be0189b2/.archon/data/worktrees/refactor-order-status/qi_01M7WHCCY3Y7WY0W16VY17FA6M",
+        "branch": "archon/vy17fa6m-refactor-order-status-strings-to-orderst",
+        "state": {
+          "state": "failed",
+          "stage_id": "implement",
+          "error": "ESCALATE: The requested `Order.status: String` → `OrderStatus` change is a breaking public API change. The assignment requires committing nothing and escalating when the change reaches a public API break. No files were modified. Baseline verification: `cargo test` passed (3 integration tests; unit and doc tests also passed). Recommend an explicit exception to the API-break escalation rule or a follow-up task that authorizes the breaking change."
+        },
+        "cost_usd": 0.00314736,
+        "started_at": "2026-11-20T13:12:24.500244744Z",
+        "finished_at": "2026-11-20T13:13:00.337679465Z"
+      },
+      {
+        "id": "prun_01M7WHE34VK941VDE8GDX88N6Q",
+        "item": "qi_01M7WHCCY3Y7WY0W16VY17FA6M",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WHE38JP6BJVM0S3BYFCYTD",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-0shouhbb/archon-bench/work/20261120T123131Z/652fd48daaf76b53be0189b2/.archon/data/worktrees/refactor-order-status/qi_01M7WHCCY3Y7WY0W16VY17FA6M",
+        "branch": "archon/vy17fa6m-refactor-order-status-strings-to-orderst",
+        "state": {
+          "state": "succeeded",
+          "summary": "Refactored order lifecycle state from String to public OrderStatus, with parsing, display, transition rules, and preserved report/error behavior. Added enum contract regression coverage. Verified cargo fmt --check, cargo test (4 integration tests), cargo clippy --all-targets -- -D warnings, source literal scan, and clean worktree. Commits: 5edfd2e and ce2d5c4. No reviewers required by contract.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit ce2d5c4a97e02f8623ef93c43424b71c0bc3b14c on the run branch"
+        },
+        "cost_usd": 0.012550800000000004,
+        "started_at": "2026-11-20T13:13:19.850025221Z",
+        "finished_at": "2026-11-20T13:15:58.258665061Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WHCD67DPQ9GS363JMAY183",
+        "run": "prun_01M7WHCCZ1V85K2S074NQ6E8QE",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WHCD6RE0RDJ5GZF2DKHA0H",
+        "aether_task": "tsk_01M7WHCD6SESNB059T1P24ZVVP",
+        "state": {
+          "state": "failed",
+          "error": "ESCALATE: The requested `Order.status: String` → `OrderStatus` change is a breaking public API change. The assignment requires committing nothing and escalating when the change reaches a public API break. No files were modified. Baseline verification: `cargo test` passed (3 integration tests; unit and doc tests also passed). Recommend an explicit exception to the API-break escalation rule or a follow-up task that authorizes the breaking change."
+        },
+        "verdict": null,
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": null,
+        "structured": null,
+        "cost_usd": 0.00314736,
+        "started_at": "2026-11-20T13:12:24.519658370Z",
+        "finished_at": "2026-11-20T13:13:00.335286435Z"
+      },
+      {
+        "id": "stg_01M7WHE386G3SJR2FM6C4ZVNRX",
+        "run": "prun_01M7WHE34VK941VDE8GDX88N6Q",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WHE39HFTWDKGAG4EYPZ73V",
+        "aether_task": "tsk_01M7WHE39HFTWDKGAG4EYPZ73W",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier",
+        "summary": "Refactored order lifecycle state from String to public OrderStatus, with parsing, display, transition rules, and preserved report/error behavior. Added enum contract regression coverage. Verified cargo fmt --check, cargo test (4 integration tests), cargo clippy --all-targets -- -D warnings, source literal scan, and clean worktree. Commits: 5edfd2e and ce2d5c4. No reviewers required by contract.",
+        "structured": {
+          "checks": [
+            "CARGO_TARGET_DIR=<item-cache> cargo fmt --check (passed)",
+            "CARGO_TARGET_DIR=<item-cache> cargo test (passed; 4 integration tests, unit/doc tests passed)",
+            "CARGO_TARGET_DIR=<item-cache> cargo clippy --all-targets -- -D warnings (passed)",
+            "rg -n '\"(pending|paid|shipped|cancelled)\"' src --glob '*.rs' (all matches in src/status.rs only)",
+            "git diff --check (passed); git status --porcelain=v1 (clean)"
+          ],
+          "commit": "ce2d5c4a97e02f8623ef93c43424b71c0bc3b14c",
+          "evidence": {
+            "none": "This is a nonvisual API refactor; enum semantics, serialization, errors and transitions are covered by automated tests."
+          },
+          "local_commit": "ce2d5c4a97e02f8623ef93c43424b71c0bc3b14c",
+          "pr": {
+            "body": "Added src/status.rs with OrderStatus, Display, FromStr and ParseStatusError. Updated Order, billing, shipping and reporting to use the enum while preserving CSV status strings, sorted report counts and existing error text. Added lifecycle API regression coverage. Verified formatting, full tests and clippy; status literals occur only in src/status.rs. The Order.status public field type change is intentional and was explicitly authorized by the operator. No advisory findings. Review scope: none required by the stage contract.",
+            "summary": "Made order lifecycle status a typed enum. Before: arbitrary status strings; now: OrderStatus with constrained transitions and preserved text serialization.",
+            "title": "refactor order statuses to enum"
+          },
+          "risk": {
+            "level": "high",
+            "why": "Order.status changes its public type from String to OrderStatus, which breaks source compatibility for external callers; this change was explicitly authorized. The crate's 4 integration tests, formatting and clippy checks pass; behavior and report output are preserved."
+          },
+          "tree": "0e6598773716ac71f8964967de924287732a4cb0"
+        },
+        "cost_usd": 0.012550800000000004,
+        "started_at": "2026-11-20T13:13:19.878069598Z",
+        "finished_at": "2026-11-20T13:15:54.607136031Z"
+      }
+    ],
+    "spent_usd": 0.015698160000000003,
+    "gates": [],
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T13:13:19.734878730Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T13:13:19.735678016Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T13:13:19.734878730Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "steers": [
+      {
+        "at": "2026-11-20T13:13:19.735714272Z",
+        "by": "orchestrator",
+        "what": "switched the stages still to run to `adaptive`; sized the efforts of the stages still to run again; queued it again on its branch"
+      }
+    ],
+    "switched_to": "adaptive",
+    "clarifications": [
+      {
+        "id": "ntf_01M7WHEPXF4ZKNYNQPSG45RE9S",
+        "item": "qi_01M7WHCCY3Y7WY0W16VY17FA6M",
+        "stage_run": "stg_01M7WHE386G3SJR2FM6C4ZVNRX",
+        "agent": "agt_01M7WHE39HFTWDKGAG4EYPZ73V",
+        "question": "The assignment explicitly requires Order.status: String -> OrderStatus, but Amendment records escalation under a breaking-public-API rule. Please confirm the required exception/authorization to proceed with this explicitly requested API break. Fallback: proceed under the assignment's explicit acceptance criteria; no external consumers are present in the local crate.",
+        "fallback": "Preserve existing behavior and make the smallest change consistent with the brief.",
+        "asked_at": "2026-11-20T13:13:40.015922369Z",
+        "deadline": "2026-11-20T13:43:40.015922369Z",
+        "resolution": {
+          "state": "answered",
+          "answer": "[clarification:ntf_01M7WHEPXF4ZKNYNQPSG45RE9S] The authenticated operator explicitly authorized this API change in inbox 2: “Order::status becomes an OrderStatus”. Proceed with that required change and preserve the other acceptance criteria.",
+          "at": "2026-11-20T13:13:46.778796845Z"
+        }
+      }
+    ]
+  }
+]

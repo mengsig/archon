@@ -1,0 +1,3 @@
+Implemented and committed as `1e45169` (`Refactor order status to enum`). `OrderStatus` now drives lifecycle checks, reporting, and CSV parsing; existing error messages and alphabetical report ordering are preserved.
+
+`git diff --check` passed. I couldn’t run `cargo test` because neither `cargo` nor `rustc` is installed in the environment.

@@ -1,0 +1,34 @@
+The refactor is queued as item `qi_01M7WGHS1GRW2EMB9VBZKJEYDF` on the `refactor-order-status` repository. I haven't changed any code or committed anything myself; the daemon will do that in a fresh worktree.
+
+- **Pipeline:** `direct`, one agent that makes and checks the change, then the daemon ships it.
+- **Review:** `standard`, because the change touches shared code and data (status is part of `Order`).
+- **Shipping:** the repository is `ship: local`, so the result is a commit on a local branch and is never pushed.
+- **Why not `refactor`:** that pipeline fixes its review at strict, and you didn't ask for that level of review on this change. I asked the agent to record `cargo test` output and the current behaviour before editing, which gives the same before/after check.
+
+The brief carries all your requirements: the `OrderStatus` enum, `as_str`, `Display`, `FromStr` with `ParseStatusError`, `can_transition_to`, the crate-root re-exports, and the rule that status literals live only in `src/status.rs`. It also says behaviour must stay the same and `cargo test` must pass. I'll report when the item finishes.
+
+Done: Refactor orders crate: order status as OrderStatus enum. Refactored the orders crate so order status is an OrderStatus enum (Pending, Paid, Shipped, Cancelled) instead of a String. Committed on archon/bzkjeydf-refactor-orders-crate-order-status-as-or as 1d19f6f (tree 4980704f86781677691ec71cd001ce5221cab0de, base c0deab9). Not pushed.
+
+What changed: new src/status.rs holds OrderStatus (as_str, can_transition_to, Display, FromStr) and the public ParseStatusError. Order::status is OrderStatus. pay, ship and cancel check can_transition_to. report::from_line returns the same "unknown status" error text. status_counts still returns (String, usize) sorted by name, so its signature and ordering are unchanged. OrderStatus and ParseStatusError are re-exported from the crate root. Status string literals appear only in src/status.rs (grep-verified). tests/orders.rs now uses the enum; tests/status.rs adds three tests (full transition table, parse round-trip, rejected input named in the error).
+
+Verification: before the change I captured cargo test (3 passing) and a characterization of error strings, parse results, report output and ordering. After the change the characterization diff showed only the intended Debug rendering of Order (status: Pending instead of "pending"). Final head checks: cargo fmt --check, cargo clippy --all-targets -- -D warnings, and cargo test (3 + 3 tests) all pass.
+
+Decisions and gaps: I ran rustfmt on the changed files only, because the original HEAD was not rustfmt-clean. The contract's "functions under 60 lines" and "two asserts per function" were not applied to new code, because the crate has no assert convention and adding panics would change behaviour. The public Order::status type change is breaking for downstream crates, as the operator requested. Reviewer agt_01M7WGNZQ62BP4G9BQKFJME46P returned pass with no blocking findings, and rated risk medium (the author rated high; the reviewer's call stands per the contract). Open non-blocking fol…
+
+Freed 0.0 GiB of build output: item qi_01M7WGHS1GRW2EMB9VBZKJEYDF ended and its cargo target directory went.
+
+Refactored the orders crate so order status is an OrderStatus enum (Pending, Paid, Shipped, Cancelled) instead of a String. Committed on archon/bzkjeydf-refactor-orders-crate-order-status-as-or as 1d19f6f (tree 4980704f86781677691ec71cd001ce5221cab0de, base c0deab9). Not pushed.
+
+What changed: new src/status.rs holds OrderStatus (as_str, can_transition_to, Display, FromStr) and the public ParseStatusError. Order::status is OrderStatus. pay, ship and cancel check can_transition_to. report::from_line returns the same "unknown status" error text. status_counts still returns (String, usize) sorted by name, so its signature and ordering are unchanged. OrderStatus and ParseStatusError are re-exported from the crate root. Status string literals appear only in src/status.rs (grep-verified). tests/orders.rs now uses the enum; tests/status.rs adds three tests (full transition table, parse round-trip, rejected input named in the error).
+
+Verification: before the change I captured cargo test (3 passing) and a characterization of error strings, parse results, report output and ordering. After the change the characterization diff showed only the intended Debug rendering of Order (status: Pending instead of "pending"). Final head checks: cargo fmt --check, cargo clippy --all-targets -- -D warnings, and cargo test (3 + 3 tests) all pass.
+
+Decisions and gaps: I ran rustfmt on the changed files only, because the original HEAD was not rustfmt-clean. The contract's "functions under 60 lines" and "two asserts per function" were not applied to new code, because the crate has no assert convention and adding panics would change behaviour. The public Order::status type change is breaking for downstream crates, as the operator requested. Reviewer agt_01M7WGNZQ62BP4G9BQKFJME46P returned pass with no blocking findings, and rated risk medium (the author rated high; the reviewer's call stands per the contract). Open non-blocking follow-ups: no test drives Order::cancel from Paid through the public method; the brief mentioned two new test cases, but there are three.
+
+Nothing was started that is still running. The reviewer's leftover claude -p process (pid 1123029) is not mine and stops when this stage ends.
+
+REVIEW: pass (agt_01M7WGNZQ62BP4G9BQKFJME46P)
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WGNZQ62BP4G9BQKFJME46P)
+
+SHIPPED: commit 1d19f6fefba164eea476d5aa714f1d912a868d14 on the run branch

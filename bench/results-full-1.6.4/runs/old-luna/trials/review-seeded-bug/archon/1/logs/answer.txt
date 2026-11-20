@@ -1,0 +1,9 @@
+## Findings
+
+- **Critical — `src/tokens.js`, `verify`:** The signature check accepts any prefix of the expected HMAC. For example, a token with a valid payload and signature `a` followed by a dot is accepted whenever the real signature starts with `a` (about a 1-in-64 chance per guessed first character). An empty signature is accepted unconditionally: `<valid-payload>.` passes the check. An attacker who can obtain or construct a payload with a future `exp` can therefore forge a session token without knowing the secret.
+
+- **High — `src/tokens.js`, `verify`:** The signature is checked before the payload is decoded, but malformed or unauthenticated input can still throw. For example, `a.b` passes the prefix check when `b` is a prefix of the expected HMAC, then `JSON.parse` throws on the decoded body. A caller that doesn’t catch this can turn a rejected token into a request error or crash. Return `null` for invalid tokens and catch decoding/parsing errors.
+
+- **Medium — `src/tokens.js`, `verify`:** `verify` does not validate `secret`. With `secret` missing, `crypto.createHmac` throws; with the wrong secret type, it may also throw. Invalid configuration or a caller mistake can thus escape the function instead of returning `null`.
+
+I reviewed the registered `review-seeded-bug` mirror’s token implementation, encoding helper, call sites, and tests. No files were changed.

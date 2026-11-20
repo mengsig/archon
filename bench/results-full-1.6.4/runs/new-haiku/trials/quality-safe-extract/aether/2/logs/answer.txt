@@ -1,0 +1,17 @@
+`safe_extract.extract` is implemented per SPEC.md and committed as `1bc5d60` on `main`. All 35 tests pass (`python3 -m unittest test_safe_extract`).
+
+**How it works**
+- The whole batch is validated before anything is created: list type, `(name, bytes)` tuple shape, name rules, duplicates and ancestor collisions in either order, root checks, and the filesystem state of every component and target.
+- Files are created with exclusive `open(..., "xb")`, so an existing file is never overwritten and a symlink is never followed.
+- Invalid input raises `ValueError`. Unexpected OS errors propagate unchanged.
+
+**Choices I made where the spec was silent**
+- Entries must be real `tuple`s. A `list` like `["a", b"x"]` is rejected as malformed.
+- Names that can't be strictly UTF-8 encoded (lone surrogates) are rejected at validation time, so they can't fail mid-write.
+- An empty-string root is rejected. A root that is a file, or lies under a file, is rejected.
+- Case-insensitive filesystems are not handled. `A` and `a` in one batch are not detected up front and would fail mid-write.
+
+**Tests**
+The two existing tests are unchanged. The new cases cover each validation rule, symlink and dangling-link handling, non-consumption of iterators and generators, atomicity when a late entry fails, and literal `%` names.
+
+**Commit attribution:** I used your configured `mengsig` identity and left out the `Co-Authored-By` trailer. The project CLAUDE.md says not to add Claude attribution to commits, and it takes precedence over the reminder.

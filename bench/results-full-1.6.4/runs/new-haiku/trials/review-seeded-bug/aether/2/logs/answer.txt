@@ -1,0 +1,47 @@
+## Review of `src/tokens.js`: not safe to ship
+
+I changed no repository files. The probe scripts are in `/tmp/tokens-review`, outside the repo. The existing suite passes (`node --test`, 4/4), but it does not cover any of the failures below.
+
+### 1. `verify`: empty signature is accepted (Critical)
+- **Function:** `verify`, line 27 (`expected.startsWith(signature)`)
+- **What goes wrong:** `startsWith('')` is always true, so any token ending in `.` passes the MAC check. An attacker can pick any payload and get it accepted, with no key.
+- **Concrete input:** `verify(base64url('{"user":"root","exp":9e15}') + '.', SECRET)` returns `{ user: 'root', exp: 9000000000000000 }`. Confirmed by running it.
+- **Impact:** Full authentication bypass as any user, with any expiry. This is a ship blocker.
+- **Fix:** Compare the full MAC with `crypto.timingSafeEqual` on equal-length buffers, and reject any signature whose length differs from the expected MAC.
+
+### 2. `verify`: prefix comparison allows truncated signatures and leaks timing (High)
+- **Function:** `verify`, line 27
+- **What goes wrong:** Even a non-empty prefix is accepted, and `startsWith` is not constant-time. Guessing a 43-character MAC one character at a time needs roughly 43 × 64 attempts, not 2^256. A timing oracle would make that practical.
+- **Concrete input:** For any body `B`, `verify(B + '.' + realMac[0], SECRET)` returns the payload. Confirmed with the real first character.
+- **Fix:** Same as #1: `timingSafeEqual` over the full MAC.
+
+### 3. `verify`: no secret validation, so an empty key verifies forgeries (High)
+- **Function:** `verify`, line 26 (`mac(body, secret)`)
+- **What goes wrong:** `sign` enforces a 32-character minimum, but `verify` does not. If the verifying side ends up with `''` (for example, a missing or empty env var passed through), HMAC with an empty key works, and anyone can compute the matching MAC.
+- **Concrete input:** `verify(body + '.' + HMAC_sha256('', body), '')` returns the payload. Confirmed. (`undefined` throws `TypeError`, which is at least visible.)
+- **Fix:** Share one secret check between `sign` and `verify`, and make it reject `''` and anything below the minimum.
+
+### 4. `verify`: throws on unauthenticated input instead of returning `null` (Medium)
+- **Function:** `verify`, lines 28–29 (`JSON.parse`, `payload.exp`)
+- **What goes wrong:** The payload is parsed before it is trusted, and the parse is not guarded. Because of #1, unsigned garbage reaches the parser.
+- **Concrete inputs:** `'%%%.'` throws `SyntaxError`. `base64url('null') + '.'` throws `TypeError` (reading `exp` of `null`). `base64url('hello') + '.'` throws `SyntaxError`. Confirmed. A caller that does not catch these gets a 500 or crash from attacker-controlled input.
+- **Fix:** After the MAC check passes, a parse failure or a non-object payload should return `null`, not throw. Put the MAC check before parsing so unauthenticated bodies never reach `JSON.parse`.
+
+### 5. `verify`: extra token segments are ignored (Low)
+- **Function:** `verify`, line 24 (`token.split('.')`)
+- **What goes wrong:** `const [body, signature] = …` silently drops anything after the second segment, so a token has many valid-looking forms. Confirmed: `valid + '.junk'` verifies.
+- **Fix:** Require exactly two non-empty segments.
+
+### 6. Secret strength is only a length check (Low)
+- **Function:** `sign`, line 15
+- **What goes wrong:** The check counts UTF-16 code units, so `'a'.repeat(32)` or the test's `'k'.repeat(40)` passes. Weak keys are then brute-forceable offline from any observed token.
+- **Fix:** Document that the secret must be random, or require a minimum entropy or byte length from a generated key.
+
+### 7. Design and test gaps (Low)
+- Tokens carry no audience or purpose claim, so a token signed for one service can be accepted by another that shares the key.
+- There is no revocation path; tokens are valid until `exp`.
+- `ttlSeconds` in `sign` is unbounded. A very large value creates long-lived tokens.
+- The tests cover only a valid token, a fully wrong signature, an expired token, and a short secret. They do not cover an empty or truncated signature, extra segments, non-object payloads, or an empty verify secret. Adding those cases would have caught #1–#5.
+
+### Recommendation
+Do not ship. Fix #1–#4 together, since the fix is one function: check the secret, split into exactly two parts, compare the full MAC with `timingSafeEqual`, and only then parse the payload inside a guard that returns `null` on failure. Add regression tests for the cases above before release.

@@ -1,0 +1,14 @@
+Queued as **qi_01M7WD6P96ES0BFBQBHCNCHDH3** in the `refactor` pipeline. It includes preserving behavior, running `cargo test`, and committing the change. The pipeline sets its own strict review, so the queue rejected a per-item review override; I re-enqueued without one.
+
+Done: Replace order status strings with OrderStatus enum. Reviewed the committed refactor against baseline 612edcb and the brief. The typed status boundary is cohesive: OrderStatus owns the four names, display/parsing, and transition policy; orders, billing, shipping, and reports consume the type, and all production status name literals are confined to src/status.rs. Report parsing/errors, output/order, and lifecycle behavior match the characterization; the added tests preserve those contracts. Worktree is clean. Independently ran cargo test (5 integration tests passed), cargo check --all-targets --all-features, cargo clippy --all-targets --all-features -- -D warnings, cargo fmt -- --check, and git diff --check; all passed. No findings or remaining risks beyond ordinary API migration to the required Order.status type change.
+VERDICT: PASS
+
+SHIPPED: commit 33998fae53ef7feb2c6611ca8293c980d229cb17 on the run branch
+Branch `archon/hcnchdh3-replace-order-status-strings-with-orders` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/a80ff9462d569b1038cc69fa/refactor-order-status holds it (7 files changed, 167 insertions(+), 27 deletions(-)). Review: `archon diff qi_01M7WD6P96ES0BFBQBHCNCHDH3`; land it in `main`: `archon merge qi_01M7WD6P96ES0BFBQBHCNCHDH3`.
+
+Freed 0.0 GiB of build output: item qi_01M7WD6P96ES0BFBQBHCNCHDH3 ended and its cargo target directory went.
+
+Reviewed the committed refactor against baseline 612edcb and the brief. The typed status boundary is cohesive: OrderStatus owns the four names, display/parsing, and transition policy; orders, billing, shipping, and reports consume the type, and all production status name literals are confined to src/status.rs. Report parsing/errors, output/order, and lifecycle behavior match the characterization; the added tests preserve those contracts. Worktree is clean. Independently ran cargo test (5 integration tests passed), cargo check --all-targets --all-features, cargo clippy --all-targets --all-features -- -D warnings, cargo fmt -- --check, and git diff --check; all passed. No findings or remaining risks beyond ordinary API migration to the required Order.status type change.
+VERDICT: PASS
+
+SHIPPED: commit 33998fae53ef7feb2c6611ca8293c980d229cb17 on the run branch

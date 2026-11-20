@@ -1,0 +1,10 @@
+`retry_delay` is implemented per `SPEC.md`, with focused tests, and committed as `a02e9a8` on `main`. All 29 tests pass under the standard library `unittest`.
+
+**What changed**
+- `retry_budget.py`: the public signature is unchanged. Argument validation runs before any early return, and rejects bool, float, and int subclasses such as `IntEnum` as `ValueError`. Backoff saturates without building a large power of two: it checks the exponent against `cap_ms.bit_length()`, and returns `base_ms` directly when `base_ms >= cap_ms`. The `Retry-After` floor is not capped, and a retry is refused unless `elapsed_ms + delay < budget_ms`.
+- `test_retry_budget.py`: kept the three original tests and added cases for each spec rule. Those cover type and minimum validation, validation ordering before the early returns, the attempt limit, zero base and cap, huge attempts and bases, the `Retry-After` floor, and the budget boundary.
+
+**Choices I made**
+- Type errors raise `ValueError`, not `TypeError`, because the spec says invalid values raise `ValueError`.
+- The commit has no `Co-Authored-By` line. Your CLAUDE.md says not to attribute commits to Claude Code, and that takes precedence over the attribution reminder.
+- I ran the tests without `-I`. That flag drops the working directory from `sys.path`, so the test import failed. The files are this repo's own code, so nothing untrusted was loaded.

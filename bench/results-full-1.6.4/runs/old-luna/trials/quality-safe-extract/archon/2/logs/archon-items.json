@@ -1,0 +1,241 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W95XPXE747TRVR2135M5RC",
+      "repo": "repo_01M7W955SVPHMN40HFZ1ZZB44V",
+      "pipeline": "direct",
+      "title": "Implement spec-complete safe_extract with focused tests",
+      "brief": "Implement safe_extract.py according to SPEC.md, preserving extract(entries, root) API. Cover every specified validation rule and boundary/error case, with focused additions to test_safe_extract.py. Use only Python standard library. Ensure the full batch and root/target tree are validated before any mutation; validation failures leave root/outside unchanged, and unexpected I/O errors remain visible. Run the test suite and any focused checks. Commit the completed work on the item branch; the registered repo ships local. Acceptance criteria: all existing and new tests pass; malformed batch/data/path, duplicate and file-directory collisions, invalid root/symlink/non-directory ancestors/existing targets are rejected with ValueError; empty batch validates root; nested valid entries preserve order and exact bytes including empty files.",
+      "priority": "high",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W95XXR388CHG9J3VH6E766",
+        "summary": "Implemented spec-complete safe extraction with whole-batch and filesystem validation before mutation, collision and symlink rejection, exact byte writes, and focused validation tests. Final checks pass: `python -m unittest -v` (9 tests) and `git diff --check`; final tree is 514d6fd66ca3afd2a38e6c0c56b64970609fa76c. Three whole-change reviews found a trailing-separator root symlink bypass; that was fixed and re-reviewed. A focused re-review found empty-root normalization regression; that was fixed and the final delta passed review. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W9A1231ZNVXPKTT4V6WPV9), codex/gpt-6-luna (agent agt_01M7W9A10DH7JQ4Y57CCKJ4XYS), codex/gpt-6-luna (agent agt_01M7W9A117WR65BVJDTNF9PKXA), codex/gpt-6-luna (agent agt_01M7W9FX1TJHX4178T227BFF95)\n\nSHIPPED: commit 1b461b23018dc2ee30d14a1d2995ad73a1306185 on the run branch"
+      },
+      "created_at": "2026-11-20T10:49:03.653153719Z",
+      "updated_at": "2026-11-20T10:55:37.031632715Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W95XXR388CHG9J3VH6E766",
+        "item": "qi_01M7W95XPXE747TRVR2135M5RC",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W95Y6CPZJ3M0WNGTS9FNG0",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/a56b16f020787a5c2fe795f4/.archon/data/worktrees/quality-safe-extract/qi_01M7W95XPXE747TRVR2135M5RC",
+        "branch": "archon/2135m5rc-implement-spec-complete-safe-extract-wit",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented spec-complete safe extraction with whole-batch and filesystem validation before mutation, collision and symlink rejection, exact byte writes, and focused validation tests. Final checks pass: `python -m unittest -v` (9 tests) and `git diff --check`; final tree is 514d6fd66ca3afd2a38e6c0c56b64970609fa76c. Three whole-change reviews found a trailing-separator root symlink bypass; that was fixed and re-reviewed. A focused re-review found empty-root normalization regression; that was fixed and the final delta passed review. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W9A1231ZNVXPKTT4V6WPV9), codex/gpt-6-luna (agent agt_01M7W9A10DH7JQ4Y57CCKJ4XYS), codex/gpt-6-luna (agent agt_01M7W9A117WR65BVJDTNF9PKXA), codex/gpt-6-luna (agent agt_01M7W9FX1TJHX4178T227BFF95)\n\nSHIPPED: commit 1b461b23018dc2ee30d14a1d2995ad73a1306185 on the run branch"
+        },
+        "cost_usd": 0.04326766,
+        "started_at": "2026-11-20T10:49:03.882820172Z",
+        "finished_at": "2026-11-20T10:55:37.031632715Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W95Y5QMGSZWWVAVDW5SCRJ",
+        "run": "prun_01M7W95XXR388CHG9J3VH6E766",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W95Y7H3XXNK1ZAP68BTASF",
+        "aether_task": "tsk_01M7W95Y7HYVJSP8XYFM3RY90X",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented spec-complete safe extraction with whole-batch and filesystem validation before mutation, collision and symlink rejection, exact byte writes, and focused validation tests. Final checks pass: `python -m unittest -v` (9 tests) and `git diff --check`; final tree is 514d6fd66ca3afd2a38e6c0c56b64970609fa76c. Three whole-change reviews found a trailing-separator root symlink bypass; that was fixed and re-reviewed. A focused re-review found empty-root normalization regression; that was fixed and the final delta passed review. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v — 9 tests passed on final head",
+            "git diff --check — passed on final head"
+          ],
+          "commit": "1b461b23018dc2ee30d14a1d2995ad73a1306185",
+          "evidence": [
+            {
+              "after": "Ran 9 tests in 0.005s — OK; git diff --check passed.",
+              "before": "Ran 2 tests; both errored with NotImplementedError.",
+              "caption": "Baseline failed because extract was unimplemented; final implementation passes the full 9-test suite.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "1b461b23018dc2ee30d14a1d2995ad73a1306185",
+          "pr": {
+            "body": "Implemented the existing `extract(entries, root)` API using only the Python standard library. Root path spelling is normalized only after rejecting the empty string, so trailing separators cannot bypass root symlink checks and an empty root cannot become the current directory. Added focused tests for batch/data/path validation, duplicate and file-directory collisions, existing filesystem conflicts, symlinks, invalid roots, literal percent signs, output order, and empty files. Full available suite: `python -m unittest -v` (9 passed); `git diff --check` passed. Assumption: the caller provides a stable filesystem as specified; concurrent changes and rollback after I/O errors remain out of scope.",
+            "summary": "Safe extraction now validates every entry and destination before writing. It rejects malformed batches, unsafe paths, collisions, symlink roots and components, and existing targets; valid nested files preserve order and exact bytes.",
+            "title": "Implement safe extraction validation"
+          },
+          "review": {
+            "reviewed_head": "1b461b23018dc2ee30d14a1d2995ad73a1306185",
+            "reviewer_agents": [
+              "agt_01M7W9A1231ZNVXPKTT4V6WPV9",
+              "agt_01M7W9A10DH7JQ4Y57CCKJ4XYS",
+              "agt_01M7W9A117WR65BVJDTNF9PKXA",
+              "agt_01M7W9FX1TJHX4178T227BFF95"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W9A1231ZNVXPKTT4V6WPV9",
+                "base": "66b0dd6db6a0568a9697056b75296f250c0185fb",
+                "findings": 1,
+                "head": "f6e9113ba7a34aef33877d2530ebb2888f1d699f",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W9A10DH7JQ4Y57CCKJ4XYS",
+                "base": "66b0dd6db6a0568a9697056b75296f250c0185fb",
+                "findings": 1,
+                "head": "f6e9113ba7a34aef33877d2530ebb2888f1d699f",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W9A117WR65BVJDTNF9PKXA",
+                "base": "66b0dd6db6a0568a9697056b75296f250c0185fb",
+                "findings": 1,
+                "head": "f6e9113ba7a34aef33877d2530ebb2888f1d699f",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W9CXGSJQJ0HG1APM7XBQZ2",
+                "base": "f6e9113ba7a34aef33877d2530ebb2888f1d699f",
+                "findings": 1,
+                "head": "253ec9cbab9863e4b041e702ea9fecce74041e29",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W9FX1TJHX4178T227BFF95",
+                "base": "253ec9cbab9863e4b041e702ea9fecce74041e29",
+                "findings": 0,
+                "head": "1b461b23018dc2ee30d14a1d2995ad73a1306185",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W9A1231ZNVXPKTT4V6WPV9",
+              "agt_01M7W9A10DH7JQ4Y57CCKJ4XYS",
+              "agt_01M7W9A117WR65BVJDTNF9PKXA",
+              "agt_01M7W9CXGSJQJ0HG1APM7XBQZ2",
+              "agt_01M7W9FX1TJHX4178T227BFF95"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M7W9FX1TJHX4178T227BFF95",
+            "why": "Contained behavior change to the existing extraction API in safe_extract.py with focused coverage in test_safe_extract.py. The initial implementation had a root-symlink spelling bypass, found by all three whole-change reviewers and fixed; a focused follow-up found empty-root normalization, also fixed. Final full suite and final focused review pass."
+          },
+          "tree": "514d6fd66ca3afd2a38e6c0c56b64970609fa76c"
+        },
+        "cost_usd": 0.04326766,
+        "started_at": "2026-11-20T10:49:03.927313855Z",
+        "finished_at": "2026-11-20T10:55:34.228710910Z"
+      }
+    ],
+    "spent_usd": 0.04326766,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W95Y5QMGSZWWVAVDW5SCRJ": {
+        "direct_usd": 0.02076622,
+        "delegated_usd": 0.022501440000000004,
+        "agents": [
+          {
+            "agent": "agt_01M7W9A10DH7JQ4Y57CCKJ4XYS",
+            "parent": "agt_01M7W95Y7H3XXNK1ZAP68BTASF",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0032500000000000003
+          },
+          {
+            "agent": "agt_01M7W9A117WR65BVJDTNF9PKXA",
+            "parent": "agt_01M7W95Y7H3XXNK1ZAP68BTASF",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0039600600000000005
+          },
+          {
+            "agent": "agt_01M7W9A1231ZNVXPKTT4V6WPV9",
+            "parent": "agt_01M7W95Y7H3XXNK1ZAP68BTASF",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.005495460000000001
+          },
+          {
+            "agent": "agt_01M7W9CXGSJQJ0HG1APM7XBQZ2",
+            "parent": "agt_01M7W95Y7H3XXNK1ZAP68BTASF",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.005370900000000001
+          },
+          {
+            "agent": "agt_01M7W9FX1TJHX4178T227BFF95",
+            "parent": "agt_01M7W95Y7H3XXNK1ZAP68BTASF",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.004425020000000001
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

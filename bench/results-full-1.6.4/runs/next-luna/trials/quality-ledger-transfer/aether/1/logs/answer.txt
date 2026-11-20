@@ -1,0 +1,5 @@
+Implemented and committed as `b4eaf0f` (`Implement atomic bounded ledger`).
+
+The ledger validates inputs and boundaries, returns detached snapshots, and uses a per-ledger lock to keep transfers and snapshots atomic. Added focused validation, overflow, self-transfer, copy-isolation, and concurrent-transfer tests.
+
+Verification: all 7 tests pass; `git diff --check` is clean.

@@ -1,0 +1,25 @@
+I queued the rate limiter as one item, `qi_01M7W2YTZ74ZHNW52FC8WW060Z`, on the `feature-token-bucket` repository. It uses the `direct` pipeline with standard review, and the outcome will be posted when it finishes.
+
+- **Pipeline:** `direct`. The module is a single small file with a clear spec, so one author can do it. I did not use `adaptive`, because the spec does not mention concurrency or locking.
+- **Model:** balanced tier at medium effort. The spec is short, but its edge cases make standard review worth it.
+- **Brief:** your words verbatim, plus the acceptance criteria: every spec behaviour, error case and edge case implemented; existing tests passing; new tests for the edge and error cases; standard library only; committed on the item's branch.
+- **Quota:** this is one medium-effort item, so it adds little to the claude-code window at 76% used. I did not change any throttling settings. If the pace worsens, I'll pause or lower efforts on new work.
+
+I did not write or commit any code myself. The repository ships locally, so the commit stays on the item's branch.
+
+Done: Implement token-bucket rate limiter per SPEC.md in ratelimit.py. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 18 tests for the spec's error and edge cases. Commit 880d878 (tree 825e8da) on archon/c8ww060z-implement-token-bucket-rate-limiter-per, not pushed. Before: base stubs, 3 of 3 existing tests error with NotImplementedError. After: `python3 -m unittest -v test_ratelimit` runs 21 tests, all OK, at HEAD. Review: one reviewer (agt_01M7W31111VFYEP6EJFVV3925R) passed the head at medium effort, risk medium, with one non-blocking follow-up: wait_time() can be one ulp short in about 0.3% of random cases, so sleeping exactly that long can still fail try_acquire. Not fixed; the spec's exact-equality wording may need a small tolerance or margin. Nothing left running; no servers were started.
+REVIEW: pass by agt_01M7W31111VFYEP6EJFVV3925R
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W31111VFYEP6EJFVV3925R)
+
+SHIPPED: commit 880d8789341a60db78d6716d2d889feef3617f13 on the run branch
+Branch `archon/c8ww060z-implement-token-bucket-rate-limiter-per` in /home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/0e1a399ac57daf070912e2a7/feature-token-bucket holds it (2 files changed, 244 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W2YTZ74ZHNW52FC8WW060Z`; land it in `main`: `archon merge qi_01M7W2YTZ74ZHNW52FC8WW060Z`.
+
+The rate limiter is done and committed as 880d878 on the item's branch (not pushed; 21 tests pass). The reviewer found one open issue: wait_time() can come out one float ulp short in about 0.3% of random cases, so sleeping exactly that long can still fail try_acquire. The spec's wording is exact equality. Should I (a) leave it as is, (b) add a small tolerance or safety margin to wait_time() (which departs from the spec's exact wording), or (c) keep the exact value and document the caveat? I have not changed anything yet.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 18 tests for the spec's error and edge cases. Commit 880d878 (tree 825e8da) on archon/c8ww060z-implement-token-bucket-rate-limiter-per, not pushed. Before: base stubs, 3 of 3 existing tests error with NotImplementedError. After: `python3 -m unittest -v test_ratelimit` runs 21 tests, all OK, at HEAD. Review: one reviewer (agt_01M7W31111VFYEP6EJFVV3925R) passed the head at medium effort, risk medium, with one non-blocking follow-up: wait_time() can be one ulp short in about 0.3% of random cases, so sleeping exactly that long can still fail try_acquire. Not fixed; the spec's exact-equality wording may need a small tolerance or margin. Nothing left running; no servers were started.
+REVIEW: pass by agt_01M7W31111VFYEP6EJFVV3925R
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W31111VFYEP6EJFVV3925R)
+
+SHIPPED: commit 880d8789341a60db78d6716d2d889feef3617f13 on the run branch

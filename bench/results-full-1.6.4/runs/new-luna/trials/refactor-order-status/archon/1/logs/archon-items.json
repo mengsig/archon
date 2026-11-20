@@ -1,0 +1,240 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W4WHTSF29A32NHCT496VDE",
+      "repo": "repo_01M7W4VN0657AEYWRP4Z4DXFE7",
+      "pipeline": "direct",
+      "title": "Refactor order status strings to OrderStatus",
+      "brief": "Refactor the orders crate's string-based order status to a proper enum and commit the work.\n\nRequirements:\n- Add src/status.rs with pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }, deriving at least Debug, Clone, Copy, PartialEq, Eq, Hash.\n- OrderStatus::as_str(self) -> &'static str returns lowercase \"pending\", \"paid\", \"shipped\", \"cancelled\"; Display prints the same.\n- Implement FromStr for OrderStatus with type Err = ParseStatusError. ParseStatusError must be public, implement std::error::Error, and its message must name the rejected input.\n- Implement OrderStatus::can_transition_to(self, next: OrderStatus) -> bool: allow pending -> paid, pending -> cancelled, paid -> shipped, paid -> cancelled; reject all other transitions.\n- Change Order::status to OrderStatus, re-export OrderStatus and ParseStatusError from crate root, and use the enum throughout so status string literals appear only in src/status.rs.\n- Preserve observable behavior exactly, including errors, report output and ordering, and parsing.\n- Run cargo test successfully and commit the changes.\n\nAcceptance: implementation satisfies all requirements; status literals are confined to src/status.rs; cargo test passes; commit exists in the registered repository's local shipping workflow.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W4WHTSF29A32NHCT496VDE",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T09:34:02.258414705Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T09:34:02.287716146Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T09:34:02.258414705Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W4WJ2J4BRYW3VMYFWH6AWE",
+        "summary": "Added public OrderStatus and ParseStatusError, changed Order.status and lifecycle logic to use the enum, and preserved CSV parsing errors, report output and ordering. cargo fmt -- --check, cargo test (4 integration tests), and git diff --check passed on committed head aa2ad9bdc3f1da8d5019e68486b04ea12ced8013; the independent review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W526GNK0FP613FPV7ABA2E)\n\nSHIPPED: commit aa2ad9bdc3f1da8d5019e68486b04ea12ced8013 on the run branch"
+      },
+      "created_at": "2026-11-20T09:34:02.073284352Z",
+      "updated_at": "2026-11-20T09:38:25.820862048Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W4WJ2J4BRYW3VMYFWH6AWE",
+        "item": "qi_01M7W4WHTSF29A32NHCT496VDE",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W4WJAEPR3NF0BFMYDREZTR",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/098ae3579e424befb7a31714/.archon/data/worktrees/refactor-order-status/qi_01M7W4WHTSF29A32NHCT496VDE",
+        "branch": "archon/ct496vde-refactor-order-status-strings-to-orderst",
+        "state": {
+          "state": "succeeded",
+          "summary": "Added public OrderStatus and ParseStatusError, changed Order.status and lifecycle logic to use the enum, and preserved CSV parsing errors, report output and ordering. cargo fmt -- --check, cargo test (4 integration tests), and git diff --check passed on committed head aa2ad9bdc3f1da8d5019e68486b04ea12ced8013; the independent review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W526GNK0FP613FPV7ABA2E)\n\nSHIPPED: commit aa2ad9bdc3f1da8d5019e68486b04ea12ced8013 on the run branch"
+        },
+        "cost_usd": 0.022396140000000005,
+        "started_at": "2026-11-20T09:34:02.519976437Z",
+        "finished_at": "2026-11-20T09:38:25.820862048Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W4WJ9RQSG8K2CCVR8356W5",
+        "run": "prun_01M7W4WJ2J4BRYW3VMYFWH6AWE",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W4WJBMNF6X328DP8X1WA85",
+        "aether_task": "tsk_01M7W4WJBMNF6X328DP8X1WA86",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Added public OrderStatus and ParseStatusError, changed Order.status and lifecycle logic to use the enum, and preserved CSV parsing errors, report output and ordering. cargo fmt -- --check, cargo test (4 integration tests), and git diff --check passed on committed head aa2ad9bdc3f1da8d5019e68486b04ea12ced8013; the independent review passed with no findings. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "cargo fmt -- --check",
+            "cargo test",
+            "git diff --check"
+          ],
+          "commit": "aa2ad9bdc3f1da8d5019e68486b04ea12ced8013",
+          "evidence": {
+            "none": "Pure refactor with no visible or measurable before/after outcome; existing output behavior is preserved and tested."
+          },
+          "local_commit": "aa2ad9bdc3f1da8d5019e68486b04ea12ced8013",
+          "pr": {
+            "body": "Added src/status.rs for OrderStatus, ParseStatusError, lowercase parsing/display, and the allowed transition table. Updated Order, billing, shipping, and reporting to use the enum; CSV output and status count ordering are unchanged. CSV parsing preserves its prior validation order and `unknown status {:?}` error text. Added tests for parsing, transitions and rejected input. Verification: cargo fmt -- --check, cargo test (4 integration tests), and git diff --check all passed. Assumption: lowercase input remains exact and case sensitive, matching existing behavior.",
+            "summary": "Replaced string based order state with a typed OrderStatus enum. Callers can now use explicit states and transition rules. Before: status was stored and compared as free form strings; now: status is a four variant enum with parsing and display support.",
+            "title": "Refactor order status to enum"
+          },
+          "review": {
+            "reviewed_head": "aa2ad9bdc3f1da8d5019e68486b04ea12ced8013",
+            "reviewer_agents": [
+              "agt_01M7W526GNK0FP613FPV7ABA2E"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W526GNK0FP613FPV7ABA2E",
+                "base": "96fcb0c9cdc552dbc95fd4d664d0233a167dc54f",
+                "findings": 0,
+                "head": "aa2ad9bdc3f1da8d5019e68486b04ea12ced8013",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W526GNK0FP613FPV7ABA2E"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": {
+              "agent_id": "agt_01M7W526GNK0FP613FPV7ABA2E",
+              "level": "low",
+              "why": "Reviewer found no unintended behavior changes; the Order.status API change was explicitly requested."
+            },
+            "why": "The requested public Order.status change from String to OrderStatus is source breaking for existing callers, which puts this change in the API break category of the risk rubric. The implementation is confined to the orders crate, preserves runtime output and parsing behavior, and all checks passed."
+          },
+          "tree": "87a5277e409f58381d692b181b28156062af3e55"
+        },
+        "cost_usd": 0.022396140000000005,
+        "started_at": "2026-11-20T09:34:02.552148396Z",
+        "finished_at": "2026-11-20T09:38:20.308584841Z"
+      }
+    ],
+    "spent_usd": 0.022396140000000005,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W4WJ9RQSG8K2CCVR8356W5": {
+        "direct_usd": 0.019527200000000005,
+        "delegated_usd": 0.00286894,
+        "agents": [
+          {
+            "agent": "agt_01M7W526GNK0FP613FPV7ABA2E",
+            "parent": "agt_01M7W4WJBMNF6X328DP8X1WA85",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00286894
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T09:34:02.258414705Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T09:34:02.287716146Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T09:34:02.258414705Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

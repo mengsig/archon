@@ -1,0 +1,10 @@
+Implemented currency support in both repositories.
+
+- `ledger` accepts an optional currency column, defaults it to USD, and reports invalid codes with the line number and exit status 2.
+- `reports` totals by account and currency, accepts older CSV without a currency column as USD, and reports invalid codes with exit status 2.
+- Updated both READMEs.
+
+Both requested suites pass: `cargo test` and `python3 -m unittest`. Both repositories are clean after commits:
+
+- `ledger`: `bb45c1b` — Add transaction currency support
+- `reports`: `1eda064` — Report totals by currency

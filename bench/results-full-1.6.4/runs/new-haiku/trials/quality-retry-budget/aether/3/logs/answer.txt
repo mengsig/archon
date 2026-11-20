@@ -1,0 +1,13 @@
+Implemented `retry_delay` in retry_budget.py per SPEC.md and committed as 6189eba on main (author mengsig). Validation runs first for every argument: built-in int only (bool/float rejected), attempt and max_attempts >= 1, others >= 0, retry_after None or >= 0, all failures raise ValueError. Then attempt >= max_attempts returns None. Backoff is min(cap, base * 2**(attempt-1)); zero base or cap gives 0, and huge attempts saturate at cap via a bit_length check so no large power is built. Retry-After acts as an uncapped floor via max(). The budget check returns None when elapsed + delay >= budget, otherwise the delay. Tests in test_retry_budget.py: the 3 original tests plus 34 new ones covering validation, attempt boundaries, backoff/saturation, Retry-After, and budget boundaries. `python3 -m unittest test_retry_budget` runs 37 tests, all passing. Helper functions are _require_int and _backoff. Note: a stray untracked __pycache__/ directory was left uncommitted.
+
+I implemented `retry_delay` in `retry_budget.py` following `SPEC.md`, added focused tests, and committed the work as `6189eba` on `main`. All 37 tests pass with `python3 -m unittest test_retry_budget`.
+
+- **Validation:** every argument is checked before any early return. Only built-in ints are accepted, so bools and floats raise `ValueError`, as do values below their minimums.
+- **Attempt limit:** `attempt >= max_attempts` returns `None`.
+- **Backoff:** `min(cap, base * 2**(attempt-1))`. Zero base or zero cap gives 0. Large attempt values saturate at the cap without building a huge power of two.
+- **Retry-After:** used as an uncapped minimum wait via `max()`.
+- **Budget:** returns `None` when `elapsed + delay >= budget`, otherwise returns the delay.
+
+The tests keep the three original cases and add 34 more covering validation, attempt boundaries, backoff and saturation, Retry-After, and budget boundaries.
+
+I chose `ValueError` for wrong types as well as out-of-range values, because the spec says "invalid values raise ValueError" and lists the type rule under validation. An untracked `__pycache__/` directory from the test run was left uncommitted.

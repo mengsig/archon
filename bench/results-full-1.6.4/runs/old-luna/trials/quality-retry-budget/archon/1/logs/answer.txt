@@ -1,0 +1,14 @@
+Queued as **qi_01M7W3TBJ6TE4SSBZA2T117SYD**. It covers implementing the spec, focused boundary and error tests, running checks, and committing the changes. The repository ships locally.
+
+Done: Implement retry budget scheduling and edge case tests. Implemented retry delay validation, capped exponential backoff, Retry-After floors, and strict budget handling in retry_budget.py; expanded test_retry_budget.py to 12 tests covering invalid arguments and edge boundaries. The first review caught early saturation for base=3/cap=7; fixed it in bfb1754 and added a regression test. Focused and discovery unittest runs pass (12 each), and git diff --check passes. Independent whole-change and fix reviews approved; worktree is clean.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W3WJJ5ZNCTX9WR5BTDGK2S), codex/gpt-6-luna (agent agt_01M7W3YWEVH8BPB4KGJKP34V5G)
+
+SHIPPED: commit bfb1754df6250ff0e9816ea157655fbcfd95fbf6 on the run branch
+Branch `archon/2t117syd-implement-retry-budget-scheduling-and-ed` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/15332bf72620804d3926dd76/quality-retry-budget holds it (2 files changed, 90 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7W3TBJ6TE4SSBZA2T117SYD`; land it in `main`: `archon merge qi_01M7W3TBJ6TE4SSBZA2T117SYD`.
+
+Implemented retry delay validation, capped exponential backoff, Retry-After floors, and strict budget handling in retry_budget.py; expanded test_retry_budget.py to 12 tests covering invalid arguments and edge boundaries. The first review caught early saturation for base=3/cap=7; fixed it in bfb1754 and added a regression test. Focused and discovery unittest runs pass (12 each), and git diff --check passes. Independent whole-change and fix reviews approved; worktree is clean.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W3WJJ5ZNCTX9WR5BTDGK2S), codex/gpt-6-luna (agent agt_01M7W3YWEVH8BPB4KGJKP34V5G)
+
+SHIPPED: commit bfb1754df6250ff0e9816ea157655fbcfd95fbf6 on the run branch

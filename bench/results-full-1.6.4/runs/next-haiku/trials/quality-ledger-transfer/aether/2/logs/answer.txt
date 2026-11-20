@@ -1,0 +1,15 @@
+Implemented ledger.py per SPEC.md and expanded test_ledger.py; committed as 578fe3d on main. All 27 tests pass (python3 -m unittest, repeated runs stable). Design: a single threading.Lock per Ledger guards every transfer and snapshot, so each operation is atomic and opposite transfers cannot deadlock. Validation: balances/amounts must be type int (bools rejected) within range; amount is validated before account lookup; unknown or non-string account names raise KeyError; failed transfers leave balances unchanged; same-account transfers return True iff funds suffice without mutating. Tests cover construction validation and copying, amount and account errors, boundary/overflow cases, self-transfers, and concurrency (no overdraft under contention, no deadlock with opposite transfers, snapshots never see a half-transfer). Assumptions: non-string account names are treated as unknown accounts (KeyError) rather than a ValueError; the concurrency tests use join timeouts only as a deadlock guard. Commit uses the repo's configured git identity (mengsig); no Co-Authored-By line was added because CLAUDE.md forbids Claude attribution in commits.
+
+I implemented `ledger.py` to the spec, expanded `test_ledger.py`, and committed both as `578fe3d` on `main`. All 27 tests pass across repeated runs with `python3 -m unittest`.
+
+**Design**
+- Each `Ledger` has one `threading.Lock` that guards every transfer and snapshot. Each operation is therefore atomic, and opposite transfers cannot deadlock because only one lock exists.
+- Balances and amounts must be built-in `int` (`type(x) is int`), so booleans are rejected. Balances must be in `[0, MAX_BALANCE]` and amounts in `[1, MAX_BALANCE]`.
+- The amount is validated before any account lookup, so a bad amount with a missing account raises `ValueError`.
+- Failed transfers leave every balance unchanged. A same-account transfer returns `True` iff funds suffice and never mutates.
+- The constructor copies its input, and `snapshot()` returns a fresh dict.
+
+**Assumptions to check**
+- A non-string account name (for example `None`, `1`, or a list) raises `KeyError`, the same as an unknown account. The spec does not say what to do here.
+- The concurrency tests use `join(timeout=30)` only as a deadlock guard. They assert no timing.
+- The commit uses the repo's configured identity (`mengsig`). I did not add the `Co-Authored-By` line from the harness reminder, because the repo's CLAUDE.md forbids Claude attribution in commits.

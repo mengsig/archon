@@ -1,0 +1,19 @@
+`safe_extract.extract` is implemented to SPEC.md, with focused tests, and committed as `926f209` on `main`. All 35 tests pass under `python3 -m unittest`.
+
+**How it works**
+- The whole batch is validated before anything is created: entry shape and types, names, duplicate and file/directory collisions, the root, and every target path.
+- The root must be an existing real directory. Below it, any existing symlink (including dangling ones) or non-directory ancestor is rejected, and each target must be absent.
+- Files are written with exclusive-create mode, so an existing file is never overwritten and a symlink at the final component is never followed.
+- Filesystem errors during writing propagate as `OSError`, as the spec requires.
+
+**Choices I made where the spec was silent**
+- Entries must be exact `tuple`s of length 2 (subclasses allowed); lists are rejected as malformed.
+- `data` must be `bytes`; `bytearray` and `memoryview` are rejected.
+- Names that cannot be encoded with the filesystem encoding (for example a lone surrogate) are rejected up front, so they cannot fail mid-batch.
+- Only the root's own path is checked for being a symlink. Symlinks in its ancestors are allowed, which keeps paths like macOS `/tmp` usable.
+- An empty string root is rejected.
+
+**Limits**
+- The test file uses `os.symlink`, so the symlink tests will not run on Windows. The spec scopes the work to POSIX.
+- Test temp directories are created with the default temp location rather than inside the repo, so the old tests' `dir="."` pattern is gone.
+- I left a stray `__pycache__` out of the commit by deleting it; it is not in `.gitignore`.

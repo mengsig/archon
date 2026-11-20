@@ -1,0 +1,26 @@
+**Root cause: `updatePrice` invalidates only the product cache entry, not the category listing cache, and listings are cached for 10 minutes.**
+
+**Code path**
+
+1. `src/pricing.js:6-13`, `updatePrice` writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That removes only `product:<sku>`.
+2. `src/catalog.js:22-33`, `Catalog.listing` caches the full page of rows under `listing:<category>:<page>` with `LISTING_TTL_SECONDS` (600 s, `src/config.js:7`). Each cached row is a copy of `{ sku, name, priceCents }`, taken at build time.
+3. Nothing deletes or refreshes the `listing:*` keys when a price changes. A category page therefore keeps serving the old `priceCents` until its entry expires, which is up to 600 s, about ten minutes.
+4. `Catalog.product` (`src/catalog.js:12-20`) reads `product:<sku>` first and falls back to the store. Because `updatePrice` deletes that key, the product page reads fresh data immediately. That is why the two pages disagree.
+
+**Why the delay is what it is**
+
+The listing cache was added for cost reasons: the comment at `src/config.js:5-6` says category listings are expensive to build (filter, sort, slice). The product and listing caches were given separate TTLs, but the write path was only wired to the product key. The listing TTL is the only thing bounding staleness. The existing test (`test/catalog.test.js:13-18`) covers product freshness only; no test checks listings after an update.
+
+**Fix**
+
+- In `updatePrice`, read the product's category before the write (`catalog.store.find(sku)`), then invalidate that category's listing entries. Pages are derived from name order, so the category's pages are the affected set. Simplest correct option: give `TtlCache` a way to delete keys by prefix (e.g. `listing:<category>:`), or keep a per-category set of listing keys. Either avoids a full cache clear.
+- Add a test: list a category, update a price in it, list again, and expect the new price.
+- Optionally keep the 600 s TTL as a backstop, not as the freshness mechanism.
+
+**Caveat**
+
+The cache is an in-process `Map` (`src/cache.js`), created per `createCatalog` call. If the service runs several instances, `updatePrice` invalidates only the instance that handled the write, and the others serve stale listings until their TTL expires. That cannot be confirmed from this repo alone; it depends on how the service is deployed. If it is multi-instance, the fix needs a shared cache or an invalidation message to all instances, not just the local delete.
+
+I made no code changes. I read the mirror at `repos/ask-cache-invalidation` (HEAD `c1eb5ea`, package `catalog-service`). I did not run the test suite.
+
+On the quota notice: the queue is empty, so nothing is running on claude-code and there is nothing to throttle right now.

@@ -1,0 +1,36 @@
+Queued the coordinated change as initiative `ini_01M7WG64JHVV9QFCNFK7Y4AM9T`:
+
+- Ledger: `qi_01M7WG64JJC1ZDF3WS9Z5R14XH`
+- Reports: `qi_01M7WG64K56N1MM4EG0YY0KBJR`
+
+Both tasks share the CSV and validation contract, and include README updates, the requested test commands, and commits.
+
+Done: Aggregate reports by account and currency. Added currency-aware report aggregation, legacy CSV defaults to USD, validation for provided currency, README documentation, and tests. `python3 -m unittest` passed (3 tests) and `git diff --check` passed. Committed as a2279877798f31318789dfd8b5b633dfc5a0b1ce; worktree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit a2279877798f31318789dfd8b5b633dfc5a0b1ce on the run branch
+Branch `archon/0yy0kbjr-aggregate-reports-by-account-and-currenc` in /home/mengsig/.local/share/archon-bench/f164-0shouhbb/archon-bench/work/20261120T123131Z/8e52379cab7764304a5d1605/reports holds it (3 files changed, 60 insertions(+), 15 deletions(-)). Review: `archon diff qi_01M7WG64K56N1MM4EG0YY0KBJR`; land it in `main`: `archon merge qi_01M7WG64K56N1MM4EG0YY0KBJR`.
+
+Done: Emit validated currency in ledger CSV. Added optional TSV currency with USD default, strict three-letter uppercase ASCII validation, and a fourth CSV column. README and tests updated. `cargo fmt --check`, `cargo test` (3 integration tests passed), and CLI checks for invalid currency status 2/line-numbered stderr and unrelated bad amount status 1 passed. Committed as 15e8d5a692eeb806233190fe6b1b9aa618e7c926; worktree clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 15e8d5a692eeb806233190fe6b1b9aa618e7c926 on the run branch
+Branch `archon/9z5r14xh-emit-validated-currency-in-ledger-csv` in /home/mengsig/.local/share/archon-bench/f164-0shouhbb/archon-bench/work/20261120T123131Z/8e52379cab7764304a5d1605/ledger holds it (4 files changed, 67 insertions(+), 13 deletions(-)). Review: `archon diff qi_01M7WG64JJC1ZDF3WS9Z5R14XH`; land it in `main`: `archon merge qi_01M7WG64JJC1ZDF3WS9Z5R14XH`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M7WG64JJC1ZDF3WS9Z5R14XH ended and its cargo target directory went.
+
+Added currency-aware report aggregation, legacy CSV defaults to USD, validation for provided currency, README documentation, and tests. `python3 -m unittest` passed (3 tests) and `git diff --check` passed. Committed as a2279877798f31318789dfd8b5b633dfc5a0b1ce; worktree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit a2279877798f31318789dfd8b5b633dfc5a0b1ce on the run branch
+
+Added optional TSV currency with USD default, strict three-letter uppercase ASCII validation, and a fourth CSV column. README and tests updated. `cargo fmt --check`, `cargo test` (3 integration tests passed), and CLI checks for invalid currency status 2/line-numbered stderr and unrelated bad amount status 1 passed. Committed as 15e8d5a692eeb806233190fe6b1b9aa618e7c926; worktree clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 15e8d5a692eeb806233190fe6b1b9aa618e7c926 on the run branch

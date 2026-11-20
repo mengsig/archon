@@ -1,0 +1,14 @@
+Queued as **qi_01M7W95XPXE747TRVR2135M5RC**. The item covers the spec’s validation and filesystem boundary cases, focused tests, and a local commit. It will report its outcome when finished.
+
+Done: Implement spec-complete safe_extract with focused tests. Implemented spec-complete safe extraction with whole-batch and filesystem validation before mutation, collision and symlink rejection, exact byte writes, and focused validation tests. Final checks pass: `python -m unittest -v` (9 tests) and `git diff --check`; final tree is 514d6fd66ca3afd2a38e6c0c56b64970609fa76c. Three whole-change reviews found a trailing-separator root symlink bypass; that was fixed and re-reviewed. A focused re-review found empty-root normalization regression; that was fixed and the final delta passed review. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W9A1231ZNVXPKTT4V6WPV9), codex/gpt-6-luna (agent agt_01M7W9A10DH7JQ4Y57CCKJ4XYS), codex/gpt-6-luna (agent agt_01M7W9A117WR65BVJDTNF9PKXA), codex/gpt-6-luna (agent agt_01M7W9FX1TJHX4178T227BFF95)
+
+SHIPPED: commit 1b461b23018dc2ee30d14a1d2995ad73a1306185 on the run branch
+Branch `archon/2135m5rc-implement-spec-complete-safe-extract-wit` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/a56b16f020787a5c2fe795f4/quality-safe-extract holds it (2 files changed, 157 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7W95XPXE747TRVR2135M5RC`; land it in `main`: `archon merge qi_01M7W95XPXE747TRVR2135M5RC`.
+
+Implemented spec-complete safe extraction with whole-batch and filesystem validation before mutation, collision and symlink rejection, exact byte writes, and focused validation tests. Final checks pass: `python -m unittest -v` (9 tests) and `git diff --check`; final tree is 514d6fd66ca3afd2a38e6c0c56b64970609fa76c. Three whole-change reviews found a trailing-separator root symlink bypass; that was fixed and re-reviewed. A focused re-review found empty-root normalization regression; that was fixed and the final delta passed review. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W9A1231ZNVXPKTT4V6WPV9), codex/gpt-6-luna (agent agt_01M7W9A10DH7JQ4Y57CCKJ4XYS), codex/gpt-6-luna (agent agt_01M7W9A117WR65BVJDTNF9PKXA), codex/gpt-6-luna (agent agt_01M7W9FX1TJHX4178T227BFF95)
+
+SHIPPED: commit 1b461b23018dc2ee30d14a1d2995ad73a1306185 on the run branch

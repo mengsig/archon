@@ -1,0 +1,14 @@
+Queued as **qi_01M7W5GZY8BY461EBGZ4NT35HK** in the `direct` pipeline. It covers the full `SPEC.md` behavior, standard-library-only implementation, and a commit on the task branch.
+
+Done: Implement the specified token bucket and keyed rate limiter. Recorded the required independent whole-change review for the committed token bucket and keyed limiter. The reviewer found no issues; all 8 focused tests passed. No code changes were needed.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W5S9GHQBGZ5D53WPAGC85S)
+
+SHIPPED: commit 27bdab0a45d57e9dcfcc66dbd11ce1df1fe34862 on the run branch
+Branch `archon/z4nt35hk-implement-the-specified-token-bucket-and` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/36319f979210026edcea381f/feature-token-bucket holds it (2 files changed, 130 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W5GZY8BY461EBGZ4NT35HK`; land it in `main`: `archon merge qi_01M7W5GZY8BY461EBGZ4NT35HK`.
+
+Recorded the required independent whole-change review for the committed token bucket and keyed limiter. The reviewer found no issues; all 8 focused tests passed. No code changes were needed.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W5S9GHQBGZ5D53WPAGC85S)
+
+SHIPPED: commit 27bdab0a45d57e9dcfcc66dbd11ce1df1fe34862 on the run branch

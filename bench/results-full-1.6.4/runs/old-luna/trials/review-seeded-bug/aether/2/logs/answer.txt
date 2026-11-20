@@ -1,0 +1,7 @@
+- **`src/tokens.js` — `verify` — Critical: forged tokens can pass signature verification.** The check `expected.startsWith(signature)` accepts an empty signature, and `token.split('.')` accepts a trailing dot as that empty signature. For example, a base64url-encoded JSON payload with a future `exp`, followed by `.`, passes the signature check without knowing the secret. An attacker able to submit tokens can forge session claims. Require an exact, full-length signature match using a constant-time comparison.
+
+- **`src/tokens.js` — `verify` — High: truncated signatures are accepted.** The same prefix check accepts any prefix of the real HMAC. Anyone who obtains a valid token can shorten its signature and still have it verify; even aside from the empty-signature bypass, this reduces the authentication check to a partial MAC. Compare the complete signature exactly.
+
+- **`src/tokens.js` — `verify` — Moderate: malformed tokens can throw instead of returning `null`.** After the signature check, `JSON.parse` is unguarded. For example, a token with a matching signature for a body that decodes to invalid JSON causes `verify` to throw. This can turn invalid input into request failures wherever callers expect the documented “null otherwise” behavior. Catch decoding and parsing errors and reject the token.
+
+I made no code changes and did not run tests.

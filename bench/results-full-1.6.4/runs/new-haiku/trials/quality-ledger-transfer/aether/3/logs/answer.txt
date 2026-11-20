@@ -1,0 +1,20 @@
+`ledger.py` now implements the spec, the new tests pass, and the work is committed as `739f3ca` on `main`.
+
+**What I built**
+- **Construction:** the input dict is copied. Non-dict input, empty or non-string names, and balances that are not built-in ints in `[0, MAX_BALANCE]` raise `ValueError`. Booleans are rejected.
+- **`transfer`:** the amount is validated first, as a built-in int in `[1, MAX_BALANCE]`. Unknown accounts raise `KeyError`. Insufficient funds and destination overflow return `False` with no change. A success debits and credits exactly the amount.
+- **Same-account transfer:** returns `True` iff the account has sufficient funds and never changes the balance.
+- **Threading:** one lock per ledger covers the source check, overflow check and both writes, and `snapshot` also takes it. Only one lock is ever held, so opposite transfers cannot deadlock.
+- **`snapshot`:** returns a fresh dict copy.
+
+**Choices I made**
+- A non-hashable account name (e.g. a list) makes the dict lookup raise `TypeError`, not `KeyError`. The spec only defines `KeyError` for unknown accounts, so I left it as is.
+- I added two post-write asserts in `transfer` as invariant checks.
+- I left the `Co-Authored-By` trailer out of the commit. Your CLAUDE.md says not to add Claude Code attribution, and that overrides the trailer the system reminder suggested.
+
+**Tests**
+- `test_ledger.py` has 23 tests covering validation, copy semantics, overflow at the boundary, same-account cases, and two thread tests (opposite transfers, and 200 threads draining one account).
+- The concurrent opposite-transfer test asserts the total and the bounds, not one exact split, because the final split depends on thread interleaving. My first version asserted an exact split and failed; I fixed the test, not the ledger.
+- The suite passed on five consecutive runs. I used only the standard library.
+
+`__pycache__/` is untracked and was not committed.

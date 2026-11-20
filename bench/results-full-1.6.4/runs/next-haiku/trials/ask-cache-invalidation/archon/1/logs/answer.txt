@@ -1,0 +1,29 @@
+**Root cause: `updatePrice` invalidates only the product cache entry, and category listings are cached separately with a 10-minute TTL that nothing invalidates.** Nothing else is wrong with the price write itself. I read the mirror at `repos/ask-cache-invalidation` (base commit `b7510522`). That is the repository whose `package.json` is named `catalog-service`, so this is the code that backs the storefront. I did not change any code.
+
+**The code paths**
+
+- `src/pricing.js:6-13`, `updatePrice`: writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That is the only invalidation. It removes `product:<sku>` and nothing else.
+- `src/catalog.js:12-20`, `Catalog.product(sku)`: reads `product:<sku>` from the cache, falling back to the store. This is why the product page is fresh right after the change.
+- `src/catalog.js:22-33`, `Catalog.listing(category, page)`: reads `listing:<category>:<page>`. On a miss it calls `store.inCategory`, slices one page, copies `{sku, name, priceCents}` into the rows, and caches them with `LISTING_TTL_SECONDS`. Those rows hold a copy of the price, so a change to the store does not reach them.
+- `src/keys.js:3-4`: `listingKey` is keyed by category and page, not by SKU. So `updatePrice` has no way to find which listing entries contain the changed SKU, even if it tried.
+- `src/config.js:4-7`: `PRODUCT_TTL_SECONDS` is 3600 and `LISTING_TTL_SECONDS` is 600. The 600 seconds is the "about ten minutes" support is seeing.
+
+**Why the delay is what it is**
+
+A listing page is filled at time `t` and expires at `t + 600s`. A price change at any moment in that window leaves the page showing the old price until expiry. So the observed staleness is roughly 0 to 600 seconds, depending on when the page was last filled. The product page is correct because its one cache entry is explicitly deleted on write.
+
+**Caveat**
+
+`TtlCache` is an in-process `Map`, so `cache.delete` only clears the cache of the process that handled the write. If the service runs as several instances, other instances would also serve stale product pages for up to an hour. The report that product pages update immediately suggests a single instance, but I have not seen the deployment config to confirm that.
+
+**Fix options**
+
+1. **Recommended: cache only the ordering and read prices live.** Cache the SKU order per category page (the expensive join and sort), then hydrate names and prices from `store` or the product cache on each read. Price changes then appear immediately, and the expensive part stays cached. This also removes the copied-price design that caused the bug. It is a small change in `Catalog.listing`.
+2. **Smaller change: invalidate by category on write.** `updatePrice` already has the updated product (`updated.category`), so it could delete every `listing:<category>:<page>` entry. That needs a prefix-delete method on `TtlCache`, which does not exist yet. Note that it only covers in-process caches, as above.
+3. **Not a fix:** lowering `LISTING_TTL_SECONDS`. It shrinks the window but keeps the staleness and adds rebuild cost.
+
+I did not check the tests in `test/catalog.test.js` for listing invalidation. If this is turned into a change, add a test that updates a price after a listing is cached and asserts the listing shows the new price.
+
+Quota pace: claude-code's seven_day window is 76% used with 30% of it elapsed. At this rate it runs out around 2026-11-21 01:04 UTC, before it resets at 2026-11-25 06:00 UTC. Archon throttles nothing; the orchestrator chooses what runs on claude-code until then.
+
+claude-code quota is at 76% used with 30% of the 7-day window elapsed, and it would run out around 2026-11-21 01:04 UTC, before the 2026-11-25 06:00 UTC reset. Nothing is running or queued right now (0 agents, 0 items), so nothing needs stopping. Until the reset I will keep new work small: one item at a time, lower effort, and other providers where the work allows. Tell me if you would rather pause claude-code work entirely.

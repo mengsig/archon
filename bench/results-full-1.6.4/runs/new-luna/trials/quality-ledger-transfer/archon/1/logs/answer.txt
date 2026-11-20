@@ -1,0 +1,14 @@
+Queued as `qi_01M7W3YW9P7PZ36VDZ4XXGR0MH` in the adaptive pipeline. It covers the full `SPEC.md` API, focused edge case and concurrency tests, and a local commit. The daemon will report the outcome when the work finishes.
+
+Done: Implement thread-safe ledger API from SPEC.md. Implemented the bounded thread-safe ledger API and focused validation, aliasing, atomicity, self-transfer, conservation, and opposing-transfer tests in ledger.py and test_ledger.py. `python -m unittest -v` passed (10 tests) and `git diff --check` passed on c5e99dba35b8fcbdb9949c2df9c50dd878e37249; working tree is clean. Independent review passed. Follow-up: reviewer recommends a direct concurrent snapshot/transfer regression; current implementation uses one lock for both.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W4150Y55KFNP0T0A8ZCXET)
+
+SHIPPED: commit c5e99dba35b8fcbdb9949c2df9c50dd878e37249 on the run branch
+Branch `archon/4xxgr0mh-implement-thread-safe-ledger-api-from-sp` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/d1e2535c16976e205858762e/quality-ledger-transfer holds it (2 files changed, 121 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M7W3YW9P7PZ36VDZ4XXGR0MH`; land it in `main`: `archon merge qi_01M7W3YW9P7PZ36VDZ4XXGR0MH`.
+
+Implemented the bounded thread-safe ledger API and focused validation, aliasing, atomicity, self-transfer, conservation, and opposing-transfer tests in ledger.py and test_ledger.py. `python -m unittest -v` passed (10 tests) and `git diff --check` passed on c5e99dba35b8fcbdb9949c2df9c50dd878e37249; working tree is clean. Independent review passed. Follow-up: reviewer recommends a direct concurrent snapshot/transfer regression; current implementation uses one lock for both.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W4150Y55KFNP0T0A8ZCXET)
+
+SHIPPED: commit c5e99dba35b8fcbdb9949c2df9c50dd878e37249 on the run branch

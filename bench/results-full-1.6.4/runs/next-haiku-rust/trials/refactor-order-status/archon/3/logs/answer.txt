@@ -1,0 +1,23 @@
+I queued the refactor; I did not change the repository myself.
+
+- **Refactor:** item `qi_01M7WGP5WQWKKNTVZV2FZ8ZKA5` is queued on `refactor-order-status` with the `direct` pipeline and standard review. It carries your full spec and asks for `cargo test` to pass and the work to be committed on the local branch. I'm assuming that repo is the `orders` crate, since it is the only registered repository.
+- **Quota:** claude-code's seven-day window is 77% used with 33% of it elapsed, so it would run out on 2026-11-21 05:25 UTC, before the 2026-11-25 reset. Nothing else is running. I'll keep new work there small and low-effort, or move it to another provider, and tell you before I do.
+
+I'll be notified when the item finishes.
+
+Done: Refactor orders status String into OrderStatus enum. Refactored the orders crate's status String into an OrderStatus enum on archon/2fz8zka5-refactor-orders-status-string-into-order, committed as c94e653 (not pushed). Added src/status.rs with OrderStatus (as_str, Display, FromStr, can_transition_to) and ParseStatusError, re-exported from the crate root. Order::status is now OrderStatus, and pay/ship/cancel share one Order::transition path. Error messages, from_line parse errors, report ordering and the other functions behave as before. status_counts now returns Vec<(OrderStatus, usize)> instead of String, a public API change. Checks on the final head: cargo test passes (3 original plus 2 new tests, 5 total), cargo clippy --all-targets -D warnings is clean, cargo fmt --check is clean (the base was not rustfmt-clean; cargo fmt was run). Status literals appear only in src/status.rs. Nothing is left running. Open follow-up (non-blocking): OrderStatus derives Ord by declaration order, not name order, so a future sort on OrderStatus would differ from report ordering. Review: one reviewer (agt_01M7WGRPCNMSQS520MPEPS6GTA, claude-haiku-5-5, medium) read the whole change at head c94e653 and passed it with one non-blocking follow-up. Review: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WGRPCNMSQS520MPEPS6GTA)
+
+SHIPPED: commit c94e653f7a178d84d7c4c18ff596724a9bb93a4e on the run branch
+Branch `archon/2fz8zka5-refactor-orders-status-string-into-order` in /home/mengsig/.local/share/archon-bench/f164-y8j04sff/archon-bench/work/20261120T123220Z/b1cbd4e1f531a986ab55e8c4/refactor-order-status holds it (7 files changed, 169 insertions(+), 33 deletions(-)). Review: `archon diff qi_01M7WGP5WQWKKNTVZV2FZ8ZKA5`; land it in `main`: `archon merge qi_01M7WGP5WQWKKNTVZV2FZ8ZKA5`.
+
+Freed 0.0 GiB of build output: item qi_01M7WGP5WQWKKNTVZV2FZ8ZKA5 ended and its cargo target directory went.
+
+OrderStatus refactor succeeded. Commit c94e653 is on branch archon/2fz8zka5-refactor-orders-status-string-into-order, local only and not pushed. Review passed with one non-blocking follow-up. cargo test passes (5 tests), clippy -D warnings is clean, and fmt --check is clean (cargo fmt was run; the base was not rustfmt-clean). Deviation to review: status_counts now returns Vec<(OrderStatus, usize)> instead of String, a public API change. Also, OrderStatus derives Ord by declaration order, not name order, so a future sort would differ from the report ordering.
+
+Refactored the orders crate's status String into an OrderStatus enum on archon/2fz8zka5-refactor-orders-status-string-into-order, committed as c94e653 (not pushed). Added src/status.rs with OrderStatus (as_str, Display, FromStr, can_transition_to) and ParseStatusError, re-exported from the crate root. Order::status is now OrderStatus, and pay/ship/cancel share one Order::transition path. Error messages, from_line parse errors, report ordering and the other functions behave as before. status_counts now returns Vec<(OrderStatus, usize)> instead of String, a public API change. Checks on the final head: cargo test passes (3 original plus 2 new tests, 5 total), cargo clippy --all-targets -D warnings is clean, cargo fmt --check is clean (the base was not rustfmt-clean; cargo fmt was run). Status literals appear only in src/status.rs. Nothing is left running. Open follow-up (non-blocking): OrderStatus derives Ord by declaration order, not name order, so a future sort on OrderStatus would differ from report ordering. Review: one reviewer (agt_01M7WGRPCNMSQS520MPEPS6GTA, claude-haiku-5-5, medium) read the whole change at head c94e653 and passed it with one non-blocking follow-up. Review: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WGRPCNMSQS520MPEPS6GTA)
+
+SHIPPED: commit c94e653f7a178d84d7c4c18ff596724a9bb93a4e on the run branch

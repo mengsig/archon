@@ -1,0 +1,23 @@
+I queued the rate limiter as item `qi_01M7W84039SWWG9W61WAX5HG7G`. It is not built yet.
+
+- **Pipeline:** `direct`, one agent that implements, tests and commits. I picked it because the spec has no concurrency or locking requirements.
+- **Review:** `standard`, because the spec's edge cases could hide a slip.
+- **Repo:** `feature-token-bucket`, which ships local, so the work is committed on a local branch and not pushed.
+- **Scope:** the agent implements `ratelimit.py` per `SPEC.md`, adds tests for the spec's error and edge cases, and leaves `SPEC.md` unchanged.
+
+I did not edit the repo myself. I'll report when the item finishes.
+
+On the quota note from the briefing: claude-code's seven-day window is at 77% with 31% of it elapsed, so it runs out before its reset on 2026-11-25. This item runs on claude-code, and one `direct` agent is a small share of that. If more claude-code work queues up, I'd move some of it to another provider or lower its effort.
+
+Done: Implement token-bucket rate limiter per SPEC.md in ratelimit.py. Implemented the token-bucket rate limiter in ratelimit.py per SPEC.md (standard library only) and added 21 tests covering the spec's validation errors and edge cases. Commit 6a81530 on archon/wax5hg7g-implement-token-bucket-rate-limiter-per; not pushed. Before: all 3 existing tests errored on the stubs (NotImplementedError). After: 24 tests pass, ruff check and ruff format --check clean. While testing I found wait_time could return a delay after which try_acquire still failed (2883 of 20000 random trials, from float rounding); fixed with a 1e-9 token tolerance, after which 0 of 20000 failed. Independent review (agt_01M7W86MB21P3H6DTP08WWHBRD) passed the head with no blocking findings. Open, non-blocking follow-ups: (1) the 1e-9 tolerance lets try_acquire succeed with up to 1e-9 tokens short, which SPEC.md does not mention; (2) max_keys is checked only for >= 1, so a non-integer such as 1.5 is accepted and later trips an assertion; (3) max_keys tests do not cover negative or NaN values; (4) the module is not thread-safe, which the spec does not address. The reviewer's process (pid 4047781, a claude -p session) was still running when I finished; it is its own harness, so stop it with kill 4047781 if it lingers. No servers or stacks were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W86MB21P3H6DTP08WWHBRD)
+
+SHIPPED: commit 6a81530f7949b8d2f80134d3db308d163bdf545c on the run branch
+Branch `archon/wax5hg7g-implement-token-bucket-rate-limiter-per` in /home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/576b9dfcf1de8ee0aa1324b2/feature-token-bucket holds it (2 files changed, 252 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W84039SWWG9W61WAX5HG7G`; land it in `main`: `archon merge qi_01M7W84039SWWG9W61WAX5HG7G`.
+
+Implemented the token-bucket rate limiter in ratelimit.py per SPEC.md (standard library only) and added 21 tests covering the spec's validation errors and edge cases. Commit 6a81530 on archon/wax5hg7g-implement-token-bucket-rate-limiter-per; not pushed. Before: all 3 existing tests errored on the stubs (NotImplementedError). After: 24 tests pass, ruff check and ruff format --check clean. While testing I found wait_time could return a delay after which try_acquire still failed (2883 of 20000 random trials, from float rounding); fixed with a 1e-9 token tolerance, after which 0 of 20000 failed. Independent review (agt_01M7W86MB21P3H6DTP08WWHBRD) passed the head with no blocking findings. Open, non-blocking follow-ups: (1) the 1e-9 tolerance lets try_acquire succeed with up to 1e-9 tokens short, which SPEC.md does not mention; (2) max_keys is checked only for >= 1, so a non-integer such as 1.5 is accepted and later trips an assertion; (3) max_keys tests do not cover negative or NaN values; (4) the module is not thread-safe, which the spec does not address. The reviewer's process (pid 4047781, a claude -p session) was still running when I finished; it is its own harness, so stop it with kill 4047781 if it lingers. No servers or stacks were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W86MB21P3H6DTP08WWHBRD)
+
+SHIPPED: commit 6a81530f7949b8d2f80134d3db308d163bdf545c on the run branch

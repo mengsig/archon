@@ -1,0 +1,41 @@
+The rate limiter work is queued as one item, `qi_01M7W22CENKSVYEHJS00GABJ45`, on the `feature-token-bucket` repository. I haven't edited any code myself.
+
+- **Pipeline:** `direct`, one agent that implements, checks and commits the change. The repository ships locally, so the work is committed on a local branch and not pushed.
+- **Review:** `standard`, one reviewer. The module is shared code, so I didn't drop review to `none`.
+- **Brief:** it carries your request verbatim, plus the instruction to implement every behaviour, error case and edge case in `SPEC.md`. It also says to add tests for those cases to `test_ratelimit.py`, keep the standard-library-only constraint, run the suite, and commit without pushing.
+
+I'll report back when the item finishes or if it fails or blocks.
+
+Done: Implement rate limiter per SPEC.md in ratelimit.py. Implemented the rate limiter in ratelimit.py per SPEC.md (standard library only) and added 27 tests to test_ratelimit.py covering the spec's error cases, edge cases and LRU behaviour. Committed on archon/00gabj45-implement-rate-limiter-per-spec-md-in-ra as 1fd934a, d2ff6e4 and f47321a (head f47321a, tree ecf6b62f); not pushed.
+
+Changes: TokenBucket starts full, refills continuously up to capacity, ignores non-advancing clocks, and validates capacity, refill and request size. KeyedLimiter keeps one bucket per key with LRU eviction at max_keys; try_acquire and wait_time both count as use.
+
+Review found three real problems in the first version, all fixed: a 1e-9 absolute tolerance let tiny requests through an empty bucket; wait_time did not hold at large magnitudes; and wait_time under-reported when the clock went backwards. Infinite rates are now rejected. The final review passed with no blocking findings.
+
+Checks: `python3 -B -m unittest test_ratelimit` before the change: 3 errors (NotImplementedError stubs). On head f47321a: 27 tests OK. Randomized probes found 0 wait-then-acquire failures across capacities up to 1e12, clocks up to 1e6 and backwards clock steps. No build or linter step exists in the repo.
+
+Open follow-ups (non-blocking, from the final review): the backwards-clock test covers only one case (n=1, rate 1.0); _refill now returns the clock reading, so its name understates what it does. Also, the implementation is not thread-safe, which the spec does not mention. wait_time pads its result by a relative 1e-12 plus two clock ulps, so it can exceed the exact value by that margin.
+
+Reviewer processes handed to this stage (pids 2898988, 2913228, 2923207) were stopped by PID. Nothing else is left running.
+
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W254T1N20AV5AF8RQ0ZKFV), claude-code/claude-haiku-5-5 (agent agt_01M7W28J5ADRK96YZQGNHWETT1), claude-code/claude-haiku-5-5 (a…
+
+Implemented the rate limiter in ratelimit.py per SPEC.md (standard library only) and added 27 tests to test_ratelimit.py covering the spec's error cases, edge cases and LRU behaviour. Committed on archon/00gabj45-implement-rate-limiter-per-spec-md-in-ra as 1fd934a, d2ff6e4 and f47321a (head f47321a, tree ecf6b62f); not pushed.
+
+Changes: TokenBucket starts full, refills continuously up to capacity, ignores non-advancing clocks, and validates capacity, refill and request size. KeyedLimiter keeps one bucket per key with LRU eviction at max_keys; try_acquire and wait_time both count as use.
+
+Review found three real problems in the first version, all fixed: a 1e-9 absolute tolerance let tiny requests through an empty bucket; wait_time did not hold at large magnitudes; and wait_time under-reported when the clock went backwards. Infinite rates are now rejected. The final review passed with no blocking findings.
+
+Checks: `python3 -B -m unittest test_ratelimit` before the change: 3 errors (NotImplementedError stubs). On head f47321a: 27 tests OK. Randomized probes found 0 wait-then-acquire failures across capacities up to 1e12, clocks up to 1e6 and backwards clock steps. No build or linter step exists in the repo.
+
+Open follow-ups (non-blocking, from the final review): the backwards-clock test covers only one case (n=1, rate 1.0); _refill now returns the clock reading, so its name understates what it does. Also, the implementation is not thread-safe, which the spec does not mention. wait_time pads its result by a relative 1e-12 plus two clock ulps, so it can exceed the exact value by that margin.
+
+Reviewer processes handed to this stage (pids 2898988, 2913228, 2923207) were stopped by PID. Nothing else is left running.
+
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W254T1N20AV5AF8RQ0ZKFV), claude-code/claude-haiku-5-5 (agent agt_01M7W28J5ADRK96YZQGNHWETT1), claude-code/claude-haiku-5-5 (agent agt_01M7W2AQ83B0Z2CQRGVY5TYC5Q)
+
+SHIPPED: commit f47321ae2dce1f63a247e03872aef649f6c575b0 on the run branch

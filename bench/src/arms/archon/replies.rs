@@ -165,13 +165,17 @@ impl ReplyLog {
                 "event {} is not after the cursor {cursor}",
                 event.seq
             );
+            let own = event.agent.as_ref() == Some(&self.orchestrator);
             ensure!(
-                event.agent.as_ref() == Some(&self.orchestrator),
+                own || creates_helper(event, &self.orchestrator),
                 "event {} is not the orchestrator's",
                 event.seq
             );
             *cursor = event.seq;
-            answers.extend(tracker.apply(event));
+            // A helper's creation is listed with its creator's events but says nothing.
+            if own {
+                answers.extend(tracker.apply(event));
+            }
         }
         Ok(())
     }
@@ -182,6 +186,13 @@ impl ReplyLog {
             Source::Transcript { cursor, .. } => *cursor,
         }
     }
+}
+
+/// Whether `event` creates a helper agent `orchestrator` delegated to: Aether
+/// lists it among its creator's events.
+fn creates_helper(event: &archon_aether::AetherEvent, orchestrator: &AetherAgentId) -> bool {
+    let created = matches!(event.kind, archon_aether::EventKind::AgentCreated { .. });
+    created && event.parent.as_ref() == Some(orchestrator) && event.agent.is_some()
 }
 
 /// The seq of `agent`'s newest event, 0 when it has none.

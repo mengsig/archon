@@ -1,0 +1,36 @@
+## Root cause
+
+The stale price comes from `updatePrice` invalidating only the product-page cache entry. The category listing cache is never touched, so it serves the old price until its 600-second TTL expires.
+
+**The write path** (`src/pricing.js:6-13`):
+
+```js
+const updated = catalog.store.update(sku, { priceCents });
+catalog.cache.delete(productKey(sku));   // only "product:<sku>" is evicted
+```
+
+**The product-page read path** (`src/catalog.js:12-20`) misses the cache after the delete, reloads from the store, and gets the new price. That is why product pages update immediately.
+
+**The listing read path** (`src/catalog.js:22-33`) caches whole page rows, including `priceCents`, under `listing:<category>:<page>`. Nothing evicts those keys on a price change, so `catalog.listing(...)` returns the old `priceCents` until `LISTING_TTL_SECONDS` runs out.
+
+## Why it is about ten minutes
+
+`LISTING_TTL_SECONDS = 600` in `src/config.js:7`. A listing entry is written at some point and stays valid for 600 s, so a price change can be hidden for up to 10 minutes. The config comment says listings are cached separately because they are expensive to build, which explains the longer TTL but not the lack of invalidation.
+
+## Why the cause is not obvious
+
+- The `productKey` and `listingKey` helpers in `src/keys.js` sit side by side, but only the product key is used in `pricing.js`.
+- `test/catalog.test.js` checks that product pages update immediately. It has no test that a listing reflects a price update, so the gap is not caught.
+
+## Fix options
+
+1. **Smallest fix:** in `updatePrice`, also evict the listing entries for the product's category. The product's category is available from the store, and the cache is a plain `Map`, so evicting all `listing:<category>:*` keys is a simple prefix scan. Add a `deleteWhere(prefix)` method to `TtlCache` for this.
+2. **Structural fix:** cache only the ordered SKU list per category page and hydrate `name` and `priceCents` through `product(sku)` at read time. Prices then come from the same cache as product pages, and no listing invalidation is needed. This costs one product-cache lookup per row, which is cheap, but changes the listing caching design.
+3. **Either way:** add a regression test in `test/catalog.test.js` that calls `catalog.listing('tools')`, runs `updatePrice`, and expects the new price in the listing.
+
+## Caveats
+
+- Both caches are in-process `Map`s (`src/cache.js`). If `catalog-service` runs as more than one instance, `updatePrice` on one instance cannot evict the other instances' entries, and product pages on those instances can be stale for up to an hour. The support report describes immediate product-page updates, which suggests a single process, but this should be confirmed against the deployment.
+- The fix must also cover any future change to a product's category or name, not only price, since listings cache those fields too.
+
+I did not change any code and did not run the test suite. Everything above comes from reading `src/` and `test/`.

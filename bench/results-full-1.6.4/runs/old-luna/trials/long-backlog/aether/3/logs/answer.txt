@@ -1,0 +1,8 @@
+Implemented all four tickets, added tests, and committed each separately:
+
+- TT-101 `d8a2dbc` — reject impossible due dates
+- TT-102 `dd56ade` — RFC 4180 CSV export
+- TT-103 `c223e1f` — structured search queries
+- TT-104 `d511267` — LIFO undo
+
+The requested test suite passes: **9 tests, OK**. The worktree is clean.

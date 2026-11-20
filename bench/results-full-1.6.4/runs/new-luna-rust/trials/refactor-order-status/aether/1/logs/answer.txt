@@ -1,0 +1,3 @@
+Implemented the `OrderStatus` enum, parsing and display support, transition rules, and updates across order, billing, shipping, and reporting. Existing tests pass, and the working tree is clean.
+
+Commit: `07b1464` — `Refactor order status into enum`

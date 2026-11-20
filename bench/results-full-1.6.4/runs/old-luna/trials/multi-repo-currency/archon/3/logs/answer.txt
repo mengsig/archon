@@ -1,0 +1,29 @@
+Queued initiative [ini_01M7WB88ED0Z096D20MW5H3XWH] to update both repositories under a shared CSV contract. Each change includes README updates, the requested test command, and a commit. Both items are queued; no dependency is needed because each can be built against the shared contract in parallel.
+
+Done: Aggregate reports by account and currency. Added currency-aware report aggregation with legacy USD defaults, strict currency validation, required CSV columns and ordering, updated README and tests. `python3 -m unittest` passed (3 tests) on the final tree; independent review passed with no findings. Committed as 480623c9351ea9332dede41eeb27b85aba6ac311; no known gaps.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBAVX8XVSVKE6T4GSKD4ZH)
+
+SHIPPED: commit 480623c9351ea9332dede41eeb27b85aba6ac311 on the run branch
+Branch `archon/wbnbdfxf-aggregate-reports-by-account-and-currenc` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/3e5bc3760c4d93c7be050e05/reports holds it (3 files changed, 66 insertions(+), 16 deletions(-)). Review: `archon diff qi_01M7WB88MNQG1SNWTTWBNBDFXF`; land it in `main`: `archon merge qi_01M7WB88MNQG1SNWTTWBNBDFXF`.
+
+Done: Add currency column and validation to ledger TSV-to-CSV. Added optional TSV currency parsing with USD default, three-uppercase-ASCII-letter validation, four-column CSV output, and CLI status 2 with line-numbered currency errors; other input errors remain status 1. Updated README and added parsing/CLI tests, including the header assertion. `git diff --check` passes; `cargo test` could not run because Cargo is absent. Review passed after addressing the missing header test; runtime execution remains unverified.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBC2FN74RZKGY2DFN5QQY6), codex/gpt-6-luna (agent agt_01M7WBE4JBCBGWNPRMAJFAGJ50)
+
+SHIPPED: commit 1dd0a50f787a0a0e039f35114a78529f9f281ded on the run branch
+Branch `archon/sb36qvn9-add-currency-column-and-validation-to-le` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/3e5bc3760c4d93c7be050e05/ledger holds it (4 files changed, 101 insertions(+), 16 deletions(-)). Review: `archon diff qi_01M7WB88EF0NRMXZJ0SB36QVN9`; land it in `main`: `archon merge qi_01M7WB88EF0NRMXZJ0SB36QVN9`.
+
+Initiative finished; coordinated result queued.
+
+Added currency-aware report aggregation with legacy USD defaults, strict currency validation, required CSV columns and ordering, updated README and tests. `python3 -m unittest` passed (3 tests) on the final tree; independent review passed with no findings. Committed as 480623c9351ea9332dede41eeb27b85aba6ac311; no known gaps.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBAVX8XVSVKE6T4GSKD4ZH)
+
+SHIPPED: commit 480623c9351ea9332dede41eeb27b85aba6ac311 on the run branch
+
+Added optional TSV currency parsing with USD default, three-uppercase-ASCII-letter validation, four-column CSV output, and CLI status 2 with line-numbered currency errors; other input errors remain status 1. Updated README and added parsing/CLI tests, including the header assertion. `git diff --check` passes; `cargo test` could not run because Cargo is absent. Review passed after addressing the missing header test; runtime execution remains unverified.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBC2FN74RZKGY2DFN5QQY6), codex/gpt-6-luna (agent agt_01M7WBE4JBCBGWNPRMAJFAGJ50)
+
+SHIPPED: commit 1dd0a50f787a0a0e039f35114a78529f9f281ded on the run branch

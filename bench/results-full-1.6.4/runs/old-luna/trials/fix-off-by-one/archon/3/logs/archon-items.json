@@ -1,0 +1,172 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WAPKATC5GMNGF1CMDFHRRS",
+      "repo": "repo_01M7WANH4SQCNF0WSZ3AJ70MGS",
+      "pipeline": "direct",
+      "title": "Fix sliding_windows boundary and input handling",
+      "brief": "In window.py, fix sliding_windows. Current range(len(items) - size) omits the final valid contiguous window. Make the function correct for all inputs under a clear, conventional contract: size must be a positive integer (reject non-integers and booleans with TypeError; reject integers <= 0 with ValueError), and return every contiguous slice of that size in order, including the final one; return [] when size exceeds len(items). Preserve the input sequence's slice result type as the existing implementation does. Do not change tests. Run `python3 -m unittest` and ensure it passes; also reason/check boundary and invalid-size cases beyond the existing tests. Commit the fix on the local branch as requested. Do not commit unrelated changes.",
+      "priority": "high",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WAPKB8HV6WM9G80FZEB8FW",
+        "summary": "Updated sliding_windows to reject non-integer and boolean sizes with TypeError, reject non-positive integers with ValueError, and include the final valid contiguous window while preserving slice result types. `python3 -m unittest` passed (3 tests); focused checks passed for equal/oversized sizes, empty input, tuple slices, and invalid sizes; `git diff --check` passed. Committed as 4438444829408e2a66db8bb30c467ed862ad3db5. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WAR7FJ9R0AKG8ZF2GDJMNC)\n\nSHIPPED: commit 4438444829408e2a66db8bb30c467ed862ad3db5 on the run branch"
+      },
+      "created_at": "2026-11-20T11:15:38.465792588Z",
+      "updated_at": "2026-11-20T11:17:25.265409048Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WAPKB8HV6WM9G80FZEB8FW",
+        "item": "qi_01M7WAPKATC5GMNGF1CMDFHRRS",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WAPKJHHMEN1CJDD57AAJ52",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/1981afc7857e621970b356cf/.archon/data/worktrees/fix-off-by-one/qi_01M7WAPKATC5GMNGF1CMDFHRRS",
+        "branch": "archon/cmdfhrrs-fix-sliding-windows-boundary-and-input-h",
+        "state": {
+          "state": "succeeded",
+          "summary": "Updated sliding_windows to reject non-integer and boolean sizes with TypeError, reject non-positive integers with ValueError, and include the final valid contiguous window while preserving slice result types. `python3 -m unittest` passed (3 tests); focused checks passed for equal/oversized sizes, empty input, tuple slices, and invalid sizes; `git diff --check` passed. Committed as 4438444829408e2a66db8bb30c467ed862ad3db5. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WAR7FJ9R0AKG8ZF2GDJMNC)\n\nSHIPPED: commit 4438444829408e2a66db8bb30c467ed862ad3db5 on the run branch"
+        },
+        "cost_usd": 0.0095976,
+        "started_at": "2026-11-20T11:15:38.670265336Z",
+        "finished_at": "2026-11-20T11:17:25.265409048Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WAPKHWHP73VY1X8B8FKDT6",
+        "run": "prun_01M7WAPKB8HV6WM9G80FZEB8FW",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7WAPKK4CMAQFA7JN1F9M3DR",
+        "aether_task": "tsk_01M7WAPKK4WJPD3C6JSSZ2013F",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Updated sliding_windows to reject non-integer and boolean sizes with TypeError, reject non-positive integers with ValueError, and include the final valid contiguous window while preserving slice result types. `python3 -m unittest` passed (3 tests); focused checks passed for equal/oversized sizes, empty input, tuple slices, and invalid sizes; `git diff --check` passed. Committed as 4438444829408e2a66db8bb30c467ed862ad3db5. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest (3 tests passed)",
+            "python3 -c focused boundary/type checks (passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "4438444829408e2a66db8bb30c467ed862ad3db5",
+          "evidence": [
+            {
+              "after": "python3 -m unittest: Ran 3 tests — OK\nfocused boundary/type checks passed",
+              "before": "Baseline implementation used range(len(items) - size), omitting the final valid slice.",
+              "caption": "Before the fix, the range omitted the last candidate; after, all size-2 windows for three items are returned and the focused boundary/type checks pass.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "4438444829408e2a66db8bb30c467ed862ad3db5",
+          "pr": {
+            "body": "In window.py, reject non-integers and bool with TypeError, reject integers <= 0 with ValueError, and adjust the range endpoint to include the final valid window. Existing slicing preserves the input sequence's slice result type. Verified with python3 -m unittest (3 passed), focused checks of exact-length, oversize, empty input, tuple result type and invalid sizes, and git diff --check. No repository contributor guidance file was present. Review found no issues.",
+            "summary": "Fixed sliding_windows so it returns every valid contiguous window, including the last one. Before, the last window was omitted and invalid size handling accepted non-integers inconsistently; now size validation is explicit and all boundary windows are returned.",
+            "title": "Fix sliding window boundaries and size validation"
+          },
+          "review": {
+            "reviewed_head": "4438444829408e2a66db8bb30c467ed862ad3db5",
+            "reviewer_agents": [
+              "agt_01M7WAR7FJ9R0AKG8ZF2GDJMNC"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7WAR7FJ9R0AKG8ZF2GDJMNC",
+                "base": "5aee8264122f4155752881cc291c031cec2c39fc",
+                "findings": 0,
+                "head": "4438444829408e2a66db8bb30c467ed862ad3db5",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7WAR7FJ9R0AKG8ZF2GDJMNC"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "low",
+            "reviewer": "agt_01M7WAR7FJ9R0AKG8ZF2GDJMNC",
+            "why": "Small isolated change to one function. Boundary and input-validation behavior was checked by the suite and focused assertions; independent review passed with no findings."
+          },
+          "tree": "ad8fd1a6b3d32f0324f9fedbd3342fcab979aad5"
+        },
+        "cost_usd": 0.0095976,
+        "started_at": "2026-11-20T11:15:38.684759285Z",
+        "finished_at": "2026-11-20T11:17:22.848686777Z"
+      }
+    ],
+    "spent_usd": 0.0095976,
+    "gates": [],
+    "delegations": {
+      "stg_01M7WAPKHWHP73VY1X8B8FKDT6": {
+        "direct_usd": 0.006800260000000001,
+        "delegated_usd": 0.00279734,
+        "agents": [
+          {
+            "agent": "agt_01M7WAR7FJ9R0AKG8ZF2GDJMNC",
+            "parent": "agt_01M7WAPKK4CMAQFA7JN1F9M3DR",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00279734
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

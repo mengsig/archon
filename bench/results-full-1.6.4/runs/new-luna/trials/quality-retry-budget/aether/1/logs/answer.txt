@@ -1,0 +1,3 @@
+Implemented `retry_delay` with full argument validation, capped exponential backoff, uncapped Retry-After handling, and strict budget checks. Added focused boundary tests.
+
+All 8 tests pass. Commit: `5482def` (`Implement bounded retry delay scheduling`). The test run left an untracked `__pycache__/` directory.

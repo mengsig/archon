@@ -1,0 +1,21 @@
+I queued the fix as item `qi_01M7W6QXY34NBDCKSW5XN5AG3G`. I did not read or edit `window.py` myself.
+
+- **Repository:** `fix-off-by-one`, which ships locally, so the fix will be committed on a local branch and not pushed.
+- **Pipeline:** `direct`, one agent, with standard review.
+- **Acceptance:** `python3 -m unittest` exits 0, no test files change, and the function is checked against edge inputs by reading its logic.
+- **Quota:** claude-code's seven-day window is at 77% with 31% elapsed, so it runs out before its reset. I kept this to a single item at default effort and told the operator.
+
+I'll report the outcome when the item finishes.
+
+Done: Fix bug in window.py so python3 -m unittest passes. Fixed the off-by-one in window.py sliding_windows: the loop bound was range(len(items) - size), which dropped the final window. It is now range(len(items) - size + 1). Committed on archon/5xn5ag3g-fix-bug-in-window-py-so-python3-m-unitte as 3f6749413aef4a1d3933d2e37c7e7975fd1fb371 (tree 86fa2570260a2e082a57848f99c47518a99b485c), under the configured mengsig identity, no attribution lines. Nothing pushed; no test files touched. Before: python3 -m unittest exit 1, FAILED (failures=2). After: Ran 3 tests, OK, exit 0. Edge cases checked by reading and ad-hoc run: [] with size 1 gives []; [1] with size 1 gives [[1]]; size greater than len gives []; size equal to len gives one window; size 1 gives singletons; negative or zero size raises ValueError. Independent reviewer agt_01M7W6RR689H71PCYGYC478E4T (claude-haiku-5-5, low effort) passed head 3f67494 with no findings, risk low. Nothing left running; the reviewer's leftover process had already exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W6RR689H71PCYGYC478E4T)
+
+SHIPPED: commit 3f6749413aef4a1d3933d2e37c7e7975fd1fb371 on the run branch
+Branch `archon/5xn5ag3g-fix-bug-in-window-py-so-python3-m-unitte` in /home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/c409b948e537b49d6e30a62e/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7W6QXY34NBDCKSW5XN5AG3G`; land it in `main`: `archon merge qi_01M7W6QXY34NBDCKSW5XN5AG3G`.
+
+Fixed the off-by-one in window.py sliding_windows: the loop bound was range(len(items) - size), which dropped the final window. It is now range(len(items) - size + 1). Committed on archon/5xn5ag3g-fix-bug-in-window-py-so-python3-m-unitte as 3f6749413aef4a1d3933d2e37c7e7975fd1fb371 (tree 86fa2570260a2e082a57848f99c47518a99b485c), under the configured mengsig identity, no attribution lines. Nothing pushed; no test files touched. Before: python3 -m unittest exit 1, FAILED (failures=2). After: Ran 3 tests, OK, exit 0. Edge cases checked by reading and ad-hoc run: [] with size 1 gives []; [1] with size 1 gives [[1]]; size greater than len gives []; size equal to len gives one window; size 1 gives singletons; negative or zero size raises ValueError. Independent reviewer agt_01M7W6RR689H71PCYGYC478E4T (claude-haiku-5-5, low effort) passed head 3f67494 with no findings, risk low. Nothing left running; the reviewer's leftover process had already exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W6RR689H71PCYGYC478E4T)
+
+SHIPPED: commit 3f6749413aef4a1d3933d2e37c7e7975fd1fb371 on the run branch

@@ -1,0 +1,30 @@
+Refactored the `orders` crate from string statuses to `OrderStatus`, committed as 884c24c on main. `cargo test` passes (6 integration tests, including 3 new ones). `cargo clippy --all-targets` is clean. Status literals now appear only in src/status.rs.
+
+What changed:
+- src/status.rs (new): `OrderStatus` (Debug, Clone, Copy, PartialEq, Eq, Hash) with `as_str`, `can_transition_to` (pending→paid, pending→cancelled, paid→shipped, paid→cancelled), `Display` (via `f.pad`, so width formatting matches the old String output), and `FromStr` with `ParseStatusError`. The error implements std::error::Error and its message is `unknown status "<input>"`, the same text `from_line` produced before.
+- Order::status is now OrderStatus. pay, ship and cancel check `can_transition_to`; the error messages are unchanged.
+- report::status_counts sorts by name, not declaration order, so the output order is unchanged.
+- lib.rs re-exports OrderStatus and ParseStatusError.
+- tests/orders.rs uses the enum; expected error strings are built with format!, so the literals don't appear outside status.rs.
+
+Decisions to review:
+- status_counts now returns Vec<(OrderStatus, usize)> instead of Vec<(String, usize)>. This is a public signature change. Callers get a compile error rather than a silent change, and Display output is identical. Say if you want the String version back.
+- I did not add the CLAUDE.md-style assertions to the touched functions. Adding them would be a behaviour change beyond this refactor.
+- The commit has no Co-Authored-By or generated-by line, because CLAUDE.md forbids attribution. It uses the repo's configured identity (mengsig / marcus.engsig@tii.ae), which I did not change.
+- cargo is at ~/.cargo/bin, not on the default PATH. I added it for this session only.
+- The baseline tree was not rustfmt-clean either, so I did not run cargo fmt over the crate.
+
+The `orders` crate now uses an `OrderStatus` enum instead of strings. The work is committed as `884c24c` on `main`, `cargo test` passes (6 tests, 3 of them new), and `cargo clippy --all-targets` is clean. The status literals now appear only in `src/status.rs`.
+
+- **`src/status.rs` (new):** `OrderStatus` with `as_str`, `Display`, `FromStr` and `can_transition_to`, plus `ParseStatusError`. The error's message is `unknown status "<input>"`, the same text `from_line` produced before.
+- **Lifecycle checks:** `pay`, `ship` and `cancel` now go through `can_transition_to`. Their error messages are unchanged.
+- **Report ordering:** `status_counts` still sorts by name, not by enum declaration order, so its output is unchanged.
+- **Exports:** `lib.rs` re-exports `OrderStatus` and `ParseStatusError`.
+
+Decisions for you to review:
+
+- **Public signature change:** `status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. Callers that treat the result as a string will fail to compile. Printed output is identical. I can restore the `String` version if you'd rather keep the signature.
+- **No new assertions:** I didn't add the per-function assertions from CLAUDE.md, since they would change behaviour beyond this refactor.
+- **No attribution line:** CLAUDE.md forbids attribution, so the commit has no Co-Authored-By line. It uses the repo's configured identity, `mengsig` / `marcus.engsig@tii.ae`, which I left alone.
+- **Cargo PATH:** `cargo` isn't on the default PATH here, so I ran it from `~/.cargo/bin` for this session only.
+- **Formatting:** the original tree already fails `cargo fmt --check`, so I didn't reformat the crate.

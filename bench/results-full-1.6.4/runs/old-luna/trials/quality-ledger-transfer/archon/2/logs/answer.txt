@@ -1,0 +1,3 @@
+Queued as **qi_01M7W7S9DQ2GH7YGJJA5YKC0EQ** on the `direct` pipeline. It covers the SPEC’s validation, boundary, aliasing, and thread-safety cases, with focused tests and a local commit. The queue will report the outcome when the run finishes.
+
+Cancelled: Implement atomic ledger API and edge-case tests. archon-bench: trial timeout

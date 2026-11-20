@@ -1,0 +1,32 @@
+**Root cause: `updatePrice` invalidates only the product cache entry, not the category listing entries that also hold the price.** The listing cache entries live for 10 minutes, which matches the reported delay.
+
+**The code path**
+
+- `src/pricing.js:6-13`: `updatePrice` writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That removes `product:<sku>` and nothing else.
+- `src/catalog.js` (`product`): reads `product:<sku>` from the cache and falls back to the store. Since the update deletes that key, the product page reads the new price on its next request. This is why it updates immediately.
+- `src/catalog.js` (`listing`): caches the whole page under `listing:<category>:<page>`. Each cached row is a copy of `{ sku, name, priceCents }`, so the price is frozen into the listing entry. The price update never touches these keys, so the category page keeps serving the old price until the entry expires.
+- `src/config.js`: `LISTING_TTL_SECONDS: 600` sets that expiry to 10 minutes. `PRODUCT_TTL_SECONDS` is 3600, but the product key is deleted on update, so the product TTL does not matter here.
+
+**Why the delay is what it is**
+
+The listing cache was added as a separate, longer-lived layer ("listings are expensive to build"), but nothing ties its entries to writes. Its only expiry is the TTL, so a price change becomes visible on category pages only when the affected page entries expire, up to 600 seconds later. Staleness is limited to listing pages for the affected category; product pages are not affected.
+
+**Fix options**
+
+1. **Invalidate the affected listings on write (recommended).** In `updatePrice`, look up the product's category and delete every `listing:<category>:*` key. `TtlCache` has no prefix delete, so either add one or have the cache track keys per category. Keep the TTL as a backstop.
+2. **Stop caching prices in listings.** Cache only the SKU list per page and hydrate `priceCents` through `product(sku)` at read time. Prices then come from the already-invalidated product cache, with no cross-key invalidation. This costs one cache lookup per row, which is cheap for 24 rows.
+3. **Versioned category keys.** Include a per-category version in the listing key and bump it on price change. This is simple but leaves old entries to expire on their own.
+
+Option 2 removes the bug class, since listings can no longer hold prices. Option 1 is the smallest diff.
+
+**Test gap:** `test/catalog.test.js` checks product pages after an update but never checks listings after one. A regression test should call `catalog.listing('tools')` (which caches), call `updatePrice`, and assert the new `priceCents` appears in the listing.
+
+**Caveats**
+
+- The cache is an in-process `Map`, so `updatePrice` clears only the local instance. If the service runs several instances, each would keep its own stale listing (and product) entries until the TTL. I could not check the deployment topology from this repo, so confirm it.
+- I did not run the tests; this was a read-only investigation of the mirror at `ask-cache-invalidation` (HEAD `6ad8aef`), and I changed no code.
+
+**Other notes**
+
+- The quota decision is still in effect: claude-code's seven-day window is 77% used at 31% elapsed, and it empties around 2026-11-21 02:09 UTC, before its 2026-11-25 reset. Nothing is running or queued, so there is nothing to throttle right now. Any new work that goes to claude-code will need a lower load or another provider.
+- The repository is registered under a name that the daemon output redacts. The code I read is the mirror of the repository the operator's question refers to, and it matches the `catalog-service` package name in `package.json`.

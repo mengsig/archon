@@ -1,0 +1,5 @@
+## Findings
+
+- **Critical — `src/tokens.js`, `verify`:** Signature validation accepts any prefix of the expected HMAC, including an empty string. For example, `verify('<base64url of {"user":"root","exp":9999999999999}>.', secret)` accepts the forged payload because every string starts with `''`. An attacker can therefore forge unexpired session claims without knowing the secret. Require an exact, fixed-length signature match using a constant-time comparison.
+
+- **Low — `src/tokens.js`, `verify`:** Extra dot-separated segments are silently ignored. A valid token with `.anything` appended still verifies, so malformed or differently interpreted token strings may be accepted. Require exactly two segments.

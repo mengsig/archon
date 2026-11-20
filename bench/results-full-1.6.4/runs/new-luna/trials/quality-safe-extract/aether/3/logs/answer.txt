@@ -1,0 +1,3 @@
+Implemented `extract` with full batch validation before writes, rejection of invalid paths, duplicate/colliding entries, symlinks, and existing targets. Added focused validation tests.
+
+`git diff --check` passed. I did not run the test suite. Commit: `a976c06` (`Implement safe batch file extraction`).

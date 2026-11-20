@@ -1,0 +1,5 @@
+Implemented and committed as `06fe84e` (`Refactor order status into enum`).
+
+`OrderStatus` now represents order state across the crate, with parsing, display, and allowed transitions. Report ordering and error text remain unchanged; status string literals appear only in `src/status.rs`.
+
+`cargo test` passed: all 3 integration tests. Working tree is clean.

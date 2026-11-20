@@ -1,0 +1,1 @@
+I’ll enqueue this as one initiative with two independent members, one per repository, using the `direct` pipeline. The shared contract will define the pagination response and client behavior; each member will update its README and run its specified test command. Both repositories have been confirmed registered, and the queue is clear.

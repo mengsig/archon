@@ -1,0 +1,324 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W5NQ8BQ2VNR16ZKN51TJ4V",
+      "repo": "repo_01M7W5NBGYV3KHF61T485RTNZV",
+      "pipeline": "adaptive",
+      "title": "Implement safe_extract.extract per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated, verbatim): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nContext: repo quality-safe-extract. SPEC.md is the authoritative spec; read it first. Implement extract(entries, root) -> list[str] in safe_extract.py. Key rules: non-list batches (including tuples, iterators, generators, even empty) raise ValueError without consuming them or touching the filesystem. Validate the ENTIRE batch before creating any file or directory: malformed entries, non-string names, non-bytes data, invalid names (leading '/', backslash, colon, NUL, empty/'.'/'..' components, must be nonempty relative POSIX; no sanitizing or decoding; literal % is legal), duplicate names, and file/directory collisions in either order. Root must be an existing real directory, not a symlink; no existing component below root may be a symlink (including dangling); ancestors must be directories; targets must be absent; never overwrite or follow links. Validation failure leaves root unchanged. Empty batch returns [] after root validation. Valid batches create missing parents and write exact bytes, including empty files. Return names in input order. Unexpected I/O errors must propagate visibly; do not swallow them.\n\nAcceptance: keep existing API unchanged; every rule above has a focused test in the existing test layout; stdlib only; functions under 60 lines; meaningful assertions at boundaries; no bare except or swallowed errors. Commit the work on the item's branch with a plain commit message and no tool attribution lines.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "safe-extract",
+        "security"
+      ],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W5NQ8BQ2VNR16ZKN51TJ4V",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T09:47:46.834380950Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T09:47:46.845137869Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T09:47:46.834380950Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:security",
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W5NQ93H9KBTYJPRD946X1S",
+        "summary": "Implemented safe_extract.extract per SPEC.md and added focused stdlib unittest coverage. Commits on archon/kn51tj4v-implement-safe-extract-extract-per-spec: 05d052e (implementation and tests), 39cb4ab (test fix after review 3's blocking finding). Head 39cb4ab, tree 557f901. Changed: safe_extract.py, test_safe_extract.py. Verified: `python3 -B -m unittest -v test_safe_extract` gives 40 tests OK on head (before: 2 existing tests errored with NotImplementedError). Every function is under 60 lines. Reviews: review-1 (agt_01M7W5RDKCQXSVM52RCT9ZH9DN) and review-2 (agt_01M7W5RMAAPXTXFZ0DEA8JMJEB) passed the whole change at 05d052e; review-3 (agt_01M7W5RV77SMC1GVG05XA41Y6C) failed it on a blocking gap (no test that lstat errors propagate), which was fixed in 39cb4ab; review-delta (agt_01M7W5XD1JEVCJBKKJ6DCPXYBY) passed the delta 05d052e..39cb4ab, confirming the new tests kill the surviving mutants. Open non-blocking follow-ups: a root reached through a symlinked ancestor path is accepted (SPEC only forbids a symlink as the root itself); extract and the validators have no internal assert invariants; NUL and leading-'/' rules rely on the explicit checks with no isolated test; mid-batch I/O failure can leave partial output and check-then-write is not atomic (both out of SPEC scope). Workers: none. Reviewers ran on claude-haiku-5-5 at medium effort (policy cap). Reviewer processes they handed back stop when this task ends. No services were started. Untracked .archon/ (evidence) is left uncommitted.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W5RDKCQXSVM52RCT9ZH9DN), claude-code/claude-haiku-5-5 (agent agt_01M7W5RMAAPXTXFZ0DEA8JMJEB), claude-code/claude-haiku-5-5 (agent agt_01M7W5RV77SMC1GVG05XA41Y6C), claude-code/claude-haiku-5-5 (agent agt_01M7W5XD1JEVCJBKKJ6DCPXYBY)\n\nSHIPPED: commit 39cb4ab824b77e186f06c864da74c8e2221b2394 on the run branch"
+      },
+      "created_at": "2026-11-20T09:47:46.827799086Z",
+      "updated_at": "2026-11-20T09:52:42.089663446Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W5NQ93H9KBTYJPRD946X1S",
+        "item": "qi_01M7W5NQ8BQ2VNR16ZKN51TJ4V",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M7W5NQGHEGCKJ7E4TEW75Z7W",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/6b6e554a686213afe4a7b9c6/.archon/data/worktrees/quality-safe-extract/qi_01M7W5NQ8BQ2VNR16ZKN51TJ4V",
+        "branch": "archon/kn51tj4v-implement-safe-extract-extract-per-spec",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract per SPEC.md and added focused stdlib unittest coverage. Commits on archon/kn51tj4v-implement-safe-extract-extract-per-spec: 05d052e (implementation and tests), 39cb4ab (test fix after review 3's blocking finding). Head 39cb4ab, tree 557f901. Changed: safe_extract.py, test_safe_extract.py. Verified: `python3 -B -m unittest -v test_safe_extract` gives 40 tests OK on head (before: 2 existing tests errored with NotImplementedError). Every function is under 60 lines. Reviews: review-1 (agt_01M7W5RDKCQXSVM52RCT9ZH9DN) and review-2 (agt_01M7W5RMAAPXTXFZ0DEA8JMJEB) passed the whole change at 05d052e; review-3 (agt_01M7W5RV77SMC1GVG05XA41Y6C) failed it on a blocking gap (no test that lstat errors propagate), which was fixed in 39cb4ab; review-delta (agt_01M7W5XD1JEVCJBKKJ6DCPXYBY) passed the delta 05d052e..39cb4ab, confirming the new tests kill the surviving mutants. Open non-blocking follow-ups: a root reached through a symlinked ancestor path is accepted (SPEC only forbids a symlink as the root itself); extract and the validators have no internal assert invariants; NUL and leading-'/' rules rely on the explicit checks with no isolated test; mid-batch I/O failure can leave partial output and check-then-write is not atomic (both out of SPEC scope). Workers: none. Reviewers ran on claude-haiku-5-5 at medium effort (policy cap). Reviewer processes they handed back stop when this task ends. No services were started. Untracked .archon/ (evidence) is left uncommitted.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W5RDKCQXSVM52RCT9ZH9DN), claude-code/claude-haiku-5-5 (agent agt_01M7W5RMAAPXTXFZ0DEA8JMJEB), claude-code/claude-haiku-5-5 (agent agt_01M7W5RV77SMC1GVG05XA41Y6C), claude-code/claude-haiku-5-5 (agent agt_01M7W5XD1JEVCJBKKJ6DCPXYBY)\n\nSHIPPED: commit 39cb4ab824b77e186f06c864da74c8e2221b2394 on the run branch"
+        },
+        "cost_usd": 0.10020349,
+        "started_at": "2026-11-20T09:47:47.066852203Z",
+        "finished_at": "2026-11-20T09:52:42.089663446Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W5NQG7BZNBSSWECG9GPYW5",
+        "run": "prun_01M7W5NQ93H9KBTYJPRD946X1S",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W5NQH2E4WZB1V7GVVBTP0Y",
+        "aether_task": "tsk_01M7W5NQH2RTXPYHNCP3SK29MX",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "critical",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented safe_extract.extract per SPEC.md and added focused stdlib unittest coverage. Commits on archon/kn51tj4v-implement-safe-extract-extract-per-spec: 05d052e (implementation and tests), 39cb4ab (test fix after review 3's blocking finding). Head 39cb4ab, tree 557f901. Changed: safe_extract.py, test_safe_extract.py. Verified: `python3 -B -m unittest -v test_safe_extract` gives 40 tests OK on head (before: 2 existing tests errored with NotImplementedError). Every function is under 60 lines. Reviews: review-1 (agt_01M7W5RDKCQXSVM52RCT9ZH9DN) and review-2 (agt_01M7W5RMAAPXTXFZ0DEA8JMJEB) passed the whole change at 05d052e; review-3 (agt_01M7W5RV77SMC1GVG05XA41Y6C) failed it on a blocking gap (no test that lstat errors propagate), which was fixed in 39cb4ab; review-delta (agt_01M7W5XD1JEVCJBKKJ6DCPXYBY) passed the delta 05d052e..39cb4ab, confirming the new tests kill the surviving mutants. Open non-blocking follow-ups: a root reached through a symlinked ancestor path is accepted (SPEC only forbids a symlink as the root itself); extract and the validators have no internal assert invariants; NUL and leading-'/' rules rely on the explicit checks with no isolated test; mid-batch I/O failure can leave partial output and check-then-write is not atomic (both out of SPEC scope). Workers: none. Reviewers ran on claude-haiku-5-5 at medium effort (policy cap). Reviewer processes they handed back stop when this task ends. No services were started. Untracked .archon/ (evidence) is left uncommitted.",
+        "structured": {
+          "checks": [
+            "python3 -B -m unittest -v test_safe_extract (40 tests OK on head 39cb4ab; baseline before implementation: 2 errors, NotImplementedError)"
+          ],
+          "commit": "39cb4ab824b77e186f06c864da74c8e2221b2394",
+          "evidence": [
+            {
+              "after": "Ran 40 tests in 0.009s\n\nOK",
+              "before": "ERROR: test_nested_files ... raise NotImplementedError\nERROR: test_empty_batch ... raise NotImplementedError\nRan 2 tests\nFAILED (errors=2)",
+              "caption": "Baseline on unchanged tree (8938ab5): both existing tests error",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "39cb4ab824b77e186f06c864da74c8e2221b2394",
+          "pr": {
+            "body": "Approach: validate the list type, root (existing real directory, not a symlink), then every entry (tuple of (str, bytes)), name rules (relative POSIX, no leading '/', backslash, colon, NUL, empty/'.'/'..' components, not valid UTF-8 text is rejected), duplicates and file/dir collisions in either order. Each target path is lstat-walked from root; any symlink, existing target, or non-directory ancestor raises ValueError; OSError from lstat propagates. Only then are parents created (mkdir exist_ok) and files written with open(path, 'xb') so existing files are never overwritten. Key files: safe_extract.py, test_safe_extract.py. Checks: 40 unittest tests OK on 39cb4ab. Review: review-1 and review-2 passed the whole change at 05d052e; review-3 failed it on a missing lstat-error-propagation test, fixed in 39cb4ab; review-delta passed 05d052e..39cb4ab. Open follow-ups (non-blocking): symlinked root ancestor accepted; no internal assert invariants in extract/validators; partial output possible on mid-batch I/O error and check-then-write is not atomic (out of SPEC scope). Assumptions: entries must be tuples (lists rejected); lone-surrogate names rejected.",
+            "summary": "Made extract(entries, root) write regular-file batches safely. Now: whole batch and root validated before any write; symlinks, existing targets and collisions rejected. Before: NotImplementedError stub. Now: 40 unit tests covering every SPEC rule.",
+            "title": "feat(safe_extract): implement validated batch extraction"
+          },
+          "review": {
+            "reviewed_head": "39cb4ab824b77e186f06c864da74c8e2221b2394",
+            "reviewer_agents": [
+              "agt_01M7W5RDKCQXSVM52RCT9ZH9DN",
+              "agt_01M7W5RMAAPXTXFZ0DEA8JMJEB",
+              "agt_01M7W5RV77SMC1GVG05XA41Y6C",
+              "agt_01M7W5XD1JEVCJBKKJ6DCPXYBY"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W5RDKCQXSVM52RCT9ZH9DN",
+                "base": "8938ab5604bd39e15d40b3503d72faec3057d1dc",
+                "findings": 0,
+                "head": "05d052ebe98dae1f246b24c47a9b4865d7d6179a",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W5RMAAPXTXFZ0DEA8JMJEB",
+                "base": "8938ab5604bd39e15d40b3503d72faec3057d1dc",
+                "findings": 2,
+                "head": "05d052ebe98dae1f246b24c47a9b4865d7d6179a",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W5RV77SMC1GVG05XA41Y6C",
+                "base": "8938ab5604bd39e15d40b3503d72faec3057d1dc",
+                "findings": 5,
+                "head": "05d052ebe98dae1f246b24c47a9b4865d7d6179a",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W5XD1JEVCJBKKJ6DCPXYBY",
+                "base": "05d052ebe98dae1f246b24c47a9b4865d7d6179a",
+                "findings": 0,
+                "head": "39cb4ab824b77e186f06c864da74c8e2221b2394",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W5RDKCQXSVM52RCT9ZH9DN",
+              "agt_01M7W5RMAAPXTXFZ0DEA8JMJEB",
+              "agt_01M7W5RV77SMC1GVG05XA41Y6C",
+              "agt_01M7W5XD1JEVCJBKKJ6DCPXYBY"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Filesystem writes from caller-supplied names with symlink and traversal checks, but the code is small and stdlib-only, the whole batch is validated before any write, and 40 tests cover each rule. review-1 (whole-change) rated medium; review-delta rated the test-only fix low. Residual risk is the non-atomic check-then-write window and partial writes on mid-batch I/O error, both out of SPEC scope."
+          },
+          "tree": "557f901be4b2f9306bf770bf25d8807bbe032bf0"
+        },
+        "cost_usd": 0.10020349,
+        "started_at": "2026-11-20T09:47:47.079486329Z",
+        "finished_at": "2026-11-20T09:52:37.638188184Z"
+      }
+    ],
+    "spent_usd": 0.10020349,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W5NQG7BZNBSSWECG9GPYW5": {
+        "direct_usd": 0.0411748,
+        "delegated_usd": 0.059028689999999995,
+        "agents": [
+          {
+            "agent": "agt_01M7W5RDKCQXSVM52RCT9ZH9DN",
+            "parent": "agt_01M7W5NQH2E4WZB1V7GVVBTP0Y",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01418349
+          },
+          {
+            "agent": "agt_01M7W5RMAAPXTXFZ0DEA8JMJEB",
+            "parent": "agt_01M7W5NQH2E4WZB1V7GVVBTP0Y",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01135154
+          },
+          {
+            "agent": "agt_01M7W5RV77SMC1GVG05XA41Y6C",
+            "parent": "agt_01M7W5NQH2E4WZB1V7GVVBTP0Y",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.026922459999999995
+          },
+          {
+            "agent": "agt_01M7W5XD1JEVCJBKKJ6DCPXYBY",
+            "parent": "agt_01M7W5NQH2E4WZB1V7GVVBTP0Y",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0065712
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T09:47:46.834380950Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T09:47:46.845137869Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T09:47:46.834380950Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

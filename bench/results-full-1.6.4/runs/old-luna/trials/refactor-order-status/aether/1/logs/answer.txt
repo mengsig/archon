@@ -1,0 +1,3 @@
+Implemented and committed as `ddf02dc` (`Refactor order status to enum`). Status is now `OrderStatus`, with parsing, display, and transition rules; report output and error wording are preserved.
+
+I couldn’t run `cargo test` or `cargo fmt` because `cargo` isn’t installed in the environment. `git diff --check` passed, and the status string literals are confined to `src/status.rs`.

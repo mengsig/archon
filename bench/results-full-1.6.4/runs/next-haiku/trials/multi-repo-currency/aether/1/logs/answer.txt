@@ -1,0 +1,21 @@
+Both repositories now handle per-transaction currency, and each has a commit: `ledger` at `2bccda4` and `reports` at `bbd97a6`. `cargo test` (8 tests) and `python3 -m unittest` (4 tests) both pass, and a ledger-to-reports pipeline run gives the expected per-account, per-currency totals.
+
+**ledger**
+- Lines take an optional fourth column; a missing one means `USD`. The CSV header is `date,account,amount_cents,currency`.
+- A malformed currency code prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1.
+- `ParseError` is now an enum (`Invalid` / `BadCurrency`) so `main` can pick the exit status.
+- Tests cover the currency column, the USD default, rejected codes, and the actual exit statuses through the binary.
+
+**reports**
+- Totals are keyed by (account, currency). The header is `account,currency,total_cents`, sorted by account then currency.
+- A CSV without a `currency` column counts as `USD`.
+- A malformed code prints `error: line N: ...` to stderr and exits 2.
+- The tests now assert the full output, not just fragments, and cover mixed currencies, old-format input, and bad codes.
+
+Both READMEs describe the new formats and exit codes.
+
+**Choices I made where the request was silent**
+- A trailing tab with an empty fourth column counts as a bad currency (exit 2), not as a missing column.
+- Old behaviour I left alone: a non-numeric amount in `reports` still raises a Python traceback with exit 1.
+
+**Environment change:** there was no Rust toolchain on this machine, so I installed one with rustup's minimal profile under `~/.cargo`. The commits contain only source, tests, and READMEs; I removed the `__pycache__` the test run created in `reports`.

@@ -1,0 +1,27 @@
+Implemented retry_delay in retry_budget.py per SPEC.md and committed as aabe32d (author mengsig, the global git identity). Tests: 30 pass via `python3 -m unittest test_retry_budget`, the 3 original tests plus 27 new ones.
+
+Implementation:
+- Validation runs first for every argument: `type(x) is int` (rejects bool, float, and int subclasses) and minimums (attempt and max_attempts >= 1; elapsed, budget, base, cap, and non-None retry_after >= 0). Failures raise ValueError.
+- Returns None when attempt >= max_attempts.
+- Backoff is min(cap, base * 2**(attempt-1)). Zero base or cap gives 0. Huge attempts saturate at cap via a shift-bit-length shortcut, so no large power is built.
+- retry_after acts as a floor via max(), not limited by cap.
+- Returns None when elapsed + delay >= budget, otherwise returns the delay, including 0.
+
+Choices to review:
+- Non-int types raise ValueError, not TypeError, because SPEC says "invalid values raise ValueError".
+- Helpers _validate, _require_int, and _backoff are private.
+
+Repo: quality-retry-budget, branch main. Only the two source files were committed. __pycache__ was removed and not committed.
+
+`retry_delay` is implemented in `retry_budget.py` and committed as `aabe32d` on `main`. All 30 tests pass with `python3 -m unittest test_retry_budget`: the 3 original tests plus 27 new ones.
+
+- **Validation:** every argument is checked first, with `type(x) is int` (so bool, float and int subclasses are rejected) and the minimums from the spec. Failures raise `ValueError`.
+- **Attempt limit:** returns `None` when `attempt >= max_attempts`.
+- **Backoff:** `min(cap, base * 2**(attempt-1))`. Zero base or cap gives 0. Large attempts saturate at the cap without building a huge power of two.
+- **Retry-After:** acts as a floor via `max()` and is not limited by the cap.
+- **Budget:** returns `None` when `elapsed + delay >= budget`, otherwise returns the delay, including 0.
+
+Choices to review:
+- Wrong-type inputs raise `ValueError`, not `TypeError`, because the spec says invalid values raise `ValueError`.
+- I committed as `mengsig`, the global git identity. The repo's existing fixture commit is authored `archon-bench`, but that is not the user's identity.
+- The commit message ends with the `Co-Authored-By: Claude Haiku 5.5` line from the system reminder.

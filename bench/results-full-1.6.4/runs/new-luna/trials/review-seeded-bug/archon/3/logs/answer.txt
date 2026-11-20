@@ -1,0 +1,6 @@
+I found two security/correctness issues in [`src/tokens.js`](/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/b7649a0973990fcb1e36473e/.archon/data/orchestrator/repos/review-seeded-bug/src/tokens.js):
+
+- **`verify` — High: accepts truncated signatures.** It checks `expected.startsWith(signature)` instead of requiring a full, exact match. For example, replacing a valid token’s signature with its first character still passes the MAC check. An attacker who can alter a token can reduce the effective signature strength to as little as one byte; an empty signature is also accepted.
+- **`verify` — Medium: malformed signed payloads throw.** `JSON.parse` is not caught, so a token with a valid MAC over a non-JSON body throws instead of returning `null`. This can cause request failures if callers expect invalid tokens to be rejected normally. For example, a token signed by the configured secret with body `eA` (base64url for `x`) reaches `JSON.parse('x')` and throws.
+
+No code was changed.

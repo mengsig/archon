@@ -1,0 +1,248 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WB7MRBHM7BVKVFZ54DD8A3",
+      "repo": "repo_01M7WB79DFAFF1R45C8PAW25Q9",
+      "pipeline": "direct",
+      "title": "Refactor orders crate order status from String to OrderStatus enum",
+      "brief": "Operator request (authenticated local socket): The `orders` crate stores an order's status as a `String` and compares string literals all over the code. Refactor it to a proper type.\n\n- Add `src/status.rs` with `pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }` deriving at least `Debug, Clone, Copy, PartialEq, Eq, Hash`.\n- `OrderStatus::as_str(self) -> &'static str` returns the lowercase names (\"pending\", \"paid\", \"shipped\", \"cancelled\"); `Display` prints the same.\n- `FromStr` for `OrderStatus` with `type Err = ParseStatusError`, a public error type that implements `std::error::Error` and whose message names the rejected input.\n- `OrderStatus::can_transition_to(self, next: OrderStatus) -> bool` encodes the lifecycle: pending -> paid, pending -> cancelled, paid -> shipped, paid -> cancelled; nothing else.\n- `Order::status` becomes an `OrderStatus`; re-export `OrderStatus` and `ParseStatusError` from the crate root; use the enum everywhere, so the status string literals appear only in `src/status.rs`.\n\nObservable behaviour (errors, report output and ordering, parsing) must stay exactly the same, and `cargo test` must pass. Commit your work.\n\nAcceptance: `cargo test` passes; status string literals occur only in src/status.rs; report output and parse errors are unchanged versus the baseline; work is committed on the item's branch (local ship, no push). Before editing, record the current report output and parse-error messages so they can be compared after the change.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "orders",
+        "refactor"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7WB7MRBHM7BVKVFZ54DD8A3",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T11:24:56.976074238Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T11:24:56.979784195Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T11:24:56.976074238Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WB7MS96QGKY7E4APWH25R5",
+        "summary": "Refactored the orders crate so Order::status is an OrderStatus enum (new src/status.rs with Display, FromStr/ParseStatusError, as_str and can_transition_to), re-exported from the crate root. Status string literals now appear only in src/status.rs. Committed locally as 8421995 on archon/z54dd8a3-refactor-orders-crate-order-status-from (tree e742de8), not pushed. Before/after probe of pay/ship/cancel errors, status counts order, outstanding/ready lists, to_line and from_line (including all parse-error messages) was byte-identical. cargo fmt --check, cargo clippy --all-targets -D warnings and cargo test (3 unit + 3 integration) pass. Review: one reviewer (agt_01M7WBAP3XJ1S4Y503ZYW09KMH) passed head 8421995 and rated risk high, because Order.status and report::status_counts change public types. Open for the human: Order's derived Debug now prints `status: Pending` instead of `status: \"pending\"`, and downstream callers of the public types will need updating.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WBAP3XJ1S4Y503ZYW09KMH)\n\nSHIPPED: commit 8421995ffabb6d5fb46fec81c3fa164bd7e954c2 on the run branch"
+      },
+      "created_at": "2026-11-20T11:24:56.970998554Z",
+      "updated_at": "2026-11-20T11:27:20.403914037Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WB7MS96QGKY7E4APWH25R5",
+        "item": "qi_01M7WB7MRBHM7BVKVFZ54DD8A3",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WB7N12SRHDWC7PQAZ7C788",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/d254ad8190bb312d0059a368/.archon/data/worktrees/refactor-order-status/qi_01M7WB7MRBHM7BVKVFZ54DD8A3",
+        "branch": "archon/z54dd8a3-refactor-orders-crate-order-status-from",
+        "state": {
+          "state": "succeeded",
+          "summary": "Refactored the orders crate so Order::status is an OrderStatus enum (new src/status.rs with Display, FromStr/ParseStatusError, as_str and can_transition_to), re-exported from the crate root. Status string literals now appear only in src/status.rs. Committed locally as 8421995 on archon/z54dd8a3-refactor-orders-crate-order-status-from (tree e742de8), not pushed. Before/after probe of pay/ship/cancel errors, status counts order, outstanding/ready lists, to_line and from_line (including all parse-error messages) was byte-identical. cargo fmt --check, cargo clippy --all-targets -D warnings and cargo test (3 unit + 3 integration) pass. Review: one reviewer (agt_01M7WBAP3XJ1S4Y503ZYW09KMH) passed head 8421995 and rated risk high, because Order.status and report::status_counts change public types. Open for the human: Order's derived Debug now prints `status: Pending` instead of `status: \"pending\"`, and downstream callers of the public types will need updating.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WBAP3XJ1S4Y503ZYW09KMH)\n\nSHIPPED: commit 8421995ffabb6d5fb46fec81c3fa164bd7e954c2 on the run branch"
+        },
+        "cost_usd": 0.04522245,
+        "started_at": "2026-11-20T11:24:57.205080789Z",
+        "finished_at": "2026-11-20T11:27:20.403914037Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WB7N0A28Z1E84JRBAME0XS",
+        "run": "prun_01M7WB7MS96QGKY7E4APWH25R5",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WB7N1AY6HPBGDTEVAM6WKR",
+        "aether_task": "tsk_01M7WB7N1AY6HPBGDTEVAM6WKS",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Refactored the orders crate so Order::status is an OrderStatus enum (new src/status.rs with Display, FromStr/ParseStatusError, as_str and can_transition_to), re-exported from the crate root. Status string literals now appear only in src/status.rs. Committed locally as 8421995 on archon/z54dd8a3-refactor-orders-crate-order-status-from (tree e742de8), not pushed. Before/after probe of pay/ship/cancel errors, status counts order, outstanding/ready lists, to_line and from_line (including all parse-error messages) was byte-identical. cargo fmt --check, cargo clippy --all-targets -D warnings and cargo test (3 unit + 3 integration) pass. Review: one reviewer (agt_01M7WBAP3XJ1S4Y503ZYW09KMH) passed head 8421995 and rated risk high, because Order.status and report::status_counts change public types. Open for the human: Order's derived Debug now prints `status: Pending` instead of `status: \"pending\"`, and downstream callers of the public types will need updating.",
+        "structured": {
+          "checks": [
+            "cargo fmt --check",
+            "cargo clippy --all-targets -- -D warnings",
+            "cargo test"
+          ],
+          "commit": "8421995ffabb6d5fb46fec81c3fa164bd7e954c2",
+          "evidence": [
+            {
+              "caption": "cargo test after the change: unit and integration suites pass",
+              "kind": "output",
+              "text": "running 3 tests\ntest result: ok. 3 passed; 0 failed\nrunning 3 tests\ntest result: ok. 3 passed; 0 failed\nrunning 0 tests\ntest result: ok. 0 passed; 0 failed"
+            }
+          ],
+          "local_commit": "8421995ffabb6d5fb46fec81c3fa164bd7e954c2",
+          "pr": {
+            "body": "Approach: new src/status.rs holds OrderStatus (Pending, Paid, Shipped, Cancelled), as_str, Display, FromStr with public ParseStatusError (message: unknown status \"<input>\"), can_transition_to (pending->paid, pending->cancelled, paid->shipped, paid->cancelled). Order::status, billing::pay, shipping::ship, Order::cancel, Order::is_open, billing::outstanding_cents, shipping::ready_to_ship, report::to_line/from_line/status_counts use the enum. status_counts now returns Vec<(OrderStatus, usize)>, sorted by as_str so output order matches the old BTreeMap ordering. from_line keeps its error text via ParseStatusError Display.\n\nChecks: cargo fmt --check clean; cargo clippy --all-targets -D warnings clean; cargo test: 3 unit (status module) and 3 integration tests pass. Behaviour check: a temporary probe that printed transitions, errors, counts, lists and parse results gave byte-identical output before and after (probe removed, not committed).\n\nBreaking public API: Order.status is OrderStatus instead of String; status_counts returns OrderStatus instead of String. Derived Debug of Order prints `Pending` instead of `\"pending\"`.\n\nNot pushed. Nothing left running.",
+            "summary": "Made order status a typed enum. Now the lifecycle rules and names live in one place (src/status.rs). Before: Order.status was a String compared to literals in four modules. Now: OrderStatus with can_transition_to, FromStr and Display; observable messages and report ordering unchanged.",
+            "title": "Refactor order status from String to OrderStatus enum"
+          },
+          "review": {
+            "reviewed_head": "8421995ffabb6d5fb46fec81c3fa164bd7e954c2",
+            "reviewer_agents": [
+              "agt_01M7WBAP3XJ1S4Y503ZYW09KMH"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7WBAP3XJ1S4Y503ZYW09KMH",
+                "base": "a185dd4a78b209bbfc3f29f993b80fe2b3e180b9",
+                "findings": 2,
+                "head": "8421995ffabb6d5fb46fec81c3fa164bd7e954c2",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7WBAP3XJ1S4Y503ZYW09KMH"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "Public API break of a library crate: Order.status type and report::status_counts return type change. Reviewer agt_01M7WBAP3XJ1S4Y503ZYW09KMH raised the author's medium to high on this basis. No persistence format, concurrency or security change; runtime behaviour in-crate is unchanged and all checks pass."
+          },
+          "risk_reviewer": "agt_01M7WBAP3XJ1S4Y503ZYW09KMH",
+          "tree": "e742de87ebebd7b57042b84843f002199af7593c"
+        },
+        "cost_usd": 0.04522245,
+        "started_at": "2026-11-20T11:24:57.226874372Z",
+        "finished_at": "2026-11-20T11:27:12.548252874Z"
+      }
+    ],
+    "spent_usd": 0.04522245,
+    "gates": [],
+    "delegations": {
+      "stg_01M7WB7N0A28Z1E84JRBAME0XS": {
+        "direct_usd": 0.03623633,
+        "delegated_usd": 0.00898612,
+        "agents": [
+          {
+            "agent": "agt_01M7WBAP3XJ1S4Y503ZYW09KMH",
+            "parent": "agt_01M7WB7N1AY6HPBGDTEVAM6WKR",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00898612
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T11:24:56.976074238Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T11:24:56.979784195Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T11:24:56.976074238Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

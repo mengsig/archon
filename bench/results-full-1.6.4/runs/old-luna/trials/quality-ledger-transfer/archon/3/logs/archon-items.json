@@ -1,0 +1,176 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WC7Q82EGQ2N9CVCJ8FW1BY",
+      "repo": "repo_01M7WC6TXDKSM0FEBHXD73PKSW",
+      "pipeline": "direct",
+      "title": "Implement atomic ledger API and focused tests",
+      "brief": "Implement ledger.py according to SPEC.md and add focused tests extending existing basic coverage. Preserve the documented API and handle every specified error and boundary case. Requirements from SPEC.md: Ledger accepts only a dict of nonempty str names to built-in ints within [0, MAX_BALANCE=2**63-1], including empty dict; reject bools and invalid input with ValueError; copy input and ensure snapshots do not alias internal state; transfers cannot create accounts. Amount must be a built-in int in [1, MAX_BALANCE], otherwise ValueError, and validate amount before account lookup. Unknown accounts raise KeyError. Return False on insufficient funds or destination overflow, with no balance mutation; successful transfer returns True, debits/credits exactly, and conserves total. Same-account transfers return True iff sufficient funds, without changing balance, after validating amount/accounts. Ensure all calls including snapshots are linearizable across threads, transfer checks and both writes atomic, and opposite transfers cannot deadlock. Focus tests on validation precedence, type/boundary cases, aliasing, failures without mutation, same-account MAX_BALANCE, conservation, and deterministic thread safety without random inputs or wall-clock calculations. Use only Python standard library. Run relevant tests, and commit the completed changes per operator instruction. Outcome criteria: implementation conforms to every bullet in SPEC.md; focused tests pass; work is committed on the item branch.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WC7QDM40084W9CD77K5SJX",
+        "summary": "Implemented the validated, bounded ledger API with atomic transfers and snapshots under one lock, plus focused validation, boundary, aliasing, conservation, and deterministic concurrency tests. Post-commit unittest, compileall, and diff checks passed; independent review passed with no findings. Changes are committed at 7da15e22d912094261614faf9976eaff0a47c71f. No open issues.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCB4Q36B8QKXSFCRFZ90BY)\n\nSHIPPED: commit 7da15e22d912094261614faf9976eaff0a47c71f on the run branch"
+      },
+      "created_at": "2026-11-20T11:42:28.258801977Z",
+      "updated_at": "2026-11-20T11:45:23.083645605Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WC7QDM40084W9CD77K5SJX",
+        "item": "qi_01M7WC7Q82EGQ2N9CVCJ8FW1BY",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WC7QN8124WT4V5XS8MAPXF",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/23355182c35cc77d42f9a7db/.archon/data/worktrees/quality-ledger-transfer/qi_01M7WC7Q82EGQ2N9CVCJ8FW1BY",
+        "branch": "archon/cj8fw1by-implement-atomic-ledger-api-and-focused",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the validated, bounded ledger API with atomic transfers and snapshots under one lock, plus focused validation, boundary, aliasing, conservation, and deterministic concurrency tests. Post-commit unittest, compileall, and diff checks passed; independent review passed with no findings. Changes are committed at 7da15e22d912094261614faf9976eaff0a47c71f. No open issues.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCB4Q36B8QKXSFCRFZ90BY)\n\nSHIPPED: commit 7da15e22d912094261614faf9976eaff0a47c71f on the run branch"
+        },
+        "cost_usd": 0.016388840000000002,
+        "started_at": "2026-11-20T11:42:28.486270271Z",
+        "finished_at": "2026-11-20T11:45:23.083645605Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WC7QMDS33FE0DN95YANCVX",
+        "run": "prun_01M7WC7QDM40084W9CD77K5SJX",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7WC7QNKAYGFGDF1SW34SBJ1",
+        "aether_task": "tsk_01M7WC7QNKAYGFGDF1SW34SBJ2",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented the validated, bounded ledger API with atomic transfers and snapshots under one lock, plus focused validation, boundary, aliasing, conservation, and deterministic concurrency tests. Post-commit unittest, compileall, and diff checks passed; independent review passed with no findings. Changes are committed at 7da15e22d912094261614faf9976eaff0a47c71f. No open issues.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (9 tests passed)",
+            "python -m compileall -q ledger.py test_ledger.py (passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "7da15e22d912094261614faf9976eaff0a47c71f",
+          "evidence": [
+            {
+              "after": "Ran 9 tests in 0.003s; OK.",
+              "before": "Ran 2 tests; FAILED (errors=2), both raised NotImplementedError in Ledger.__init__.",
+              "caption": "Baseline before implementation: existing tests failed because Ledger was unimplemented; committed head passes the expanded suite.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "7da15e22d912094261614faf9976eaff0a47c71f",
+          "pr": {
+            "body": "Implemented constructor validation and defensive copying, exact built-in integer amount validation before account lookup, atomic source/destination checks and updates, same-account handling, and copied snapshots in ledger.py. Expanded test_ledger.py with invalid input and precedence cases, overflow and insufficient funds with unchanged state, MAX_BALANCE same-account transfers, conservation, and synchronized opposite transfers with snapshots. Verification on the committed head: python -m unittest -v (9 passed); python -m compileall -q ledger.py test_ledger.py (passed); git diff --check (passed). Assumes str subclasses are valid account names and dict subclasses are valid dict inputs, consistent with the spec wording. No known limitations.",
+            "summary": "Implemented the ledger API with bounded balances and atomic, thread-safe transfers. Before: the ledger methods were unimplemented and the existing tests failed; now: all specified validation, failure, aliasing, and concurrency behaviors are covered and pass.",
+            "title": "Implement atomic ledger transfers"
+          },
+          "review": {
+            "reviewed_head": "7da15e22d912094261614faf9976eaff0a47c71f",
+            "reviewer_agents": [
+              "agt_01M7WCB4Q36B8QKXSFCRFZ90BY"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7WCB4Q36B8QKXSFCRFZ90BY",
+                "base": "d5a79f46dc3be2535d15352eb7b77c8832a68824",
+                "findings": 0,
+                "head": "7da15e22d912094261614faf9976eaff0a47c71f",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7WCB4Q36B8QKXSFCRFZ90BY"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": {
+              "agent": "agt_01M7WCB4Q36B8QKXSFCRFZ90BY",
+              "level": "medium",
+              "why": "Reviewer judged behavior contained with a single per-ledger lock and no lock ordering; review passed with no findings."
+            },
+            "why": "ledger.py changes transfer and snapshot synchronization through a per-ledger lock; concurrency and locking changes are high under the stage rubric. The implementation avoids multi-lock ordering, and deterministic concurrency tests and the independent review passed."
+          },
+          "tree": "b26ce072854f6bf555481aacc2cda9ba15330829"
+        },
+        "cost_usd": 0.016388840000000002,
+        "started_at": "2026-11-20T11:42:28.493705664Z",
+        "finished_at": "2026-11-20T11:45:20.647967002Z"
+      }
+    ],
+    "spent_usd": 0.016388840000000002,
+    "gates": [],
+    "delegations": {
+      "stg_01M7WC7QMDS33FE0DN95YANCVX": {
+        "direct_usd": 0.01261582,
+        "delegated_usd": 0.00377302,
+        "agents": [
+          {
+            "agent": "agt_01M7WCB4Q36B8QKXSFCRFZ90BY",
+            "parent": "agt_01M7WC7QNKAYGFGDF1SW34SBJ1",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00377302
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

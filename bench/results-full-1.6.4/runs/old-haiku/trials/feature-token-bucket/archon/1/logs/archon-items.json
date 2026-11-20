@@ -1,0 +1,215 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W22CENKSVYEHJS00GABJ45",
+      "repo": "repo_01M7W2252RY7Q2Y3KTSBEZAKZ7",
+      "pipeline": "direct",
+      "title": "Implement rate limiter per SPEC.md in ratelimit.py",
+      "brief": "Operator request (authenticated, verbatim): \"Implement the rate limiter described in `SPEC.md` in `ratelimit.py` (the module currently only has stubs). Follow the spec exactly, including its error cases and edge cases; the tests in `test_ratelimit.py` only cover the basics. Keep it dependency-free (standard library only) and commit your work.\"\n\nRequirements:\n- Read SPEC.md in the repository root and implement every behaviour, error case and edge case it defines in ratelimit.py. Do not rely on test_ratelimit.py for coverage: add tests for the spec's error and edge cases to test_ratelimit.py.\n- Standard library only; no new dependencies.\n- Keep functions under 60 lines, validate inputs at the boundary, and keep failure visible (no silent swallowing).\n- Run the test suite and make sure it passes before finishing.\n- Commit the work on the local branch. Do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W22CMVPFC4898WK837KWXB",
+        "summary": "Implemented the rate limiter in ratelimit.py per SPEC.md (standard library only) and added 27 tests to test_ratelimit.py covering the spec's error cases, edge cases and LRU behaviour. Committed on archon/00gabj45-implement-rate-limiter-per-spec-md-in-ra as 1fd934a, d2ff6e4 and f47321a (head f47321a, tree ecf6b62f); not pushed.\n\nChanges: TokenBucket starts full, refills continuously up to capacity, ignores non-advancing clocks, and validates capacity, refill and request size. KeyedLimiter keeps one bucket per key with LRU eviction at max_keys; try_acquire and wait_time both count as use.\n\nReview found three real problems in the first version, all fixed: a 1e-9 absolute tolerance let tiny requests through an empty bucket; wait_time did not hold at large magnitudes; and wait_time under-reported when the clock went backwards. Infinite rates are now rejected. The final review passed with no blocking findings.\n\nChecks: `python3 -B -m unittest test_ratelimit` before the change: 3 errors (NotImplementedError stubs). On head f47321a: 27 tests OK. Randomized probes found 0 wait-then-acquire failures across capacities up to 1e12, clocks up to 1e6 and backwards clock steps. No build or linter step exists in the repo.\n\nOpen follow-ups (non-blocking, from the final review): the backwards-clock test covers only one case (n=1, rate 1.0); _refill now returns the clock reading, so its name understates what it does. Also, the implementation is not thread-safe, which the spec does not mention. wait_time pads its result by a relative 1e-12 plus two clock ulps, so it can exceed the exact value by that margin.\n\nReviewer processes handed to this stage (pids 2898988, 2913228, 2923207) were stopped by PID. Nothing else is left running.\n\nREVIEW: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W254T1N20AV5AF8RQ0ZKFV), claude-code/claude-haiku-5-5 (agent agt_01M7W28J5ADRK96YZQGNHWETT1), claude-code/claude-haiku-5-5 (agent agt_01M7W2AQ83B0Z2CQRGVY5TYC5Q)\n\nSHIPPED: commit f47321ae2dce1f63a247e03872aef649f6c575b0 on the run branch"
+      },
+      "created_at": "2026-11-20T08:44:47.622398160Z",
+      "updated_at": "2026-11-20T08:50:08.192065283Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W22CMVPFC4898WK837KWXB",
+        "item": "qi_01M7W22CENKSVYEHJS00GABJ45",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W22CVDPWHYZQ1T66NRQ86J",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/5d573c466e6ae85572d39cb5/.archon/data/worktrees/feature-token-bucket/qi_01M7W22CENKSVYEHJS00GABJ45",
+        "branch": "archon/00gabj45-implement-rate-limiter-per-spec-md-in-ra",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the rate limiter in ratelimit.py per SPEC.md (standard library only) and added 27 tests to test_ratelimit.py covering the spec's error cases, edge cases and LRU behaviour. Committed on archon/00gabj45-implement-rate-limiter-per-spec-md-in-ra as 1fd934a, d2ff6e4 and f47321a (head f47321a, tree ecf6b62f); not pushed.\n\nChanges: TokenBucket starts full, refills continuously up to capacity, ignores non-advancing clocks, and validates capacity, refill and request size. KeyedLimiter keeps one bucket per key with LRU eviction at max_keys; try_acquire and wait_time both count as use.\n\nReview found three real problems in the first version, all fixed: a 1e-9 absolute tolerance let tiny requests through an empty bucket; wait_time did not hold at large magnitudes; and wait_time under-reported when the clock went backwards. Infinite rates are now rejected. The final review passed with no blocking findings.\n\nChecks: `python3 -B -m unittest test_ratelimit` before the change: 3 errors (NotImplementedError stubs). On head f47321a: 27 tests OK. Randomized probes found 0 wait-then-acquire failures across capacities up to 1e12, clocks up to 1e6 and backwards clock steps. No build or linter step exists in the repo.\n\nOpen follow-ups (non-blocking, from the final review): the backwards-clock test covers only one case (n=1, rate 1.0); _refill now returns the clock reading, so its name understates what it does. Also, the implementation is not thread-safe, which the spec does not mention. wait_time pads its result by a relative 1e-12 plus two clock ulps, so it can exceed the exact value by that margin.\n\nReviewer processes handed to this stage (pids 2898988, 2913228, 2923207) were stopped by PID. Nothing else is left running.\n\nREVIEW: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W254T1N20AV5AF8RQ0ZKFV), claude-code/claude-haiku-5-5 (agent agt_01M7W28J5ADRK96YZQGNHWETT1), claude-code/claude-haiku-5-5 (agent agt_01M7W2AQ83B0Z2CQRGVY5TYC5Q)\n\nSHIPPED: commit f47321ae2dce1f63a247e03872aef649f6c575b0 on the run branch"
+        },
+        "cost_usd": 0.1030628,
+        "started_at": "2026-11-20T08:44:47.824741274Z",
+        "finished_at": "2026-11-20T08:50:08.192065283Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W22CTPHCQZPQ3KKJK2Y73A",
+        "run": "prun_01M7W22CMVPFC4898WK837KWXB",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W22CVKFPF4Z6FZFAHWW8AF",
+        "aether_task": "tsk_01M7W22CVKFPF4Z6FZFAHWW8AG",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented the rate limiter in ratelimit.py per SPEC.md (standard library only) and added 27 tests to test_ratelimit.py covering the spec's error cases, edge cases and LRU behaviour. Committed on archon/00gabj45-implement-rate-limiter-per-spec-md-in-ra as 1fd934a, d2ff6e4 and f47321a (head f47321a, tree ecf6b62f); not pushed.\n\nChanges: TokenBucket starts full, refills continuously up to capacity, ignores non-advancing clocks, and validates capacity, refill and request size. KeyedLimiter keeps one bucket per key with LRU eviction at max_keys; try_acquire and wait_time both count as use.\n\nReview found three real problems in the first version, all fixed: a 1e-9 absolute tolerance let tiny requests through an empty bucket; wait_time did not hold at large magnitudes; and wait_time under-reported when the clock went backwards. Infinite rates are now rejected. The final review passed with no blocking findings.\n\nChecks: `python3 -B -m unittest test_ratelimit` before the change: 3 errors (NotImplementedError stubs). On head f47321a: 27 tests OK. Randomized probes found 0 wait-then-acquire failures across capacities up to 1e12, clocks up to 1e6 and backwards clock steps. No build or linter step exists in the repo.\n\nOpen follow-ups (non-blocking, from the final review): the backwards-clock test covers only one case (n=1, rate 1.0); _refill now returns the clock reading, so its name understates what it does. Also, the implementation is not thread-safe, which the spec does not mention. wait_time pads its result by a relative 1e-12 plus two clock ulps, so it can exceed the exact value by that margin.\n\nReviewer processes handed to this stage (pids 2898988, 2913228, 2923207) were stopped by PID. Nothing else is left running.\n\nREVIEW: pass",
+        "structured": {
+          "checks": [
+            "python3 -B -m unittest test_ratelimit (head f47321a: 27 tests OK)",
+            "python3 -B -m unittest test_ratelimit (before change, stub: 3 errors)",
+            "randomized wait-then-acquire boundary probes (forward and backwards clock): 0 failures"
+          ],
+          "commit": "f47321ae2dce1f63a247e03872aef649f6c575b0",
+          "local_commit": "f47321ae2dce1f63a247e03872aef649f6c575b0",
+          "pr": {
+            "body": "Approach: ratelimit.py implements TokenBucket (continuous refill capped at capacity, clock-injected, non-advancing clock changes nothing) and KeyedLimiter (OrderedDict of buckets, max_keys LRU eviction, try_acquire and wait_time both count as use). Standard library only.\n\nKey decisions: request and rate validation at the boundary (ValueError); infinite and NaN rates rejected; try_acquire compares tokens exactly. wait_time pads by relative 1e-12 plus 2 clock ulps to absorb float rounding, and includes the backwards-clock gap.\n\nChecks: python3 -B -m unittest test_ratelimit: 27 OK on head f47321a (3 errors on the stub before). Randomized probes: 0 wait-then-acquire failures.\n\nAssumptions and limits: not thread-safe (spec does not mention threads). wait_time may exceed the exact spec value by the padding. Follow-ups: broaden backwards-clock tests; rename _refill or document its return value.",
+            "evidence": [
+              {
+                "after": "python3 -B -m unittest test_ratelimit\nRan 27 tests in 0.001s\nOK",
+                "before": "python3 -B -m unittest test_ratelimit\nRan 3 tests\nFAILED (errors=3)  # NotImplementedError from stubs",
+                "caption": "Test run before implementation (stub) and after (head f47321a)",
+                "kind": "output"
+              }
+            ],
+            "risk": {
+              "level": "medium",
+              "why": "New feature in a contained module with no existing callers; no existing behaviour changes. Tests: 27 unit tests pass. Review: three reviewers; the first failed with two blocking findings (tolerance bypass, float boundary), both fixed; the delta reviews passed. Level kept at medium per rubric for new features, despite one delta reviewer rating it low."
+            },
+            "summary": "Made rate limiting available: TokenBucket and KeyedLimiter per SPEC.md. Now can limit requests per key with LRU eviction. Before: stubs raising NotImplementedError; now: 27 passing tests covering spec error and edge cases.",
+            "title": "Implement token bucket and keyed rate limiter per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "f47321ae2dce1f63a247e03872aef649f6c575b0",
+            "reviewer_agents": [
+              "agt_01M7W254T1N20AV5AF8RQ0ZKFV",
+              "agt_01M7W28J5ADRK96YZQGNHWETT1",
+              "agt_01M7W2AQ83B0Z2CQRGVY5TYC5Q"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W254T1N20AV5AF8RQ0ZKFV",
+                "base": "8454b8d80fe52f227ce1e1dc8047c8c111fcdc79",
+                "findings": 6,
+                "head": "1fd934a7fa2f302b24b3e70cc10369288d7946b7",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W28J5ADRK96YZQGNHWETT1",
+                "base": "1fd934a7fa2f302b24b3e70cc10369288d7946b7",
+                "findings": 2,
+                "head": "d2ff6e40db016080a2a98fcd27a456e8b83bf4d0",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W2AQ83B0Z2CQRGVY5TYC5Q",
+                "base": "d2ff6e40db016080a2a98fcd27a456e8b83bf4d0",
+                "findings": 2,
+                "head": "f47321ae2dce1f63a247e03872aef649f6c575b0",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W254T1N20AV5AF8RQ0ZKFV",
+              "agt_01M7W28J5ADRK96YZQGNHWETT1",
+              "agt_01M7W2AQ83B0Z2CQRGVY5TYC5Q"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "New feature in a contained module with no existing callers; new behaviour behind a new interface. Files: ratelimit.py, test_ratelimit.py. Tests: 27 pass on the final head. Review: failing first review's blocking findings fixed; delta reviews passed. Medium kept per the rubric for new features; one delta reviewer rated low."
+          },
+          "tree": "ecf6b62f5eb59d1899d8899a4284f840aad1795c"
+        },
+        "cost_usd": 0.1030628,
+        "started_at": "2026-11-20T08:44:47.830273451Z",
+        "finished_at": "2026-11-20T08:50:05.493415724Z"
+      }
+    ],
+    "spent_usd": 0.1030628,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W22CTPHCQZPQ3KKJK2Y73A": {
+        "direct_usd": 0.071007,
+        "delegated_usd": 0.032055799999999995,
+        "agents": [
+          {
+            "agent": "agt_01M7W254T1N20AV5AF8RQ0ZKFV",
+            "parent": "agt_01M7W22CVKFPF4Z6FZFAHWW8AF",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01372411
+          },
+          {
+            "agent": "agt_01M7W28J5ADRK96YZQGNHWETT1",
+            "parent": "agt_01M7W22CVKFPF4Z6FZFAHWW8AF",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0103524
+          },
+          {
+            "agent": "agt_01M7W2AQ83B0Z2CQRGVY5TYC5Q",
+            "parent": "agt_01M7W22CVKFPF4Z6FZFAHWW8AF",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00797929
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

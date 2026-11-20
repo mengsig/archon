@@ -1,0 +1,18 @@
+The rate limiter is implemented in `ratelimit.py` per `SPEC.md` and committed as `9d78f0d`. All 13 tests pass: the 3 original ones and 10 new ones I added for the spec's error and edge cases.
+
+**Commit placement:** I committed on `main`, the default branch, because I didn't check the branch first. I did not rewrite it. If you want the work on `feature-token-bucket` instead, say so and I'll move the commit to a branch and reset `main` to `ef1fb74`.
+
+**What's implemented:**
+- **`TokenBucket`**: starts full, refills continuously and caps at capacity, and rejects `n <= 0` or `n > capacity`. `wait_time` consumes nothing.
+- **Clock going backwards**: the bucket only advances its refill time when the clock passes the latest time it has seen, so backwards jumps add or remove nothing.
+- **`KeyedLimiter`**: one bucket per key, kept in an `OrderedDict` for LRU order. Both `try_acquire` and `wait_time` count as a use, and an evicted key returns full.
+- **Validation before side effects**: `n` is checked before a key is created, so an invalid call cannot evict another key.
+- **Standard library only**: the module imports just `time` and `collections`.
+
+**Choices I made that you may want to review:**
+- Validation of `capacity`, `refill_per_sec` and `n` is shared by two small helpers, `_check_rates` and `_check_n`, so both classes enforce the same rules.
+- Each class has two assertions on its internal invariants, which only fire on a bug and not on bad user input.
+
+**Known limitation:** the refill uses floating-point arithmetic. In rare cases `wait_time(n)` may return a delay after which `try_acquire(n)` still fails by a rounding error. I did not add a tolerance because the spec doesn't mention one. Say if you want one.
+
+I removed the `__pycache__` directory my test run created, so the working tree is clean.

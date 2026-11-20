@@ -1,0 +1,246 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W3MSV25H5P5HR63HT94YD8",
+      "repo": "repo_01M7W3MEXNRYA3MNRYFC090P8F",
+      "pipeline": "direct",
+      "title": "Implement ledger.py per SPEC.md with focused tests",
+      "brief": "Operator instruction (authenticated, verbatim): \"Implement `ledger.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nGoal: make ledger.py conform to SPEC.md. Acceptance criteria: every documented API function behaves as SPEC.md states; every specified error and boundary case is handled with the specified exception or result; existing public API is preserved; new focused tests cover each specified error and boundary case; only the Python standard library is used; all tests pass; work is committed on the item's branch.\n\nConstraints: read SPEC.md first and treat it as the source of truth. Do not add dependencies. Keep functions under 60 lines and follow the repository's existing style. Do not add attribution lines to the commit message.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W3MSV25H5P5HR63HT94YD8",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-20T09:12:19.560779904Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-20T09:12:19.560779904Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W3MSX9YCNJXB1D4ZB8CWY4",
+        "summary": "Implemented ledger.py per SPEC.md (stdlib only, one threading.Lock per ledger) and expanded test_ledger.py to 27 focused tests. Head 1dc92cb on archon/3ht94yd8-implement-ledger-py-per-spec-md-with-foc (tree d4efc38f299748cff8bf31a51f509fc5a0c8d7fc), on top of d42baaa. Before: both existing tests errored with NotImplementedError. After: 27/27 pass (python3 -m unittest), and 30/30 repeated runs passed with no failures. Review: first whole-change review (agt_01M7W3PJB8PK2GVG2PH46DRTJ0) failed on two blocking findings, a dict-subclass items() bypass of balance validation and non-daemon concurrency test threads that could hang on deadlock. Fixed in 1dc92cb with a regression test, daemon threads and an exact-balance assertion. Delta review (agt_01M7W3RFM48JB50V5KVE8CD8G4) of 71c751f..1dc92cb passed with no findings. Left open (non-blocking): unhashable account names such as lists raise TypeError rather than KeyError; SPEC does not define that case. Risk is high because the change adds locking. The change is isolated, with no dependents in the repo. No servers or Compose stacks were started; the reviewer processes exited.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W3RFM48JB50V5KVE8CD8G4), claude-code/claude-haiku-5-5 (agent agt_01M7W3PJB8PK2GVG2PH46DRTJ0)\n\nSHIPPED: commit 1dc92cb8a507c4fa44ebef3d9cc35edd6a067ce6 on the run branch"
+      },
+      "created_at": "2026-11-20T09:12:19.554855789Z",
+      "updated_at": "2026-11-20T09:15:00.055079708Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W3MSX9YCNJXB1D4ZB8CWY4",
+        "item": "qi_01M7W3MSV25H5P5HR63HT94YD8",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W3MT64VNX2ACV8YFRP5WAJ",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/b1393224a3f7ef4e419edf8c/.archon/data/worktrees/quality-ledger-transfer/qi_01M7W3MSV25H5P5HR63HT94YD8",
+        "branch": "archon/3ht94yd8-implement-ledger-py-per-spec-md-with-foc",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented ledger.py per SPEC.md (stdlib only, one threading.Lock per ledger) and expanded test_ledger.py to 27 focused tests. Head 1dc92cb on archon/3ht94yd8-implement-ledger-py-per-spec-md-with-foc (tree d4efc38f299748cff8bf31a51f509fc5a0c8d7fc), on top of d42baaa. Before: both existing tests errored with NotImplementedError. After: 27/27 pass (python3 -m unittest), and 30/30 repeated runs passed with no failures. Review: first whole-change review (agt_01M7W3PJB8PK2GVG2PH46DRTJ0) failed on two blocking findings, a dict-subclass items() bypass of balance validation and non-daemon concurrency test threads that could hang on deadlock. Fixed in 1dc92cb with a regression test, daemon threads and an exact-balance assertion. Delta review (agt_01M7W3RFM48JB50V5KVE8CD8G4) of 71c751f..1dc92cb passed with no findings. Left open (non-blocking): unhashable account names such as lists raise TypeError rather than KeyError; SPEC does not define that case. Risk is high because the change adds locking. The change is isolated, with no dependents in the repo. No servers or Compose stacks were started; the reviewer processes exited.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W3RFM48JB50V5KVE8CD8G4), claude-code/claude-haiku-5-5 (agent agt_01M7W3PJB8PK2GVG2PH46DRTJ0)\n\nSHIPPED: commit 1dc92cb8a507c4fa44ebef3d9cc35edd6a067ce6 on the run branch"
+        },
+        "cost_usd": 0.04812853,
+        "started_at": "2026-11-20T09:12:19.845254739Z",
+        "finished_at": "2026-11-20T09:15:00.055079708Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W3MT5AEZD1GJZNFAG7JTPB",
+        "run": "prun_01M7W3MSX9YCNJXB1D4ZB8CWY4",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W3MT7CEYP88Q008S7BG8SP",
+        "aether_task": "tsk_01M7W3MT7CEYP88Q008S7BG8SQ",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; the plan pins medium",
+        "summary": "Implemented ledger.py per SPEC.md (stdlib only, one threading.Lock per ledger) and expanded test_ledger.py to 27 focused tests. Head 1dc92cb on archon/3ht94yd8-implement-ledger-py-per-spec-md-with-foc (tree d4efc38f299748cff8bf31a51f509fc5a0c8d7fc), on top of d42baaa. Before: both existing tests errored with NotImplementedError. After: 27/27 pass (python3 -m unittest), and 30/30 repeated runs passed with no failures. Review: first whole-change review (agt_01M7W3PJB8PK2GVG2PH46DRTJ0) failed on two blocking findings, a dict-subclass items() bypass of balance validation and non-daemon concurrency test threads that could hang on deadlock. Fixed in 1dc92cb with a regression test, daemon threads and an exact-balance assertion. Delta review (agt_01M7W3RFM48JB50V5KVE8CD8G4) of 71c751f..1dc92cb passed with no findings. Left open (non-blocking): unhashable account names such as lists raise TypeError rather than KeyError; SPEC does not define that case. Risk is high because the change adds locking. The change is isolated, with no dependents in the repo. No servers or Compose stacks were started; the reviewer processes exited.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v (27 tests, OK)",
+            "python3 -m unittest -q repeated 30 times (0 failures)"
+          ],
+          "commit": "1dc92cb8a507c4fa44ebef3d9cc35edd6a067ce6",
+          "evidence": [
+            {
+              "after": "Ran 27 tests in 0.003s\nOK",
+              "before": "ERROR: test_insufficient_funds ... NotImplementedError\nERROR: test_transfer ... NotImplementedError\nRan 2 tests\nFAILED (errors=2)",
+              "caption": "Before: baseline on d42baaa, both existing tests error with NotImplementedError",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "1dc92cb8a507c4fa44ebef3d9cc35edd6a067ce6",
+          "pr": {
+            "body": "Files: ledger.py (implementation), test_ledger.py (27 tests). Approach: copy and validate the input dict, validate amount before account lookup, and run each transfer and snapshot under a single threading.Lock. Checks: unittest 27/27 OK; 30 repeated runs with 0 failures. Review: first whole-change review failed on two blocking findings (validation bypass via dict subclass items(); non-daemon test threads that could hang). Both fixed in 1dc92cb with a regression test, daemon threads and exact-balance assertion; delta review passed. Assumption: unhashable account names (e.g. lists) raise TypeError from the dict membership test, since SPEC does not define them. Limits: no multi-process use; the lock is per ledger instance.",
+            "pr_body_note": "No attribution lines.",
+            "summary": "Made Ledger(balances), transfer(), and snapshot() conform to SPEC.md. now: validated construction, bounded atomic transfers, unknown accounts raise KeyError, same-account and boundary cases handled, and one lock keeps operations linearizable. before: stub raising NotImplementedError.",
+            "title": "Implement atomic Ledger per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "1dc92cb8a507c4fa44ebef3d9cc35edd6a067ce6",
+            "reviewer_agents": [
+              "agt_01M7W3RFM48JB50V5KVE8CD8G4",
+              "agt_01M7W3PJB8PK2GVG2PH46DRTJ0"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W3RFM48JB50V5KVE8CD8G4",
+                "base": "71c751fe628e54166372e41e3ece55c10926f7bd",
+                "findings": 0,
+                "head": "1dc92cb8a507c4fa44ebef3d9cc35edd6a067ce6",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W3PJB8PK2GVG2PH46DRTJ0",
+                "base": "d42baaaf5ef3a8bf8a20c14d3f92b4f6a7147354",
+                "findings": 5,
+                "head": "71c751fe628e54166372e41e3ece55c10926f7bd",
+                "verdict": "fail"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W3RFM48JB50V5KVE8CD8G4",
+              "agt_01M7W3PJB8PK2GVG2PH46DRTJ0"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "Adds locking and concurrency to a new module (single threading.Lock). No other code depends on it. Tests cover linearizability and deadlock; deadlock tests fail rather than hang. Both reviewers rated risk high."
+          },
+          "tree": "d4efc38f299748cff8bf31a51f509fc5a0c8d7fc"
+        },
+        "cost_usd": 0.04812853,
+        "started_at": "2026-11-20T09:12:19.882653963Z",
+        "finished_at": "2026-11-20T09:14:56.377382658Z"
+      }
+    ],
+    "spent_usd": 0.04812853,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W3MT5AEZD1GJZNFAG7JTPB": {
+        "direct_usd": 0.030503009999999997,
+        "delegated_usd": 0.01762552,
+        "agents": [
+          {
+            "agent": "agt_01M7W3PJB8PK2GVG2PH46DRTJ0",
+            "parent": "agt_01M7W3MT7CEYP88Q008S7BG8SP",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.010007599999999998
+          },
+          {
+            "agent": "agt_01M7W3RFM48JB50V5KVE8CD8G4",
+            "parent": "agt_01M7W3MT7CEYP88Q008S7BG8SP",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.007617919999999999
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-20T09:12:19.560779904Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-20T09:12:19.560779904Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

@@ -1,0 +1,11 @@
+I've queued the refactor as `qi_01M7W4T3WJE8RYJVZ8CXPNR167`. It targets the `refactor-order-status` repository and runs the `refactor` pipeline, which characterizes current behaviour, refactors, verifies, and reviews before shipping.
+
+The repository ships `local`, so the work is committed to a local branch and nothing is pushed. I could not enqueue with a lower review level because the `refactor` pipeline fixes its review at strict. I left that as it is, since a behaviour-preserving refactor benefits from the stricter review.
+
+I'll report when the item finishes. I did not edit the repository myself.
+
+Failed: Refactor orders order status String into OrderStatus enum — refactor: BLOCKED: the brief's requirements conflict with keeping tests/legacy_string_status.rs. Full detail: archon queue show qi_01M7W4T3WJE8RYJVZ8CXPNR167 --full
+
+Freed 0.0 GiB of build output: item qi_01M7W4T3WJE8RYJVZ8CXPNR167 ended and its cargo target directory went.
+
+The OrderStatus refactor (qi_01M7W4T3WJE8RYJVZ8CXPNR167) failed. The brief requires Order::status to become an OrderStatus, but tests/legacy_string_status.rs assigns order.status = "lost".to_string(), which no longer compiles, so cargo test fails. The agent did not delete the test. Branch state: 4fbb8b3 adds the enum, 70b20f7 switches the code to it and removes the legacy test, 112127b restores that test byte-identical, so HEAD 112127b fails to compile. Which do you want? (a) Approve deleting tests/legacy_string_status.rs and its pinned behaviour (unknown status strings passing through to is_open, to_line, status_counts, pay, cancel). (b) Rewrite that test to assert the typed-status contract instead. (c) Keep Order::status as a String, which the brief forbids.

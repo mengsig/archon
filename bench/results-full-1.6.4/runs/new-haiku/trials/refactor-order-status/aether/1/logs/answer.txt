@@ -1,0 +1,29 @@
+Refactored the `orders` crate's string order status into an `OrderStatus` enum and committed it as 998b054 on main (the repo's configured git user, no attribution trailer, per CLAUDE.md). `cargo test` passes (3 unit tests in status.rs, 3 integration tests), clippy is clean, and `cargo fmt --check` passes.
+
+What changed:
+- New `src/status.rs`: `OrderStatus` (Debug, Clone, Copy, PartialEq, Eq, Hash) with `as_str`, `Display` (uses `f.pad`, so width specifiers behave as they did on the old String), `FromStr` with `ParseStatusError` (keeps the rejected input, exposes `input()`, implements `std::error::Error`), and `can_transition_to` encoding exactly the four allowed transitions.
+- `Order::status` is now `OrderStatus`. `pay`, `ship` and `cancel` use `can_transition_to`; error messages are unchanged.
+- `report::from_line` parses via `FromStr` and maps the error with `to_string()`, so the message stays `unknown status "lost"`.
+- `lib.rs` declares `pub mod status` and re-exports `OrderStatus` and `ParseStatusError` at the root.
+- Status string literals now appear only in `src/status.rs`.
+
+Choices to review:
+- `report::status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. Ordering is still by status name (cancelled, paid, pending, shipped), enforced with `sort_by_key(as_str)`, because a derived `Ord` would sort by declaration order instead. This is a public signature change; say if you want it kept as `String`.
+- `tests/orders.rs` compares enum values rather than string literals. Two literals remain on purpose because they check observable output: the error-message text and the CSV line `1,ada,100,paid`.
+- `status` module is `pub` to match the other modules.
+
+Environment note: `cargo` is not on the default PATH here; it lives in `~/.cargo/bin`.
+
+The order status is now an `OrderStatus` enum, committed as `998b054` on `main`. `cargo test` passes (3 unit tests in `status.rs`, 3 integration tests), clippy is clean, and `cargo fmt --check` passes.
+
+- **New `src/status.rs`:** `OrderStatus` with `as_str`, `Display`, `FromStr` (error type `ParseStatusError`, which keeps the rejected input and implements `std::error::Error`), and `can_transition_to` encoding the four allowed transitions.
+- **Behaviour kept:** `pay`, `ship` and `cancel` go through `can_transition_to`, and their error messages are unchanged. `from_line` still reports `unknown status "lost"` for bad input, and CSV output is unchanged.
+- **Literals:** status string literals now appear only in `src/status.rs`.
+- **Re-exports:** `OrderStatus` and `ParseStatusError` are re-exported from the crate root.
+
+Choices to review:
+- `report::status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. This is a public signature change. Ordering is still by status name, enforced with `sort_by_key(as_str)`, because a derived `Ord` would sort by declaration order instead. If you want the `String` signature kept, say so.
+- `tests/orders.rs` compares enum values. Two literals remain on purpose because they check observable output: the error-message text and the CSV line `1,ada,100,paid`.
+- The `status` module is `pub`, to match the other modules.
+- The commit has no Co-Authored-By trailer, because CLAUDE.md rules out attribution lines.
+- `cargo` is not on the default PATH in this shell; it lives in `~/.cargo/bin`.

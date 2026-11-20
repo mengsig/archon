@@ -1,0 +1,25 @@
+Root cause: updatePrice (src/pricing.js:10-11) invalidates only product:<sku>. Category listing rows (src/catalog.js:22-33, keys listing:<category>:<page>) hold copies of priceCents and are never invalidated, so they serve stale prices until LISTING_TTL_SECONDS=600 (src/config.js:7) expires. Reproduced inline: listing stays 5000 until 600s after a change to 4500, while product returns 4500 immediately. Fix options: invalidate all listing pages for the product's category on write; or cache only SKU order and hydrate prices from the product cache at read time (recommended); or a per-category version in the listing key. Caveat: the cache is in-process, so multi-instance deployments would be stale longer; topology not verifiable from this repo. No code changed; existing tests pass (3/3) and none cover listing freshness.
+
+**Root cause:** `updatePrice` invalidates only the product cache entry. Category listings keep their own copies of `priceCents` and are never invalidated, so they serve the old price until their 600-second TTL expires.
+
+**Code path**
+- `src/pricing.js:10-11`: `updatePrice` updates the store, then calls `catalog.cache.delete(productKey(sku))`. Only `product:<sku>` is cleared.
+- `src/catalog.js:22-33`: `Catalog.listing` caches rows under `listing:<category>:<page>` (`src/keys.js:4`). Each row is a copy of `{ sku, name, priceCents }`.
+- `src/config.js:7`: `LISTING_TTL_SECONDS: 600`. This is the "about ten minutes" in the report.
+- `src/catalog.js:12-20`: `Catalog.product` is invalidated correctly, which is why product pages update immediately.
+
+**Why the delay is what it is:** Listing keys are per category and page, but `updatePrice` only knows the SKU. Nothing maps a SKU to the listing entries that contain it, and `TtlCache` (`src/cache.js`) is a flat `Map` with no category index. So the listing entries are left to expire on their own. The 600 s value is deliberate (`src/config.js:5-6`) because listings are expensive to build.
+
+**Reproduction:** I ran an inline script (no files written). After `updatePrice(c, 'A1', 4500)`, the product returned 4500 but the listing still returned 5000. At 599 s the listing was still 5000; at 600 s it became 4500. The existing tests pass (3/3), but none check listing freshness after a price change.
+
+**Fix options**
+1. **Invalidate on write.** In `updatePrice`, delete every `listing:<category>:<page>` for the product's category. This needs a way to enumerate the pages, or a per-category index of listing keys. Keep that logic in `Catalog` so `pricing.js` doesn't depend on key formats.
+2. **Cache SKU order only and hydrate prices at read time.** Listings would store the SKU list and read each product through the product cache. This removes the stale copy entirely, at the cost of one lookup per row.
+3. **Per-category version in the listing key.** Bump the version on price change. This is cheap, but old entries stay in memory until evicted.
+4. **Shorten `LISTING_TTL_SECONDS`.** This only narrows the window and adds rebuild cost, so I wouldn't ship it alone.
+
+I recommend option 2 for correctness and simplicity, since rows are small and product reads are already cached. Use option 1 if listing rebuilds really are expensive, as the config comment says. Either way, add a test that changes a price and then reads the listing.
+
+**Caveat:** `TtlCache` is in-process. With multiple instances, `updatePrice` clears only the instance it runs on, and the others stay stale for up to 3600 s for products and 600 s for listings. The report says product pages update immediately, so this is probably a single process or sticky routing, but I can't confirm the deployment topology from this repository.
+
+No code was changed.

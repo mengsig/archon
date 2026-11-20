@@ -1,0 +1,16 @@
+Queued as `qi_01M7WH1HE8V9ECC7936SZEY26D` in the `refactor` pipeline. It will implement the typed status API, preserve behavior, run `cargo test`, and commit the change.
+
+Done: Replace order status strings with OrderStatus. Reviewed commit 7f2a659 against the baseline and characterization changes. The typed status design meets the structural goal: lifecycle logic uses `OrderStatus`, and status-name parsing and conversion are centralized in `src/status.rs`. Report ordering, CSV behavior, and existing errors are preserved. The worktree is clean, and all independently run checks passed: `cargo test`, `cargo build`, Clippy, formatting, and `git diff --check`.
+
+VERDICT: PASS
+
+SHIPPED: commit 7f2a65904a1b80d23f180a4f00c909cf4ef1f807 on the run branch
+Branch `archon/6szey26d-replace-order-status-strings-with-orders` in /home/mengsig/.local/share/archon-bench/f164-ngf165q5/archon-bench/work/20261120T123310Z/8294ead113dda1787f66b3b2/refactor-order-status holds it (7 files changed, 231 insertions(+), 29 deletions(-)). Review: `archon diff qi_01M7WH1HE8V9ECC7936SZEY26D`; land it in `main`: `archon merge qi_01M7WH1HE8V9ECC7936SZEY26D`.
+
+Freed 0.0 GiB of build output: item qi_01M7WH1HE8V9ECC7936SZEY26D ended and its cargo target directory went.
+
+Reviewed commit 7f2a659 against the baseline and characterization changes. The typed status design meets the structural goal: lifecycle logic uses `OrderStatus`, and status-name parsing and conversion are centralized in `src/status.rs`. Report ordering, CSV behavior, and existing errors are preserved. The worktree is clean, and all independently run checks passed: `cargo test`, `cargo build`, Clippy, formatting, and `git diff --check`.
+
+VERDICT: PASS
+
+SHIPPED: commit 7f2a65904a1b80d23f180a4f00c909cf4ef1f807 on the run branch

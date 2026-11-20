@@ -1,0 +1,21 @@
+All four tickets (TT-101 to TT-104) are implemented, each in its own commit on `main`. The suite passes with 37 tests (`python3 -m unittest discover -s tests -t .`, exit 0), and the standard library is the only dependency. The working tree is clean.
+
+| Commit | Ticket | Change | Tests |
+|---|---|---|---|
+| `55585f4` | TT-101 | `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible dates, unsupported text and out-of-range offsets, with the original text in the message. | `tests/test_dates.py` |
+| `9a46d14` | TT-102 | `to_csv` emits RFC 4180 CSV with CRLF line endings and quotes or doubles fields only when needed. | `tests/test_export.py` |
+| `370673c` | TT-103 | `search` parses a small query language: AND-ed terms, quoted phrases, `tag:`, `status:`, and `QueryError` on bad input. | `tests/test_search.py` |
+| `fa3e185` | TT-104 | `TaskStore.undo()` is a LIFO log over add, complete and delete, and raises `NothingToUndo` when empty. | `tests/test_undo.py` |
+
+I took these readings where the ticket left room:
+
+- **Undo of a complete** restores the task's previous status rather than forcing it to open. Completing an already-done task and then undoing it leaves it done. For an open task this matches the ticket exactly.
+- **Status and tag matching** is case-insensitive for `status:` values as well as tags, so `status:OPEN` works.
+- **Quoted terms** are always treated as phrases. `"status:open"` matches titles containing that text; it is not a field filter.
+- **Unknown field syntax** such as `priority:high` or `:x` raises `QueryError`, as the ticket requires. An empty value such as `tag:` also raises, which the ticket does not mention.
+- **Offset overflow** such as `+99999999999d` raises `InvalidDate` rather than a bare `OverflowError`.
+
+Two things you should know:
+
+- **No `Co-Authored-By` trailer.** The harness asked for one naming Claude, but your `CLAUDE.md` says not to put anything like that in commits. I followed `CLAUDE.md`, so the commits carry only the ticket message, authored as `mengsig`.
+- **One commit briefly landed with a failing test.** My first TT-102 test expectation was wrong, and `tail` masked the exit code so the commit went through. I amended it before anything else was committed, so the final history has no broken commit. Each commit's tests now pass.

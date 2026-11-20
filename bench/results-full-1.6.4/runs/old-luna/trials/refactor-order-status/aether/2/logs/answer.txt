@@ -1,0 +1,3 @@
+Implemented and committed as `24d0faa` (`Refactor order status to enum`). Status is now `OrderStatus` across the crate, with parsing, display, and lifecycle transitions in `src/status.rs`.
+
+`cargo test` could not run because Cargo is unavailable in the environment. `git diff --check` passed.

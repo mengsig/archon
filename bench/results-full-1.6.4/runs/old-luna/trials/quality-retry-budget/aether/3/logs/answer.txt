@@ -1,0 +1,3 @@
+Implemented `retry_delay` with strict built-in integer validation, capped exponential backoff, Retry-After floors, and strict budget boundary handling. Added focused edge-case tests.
+
+All 7 tests pass. Committed as `5a0d977` (`Implement bounded retry delay scheduling`).

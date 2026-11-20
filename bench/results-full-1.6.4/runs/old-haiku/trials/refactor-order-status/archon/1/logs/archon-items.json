@@ -1,0 +1,191 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W4T3WJE8RYJVZ8CXPNR167",
+      "repo": "repo_01M7W4SS9QPFC4EYQNRSVQGPQY",
+      "pipeline": "refactor",
+      "title": "Refactor orders order status String into OrderStatus enum",
+      "brief": "The `orders` crate stores an order's status as a `String` and compares string literals throughout. Refactor it to a proper type, with no observable behaviour change.\n\nRequirements:\n- Add `src/status.rs` with `pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }`, deriving at least `Debug, Clone, Copy, PartialEq, Eq, Hash`.\n- `OrderStatus::as_str(self) -> &'static str` returns the lowercase names (\"pending\", \"paid\", \"shipped\", \"cancelled\"). `Display` prints the same.\n- `FromStr` for `OrderStatus` with `type Err = ParseStatusError`. `ParseStatusError` is a public error type implementing `std::error::Error`, whose message names the rejected input.\n- `OrderStatus::can_transition_to(self, next: OrderStatus) -> bool` encodes the lifecycle: pending -> paid, pending -> cancelled, paid -> shipped, paid -> cancelled. Nothing else.\n- `Order::status` becomes an `OrderStatus`. Re-export `OrderStatus` and `ParseStatusError` from the crate root. Use the enum everywhere, so status string literals appear only in `src/status.rs`.\n\nObservable behaviour (errors, report output and ordering, parsing) must stay exactly the same. `cargo test` must pass. Commit the work on the local branch.\n\n## Amendment (2026-11-20 09:36 UTC)\n\nDo not remove the legacy string-passthrough characterization test. The brief does not allow removing tests: it requires observable behaviour (errors, report output and ordering, parsing) to stay exactly the same. If keeping that behaviour is truly impossible with OrderStatus, stop and report the conflict in the stage summary rather than deleting the test, so it can be decided.\n",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "baseline": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "refactor": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "review": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "verify": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "failed",
+        "run": "prun_01M7W4T43760N0QHQJNT1W8X89",
+        "error": "stage refactor: BLOCKED: the brief's requirements conflict with keeping tests/legacy_string_status.rs. It assigns `order.status = \"lost\".to_string()`, which cannot compile once `Order::status` is `OrderStatus` (the brief requires that type change). `cargo test` now fails to compile this test (2× E0308), so the branch does not pass the suite. I did not delete the test, per the amendment. Operator must decide one of: (a) approve removing this test file and its pinned behaviour (unknown status passing through the public field to is_open, to_line, status_counts, pay, cancel); (b) approve a different contract, e.g. keeping `Order::status` as a String, which the brief forbids; or (c) approve rewriting the test to assert a different, typed-status contract. Work so far on the branch: 4fbb8b3 adds the OrderStatus enum and tests (unit and re-export); 70b20f7 switches Order, billing, shipping and report to the enum and removes the legacy test; 112127b restores that test file byte-identical to 9317c26. With the test restored, HEAD is 112127b (tree 9d4e104695c0d6aa955fd0c9f806777a2f34a855). Before restoring, the same tree minus the test passed: 3 unit + 16 characterization + 3 orders tests, clippy -D warnings exit 0. Tree 559aaaadf266061739a05a3bbf2806fa4175dcc2 is that pre-restore state (commit 70b20f7). Worktree is clean."
+      },
+      "created_at": "2026-11-20T09:32:42.451725969Z",
+      "updated_at": "2026-11-20T09:36:48.996619710Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W4T43760N0QHQJNT1W8X89",
+        "item": "qi_01M7W4T3WJE8RYJVZ8CXPNR167",
+        "pipeline": "refactor",
+        "shipped": false,
+        "aether_run": "run_01M7W4T4A3RHT9GCGA8YNB8CMA",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/9aa6db0e42a6da8cdea927c4/.archon/data/worktrees/refactor-order-status/qi_01M7W4T3WJE8RYJVZ8CXPNR167",
+        "branch": "archon/cxpnr167-refactor-orders-order-status-string-into",
+        "state": {
+          "state": "failed",
+          "stage_id": "refactor",
+          "error": "BLOCKED: the brief's requirements conflict with keeping tests/legacy_string_status.rs. It assigns `order.status = \"lost\".to_string()`, which cannot compile once `Order::status` is `OrderStatus` (the brief requires that type change). `cargo test` now fails to compile this test (2× E0308), so the branch does not pass the suite. I did not delete the test, per the amendment. Operator must decide one of: (a) approve removing this test file and its pinned behaviour (unknown status passing through the public field to is_open, to_line, status_counts, pay, cancel); (b) approve a different contract, e.g. keeping `Order::status` as a String, which the brief forbids; or (c) approve rewriting the test to assert a different, typed-status contract. Work so far on the branch: 4fbb8b3 adds the OrderStatus enum and tests (unit and re-export); 70b20f7 switches Order, billing, shipping and report to the enum and removes the legacy test; 112127b restores that test file byte-identical to 9317c26. With the test restored, HEAD is 112127b (tree 9d4e104695c0d6aa955fd0c9f806777a2f34a855). Before restoring, the same tree minus the test passed: 3 unit + 16 characterization + 3 orders tests, clippy -D warnings exit 0. Tree 559aaaadf266061739a05a3bbf2806fa4175dcc2 is that pre-restore state (commit 70b20f7). Worktree is clean."
+        },
+        "cost_usd": 0.05740736,
+        "started_at": "2026-11-20T09:32:42.663073766Z",
+        "finished_at": "2026-11-20T09:36:48.996619710Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W4T49BPP65RG10K8F98CM8",
+        "run": "prun_01M7W4T43760N0QHQJNT1W8X89",
+        "stage_id": "baseline",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W4T4AAS35D9CE87S44Y35V",
+        "aether_task": "tsk_01M7W4T4AAS35D9CE87S44Y35W",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "BASELINE + CHARACTERIZATION DONE (attempt 1). Branch archon/cxpnr167-refactor-orders-order-status-string-into, worktree clean.\n\nStructural goal (from brief): replace Order::status String and literal comparisons with an OrderStatus enum (src/status.rs, as_str/Display/FromStr/ParseStatusError/can_transition_to, re-exported from crate root), with no observable behaviour change.\n\nCommits:\n- Original baseline: 9ba85cc0fd53f4e1cdfd95619b9dbb7bf8d55024 (tree of the original baseline not separately recorded; src/ and existing tests are unchanged from it).\n- Characterization commits (tests only, no production changes):\n  - 5d44230 test: characterize status transitions and their errors\n  - 12d218d test: characterize report output, parsing and status counts\n  - 9317c26 test: characterize unchecked status passthrough (HEAD, tree fc40300b77286e0d957041d367ce1bcd74a642a3)\n\nChecks (CARGO_TARGET_DIR set to the item cache; cargo at ~/.cargo/bin, not on default PATH):\n- Before adding tests (9ba85cc): `cargo test` exit 0 (3 tests pass); `cargo clippy --all-targets -- -D warnings` exit 0; `cargo fmt --check` exit 1: pre-existing rustfmt drift in src/billing.rs, src/order.rs, src/report.rs, src/shipping.rs and tests/orders.rs. Left untouched as out of scope. No README, Makefile or CI config exists; these are the only checks.\n- After adding tests (9317c26): `cargo test` exit 0 (3 existing + 16 in tests/characterization.rs + 1 in tests/legacy_string_status.rs, all pass); clippy exit 0; new test files rustfmt-clean; `cargo fmt --check` still exit 1 only for the pre-existing files.\n- git diff 9ba85cc..HEAD touches only tests/characterization.rs and tests/legacy_string_status.rs. src/, Cargo.toml, Cargo.lock and tests/orders.rs are byte-identical to baseline.\n\nPublic surface to preserve (baseline):\n- lib.rs: pub mod billing, order, report, shipping; pub use order::Order.\n- order::Order { pub id: u32, pub customer: String, pub total_cents: u64, pub status: String }, derives Debug, Clone, PartialEq. Order::new(u32, &str, u64) starts \"pending\". is_open() true only for pending/paid. cancel() -> Result<(), String>: refused for shipped/cancelled with \"order {id} cannot be cancelled: it is {status}\".\n- billing::pay(&mut Order) -> Result<(), String>, refused unless pending: \"order {id} cannot be paid: it is {status}\". billing::outstanding_cents(&[Order]) -> u64 sums pending totals.\n- shipping::ship(&mut Order) -> Result<(), String>, refused unless paid: \"order {id} cannot be shipped: it is {status}\". shipping::ready_to_ship(&[Order]) -> Vec<u32>, input order.\n- report::status_counts(&[Order]) -> Vec<(String, usize)>, sorted by status name (alphabetical: cancelled, paid, pending, shipped). Note: a derived Ord on the enum sorts by declaration order, which would change this output.\n- report::to_line(&Order) -> \"id,customer,total_cents,status\". report::from_line(&str) -> Result<Order, String>: trims whole line only; exactly 4 fields (\"expected 4 fields, got N\"); fields checked in order id, total, status (\"bad id {:?}: {e}\", \"bad total {:?}: {e}\", \"unknown status {:?}\"). Status match is case-sensitive, with no per-field trim.\n\nCoverage: the pre-existing 3 tests cover the lifecycle, the pay/ship refusal messages, and count/outstanding/ready/round-trip/unknown-status basics. The characterization tests add: each transition's allowed and refused cases with exact messages; cancel from pending/paid; refused ops leave status unchanged; is_open per status; new() fields; status_counts with all four statuses, ordering, and empty input; outstanding_cents excluding paid/shipped/cancelled; ready_to_ship order; to_line for each status; from_line for each status, trimming, field-count errors, first-bad-field precedence, and non-canonical status rejection.\n\nAllowed exception / known gap for the refactorer: tests/legacy_string_status.rs writes `order.status = \"lost\".to_string()` and expects is_open false, to_line \"…,lost\", status_counts containing \"lost\", pay refused, and cancel succeeding. A typed status cannot represent this, so this file will fail to compile after the refactor by design. It is isolated so the rest of the suite still compiles. The refactorer must either delete it or get explicit sign-off, and must report which behaviour was lost. Other tests use `.to_string()` for status comparisons so they hold whether status is String or enum. Known gaps: no tests for Order's Debug/Clone output and no serde or CLI (none exist). Nothing was published as an artifact, and no servers or background processes were started.\n\nFeedback: none (attempt 1). Left for refactorer: keep status_counts' sorted-by-name output, keep error message text and from_line precedence, decide on the legacy file as above.",
+        "structured": null,
+        "cost_usd": 0.03132258,
+        "started_at": "2026-11-20T09:32:42.667748319Z",
+        "finished_at": "2026-11-20T09:35:00.571997189Z"
+      },
+      {
+        "id": "stg_01M7W4YB013VYDCJSJK42HQGFV",
+        "run": "prun_01M7W4T43760N0QHQJNT1W8X89",
+        "stage_id": "refactor",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W4YB10X7SYD2RZEZ2K7RAF",
+        "aether_task": "tsk_01M7W4YB10X7SYD2RZEZ2K7RAG",
+        "state": {
+          "state": "failed",
+          "error": "BLOCKED: the brief's requirements conflict with keeping tests/legacy_string_status.rs. It assigns `order.status = \"lost\".to_string()`, which cannot compile once `Order::status` is `OrderStatus` (the brief requires that type change). `cargo test` now fails to compile this test (2× E0308), so the branch does not pass the suite. I did not delete the test, per the amendment. Operator must decide one of: (a) approve removing this test file and its pinned behaviour (unknown status passing through the public field to is_open, to_line, status_counts, pay, cancel); (b) approve a different contract, e.g. keeping `Order::status` as a String, which the brief forbids; or (c) approve rewriting the test to assert a different, typed-status contract. Work so far on the branch: 4fbb8b3 adds the OrderStatus enum and tests (unit and re-export); 70b20f7 switches Order, billing, shipping and report to the enum and removes the legacy test; 112127b restores that test file byte-identical to 9317c26. With the test restored, HEAD is 112127b (tree 9d4e104695c0d6aa955fd0c9f806777a2f34a855). Before restoring, the same tree minus the test passed: 3 unit + 16 characterization + 3 orders tests, clippy -D warnings exit 0. Tree 559aaaadf266061739a05a3bbf2806fa4175dcc2 is that pre-restore state (commit 70b20f7). Worktree is clean."
+        },
+        "verdict": null,
+        "summary": null,
+        "structured": null,
+        "cost_usd": 0.026084779999999995,
+        "started_at": "2026-11-20T09:35:00.609916578Z",
+        "finished_at": "2026-11-20T09:36:48.993957770Z"
+      }
+    ],
+    "spent_usd": 0.05740736,
+    "gates": [],
+    "default_efforts": {
+      "baseline": "high",
+      "refactor": "high",
+      "review": "medium",
+      "verify": "high"
+    },
+    "steers": [
+      {
+        "at": "2026-11-20T09:36:34.214664749Z",
+        "by": "orchestrator",
+        "what": "amended the brief",
+        "note": "Do not remove the legacy string-passthrough characterization test. The brief does not allow removing tests: it requires observable behaviour (errors, report output and ordering, parsing) to stay exactly the same. If keeping that behaviour is truly impossible with OrderStatus, stop and report the conflict in the stage summary rather than deleting the test, so it can be decided."
+      }
+    ]
+  }
+]

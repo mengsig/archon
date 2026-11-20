@@ -1,0 +1,36 @@
+Added cursor pagination to GET /items in inventory-api and switched inventory-client's listItems to follow next_cursor. Both repos are committed, with clean working trees. Tests pass in both: `python3 -m unittest` (9 tests) and `npm test` (9 tests). I also ran listItems against the real API CLI and it returned all 57 items in order.
+
+inventory-api (commit 117c5d2 "Paginate GET /items with limit and cursor"):
+- GET /items takes optional `limit` (1..100, default 20) and `cursor`, and returns {"items": [...], "next_cursor": ...}. next_cursor is null on the last page, including when a page exactly fills the list.
+- The cursor is opaque: base64 of the last returned id. The next page starts after that id.
+- Invalid limit or cursor returns 400 {"error": "..."}. Digit strings are capped at 3 digits for limit and 18 for the cursor's id, so oversized input can't trigger Python's int-conversion limit.
+- README documents the new parameters and response, with a worked example that I verified.
+
+inventory-client (commit 686d27c "Follow next_cursor in listItems"):
+- listItems sends no cursor on the first request, then echoes each cursor back unchanged, until next_cursor is null or absent.
+- It rejects on a failed page, on a page without an items array, or when the server repeats a cursor, so it can't loop forever.
+- Tests cover the multi-page walk, the cursor sequence, absent next_cursor, failures, and the repeat guard.
+- README updated.
+
+Choices I made:
+- The first request sends only the cursor (no limit), so the API default of 20 applies. Passing limit=100 would cut the number of requests; I didn't, since the spec didn't ask for it.
+- No Co-Authored-By or "Generated with Claude Code" trailers. CLAUDE.md forbids Claude attribution and takes precedence over the reminder's trailer. Commits use the configured git identity (mengsig).
+- I did not bump the client's package.json version (1.4.0), since the spec didn't ask for it.
+
+Cursor pagination is in place in `inventory-api`, and `inventory-client`'s `listItems` now follows `next_cursor` to the end. Both repos are committed with clean trees. Both test suites pass (`python3 -m unittest` and `npm test`, 9 tests each). I also ran `listItems` against the real API through its CLI, and it returned all 57 items in order.
+
+**inventory-api** (commit `117c5d2`)
+- `GET /items` takes `limit` (1..100, default 20) and `cursor`. It returns `{"items": [...], "next_cursor": ...}`, with `next_cursor` null on the last page, including when a page exactly fills the list.
+- The cursor is base64 of the last returned `id`, and the next page starts after that id.
+- Invalid `limit` or `cursor` returns 400 `{"error": "..."}`.
+- The README documents the change, with an example I checked against the code.
+
+**inventory-client** (commit `686d27c`)
+- `listItems` sends no cursor on the first request, then passes each cursor back unchanged until `next_cursor` is null or absent.
+- It rejects on a failed page, on a page without an `items` array, or when the server repeats a cursor, so it cannot loop forever.
+- The README is updated to match.
+
+Choices I made:
+- The client sends only `cursor`, not `limit`, so the server default of 20 applies. Sending `limit=100` would cut the number of requests, but the spec didn't ask for it.
+- The commits have no Co-Authored-By or "Generated with Claude Code" trailer. CLAUDE.md forbids Claude attribution and takes precedence over the reminder's trailer. The commits use the configured git identity, `mengsig`.
+- I left the client's `package.json` version at 1.4.0.

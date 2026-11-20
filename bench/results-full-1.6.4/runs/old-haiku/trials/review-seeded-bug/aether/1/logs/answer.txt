@@ -1,0 +1,31 @@
+Reviewed src/tokens.js (plus encoding.js, index.js, tests, package.json). No code changed. Do not ship as-is: verify() accepts forged tokens. Confirmed by running the module: a token of the form `<base64url(any JSON claims)>.` (empty signature) verifies and returns the attacker's claims, e.g. {"user":"root","exp":9e15}. Full findings are in the final message.
+
+**Do not ship `src/tokens.js` as it stands.** The verifier accepts forged tokens. I confirmed this by running the module. I made no code changes.
+
+**Findings (most severe first)**
+
+1. **Critical: `verify()`, lines 24–27. Forgery with an empty signature.** The check is `expected.startsWith(signature)`. An empty string is a prefix of every string, so a token ending in `.` passes for any claims. Anyone can mint a session.
+   - Input: `base64url('{"user":"root","exp":9000000000000000}') + "."`
+   - Result: `verify` returns `{"user":"root","exp":9000000000000000}`.
+
+2. **High: `verify()`, line 27. Prefix comparison and timing leak.** Even with the empty-signature case fixed, a truncated signature is accepted, and `===`-style prefix checks leak timing. Use `crypto.timingSafeEqual` on equal-length buffers, and return `null` when lengths differ.
+
+3. **Medium-high: `verify()`, lines 22–26. The secret is not validated on verify.** `sign()` enforces 32+ characters, but `verify()` does not. If the verifying service is configured with `''` or a short secret, HMAC uses a guessable key, and anyone can forge tokens that pass. The fix is to share one secret check between `sign` and `verify`.
+
+4. **Medium: `verify()` can throw where it should return `null`.** Confirmed cases:
+   - A non-JSON payload throws `SyntaxError` from `JSON.parse` (line 28).
+   - An `undefined` secret throws `TypeError` from `createHmac` (line 26).
+   - A payload of JSON `null` throws `TypeError` at `payload.exp` (line 29).
+
+   A caller that does not wrap `verify` will turn these into 500s or crashes. Wrap the parse and return `null`.
+
+5. **Low: `verify()`, line 24. Extra segments are ignored.** `split('.')` drops anything after the second segment, so `<valid token>.garbage` verifies (confirmed). Require exactly two segments.
+
+6. **Low: test gap, `test/tokens.test.js`.** `npm test` passes 4/4 while the critical bug exists. The "tampered payloads" test swaps the body but keeps a real signature, so it never exercises an empty, truncated, or extra-segment signature. Add those cases, plus non-JSON payloads.
+
+**Checked and fine**
+- `sign()` spreads the caller's claims before `iat` and `exp`, so callers cannot override expiry.
+- The algorithm is fixed to HMAC-SHA256 with no `alg` header, so there is no algorithm-confusion path.
+- `sign()` rejects short secrets.
+
+**Suggested fix before tomorrow:** require exactly two segments; compare the signature with `timingSafeEqual` on equal-length buffers; apply the same secret check in `verify`; wrap parsing so any malformed token returns `null`; and add the missing test cases. The critical item alone is enough to block the release.

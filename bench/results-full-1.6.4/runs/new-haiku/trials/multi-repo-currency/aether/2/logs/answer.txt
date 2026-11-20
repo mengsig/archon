@@ -1,0 +1,35 @@
+Added currency support across both repos, with tests and READMEs updated, and committed in each.
+
+ledger (commit a90aab8): an optional fourth TSV column carries the ISO 4217 code and defaults to USD. Output header is `date,account,amount_cents,currency`. A malformed code exits 2 with `line N:` on stderr. Other input errors still exit 1. Parsing errors are now a `LineError` enum (`Field` / `Currency`) so main can pick the exit status. `cargo test`: 8 passed. Clippy is clean.
+
+reports (commit 6bb0d4b): totals are keyed by (account, currency) and output is `account,currency,total_cents`, sorted by account then currency. CSV without a `currency` column counts as USD. A malformed code prints `reports: line N: ...` to stderr and exits 2. `python3 -m unittest`: 5 passed.
+
+End-to-end: ledger output piped into reports gives the expected totals. A bad code fails at ledger with exit 2.
+
+Choices I made:
+- An empty fourth column (e.g. a trailing tab) is treated as a malformed currency, not as the USD default.
+- Commits use the configured git identity. I omitted the Co-Authored-By trailer because the CLAUDE.md in the repo forbids Claude attribution.
+- reports does not trim whitespace in the currency value, so `" EUR"` is rejected. ledger trims TSV fields, so its output never contains such values.
+- Existing rustfmt diffs in untouched lines of `ledger/src/lib.rs` were left as they were.
+
+Working trees are clean, and the stray `__pycache__` from my test runs was removed.
+
+Both repos now handle currency, and each has a commit: `ledger` at `a90aab8` and `reports` at `6bb0d4b`. The tests pass in both (`cargo test`: 8 passed; `python3 -m unittest`: 5 passed), and the two tools work together end to end.
+
+**ledger**
+- An optional fourth TSV column holds the ISO 4217 code and defaults to `USD`.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed code prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1.
+
+**reports**
+- Totals are per account and currency, printed as `account,currency,total_cents`, sorted by account then currency.
+- CSV without a `currency` column counts as `USD`.
+- A malformed code prints `reports: line N: ...` to stderr and exits 2.
+
+Both READMEs are updated.
+
+Choices I made:
+- An empty fourth column, such as a trailing tab, counts as a malformed currency, not as the `USD` default.
+- `reports` does not trim whitespace in the currency value, so `" EUR"` is rejected. `ledger` trims its input, so it never emits such values.
+- I left the commits without a `Co-Authored-By` trailer because the repo's CLAUDE.md forbids Claude attribution. The commits use your configured git identity.
+- I did not reformat untouched lines in `ledger/src/lib.rs`, which `cargo fmt --check` flags.

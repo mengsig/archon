@@ -1,0 +1,192 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W25QYGJPMDDN8QMYSDRJ0J",
+      "repo": "repo_01M7W24XENTAS23V4SVKEBZTFB",
+      "pipeline": "direct",
+      "title": "Implement specified token bucket and keyed rate limiter",
+      "brief": "Implement the rate limiter exactly as described in SPEC.md in ratelimit.py, replacing stubs. Cover all specified semantics and edge cases: positive capacity/refill rate, full initial state, continuous fractional refill capped at capacity, validation of n <= 0 or n > capacity for try_acquire and wait_time, non-consuming wait_time, monotonic injected clock behavior with backward clock readings freezing progress until time passes the latest observed time, independent per-key buckets, LRU eviction on any use (both try_acquire and wait_time), evicted keys restarting full, max_keys validation, and len(). Keep implementation standard-library-only. Inspect the existing tests and add/adjust tests for the spec's uncovered edge cases as appropriate. Run the relevant tests and commit the completed work on the local branch. Do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W25R58WDC6MSDFTYCA5MZC",
+        "summary": "Implemented continuous token bucket refill and per-key LRU rate limiting in ratelimit.py, with validation and edge-case tests. Final checks passed: `python -m unittest -v` (8 tests), `python -m py_compile ratelimit.py test_ratelimit.py`, and `git diff --check`; final checked tree is 6b9fc8b462484a5a3f63fa99000b28e0fc1e142d. Independent whole-change review found a NaN validation bug, which was fixed and committed; a fresh delta review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W28PEQFFRXGN2N7ACD8QP4), codex/gpt-6-luna (agent agt_01M7W2C69TWQHCAG11Y9ZPGYPK)\n\nSHIPPED: commit 66cc196327f18ea2fb2368647deddce6db46405a on the run branch"
+      },
+      "created_at": "2026-11-20T08:46:37.713995136Z",
+      "updated_at": "2026-11-20T08:51:14.519186234Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W25R58WDC6MSDFTYCA5MZC",
+        "item": "qi_01M7W25QYGJPMDDN8QMYSDRJ0J",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W25RFSK6EE1XT4BFS3V32N",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/3a8f8bc7d2fe90e599ba08b3/.archon/data/worktrees/feature-token-bucket/qi_01M7W25QYGJPMDDN8QMYSDRJ0J",
+        "branch": "archon/mysdrj0j-implement-specified-token-bucket-and-key",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented continuous token bucket refill and per-key LRU rate limiting in ratelimit.py, with validation and edge-case tests. Final checks passed: `python -m unittest -v` (8 tests), `python -m py_compile ratelimit.py test_ratelimit.py`, and `git diff --check`; final checked tree is 6b9fc8b462484a5a3f63fa99000b28e0fc1e142d. Independent whole-change review found a NaN validation bug, which was fixed and committed; a fresh delta review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W28PEQFFRXGN2N7ACD8QP4), codex/gpt-6-luna (agent agt_01M7W2C69TWQHCAG11Y9ZPGYPK)\n\nSHIPPED: commit 66cc196327f18ea2fb2368647deddce6db46405a on the run branch"
+        },
+        "cost_usd": 0.02301424,
+        "started_at": "2026-11-20T08:46:38.004354545Z",
+        "finished_at": "2026-11-20T08:51:14.519186234Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W25RF5HT4WXP71Y0XCSCW3",
+        "run": "prun_01M7W25R58WDC6MSDFTYCA5MZC",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W25RGVTEPVHEHGSEE9M2FX",
+        "aether_task": "tsk_01M7W25RGVTEPVHEHGSEE9M2FY",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented continuous token bucket refill and per-key LRU rate limiting in ratelimit.py, with validation and edge-case tests. Final checks passed: `python -m unittest -v` (8 tests), `python -m py_compile ratelimit.py test_ratelimit.py`, and `git diff --check`; final checked tree is 6b9fc8b462484a5a3f63fa99000b28e0fc1e142d. Independent whole-change review found a NaN validation bug, which was fixed and committed; a fresh delta review passed with no findings. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (8 passed)",
+            "python -m py_compile ratelimit.py test_ratelimit.py (passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "66cc196327f18ea2fb2368647deddce6db46405a",
+          "evidence": [
+            {
+              "after": "Ran 8 tests in 0.000s\nOK",
+              "before": "Ran 3 tests; all 3 errored with NotImplementedError.",
+              "caption": "Before, the existing 3 tests errored because implementation methods were stubs. After implementation and the non-finite validation fix, all 8 tests pass.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "66cc196327f18ea2fb2368647deddce6db46405a",
+          "pr": {
+            "body": "`ratelimit.py` implements full initial buckets, fractional continuous refill, non-consuming wait calculations, nondecreasing observed clock behavior, and bounded per-key LRU eviction. Non-finite configuration and request values are rejected. `test_ratelimit.py` covers refill, backward clocks, validation, independent keys, and LRU behavior including eviction through `wait_time`. Checks: 8 unit tests, bytecode compilation, and `git diff --check` all passed. Standard-library-only; no open limitations.",
+            "summary": "Implemented full token bucket and keyed LRU rate limiting. Callers can acquire tokens, inspect availability and wait times, and track independent per-key limits with bounded storage. Before: API methods were stubs; now: specified refill, validation, clock, and eviction behavior is implemented.",
+            "title": "Implement token bucket rate limiter"
+          },
+          "review": {
+            "reviewed_head": "66cc196327f18ea2fb2368647deddce6db46405a",
+            "reviewer_agents": [
+              "agt_01M7W28PEQFFRXGN2N7ACD8QP4",
+              "agt_01M7W2C69TWQHCAG11Y9ZPGYPK"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W28PEQFFRXGN2N7ACD8QP4",
+                "base": "ebadb87cf84b4332b9fb1eed9d91f7762e0c8b70",
+                "findings": 1,
+                "head": "bc597c023800b1a3b40a3e2ed151226a9b5f8aa3",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W2C69TWQHCAG11Y9ZPGYPK",
+                "base": "bc597c023800b1a3b40a3e2ed151226a9b5f8aa3",
+                "findings": 0,
+                "head": "66cc196327f18ea2fb2368647deddce6db46405a",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W28PEQFFRXGN2N7ACD8QP4",
+              "agt_01M7W2C69TWQHCAG11Y9ZPGYPK"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M7W2C69TWQHCAG11Y9ZPGYPK",
+            "why": "Contained behavior change to existing rate-limiter interfaces. Implementation is isolated and standard-library-only; tests cover the specified edge cases. The first review found a non-finite input correctness bug, fixed in a separate commit and verified by a passing delta review."
+          },
+          "tree": "6b9fc8b462484a5a3f63fa99000b28e0fc1e142d"
+        },
+        "cost_usd": 0.02301424,
+        "started_at": "2026-11-20T08:46:38.053534217Z",
+        "finished_at": "2026-11-20T08:51:12.531933820Z"
+      }
+    ],
+    "spent_usd": 0.02301424,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W25RF5HT4WXP71Y0XCSCW3": {
+        "direct_usd": 0.01481484,
+        "delegated_usd": 0.008199399999999999,
+        "agents": [
+          {
+            "agent": "agt_01M7W28PEQFFRXGN2N7ACD8QP4",
+            "parent": "agt_01M7W25RGVTEPVHEHGSEE9M2FX",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00363462
+          },
+          {
+            "agent": "agt_01M7W2C69TWQHCAG11Y9ZPGYPK",
+            "parent": "agt_01M7W25RGVTEPVHEHGSEE9M2FX",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00456478
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

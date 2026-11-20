@@ -1,0 +1,31 @@
+Queued initiative `ini_01M7WCDPDEZTP5K95K3DZTNEC8` with one direct change for each repository, sharing the CSV and validation contract. Both tasks include README updates, the requested test commands, and a commit in their repository.
+
+Done: Group report totals by account and currency. Added currency-aware report totals: legacy CSV rows default to USD, supplied currencies are validated, and output groups and sorts by account and currency. Updated README and tests. `python3 -m unittest` passed (3 tests), `git diff --check` passed, and independent review passed with no findings. Committed as cf4d03ab53491c68022f8c49c254aaca5918e2fc; working tree is clean. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCFMJXCMFKA9ZGTVT13VWX)
+
+SHIPPED: commit cf4d03ab53491c68022f8c49c254aaca5918e2fc on the run branch
+Branch `archon/eja8jgcq-group-report-totals-by-account-and-curre` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/69b96c826cd728f493f44180/reports holds it (3 files changed, 59 insertions(+), 15 deletions(-)). Review: `archon diff qi_01M7WCDPEB2MBEQYF5EJA8JGCQ`; land it in `main`: `archon merge qi_01M7WCDPEB2MBEQYF5EJA8JGCQ`.
+
+Done: Add currency column to ledger CSV output. Added optional TSV currency parsing with USD default, ASCII uppercase validation, four-column CSV output, and line-numbered malformed-currency errors exiting 2 while other input errors remain 1. Updated integration tests and README. cargo fmt -- --check and cargo test passed; reviewer passed with two nonblocking observations. Commit be856e58822ce9e31f032cc9e9d3c5fd864740eb; worktree clean.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCHCQPFP7ZZSWGPW5AGPMG)
+
+SHIPPED: commit be856e58822ce9e31f032cc9e9d3c5fd864740eb on the run branch
+Branch `archon/vny6km7v-add-currency-column-to-ledger-csv-output` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/69b96c826cd728f493f44180/ledger holds it (4 files changed, 106 insertions(+), 13 deletions(-)). Review: `archon diff qi_01M7WCDPDF6NFHTRX1VNY6KM7V`; land it in `main`: `archon merge qi_01M7WCDPDF6NFHTRX1VNY6KM7V`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M7WCDPDF6NFHTRX1VNY6KM7V ended and its cargo target directory went.
+
+Added currency-aware report totals: legacy CSV rows default to USD, supplied currencies are validated, and output groups and sorts by account and currency. Updated README and tests. `python3 -m unittest` passed (3 tests), `git diff --check` passed, and independent review passed with no findings. Committed as cf4d03ab53491c68022f8c49c254aaca5918e2fc; working tree is clean. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCFMJXCMFKA9ZGTVT13VWX)
+
+SHIPPED: commit cf4d03ab53491c68022f8c49c254aaca5918e2fc on the run branch
+
+Added optional TSV currency parsing with USD default, ASCII uppercase validation, four-column CSV output, and line-numbered malformed-currency errors exiting 2 while other input errors remain 1. Updated integration tests and README. cargo fmt -- --check and cargo test passed; reviewer passed with two nonblocking observations. Commit be856e58822ce9e31f032cc9e9d3c5fd864740eb; worktree clean.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCHCQPFP7ZZSWGPW5AGPMG)
+
+SHIPPED: commit be856e58822ce9e31f032cc9e9d3c5fd864740eb on the run branch

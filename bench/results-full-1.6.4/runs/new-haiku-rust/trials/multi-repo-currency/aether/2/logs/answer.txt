@@ -1,0 +1,22 @@
+Both repositories now carry the currency column end to end, with tests passing and a commit in each.
+
+**`ledger`** (commit `d4bc58f`)
+- Input lines take an optional fourth column. A three-uppercase-letter code is kept; a missing column becomes `USD`.
+- Output header is `date,account,amount_cents,currency`, with the currency on every row.
+- A malformed code exits 2 with `line N: bad currency "..."` on stderr. Other input errors still exit 1.
+- `cargo test`: 9 passed, including CLI tests for the output and both exit codes.
+
+**`reports`** (commit `25ce487`)
+- Totals are grouped by account and currency, printed as `account,currency,total_cents`, sorted by account then currency.
+- A CSV without a `currency` column counts as `USD`.
+- A malformed code prints `error: line N: ...` to stderr and exits 2.
+- `python3 -m unittest`: 5 passed. I also ran ledger's output through reports as a pipeline and got the expected totals.
+
+READMEs are updated in both repos.
+
+Choices I made that you may want to change:
+- **Empty fourth column** (`...\t1\t`) is treated as a malformed code (exit 2), not as a missing column that defaults to USD.
+- **Line numbers in `reports`** assume one physical line per CSV row, with the header on line 1. They would be off for quoted fields that contain newlines, which the ledger output never produces.
+- **`cargo fmt`** also reflowed two untouched lines in `ledger/src/lib.rs`, because the baseline wasn't rustfmt-clean.
+- **Version** in `ledger/Cargo.toml` stays at 0.3.0, even though the output format changed. Bumping it would be a separate decision.
+- **Commits** use the repos' configured git identity (mengsig) and the Co-Authored-By trailer from the attribution reminder.

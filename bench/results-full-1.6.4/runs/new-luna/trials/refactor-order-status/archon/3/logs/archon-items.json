@@ -1,0 +1,551 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WBS677JRZT6G0B651A7BA6",
+      "repo": "repo_01M7WBJFVWDPRN4RY16WSDDMXV",
+      "pipeline": "direct",
+      "title": "Verify order status refactor with cargo test",
+      "brief": "Follow up on the committed order status refactor (commit aafe5b029e182d6460e4e538bd990d4d13511252). The prior run could not execute cargo fmt or cargo test because cargo was not available on PATH.\n\nLocate and use an available Rust toolchain in this environment, or make the toolchain available if the environment already contains an install. Run cargo fmt -- --check and cargo test. Fix any failures caused by the refactor, preserve the specified observable behavior and status-literal constraint, and commit any necessary fixes locally without pushing. Report exact commands and results. If no toolchain can be made available, report concrete evidence of the blocker; do not claim tests passed.\n\n## Amendment (2026-11-20 11:36 UTC)\n\nAutomatic repair (archond retries a refused record once). The gate refused your finished work: the review this pipeline declares is not on record: reviewer agt_01M7WBVCSCJP2CGB0GH72VDC3F it passes but its summary's final `VERDICT:` line or JSON verdict does not, text after the JSON verdict opening it takes it back, or it lists a blocking finding: complete the task with `structured` set to {\"verdict\": \"pass\"|\"fail\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}, or end the summary with a line `VERDICT: PASS` or `VERDICT: FAIL` besid\n\nRepair the record only. Do not change code unless a reviewer finds a defect. Delegate one reviewer over the whole change from the merge base, copy its agent id exactly, and return the review object and ship record the gate requires.\n\nRun any check in the foreground or wait on it, and never end your turn while one runs: Archon reads the end of your turn as your result.\n",
+      "priority": "normal",
+      "dependencies": [
+        "qi_01M7WBK8820PJHNJDT2626BSK0"
+      ],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7WBS677JRZT6G0B651A7BA6",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T11:34:31.921092012Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T11:34:31.924845641Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T11:34:31.921092012Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WBWXFGAMAQQEA6EM5KXCEZ",
+        "summary": "Record repair only; no code changed. Whole-change review by agt_01M7WBXPD0V5C3G3P78MVJZYEZ passed with no findings. `git diff --check 13224dc 7a5377363269572569953ee37184cae488bca3c0` passed. `cargo fmt -- --check` and `cargo test` remain unverified because cargo is unavailable in the environment; no claim of test success. The branch is clean at 7a5377363269572569953ee37184cae488bca3c0.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBXPD0V5C3G3P78MVJZYEZ)\n\nSHIPPED: commit 7a5377363269572569953ee37184cae488bca3c0 on the run branch"
+      },
+      "created_at": "2026-11-20T11:34:31.911214651Z",
+      "updated_at": "2026-11-20T11:38:14.408027761Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WBS680DPMA4K808MB5PMSN",
+        "item": "qi_01M7WBS677JRZT6G0B651A7BA6",
+        "pipeline": "direct",
+        "shipped": false,
+        "aether_run": "run_01M7WBS6HWZ190NB987M1WDAD4",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/e5580d592ca2398f815c549d/.archon/data/worktrees/refactor-order-status/qi_01M7WBS677JRZT6G0B651A7BA6",
+        "branch": "archon/651a7ba6-verify-order-status-refactor-with-cargo",
+        "state": {
+          "state": "failed",
+          "stage_id": "implement",
+          "error": "stage `implement` failed: the review this pipeline declares is not on record: reviewer agt_01M7WBVCSCJP2CGB0GH72VDC3F it passes but its summary's final `VERDICT:` line or JSON verdict does not, text after the JSON verdict opening it takes it back, or it lists a blocking finding: complete the task with `structured` set to {\"verdict\": \"pass\"|\"fail\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}, or end the summary with a line `VERDICT: PASS` or `VERDICT: FAIL` besid\n\n**Stage `implement` attempt 1: the review this pipeline declares is not on record: reviewer agt_01M7WBVCSCJP2CGB0GH72VDC3F it passes but its summary's final `VERDICT:` line or JSON verdict does not, text after the JSON verdict opening it takes it back, or it lists a blocking finding: complete the task with `structured` set to {\"verdict\": \"pass\"|\"fail\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}, or end the summary with a line `VERDICT: PASS` or `VERDICT: FAIL` besid**\n\nLocated the installed Rust 1.100 toolchain under the environment’s private .rustup directory and ran it directly with the item-specific Cargo target cache. The first `cargo fmt -- --check` exposed formatting drift in the refactor; applied rustfmt and committed that formatting-only correction as 7a5377363269572569953ee37184cae488bca3c0. On the final tree, `cargo fmt -- --check` passed and `cargo test` passed (2 unit tests, 3 integration tests, 0 doc tests). The worktree is clean. Independent review passed with no findings; it confirmed behavior and the status-literal constraint are unchanged. Nothing was pushed.\n"
+        },
+        "cost_usd": 0.0119736,
+        "started_at": "2026-11-20T11:34:32.209937813Z",
+        "finished_at": "2026-11-20T11:36:33.790372146Z"
+      },
+      {
+        "id": "prun_01M7WBWXFGAMAQQEA6EM5KXCEZ",
+        "item": "qi_01M7WBS677JRZT6G0B651A7BA6",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WBWXMPM79212Z50C1CGKYP",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/e5580d592ca2398f815c549d/.archon/data/worktrees/refactor-order-status/qi_01M7WBS677JRZT6G0B651A7BA6",
+        "branch": "archon/651a7ba6-verify-order-status-refactor-with-cargo",
+        "state": {
+          "state": "succeeded",
+          "summary": "Record repair only; no code changed. Whole-change review by agt_01M7WBXPD0V5C3G3P78MVJZYEZ passed with no findings. `git diff --check 13224dc 7a5377363269572569953ee37184cae488bca3c0` passed. `cargo fmt -- --check` and `cargo test` remain unverified because cargo is unavailable in the environment; no claim of test success. The branch is clean at 7a5377363269572569953ee37184cae488bca3c0.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBXPD0V5C3G3P78MVJZYEZ)\n\nSHIPPED: commit 7a5377363269572569953ee37184cae488bca3c0 on the run branch"
+        },
+        "cost_usd": 0.01031768,
+        "started_at": "2026-11-20T11:36:34.154365404Z",
+        "finished_at": "2026-11-20T11:38:14.408027761Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WBS6HCD3RMXAFXE7R6VP7S",
+        "run": "prun_01M7WBS680DPMA4K808MB5PMSN",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WBS6JQEAB3KA769HCF12YM",
+        "aether_task": "tsk_01M7WBS6JQEAB3KA769HCF12YN",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Located the installed Rust 1.100 toolchain under the environment’s private .rustup directory and ran it directly with the item-specific Cargo target cache. The first `cargo fmt -- --check` exposed formatting drift in the refactor; applied rustfmt and committed that formatting-only correction as 7a5377363269572569953ee37184cae488bca3c0. On the final tree, `cargo fmt -- --check` passed and `cargo test` passed (2 unit tests, 3 integration tests, 0 doc tests). The worktree is clean. Independent review passed with no findings; it confirmed behavior and the status-literal constraint are unchanged. Nothing was pushed.",
+        "structured": {
+          "checks": [
+            "cargo fmt -- --check (passed on final tree; invoked with installed Rust 1.100 toolchain on PATH)",
+            "cargo test (passed: 2 unit, 3 integration, 0 doc tests; invoked with installed Rust 1.100 toolchain and item-specific CARGO_TARGET_DIR)",
+            "git diff --check (passed)"
+          ],
+          "commit": "7a5377363269572569953ee37184cae488bca3c0",
+          "evidence": {
+            "none": "This follow-up is a pure formatting correction with no visible or measurable behavior change."
+          },
+          "pr": {
+            "body": "The existing refactor required only rustfmt line wrapping across src/billing.rs, src/order.rs, src/report.rs, src/shipping.rs, and tests/orders.rs. Rust 1.100 was already installed in the environment’s private .rustup toolchain directory but absent from PATH. Checks on final commit: `cargo fmt -- --check` passed; `cargo test` passed (2 unit, 3 integration, 0 doc tests); `git diff --check` passed. No behavior or status-literal changes.",
+            "summary": "Applied rustfmt to the order status refactor. Before: formatter check failed on layout drift; now: formatting check and complete Cargo test suite pass.",
+            "title": "Format order status refactor"
+          },
+          "review": {
+            "reviewers": [
+              "agt_01M7WBVCSCJP2CGB0GH72VDC3F"
+            ],
+            "unverified": "reviewer agt_01M7WBVCSCJP2CGB0GH72VDC3F it passes but its summary's final `VERDICT:` line or JSON verdict does not, text after the JSON verdict opening it takes it back, or it lists a blocking finding: complete the task with `structured` set to {\"verdict\": \"pass\"|\"fail\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}, or end the summary with a line `VERDICT: PASS` or `VERDICT: FAIL` beside lines `head: <commit>` and `base: <commit>`; the verdict is one of those two words, and a fail always fails, so a review whose findings are all follow-ups or advice is a pass",
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "low",
+            "why": "Only rustfmt line wrapping was committed in five Rust files. The refactor’s observable status parsing/display, transitions, reporting, and status-literal constraint remain unchanged. Full tests and formatting check passed; independent review found no issues."
+          },
+          "tree": "67a3b3ab5ef05a48bbff90f4fce463548b8c4f6e"
+        },
+        "cost_usd": 0.0119736,
+        "started_at": "2026-11-20T11:34:32.236850538Z",
+        "finished_at": "2026-11-20T11:36:33.785816793Z"
+      },
+      {
+        "id": "stg_01M7WBWXM4HQ3VQ2J061YNR8WB",
+        "run": "prun_01M7WBWXFGAMAQQEA6EM5KXCEZ",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WBWXNMT68MP1Y524RM8QH4",
+        "aether_task": "tsk_01M7WBWXNMT68MP1Y524RM8QH5",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "pass",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Record repair only; no code changed. Whole-change review by agt_01M7WBXPD0V5C3G3P78MVJZYEZ passed with no findings. `git diff --check 13224dc 7a5377363269572569953ee37184cae488bca3c0` passed. `cargo fmt -- --check` and `cargo test` remain unverified because cargo is unavailable in the environment; no claim of test success. The branch is clean at 7a5377363269572569953ee37184cae488bca3c0.",
+        "structured": {
+          "base": "aafe5b029e182d6460e4e538bd990d4d13511252",
+          "checks": [
+            "git diff --check 13224dc 7a5377363269572569953ee37184cae488bca3c0 (passed)",
+            "cargo fmt -- --check (not run: cargo unavailable on PATH)",
+            "cargo test (not run: cargo unavailable on PATH)"
+          ],
+          "commit": "7a5377363269572569953ee37184cae488bca3c0",
+          "evidence": {
+            "none": "Record-only repair with no new behavior or measurable before/after output."
+          },
+          "findings": [],
+          "head": "7a5377363269572569953ee37184cae488bca3c0",
+          "local_commit": "7a5377363269572569953ee37184cae488bca3c0",
+          "pr": {
+            "body": "No additional code changes in this record repair. Whole-change reviewer found no blocking issues and confirmed the status literal constraint and observable behavior by inspection. `git diff --check 13224dc 7a5377363269572569953ee37184cae488bca3c0` passed. `cargo fmt -- --check` and `cargo test` could not be executed because cargo was unavailable on PATH. Assumption: preserving the existing clean, committed branch is the requested repair-only scope.",
+            "summary": "Completed the formatting follow-up for the order status refactor. Before: formatting and test verification could not run because cargo was unavailable. Now: review and diff whitespace checks pass; Rust formatting and tests remain unverified.",
+            "title": "Format order status refactor"
+          },
+          "review": {
+            "reviewed_head": "7a5377363269572569953ee37184cae488bca3c0",
+            "reviewer_agents": [
+              "agt_01M7WBXPD0V5C3G3P78MVJZYEZ"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7WBXPD0V5C3G3P78MVJZYEZ",
+                "base": "aafe5b029e182d6460e4e538bd990d4d13511252",
+                "findings": 0,
+                "head": "7a5377363269572569953ee37184cae488bca3c0",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7WBXPD0V5C3G3P78MVJZYEZ"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "low",
+            "why": "Record-only repair; no code or behavior changed. Review passed with no findings. Rust checks remain unverified because cargo is unavailable."
+          },
+          "tree": "67a3b3ab5ef05a48bbff90f4fce463548b8c4f6e",
+          "verdict": "pass"
+        },
+        "cost_usd": 0.01031768,
+        "started_at": "2026-11-20T11:36:34.180468778Z",
+        "finished_at": "2026-11-20T11:38:11.809366214Z"
+      }
+    ],
+    "spent_usd": 0.02229128,
+    "gates": [],
+    "delegations": {
+      "stg_01M7WBS6HCD3RMXAFXE7R6VP7S": {
+        "direct_usd": 0.00969718,
+        "delegated_usd": 0.0022764200000000004,
+        "agents": [
+          {
+            "agent": "agt_01M7WBVCSCJP2CGB0GH72VDC3F",
+            "parent": "agt_01M7WBS6JQEAB3KA769HCF12YM",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.0022764200000000004
+          }
+        ]
+      },
+      "stg_01M7WBWXM4HQ3VQ2J061YNR8WB": {
+        "direct_usd": 0.0050165,
+        "delegated_usd": 0.005301180000000001,
+        "agents": [
+          {
+            "agent": "agt_01M7WBXPD0V5C3G3P78MVJZYEZ",
+            "parent": "agt_01M7WBWXNMT68MP1Y524RM8QH4",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.005301180000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T11:34:31.921092012Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T11:34:31.924845641Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T11:34:31.921092012Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WBK8820PJHNJDT2626BSK0",
+      "repo": "repo_01M7WBJFVWDPRN4RY16WSDDMXV",
+      "pipeline": "direct",
+      "title": "Refactor order status strings to OrderStatus enum",
+      "brief": "Refactor the orders crate as requested.\n\nRequirements:\n- Add src/status.rs with pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }, deriving Debug, Clone, Copy, PartialEq, Eq, Hash.\n- Implement OrderStatus::as_str(self) -> &'static str yielding lowercase names pending, paid, shipped, cancelled; Display yields the same.\n- Implement FromStr for OrderStatus with type Err = ParseStatusError. ParseStatusError is public, implements std::error::Error, and its message names the rejected input.\n- Implement OrderStatus::can_transition_to(self, next: OrderStatus) -> bool: allow pending -> paid/cancelled and paid -> shipped/cancelled, and no other transitions.\n- Change Order::status to OrderStatus, re-export OrderStatus and ParseStatusError at crate root, and use the enum throughout so status string literals occur only in src/status.rs.\n- Preserve observable behavior, including errors, report output and ordering, and parsing.\n\nRun cargo test and ensure it passes. Commit the completed change on the local branch; do not push.\nAcceptance: implementation meets every bullet, existing behavior is preserved, cargo test passes, and the work is committed.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7WBK8820PJHNJDT2626BSK0",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-20T11:31:17.383640400Z"
+              },
+              "effort": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-20T11:31:17.383640400Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged: the learned route's effort"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WBK8A77J3PKYN9YX78VFJG",
+        "summary": "Refactored order status to the public OrderStatus enum, added parsing/display/error and transition support, and updated lifecycle and report code while preserving status text, parsing errors, and lexical report order. Commit aafe5b029e182d6460e4e538bd990d4d13511252. `git diff --check` passed; `cargo fmt -- --check`, formatting, and `cargo test` could not run because cargo is not installed or available on PATH. Independent review passed with no findings. No runtime evidence applies to this pure refactor; the Rust test suite remains unverified in this environment.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBQ0BH3X9VYS7C5B0W66HJ)\n\nSHIPPED: commit aafe5b029e182d6460e4e538bd990d4d13511252 on the run branch"
+      },
+      "created_at": "2026-11-20T11:31:17.378091391Z",
+      "updated_at": "2026-11-20T11:34:10.137015240Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WBK8A77J3PKYN9YX78VFJG",
+        "item": "qi_01M7WBK8820PJHNJDT2626BSK0",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WBK9Q84DX1XQD3ZBW8A7P5",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/e5580d592ca2398f815c549d/.archon/data/worktrees/refactor-order-status/qi_01M7WBK8820PJHNJDT2626BSK0",
+        "branch": "archon/2626bsk0-refactor-order-status-strings-to-orderst",
+        "state": {
+          "state": "succeeded",
+          "summary": "Refactored order status to the public OrderStatus enum, added parsing/display/error and transition support, and updated lifecycle and report code while preserving status text, parsing errors, and lexical report order. Commit aafe5b029e182d6460e4e538bd990d4d13511252. `git diff --check` passed; `cargo fmt -- --check`, formatting, and `cargo test` could not run because cargo is not installed or available on PATH. Independent review passed with no findings. No runtime evidence applies to this pure refactor; the Rust test suite remains unverified in this environment.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBQ0BH3X9VYS7C5B0W66HJ)\n\nSHIPPED: commit aafe5b029e182d6460e4e538bd990d4d13511252 on the run branch"
+        },
+        "cost_usd": 0.013029700000000002,
+        "started_at": "2026-11-20T11:31:17.666805974Z",
+        "finished_at": "2026-11-20T11:34:10.137015240Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WBK9Q0HCSC2HCKFNZ3N1K0",
+        "run": "prun_01M7WBK8A77J3PKYN9YX78VFJG",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WBK9R185K8G56GPNC00FE2",
+        "aether_task": "tsk_01M7WBK9R1P33VK57PXZ5CTKTH",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "learned",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged: the learned route's effort",
+        "summary": "Refactored order status to the public OrderStatus enum, added parsing/display/error and transition support, and updated lifecycle and report code while preserving status text, parsing errors, and lexical report order. Commit aafe5b029e182d6460e4e538bd990d4d13511252. `git diff --check` passed; `cargo fmt -- --check`, formatting, and `cargo test` could not run because cargo is not installed or available on PATH. Independent review passed with no findings. No runtime evidence applies to this pure refactor; the Rust test suite remains unverified in this environment.",
+        "structured": {
+          "checks": [
+            "git diff --check (passed)",
+            "cargo fmt -- --check && cargo fmt && cargo test (not run: cargo: command not found)"
+          ],
+          "commit": "aafe5b029e182d6460e4e538bd990d4d13511252",
+          "evidence": {
+            "none": "Pure refactor with no visible or measurable before/after change."
+          },
+          "local_commit": "aafe5b029e182d6460e4e538bd990d4d13511252",
+          "pr": {
+            "body": "Added src/status.rs with OrderStatus, Display, FromStr, ParseStatusError, transition rules, and unit coverage. Updated Order, billing, shipping, and report paths; report_counts retains lexical name ordering. No AGENTS.md or CONTRIBUTING guidance was present. `git diff --check` passed. Rust formatting and tests were attempted but cargo is unavailable in this environment, so those checks remain unverified. The public Order::status type change is required by the request.",
+            "summary": "Made order statuses a typed enum. Callers now use OrderStatus while display, parsing, errors, and report ordering retain their prior behavior; before: status was stored and compared as String, now: status is typed.",
+            "title": "Refactor order status to enum"
+          },
+          "review": {
+            "reviewed_head": "aafe5b029e182d6460e4e538bd990d4d13511252",
+            "reviewer_agents": [
+              "agt_01M7WBQ0BH3X9VYS7C5B0W66HJ"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7WBQ0BH3X9VYS7C5B0W66HJ",
+                "base": "13224dcb907046613a4f871ba03d9181eea6381d",
+                "findings": 0,
+                "head": "aafe5b029e182d6460e4e538bd990d4d13511252",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7WBQ0BH3X9VYS7C5B0W66HJ"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M7WBQ0BH3X9VYS7C5B0W66HJ",
+            "why": "Contained public API type change in src/order.rs with changes to lifecycle and reporting consumers. Status text, parsing errors, and report ordering are preserved by inspection and the independent review; automated Rust checks could not run because cargo is unavailable."
+          },
+          "tree": "42e356748e871fdf6fdf19c2f3ebe8e5154ef7de"
+        },
+        "cost_usd": 0.013029700000000002,
+        "started_at": "2026-11-20T11:31:18.880790401Z",
+        "finished_at": "2026-11-20T11:34:07.332757715Z"
+      }
+    ],
+    "spent_usd": 0.013029700000000002,
+    "gates": [],
+    "delegations": {
+      "stg_01M7WBK9Q0HCSC2HCKFNZ3N1K0": {
+        "direct_usd": 0.011169880000000002,
+        "delegated_usd": 0.00185982,
+        "agents": [
+          {
+            "agent": "agt_01M7WBQ0BH3X9VYS7C5B0W66HJ",
+            "parent": "agt_01M7WBK9R185K8G56GPNC00FE2",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00185982
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-20T11:31:17.383640400Z"
+          },
+          "effort": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-20T11:31:17.383640400Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

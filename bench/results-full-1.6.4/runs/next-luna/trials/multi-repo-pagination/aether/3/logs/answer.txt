@@ -1,0 +1,7 @@
+Implemented cursor pagination and updated both READMEs. `GET /items` defaults to 20 items, validates limits and cursors, and returns `next_cursor`; `listItems` follows cursors until the final page while preserving their values.
+
+Both test suites pass: `python3 -m unittest` and `npm test`. Both repositories are clean.
+
+Commits:
+- `inventory-api`: `3b35d98` — Add cursor pagination to items endpoint
+- `inventory-client`: `615e586` — Follow item pagination cursors

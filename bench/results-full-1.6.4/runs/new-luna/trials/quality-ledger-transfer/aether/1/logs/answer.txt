@@ -1,0 +1,3 @@
+Implemented `Ledger` with input validation, copied state, atomic transfers and snapshots, overflow handling, and self transfer behavior. Added focused tests for validation, boundaries, and failure atomicity.
+
+All 7 tests pass. Committed as `a760b1a` (`Implement atomic bounded ledger`). The test run left an untracked `__pycache__/` directory.

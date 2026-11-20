@@ -1,0 +1,14 @@
+Implemented `extract(entries, root)` in safe_extract.py per SPEC.md and expanded test_safe_extract.py. Committed as fca0637 on main (author mengsig; no attribution lines, per CLAUDE.md). The full batch is validated before any filesystem write: list-only batch type (empty included, no consumption), (name, bytes) tuple entries, relative POSIX names without '/' prefix, '\\', ':', NUL, or empty/'.'/'..' components, duplicates and file/directory collisions in either order, and root as an existing real directory. Every existing component below root is lstat-checked: symlinks (including dangling) and non-directory ancestors are rejected, and an existing target of any type is rejected. Writes create missing parents, then use exclusive 'xb' creation. I/O errors other than missing paths propagate. Tests: 36 unittest cases, all passing via `python3 -m unittest discover -s . -p 'test_*.py'`. Assumptions I chose: names that are not strictly UTF-8 encodable (e.g. lone surrogates) are rejected; subclasses of list and bytes are accepted; an empty-string root is rejected. Note: `python3 -I -m unittest test_safe_extract` fails to find the module, so discovery is the way to run tests.
+
+I implemented `extract(entries, root)` in `safe_extract.py` per `SPEC.md`, expanded the tests, and committed as `fca0637` on `main`. All 36 tests pass.
+
+The whole batch is validated before anything is written. Only then are missing parent directories created and files written with exclusive creation, so an existing file is never overwritten. Missing paths are the only `OSError` that is swallowed, and other I/O errors propagate.
+
+Choices I made where the spec was silent, so you can redirect me:
+- Names that aren't strictly UTF-8 encodable (for example lone surrogates) are rejected with `ValueError`.
+- `list` and `bytes` subclasses are accepted.
+- An empty-string root is rejected.
+
+Running the tests needs discovery: `python3 -m unittest discover -s . -p 'test_*.py'`. `python3 -I -m unittest test_safe_extract` can't find the module, because `-I` drops the current directory from the import path.
+
+I left the commit without attribution lines, because CLAUDE.md says not to mention Claude Code in commits and that takes precedence over the reminder asking for a Co-Authored-By line.

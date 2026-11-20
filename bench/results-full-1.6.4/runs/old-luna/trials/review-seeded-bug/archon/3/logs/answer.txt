@@ -1,0 +1,15 @@
+**`src/tokens.js` has a critical signature bypass.** I reviewed the file and its callers in the registered `review-seeded-bug` mirror. The mirror is at `6b112ce6c45f5696c883e27a451cc09149a47c1f`; I made no changes.
+
+- **File:** [`src/tokens.js`](/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/eba78ad0d1cb0e9af2ec0e21/.archon/data/orchestrator/repos/review-seeded-bug/src/tokens.js)  
+  **Function:** `verify`  
+  **Severity:** Critical  
+  **Problem:** `expected.startsWith(signature)` accepts any prefix of the real signature, including an empty string. An attacker can take a valid token and remove its signature, leaving `body.`; verification accepts it as long as the payload has a future numeric `exp`. They can also forge an arbitrary payload with a future expiry and an empty signature.  
+  **Fix:** Require the supplied signature to have the exact expected length and compare signatures with a constant time equality check, such as `crypto.timingSafeEqual` after validating lengths.
+
+- **File:** [`src/tokens.js`](/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/eba78ad0d1cb0e9af2ec0e21/.archon/data/orchestrator/repos/review-seeded-bug/src/tokens.js)  
+  **Function:** `verify`  
+  **Severity:** Medium  
+  **Problem:** Untrusted token contents can make verification throw instead of returning `null`. For example, a correctly signed body containing `null` reaches `payload.exp` and throws a `TypeError`; malformed JSON with a matching signature throws from `JSON.parse`. This can cause request failures if callers expect invalid tokens to be rejected normally.  
+  **Fix:** Validate the parsed payload’s type and required claims, and handle decoding and parsing errors by rejecting the token.
+
+The first issue makes the session-token signature ineffective; it should be fixed before production deployment.

@@ -1,0 +1,14 @@
+`python3 -m unittest` now passes all 3 tests, and the fix is committed as `6f97872`.
+
+**The bug:** `sliding_windows` built its range as `range(len(items) - size)`, which stops one window early and dropped the last one. For example, `[1, 2, 3]` with size 2 returned `[[1, 2]]` instead of `[[1, 2], [2, 3]]`. The fix changes the bound to `range(len(items) - size + 1)` in `window.py`.
+
+**Other inputs:** I checked these beyond the tests, and they behave correctly:
+- Empty input returns `[]`.
+- A size larger than the list returns `[]`.
+- Size 1 returns each item as its own window.
+- Size equal to the list length returns the whole list as one window.
+- A size of 0 or less still raises `ValueError`.
+
+**Commit:** I committed only `window.py` and used the Co-Authored-By line from the attribution reminder. The commit author is your configured git user.
+
+I did not change `test_window.py`. An untracked `__pycache__/` directory was left in the workspace from the test run and is not committed.

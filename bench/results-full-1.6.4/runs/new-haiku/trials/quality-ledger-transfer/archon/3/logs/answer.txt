@@ -1,0 +1,22 @@
+I queued the work as one item, `qi_01M7W9JA24VBG57DE2CP9R4R68`, in the `quality-ledger-transfer` repository. It uses the `direct` pipeline with standard review.
+
+- **Scope:** the agent implements `ledger.py` to match `SPEC.md`, covers each specified error and boundary case with focused tests, keeps existing tests passing, and uses only the standard library. It commits the work in the repository.
+- **Effort:** I set it to medium. My first attempt at high was refused because the configured maximum effort is medium. I did not work around that. Raising the ceiling is the operator's call.
+- **Quota:** this is the only item, so it adds little pressure on the claude-code window (77% used, on pace to run out before reset).
+
+I haven't read `SPEC.md` or `ledger.py` myself. The repository is registered with local shipping, so the item will commit locally and not push. The outcome will be posted when the item finishes.
+
+Done: Implement ledger.py per SPEC.md with focused tests. Implemented ledger.py per SPEC.md and extended test_ledger.py with focused error and boundary tests. Committed as fe874ba883b595e248c2034e415f40d573567dfc on archon/cp9r4r68-implement-ledger-py-per-spec-md-with-foc, not pushed. Before: the stub raised NotImplementedError and the existing suite errored. After: 22 tests pass with `python3 -m unittest -v test_ledger` (under timeout 60s). Only the standard library is used. Concurrency is one per-ledger threading.Lock, so transfers and snapshots are atomic and opposite transfers cannot deadlock; the threaded tests use join timeouts. Reviewer agt_01M7W9KZ8XXC4RVGSXDW371CMW passed head fe874ba with no findings. Open items: no linter is installed, so only py_compile with -W error was run. Non-str account names in transfer raise KeyError, which I read as "unknown account". The risk is high under the rubric because the change involves concurrency, but it is confined to a new module with no dependents. I proceeded instead of escalating because the operator explicitly asked for thread-safe locking. Nothing is left running.
+REVIEW: pass by agt_01M7W9KZ8XXC4RVGSXDW371CMW
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9KZ8XXC4RVGSXDW371CMW)
+
+SHIPPED: commit fe874ba883b595e248c2034e415f40d573567dfc on the run branch
+Branch `archon/cp9r4r68-implement-ledger-py-per-spec-md-with-foc` in /home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/851323aaf97a9586fe3d7b18/quality-ledger-transfer holds it (2 files changed, 194 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M7W9JA24VBG57DE2CP9R4R68`; land it in `main`: `archon merge qi_01M7W9JA24VBG57DE2CP9R4R68`.
+
+Implemented ledger.py per SPEC.md and extended test_ledger.py with focused error and boundary tests. Committed as fe874ba883b595e248c2034e415f40d573567dfc on archon/cp9r4r68-implement-ledger-py-per-spec-md-with-foc, not pushed. Before: the stub raised NotImplementedError and the existing suite errored. After: 22 tests pass with `python3 -m unittest -v test_ledger` (under timeout 60s). Only the standard library is used. Concurrency is one per-ledger threading.Lock, so transfers and snapshots are atomic and opposite transfers cannot deadlock; the threaded tests use join timeouts. Reviewer agt_01M7W9KZ8XXC4RVGSXDW371CMW passed head fe874ba with no findings. Open items: no linter is installed, so only py_compile with -W error was run. Non-str account names in transfer raise KeyError, which I read as "unknown account". The risk is high under the rubric because the change involves concurrency, but it is confined to a new module with no dependents. I proceeded instead of escalating because the operator explicitly asked for thread-safe locking. Nothing is left running.
+REVIEW: pass by agt_01M7W9KZ8XXC4RVGSXDW371CMW
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9KZ8XXC4RVGSXDW371CMW)
+
+SHIPPED: commit fe874ba883b595e248c2034e415f40d573567dfc on the run branch

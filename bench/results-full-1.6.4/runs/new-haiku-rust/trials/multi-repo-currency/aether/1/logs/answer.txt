@@ -1,0 +1,39 @@
+Multi-currency support is implemented and committed in both repos; both test suites pass.
+
+ledger (commit bd4b73b, cargo test: 8/8 pass):
+- Lines may have a 4th TSV column with the currency code. If absent, it is USD. The header is now `date,account,amount_cents,currency`.
+- Currency must be exactly three uppercase ASCII letters. A bad code prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1.
+- parse_line returns a ParseError enum (Malformed / BadCurrency) so main maps the exit status.
+- Tests cover the parser and the binary's exit codes and stderr.
+
+reports (commit e31ac42, python3 -m unittest: 5/5 pass):
+- Output is `account,currency,total_cents`, sorted by account then currency.
+- CSV without a currency column counts as USD. A bad code prints `reports: line N: bad currency ...` to stderr and exits 2.
+- Existing test kept unchanged; four new tests added.
+
+READMEs updated in both repos. An end-to-end run (ledger | reports) produced the expected totals.
+
+Choices I made, which you may want to change:
+- An empty fourth column (trailing tab) counts as a malformed currency (exit 2), not as USD.
+- A line with 5+ columns is a shape error (exit 1).
+- reports still raises a traceback (exit 1) on a non-integer amount_cents, as before; I did not change that.
+- Commit trailer: Co-Authored-By Claude Haiku 5.5 as the reminder specified; author is the repos' configured git identity.
+- reports/__pycache__ was removed and not committed.
+
+Multi-currency support is in place in both repositories and committed. `cargo test` passes 8/8 in `ledger` and `python3 -m unittest` passes 5/5 in `reports`. I also ran ledger's output through reports end to end, and a bad currency code exits 2 in both.
+
+**ledger** (commit `bd4b73b`)
+- A fourth TSV column carries the currency. When it is absent the currency is `USD`. The header is now `date,account,amount_cents,currency`.
+- A code that is not exactly three uppercase ASCII letters prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1.
+
+**reports** (commit `e31ac42`)
+- Output is `account,currency,total_cents`, sorted by account then currency.
+- CSV without a `currency` column counts as `USD`. A bad code prints `reports: line N: bad currency ...` to stderr and exits 2.
+
+Both READMEs are updated.
+
+Choices I made that you may want to change:
+- An empty fourth column (a trailing tab) is treated as a bad currency and exits 2, not as `USD`.
+- A line with more than four columns is a shape error and exits 1.
+- reports still crashes with a traceback (exit 1) on a non-integer `amount_cents`, as before. I left that alone.
+- Commits use the repos' configured git identity and the Co-Authored-By trailer from the attribution reminder.

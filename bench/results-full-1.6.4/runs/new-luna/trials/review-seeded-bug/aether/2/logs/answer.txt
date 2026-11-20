@@ -1,0 +1,7 @@
+## Findings
+
+- **Critical — `src/tokens.js`, `verify`: accepts forged tokens with empty or truncated signatures.** The check `expected.startsWith(signature)` accepts any prefix of the real MAC, including an empty string. An attacker can construct `base64url({"user":"root","exp":9999999999999}).` and have it accepted without knowing the secret. Compare the full MAC using a constant-time comparison after validating the signature’s format and length.
+
+- **High — `src/tokens.js`, `verify`: malformed tokens can throw instead of returning `null`.** `JSON.parse` and `crypto.createHmac` are unguarded. For example, a token with a valid-looking body and matching signature over invalid JSON causes `JSON.parse` to throw; an absent or invalid secret can make HMAC creation throw too. If callers rely on the documented “null otherwise” behavior, malformed input can turn into request errors. Reject invalid inputs and handle decoding/parsing failures.
+
+- **Medium — `src/tokens.js`, `verify`: ignores extra token segments.** Destructuring `token.split('.')` reads only the first two segments, so a token with valid body and signature followed by `.anything` still verifies. Require exactly two segments to enforce the token format.

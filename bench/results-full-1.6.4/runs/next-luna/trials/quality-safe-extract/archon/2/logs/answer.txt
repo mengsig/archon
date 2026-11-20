@@ -1,0 +1,14 @@
+Queued as **qi_01M7WA2TGZ40G209B68PHXR5X5** in the `adaptive` pipeline with strict review. It covers implementing the documented API, adding focused edge case tests, running the relevant suite, and committing the work.
+
+Done: Implement safe_extract.py to SPEC.md with focused tests. Implemented SPEC.md-compliant safe extraction in safe_extract.py and added focused boundary, symlink, collision, no-mutation, and I/O propagation tests in test_safe_extract.py. Full unittest discovery passes (12 tests); diff check is clean. Three whole-change reviews and one fix-only re-review completed; the initial test coverage finding was fixed and passed re-review. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WA5B97EDF21A8C2QF1D1P6), codex/gpt-6-luna (agent agt_01M7WA5BBE3FZ3T4VCNDKWQYK8), codex/gpt-6-luna (agent agt_01M7WA5BA37CFY1ZYPMD2EMTGS), codex/gpt-6-luna (agent agt_01M7WA7GWP4TSS4F81RGT6P0J2)
+
+SHIPPED: commit 8d932ff1eec63d3119744ebf85044e58849310d4 on the run branch
+Branch `archon/8phxr5x5-implement-safe-extract-py-to-spec-md-wit` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/6c6715312a8745d8ec5b92b0/quality-safe-extract holds it (2 files changed, 197 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M7WA2TGZ40G209B68PHXR5X5`; land it in `main`: `archon merge qi_01M7WA2TGZ40G209B68PHXR5X5`.
+
+Implemented SPEC.md-compliant safe extraction in safe_extract.py and added focused boundary, symlink, collision, no-mutation, and I/O propagation tests in test_safe_extract.py. Full unittest discovery passes (12 tests); diff check is clean. Three whole-change reviews and one fix-only re-review completed; the initial test coverage finding was fixed and passed re-review. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WA5B97EDF21A8C2QF1D1P6), codex/gpt-6-luna (agent agt_01M7WA5BBE3FZ3T4VCNDKWQYK8), codex/gpt-6-luna (agent agt_01M7WA5BA37CFY1ZYPMD2EMTGS), codex/gpt-6-luna (agent agt_01M7WA7GWP4TSS4F81RGT6P0J2)
+
+SHIPPED: commit 8d932ff1eec63d3119744ebf85044e58849310d4 on the run branch

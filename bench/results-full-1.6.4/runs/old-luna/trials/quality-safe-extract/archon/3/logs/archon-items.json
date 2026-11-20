@@ -1,0 +1,174 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WCVH2JNJBX8KDHDPVJQ6M2",
+      "repo": "repo_01M7WCTRF6B318ZZH92KH390HQ",
+      "pipeline": "direct",
+      "title": "Implement safe_extract.py and focused tests",
+      "brief": "Implement safe_extract.py according to SPEC.md. Preserve the documented API, handle every specified error and boundary case, and add focused tests beyond the existing basics. Use only the Python standard library. Validate the entire input batch and filesystem conflicts before any writes, matching all naming, collision, root/symlink, absent-target, byte-preservation, and error visibility requirements in SPEC.md. Run the relevant tests and commit the completed work in the item's worktree. Do not push or override git identity.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WCVH9GRMGXWV6BZ35HNAYQ",
+        "summary": "Implemented safe_extract.extract with whole-batch validation, POSIX name and collision checks, root and symlink-aware filesystem preflight, exclusive target creation, and exact byte writes. Added focused coverage for invalid batches, path boundaries, collisions, symlinks, existing targets, byte preservation, and visible I/O errors. Final `python -m unittest -v` passed all 10 tests; `git diff --check` passed. Baseline had both original tests failing with NotImplementedError. Committed as c1ca27ac56a5a42dde2381b3d2fb6cb4a6987de1; worktree clean. No known gaps.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCZ581NV6ZHP6F83Z552QB)\n\nSHIPPED: commit c1ca27ac56a5a42dde2381b3d2fb6cb4a6987de1 on the run branch"
+      },
+      "created_at": "2026-11-20T11:53:17.323913462Z",
+      "updated_at": "2026-11-20T11:56:35.284114956Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WCVH9GRMGXWV6BZ35HNAYQ",
+        "item": "qi_01M7WCVH2JNJBX8KDHDPVJQ6M2",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WCVHJTN98C3HKPV8VFK7XQ",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/9bbf18aa2585aedae16b3852/.archon/data/worktrees/quality-safe-extract/qi_01M7WCVH2JNJBX8KDHDPVJQ6M2",
+        "branch": "archon/dpvjq6m2-implement-safe-extract-py-and-focused-te",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract with whole-batch validation, POSIX name and collision checks, root and symlink-aware filesystem preflight, exclusive target creation, and exact byte writes. Added focused coverage for invalid batches, path boundaries, collisions, symlinks, existing targets, byte preservation, and visible I/O errors. Final `python -m unittest -v` passed all 10 tests; `git diff --check` passed. Baseline had both original tests failing with NotImplementedError. Committed as c1ca27ac56a5a42dde2381b3d2fb6cb4a6987de1; worktree clean. No known gaps.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCZ581NV6ZHP6F83Z552QB)\n\nSHIPPED: commit c1ca27ac56a5a42dde2381b3d2fb6cb4a6987de1 on the run branch"
+        },
+        "cost_usd": 0.01562356,
+        "started_at": "2026-11-20T11:53:17.590897035Z",
+        "finished_at": "2026-11-20T11:56:35.284114956Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WCVHJ4KCXDJ2VKSHHCSHYA",
+        "run": "prun_01M7WCVH9GRMGXWV6BZ35HNAYQ",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7WCVHKGBH29N2QGSZ94V7TK",
+        "aether_task": "tsk_01M7WCVHKGFMYQ6E1ZADF8P5FY",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented safe_extract.extract with whole-batch validation, POSIX name and collision checks, root and symlink-aware filesystem preflight, exclusive target creation, and exact byte writes. Added focused coverage for invalid batches, path boundaries, collisions, symlinks, existing targets, byte preservation, and visible I/O errors. Final `python -m unittest -v` passed all 10 tests; `git diff --check` passed. Baseline had both original tests failing with NotImplementedError. Committed as c1ca27ac56a5a42dde2381b3d2fb6cb4a6987de1; worktree clean. No known gaps.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v — passed, 10 tests",
+            "git diff --check — passed"
+          ],
+          "commit": "c1ca27ac56a5a42dde2381b3d2fb6cb4a6987de1",
+          "evidence": [
+            {
+              "after": "Ran 10 tests in 0.004s — OK. git diff --check passed.",
+              "before": "Ran 2 tests; both errored with NotImplementedError.",
+              "caption": "Baseline test failure before implementation and final passing suite after implementation.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "c1ca27ac56a5a42dde2381b3d2fb6cb4a6987de1",
+          "pr": {
+            "body": "Implemented the documented standard-library API in safe_extract.py and added focused tests in test_safe_extract.py. Validation covers strict list/tuple/bytes types, POSIX path boundaries, duplicate and file/directory collisions, existing roots and targets, symlink components, and non-directory ancestors before any writes. Writes use exclusive creation and preserve bytes; unexpected I/O failures remain visible. Assumption: caller provides a stable filesystem, as specified. Final unittest suite passed all 10 tests and git diff --check passed; baseline's two tests failed with NotImplementedError. Independent review passed with no findings.",
+            "summary": "Implemented validated regular-file extraction. Before: the API raised NotImplementedError; now it validates the full batch and filesystem before writing, rejects invalid paths and conflicts, and preserves exact bytes.",
+            "title": "Implement safe file extraction"
+          },
+          "review": {
+            "reviewed_head": "c1ca27ac56a5a42dde2381b3d2fb6cb4a6987de1",
+            "reviewer_agents": [
+              "agt_01M7WCZ581NV6ZHP6F83Z552QB"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7WCZ581NV6ZHP6F83Z552QB",
+                "base": "79c0226e100183ce361a272ea96d65c487f1e114",
+                "findings": 0,
+                "head": "c1ca27ac56a5a42dde2381b3d2fb6cb4a6987de1",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7WCZ581NV6ZHP6F83Z552QB"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": {
+              "level": "medium",
+              "why": "The change handles filesystem paths and file creation, so defects could affect extracted data, but scope is limited to one helper and its tests. Exclusive file creation and full preflight reduce overwrite and validation risks."
+            },
+            "why": "Contained behavior change in safe_extract.py and its tests, but filesystem path validation and writes can affect data. Full preflight, symlink rejection, exclusive creates, focused tests, and independent review reduce risk."
+          },
+          "tree": "f0ae9e22ce051f1a0a5450a363235f72e2cf1cd1"
+        },
+        "cost_usd": 0.01562356,
+        "started_at": "2026-11-20T11:53:17.636539736Z",
+        "finished_at": "2026-11-20T11:56:32.079690556Z"
+      }
+    ],
+    "spent_usd": 0.01562356,
+    "gates": [],
+    "delegations": {
+      "stg_01M7WCVHJ4KCXDJ2VKSHHCSHYA": {
+        "direct_usd": 0.01226654,
+        "delegated_usd": 0.0033570200000000005,
+        "agents": [
+          {
+            "agent": "agt_01M7WCZ581NV6ZHP6F83Z552QB",
+            "parent": "agt_01M7WCVHKGBH29N2QGSZ94V7TK",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0033570200000000005
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

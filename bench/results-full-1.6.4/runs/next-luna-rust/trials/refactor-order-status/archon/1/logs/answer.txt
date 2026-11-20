@@ -1,0 +1,16 @@
+Queued as [qi_01M7WFGR6AAA4SNFSEF78K4TKV](#) in the `direct` pipeline with strict review. The brief includes the type, parsing, lifecycle, behavior-preservation, `cargo test`, and commit requirements.
+
+Done: Refactor order status strings into OrderStatus. Refactored the orders crate to use and re-export OrderStatus and ParseStatusError, preserving strict parsing, prior error text, report serialization/order, and lifecycle behavior. Added parsing/formatting and transition tests. Final cargo fmt --check, cargo test (5 passed), and git diff --check passed on HEAD f9b9858e9cc1c293bf5525ea037a99198b9766ef; worktree is clean. Three independent whole-change reviews passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WFN33QJZR99YTXPAT1E90K), codex/gpt-6-luna (agent agt_01M7WFN35JA3K3F743KXR0G3NX), codex/gpt-6-luna (agent agt_01M7WFN34PK2ZRR36GP678HT7M)
+
+SHIPPED: commit f9b9858e9cc1c293bf5525ea037a99198b9766ef on the run branch
+Branch `archon/f78k4tkv-refactor-order-status-strings-into-order` in /home/mengsig/.local/share/archon-bench/f164-ngf165q5/archon-bench/work/20261120T123310Z/9222d6e0f01e9962b359e307/refactor-order-status holds it (7 files changed, 153 insertions(+), 27 deletions(-)). Review: `archon diff qi_01M7WFGR6AAA4SNFSEF78K4TKV`; land it in `main`: `archon merge qi_01M7WFGR6AAA4SNFSEF78K4TKV`.
+
+Freed 0.0 GiB of build output: item qi_01M7WFGR6AAA4SNFSEF78K4TKV ended and its cargo target directory went.
+
+Refactored the orders crate to use and re-export OrderStatus and ParseStatusError, preserving strict parsing, prior error text, report serialization/order, and lifecycle behavior. Added parsing/formatting and transition tests. Final cargo fmt --check, cargo test (5 passed), and git diff --check passed on HEAD f9b9858e9cc1c293bf5525ea037a99198b9766ef; worktree is clean. Three independent whole-change reviews passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WFN33QJZR99YTXPAT1E90K), codex/gpt-6-luna (agent agt_01M7WFN35JA3K3F743KXR0G3NX), codex/gpt-6-luna (agent agt_01M7WFN34PK2ZRR36GP678HT7M)
+
+SHIPPED: commit f9b9858e9cc1c293bf5525ea037a99198b9766ef on the run branch

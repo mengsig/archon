@@ -1,0 +1,27 @@
+**Root cause: the price-change path invalidates only the product cache entry, and category listings are cached separately for 10 minutes with no invalidation.** I read the code and changed nothing.
+
+**Repository note:** the only registered mirror is `ask-cache-invalidation`, whose `package.json` names the package `catalog-service` (v2.3.1). I read that mirror at its base commit on `main`. I have not checked the deployed version.
+
+**The code path**
+
+1. A merchant change goes through `updatePrice` in `src/pricing.js:6-13`. It writes to the store, then calls `catalog.cache.delete(productKey(sku))`, which removes only `product:<sku>`.
+2. Product pages call `Catalog.product` (`src/catalog.js:21-29`). It reads `product:<sku>`, so it misses the deleted entry, reloads from the store, and shows the new price at once.
+3. Category pages call `Catalog.listing` (`src/catalog.js:31-42`). It caches each page under `listing:<category>:<page>` with `LISTING_TTL_SECONDS` (`src/config.js:87`, 600 seconds). Each cached row is a copy of `{ sku, name, priceCents }`, so the price is stored inside the listing entry.
+4. Nothing deletes `listing:*` keys. `updatePrice` does not know the product's category, and `TtlCache` has no prefix or pattern delete (`src/cache.js:49-72`). Until a listing entry expires, every category page serves the old price.
+
+**Why the delay is about ten minutes:** the listing entry's TTL is 600 seconds, and an entry is only rebuilt once it expires. The price change happens at a random point in that window, so the stale period runs up to 10 minutes. The product TTL is 3600 seconds, but the product entry is explicitly deleted, so it does not matter here.
+
+**Fix options**
+
+- **Preferred:** in `updatePrice`, look up the product's category and delete every listing page for that category, e.g. by adding a `deletePrefix(\`listing:${category}:\`)` method to `TtlCache`. This keeps the 600-second cache and its cost, and makes the change visible at once.
+- **Alternative:** stop storing `priceCents` in listing rows. Cache only the SKU order and fill prices from the product cache at read time. This removes the duplicated price, at the cost of one extra lookup per row.
+- **Mitigation only:** lower `LISTING_TTL_SECONDS`. This shortens the window but does not remove the inconsistency, and it raises rebuild cost.
+
+**Caveats**
+
+- The cache is an in-process `Map`. If the service runs as several instances, a delete in one instance does not reach the others, so the fix must also cover them. I cannot see the deployment topology from this mirror.
+- The test suite (`test/catalog.test.js`) covers product freshness but never checks a listing after a price update. That is why this went unnoticed. Any fix should add that test.
+
+Quota pace: claude-code's seven_day window is 76% used with 30% of it elapsed. At this rate it runs out around 2026-11-21 00:45 UTC, before it resets at 2026-11-25 06:00 UTC. Archon throttles nothing; the orchestrator chooses what runs on claude-code until then.
+
+claude-code seven-day quota is 76% used at 30% of the window, projected to run out around 2026-11-21 00:45 UTC, before the reset on 2026-11-25 06:00 UTC. Nothing is running or queued now (0 agents, 0 queued). I will keep new work to one item at a time at low or medium effort, and I will tell you before queueing anything heavy or moving work to another provider. Tell me if you would rather pause claude-code or route to another provider now.

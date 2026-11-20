@@ -1,0 +1,199 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W47677FEN6ZFWP568TFNK4",
+      "repo": "repo_01M7W46F1YCA7ND3GSGP7PHRHD",
+      "pipeline": "direct",
+      "title": "Implement retry_budget.py to SPEC with focused tests",
+      "brief": "Implement retry_budget.py according to SPEC.md. Preserve the documented API, handle every specified error and boundary case, and add focused tests beyond the existing basic coverage. Use only the Python standard library. Run appropriate tests and commit the completed work. Acceptance: behavior matches every specified API/error/boundary requirement in SPEC.md; focused tests cover omitted cases; tests pass; commit is created in the assigned worktree.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W47677FEN6ZFWP568TFNK4",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T09:22:22.060935275Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T09:22:22.077898860Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T09:22:22.060935275Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W4768Y7GTFNJ7P7KHRZJ20",
+        "summary": "Implemented retry_delay validation, bounded exponential backoff, Retry-After floor, and strict budget handling in retry_budget.py. Added focused boundary and validation tests. Final unittest suite passes (9 tests), compileall and diff checks pass; commit b7e71127e1d6e39c99cd06f179524d445f3e7528 is clean. No open issues.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit b7e71127e1d6e39c99cd06f179524d445f3e7528 on the run branch"
+      },
+      "created_at": "2026-11-20T09:22:22.055494122Z",
+      "updated_at": "2026-11-20T09:23:46.029270095Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W4768Y7GTFNJ7P7KHRZJ20",
+        "item": "qi_01M7W47677FEN6ZFWP568TFNK4",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W476KXAE27W5TQJGEEWXRV",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/c34ea98bd31196a317f14c55/.archon/data/worktrees/quality-retry-budget/qi_01M7W47677FEN6ZFWP568TFNK4",
+        "branch": "archon/568tfnk4-implement-retry-budget-py-to-spec-with-f",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented retry_delay validation, bounded exponential backoff, Retry-After floor, and strict budget handling in retry_budget.py. Added focused boundary and validation tests. Final unittest suite passes (9 tests), compileall and diff checks pass; commit b7e71127e1d6e39c99cd06f179524d445f3e7528 is clean. No open issues.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit b7e71127e1d6e39c99cd06f179524d445f3e7528 on the run branch"
+        },
+        "cost_usd": 0.0080049,
+        "started_at": "2026-11-20T09:22:22.369181944Z",
+        "finished_at": "2026-11-20T09:23:46.029270095Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W476JYM5A660MMPQT9VZBV",
+        "run": "prun_01M7W4768Y7GTFNJ7P7KHRZJ20",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W476N77CWD3QCWCPHYS054",
+        "aether_task": "tsk_01M7W476N7EW6915P9K9XQA9HR",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented retry_delay validation, bounded exponential backoff, Retry-After floor, and strict budget handling in retry_budget.py. Added focused boundary and validation tests. Final unittest suite passes (9 tests), compileall and diff checks pass; commit b7e71127e1d6e39c99cd06f179524d445f3e7528 is clean. No open issues.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (9 tests passed)",
+            "python -m compileall -q retry_budget.py test_retry_budget.py (passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "b7e71127e1d6e39c99cd06f179524d445f3e7528",
+          "evidence": [
+            {
+              "caption": "Final focused test run on committed tree: all 9 tests passed.",
+              "kind": "output",
+              "text": "Ran 9 tests in 0.001s\nOK"
+            }
+          ],
+          "local_commit": "b7e71127e1d6e39c99cd06f179524d445f3e7528",
+          "pr": {
+            "body": "Implemented the pure standard-library retry_delay function and added focused coverage for validation order, built-in integer type requirements, exhausted-attempt behavior, strict budget boundary, zero values, cap and uncapped Retry-After, and huge attempts. Full unittest suite passed (9 tests); compileall and git diff --check passed. No external dependencies or assumptions beyond SPEC.md.",
+            "summary": "Implemented the documented retry scheduling behavior. Before: retry_delay raised NotImplementedError; now it validates inputs, computes capped backoff safely, respects Retry-After and only starts retries strictly within budget.",
+            "title": "Implement retry budget scheduling"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained behavior change in retry_budget.py with focused test additions in test_retry_budget.py. No persistence, concurrency, security, or public API shape changes. The full test suite passed."
+          },
+          "tree": "fe973430932bd5291fdf9d03de3b6fc4ebe00e51"
+        },
+        "cost_usd": 0.0080049,
+        "started_at": "2026-11-20T09:22:22.430632160Z",
+        "finished_at": "2026-11-20T09:23:45.720776030Z"
+      }
+    ],
+    "spent_usd": 0.0080049,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T09:22:22.060935275Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T09:22:22.077898860Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T09:22:22.060935275Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

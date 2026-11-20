@@ -1,0 +1,68 @@
+# Archon benchmark
+
+- Run `20261120T084309Z`: 2026-11-20T08:43:09.926968965+00:00 → 2026-11-20T11:17:16.229369891+00:00
+- Archon commit: `c17af3feba8f5a6a2adf480d77d4477894d6eccc`
+- Effort: `medium`; trials per task and arm: 3; parallel: 1
+- Model `aether`: `claude-code/claude-haiku-5-5`
+- Model `archon`: `claude-code/claude-haiku-5-5`
+- Version `aetherd`: `1.4.2`
+- Version `archon`: `archon 1.6.3`
+- Trials: 66 planned, 66 completed, 0 skipped; spent $2.96 of $25.00
+
+## Per arm
+
+| Arm | Model | Trials | Success | pass@1 | pass@3 | Score | Wall s | Input tok | Output tok | Cost $ | Operator msgs | Infra | Timeouts |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| archon | `claude-code/claude-haiku-5-5` | 33 | 26/33 (79%) | 79% | 82% | 0.79 ± 0.42 | 177 ± 122 | 2000518 ± 1376412 | 45492 ± 34506 | 0.07 ± 0.05 | 2.8 ± 1.5 | 0 | 0 |
+| aether | `claude-code/claude-haiku-5-5` | 33 | 27/33 (82%) | 82% | 82% | 0.82 ± 0.39 | 56 ± 27 | 363340 ± 231171 | 11336 ± 6018 | 0.02 ± 0.01 | 6.1 ± 3.4 | 0 | 0 |
+
+## Per task
+
+Each cell: passes/trials · wall s · cost $ · operator msgs (mean ± stdev).
+
+| Task | archon | aether |
+|---|---|---|
+| ask-cache-invalidation | 3/3 · 22 ± 3 · 0.01 ± 0.00 · 1.0 ± 0.0 | 3/3 · 22 ± 3 · 0.01 ± 0.00 · 1.0 ± 0.0 |
+| feature-token-bucket | 3/3 · 254 ± 120 · 0.08 ± 0.04 · 2.0 ± 0.0 | 3/3 · 43 ± 5 · 0.01 ± 0.00 · 5.0 ± 1.0 |
+| fix-off-by-one | 3/3 · 66 ± 6 · 0.03 ± 0.00 · 2.3 ± 0.6 | 3/3 · 20 ± 0 · 0.01 ± 0.00 · 4.7 ± 0.6 |
+| long-backlog | 3/3 · 153 ± 33 · 0.14 ± 0.02 · 5.0 ± 0.0 | 3/3 · 100 ± 18 · 0.03 ± 0.01 · 8.7 ± 3.8 |
+| multi-repo-currency | 0/3 · 148 ± 24 · 0.07 ± 0.00 · 5.0 ± 0.0 | 0/3 · 85 ± 10 · 0.02 ± 0.00 · 9.3 ± 1.2 |
+| multi-repo-pagination | 2/3 · 306 ± 153 · 0.16 ± 0.07 · 4.7 ± 1.2 | 3/3 · 75 ± 5 · 0.02 ± 0.00 · 11.7 ± 2.1 |
+| quality-ledger-transfer | 3/3 · 236 ± 131 · 0.07 ± 0.03 · 2.0 ± 0.0 | 3/3 · 53 ± 2 · 0.01 ± 0.00 · 5.0 ± 1.0 |
+| quality-retry-budget | 3/3 · 139 ± 33 · 0.04 ± 0.01 · 2.0 ± 0.0 | 3/3 · 42 ± 8 · 0.01 ± 0.00 · 6.0 ± 2.6 |
+| quality-safe-extract | 3/3 · 337 ± 25 · 0.12 ± 0.01 · 2.3 ± 0.6 | 3/3 · 77 ± 7 · 0.02 ± 0.00 · 6.0 ± 2.0 |
+| refactor-order-status | 0/3 · 256 ± 10 · 0.08 ± 0.01 · 3.7 ± 0.6 | 0/3 · 68 ± 8 · 0.02 ± 0.00 · 8.0 ± 1.0 |
+| review-seeded-bug | 3/3 · 32 ± 3 · 0.01 ± 0.00 · 1.0 ± 0.0 | 3/3 · 28 ± 3 · 0.01 ± 0.00 · 2.0 ± 0.0 |
+
+## Per pipeline
+
+Archon whole-trial observations: each trial appears once per table. Mixed buckets retain all selected and attempted pipelines or selected review levels. Pass rate is the trial grader verdict; cost and wall time cover the whole trial, including orchestration. These are not per-item outcomes or causal comparisons. Review levels are captured policy, not proof of completed review; historical policy changes are unavailable. Unknown means missing metadata; no work means a captured empty queue. Infrastructure failures are excluded from metrics.
+
+| Bucket | Trials | Pass rate | Wall s | Cost $ | Infra | Timeouts |
+|---|---:|---:|---:|---:|---:|---:|
+| direct | 26 | 20/26 (77%) | 208 ± 110 | 0.09 ± 0.05 | 0 | 0 |
+| no work (empty queue) | 6 | 6/6 (100%) | 27 ± 6 | 0.01 ± 0.00 | 0 | 0 |
+| refactor | 1 | 0/1 (0%) | 268 ± 0 | 0.07 ± 0.00 | 0 | 0 |
+
+## Per review level
+
+Archon whole-trial observations: each trial appears once per table. Mixed buckets retain all selected and attempted pipelines or selected review levels. Pass rate is the trial grader verdict; cost and wall time cover the whole trial, including orchestration. These are not per-item outcomes or causal comparisons. Review levels are captured policy, not proof of completed review; historical policy changes are unavailable. Unknown means missing metadata; no work means a captured empty queue. Infrastructure failures are excluded from metrics.
+
+| Bucket | Trials | Pass rate | Wall s | Cost $ | Infra | Timeouts |
+|---|---:|---:|---:|---:|---:|---:|
+| mixed: standard + strict | 2 | 2/2 (100%) | 392 ± 56 | 0.19 ± 0.03 | 0 | 0 |
+| no work (empty queue) | 6 | 6/6 (100%) | 27 ± 6 | 0.01 ± 0.00 | 0 | 0 |
+| standard | 19 | 13/19 (68%) | 160 ± 77 | 0.07 ± 0.04 | 0 | 0 |
+| strict | 6 | 5/6 (83%) | 310 ± 66 | 0.10 ± 0.02 | 0 | 0 |
+
+## Method
+
+- Every arm gets the same task prompt, effort and time limit, and the same model where the harness allows; `codex` runs its own model. Every arm runs with its tool permission prompts bypassed.
+- `claude` keeps Claude Code's built-in subagents (the Task tool); the `aether` arm is a single leaf agent without delegation.
+- Each trial starts from a fresh copy of the fixtures in an unguessably named directory outside the Archon checkout, with a one-commit git history. Hidden tests, reference solutions and rubrics are copied in only at grade time, into a separate copy the agent never sees, after the agent and every process it started have stopped. Agent processes do not inherit environment variables pointing at the checkout. There is no OS sandbox: an agent that searched the whole home directory could still find the checkout.
+- Success is the hidden grader's verdict. Test graders restore the visible tests from the task, not from the agent's repository, and require the runner's own summary to report no failures and a minimum number of passing tests. Rubric graders need related facts close together and cap the answer length.
+- A failed trial with a harness error (the arm could not run cleanly: a provider limit, a crash, a grading failure) is an infrastructure failure. It is left out of pass rates and every metric, counted under Infra and listed with its error.
+- Wall time runs from handing over the prompt until the arm finished; Archon's daemon start-up (recorded as `setup_secs`) and the quiet window used to detect that Archon finished are excluded.
+- Input tokens include cache reads and writes. Cost is the API-equivalent total: billed dollars plus Aether's estimate of unbilled usage (such as Codex), or `--price` list prices for an arm that reports neither. `(n=…)` marks a metric only that many trials reported. `≥` marks a cost Aether reported as incomplete (`cost_gap`); the true cost is at least that. An agent's estimate prices its own unpriced usage, so only unpriced work no estimate covers counts as incomplete. `*` marks a cost that includes one Aether reported as incomplete together with estimates; it is not a bound.
+- Operator messages are what the operator had to read: one final result for `claude`/`codex`, the assistant messages of the Aether agent, and the default-visible chat lines for Archon.
+- Values are mean ± sample standard deviation over graded trials. pass@k uses the unbiased estimator per task, averaged over tasks, with k the fewest graded trials any (task, arm) cell has.

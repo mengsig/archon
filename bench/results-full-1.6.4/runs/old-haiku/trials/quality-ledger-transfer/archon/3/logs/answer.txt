@@ -1,0 +1,20 @@
+I queued the work as item `qi_01M7W9H1X99N8E8DY2HTHB87N7`. It runs in a fresh worktree on the `direct` pipeline with standard review. I'll post the outcome when it finishes.
+
+- **Scope:** implement `ledger.py` per `SPEC.md` in `quality-ledger-transfer`, keep the documented API, handle every specified error and boundary case, add focused tests beyond the existing basics, standard library only, and commit.
+- **Review:** standard, not strict, because the change is a single self-contained module. I did not read the code, since the orchestrator does not change repositories and the stage agent does that.
+- **Shipping:** the repository ships `local` (commit on a local branch, never pushed), so the result will be a local commit on the item's branch.
+
+Done: Implement ledger.py per SPEC.md with focused tests. Implemented ledger.py per SPEC.md (Ledger, transfer, snapshot, MAX_BALANCE) using only the standard library, with one threading.Lock per ledger so transfers are atomic and opposite transfers cannot deadlock. Validation runs at construction and before any account lookup. Added 24 focused tests to test_ledger.py for construction, amount and account errors, balance and overflow boundaries, same-account transfers, and threaded transfers that cannot hang (bounded joins). Before: the committed stub fails both original tests with NotImplementedError. After: `python3 -m unittest -v test_ledger` runs 26 tests, all OK. Commit 54a9739 (tree 743b117) on archon/hthb87n7-implement-ledger-py-per-spec-md-with-foc, under the repo's configured identity, not pushed. Review: one reviewer (agt_01M7W9K1BNJTKX8759C3KVXQRS) passed the head with no blocking findings. Open, non-blocking follow-ups: the constructor validates via items() but copies via dict(), which only matters for dict subclasses; the snapshot test samples interleavings and would probably not catch a removed lock. The reviewer's leftover claude process (PID 170094) had already exited. Nothing is left running.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9K1BNJTKX8759C3KVXQRS)
+
+SHIPPED: commit 54a973959072a2602a4980648dff4f87fb7b5882 on the run branch
+Branch `archon/hthb87n7-implement-ledger-py-per-spec-md-with-foc` in /home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/ab7937af0613474fa940be2e/quality-ledger-transfer holds it (2 files changed, 223 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M7W9H1X99N8E8DY2HTHB87N7`; land it in `main`: `archon merge qi_01M7W9H1X99N8E8DY2HTHB87N7`.
+
+Implemented ledger.py per SPEC.md (Ledger, transfer, snapshot, MAX_BALANCE) using only the standard library, with one threading.Lock per ledger so transfers are atomic and opposite transfers cannot deadlock. Validation runs at construction and before any account lookup. Added 24 focused tests to test_ledger.py for construction, amount and account errors, balance and overflow boundaries, same-account transfers, and threaded transfers that cannot hang (bounded joins). Before: the committed stub fails both original tests with NotImplementedError. After: `python3 -m unittest -v test_ledger` runs 26 tests, all OK. Commit 54a9739 (tree 743b117) on archon/hthb87n7-implement-ledger-py-per-spec-md-with-foc, under the repo's configured identity, not pushed. Review: one reviewer (agt_01M7W9K1BNJTKX8759C3KVXQRS) passed the head with no blocking findings. Open, non-blocking follow-ups: the constructor validates via items() but copies via dict(), which only matters for dict subclasses; the snapshot test samples interleavings and would probably not catch a removed lock. The reviewer's leftover claude process (PID 170094) had already exited. Nothing is left running.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9K1BNJTKX8759C3KVXQRS)
+
+SHIPPED: commit 54a973959072a2602a4980648dff4f87fb7b5882 on the run branch

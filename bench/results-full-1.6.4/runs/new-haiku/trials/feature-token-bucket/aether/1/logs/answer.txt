@@ -1,0 +1,14 @@
+The rate limiter is implemented to the spec in `ratelimit.py` and committed as `01eba0d` on `main`. All 15 tests pass (the 3 original plus 12 new edge-case tests), and the standard library is the only dependency.
+
+**What the implementation does**
+- **`TokenBucket`** starts full and refills continuously from the injected clock, capped at capacity. `try_acquire`, `available` and `wait_time` all refill first. `wait_time` returns `0.0` when a request would succeed now and never consumes tokens.
+- **Clock regressions** are ignored: the bucket only advances its time when the clock passes the latest time it has seen.
+- **`KeyedLimiter`** keeps one bucket per key in an `OrderedDict`. Both `try_acquire` and `wait_time` count as a use. Once `max_keys` is reached, the least recently used key is evicted, and an evicted key returns full.
+- **Invalid requests change nothing.** The request size is validated before a key is created or any eviction happens, so a bad call cannot evict another key.
+- **NaN is rejected** for capacity, refill rate and request size, using `not x > 0`-style checks, which the plain `<= 0` form would miss.
+
+**Choices I made beyond the spec**
+- I added 12 edge-case tests to `test_ratelimit.py`, covering error paths, clock regression, fractional tokens, and LRU eviction order.
+- I did not write a `Co-Authored-By` trailer on the commit, because the CLAUDE.md in this repo says no Claude attribution and that takes precedence. The commit uses the repo's configured identity (`mengsig`).
+
+**Note:** I ran the tests with `python3 -m unittest` rather than `-I`, because `-I` removes the working directory from the import path and the test module failed to load.

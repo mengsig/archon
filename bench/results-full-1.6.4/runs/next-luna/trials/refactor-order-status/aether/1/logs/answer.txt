@@ -1,0 +1,3 @@
+Implemented and committed as `60c3096` (`Refactor order status to enum`). `OrderStatus` now handles parsing, display, and lifecycle transitions, and the crate re-exports it and `ParseStatusError`. Status name literals are confined to `src/status.rs`.
+
+I couldn’t run `cargo fmt` or `cargo test` because `cargo` is unavailable in this environment. The working tree is clean.

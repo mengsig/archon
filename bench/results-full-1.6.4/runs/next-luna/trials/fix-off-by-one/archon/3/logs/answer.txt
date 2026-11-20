@@ -1,0 +1,16 @@
+Queued as **qi_01M7WBGQZT5NQJ5EMB9F9YZQ05** on the repository’s direct pipeline, with standard review. The work brief requires fixing `window.py`, leaving tests unchanged, running `python3 -m unittest`, and committing the fix locally.
+
+Failed: Fix window.py so unittest passes for all inputs — implement: stage implement failed: the ship record archond delivers is not on record: commit "b5a83f7ece3f8f4e8f4e046303e26f4116b2a768917f" names no single commit in the run worktree (unknown or ambiguous): give the full hash git rev-parse prints. Full detail: archon queue show qi_01M7WBGQZT5NQJ5EMB9F9YZQ05 --full
+
+Done: Fix window.py so unittest passes for all inputs. Fixed sliding_windows’ off-by-one stop bound so it includes every valid contiguous window. The original unittest run failed 2 tests; after the fix, python3 -m unittest passed all 3 tests and git diff --check passed. Independent review passed with no findings. Committed as edc448b5946ab2c19cf3675484204cad24b4c80f; worktree is clean. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBRHB1QFRABZXNKDBB7A9Z)
+
+SHIPPED: commit edc448b5946ab2c19cf3675484204cad24b4c80f on the run branch
+Branch `archon/9f9yzq05-fix-window-py-so-unittest-passes-for-all-fresh1` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/65983ea202b8a788964528a7/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7WBGQZT5NQJ5EMB9F9YZQ05`; land it in `main`: `archon merge qi_01M7WBGQZT5NQJ5EMB9F9YZQ05`.
+
+Fixed sliding_windows’ off-by-one stop bound so it includes every valid contiguous window. The original unittest run failed 2 tests; after the fix, python3 -m unittest passed all 3 tests and git diff --check passed. Independent review passed with no findings. Committed as edc448b5946ab2c19cf3675484204cad24b4c80f; worktree is clean. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBRHB1QFRABZXNKDBB7A9Z)
+
+SHIPPED: commit edc448b5946ab2c19cf3675484204cad24b4c80f on the run branch

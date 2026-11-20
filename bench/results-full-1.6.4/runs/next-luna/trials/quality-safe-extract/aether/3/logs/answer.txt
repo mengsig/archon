@@ -1,0 +1,3 @@
+Implemented `extract()` with whole-batch validation, path and collision checks, symlink and existing-target rejection, and exclusive file creation. Added focused validation and boundary tests.
+
+All 7 tests pass, and `git diff --check` is clean. Commit: `0e6371f` (`Implement safe file extraction validation`).

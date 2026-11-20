@@ -1,0 +1,200 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WB99NXXTGBHDX590YHGBAF",
+      "repo": "repo_01M7WB8HAB1FT860X8R0XXCN3V",
+      "pipeline": "direct",
+      "title": "Implement rate limiter from SPEC.md",
+      "brief": "Implement the rate limiter exactly as specified in SPEC.md in ratelimit.py, which currently contains stubs. Handle every specified error case and edge case, including those not covered by test_ratelimit.py. Keep the implementation dependency-free using only the Python standard library. Run the relevant tests/checks, review the diff, and commit the completed work on this local-shipping repository. Acceptance: behavior matches SPEC.md including boundary/error cases; existing tests pass; no third-party dependencies; a commit is created.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7WB99NXXTGBHDX590YHGBAF",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T11:25:51.346885797Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T11:25:51.350367374Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T11:25:51.346885797Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WB99W0XAZ1ZG273NHSCHS7",
+        "summary": "Implemented and committed the dependency-free token bucket and LRU keyed limiter. The committed tree passes all 8 unit tests, bytecode compilation, diff whitespace checks, and a fractional max_keys cap check. No work remains open.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 346fc48cff68f4cc961a011be5bae8c93fc247d9 on the run branch"
+      },
+      "created_at": "2026-11-20T11:25:51.165814005Z",
+      "updated_at": "2026-11-20T11:28:03.518642889Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WB99W0XAZ1ZG273NHSCHS7",
+        "item": "qi_01M7WB99NXXTGBHDX590YHGBAF",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WB9A36PWX5CDZ08ERFYRCR",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/891dbbf1edfb6c659c111478/.archon/data/worktrees/feature-token-bucket/qi_01M7WB99NXXTGBHDX590YHGBAF",
+        "branch": "archon/90yhgbaf-implement-rate-limiter-from-spec-md",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented and committed the dependency-free token bucket and LRU keyed limiter. The committed tree passes all 8 unit tests, bytecode compilation, diff whitespace checks, and a fractional max_keys cap check. No work remains open.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 346fc48cff68f4cc961a011be5bae8c93fc247d9 on the run branch"
+        },
+        "cost_usd": 0.01258134,
+        "started_at": "2026-11-20T11:25:51.556096137Z",
+        "finished_at": "2026-11-20T11:28:03.518642889Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WB9A2R1FN6FN8J8V0QMF45",
+        "run": "prun_01M7WB99W0XAZ1ZG273NHSCHS7",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WB9A3Q0MW8DDPQ074PB7T8",
+        "aether_task": "tsk_01M7WB9A3QGM458Q5BKBAJ1FH1",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented and committed the dependency-free token bucket and LRU keyed limiter. The committed tree passes all 8 unit tests, bytecode compilation, diff whitespace checks, and a fractional max_keys cap check. No work remains open.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v — 8 tests passed",
+            "python -m py_compile ratelimit.py test_ratelimit.py — passed",
+            "git diff --check — passed",
+            "fractional max_keys cap assertion — passed"
+          ],
+          "commit": "346fc48cff68f4cc961a011be5bae8c93fc247d9",
+          "evidence": [
+            {
+              "after": "Ran 8 tests in 0.000s\nOK\nfractional max_keys cap: OK",
+              "before": "before: TokenBucket(1, 1) -> NotImplementedError",
+              "caption": "Before, constructing a token bucket raised NotImplementedError; after, all focused tests pass.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "346fc48cff68f4cc961a011be5bae8c93fc247d9",
+          "pr": {
+            "body": "Implemented standard-library-only token buckets with continuous fractional refill and monotonic rollback handling, plus keyed buckets stored in an LRU OrderedDict. Added coverage for fractional refill, wait times, rollback, invalid inputs, LRU recency/eviction, independent keys, and invalid requests not displacing existing keys. Verification: python -m unittest -v (8 passed), python -m py_compile ratelimit.py test_ratelimit.py, git diff --check, and an explicit fractional max_keys cap assertion. Assumption: a non-integral max_keys is honored as an upper bound on the integer bucket count.",
+            "summary": "Implemented full token bucket and per-key LRU rate limiting. Callers can acquire tokens, inspect availability or wait time, and independently limit hashable keys. Before: all methods were stubs; now: specified refill, rollback, validation, and eviction behavior works.",
+            "title": "Implement token bucket rate limiter"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained behavior change in ratelimit.py with focused tests in test_ratelimit.py. No dependencies, persistence, locking, or cross-cutting changes. All checks passed; the feature adds caller-visible rate limiting behavior."
+          },
+          "tree": "db13d0c29f85503a71d75e052d1e647d9cac683f"
+        },
+        "cost_usd": 0.01258134,
+        "started_at": "2026-11-20T11:25:51.576252566Z",
+        "finished_at": "2026-11-20T11:28:03.210418988Z"
+      }
+    ],
+    "spent_usd": 0.01258134,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T11:25:51.346885797Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T11:25:51.350367374Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T11:25:51.346885797Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

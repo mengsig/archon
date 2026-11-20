@@ -1,0 +1,9 @@
+Implemented and committed in both repositories.
+
+- `ledger`: accepts optional currency codes, defaults to `USD`, emits the currency column, and returns status 2 for malformed codes.
+- `reports`: totals by account and currency, supports older CSV without a currency column as `USD`, and returns status 2 for malformed codes.
+- Updated both READMEs.
+- Python tests pass. Rust tests could not run because `cargo` is unavailable.
+- Both repositories have clean working trees.
+
+Commits: `ledger` `982a73b`; `reports` `cc3429c`.

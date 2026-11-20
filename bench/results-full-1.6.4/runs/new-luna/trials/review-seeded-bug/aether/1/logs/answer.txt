@@ -1,0 +1,9 @@
+## Findings
+
+- **Critical — `src/tokens.js`, `verify`: empty signatures are accepted, allowing forged tokens.** `expected.startsWith(signature)` succeeds when `signature` is empty. For example, an attacker can base64url-encode `{"user":"root","exp":9999999999999}` and submit `<encoded-payload>.`; verification returns the forged payload. Require a full-length signature and compare it in constant time.
+
+- **High — `src/tokens.js`, `verify`: signature comparison leaks timing information.** `startsWith` can return at the first mismatching character. Repeated measurements may reveal signature prefixes, weakening HMAC verification. Use a constant-time comparison after validating the signature’s encoding and exact length.
+
+- **Medium — `src/tokens.js`, `verify`: malformed token payloads can throw instead of returning `null`.** `JSON.parse(fromBase64Url(body))` is not guarded. For example, `!.` passes the empty-signature check and can throw during parsing. Catch decoding and parsing errors and reject the token with `null`.
+
+I did not change files or run tests.

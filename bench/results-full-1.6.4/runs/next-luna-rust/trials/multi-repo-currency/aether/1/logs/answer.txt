@@ -1,0 +1,6 @@
+Implemented and committed both repositories.
+
+- `ledger`: accepts an optional currency code (defaults to `USD`), adds it to CSV output, and exits with status 2 for malformed codes. Commit: `31572d0`.
+- `reports`: totals by account and currency, defaults older CSV rows to `USD`, and exits with status 2 for malformed codes. Commit: `4663d45`.
+- Updated both READMEs and added regression coverage.
+- Verification passed: `cargo test` and `python3 -m unittest`. Both working trees are clean.

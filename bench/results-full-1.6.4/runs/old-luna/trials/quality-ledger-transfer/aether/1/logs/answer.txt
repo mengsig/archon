@@ -1,0 +1,5 @@
+Implemented the bounded, thread-safe ledger and added focused validation, boundary, copying, and concurrency tests.
+
+All 8 tests pass. Working tree is clean.
+
+Commit: `32b8b6e` — `Implement atomic bounded ledger`

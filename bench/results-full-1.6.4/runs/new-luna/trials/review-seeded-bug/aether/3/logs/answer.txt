@@ -1,0 +1,9 @@
+I found two security issues and one robustness issue in [src/tokens.js](/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/b5b68dcd8e898aacfbab4e43/review-seeded-bug/src/tokens.js).
+
+- **High — `verify`: accepts truncated or empty signatures.** `expected.startsWith(signature)` accepts any prefix of the correct HMAC, including an empty string. An attacker can take any unexpired token payload and submit `<body>.` or `<body>.<first few signature characters>`; verification returns the payload without knowing the secret. Require a full-length signature and compare it with a constant-time comparison.
+
+- **Medium — `verify`: malformed tokens can throw instead of returning `null`.** `fromBase64Url` and `JSON.parse` can throw for malformed payloads, and a correctly signed JSON value such as `null` causes `payload.exp` to throw. Since tokens may come from untrusted requests, callers that expect invalid tokens to return `null` can get uncaught exceptions. Catch decoding/parsing errors and validate that the payload is an object before reading claims.
+
+- **Low — `verify`: ignores extra token segments.** `token.split('.')` destructures only the first two segments, so a token with a valid signature followed by extra data is accepted. For example, `<body>.<valid-signature>.anything` verifies. Require exactly two segments.
+
+I made no code changes and did not run tests or builds.

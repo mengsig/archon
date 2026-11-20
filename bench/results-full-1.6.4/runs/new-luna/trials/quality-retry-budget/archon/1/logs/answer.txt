@@ -1,0 +1,14 @@
+Queued as `qi_01M7W47677FEN6ZFWP568TFNK4` in the `direct` pipeline. It covers implementing `retry_budget.py` to `SPEC.md`, adding focused tests, using only the standard library, and committing the work.
+
+Done: Implement retry_budget.py to SPEC with focused tests. Implemented retry_delay validation, bounded exponential backoff, Retry-After floor, and strict budget handling in retry_budget.py. Added focused boundary and validation tests. Final unittest suite passes (9 tests), compileall and diff checks pass; commit b7e71127e1d6e39c99cd06f179524d445f3e7528 is clean. No open issues.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit b7e71127e1d6e39c99cd06f179524d445f3e7528 on the run branch
+Branch `archon/568tfnk4-implement-retry-budget-py-to-spec-with-f` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/c34ea98bd31196a317f14c55/quality-retry-budget holds it (2 files changed, 68 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7W47677FEN6ZFWP568TFNK4`; land it in `main`: `archon merge qi_01M7W47677FEN6ZFWP568TFNK4`.
+
+Implemented retry_delay validation, bounded exponential backoff, Retry-After floor, and strict budget handling in retry_budget.py. Added focused boundary and validation tests. Final unittest suite passes (9 tests), compileall and diff checks pass; commit b7e71127e1d6e39c99cd06f179524d445f3e7528 is clean. No open issues.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit b7e71127e1d6e39c99cd06f179524d445f3e7528 on the run branch

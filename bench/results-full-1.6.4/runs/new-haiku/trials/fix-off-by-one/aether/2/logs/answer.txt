@@ -1,0 +1,9 @@
+Fixed the off-by-one bug in window.py's sliding_windows and committed it as 9b5b80d ("Fix off-by-one in sliding_windows") on main. The loop range was len(items) - size, which dropped the last window; it is now len(items) - size + 1. `python3 -m unittest` now runs 3 tests, all passing, and the test files are unchanged. I also checked edge cases by hand: empty input, size larger than the list, size equal to the list length, size 1, and tuple input all return the expected results. size <= 0 still raises ValueError. The commit has the configured git user (mengsig) and the Co-Authored-By line from the attribution reminder.
+
+The bug is fixed and committed as `9b5b80d` on `main`. `python3 -m unittest` now runs 3 tests with no failures, and the test files are unchanged.
+
+The loop in `window.py` iterated `range(len(items) - size)`, which skipped the final window. I changed it to `range(len(items) - size + 1)`. For inputs shorter than `size`, the count is zero or negative, and `range` treats that as empty, so those cases return `[]`. `size <= 0` still raises `ValueError`.
+
+I also checked these cases by hand, since the tests don't cover them: empty input, a list shorter than `size`, `size` equal to the list length, `size` of 1, and tuple input.
+
+The commit uses the repo's configured git identity (mengsig) and includes the `Co-Authored-By: Claude Haiku 5.5` line from the attribution reminder. I removed the `__pycache__` directory my test run created, so the working tree is clean.

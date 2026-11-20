@@ -1,0 +1,3 @@
+Implemented `TokenBucket` and `KeyedLimiter` per `SPEC.md`, including fractional refill, backward-clock handling, request validation, and LRU eviction. Committed as `5b2fdf6` (`Implement token bucket rate limiter`).
+
+I checked the diff for whitespace errors. I did not run the tests.

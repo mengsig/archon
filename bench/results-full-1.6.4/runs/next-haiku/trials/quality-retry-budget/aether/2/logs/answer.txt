@@ -1,0 +1,30 @@
+Implemented `retry_delay` in retry_budget.py per SPEC.md and added focused tests; all 30 tests pass (`python3 -m unittest test_retry_budget`). Committed as 275ab32 on main in the quality-retry-budget repo.
+
+Implementation:
+- Argument validation runs first, before any exhausted-attempt or exhausted-budget return. Each value must be a built-in int (bool and float are rejected), and the minimums are attempt>=1, max_attempts>=1, and elapsed/budget/base/cap/retry_after>=0 (retry_after may be None). Violations raise ValueError.
+- Backoff: returns 0 when base or cap is 0. Otherwise it returns cap once the exponent reaches cap.bit_length(), which avoids building a huge power of two; below that it computes min(cap, base << exponent).
+- Retry-After is an uncapped floor: delay = max(backoff, retry_after).
+- Budget: returns None when elapsed + delay >= budget, otherwise returns delay (including 0).
+
+Tests cover the attempt limit boundary, cap saturation, zero base/cap, base>cap, huge attempt values, the Retry-After floor and budget interaction, the exact budget boundary, zero delay, and every validation rule including validation-before-early-return.
+
+Choices to note:
+- Wrong-type arguments raise ValueError, not TypeError, because the spec says invalid values raise ValueError.
+- The commit has no Co-Authored-By line. The harness reminder asked for one, but the repo's CLAUDE.md says not to add Claude attribution and says the user's own rules take precedence.
+- A `__pycache__/` directory was created by running the tests and is untracked. It was left uncommitted.
+- Running unittest with `-I` fails to find the test module, so the tests were run without it.
+
+`retry_delay` is implemented per SPEC.md and committed as `275ab32` on `main`. All 30 tests pass with `python3 -m unittest test_retry_budget`.
+
+- **Validation** runs before any early return. Every argument must be a built-in int, so bool and float are rejected. Minimums are `attempt >= 1`, `max_attempts >= 1`, and `>= 0` for the rest. `retry_after_ms` may be `None`. Violations raise `ValueError`.
+- **Backoff** returns 0 when base or cap is 0. Once the exponent reaches `cap_ms.bit_length()`, it returns the cap without building a large power of two.
+- **Retry-After** is an uncapped floor: `max(backoff, retry_after_ms)`.
+- **Budget** returns `None` when `elapsed + delay >= budget`, otherwise the delay, including 0.
+
+The tests cover each rule and its boundaries, including the exact budget edge and validation running before the early returns.
+
+Choices I made:
+- **Wrong-type arguments raise `ValueError`**, not `TypeError`, because the spec says invalid values raise `ValueError`.
+- **No `Co-Authored-By` line in the commit.** The harness asked for one, but the repo's CLAUDE.md says not to add Claude attribution and says its rules override that reminder.
+- **`__pycache__/` is left untracked** from the test runs.
+- **Tests run without `python3 -I`.** The `-I` flag stops unittest from finding the test module in the working directory.

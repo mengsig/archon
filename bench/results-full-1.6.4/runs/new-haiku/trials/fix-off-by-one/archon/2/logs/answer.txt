@@ -1,0 +1,23 @@
+The fix is queued as item `qi_01M7W5QGYBY48W1Z80PCA8M5TG` in `fix-off-by-one`. I haven't touched the repository myself, since the orchestrator doesn't change repositories.
+
+- **What's queued:** the `direct` pipeline. One agent finds and fixes the bug in `window.py`, leaves the tests unchanged, checks edge cases beyond the tested ones, and commits to the local branch without pushing. The repo ships locally, so the commit stays on the local branch.
+- **Review:** `standard`, since a window function is shared logic that a subtle bug could hide in.
+- **Model:** balanced tier at medium effort. This is a small fix, and claude-code's seven-day quota is at 77% with 31% of the window elapsed, so I kept the effort down.
+- **Priority:** high.
+
+I'll report the outcome when the item finishes. I haven't run the tests myself, so there is no result yet.
+
+Done: Fix window.py bug so python3 -m unittest passes. Fixed the off-by-one in window.py so python3 -m unittest passes (3/3). sliding_windows iterated range(len(items) - size), which dropped the final window. It now uses range(len(items) - size + 1). Empty input and size larger than the input still return []; size <= 0 still raises ValueError. Tests are unchanged. Committed on archon/pca8m5tg-fix-window-py-bug-so-python3-m-unittest as abffe2a (tree 86fa257), not pushed, using the repo's configured identity with no attribution lines. Before: 2 of 3 tests failed (tests 'includes last window' and 'whole list is one window'). After: 3 of 3 pass. Extra edge checks passed: empty list, size>len, size==len, size 1, tuples, strings. Review: one reviewer (agt_01M7W5R6NVR3W4QKADK0BTNJFD, haiku, effort low) passed head abffe2a with no findings, risk low. The reviewer's leftover process (pid 3577190) had already exited. Nothing left running. Open items: none.
+REVIEW: pass by agt_01M7W5R6NVR3W4QKADK0BTNJFD at abffe2a
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W5R6NVR3W4QKADK0BTNJFD)
+
+SHIPPED: commit abffe2acb588544bed436b0dfe9b03c276633014 on the run branch
+Branch `archon/pca8m5tg-fix-window-py-bug-so-python3-m-unittest` in /home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/4f9338d607706504b90c3ed6/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7W5QGYBY48W1Z80PCA8M5TG`; land it in `main`: `archon merge qi_01M7W5QGYBY48W1Z80PCA8M5TG`.
+
+Fixed the off-by-one in window.py so python3 -m unittest passes (3/3). sliding_windows iterated range(len(items) - size), which dropped the final window. It now uses range(len(items) - size + 1). Empty input and size larger than the input still return []; size <= 0 still raises ValueError. Tests are unchanged. Committed on archon/pca8m5tg-fix-window-py-bug-so-python3-m-unittest as abffe2a (tree 86fa257), not pushed, using the repo's configured identity with no attribution lines. Before: 2 of 3 tests failed (tests 'includes last window' and 'whole list is one window'). After: 3 of 3 pass. Extra edge checks passed: empty list, size>len, size==len, size 1, tuples, strings. Review: one reviewer (agt_01M7W5R6NVR3W4QKADK0BTNJFD, haiku, effort low) passed head abffe2a with no findings, risk low. The reviewer's leftover process (pid 3577190) had already exited. Nothing left running. Open items: none.
+REVIEW: pass by agt_01M7W5R6NVR3W4QKADK0BTNJFD at abffe2a
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W5R6NVR3W4QKADK0BTNJFD)
+
+SHIPPED: commit abffe2acb588544bed436b0dfe9b03c276633014 on the run branch

@@ -1,0 +1,24 @@
+Refactored the `orders` crate's order status from `String` to a `OrderStatus` enum and committed it as 5b94eba on main. `cargo test` passes (3 integration tests plus 3 new unit tests in src/status.rs, no warnings).
+
+What changed:
+- src/status.rs (new): `OrderStatus` (Pending, Paid, Shipped, Cancelled; derives Debug, Clone, Copy, PartialEq, Eq, Hash), `as_str`, `Display`, `can_transition_to` with the four allowed transitions, `ParseStatusError` (implements Error; message `unknown order status "<input>"`), and `FromStr` (exact match, case-sensitive). The only status string literals are here.
+- `Order::status` is now `OrderStatus`. `pay`, `ship` and `cancel` are guarded by `can_transition_to`, which is equivalent to the old checks, and their error messages are unchanged.
+- `report::from_line` still checks fields in the same order and returns the same `unknown status "<raw>"` error.
+- `lib.rs` re-exports `OrderStatus` and `ParseStatusError`.
+
+Choices to review:
+- `report::status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. Ordering is still by status name (cancelled, paid, pending, shipped), not enum declaration order, which is kept explicit with a BTreeMap keyed on `as_str()`. This is a public signature change; the existing test still compiles because it calls `to_string()`, and I updated it to compare enum values.
+- `tests/orders.rs` now compares enum values. The one remaining literal is the expected error text "it is pending", which checks observable output.
+- I did not add a Co-Authored-By trailer to the commit, because CLAUDE.md says not to add Claude attribution to commits. The commit uses the repo's configured git user (mengsig).
+
+The order status is now an `OrderStatus` enum, committed as `5b94eba` on `main`. `cargo test` passes: the 3 existing integration tests plus 3 new unit tests in `src/status.rs`, with no warnings.
+
+- **`src/status.rs` (new):** holds `OrderStatus`, `as_str`, `Display`, `can_transition_to` with the four allowed transitions, `ParseStatusError`, and `FromStr`. Parsing is exact and case-sensitive, and the error reads `unknown order status "<input>"`. This is the only file with status string literals.
+- **Lifecycle:** `pay`, `ship` and `cancel` are guarded by `can_transition_to`. The error messages are unchanged.
+- **Report:** `from_line` checks fields in the same order and keeps its `unknown status "<raw>"` error.
+- **Crate root:** `lib.rs` re-exports `OrderStatus` and `ParseStatusError`.
+
+Decisions for you to review:
+- **Public signature change:** `report::status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. It is still sorted by status name (cancelled, paid, pending, shipped), not by enum declaration order. Any external caller of this function will need updating.
+- **Test literals:** `tests/orders.rs` now compares enum values. The one remaining status word is in the expected error text "it is pending", which checks observable output.
+- **Commit trailer:** I left off the Co-Authored-By line, because CLAUDE.md says not to add Claude attribution to commits. The commit uses the repo's configured git user (mengsig).

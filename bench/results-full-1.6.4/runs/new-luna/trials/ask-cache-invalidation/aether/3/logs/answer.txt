@@ -1,0 +1,5 @@
+`catalog.listing()` is responsible. It caches each category page under `listing:<category>:<page>` for `LISTING_TTL_SECONDS`, which is 600 seconds. When a listing is first read, it copies each product’s price into the cached rows.
+
+`updatePrice()` updates the store and deletes only `product:<sku>`. That immediately clears the product detail cache, but it leaves every cached listing page containing that SKU untouched. Those pages keep serving the old copied price until their 600-second TTL expires; the observed delay can be up to ten minutes.
+
+The fix is to invalidate the affected category’s listing cache entries when a price changes. Since listings are paged, invalidate every page for that category, or introduce a category-level version/key scheme that makes all its listing entries stale. Updating the tests to cover a cached listing followed by a price change would verify the fix.

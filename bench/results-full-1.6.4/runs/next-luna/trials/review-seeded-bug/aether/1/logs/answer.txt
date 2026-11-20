@@ -1,0 +1,7 @@
+## Findings
+
+- **High — `src/tokens.js`, `verify`: signature prefixes are accepted.** `expected.startsWith(signature)` accepts an empty signature, so `"<base64url of {\"user\":\"root\",\"exp\":9999999999999}>."` verifies as a forged, unexpired token. Nonempty truncated signatures also weaken forgery resistance: an attacker can alter the payload and search for a matching short prefix. Require an exact signature match, with a constant time comparison.
+
+- **Low — `src/tokens.js`, `verify`: trailing token segments are ignored.** Destructuring `token.split('.')` uses only the first two segments. A valid token followed by `.extra` still verifies. Reject tokens that do not have exactly two segments to keep parsing unambiguous.
+
+I did not change any files or run builds.

@@ -1,0 +1,38 @@
+I've queued the change as one initiative (`ini_01M7W5Y2ZMFJ2216GMDZ2WAVCP`) with two members, both on the `direct` pipeline with standard review:
+
+- `qi_01M7W5Y2ZP1HK33VNZPR901VNW`: **ledger** adds the optional fourth currency column (default `USD`), validates the three-letter code, and exits 2 with the line number for a malformed code. Other input errors keep exit 1.
+- `qi_01M7W5Y346731H8GKXYAGFMD05`: **reports** totals per account and currency, with header `account,currency,total_cents`, sorted by account then currency. Old CSV without the column counts as `USD`, and a malformed code exits 2.
+
+Both members build against one shared contract, so they run in parallel and don't depend on each other's code. Each repo's tests, README and commit are part of its member's brief. Both repos ship local, so the commits stay on local branches and nothing is pushed.
+
+Nothing has been changed in either repo yet; the items are queued. I'll look at the results when they finish.
+
+Done: reports: per-currency totals. Implemented per-account, per-currency totals in the reports repo. reports.py now reads an optional currency column (absent means USD), groups totals by (account, currency), and prints `account,currency,total_cents` sorted by account then currency. A malformed currency code (not exactly three uppercase A-Z) prints an error naming the line to stderr and exits 2 with no stdout. Added 4 unittest tests (new CSV with currency, old CSV without the column, sort order, malformed code exit 2 across five bad codes) and updated README.md. `python3 -m unittest` passes: 5 tests OK on commit adef1e7. Before, the currency column was ignored (EUR and USD summed together) and malformed codes were accepted. Review agt_01M7W5ZJQEEXC77TMY6T48BC99 passed the head with no blocking findings. Non-blocking follow-ups, not fixed: header matching is case-sensitive, so a `Currency` header is silently read as USD; a short row reports "malformed currency code None"; the README does not flag the header change as breaking for position-based consumers. Risk is high because the output shape changes for every caller. Nothing is running; no services were started. Only the commit is on the branch; not pushed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W5ZJQEEXC77TMY6T48BC99)
+
+SHIPPED: commit adef1e75275779550a436a363ec56fa9bd2d4fb0 on the run branch
+Branch `archon/yagfmd05-reports-per-currency-totals` in /home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/073c1ea06662af8cdd618321/reports holds it (3 files changed, 111 insertions(+), 14 deletions(-)). Review: `archon diff qi_01M7W5Y346731H8GKXYAGFMD05`; land it in `main`: `archon merge qi_01M7W5Y346731H8GKXYAGFMD05`.
+
+Done: ledger: currency column. Added the optional fourth currency column to the ledger CLI in commit 2366cf640dc89772e73f5a922c94546a9740f5e3 on archon/pr901vnw-ledger-currency-column (based on main ebcd6da). The fourth TSV column is optional and defaults to USD; a present code must be exactly three uppercase ASCII letters. Output header is now `date,account,amount_cents,currency`, with currency on every row. A malformed currency prints `line N: bad currency ...` to stderr and exits 2; other input errors still exit 1. Added unit tests for default, explicit, malformed and exit-code cases, plus a CLI test file that checks stdout, stderr line numbers and exit codes. README documents the format. Checks on the final tree 8a8fed1d0df7b68bfcc02a0f93fe88fc35f209b6: cargo fmt --check passed; cargo clippy --all-targets -D warnings passed; cargo test passed (14 tests). Review: one reviewer (agt_01M7W6015099T1CZABFKYRD9YW) read the whole change and returned pass with no blocking findings. Non-blocking follow-ups: a trailing tab with an empty 4th column reports `bad currency ""` with exit 2, and the README does not say so; a line with both a bad date and a bad currency reports the date error first. Not run: the reviewer's own probes were hand-run, not a separate test run. Nothing was pushed. No servers or processes were started. Review: pass by agt_01M7W6015099T1CZABFKYRD9YW.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W6015099T1CZABFKYRD9YW)
+
+SHIPPED: commit 2366cf640dc89772e73f5a922c94546a9740f5e3 on the run branch
+Branch `archon/pr901vnw-ledger-currency-column` in /home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/073c1ea06662af8cdd618321/ledger holds it (5 files changed, 201 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M7W5Y2ZP1HK33VNZPR901VNW`; land it in `main`: `archon merge qi_01M7W5Y2ZP1HK33VNZPR901VNW`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M7W5Y2ZP1HK33VNZPR901VNW ended and its cargo target directory went.
+
+Implemented per-account, per-currency totals in the reports repo. reports.py now reads an optional currency column (absent means USD), groups totals by (account, currency), and prints `account,currency,total_cents` sorted by account then currency. A malformed currency code (not exactly three uppercase A-Z) prints an error naming the line to stderr and exits 2 with no stdout. Added 4 unittest tests (new CSV with currency, old CSV without the column, sort order, malformed code exit 2 across five bad codes) and updated README.md. `python3 -m unittest` passes: 5 tests OK on commit adef1e7. Before, the currency column was ignored (EUR and USD summed together) and malformed codes were accepted. Review agt_01M7W5ZJQEEXC77TMY6T48BC99 passed the head with no blocking findings. Non-blocking follow-ups, not fixed: header matching is case-sensitive, so a `Currency` header is silently read as USD; a short row reports "malformed currency code None"; the README does not flag the header change as breaking for position-based consumers. Risk is high because the output shape changes for every caller. Nothing is running; no services were started. Only the commit is on the branch; not pushed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W5ZJQEEXC77TMY6T48BC99)
+
+SHIPPED: commit adef1e75275779550a436a363ec56fa9bd2d4fb0 on the run branch
+
+Added the optional fourth currency column to the ledger CLI in commit 2366cf640dc89772e73f5a922c94546a9740f5e3 on archon/pr901vnw-ledger-currency-column (based on main ebcd6da). The fourth TSV column is optional and defaults to USD; a present code must be exactly three uppercase ASCII letters. Output header is now `date,account,amount_cents,currency`, with currency on every row. A malformed currency prints `line N: bad currency ...` to stderr and exits 2; other input errors still exit 1. Added unit tests for default, explicit, malformed and exit-code cases, plus a CLI test file that checks stdout, stderr line numbers and exit codes. README documents the format. Checks on the final tree 8a8fed1d0df7b68bfcc02a0f93fe88fc35f209b6: cargo fmt --check passed; cargo clippy --all-targets -D warnings passed; cargo test passed (14 tests). Review: one reviewer (agt_01M7W6015099T1CZABFKYRD9YW) read the whole change and returned pass with no blocking findings. Non-blocking follow-ups: a trailing tab with an empty 4th column reports `bad currency ""` with exit 2, and the README does not say so; a line with both a bad date and a bad currency reports the date error first. Not run: the reviewer's own probes were hand-run, not a separate test run. Nothing was pushed. No servers or processes were started. Review: pass by agt_01M7W6015099T1CZABFKYRD9YW.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W6015099T1CZABFKYRD9YW)
+
+SHIPPED: commit 2366cf640dc89772e73f5a922c94546a9740f5e3 on the run branch

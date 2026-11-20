@@ -1,0 +1,6 @@
+Implemented and committed both repositories:
+
+- `ledger` adds an optional currency column, defaults to USD, and returns status 2 with a line-numbered error for invalid codes. Commit: `3fa48c3`.
+- `reports` totals by account and currency, supports legacy CSV as USD, and returns status 2 for invalid codes. Commit: `392f9ba`.
+
+`cargo test` and `python3 -m unittest` both pass. Both repositories have clean working trees.

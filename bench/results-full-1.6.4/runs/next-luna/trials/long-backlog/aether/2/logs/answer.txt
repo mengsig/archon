@@ -1,0 +1,8 @@
+Implemented all four tickets and committed each separately:
+
+- TT-101: `8100009` — reject invalid due dates
+- TT-102: `7cfb43a` — RFC 4180 CSV export
+- TT-103: `bb6a128` — search query syntax
+- TT-104: `bf5b3f5` — undo store operations
+
+The requested unittest suite passes (9 tests), including new coverage for each ticket. The working tree is clean.

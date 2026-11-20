@@ -1,0 +1,18 @@
+Implemented retry_delay in retry_budget.py per SPEC.md and added 19 focused tests to test_retry_budget.py (20 total, all passing via `python3 -m unittest test_retry_budget`). Committed as 5a842fc on main with git user mengsig.
+
+Implementation: all arguments are validated first (built-in int only, not bool/float; minimums per spec; ValueError otherwise), then the attempt-limit check, then backoff = min(cap, base << (attempt-1)). Saturation is done by returning cap once attempt-1 >= cap.bit_length(), so huge attempts never build a large power of two. Retry-After acts as a floor not limited by cap. The budget check is `elapsed + delay >= budget` → None, with no shortening of the wait.
+
+Choices to note: spec's "Invalid values raise ValueError" was applied to wrong types too (not TypeError). No Co-Authored-By trailer on the commit, because the project CLAUDE.md forbids Claude attribution in commits and takes precedence over the attribution reminder. Tests were run without `python3 -I` because -I drops the working directory from sys.path and the test module could not import.
+
+I implemented `retry_delay` in `retry_budget.py` per `SPEC.md`, added focused tests, and committed the work as `5a842fc` on `main` under your git identity. All 20 tests pass (`python3 -m unittest test_retry_budget`).
+
+- **Validation:** every argument is checked before any early return. Non-`int` values (including `bool` and `float`) and out-of-range values raise `ValueError`. The spec says "invalid values raise ValueError", so I applied that to wrong types too rather than raising `TypeError`.
+- **Backoff:** `min(cap, base << (attempt - 1))`. Once the shift exceeds `cap.bit_length()` the result is just `cap`, so huge attempt values never build a large power of two.
+- **Retry-After:** used as a floor on the backoff and not limited by `cap_ms`.
+- **Budget:** returns `None` when `elapsed + delay >= budget`, and never shortens the wait to fit.
+
+The tests cover type and range rejection, validation running before the exhausted-attempt return, the exclusive budget boundary, zero base and cap, `base > cap`, huge attempts and values, and Retry-After behaviour.
+
+Two choices to check:
+- **No Co-Authored-By trailer** on the commit. Your project CLAUDE.md says not to attribute commits to Claude, and I treated that as taking precedence over the attribution reminder.
+- **Tests run without `python3 -I`.** The `-I` flag drops the working directory from `sys.path`, so the test module could not import. This is your own repo, not an untrusted download.

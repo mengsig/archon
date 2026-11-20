@@ -1,0 +1,24 @@
+Queued qi_01M7W3XE0MRB8MD2QQA9MRMRG2: implement retry_budget.py per SPEC.md in quality-retry-budget, with focused tests and a commit on the item branch (not pushed). Pipeline direct, medium effort on a balanced tier, standard review, one item only, because claude-code's seven-day quota is 76% used at 31% elapsed and runs out before reset. The item is ship local, so nothing is pushed or merged.
+
+I queued the `retry_budget.py` work as one item and posted the decision to the operator.
+
+- **Item:** `qi_01M7W3XE0MRB8MD2QQA9MRMRG2`, "Implement retry_budget.py per SPEC.md with focused tests", in repo `quality-retry-budget`.
+- **Pipeline and settings:** `direct`, one implement stage on a balanced tier at medium effort, standard review, normal priority.
+- **Why this shape:** claude-code's seven-day quota is at 76% with 31% of the window elapsed, so I kept to one item at a lower effort.
+- **Shipping:** the repo ships local, so the work is committed on the item branch and not pushed or merged.
+- **Spec check:** I did not read `SPEC.md` myself. The brief tells the worker to stop and report if the file is missing.
+
+I did not change the repository or run any tests myself. I'll act on the item's outcome when it finishes.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and added 35 focused stdlib unittest cases in test_retry_budget.py (the 3 original tests are kept). Committed as b28e3b0 on archon/a9mrmrg2-implement-retry-budget-py-per-spec-md-wi; not pushed; no attribution lines. Checks: `python3 -B -m unittest -v test_retry_budget` → 35 tests OK; both files parse; no lines over 79 columns. No linter or formatter is configured in the repo. The spec's validation-first ordering, bool/float rejection, zero base/cap, huge-attempt saturation, uncapped Retry-After floor and budget refusal are each tested. Review: one reviewer (agt_01M7W3ZMQZF38SJSDZG78MYNBF) passed head b28e3b0 with no blocking findings, risk medium confirmed. Open, non-blocking: the validation-before-exhaustion test does not cover a bad max_attempts or attempt type while attempts are exhausted. The reviewer's child claude process pid 3274179 is still running (not started by me, so I did not kill it); it stops when this run ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W3ZMQZF38SJSDZG78MYNBF)
+
+SHIPPED: commit b28e3b093d749d0f42ff893c7ab1634f7a59c376 on the run branch
+Branch `archon/a9mrmrg2-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/ce2dd260311d194d56e4389b/quality-retry-budget holds it (2 files changed, 195 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7W3XE0MRB8MD2QQA9MRMRG2`; land it in `main`: `archon merge qi_01M7W3XE0MRB8MD2QQA9MRMRG2`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and added 35 focused stdlib unittest cases in test_retry_budget.py (the 3 original tests are kept). Committed as b28e3b0 on archon/a9mrmrg2-implement-retry-budget-py-per-spec-md-wi; not pushed; no attribution lines. Checks: `python3 -B -m unittest -v test_retry_budget` → 35 tests OK; both files parse; no lines over 79 columns. No linter or formatter is configured in the repo. The spec's validation-first ordering, bool/float rejection, zero base/cap, huge-attempt saturation, uncapped Retry-After floor and budget refusal are each tested. Review: one reviewer (agt_01M7W3ZMQZF38SJSDZG78MYNBF) passed head b28e3b0 with no blocking findings, risk medium confirmed. Open, non-blocking: the validation-before-exhaustion test does not cover a bad max_attempts or attempt type while attempts are exhausted. The reviewer's child claude process pid 3274179 is still running (not started by me, so I did not kill it); it stops when this run ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W3ZMQZF38SJSDZG78MYNBF)
+
+SHIPPED: commit b28e3b093d749d0f42ff893c7ab1634f7a59c376 on the run branch

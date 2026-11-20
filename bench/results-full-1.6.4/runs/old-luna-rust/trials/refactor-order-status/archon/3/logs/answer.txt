@@ -1,0 +1,12 @@
+Queued as `qi_01M7WGS8BQNQN58ADCM6W99VQ6` in the `refactor` pipeline. It will preserve observable behavior, run `cargo test`, and commit the change locally.
+
+Done: Replace order status strings with OrderStatus. Reviewed baseline-to-HEAD changes and current worktree. The typed OrderStatus design meets the structural goal: status-name mapping/parsing are cohesive in src/status.rs, consumers compare enum variants, and report parsing/formatting preserves existing behavior and ordering. Characterization assertions remain intact; the only pre-existing test edit is rustfmt wrapping. Confirmed the worktree is clean and rg finds the four quoted status literals only in src/status.rs. Ran cargo test (3 unit, 5 integration tests pass), cargo build, cargo clippy --all-targets -- -D warnings, cargo fmt --check, git diff --check, and cargo rustc --lib -- --crate-type lib; all pass. No findings. The required public Order.status type change is an intentional API migration; remaining coupling is limited to expected report formatting/parsing through OrderStatus.
+
+SHIPPED: commit 68c59b178ab9905279420feb43f278fdef7b27bc on the run branch
+Branch `archon/m6w99vq6-replace-order-status-strings-with-orders` in /home/mengsig/.local/share/archon-bench/f164-ezf9wwc6/archon-bench/work/20261120T123040Z/c3bc0bab30d9f4386fe9d90e/refactor-order-status holds it (7 files changed, 187 insertions(+), 25 deletions(-)). Review: `archon diff qi_01M7WGS8BQNQN58ADCM6W99VQ6`; land it in `main`: `archon merge qi_01M7WGS8BQNQN58ADCM6W99VQ6`.
+
+Freed 0.0 GiB of build output: item qi_01M7WGS8BQNQN58ADCM6W99VQ6 ended and its cargo target directory went.
+
+Reviewed baseline-to-HEAD changes and current worktree. The typed OrderStatus design meets the structural goal: status-name mapping/parsing are cohesive in src/status.rs, consumers compare enum variants, and report parsing/formatting preserves existing behavior and ordering. Characterization assertions remain intact; the only pre-existing test edit is rustfmt wrapping. Confirmed the worktree is clean and rg finds the four quoted status literals only in src/status.rs. Ran cargo test (3 unit, 5 integration tests pass), cargo build, cargo clippy --all-targets -- -D warnings, cargo fmt --check, git diff --check, and cargo rustc --lib -- --crate-type lib; all pass. No findings. The required public Order.status type change is an intentional API migration; remaining coupling is limited to expected report formatting/parsing through OrderStatus.
+
+SHIPPED: commit 68c59b178ab9905279420feb43f278fdef7b27bc on the run branch

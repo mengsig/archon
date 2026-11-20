@@ -1,0 +1,9 @@
+Implemented and committed pagination in both repositories.
+
+- API: limit defaults to 20 and accepts 1–100; responses include `next_cursor`, and invalid pagination parameters return 400.
+- Client: `listItems` fetches all pages, passing each cursor through unchanged.
+- Both READMEs and tests were updated.
+
+Tests passed: `python3 -m unittest` and `npm test`.
+
+Commits: `2723f03` (`inventory-api`) and `4387bc3` (`inventory-client`).

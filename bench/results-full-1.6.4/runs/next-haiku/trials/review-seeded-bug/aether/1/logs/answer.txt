@@ -1,0 +1,21 @@
+Review of src/tokens.js (verify/sign) complete. No code changed. Critical: verify() accepts an empty signature, so anyone can forge a token without the secret. Other findings: prefix-match signature check (not constant-time), uncaught exceptions on malformed payloads, extra dot segments accepted, and minor input-validation gaps. Probes were run read-only; the test suite was not run.
+
+The most serious problem is that `verify()` accepts a token with an empty signature, so anyone can forge a session token without the secret. Ship-blocking. I made no code changes. I ran read-only `node -e` probes against `src/`, but did not run `npm test`.
+
+Findings, most severe first, all in `src/tokens.js`:
+
+1. **Critical — `verify()`, line 27: empty signature forges tokens.** The check is `expected.startsWith(signature)`, and every string starts with the empty string. Verified: `base64url({"user":"root","exp": now+1h}) + "."` returns the payload with no secret. Fix: compare the full MAC with `crypto.timingSafeEqual` on equal-length Buffers, and reject a missing or wrong-length signature.
+
+2. **High — `verify()`, line 27: truncated signatures and timing leak.** Prefix matching also accepts truncated signatures (verified: a one-character signature passes). An attacker can guess each character in about 64 tries, and the string comparison is not constant-time, which leaks timing. Same fix as above.
+
+3. **Medium — `verify()`, lines 28–29: unguarded parse.** `JSON.parse` and `payload.exp` are not guarded. A non-JSON body throws `SyntaxError` and a `null` body throws `TypeError` (both verified, both reachable through the empty-signature hole). The function is meant to return `null` for invalid tokens, so untrusted input can produce exceptions instead. Fix: catch the parse error, return `null`, and check the payload is an object before reading `exp`.
+
+4. **Low — `verify()`, line 24: extra segments accepted.** `split('.')` ignores anything after the second segment, so `<body>.<sig>.junk` verifies (verified). Require exactly two non-empty segments.
+
+5. **Low — `verify()`, line 22: no secret validation.** `sign()` refuses secrets shorter than 32 characters, but `verify()` accepts any secret, including short ones. A missing secret throws a raw `TypeError` from `createHmac`.
+
+6. **Low — `sign()`, line 14: `ttlSeconds` not validated.** `NaN` or a negative value produces a token that `verify()` silently rejects, or an already-expired one. Validate it as a positive finite number.
+
+7. **Info — `test/tokens.test.js`.** The tampering test changes the payload but keeps the valid signature, so it passes despite the forgery. Nothing covers empty or truncated signatures, extra segments, malformed payloads, or constant-time comparison. Add regression tests for these.
+
+Findings 1–3 should block the release. Findings 4–6 are worth fixing in the same change.

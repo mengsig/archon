@@ -1,0 +1,5 @@
+`updatePrice` updates the store and deletes only the individual product cache entry (`product:<sku>`). That’s why product pages show the new price immediately: `catalog.product()` misses that entry and reads the updated record.
+
+Category pages use a separate cache. `catalog.listing()` caches a snapshot of each category page under `listing:<category>:<page>` for `LISTING_TTL_SECONDS`, which is 600 seconds. A price update does not invalidate those listing entries, so they can keep showing the old price until their TTL expires—up to ten minutes after the listing was cached.
+
+The fix is to invalidate the affected category listing entries when a price changes. Since the cache keys include category and page, the update path needs to identify the product’s category and delete every cached page for it. Alternatively, listing data could be rebuilt or invalidated through a category-level cache strategy. No code was changed.

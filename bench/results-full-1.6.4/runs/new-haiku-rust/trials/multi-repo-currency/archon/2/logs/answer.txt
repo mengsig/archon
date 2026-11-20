@@ -1,0 +1,45 @@
+The two-repository change is queued as one initiative, `ini_01M7WFJ1SPXHX9CBEQ9Y5ZXX9N`, with one `direct` item per repository:
+
+- `qi_01M7WFJ1SR57ENDN6MP0V7GX30`: `ledger`, the optional fourth currency column, the new header, and exit status 2 for a malformed code.
+- `qi_01M7WFJ1T2XYY34CFG0WNXJ5HZ`: `reports`, per account and currency totals, legacy input treated as USD, and exit status 2 for a malformed code.
+
+The shared CSV contract is written into the initiative, so both agents build against the same header, currency rules and exit codes. The two items don't depend on each other, so they run in parallel.
+
+Choices I made:
+- **Model:** the model policy allows only `claude-code/claude-haiku-5-5`, and I used it at `medium` effort for both implementation and review. Claude Code's weekly quota is at 77% used with about a third of the window elapsed, so I didn't spend on a larger model. Codex models are refused by policy. Expect a shallower first pass on the Rust parser; review is set to `standard`.
+- **Shipping:** both repositories ship `local`, so the work lands as commits on local branches, not pull requests. Nothing is merged.
+- **Not atomic:** each repository can land on its own.
+
+I haven't touched either repository myself. I'll report when the items finish, or if either one fails.
+
+Done: reports: total per account and currency. Changed `reports` to total per (account, currency). Output header is now `account,currency,total_cents`, sorted by account then currency. A `currency` input column is used per row; legacy input without it counts as USD. A malformed code (not exactly three uppercase ASCII letters, or an empty/missing value in a row with the column) prints the line number to stderr and exits 2 with nothing on stdout. Before, EUR and USD rows for the same account were summed into one total (`rent,-210000`); after, they are split. Tests: `python3 -m unittest` passes, 6 tests (exact-output checks for both input shapes, multi-currency totals, sort order, malformed codes, missing value). README updated. Committed as d83ed72 on the branch (tree bb545fbaf0a2b33bdde5ac675c41513716a1d321); not pushed. Review: one reviewer (agt_01M7WFKJYGHCXNCZV7BV4Y5HBE) passed head d83ed72 with no blocking findings. Non-blocking follow-ups: header detection is an exact match, so a mis-cased or padded `Currency` header silently falls back to USD; line numbers are the row's end line for multi-line quoted rows; non-numeric amount_cents still raises an uncaught traceback (pre-existing). Risk is high because the CLI header and columns change for every caller, which the operator requested. Nothing is left running.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFKJYGHCXNCZV7BV4Y5HBE)
+
+SHIPPED: commit d83ed72b10a45010c3affbf38ee640e576a0b42d on the run branch
+Branch `archon/0wnxj5hz-reports-total-per-account-and-currency` in /home/mengsig/.local/share/archon-bench/f164-d_m8pmpw/archon-bench/work/20261120T122950Z/5c962c420ba64c8c5111adae/reports holds it (3 files changed, 126 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M7WFJ1T2XYY34CFG0WNXJ5HZ`; land it in `main`: `archon merge qi_01M7WFJ1T2XYY34CFG0WNXJ5HZ`.
+
+Done: ledger: add per-row currency column. Added the per-row currency column to ledger (Rust). Input lines take an optional fourth TSV column, the ISO 4217 code; lines without it are USD. Output header is now `date,account,amount_cents,currency` and every row carries a currency. A malformed currency code exits 2 with `line N:` on stderr; other input errors still exit 1. Changes are in src/lib.rs (Entry.currency, LineError enum, parse_currency), src/main.rs (exit_status) and tests/ledger.rs (present, absent, malformed, plus binary exit-code and line-number tests). README updated. Commit 13ad897 on archon/p0v7gx30-ledger-add-per-row-currency-column, tree be4306b; not pushed. Checks on the final head: cargo fmt --check clean; cargo clippy --all-targets -D warnings clean; cargo test 10/10 pass. Before: header date,account,amount_cents, 3-column rows. After: 4-column header, USD default, EUR preserved. Open follow-ups (non-blocking, from review): the currency code is trimmed before validation, so ' EUR ' is accepted; the header is written before the first row is validated, so a failing run leaves a header-only stdout. Public API change: Entry gained a field and parse_line returns LineError instead of String; this is intentional, with no in-repo consumers. I ran cargo fmt, which also reformatted two pre-existing rustfmt-unclean lines in lib.rs. Left running: reviewer's claude -p process pid 928959 (the reviewer child's own process, not started by this stage); nothing else is running. Review: agent agt_01M7WFKZAR949KS85ZSMX8GJKB, pass at head 13ad897 with no blocking findings, risk high confirmed. REVIEW: pass by agt_01M7WFKZAR949KS85ZSMX8GJKB
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFKZAR949KS85ZSMX8GJKB)
+
+SHIPPED: commit 13ad897a8a03f18589207fdb2dc88852b584236a on the run branch
+Branch `archon/p0v7gx30-ledger-add-per-row-currency-column` in /home/mengsig/.local/share/archon-bench/f164-d_m8pmpw/archon-bench/work/20261120T122950Z/5c962c420ba64c8c5111…
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M7WFJ1SR57ENDN6MP0V7GX30 ended and its cargo target directory went.
+
+Changed `reports` to total per (account, currency). Output header is now `account,currency,total_cents`, sorted by account then currency. A `currency` input column is used per row; legacy input without it counts as USD. A malformed code (not exactly three uppercase ASCII letters, or an empty/missing value in a row with the column) prints the line number to stderr and exits 2 with nothing on stdout. Before, EUR and USD rows for the same account were summed into one total (`rent,-210000`); after, they are split. Tests: `python3 -m unittest` passes, 6 tests (exact-output checks for both input shapes, multi-currency totals, sort order, malformed codes, missing value). README updated. Committed as d83ed72 on the branch (tree bb545fbaf0a2b33bdde5ac675c41513716a1d321); not pushed. Review: one reviewer (agt_01M7WFKJYGHCXNCZV7BV4Y5HBE) passed head d83ed72 with no blocking findings. Non-blocking follow-ups: header detection is an exact match, so a mis-cased or padded `Currency` header silently falls back to USD; line numbers are the row's end line for multi-line quoted rows; non-numeric amount_cents still raises an uncaught traceback (pre-existing). Risk is high because the CLI header and columns change for every caller, which the operator requested. Nothing is left running.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFKJYGHCXNCZV7BV4Y5HBE)
+
+SHIPPED: commit d83ed72b10a45010c3affbf38ee640e576a0b42d on the run branch
+
+Added the per-row currency column to ledger (Rust). Input lines take an optional fourth TSV column, the ISO 4217 code; lines without it are USD. Output header is now `date,account,amount_cents,currency` and every row carries a currency. A malformed currency code exits 2 with `line N:` on stderr; other input errors still exit 1. Changes are in src/lib.rs (Entry.currency, LineError enum, parse_currency), src/main.rs (exit_status) and tests/ledger.rs (present, absent, malformed, plus binary exit-code and line-number tests). README updated. Commit 13ad897 on archon/p0v7gx30-ledger-add-per-row-currency-column, tree be4306b; not pushed. Checks on the final head: cargo fmt --check clean; cargo clippy --all-targets -D warnings clean; cargo test 10/10 pass. Before: header date,account,amount_cents, 3-column rows. After: 4-column header, USD default, EUR preserved. Open follow-ups (non-blocking, from review): the currency code is trimmed before validation, so ' EUR ' is accepted; the header is written before the first row is validated, so a failing run leaves a header-only stdout. Public API change: Entry gained a field and parse_line returns LineError instead of String; this is intentional, with no in-repo consumers. I ran cargo fmt, which also reformatted two pre-existing rustfmt-unclean lines in lib.rs. Left running: reviewer's claude -p process pid 928959 (the reviewer child's own process, not started by this stage); nothing else is running. Review: agent agt_01M7WFKZAR949KS85ZSMX8GJKB, pass at head 13ad897 with no blocking findings, risk high confirmed. REVIEW: pass by agt_01M7WFKZAR949KS85ZSMX8GJKB
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFKZAR949KS85ZSMX8GJKB)
+
+SHIPPED: commit 13ad897a8a03f18589207fdb2dc88852b584236a on the run branch

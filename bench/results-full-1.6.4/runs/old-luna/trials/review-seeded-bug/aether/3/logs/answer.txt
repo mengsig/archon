@@ -1,0 +1,11 @@
+## Findings
+
+- **`src/tokens.js` — `verify` — Critical:** The signature check accepts any prefix of the expected MAC. For example, a token ending in `.` has an empty signature, and `expected.startsWith('')` is true; a syntactically valid payload with a future `exp` is then accepted without a signature. Require an exact, constant-time comparison of the full MAC.
+
+- **`src/tokens.js` — `verify` — High:** Malformed input can throw instead of returning `null`. For example, `verify('a.b', secret)` can throw when parsing decoded `a` as JSON; a non-string `secret` can also make `createHmac` throw. If callers rely on `null` for invalid tokens, attacker-controlled tokens can trigger errors and potentially disrupt request handling. Validate inputs and handle decoding/parsing failures.
+
+- **`src/tokens.js` — `sign` — Medium:** Caller claims can override reserved fields only before they are overwritten, so `iat` and `exp` are replaced as intended. However, claims are spread without validation: `sign(null, secret)` yields a token with no user claims, while arrays and strings spread into numeric character keys. This can issue structurally unexpected tokens if claims come from untrusted or loosely typed callers. Validate that claims is a plain object.
+
+- **`src/tokens.js` — `sign` — Medium:** `ttlSeconds` and `now` are unchecked. A negative TTL (for example, `ttlSeconds: -1`) creates an already expired token; a nonnumeric TTL can produce `NaN`, which serializes as `null` for `exp`, making the token unverifiable. Validate finite numeric values and an acceptable TTL range.
+
+- **`src/tokens.js` — `verify` — Medium:** Base64url decoding is permissive and the decoded payload is not checked to be an object. After the prefix-signature flaw is fixed, noncanonical encodings and signed JSON values such as `null` can still lead to surprising payload shapes or exceptions when downstream code accesses claims. Enforce canonical encoding and require a JSON object payload.

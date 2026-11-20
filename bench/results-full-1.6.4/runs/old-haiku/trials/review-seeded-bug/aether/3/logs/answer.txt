@@ -1,0 +1,33 @@
+Reviewed src/tokens.js (read-only; no code changed). Critical: verify() accepts a token with an empty signature (`<body>.`), because `expected.startsWith("")` is true. Confirmed: a forged token with exp=9e15 and user=root verifies. High: signature check is a prefix match via startsWith, not full equality, and is not constant-time. Medium/low: JSON.parse throws on malformed payloads instead of returning null; verify() does not enforce sign()'s secret-length rule; extra dot segments are silently accepted; the secret check counts characters, not entropy; no iat/audience/revocation. The existing tests miss the empty-signature and truncated-signature cases. Fix: compare full-length buffers with crypto.timingSafeEqual and reject empty or wrong-length signatures.
+
+I reviewed `src/tokens.js` without changing any code. Its `verify()` has a critical auth bypass, and it should not ship as written.
+
+**Findings, most severe first**
+
+1. **Critical — `verify()`: an empty signature is accepted, so anyone can forge a token.**
+   - A token of the form `<body>.` splits into `signature === ""`. The check `expected.startsWith("")` is always true.
+   - I ran it against the module: `verify(base64url({"user":"root","exp":9e15}) + ".", secret)` returns `{ user: 'root', exp: 9000000000000000 }`.
+   - Fix: reject empty or wrong-length signatures, then compare with `crypto.timingSafeEqual`.
+
+2. **High — `verify()`: the signature is checked by prefix, not full equality, and not in constant time.**
+   - `expected.startsWith(signature)` only requires the supplied signature to be a prefix of the real MAC. A one-character guess matches 1 in 64 times. A timing side channel would let an attacker recover the MAC one character at a time.
+   - Fix together with #1: `timingSafeEqual` on equal-length buffers.
+
+3. **Medium — `verify()`: malformed payloads throw instead of returning `null`.**
+   - `verify("!!.", secret)` throws `Unexpected end of JSON input`. A payload that decodes to `null` would throw a `TypeError` at `payload.exp`.
+   - With #1 fixed, this is only reachable with a validly signed token, but the parse should still be wrapped and return `null`.
+
+4. **Low — `verify()`: no secret-strength check.** `sign()` refuses secrets under 32 characters, but `verify()` accepts any secret. Also, the check counts characters, not entropy: `'k'.repeat(40)` passes.
+
+5. **Low — `verify()`: extra dot segments are accepted.** `token + ".junk"` verifies. This gives multiple string forms of one token, which matters if tokens are used as keys or in a revocation list.
+
+6. **Low — `verify()`: the `now` option is trusted from the caller.** If any caller takes `now` from request input, expiry can be bypassed. I did not check `src/index.js` for this.
+
+7. **Informational:**
+   - No `iat` or `nbf` check.
+   - No audience or purpose claim, so tokens signed with the same secret for another purpose would be accepted.
+   - No revocation, so a token stays valid for up to an hour after logout.
+
+**Test gap:** `test/tokens.test.js` covers only the happy path, tampered payloads with the original signature, expiry, and short secrets. It has no case for an empty or truncated signature, which is why #1 passes the suite.
+
+I checked #1, #3 and #5 by calling the module directly in Node, and reproduced #1 with the forged token above. #2 is from reading the code and was not exploited. Nothing was modified in the repository.

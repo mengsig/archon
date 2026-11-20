@@ -1,0 +1,3 @@
+Implemented `retry_delay` with full argument validation, capped exponential backoff, Retry-After handling, and strict budget checks. Added focused boundary tests.
+
+All 10 tests pass; `git diff --check` is clean. Committed as `f0ac46a` (`Implement bounded retry delay scheduling`).

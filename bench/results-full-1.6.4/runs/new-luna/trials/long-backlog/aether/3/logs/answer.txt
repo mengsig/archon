@@ -1,0 +1,8 @@
+Implemented all four tickets, added focused tests, and committed each separately:
+
+- TT-101 `4983252` — due date validation
+- TT-102 `114a798` — RFC 4180 CSV export
+- TT-103 `d3d346b` — search query syntax
+- TT-104 `0d9edf2` — undo support
+
+The requested suite passes: **15 tests**. The working tree is clean.

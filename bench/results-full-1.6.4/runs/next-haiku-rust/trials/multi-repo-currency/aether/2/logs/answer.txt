@@ -1,0 +1,41 @@
+Multi-currency support is implemented and committed in both repositories. Both suites pass: `cargo test` in ledger (8/8) and `python3 -m unittest` in reports (4/4). An end-to-end pipe from ledger into reports works.
+
+ledger (commit dc0c596):
+- Lines accept an optional 4th column, the currency. It defaults to USD when missing. Codes must be exactly three uppercase ASCII letters, and the value is trimmed like the other fields.
+- The header is now `date,account,amount_cents,currency`, and every row carries its currency.
+- Parse errors are a `LineError` enum. A bad currency exits 2 and other errors exit 1, both with `line N:` on stderr.
+- Tests cover defaults, rejected codes, field counts, and the binary's exit codes and output.
+- README updated.
+
+reports (commit c3f213b):
+- Totals are keyed by (account, currency). Output is `account,currency,total_cents`, sorted by account then currency.
+- A CSV with no `currency` column counts as USD. A malformed code prints `error: line N: bad currency ...` to stderr and exits 2.
+- Validation is strict (no trimming), since the input is machine-generated.
+- Tests cover per-currency totals, legacy input, sort order, and the exit-2 path.
+- README updated.
+
+Choices and assumptions to review:
+- I did not bump ledger's Cargo version (0.3.0). The output format changed, so a bump to 0.4.0 may be wanted.
+- Commits carry no attribution trailer. The CLAUDE.md rule to not add attribution takes precedence over the Co-Authored-By reminder.
+- I did not add the fixed assert count from CLAUDE.md to existing functions. I added one `debug_assert!` in `to_csv_row`, and the rest of the new validation is explicit error returns.
+- `reports.py` still lets a non-numeric `amount_cents` raise a traceback (exit 1), as before. That is outside this change.
+
+Multi-currency support is in both repos and committed in each. `cargo test` in `ledger` passes (8/8) and `python3 -m unittest` in `reports` passes (4/4). I also piped ledger output into reports end to end, and it produced the expected per-currency totals.
+
+**ledger** (commit `dc0c596`)
+- An optional fourth column holds the currency. It defaults to `USD`. Codes must be exactly three uppercase ASCII letters. Like the other fields, the value is trimmed first.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A bad currency code prints `line N: ...` to stderr and exits 2. Other input errors still exit 1.
+- README updated.
+
+**reports** (commit `c3f213b`)
+- Totals are keyed by account and currency. Output is `account,currency,total_cents`, sorted by account, then currency.
+- Input without a `currency` column counts as `USD`. A malformed code prints an error to stderr and exits 2.
+- README updated.
+
+Decisions for you to review:
+- **Version:** I did not bump `ledger`'s version from 0.3.0. The output format changed, so 0.4.0 may be appropriate.
+- **Validation style:** `reports` validates currency strictly with no trimming, since its input is machine-generated. `ledger` trims, to match its other fields.
+- **Commit trailer:** the commits have no attribution line. CLAUDE.md's no-attribution rule overrides the Co-Authored-By reminder.
+- **Assertions:** I did not add the assertion count CLAUDE.md asks for to existing functions. The new validation is explicit error returns, plus one `debug_assert!` in `to_csv_row`.
+- **Existing behaviour:** a non-numeric `amount_cents` in `reports` still raises a traceback and exits 1, as before. I left that alone because it is outside this change.

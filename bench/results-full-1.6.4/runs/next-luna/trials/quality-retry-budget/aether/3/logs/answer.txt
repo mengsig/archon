@@ -1,0 +1,3 @@
+Implemented `retry_delay` with full argument validation, efficient backoff saturation, uncapped Retry-After floors, and the strict budget boundary. Added focused edge-case tests.
+
+All 10 tests pass, and the working tree is clean. Commit: `51674d0` (`Implement bounded retry delay scheduling`).

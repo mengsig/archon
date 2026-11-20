@@ -1,0 +1,31 @@
+Enqueued initiative `ini_01M7W71KGW6NDRZ2KTM51GH4F5` with one item per repository. Both will implement the shared currency contract, update their READMEs, run the requested test suite, and commit their changes.
+
+Done: Group report totals by currency. Added currency-aware report totals. Legacy CSV without a currency column defaults to USD; invalid currency reports a line-numbered stderr error and exits 2. The required unittest suite passed (3 tests) on the final committed tree; independent review passed with no findings. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W74CW2DYNJEQ42XFANACYQ)
+
+SHIPPED: commit de44b170fa9d4ed29e9bda2e7e34191a59dc0f0d on the run branch
+Branch `archon/stsmm489-group-report-totals-by-currency` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/6423fd2c7496448f6a0f1bf1/reports holds it (3 files changed, 53 insertions(+), 18 deletions(-)). Review: `archon diff qi_01M7W71MEXNCWXB6HNSTSMM489`; land it in `main`: `archon merge qi_01M7W71MEXNCWXB6HNSTSMM489`.
+
+Done: Add currency support to ledger TSV to CSV. Added optional currency parsing to ledger TSV, defaulting to USD and validating exactly three uppercase ASCII bytes. CSV now includes currency in its header and every row; invalid currencies report the physical line number and exit 2, while other input errors retain exit 1. Updated README and regression tests. `cargo fmt --check` and `cargo test` passed; CLI probes confirmed EUR output and exit statuses 2 and 1. Before: three input fields and a three-column CSV; after: optional currency input and four-column CSV. Committed as 943ec745c5fdd1d1f57a7aed30c96a66271f04db; tree 90e36ac9335b62f4030763f5b8864e30f9eb9c45. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W752H6J8F06C63QZAW6J6F)
+
+SHIPPED: commit 943ec745c5fdd1d1f57a7aed30c96a66271f04db on the run branch
+Branch `archon/e0b4xrhm-add-currency-support-to-ledger-tsv-to-cs` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/6423fd2c7496448f6a0f1bf1/ledger holds it (4 files changed, 40 insertions(+), 12 deletions(-)). Review: `archon diff qi_01M7W71KGX9NRTVK7ZE0B4XRHM`; land it in `main`: `archon merge qi_01M7W71KGX9NRTVK7ZE0B4XRHM`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M7W71KGX9NRTVK7ZE0B4XRHM ended and its cargo target directory went.
+
+Added currency-aware report totals. Legacy CSV without a currency column defaults to USD; invalid currency reports a line-numbered stderr error and exits 2. The required unittest suite passed (3 tests) on the final committed tree; independent review passed with no findings. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W74CW2DYNJEQ42XFANACYQ)
+
+SHIPPED: commit de44b170fa9d4ed29e9bda2e7e34191a59dc0f0d on the run branch
+
+Added optional currency parsing to ledger TSV, defaulting to USD and validating exactly three uppercase ASCII bytes. CSV now includes currency in its header and every row; invalid currencies report the physical line number and exit 2, while other input errors retain exit 1. Updated README and regression tests. `cargo fmt --check` and `cargo test` passed; CLI probes confirmed EUR output and exit statuses 2 and 1. Before: three input fields and a three-column CSV; after: optional currency input and four-column CSV. Committed as 943ec745c5fdd1d1f57a7aed30c96a66271f04db; tree 90e36ac9335b62f4030763f5b8864e30f9eb9c45. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W752H6J8F06C63QZAW6J6F)
+
+SHIPPED: commit 943ec745c5fdd1d1f57a7aed30c96a66271f04db on the run branch

@@ -1,0 +1,26 @@
+Implemented retry_delay in retry_budget.py per SPEC.md and added focused tests; committed as 15961ca on main (author mengsig). All 23 unittest tests pass (`python3 -m unittest -v test_retry_budget`).
+
+Implementation:
+- Validation runs first for every argument: built-in int only (bool, float, and int subclasses rejected), with minimums attempt>=1, max_attempts>=1, and elapsed/budget/base/cap/retry_after>=0 (retry_after may be None). Failures raise ValueError.
+- Attempt >= max_attempts returns None after validation.
+- Backoff is min(cap, base << (attempt-1)). Zero base or zero cap gives 0. When the exponent is at least cap's bit length, the cap is returned directly, so huge attempts never build a large power of two.
+- retry_after acts as an uncapped floor via max().
+- Returns None when elapsed+delay >= budget; the wait is never shortened.
+
+Assumptions to review:
+- Wrong-type arguments raise ValueError, not TypeError, because the spec says "Invalid values raise ValueError" and does not separate type errors. If you want TypeError for non-int types, it's a one-line change in _require_int.
+- The commit has no Co-Authored-By line, because the project CLAUDE.md says not to put Claude attribution in commits and that takes precedence over the attribution reminder.
+
+I implemented `retry_delay` per `SPEC.md`, added tests, and committed as `15961ca` on `main` under `mengsig`. All 23 tests pass with `python3 -m unittest -v test_retry_budget`.
+
+- **Validation first:** every argument is checked before any early return. Only built-in ints are accepted (bools, floats and int subclasses are rejected), with the minimums from the spec. Failures raise `ValueError`.
+- **Attempt limit:** `attempt >= max_attempts` returns `None`, and attempts beyond the limit are legal.
+- **Backoff:** `min(cap, base << (attempt-1))`, with zero base or zero cap giving 0. Once the exponent reaches the cap's bit length the cap is returned directly, so huge attempt values never build a large power of two.
+- **Retry-After:** acts as an uncapped floor via `max()`.
+- **Budget:** returns `None` when `elapsed + delay >= budget`, and never shortens the wait to fit.
+
+Two choices you may want to change:
+- Wrong-type arguments raise `ValueError`, not `TypeError`, because the spec says "Invalid values raise ValueError" without separating type errors. Switching is a one-line change in `_require_int`.
+- The commit has no Co-Authored-By line. The project CLAUDE.md says not to put Claude attribution in commits, and I followed it over the attribution reminder.
+
+The working tree is clean.

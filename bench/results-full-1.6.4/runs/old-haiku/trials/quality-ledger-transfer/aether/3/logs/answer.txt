@@ -1,0 +1,20 @@
+Implemented ledger.py per SPEC.md and committed it as b519f81 ("Implement atomic bounded ledger") on main, authored by mengsig. The commit also adds focused tests in test_ledger.py: 22 tests, all passing with `python3 -m unittest -v test_ledger`. Working tree is clean.
+
+Implementation:
+- Construction: requires a dict; names must be nonempty str; balances must be exact `int` (type check, so bools/floats/subclasses are rejected) in [0, MAX_BALANCE]. The input is copied.
+- transfer: validates the amount first (exact int in [1, MAX_BALANCE]), then looks up both accounts (KeyError if either is missing), then applies the transfer under a single per-ledger `threading.Lock`. Insufficient funds or destination overflow return False with no change. Same-account transfers return whether the balance covers the amount and never modify it.
+- snapshot returns a copy taken under the lock.
+- One lock gives linearizability and makes opposite transfers deadlock-free.
+
+Assumptions and gaps:
+- An unhashable account name (e.g. a list) raises TypeError from the dict lookup rather than KeyError or ValueError. The spec doesn't cover this; I left it as is.
+- Concurrency tests use fixed iteration counts with no timing. A deadlock would hang the test rather than fail it.
+
+I implemented `ledger.py` to the spec and committed it as `b519f81` on `main`, authored by mengsig. The 22 tests in `test_ledger.py` all pass (`python3 -m unittest -v test_ledger`), and the working tree is clean.
+
+- **Construction:** requires a dict with nonempty string names and exact `int` balances in `[0, MAX_BALANCE]`. Bools, floats and int subclasses are rejected. The input dict is copied.
+- **`transfer`:** validates the amount first, then looks up both accounts (`KeyError` if either is missing), then applies the transfer under one per-ledger lock. Insufficient funds or destination overflow return `False` and change nothing. A same-account transfer returns whether the balance covers the amount and never modifies it.
+- **`snapshot`:** returns a copy taken under the lock.
+- **Concurrency:** the single lock makes each transfer atomic and snapshots never see a half-applied transfer. Opposite transfers can't deadlock because only one lock is ever held.
+
+One gap: an unhashable account name, such as a list, raises `TypeError` from the dict lookup rather than `KeyError` or `ValueError`. The spec doesn't cover this, so I left it alone. The concurrency tests use fixed iteration counts with no timing, so a deadlock would hang the run rather than fail it.

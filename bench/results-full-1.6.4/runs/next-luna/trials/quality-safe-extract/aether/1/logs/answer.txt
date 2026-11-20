@@ -1,0 +1,3 @@
+Implemented `extract` with full batch validation before filesystem changes, including path safety, collisions, existing files, symlinks, and invalid roots. Added focused tests for these cases.
+
+All 8 tests pass. Commit: `f224688` (`Implement safe batch extraction`).

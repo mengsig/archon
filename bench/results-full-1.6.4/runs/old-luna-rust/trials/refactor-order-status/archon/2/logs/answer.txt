@@ -1,0 +1,16 @@
+Queued as [qi_01M7WG233D7RPMBBRZHERKQ7TD](#) on the `direct` pipeline. It will implement the typed status, preserve behavior, run `cargo test`, and commit the change.
+
+Done: Refactor order status strings into OrderStatus. Added public OrderStatus and ParseStatusError, changed Order and lifecycle/reporting code to use the enum, and retained lowercase serialization, parsing errors, report ordering, and lifecycle error text. Added focused parsing/display/transition tests. cargo fmt -- --check and cargo test pass; status-name source scan and git diff --check pass. Committed as 60fc93a23e18b3011e0a766287dec30e00559a40. Nothing remains open.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 60fc93a23e18b3011e0a766287dec30e00559a40 on the run branch
+Branch `archon/herkq7td-refactor-order-status-strings-into-order` in /home/mengsig/.local/share/archon-bench/f164-ezf9wwc6/archon-bench/work/20261120T123040Z/af799d50ba0dec1fb6c85514/refactor-order-status holds it (7 files changed, 152 insertions(+), 26 deletions(-)). Review: `archon diff qi_01M7WG233D7RPMBBRZHERKQ7TD`; land it in `main`: `archon merge qi_01M7WG233D7RPMBBRZHERKQ7TD`.
+
+Freed 0.0 GiB of build output: item qi_01M7WG233D7RPMBBRZHERKQ7TD ended and its cargo target directory went.
+
+Added public OrderStatus and ParseStatusError, changed Order and lifecycle/reporting code to use the enum, and retained lowercase serialization, parsing errors, report ordering, and lifecycle error text. Added focused parsing/display/transition tests. cargo fmt -- --check and cargo test pass; status-name source scan and git diff --check pass. Committed as 60fc93a23e18b3011e0a766287dec30e00559a40. Nothing remains open.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 60fc93a23e18b3011e0a766287dec30e00559a40 on the run branch

@@ -1,0 +1,39 @@
+The worst problem is a signature bypass that accepts any payload with an empty signature. It is confirmed by running `verify` from the mirror. I did not change any code.
+
+I reviewed `src/tokens.js` in the `session-lib` package. The registered mirror is `repos/review-seeded-bug`, whose `package.json` names the package `session-lib`. Its HEAD is the base commit "bench fixture". If the tomorrow-shipping rewrite is uncommitted, I reviewed the base version, so re-check against the working tree.
+
+**1. Critical: `verify` accepts any payload with an empty signature**
+- File and function: `src/tokens.js`, `verify`, line 27.
+- Cause: `expected.startsWith(signature)` is true for `""`. The `signature === undefined` guard does not catch an empty string.
+- Concrete input: `base64url('{"user":"root","exp":9e15}') + "."`. I ran this against the mirror with no secret involved, and it returned `{ user: 'root', exp: 9000000000000000 }`. Any caller that trusts `verify` gets an arbitrary identity with no key.
+
+**2. High: signature is checked by prefix, which allows character-by-character forgery**
+- File and function: `src/tokens.js`, `verify`, line 27.
+- Cause: a prefix check, not a full comparison. Each guessed character is verified by the oracle (payload returned or `null`). That takes about 64 tries per character, roughly 2,800 requests for a 43-character signature. The same check is also not constant-time.
+- Fix: require the full signature length, then compare with `crypto.timingSafeEqual`.
+
+**3. Medium: a valid-signature-looking body with bad JSON throws out of `verify`**
+- File and function: `src/tokens.js`, `verify`, line 28.
+- Concrete input: `base64url("{bad") + "."` throws `SyntaxError`. `base64url("null") + "."` throws `TypeError: Cannot read properties of null (reading 'exp')`. With bug 1 these are attacker-controlled, so they become a crash or denial of service for any caller that does not wrap `verify`. The function's contract says it returns `null` for an invalid token, so it should return `null` here.
+
+**4. Medium: `verify` does not check the secret, so an empty secret is accepted**
+- File and function: `src/tokens.js`, `verify`, line 22.
+- Cause: only `sign` enforces the 32-character minimum. A token signed with `""` as the key verifies under `verify(token, "")`. My probe returned the payload for `root`.
+- Fix: apply the same secret check in `verify`, or share one `assertSecret` helper.
+
+**5. Low: extra segments are ignored**
+- File and function: `src/tokens.js`, `verify`, line 24.
+- Concrete input: a valid token with `.junk` appended still verifies. I confirmed this returns `ada`.
+- Fix: require exactly two segments.
+
+**6. Low: missing claim checks**
+- File and function: `src/tokens.js`, `verify`, lines 29–30.
+- `iat` is never checked, so a future-dated token verifies. There is no audience or issuer check, so a token signed for one service is valid for any service sharing the secret. Whether these matter depends on the production design.
+
+**7. Low: `sign` does not validate `ttlSeconds`**
+- File and function: `src/tokens.js`, `sign`, line 16.
+- A non-numeric TTL makes `exp` `NaN`, which `JSON.stringify` turns into `null`. That token is then rejected by `verify` with no error at signing time.
+
+**Tests:** `test/tokens.test.js` does not cover an empty signature, a prefix or partial signature, malformed JSON, an empty secret, or extra segments. The existing tests would pass with every bug above present.
+
+**Recommendation:** Do not ship until bugs 1–4 are fixed and tests for them are added. The fix is small: split on `.`, require exactly two parts, require the signature to equal the full expected MAC using `timingSafeEqual` after a length check, wrap the payload parse so malformed input returns `null`, and enforce the secret minimum in `verify`.

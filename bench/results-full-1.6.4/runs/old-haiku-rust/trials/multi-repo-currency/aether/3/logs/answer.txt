@@ -1,0 +1,42 @@
+Added currency support across `ledger` (Rust) and `reports` (Python), with tests and READMEs, and committed in both repos as mengsig.
+
+ledger (commit 7373407):
+- Lines take an optional 4th column, an ISO 4217 code of exactly three uppercase ASCII letters. Missing means USD.
+- Header is `date,account,amount_cents,currency`; every row carries its currency.
+- `parse_line` now returns a `ParseError` enum. Malformed input exits 1; a bad currency exits 2. Both print `line N: ...` to stderr.
+- `cargo test`: 9 integration tests pass, including exit-code checks on the binary. Clippy is clean.
+
+reports (commit 7d956d2):
+- Output is `account,currency,total_cents`, sorted by account then currency.
+- CSV without a `currency` column counts as USD. A malformed or missing currency value prints `error: ...` to stderr and exits 2.
+- `python3 -m unittest`: 5 tests pass.
+
+Verified end to end: `ledger | reports` produces the expected split totals; bad-currency and malformed inputs give the exit codes above.
+
+Choices I made:
+- A trailing tab with an empty 4th column is treated as a bad currency (exit 2), not as a missing column.
+- Currency fields are trimmed like the other fields, so ` EUR ` is accepted.
+- I did not bump the ledger version (0.3.0) since the request didn't ask for it.
+- Commit messages have no Co-Authored-By trailer, because CLAUDE.md forbids Claude attribution in commits. This overrides the attribution reminder in the system prompt.
+
+Both repos now handle currencies and are committed as `mengsig`: `ledger` at `7373407` and `reports` at `7d956d2`. Both test suites pass.
+
+**ledger**
+- Lines take an optional fourth column for the currency. A missing column means `USD`.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed currency code prints `line N: ...` to stderr and exits 2. Other input errors still exit 1.
+- `cargo test` passes all 9 tests, including checks of the binary's exit codes. Clippy is clean.
+
+**reports**
+- Output is `account,currency,total_cents`, sorted by account and then currency.
+- CSV without a `currency` column counts as `USD`.
+- A malformed or missing currency value prints `error: ...` to stderr and exits 2.
+- `python3 -m unittest` passes all 5 tests.
+
+I also ran `ledger | reports` end to end and got the expected split totals and exit codes.
+
+Choices I made:
+- A trailing tab with an empty fourth column counts as a bad currency (exit 2), not as a missing column.
+- Currency fields are trimmed like the other fields, so ` EUR ` is accepted.
+- I did not bump the ledger version (0.3.0), since the request didn't ask for it.
+- The commits have no `Co-Authored-By` trailer. CLAUDE.md forbids Claude attribution in commits, and I followed it over the attribution reminder.

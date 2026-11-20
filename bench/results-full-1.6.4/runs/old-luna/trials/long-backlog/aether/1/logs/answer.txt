@@ -1,0 +1,3 @@
+Implemented TT-101 through TT-104, added regression tests, and committed each ticket separately. The requested suite passes: **8 tests, OK**. The worktree is clean.
+
+Commits: `0e7f465` (TT-101), `073ccf8` (TT-102), `256eec4` (TT-103), `e64c0bb` (TT-104).

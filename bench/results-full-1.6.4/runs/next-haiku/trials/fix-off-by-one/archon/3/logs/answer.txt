@@ -1,0 +1,23 @@
+Queued qi_01M7W9GV7GA1YF5D4QZAGR1D8C to fix the off-by-one in window.py (sliding_windows stops one window short) in repo fix-off-by-one. It runs as one direct item at low effort with one standard review, to keep claude-code quota use down. Quota pace: claude-code is at 77% of its seven-day window with 31% elapsed, so it would run out before reset. I'm not running more items in parallel. Tell me if you want this item held or sent to another provider.
+
+I queued the fix rather than making it myself, since the repository is only managed through Archon. The item will commit the change to a local branch once it passes.
+
+- **Item:** `qi_01M7W9GV7GA1YF5D4QZAGR1D8C`, in repo `fix-off-by-one` (ship mode: local, base `main`).
+- **Bug:** `sliding_windows` in `window.py` uses `range(len(items) - size)`, which drops the last window. It should be `range(len(items) - size + 1)`. The brief asks the agent to check the edge cases: size equal to the length, size greater than the length, empty input, and size ≤ 0, which keeps its `ValueError`.
+- **Constraints in the brief:** don't change the tests, keep the change minimal, run `python3 -m unittest` and report its output, and commit without attribution lines.
+- **Setup:** the `direct` pipeline with one standard review, at `low` effort on a `fast` model. I chose this for the quota pace: claude-code is at 77% of its seven-day window with 31% elapsed, so it would run out before reset. I'm running only this one item there.
+
+I haven't verified the test run. I'll report the outcome when the item finishes, or if it fails.
+
+Done: Fix off-by-one in sliding_windows so python3 -m unittest passes. Fixed the off-by-one in sliding_windows (window.py). The range stop was len(items) - size, which dropped the last window; it is now len(items) - size + 1, so every start index 0..len(items)-size is returned. Size == len gives one window, size > len or empty items gives [], and size <= 0 still raises ValueError. No test files changed. Committed as 70f4598 on archon/zagr1d8c-fix-off-by-one-in-sliding-windows-so-pyt with the repo's configured identity (mengsig), no attribution lines. Before: python3 -m unittest FAILED (2 failures, 3 tests). After on 70f4598: "Ran 3 tests ... OK", exit 0. Ad hoc edge checks passed: [1,2,3] size 2 -> [[1,2],[2,3]]; [1,2] size 2 -> [[1,2]]; [1] size 2 -> []; [] size 1 -> []; [1,2,3] size 3 -> one window; [1,2,3,4] size 1 -> four windows. Review: reviewer agt_01M7W9HBCBQ8K7C3J5YWF25FSH (claude-code/claude-haiku-5-5, effort low) passed head 70f4598 with no findings. Tree 86fa2570260a2e082a57848f99c47518a99b485c. Not pushed. Left open: the reviewer's leftover process pid 159254 (a claude -p child) is listed as handed to me; it stops when this stage ends, and I did not kill it. __pycache__ was removed and is untracked.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9HBCBQ8K7C3J5YWF25FSH)
+
+SHIPPED: commit 70f4598f2f00f1cad23653bf4ee9ea7e8fb5a2de on the run branch
+Branch `archon/zagr1d8c-fix-off-by-one-in-sliding-windows-so-pyt` in /home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/b7b5e29d785c12abe0ae0302/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7W9GV7GA1YF5D4QZAGR1D8C`; land it in `main`: `archon merge qi_01M7W9GV7GA1YF5D4QZAGR1D8C`.
+
+Fixed the off-by-one in sliding_windows (window.py). The range stop was len(items) - size, which dropped the last window; it is now len(items) - size + 1, so every start index 0..len(items)-size is returned. Size == len gives one window, size > len or empty items gives [], and size <= 0 still raises ValueError. No test files changed. Committed as 70f4598 on archon/zagr1d8c-fix-off-by-one-in-sliding-windows-so-pyt with the repo's configured identity (mengsig), no attribution lines. Before: python3 -m unittest FAILED (2 failures, 3 tests). After on 70f4598: "Ran 3 tests ... OK", exit 0. Ad hoc edge checks passed: [1,2,3] size 2 -> [[1,2],[2,3]]; [1,2] size 2 -> [[1,2]]; [1] size 2 -> []; [] size 1 -> []; [1,2,3] size 3 -> one window; [1,2,3,4] size 1 -> four windows. Review: reviewer agt_01M7W9HBCBQ8K7C3J5YWF25FSH (claude-code/claude-haiku-5-5, effort low) passed head 70f4598 with no findings. Tree 86fa2570260a2e082a57848f99c47518a99b485c. Not pushed. Left open: the reviewer's leftover process pid 159254 (a claude -p child) is listed as handed to me; it stops when this stage ends, and I did not kill it. __pycache__ was removed and is untracked.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9HBCBQ8K7C3J5YWF25FSH)
+
+SHIPPED: commit 70f4598f2f00f1cad23653bf4ee9ea7e8fb5a2de on the run branch

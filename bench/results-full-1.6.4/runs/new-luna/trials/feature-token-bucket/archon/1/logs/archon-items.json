@@ -1,0 +1,241 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W276XS3TGH4C3V9HX10T10",
+      "repo": "repo_01M7W26M2MEQ75WJ38H0CM8B39",
+      "pipeline": "direct",
+      "title": "Implement SPEC.md rate limiter in ratelimit.py",
+      "brief": "Implement the rate limiter described in SPEC.md in ratelimit.py, which currently contains stubs. Follow the spec exactly, including all error cases and edge cases; test_ratelimit.py covers only basics, so inspect the full spec carefully. Keep the implementation dependency-free using only the Python standard library. Run appropriate existing validation, add or adjust tests only as needed to cover the specified error and edge cases, and commit the completed work. Acceptance criteria: behavior matches SPEC.md including error and edge cases; no third-party dependencies; implementation is committed.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W276XS3TGH4C3V9HX10T10",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T08:47:25.783245732Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T08:47:25.792543045Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T08:47:25.783245732Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W2773HVQD6BAQVZGYYG60J",
+        "summary": "Implemented the SPEC.md token bucket and keyed LRU limiter in ratelimit.py, with validation, continuous refill, rollback-safe clock handling, wait-time queries, and focused edge-case tests. Baseline tests errored on the original stubs; all 8 tests, py_compile, and git diff --check pass on the committed head. Committed as 43dde9c; worktree is clean. No known gaps.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W2AR1BREZQPMZFAPSPZD86)\n\nSHIPPED: commit 43dde9c63b10a4be86786188339ca2c0d94c9562 on the run branch"
+      },
+      "created_at": "2026-11-20T08:47:25.625577001Z",
+      "updated_at": "2026-11-20T08:49:58.571190684Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W2773HVQD6BAQVZGYYG60J",
+        "item": "qi_01M7W276XS3TGH4C3V9HX10T10",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W277B7WP2P8VJM0JN7050R",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/cc70d001d51a72b8fd88d3fe/.archon/data/worktrees/feature-token-bucket/qi_01M7W276XS3TGH4C3V9HX10T10",
+        "branch": "archon/9hx10t10-implement-spec-md-rate-limiter-in-rateli",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the SPEC.md token bucket and keyed LRU limiter in ratelimit.py, with validation, continuous refill, rollback-safe clock handling, wait-time queries, and focused edge-case tests. Baseline tests errored on the original stubs; all 8 tests, py_compile, and git diff --check pass on the committed head. Committed as 43dde9c; worktree is clean. No known gaps.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W2AR1BREZQPMZFAPSPZD86)\n\nSHIPPED: commit 43dde9c63b10a4be86786188339ca2c0d94c9562 on the run branch"
+        },
+        "cost_usd": 0.01448512,
+        "started_at": "2026-11-20T08:47:26.017731366Z",
+        "finished_at": "2026-11-20T08:49:58.571190684Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W277APSFZWJV0ZPY7T3H2H",
+        "run": "prun_01M7W2773HVQD6BAQVZGYYG60J",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W277BWQT09KG760QBXBBKZ",
+        "aether_task": "tsk_01M7W277BWQT09KG760QBXBBM0",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented the SPEC.md token bucket and keyed LRU limiter in ratelimit.py, with validation, continuous refill, rollback-safe clock handling, wait-time queries, and focused edge-case tests. Baseline tests errored on the original stubs; all 8 tests, py_compile, and git diff --check pass on the committed head. Committed as 43dde9c; worktree is clean. No known gaps.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (8 passed; baseline 3 errors from NotImplementedError stubs)",
+            "python -m py_compile ratelimit.py test_ratelimit.py (passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "43dde9c63b10a4be86786188339ca2c0d94c9562",
+          "evidence": [
+            {
+              "after": "Ran 8 tests in 0.000s; OK.",
+              "before": "Ran 3 tests; FAILED (errors=3), each raised NotImplementedError.",
+              "caption": "Rate limiter test suite: baseline failed on stubs; all tests pass after implementation.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "43dde9c63b10a4be86786188339ca2c0d94c9562",
+          "pr": {
+            "body": "Implemented dependency-free TokenBucket and KeyedLimiter using the injected clock and collections.OrderedDict. Added tests for configuration/request validation, fractional refill, clock rollback, wait_time behavior, LRU recency/eviction, and invalid keyed requests. Verification on final head: python -m unittest -v (8 passed), python -m py_compile ratelimit.py test_ratelimit.py (passed), git diff --check (passed). No known limitations.",
+            "summary": "Implemented the SPEC.md rate limiter. Now supports validated token acquisition, fractional refill, wait estimates, rollback-safe clocks, and bounded per-key LRU buckets. Before: all three baseline tests failed on stubs; now: all eight tests pass.",
+            "title": "Implement specified token bucket rate limiter"
+          },
+          "review": {
+            "reviewed_head": "43dde9c63b10a4be86786188339ca2c0d94c9562",
+            "reviewer_agents": [
+              "agt_01M7W2AR1BREZQPMZFAPSPZD86"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W2AR1BREZQPMZFAPSPZD86",
+                "base": "55c23c6737309cdea58e2faa6a1dae313c9ed0d8",
+                "findings": 0,
+                "head": "43dde9c63b10a4be86786188339ca2c0d94c9562",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W2AR1BREZQPMZFAPSPZD86"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "low",
+            "why": "Contained change in ratelimit.py with focused tests in test_ratelimit.py; no third-party dependencies. Independent review passed with no findings. The reviewer assessed behavior as isolated and the focused tests passed."
+          },
+          "risk_reviewer": "agt_01M7W2AR1BREZQPMZFAPSPZD86",
+          "tree": "b3004fa5ccfa5cc0748b11a29a17c872233f1767"
+        },
+        "cost_usd": 0.01448512,
+        "started_at": "2026-11-20T08:47:26.038037124Z",
+        "finished_at": "2026-11-20T08:49:56.165134401Z"
+      }
+    ],
+    "spent_usd": 0.01448512,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W277APSFZWJV0ZPY7T3H2H": {
+        "direct_usd": 0.0114108,
+        "delegated_usd": 0.00307432,
+        "agents": [
+          {
+            "agent": "agt_01M7W2AR1BREZQPMZFAPSPZD86",
+            "parent": "agt_01M7W277BWQT09KG760QBXBBKZ",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.00307432
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T08:47:25.783245732Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T08:47:25.792543045Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T08:47:25.783245732Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

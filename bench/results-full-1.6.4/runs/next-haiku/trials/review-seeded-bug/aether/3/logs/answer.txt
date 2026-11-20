@@ -1,0 +1,39 @@
+I found one critical forgery bug in `src/tokens.js` that lets anyone mint a valid session token, plus several smaller problems. I changed no files. The existing 4 tests pass, but none of them exercise these cases.
+
+**1. `verify` — critical: anyone can forge a token with an empty signature**
+- Where: `verify()`, line 27 (`expected.startsWith(signature)`).
+- What goes wrong: `startsWith` against an empty string is always true. Any token ending in `.` passes the signature check. The attacker writes any payload, base64url-encodes it, and appends `.`.
+- Concrete input: `body = base64url('{"user":"root","exp":<now+1h>}')`, token `body + "."`, with any secret. `verify` returns `{ user: 'root', ... }`. I ran this and confirmed it.
+- Severity: critical. This is a full authentication bypass, and it would ship tomorrow.
+
+**2. `verify` — critical: the signature is checked by prefix, so it can be guessed one character at a time**
+- Where: same line 27.
+- What goes wrong: even if the empty case were fixed, accepting any prefix of the real MAC lets an attacker recover the signature one base64url character at a time (at most 64 tries per position, about 43 × 64 requests in total). Each character is a yes/no oracle. Prefix matching also means a truncated signature is accepted.
+- Severity: critical. Fix both 1 and 2 by comparing the full expected MAC with `crypto.timingSafeEqual` on equal-length buffers.
+
+**3. `verify` — high: a malformed but signed-looking token throws instead of returning `null`**
+- Where: `verify()`, line 28 (`JSON.parse(fromBase64Url(body))`) and line 29 (`payload.exp`).
+- What goes wrong: the function's contract is "payload or `null`". Input `"bm90anNvbg."` (decodes to `notjson`) throws `SyntaxError`. Input `"bnVsbA."` (decodes to `null`) throws `TypeError` at `payload.exp`. Both are reachable without the secret, because of bugs 1 and 2. If the caller doesn't catch them, one bad cookie can crash a request handler or become a 500 instead of a clean rejection.
+- Severity: high (denial of service on the request path, and an error-handling contract violation). I confirmed both throws.
+
+**4. `verify` — medium: extra segments are silently accepted**
+- Where: `verify()`, line 24 (`token.split('.')`).
+- What goes wrong: `split` drops everything after the second segment. `good + ".junk"` verifies. This makes tokens malleable and breaks the "exactly two segments" format. I confirmed it.
+- Severity: medium. Use an exact check that the token has exactly two non-empty segments.
+
+**5. `verify` — medium: an empty or missing secret is not rejected**
+- Where: `verify()`, line 26. Only `sign()` (line 15) checks the secret length.
+- What goes wrong: `verify(token, '')` accepts any token signed with an empty HMAC key. I confirmed this. A `null` or `undefined` secret throws a `TypeError` from `createHmac` rather than returning `null`.
+- Severity: medium. Apply the same length check in `verify`, or validate the secret once where it is loaded.
+
+**6. `sign` — low: unvalidated TTL**
+- Where: `sign()`, line 16.
+- What goes wrong: `ttlSeconds` is not checked. `NaN`, a negative value, or `Infinity` produces tokens that are never valid, or never expire, depending on the value. There is no `Number.isFinite` / positive check.
+- Severity: low. Add a guard that `ttlSeconds` is a finite positive number.
+
+**7. Minor notes (low / informational)**
+- Expiry uses milliseconds in `exp`/`iat`, while JWT uses seconds. This is fine if it is internal, but it will confuse any interop or debugging.
+- The secret length check counts characters, not bytes. A 32-character non-ASCII secret is under 32 bytes of entropy in some encodings. The guidance is to require a minimum byte length or a random key.
+- Nothing checks `iat`/`nbf` or an audience. A token signed for one service is accepted by any service with the same key.
+
+**Recommendation:** do not ship. Fix bugs 1 and 2 first, which together are a critical auth bypass. Add the regression tests the existing suite is missing: an empty-signature forgery, a truncated-signature forgery, malformed-body and `null`-payload inputs that must return `null`, extra-segment tokens, and an empty secret in `verify`. Everything above is from reading the code and running the module directly. I did not run any load tests or the server-side call sites, since `index.js` only re-exports this file.

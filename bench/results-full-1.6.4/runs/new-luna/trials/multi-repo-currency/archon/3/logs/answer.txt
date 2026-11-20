@@ -1,0 +1,31 @@
+Queued initiative **ini_01M7W9WT8KAN4DQW4R8C2YFES5** with one `direct` item for each repository. Both items share the currency and CSV compatibility contract and include the requested README updates, test commands, and commits. The repositories ship locally, so the commits will remain local.
+
+Done: Aggregate report totals by account and currency. Added currency-aware report totals: legacy CSV without currency defaults to USD, new CSV totals group by account and currency, output sorts by both fields, and invalid currency codes exit 2 with stderr errors. Updated README and tests. `python3 -m unittest` passed (3 tests); `git diff --check` passed. Committed as 83a9064e1c4026b81c1f87b29e1fe3c792950b11; no open issues.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 83a9064e1c4026b81c1f87b29e1fe3c792950b11 on the run branch
+Branch `archon/p0k93pe4-aggregate-report-totals-by-account-and-c` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/128ed82bba2c82f2291153d1/reports holds it (3 files changed, 58 insertions(+), 15 deletions(-)). Review: `archon diff qi_01M7W9WT8WHYZ0EFBFP0K93PE4`; land it in `main`: `archon merge qi_01M7W9WT8WHYZ0EFBFP0K93PE4`.
+
+Done: Add currency field to ledger TSV-to-CSV. Added optional TSV currency with USD default and four-column CSV output; malformed currencies report their line and exit 2 while other input errors remain exit 1. Preserved the existing public Rust parsing and row-rendering APIs by adding currency-aware counterparts for the CLI. README and tests updated. `cargo fmt -- --check`, `cargo test` (4 integration tests passed), and `git diff --check` passed on the committed tree. Commit: 9d449fd05285806a23a130c3b7a99a488e0a5e37; tree: 329fca3d99105b4559a107a1c0fcc4fb4444720b. No open implementation work.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 9d449fd05285806a23a130c3b7a99a488e0a5e37 on the run branch
+Branch `archon/q4f15j4r-add-currency-field-to-ledger-tsv-to-csv` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/128ed82bba2c82f2291153d1/ledger holds it (4 files changed, 123 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M7W9WT8MBPYYXVYGQ4F15J4R`; land it in `main`: `archon merge qi_01M7W9WT8MBPYYXVYGQ4F15J4R`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M7W9WT8MBPYYXVYGQ4F15J4R ended and its cargo target directory went.
+
+Added currency-aware report totals: legacy CSV without currency defaults to USD, new CSV totals group by account and currency, output sorts by both fields, and invalid currency codes exit 2 with stderr errors. Updated README and tests. `python3 -m unittest` passed (3 tests); `git diff --check` passed. Committed as 83a9064e1c4026b81c1f87b29e1fe3c792950b11; no open issues.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 83a9064e1c4026b81c1f87b29e1fe3c792950b11 on the run branch
+
+Added optional TSV currency with USD default and four-column CSV output; malformed currencies report their line and exit 2 while other input errors remain exit 1. Preserved the existing public Rust parsing and row-rendering APIs by adding currency-aware counterparts for the CLI. README and tests updated. `cargo fmt -- --check`, `cargo test` (4 integration tests passed), and `git diff --check` passed on the committed tree. Commit: 9d449fd05285806a23a130c3b7a99a488e0a5e37; tree: 329fca3d99105b4559a107a1c0fcc4fb4444720b. No open implementation work.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 9d449fd05285806a23a130c3b7a99a488e0a5e37 on the run branch

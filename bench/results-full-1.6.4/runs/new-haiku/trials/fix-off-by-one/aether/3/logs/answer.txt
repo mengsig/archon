@@ -1,0 +1,13 @@
+Fixed the off-by-one in window.py: sliding_windows used range(len(items) - size), which dropped the final window. Changed to range(len(items) - size + 1). `python3 -m unittest` now passes all 3 tests (no test files changed). Edge cases checked: empty list, size == len, size > len (returns []), and size 2 on 4 items. Committed as b3a8dfd on main with the configured git identity (mengsig), with no attribution lines per CLAUDE.md. An untracked __pycache__/ directory from running the tests was left uncommitted.
+
+The bug is fixed and committed as `b3a8dfd` on `main`. `python3 -m unittest` now passes all 3 tests, and I did not change the tests.
+
+The cause was the loop bound in `window.py`. `range(len(items) - size)` stopped one step early, so the final window was always dropped. I changed it to `range(len(items) - size + 1)`.
+
+I also checked the edge cases directly:
+- An empty list returns `[]`.
+- `size == len(items)` returns the whole list as one window.
+- `size > len(items)` returns `[]`.
+- `[1, 2, 3, 4]` with size 2 returns all three windows.
+
+The commit uses the git identity already configured in the repo (mengsig). I left out the Co-Authored-By line from the attribution reminder because your CLAUDE.md says not to add attribution. There is an untracked `__pycache__/` directory from running the tests. I did not commit it.

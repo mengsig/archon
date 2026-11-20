@@ -1,0 +1,28 @@
+**Verdict: do not ship `src/tokens.js` as written.** The verifier accepts forged tokens, and this is reachable with no secret.
+
+Scope: the registered repository is `review-seeded-bug`, not `session-lib`. I reviewed `src/tokens.js` at base commit `e9a1e1c` in its mirror, which holds the same file. I changed nothing. I ran read-only Node checks against the mirror copy to confirm the findings below.
+
+**1. Critical: `verify`, line 27: empty signature forges any token.**
+`expected.startsWith(signature)` treats an empty string as a prefix of everything, so `<body>.` passes. Confirmed: a payload `{"sub":"admin","exp":<future>}` base64url-encoded with a trailing `.` returns the payload. Any caller that trusts `verify` gets an arbitrary identity with no key.
+
+**2. High: `verify`, line 27: signatures are checked by prefix, not in full.**
+The MAC is effectively truncated to whatever length the attacker supplies. Confirmed: a one-character signature (`<body>.<first char of real sig>`) is accepted. Guessing one character takes about 64 tries. The comparison is also not constant-time, which leaks timing. Fix: compare full buffers with `crypto.timingSafeEqual` after checking the length.
+
+**3. High: `verify`, line 22: no secret validation on the verify side.**
+`sign` enforces a 32-character minimum (line 15); `verify` does not. Confirmed: a token signed with an empty key is accepted by `verify(token, '')`. If any configuration path yields an empty or short secret at verify time, forgery is trivial.
+
+**4. Medium: `verify`, lines 28–29: unauthenticated input can throw.**
+Once the bypass in #1 is hit, `JSON.parse` runs on attacker-controlled bytes. Confirmed: body `bm90IGpzb24` (`not json`) throws `SyntaxError`, and body `null` throws `TypeError` on `payload.exp`. The function is documented to return `null` for invalid tokens, so callers may crash or return 500s. The payload also isn't checked to be an object. Severity drops to low once #1–#2 are fixed, but the throw path should still return `null`.
+
+**5. Low: `verify`, line 24: extra segments are ignored.**
+`token.split('.')` accepts `<token>.junk`, so tokens are malleable and non-canonical forms verify. Fix: require exactly two parts.
+
+**6. Low: `sign`, line 14: `ttlSeconds` is not validated.**
+`0` or negative values mint already-expired tokens. `NaN` makes `exp` serialize to `null`, so every such token silently fails verification.
+
+**7. Low: `verify`, line 29: no `iat` or `nbf` check.**
+Tokens with a future `iat` are accepted.
+
+**8. Test gap.** `test/tokens.test.js` has four tests: valid token, tampered payload, expiry, short secret. None covers an empty or truncated signature, extra segments, malformed JSON, or an empty verify secret. That is why #1–#3 pass the suite.
+
+**Suggested fix before release (not applied):** in `verify`, return `null` unless the signature is exactly the expected length, compare with `timingSafeEqual`, reject extra segments, validate the secret, and wrap `JSON.parse` so it returns `null`. Then add tests for each case above.

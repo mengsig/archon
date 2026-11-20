@@ -1,0 +1,3 @@
+Implemented `TokenBucket` with continuous refill, request validation, non-consuming wait estimates, and backward-clock handling. Added `KeyedLimiter` with per-key buckets and least-recently-used eviction.
+
+Committed as `c09cae7` (`Implement token bucket rate limiter`). `git diff --check` passed; tests were not run.

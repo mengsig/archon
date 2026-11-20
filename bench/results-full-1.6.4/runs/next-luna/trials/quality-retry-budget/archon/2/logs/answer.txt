@@ -1,0 +1,14 @@
+Queued as [qi_01M7W9SYB96Z83KRKZY2QFH3NP](#) on the `direct` pipeline. Its acceptance criteria include API compatibility, all specified errors and boundaries in `SPEC.md`, focused standard-library tests, and a commit.
+
+Done: Implement retry_budget.py to SPEC.md. Implemented retry_delay per SPEC.md and added focused boundary tests. Before: all 3 existing tests errored on the stub; after: all 10 tests pass. Final checks: PYTHONDONTWRITEBYTECODE=1 python -m unittest -v (10 passed) and git diff --check (passed). Committed as 0dd2449c21652e02b60d00a1581d18191ec07cd5; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W9WCK23R7JPXQMAF4CVS2H)
+
+SHIPPED: commit 0dd2449c21652e02b60d00a1581d18191ec07cd5 on the run branch
+Branch `archon/y2qfh3np-implement-retry-budget-py-to-spec-md` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/5b7c3965ffa3057afe16d527/quality-retry-budget holds it (2 files changed, 73 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7W9SYB96Z83KRKZY2QFH3NP`; land it in `main`: `archon merge qi_01M7W9SYB96Z83KRKZY2QFH3NP`.
+
+Implemented retry_delay per SPEC.md and added focused boundary tests. Before: all 3 existing tests errored on the stub; after: all 10 tests pass. Final checks: PYTHONDONTWRITEBYTECODE=1 python -m unittest -v (10 passed) and git diff --check (passed). Committed as 0dd2449c21652e02b60d00a1581d18191ec07cd5; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W9WCK23R7JPXQMAF4CVS2H)
+
+SHIPPED: commit 0dd2449c21652e02b60d00a1581d18191ec07cd5 on the run branch

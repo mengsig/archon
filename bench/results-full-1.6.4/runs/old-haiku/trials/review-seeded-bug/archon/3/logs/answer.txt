@@ -1,0 +1,41 @@
+I reviewed `src/tokens.js` (and `src/encoding.js`, which it depends on) and found one critical forgery bug. The file is not safe to ship as written. I changed nothing.
+
+**Scope note:** You named the repository `session-lib`. The only registered repository is `review-seeded-bug` (base `main`, HEAD `15a1ccf "bench fixture"`). I reviewed `src/tokens.js` from that mirror, so this is the committed version. Any uncommitted changes are not visible to me.
+
+### Findings
+
+**1. `verify` accepts unsigned tokens: any payload can be forged. Severity: critical.**
+- File and function: `src/tokens.js`, `verify`, the `expected.startsWith(signature)` check at line 27.
+- What goes wrong: an empty signature is a prefix of every string, so `startsWith('')` is always true. `token.split('.')` on `"<body>."` gives `signature === ""`, which passes the `undefined` check. The HMAC is never effectively checked.
+- Concrete input: `payload = toBase64Url(JSON.stringify({ sub: 'admin', exp: Date.now() + 1e12 }))`, then `token = payload + '.'`. `verify(token, secret)` returns `{ sub: 'admin', ... }` without the secret.
+- Fix: require `signature` to equal the full expected digest, compared with `crypto.timingSafeEqual` on equal-length buffers.
+
+**2. The signature check is a prefix match and is not constant-time. Severity: high.**
+- File and function: `src/tokens.js`, `verify`, line 27.
+- What goes wrong: even with a non-empty signature, a attacker only needs to match a prefix. A one-character guess succeeds 1/64 of the time. Because the comparison is not constant-time, the response timing also leaks how many leading characters matched. Recovering a full 43-character digest takes roughly a few thousand online requests.
+- Fix: compare the full digest with `crypto.timingSafeEqual`, as above. This also fixes finding 1.
+
+**3. `verify` throws on attacker-shaped payloads instead of returning `null`. Severity: medium.**
+- File and function: `src/tokens.js`, `verify`, line 28.
+- What goes wrong: `JSON.parse` is unguarded. Once finding 1 lets an attacker control the body, a body that is not JSON (for example, `base64url("{")`) throws out of `verify`. A body that decodes to `null` makes `payload.exp` throw a `TypeError` at line 29. Callers that expect `null` for invalid tokens will see an uncaught exception on the request path.
+- Fix: wrap only the parse in a try/catch that returns `null`, and check that the payload is a non-null object before reading `exp`.
+
+**4. `verify` does not reject extra segments. Severity: low.**
+- File and function: `src/tokens.js`, `verify`, line 24.
+- What goes wrong: `token.split('.')` ignores everything after the second segment. `"<body>.<sig>.junk"` verifies just like `"<body>.<sig>"`, so tokens are malleable at the transport level. This matters if tokens are used as cache or dedupe keys.
+- Fix: require exactly two segments, for example with `split` and a length check of 2.
+
+**5. `verify` does not validate its secret. Severity: low, but it can compound finding 1.**
+- File and function: `src/tokens.js`, `verify`, line 26.
+- What goes wrong: `sign` enforces `secret.length >= 32`, but `verify` does not. If `verify` is called with an empty or short secret (for example, a missing environment variable that is coerced to `''`), tokens can be forged by anyone who knows that empty key.
+- Fix: apply the same secret check in `verify`, sharing one helper.
+
+**6. `sign` does not validate `ttlSeconds`. Severity: low.**
+- File and function: `src/tokens.js`, `sign`, line 16.
+- What goes wrong: `ttlSeconds` is not checked. `NaN` or a non-number makes `exp` `NaN`, which `JSON.stringify` turns into `null`. The token is then signed but can never verify. Zero or negative values create tokens that are already expired, and nothing reports it.
+- Fix: validate `ttlSeconds` as a positive finite number at the top of `sign`.
+
+**Not an issue:** the algorithm is fixed to HMAC-SHA256 and the header carries no `alg` field, so algorithm-confusion attacks do not apply. Claims also cannot override `iat` or `exp`, because those are set after the spread.
+
+### Recommendation
+Do not ship until finding 1 is fixed and a test is added that rejects a token with an empty signature. Findings 2 through 6 should be fixed in the same change, since they are small and sit in the same functions. Changes are not made here: this needs to go through the queue, and I can enqueue it if you want.

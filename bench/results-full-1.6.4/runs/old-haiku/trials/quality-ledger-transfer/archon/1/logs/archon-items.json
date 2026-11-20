@@ -1,0 +1,239 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W3PHR46PCDS3TW376GGHXV",
+      "repo": "repo_01M7W3P91NPBFY64V2J1RE19SP",
+      "pipeline": "direct",
+      "title": "Implement ledger.py per SPEC.md with focused stdlib tests",
+      "brief": "Operator request (authenticated): \"Implement `ledger.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nRead SPEC.md at the repository root in full and follow it exactly. Summary of the spec: implement `Ledger(balances)`, `transfer(source, destination, amount) -> bool`, and `snapshot() -> dict`, with `MAX_BALANCE = 2**63 - 1`.\n- Construction: dict of nonempty string names to built-in ints in [0, MAX_BALANCE]; empty allowed; invalid names/balances or non-dict input raise ValueError; bools are not integers. Copy input; snapshots must not alias internal state; transfers cannot create accounts.\n- Amount: built-in int in [1, MAX_BALANCE] else ValueError, validated before account lookup. Unknown account raises KeyError.\n- False for insufficient funds or destination overflow, with no change. Success returns True and preserves the total.\n- Same-account transfer: True iff sufficient funds, never changes balance (even at MAX_BALANCE); validate amount and account first.\n- Thread-safe: each transfer is atomic, snapshots never see a half transfer, opposite transfers must not deadlock.\n\nAcceptance: existing tests still pass; new focused tests cover every error and boundary case above, including a concurrency test using threads with deterministic outcomes (no wall-clock timing, no randomness, no external services). Use only the Python standard library. Keep functions under 60 lines and add meaningful assertions at boundaries, per the repository's coding rules if present.\n\nCommit the work on the local branch with a clear message (ship mode is local; do not push). Do not add attribution lines beyond the repository's conventions. Do not ask the operator questions; decide and state assumptions in your summary.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W3PHXJW0P3QCB1P1P8D8C2",
+        "summary": "Implemented ledger.py per SPEC.md: Ledger(balances), transfer(), snapshot(), MAX_BALANCE, using one per-ledger threading.Lock and stdlib only. Added 29 focused unittest cases in test_ledger.py covering construction, name and balance validation, bool rejection, amount-before-account ordering, KeyError on unknown accounts, same-account semantics at MAX_BALANCE, overflow, copy/no-aliasing, str-subclass names, and deterministic concurrency (exact drain, exact overflow capacity, opposite transfers, snapshot consistency). Checks: `python3 -m unittest -v test_ledger` on head 635f48b gives 31 tests OK, repeated runs OK. Before (base stub): 2 errors (NotImplementedError). Mutants: 6 of 7 caught; a removed lock was not caught deterministically, so atomicity relies on the snapshot test's probabilistic interleaving. Review round 1 (whole change at 4f93729): review-2 and review-3 failed on a str-subclass name deadlock and non-daemon test threads; both fixed in 635f48b (exact type checks, daemon threads, bounded joins, new tests). review-delta re-read 4f93729..635f48b and passed. review-1 passed the whole change at 4f93729. Open follow-ups (non-blocking): no deterministic test that a missing lock is detected; tests use barrier/join timeouts as deadlock guards; invariant asserts are stripped under -O. Assumptions: one lock per ledger; unhashable or non-str account names raise KeyError; a str-subclass name is rejected. Nothing is running from this stage except reviewer agent processes that exit with the run. Not pushed.\nREVIEW: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W3S5CWTDMJ937V2PGG84BZ), claude-code/claude-haiku-5-5 (agent agt_01M7W3SADJ6ZB4KH3AC7X5KYKX), claude-code/claude-haiku-5-5 (agent agt_01M7W3SFSKFFV8W87KRJR1CZFD), claude-code/claude-haiku-5-5 (agent agt_01M7W40ACEKKVFQ87RPGC7K71B)\n\nSHIPPED: commit 635f48bd09ce122eaf3a3e4c75c6e32d9cb06fc9 on the run branch"
+      },
+      "created_at": "2026-11-20T09:13:16.971778515Z",
+      "updated_at": "2026-11-20T09:19:21.188769285Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W3PHXJW0P3QCB1P1P8D8C2",
+        "item": "qi_01M7W3PHR46PCDS3TW376GGHXV",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W3PJ46FK8KFDW2PE0JSBG1",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/9e1ab02261a0a9df08c37bfc/.archon/data/worktrees/quality-ledger-transfer/qi_01M7W3PHR46PCDS3TW376GGHXV",
+        "branch": "archon/376gghxv-implement-ledger-py-per-spec-md-with-foc",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented ledger.py per SPEC.md: Ledger(balances), transfer(), snapshot(), MAX_BALANCE, using one per-ledger threading.Lock and stdlib only. Added 29 focused unittest cases in test_ledger.py covering construction, name and balance validation, bool rejection, amount-before-account ordering, KeyError on unknown accounts, same-account semantics at MAX_BALANCE, overflow, copy/no-aliasing, str-subclass names, and deterministic concurrency (exact drain, exact overflow capacity, opposite transfers, snapshot consistency). Checks: `python3 -m unittest -v test_ledger` on head 635f48b gives 31 tests OK, repeated runs OK. Before (base stub): 2 errors (NotImplementedError). Mutants: 6 of 7 caught; a removed lock was not caught deterministically, so atomicity relies on the snapshot test's probabilistic interleaving. Review round 1 (whole change at 4f93729): review-2 and review-3 failed on a str-subclass name deadlock and non-daemon test threads; both fixed in 635f48b (exact type checks, daemon threads, bounded joins, new tests). review-delta re-read 4f93729..635f48b and passed. review-1 passed the whole change at 4f93729. Open follow-ups (non-blocking): no deterministic test that a missing lock is detected; tests use barrier/join timeouts as deadlock guards; invariant asserts are stripped under -O. Assumptions: one lock per ledger; unhashable or non-str account names raise KeyError; a str-subclass name is rejected. Nothing is running from this stage except reviewer agent processes that exit with the run. Not pushed.\nREVIEW: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W3S5CWTDMJ937V2PGG84BZ), claude-code/claude-haiku-5-5 (agent agt_01M7W3SADJ6ZB4KH3AC7X5KYKX), claude-code/claude-haiku-5-5 (agent agt_01M7W3SFSKFFV8W87KRJR1CZFD), claude-code/claude-haiku-5-5 (agent agt_01M7W40ACEKKVFQ87RPGC7K71B)\n\nSHIPPED: commit 635f48bd09ce122eaf3a3e4c75c6e32d9cb06fc9 on the run branch"
+        },
+        "cost_usd": 0.08626979000000001,
+        "started_at": "2026-11-20T09:13:17.176302160Z",
+        "finished_at": "2026-11-20T09:19:21.188769285Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W3PJ3ZVFBZVA0WZP99HT8H",
+        "run": "prun_01M7W3PHXJW0P3QCB1P1P8D8C2",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W3PJ4KFEJQ2ADKDXAPHPVT",
+        "aether_task": "tsk_01M7W3PJ4KTDBA7T27V5H9RSZ6",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented ledger.py per SPEC.md: Ledger(balances), transfer(), snapshot(), MAX_BALANCE, using one per-ledger threading.Lock and stdlib only. Added 29 focused unittest cases in test_ledger.py covering construction, name and balance validation, bool rejection, amount-before-account ordering, KeyError on unknown accounts, same-account semantics at MAX_BALANCE, overflow, copy/no-aliasing, str-subclass names, and deterministic concurrency (exact drain, exact overflow capacity, opposite transfers, snapshot consistency). Checks: `python3 -m unittest -v test_ledger` on head 635f48b gives 31 tests OK, repeated runs OK. Before (base stub): 2 errors (NotImplementedError). Mutants: 6 of 7 caught; a removed lock was not caught deterministically, so atomicity relies on the snapshot test's probabilistic interleaving. Review round 1 (whole change at 4f93729): review-2 and review-3 failed on a str-subclass name deadlock and non-daemon test threads; both fixed in 635f48b (exact type checks, daemon threads, bounded joins, new tests). review-delta re-read 4f93729..635f48b and passed. review-1 passed the whole change at 4f93729. Open follow-ups (non-blocking): no deterministic test that a missing lock is detected; tests use barrier/join timeouts as deadlock guards; invariant asserts are stripped under -O. Assumptions: one lock per ledger; unhashable or non-str account names raise KeyError; a str-subclass name is rejected. Nothing is running from this stage except reviewer agent processes that exit with the run. Not pushed.\nREVIEW: pass",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v test_ledger (31 tests, OK, on 635f48b)",
+            "python3 -m unittest test_ledger, repeated 3x (OK)",
+            "python3 -m py_compile ledger.py test_ledger.py (OK)",
+            "line-length check >100 chars (0 lines)",
+            "mutant runs in temp copies (6 of 7 caught; no-lock mutant not caught deterministically)"
+          ],
+          "commit": "635f48bd09ce122eaf3a3e4c75c6e32d9cb06fc9",
+          "evidence": [
+            {
+              "caption": "Final test run on head 635f48b: 31 tests pass",
+              "kind": "output",
+              "text": "Ran 31 tests in 0.011s\n\nOK"
+            },
+            {
+              "caption": "Base stub before the change: 2 existing tests error",
+              "kind": "output",
+              "text": "Ran 2 tests in 0.001s\n\nFAILED (errors=2)"
+            }
+          ],
+          "local_commit": "635f48bd09ce122eaf3a3e4c75c6e32d9cb06fc9",
+          "pr": {
+            "body": "Approach: single threading.Lock per Ledger guards transfer and snapshot; transfer validates amount before taking the lock, then accounts, then funds, same-account and overflow checks, then both writes. Key files: ledger.py, test_ledger.py. Checks: unittest on 635f48b 31/31 OK; base stub 2 errors. Review: round 1 failed (str-subclass name ran user __hash__ under the lock; non-daemon test threads could hang), fixed with exact type checks, daemon threads and bounded joins, plus new tests; delta re-review passed. Assumptions: one lock per ledger; unhashable or non-str names raise KeyError; str subclasses are rejected. Limits: a removed lock is not caught deterministically by the tests. Not pushed.",
+            "pr_summary": null,
+            "summary": "made Ledger(balances), transfer() and snapshot() real. now atomic per transfer under one lock, with validation and overflow/same-account rules per spec. before: every method raised NotImplementedError; now: 31 stdlib tests pass.",
+            "title": "Implement thread-safe Ledger per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "635f48bd09ce122eaf3a3e4c75c6e32d9cb06fc9",
+            "reviewer_agents": [
+              "agt_01M7W3S5CWTDMJ937V2PGG84BZ",
+              "agt_01M7W3SADJ6ZB4KH3AC7X5KYKX",
+              "agt_01M7W3SFSKFFV8W87KRJR1CZFD",
+              "agt_01M7W40ACEKKVFQ87RPGC7K71B"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W3S5CWTDMJ937V2PGG84BZ",
+                "base": "2d685caed682f8627116b21650501eeea2457876",
+                "findings": 3,
+                "head": "4f937297149de5f8e2b0cb872f0a01e949c0c35c",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W3SADJ6ZB4KH3AC7X5KYKX",
+                "base": "2d685caed682f8627116b21650501eeea2457876",
+                "findings": 4,
+                "head": "4f937297149de5f8e2b0cb872f0a01e949c0c35c",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W3SFSKFFV8W87KRJR1CZFD",
+                "base": "2d685caed682f8627116b21650501eeea2457876",
+                "findings": 4,
+                "head": "4f937297149de5f8e2b0cb872f0a01e949c0c35c",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W40ACEKKVFQ87RPGC7K71B",
+                "base": "4f937297149de5f8e2b0cb872f0a01e949c0c35c",
+                "findings": 2,
+                "head": "635f48bd09ce122eaf3a3e4c75c6e32d9cb06fc9",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W3S5CWTDMJ937V2PGG84BZ",
+              "agt_01M7W3SADJ6ZB4KH3AC7X5KYKX",
+              "agt_01M7W3SFSKFFV8W87KRJR1CZFD",
+              "agt_01M7W40ACEKKVFQ87RPGC7K71B"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": "agt_01M7W3S5CWTDMJ937V2PGG84BZ",
+            "why": "Concurrency and locking in new code; the spec requires atomic transfers and no deadlock. Touches ledger.py and test_ledger.py only; behaviour is new, not changed. Review round 1 found two real defects, both fixed and re-reviewed. Tests run in under 15 ms."
+          },
+          "tree": "e400a040bbd125ab2e580fb41754752138d636d2"
+        },
+        "cost_usd": 0.08626979000000001,
+        "started_at": "2026-11-20T09:13:17.183583675Z",
+        "finished_at": "2026-11-20T09:19:17.236020943Z"
+      }
+    ],
+    "spent_usd": 0.08626979000000001,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W3PJ3ZVFBZVA0WZP99HT8H": {
+        "direct_usd": 0.04166402,
+        "delegated_usd": 0.04460577,
+        "agents": [
+          {
+            "agent": "agt_01M7W3S5CWTDMJ937V2PGG84BZ",
+            "parent": "agt_01M7W3PJ4KFEJQ2ADKDXAPHPVT",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00896785
+          },
+          {
+            "agent": "agt_01M7W3SADJ6ZB4KH3AC7X5KYKX",
+            "parent": "agt_01M7W3PJ4KFEJQ2ADKDXAPHPVT",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.014735740000000002
+          },
+          {
+            "agent": "agt_01M7W3SFSKFFV8W87KRJR1CZFD",
+            "parent": "agt_01M7W3PJ4KFEJQ2ADKDXAPHPVT",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01329801
+          },
+          {
+            "agent": "agt_01M7W40ACEKKVFQ87RPGC7K71B",
+            "parent": "agt_01M7W3PJ4KFEJQ2ADKDXAPHPVT",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.007604170000000002
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

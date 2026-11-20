@@ -1,0 +1,34 @@
+The review found one critical forgery bug and several smaller problems in `src/tokens.js`. The file should not ship as written. I changed nothing.
+
+**Scope note:** No repository named `session-lib` is registered. The file is in the registered repo `review-seeded-bug`, whose `package.json` name is `session-lib`. I read the working tree at `review-seeded-bug/src/tokens.js` (git HEAD `d38fbf0`, "bench fixture"). I reasoned through the code and did not execute it.
+
+**1. Critical: `verify` accepts any payload with an empty signature. `src/tokens.js:24-27`, `verify()`**
+- Line 25 only rejects `signature === undefined`. For `"<body>."`, `split('.')` gives `signature === ''`, which passes.
+- Line 27 is `expected.startsWith(signature)`, and every string starts with `''`, so the check always passes.
+- Concrete input: `base64url(JSON.stringify({user:'root', exp: 9e15}))` + `"."`. `verify` returns `{user:'root', exp:9e15}` for any secret. Anyone can mint an admin token that never expires.
+- The existing test at `test/tokens.test.js:16-19` only tries a forged body with the *valid* signature, so it does not catch this.
+
+**2. High: the signature check is a prefix match, not a full comparison. `src/tokens.js:26-27`, `verify()`**
+- `expected.startsWith(signature)` accepts any truncated signature. Even if fix 1 is applied, a one-character signature matches with probability 1/64, and a short prefix can be brute-forced.
+- It is also not constant-time, so it leaks the matching prefix through timing.
+- Fix direction: compare the full MAC with `crypto.timingSafeEqual` on equal-length buffers, and reject any signature whose length differs from the MAC.
+
+**3. Medium: `verify` throws on untrusted input instead of returning `null`. `src/tokens.js:28-29`, `verify()`**
+- Line 28 `JSON.parse` is not guarded. Input `"e30"` followed by `"."` (body is `{}`) is fine, but `"bm90LWpzb24"` (not JSON) throws `SyntaxError`.
+- Line 29 dereferences `payload.exp`. Input `"bnVsbA."` (body is `null`) throws `TypeError`.
+- Once fix 1 or 2 is applied, these would only fire for tokens that already pass the signature check. Right now they can be triggered by any unauthenticated caller, so a request handler can crash or fail with a 500 instead of rejecting the token.
+- Fix direction: parse inside a guard that returns `null` on failure, and check the payload is a non-null object.
+
+**4. Low: extra dot-separated segments are silently ignored. `src/tokens.js:24`, `verify()`**
+- `const [body, signature] = token.split('.')` drops anything after the second segment. `body.sig.junk` verifies as `body.sig`. This is harmless once the signature check is strict, but it is a sign the token format is not being checked. Reject tokens without exactly two segments.
+
+**5. Low: `verify` does not check the secret length that `sign` enforces. `src/tokens.js:22`, `verify()`**
+- `sign` rejects secrets under 32 characters, but `verify` accepts anything, including `''`. If the verifying side is misconfigured with an empty secret, forged tokens become easy to mint, since the HMAC key is public.
+- Fix direction: apply the same check in a shared helper.
+
+**6. Low: `sign` accepts a `ttlSeconds` that produces a useless token. `src/tokens.js:14-16`, `sign()`**
+- `ttlSeconds: NaN` yields `exp: null` after JSON serialization, so every issued token fails verification. A zero or negative TTL issues an already-expired token. No error is raised in either case.
+
+**Test coverage:** `test/tokens.test.js` has four cases. It has no test for an empty signature, a truncated signature, non-JSON or `null` bodies, or extra segments. Fix 1 would have been caught by one such test.
+
+**Recommendation:** Do not ship tomorrow until fix 1 and fix 2 are in and covered by tests. Fix 3 should go in the same change.

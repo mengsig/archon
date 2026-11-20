@@ -1,0 +1,20 @@
+Implemented the rate limiter in ratelimit.py per SPEC.md and committed it as bdeca61 on main (author mengsig). Standard library only.
+
+- TokenBucket: validates capacity and refill_per_sec (> 0), starts full, accrues fractional tokens capped at capacity, try_acquire/available/wait_time with n validated (0 < n <= capacity). A backwards or unchanged clock adds nothing; refill resumes from the latest time seen.
+- KeyedLimiter: one bucket per key in an OrderedDict, LRU eviction at max_keys (try_acquire and wait_time both count as use), evicted keys return full, __len__ reports tracked keys. Request validation runs before any key is created or evicted, so an invalid call has no side effects.
+
+Tests: added 11 edge-case tests to test_ratelimit.py alongside the 3 originals. All 14 pass with `python3 test_ratelimit.py`.
+
+Choices I made: a try_acquire call that fails still refills the bucket up to the current time. The commit has no Co-Authored-By trailer, because CLAUDE.md says not to put Claude attribution in commits. `python3 -I` can't import the test module from the repo directory, so I ran the tests without `-I`.
+
+I implemented the rate limiter in `ratelimit.py` following `SPEC.md`, added edge-case tests, and committed both as `bdeca61` on `main`. All 14 tests pass (`python3 test_ratelimit.py`).
+
+- **`TokenBucket`:** validates `capacity` and `refill_per_sec` (both must be `> 0`), starts full, and accrues fractional tokens capped at `capacity`. `try_acquire`, `available` and `wait_time` check `n` (must satisfy `0 < n <= capacity`). A clock that goes backwards, or stands still, adds nothing; refill resumes from the latest time seen.
+- **`KeyedLimiter`:** one bucket per key in an `OrderedDict`. At `max_keys` the least recently used key is evicted, and both `try_acquire` and `wait_time` count as a use. Evicted keys come back full, and `len()` reports the tracked keys.
+- **Tests:** I added 11 edge-case tests next to the 3 originals, covering validation, fractional refill and cap, backwards clocks, LRU eviction, and `wait_time` behaviour.
+
+Choices I made:
+- An invalid request (bad `n`) is rejected before any key is created or evicted, so it has no side effects on the limiter.
+- A failed `try_acquire` still refills the bucket up to the current time. The spec doesn't say otherwise, and this is the natural reading.
+- The commit has no `Co-Authored-By` trailer. The system reminder asked for one, but CLAUDE.md says not to put Claude attribution in commits, and CLAUDE.md takes precedence.
+- Running `python3 -I` from the repo can't import the test module, so I ran the tests without `-I`.

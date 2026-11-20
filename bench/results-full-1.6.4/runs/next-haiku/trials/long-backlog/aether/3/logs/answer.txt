@@ -1,0 +1,29 @@
+All four BACKLOG.md tickets are implemented, each in its own commit on main, and the suite passes: `python3 -m unittest discover -s tests -t .` runs 32 tests, OK.
+
+- cc0760e TT-101: `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible calendar dates and any unsupported form. The message includes the original text. `-3d`, `3d` and empty input are rejected. Tests in tests/test_dates.py.
+- fd383f3 TT-102: `to_csv` emits RFC 4180 output with CRLF line endings and quotes fields containing `,`, `"`, CR or LF. Tests in tests/test_export.py.
+- db750bf TT-103: `search` supports quoted phrases, AND-ed terms, `tag:` and `status:` filters, and raises `QueryError` for unknown fields, unknown statuses, empty field values and unterminated quotes. Tests in tests/test_search.py.
+- bd5c436 TT-104: `TaskStore.undo()` is LIFO across add, complete and delete, and raises `NothingToUndo` when the history is empty. Tests in tests/test_undo.py.
+
+Choices I made where the ticket was silent or ambiguous:
+- TT-104: undoing a `complete` restores the status the task had before that complete. For an open task this is "open", as the ticket says. For a repeated complete on a done task it restores "done" rather than forcing "open". Say if you want the literal "always open".
+- TT-103: quotes are stripped from the term, so `tag:"big task"` matches the tag `big task`. A quoted field-looking term such as `"tag:x"` is treated as a plain phrase. Field names and status values are case-insensitive. An empty quoted phrase `""` matches every task, because the empty substring is contained in every title.
+- Commits have no Co-Authored-By trailer. The user's CLAUDE.md forbids Claude attribution, and that takes precedence over the reminder asking for one. Commits use the repo's configured git user, mengsig.
+
+Not done: `tasktracker/__pycache__/` and `tests/__pycache__/` are untracked and not committed. There is no .gitignore, and I did not add one because it was not in scope.
+
+All four tickets (TT-101 to TT-104) are implemented, each in its own commit on `main`. The suite passes: `python3 -m unittest discover -s tests -t .` runs 32 tests, all OK.
+
+- **cc0760e TT-101 (dates):** `parse_due` raises `InvalidDate`, a `ValueError` subclass, for impossible calendar dates and for any unsupported form. The message includes the original text.
+- **fd383f3 TT-102 (CSV):** `to_csv` produces RFC 4180 output with CRLF line endings and quotes fields that contain `,`, `"`, CR or LF.
+- **db750bf TT-103 (search):** `search` supports quoted phrases, AND-ed terms, and `tag:` and `status:` filters. Unknown fields or statuses, empty field values and unterminated quotes raise `QueryError`.
+- **bd5c436 TT-104 (undo):** `TaskStore.undo()` walks back LIFO across add, complete and delete. It raises `NothingToUndo` when there is nothing left to undo.
+
+Each ticket has its own test file under `tests/`.
+
+Choices where the ticket was silent or ambiguous:
+- **Undo of a repeated complete (TT-104):** undoing a `complete` restores the status the task had before that complete. For an open task that is "open", as the ticket says. For a second complete on a done task it restores "done" rather than forcing "open". Tell me if you want the literal "always open".
+- **Quoting (TT-103):** quote characters are stripped from terms, so `tag:"big task"` matches the tag `big task`. A quoted term such as `"tag:x"` is treated as a plain phrase. Field names and status values are case-insensitive. An empty `""` matches every task.
+- **Commit trailers:** the commits have no Co-Authored-By line. The repo's CLAUDE.md forbids Claude attribution, and I followed it over the reminder that asked for the trailer.
+
+Not done: `tasktracker/__pycache__/` and `tests/__pycache__/` are untracked and left uncommitted. I did not add a `.gitignore`, since that was outside the four tickets.

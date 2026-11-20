@@ -1,0 +1,20 @@
+The `orders` crate now stores status as an `OrderStatus` enum. The work is committed as `56e0c9f` on `main`, and `cargo test` passes: 3 integration tests, plus 3 new unit tests in `status.rs`. Clippy with `-D warnings` is clean.
+
+**What changed**
+- `src/status.rs` is new. It holds the enum, `as_str`, `Display` (via `f.pad`, so width flags behave as they did on `String`), `FromStr`, `ParseStatusError`, and `can_transition_to`. The status literals appear only here.
+- `pay`, `ship` and `cancel` now check `can_transition_to`. For the existing states this is the same condition as before, so the error messages are unchanged.
+- `from_line` gets its "unknown status" text from `ParseStatusError`'s `Display`, which produces the same string as before. Field parse order is unchanged.
+- `src/lib.rs` re-exports `OrderStatus` and `ParseStatusError` from the crate root.
+- `tests/orders.rs` is untouched and still passes, so the existing observable behaviour is verified.
+
+**Decisions to review**
+- **Public API change:** `report::status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. Ordering is kept by sorting on `as_str()`, not on the enum's declaration order. The existing test still compiles because it calls `to_string()` on each entry.
+- `status` is a private module with the two types re-exported, so `orders::status::…` is not a public path.
+- I did not add the "at least 2 assertions per function" padding from the CLAUDE.md. These functions are trivial and the instructions say not to invent asserts to meet a quota. The unit tests cover the lifecycle table and the error text instead.
+- I did not run `cargo fmt` over the repo. The original files weren't rustfmt-clean, and reformatting them would have bloated the diff.
+
+**Commit identity**
+- The commit has no `Co-Authored-By` line. The CLAUDE.md says not to put Claude attribution in commits, and it takes precedence over the attribution reminder.
+- The repo's configured `user.name` is `mengsig`, but its configured `user.email` is not your iCloud address. I committed with the configured identity as-is. If you want the iCloud address on this commit, I can amend it.
+
+**Environment note:** `cargo` isn't on the default PATH here. I ran it from `~/.cargo/bin`.

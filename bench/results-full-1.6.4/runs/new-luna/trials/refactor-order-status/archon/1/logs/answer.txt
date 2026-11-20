@@ -1,0 +1,16 @@
+Queued as **qi_01M7W4WHTSF29A32NHCT496VDE** in the `direct` pipeline. It includes the enum refactor, behavior preservation, `cargo test`, and a commit in the repository’s local shipping workflow.
+
+Done: Refactor order status strings to OrderStatus. Added public OrderStatus and ParseStatusError, changed Order.status and lifecycle logic to use the enum, and preserved CSV parsing errors, report output and ordering. cargo fmt -- --check, cargo test (4 integration tests), and git diff --check passed on committed head aa2ad9bdc3f1da8d5019e68486b04ea12ced8013; the independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W526GNK0FP613FPV7ABA2E)
+
+SHIPPED: commit aa2ad9bdc3f1da8d5019e68486b04ea12ced8013 on the run branch
+Branch `archon/ct496vde-refactor-order-status-strings-to-orderst` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/098ae3579e424befb7a31714/refactor-order-status holds it (7 files changed, 138 insertions(+), 31 deletions(-)). Review: `archon diff qi_01M7W4WHTSF29A32NHCT496VDE`; land it in `main`: `archon merge qi_01M7W4WHTSF29A32NHCT496VDE`.
+
+Freed 0.0 GiB of build output: item qi_01M7W4WHTSF29A32NHCT496VDE ended and its cargo target directory went.
+
+Added public OrderStatus and ParseStatusError, changed Order.status and lifecycle logic to use the enum, and preserved CSV parsing errors, report output and ordering. cargo fmt -- --check, cargo test (4 integration tests), and git diff --check passed on committed head aa2ad9bdc3f1da8d5019e68486b04ea12ced8013; the independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W526GNK0FP613FPV7ABA2E)
+
+SHIPPED: commit aa2ad9bdc3f1da8d5019e68486b04ea12ced8013 on the run branch

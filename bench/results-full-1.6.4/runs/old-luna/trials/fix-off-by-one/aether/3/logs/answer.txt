@@ -1,0 +1,3 @@
+Fixed the off-by-one range in [window.py](/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/8876d9bf45faf8a5f149f37e/fix-off-by-one/window.py). It now includes the last valid window and returns no windows when `size` exceeds the input length.
+
+`python3 -m unittest` passes. Committed as `8b9465f` (`Fix sliding window endpoint`); working tree is clean.

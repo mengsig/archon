@@ -1,0 +1,28 @@
+**Root cause: `updatePrice` invalidates only the product cache entry, not the category listing entries that also hold the price. Those listing entries live for 10 minutes.**
+
+I read the code in the `ask-cache-invalidation` mirror (HEAD `39da990`). The `catalog-service` package is in that repo, in `package.json`. I did not run the tests or change anything.
+
+**The two read paths**
+
+- **Product page** (`Catalog.product`, `src/catalog.js:12-20`): cached under `product:<sku>` with `PRODUCT_TTL_SECONDS = 3600`. `updatePrice` deletes that key (`src/pricing.js:11`), so the next read goes to the store and shows the new price at once.
+- **Category page** (`Catalog.listing`, `src/catalog.js:22-33`): cached under `listing:<category>:<page>` with `LISTING_TTL_SECONDS = 600`. Each cached row is a copy of `{ sku, name, priceCents }`. Nothing deletes these keys when a price changes, so they keep the old `priceCents` until their TTL expires.
+
+**Why the delay is what it is**
+
+- The delay is the listing TTL, not a timing bug. A listing filled just before a change stays stale for up to 600 s. A listing filled earlier expires sooner.
+- `src/config.js:5-6` gives the reason for caching listings separately: they are expensive to build (join and sort). The price is copied into the cached row, so a price change has to invalidate the listing. Nothing does.
+- The test at `test/catalog.test.js:13-18` checks only the product page. No test covers a listing after `updatePrice`, which is why this went unnoticed.
+
+**Suggested fix (smallest that is correct)**
+
+Invalidate the affected category's listings in `updatePrice`, after the store update. The price does not change sort order or page membership, so clearing that category's pages is enough. Concretely:
+
+1. Read the product's category from the store (`catalog.store.find(sku).category`).
+2. Delete every `listing:<category>:*` key. `TtlCache` has no prefix delete, so either add a small method for it, or keep a per-category version number that is part of the listing key and bump it on price change.
+3. Add a test: fill a listing, call `updatePrice`, and assert the listing shows the new price.
+
+Alternative: stop copying `priceCents` into listing rows and join prices at read time from the product lookup. That is more correct but costs one lookup per row on every listing read.
+
+**Caveat**
+
+Invalidation only clears this process's in-memory cache (`createCatalog` builds its own `TtlCache`). If several instances run, the other instances can still show the old price until their listing TTL expires. The code here doesn't show how the service is deployed, so I can't confirm that. If it is multi-instance, the fix needs a shared cache, or a shorter listing TTL for prices.

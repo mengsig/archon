@@ -1,0 +1,263 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W3YW9P7PZ36VDZ4XXGR0MH",
+      "repo": "repo_01M7W3XYX4HGWNWA51Y5GGQFR3",
+      "pipeline": "adaptive",
+      "title": "Implement thread-safe ledger API from SPEC.md",
+      "brief": "Implement ledger.py according to SPEC.md and add focused tests extending the basics in test_ledger.py. Preserve the documented API and handle every specified error and boundary case. Use only the Python standard library. Acceptance criteria: constructor validates dict input, nonempty string account names, and built-in integer balances in [0, MAX_BALANCE], rejects bools, accepts empty dict, and copies input; snapshots are independent copies. transfer validates built-in integer amount in [1, MAX_BALANCE] before account lookup; unknown accounts raise KeyError; insufficient funds and destination overflow return False without mutation; successful transfer returns True and conserves total; same-account transfer returns True exactly when funded, changes nothing, and still validates amount/account; all operations including snapshots are linearizable across threads, with no half-transfer snapshots and no deadlock for opposite-direction transfers. Add deterministic focused tests for validation, boundaries, failure atomicity, alias isolation, self transfer, conservation, and concurrency as appropriate, without external services, wall-clock calculations, or random inputs. Run the relevant tests and fix issues. Commit the completed work on the assigned local branch; do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W3YW9P7PZ36VDZ4XXGR0MH",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T09:17:49.753361938Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T09:17:49.755737666Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T09:17:49.753361938Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:concurrency",
+          "scope:api"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:concurrency",
+              "scope:api"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W3YWA0BE8CTE6BT149HRHK",
+        "summary": "Implemented the bounded thread-safe ledger API and focused validation, aliasing, atomicity, self-transfer, conservation, and opposing-transfer tests in ledger.py and test_ledger.py. `python -m unittest -v` passed (10 tests) and `git diff --check` passed on c5e99dba35b8fcbdb9949c2df9c50dd878e37249; working tree is clean. Independent review passed. Follow-up: reviewer recommends a direct concurrent snapshot/transfer regression; current implementation uses one lock for both.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W4150Y55KFNP0T0A8ZCXET)\n\nSHIPPED: commit c5e99dba35b8fcbdb9949c2df9c50dd878e37249 on the run branch"
+      },
+      "created_at": "2026-11-20T09:17:49.750119285Z",
+      "updated_at": "2026-11-20T09:20:19.560643381Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W3YWA0BE8CTE6BT149HRHK",
+        "item": "qi_01M7W3YW9P7PZ36VDZ4XXGR0MH",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M7W3YWHZWEZSRGS4160FA9NH",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/d1e2535c16976e205858762e/.archon/data/worktrees/quality-ledger-transfer/qi_01M7W3YW9P7PZ36VDZ4XXGR0MH",
+        "branch": "archon/4xxgr0mh-implement-thread-safe-ledger-api-from-sp",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the bounded thread-safe ledger API and focused validation, aliasing, atomicity, self-transfer, conservation, and opposing-transfer tests in ledger.py and test_ledger.py. `python -m unittest -v` passed (10 tests) and `git diff --check` passed on c5e99dba35b8fcbdb9949c2df9c50dd878e37249; working tree is clean. Independent review passed. Follow-up: reviewer recommends a direct concurrent snapshot/transfer regression; current implementation uses one lock for both.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W4150Y55KFNP0T0A8ZCXET)\n\nSHIPPED: commit c5e99dba35b8fcbdb9949c2df9c50dd878e37249 on the run branch"
+        },
+        "cost_usd": 0.013693280000000002,
+        "started_at": "2026-11-20T09:17:49.983961809Z",
+        "finished_at": "2026-11-20T09:20:19.560643381Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W3YWH7TP18S6XPRBPT1W4G",
+        "run": "prun_01M7W3YWA0BE8CTE6BT149HRHK",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W3YWJSFM1XRX1YD5C2RAPA",
+        "aether_task": "tsk_01M7W3YWJST8RRVD2H0AZTE994",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented the bounded thread-safe ledger API and focused validation, aliasing, atomicity, self-transfer, conservation, and opposing-transfer tests in ledger.py and test_ledger.py. `python -m unittest -v` passed (10 tests) and `git diff --check` passed on c5e99dba35b8fcbdb9949c2df9c50dd878e37249; working tree is clean. Independent review passed. Follow-up: reviewer recommends a direct concurrent snapshot/transfer regression; current implementation uses one lock for both.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v — passed, 10 tests",
+            "git diff --check — passed"
+          ],
+          "commit": "c5e99dba35b8fcbdb9949c2df9c50dd878e37249",
+          "evidence": [
+            {
+              "caption": "Post-commit focused suite and whitespace check on the final head.",
+              "kind": "output",
+              "text": "python -m unittest -v\nRan 10 tests in 0.002s\nOK\ngit diff --check\n(no output; passed)"
+            }
+          ],
+          "local_commit": "c5e99dba35b8fcbdb9949c2df9c50dd878e37249",
+          "pr": {
+            "body": "`ledger.py` copies and validates constructor balances, validates transfer amount before account lookup, and protects transfer checks/writes and snapshot copies with one per-ledger lock. `test_ledger.py` covers invalid inputs and boundaries, failure atomicity, input/snapshot isolation, self transfers, conservation, and opposing-direction concurrency. Verified with `python -m unittest -v` (10 passed) and `git diff --check` (passed). No separate build or lint configuration is present. Review covered base 195584275c12599a4d2d0ade3bab0a7ea8a4ecb5 through head c5e99dba35b8fcbdb9949c2df9c50dd878e37249. Reviewer follow-up left open: add a direct concurrent snapshot-versus-transfer regression to detect future synchronization regressions. No other known risks or assumptions.",
+            "summary": "Implemented a bounded ledger with atomic, thread-safe transfers and independent snapshots. Before: ledger methods were unimplemented; now: validation, transfers and snapshots follow SPEC.md with focused regression coverage.",
+            "title": "implement thread-safe ledger API"
+          },
+          "review": {
+            "reviewed_head": "c5e99dba35b8fcbdb9949c2df9c50dd878e37249",
+            "reviewer_agents": [
+              "agt_01M7W4150Y55KFNP0T0A8ZCXET"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W4150Y55KFNP0T0A8ZCXET",
+                "base": "195584275c12599a4d2d0ade3bab0a7ea8a4ecb5",
+                "findings": 1,
+                "head": "c5e99dba35b8fcbdb9949c2df9c50dd878e37249",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W4150Y55KFNP0T0A8ZCXET"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": "agt_01M7W4150Y55KFNP0T0A8ZCXET",
+            "why": "Concurrency and locking determine correctness. One lock guards the transfer checks and writes and the snapshot copy; the 10-test suite, including simultaneous opposite-direction transfers with a bounded join, passes."
+          },
+          "tree": "fa7afd1ffe53faf1460f600f167017e10fdf2f65"
+        },
+        "cost_usd": 0.013693280000000002,
+        "started_at": "2026-11-20T09:17:49.991110935Z",
+        "finished_at": "2026-11-20T09:20:16.374270064Z"
+      }
+    ],
+    "spent_usd": 0.013693280000000002,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W3YWH7TP18S6XPRBPT1W4G": {
+        "direct_usd": 0.007743620000000001,
+        "delegated_usd": 0.00594966,
+        "agents": [
+          {
+            "agent": "agt_01M7W4150Y55KFNP0T0A8ZCXET",
+            "parent": "agt_01M7W3YWJSFM1XRX1YD5C2RAPA",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00594966
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T09:17:49.753361938Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T09:17:49.755737666Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T09:17:49.753361938Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

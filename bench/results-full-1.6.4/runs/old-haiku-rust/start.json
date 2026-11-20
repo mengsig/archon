@@ -1,0 +1,15 @@
+{
+  "head": "c17af3feba8f5a6a2adf480d77d4477894d6eccc",
+  "arm": "old",
+  "model": "haiku",
+  "parallel": "1",
+  "load5": 1.38134765625,
+  "hashes": {
+    "archon": "8fe4927e3bc2d0c66e590e9fab58de8aca468cdfdc1345b07d3903da62b94981",
+    "aether": "c0510fe9d0669cf8eda7cc3f3154db21eb62c297b24b30896244e65398ab9a88",
+    "archon-bench": "590163a9c0cd1ae1515d08a8f31d513ce3c05f00616b177323d261a58cbace5a"
+  },
+  "start": "2026-11-20T12:28:59.655239+00:00",
+  "exit": 0,
+  "end": "2026-11-20T13:02:33.748987+00:00"
+}

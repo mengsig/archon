@@ -1,0 +1,29 @@
+## Root cause: `updatePrice` invalidates only the product cache entry, not the listing entries that embed the price
+
+The stale prices are a cache invalidation gap. The product page and the category page read from two different cache entries, and only one of them is cleared on a price change.
+
+**The write path** (`src/pricing.js:6-13`):
+```js
+const updated = catalog.store.update(sku, { priceCents });
+catalog.cache.delete(productKey(sku));   // only "product:<sku>" is cleared
+```
+
+**Product page** (`src/catalog.js:12-20`): reads `product:<sku>`. The entry was deleted, so the next read goes to the store and gets the new price. This is why it updates immediately.
+
+**Category page** (`src/catalog.js:22-33`): reads `listing:<category>:<page>`. Each listing row is a copy of `{ sku, name, priceCents }` built at cache-fill time. Nothing deletes or rebuilds those entries when a SKU in the category changes price, so they keep the old `priceCents` until they expire.
+
+**Why it is about ten minutes:** `src/config.js:4-7` sets `LISTING_TTL_SECONDS: 600`. The comment says listings are cached separately because they are expensive to build. That is a reasonable reason for a longer TTL, but the price write was never wired to the listing cache, so the TTL is the only thing that ever clears a stale listing. The worst case is about 600 seconds.
+
+**Reproduced:** I ran the catalog with an injected clock. After `updatePrice(..., 4500)` at t=1s, `product()` returned 4500 but `listing('tools')` still returned 5000. At t=600s the listing returned 4500. The existing tests in `test/catalog.test.js` pass (3/3 when run as `node --test test/catalog.test.js`). They cover product freshness but not listing freshness, which is why this was not caught. The `node --test test/` form failed on this Node version because of how it handles a directory argument, which is unrelated to the bug.
+
+## Fix options
+
+1. **Invalidate the affected listings on write (targeted).** In `updatePrice`, after the store update, delete `listing:<updated.category>:<page>` for every page of that category. The category is available from `updated`. This needs a way to enumerate or delete by prefix, because `TtlCache` has no such method today. The simplest version is to loop over page numbers up to `ceil(count / PAGE_SIZE)`.
+2. **Store SKUs in listings, not price copies.** Cache only the ordered SKU list per page, and resolve each price through `this.product(sku)` when the listing is read. Prices then always come from the product cache, which is already invalidated correctly. This removes the class of bug rather than patching one path, at the cost of N product lookups per listing render. Those lookups hit the cache, so this is cheap in practice.
+3. **Lower `LISTING_TTL_SECONDS`.** This only shrinks the window and does not fix the bug. I would not rely on it alone.
+
+**Recommendation:** option 2. It makes the listing read path follow the same rule as the product page, and it avoids having the write path know which pages a category has. Whichever option is chosen, add a test that calls `listing()`, then `updatePrice()`, then `listing()` and expects the new price, since no current test covers that.
+
+**Assumption:** the reported behavior matches the code. The reproduction and the code agree, but I did not check the live storefront or any real merchant workflow.
+
+I made no code changes. The only commands run were read-only checks and the existing test file.

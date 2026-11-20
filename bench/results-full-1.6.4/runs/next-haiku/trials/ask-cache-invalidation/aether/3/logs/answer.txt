@@ -1,0 +1,30 @@
+Root cause of stale category prices: updatePrice (src/pricing.js:6-13) invalidates only the product cache entry (`product:<sku>`). Category listing pages are cached separately under `listing:<category>:<page>` with LISTING_TTL_SECONDS=600 (src/config.js:7), and nothing removes them, so category pages serve the old priceCents until that entry expires, up to 10 minutes. Product pages use PRODUCT_TTL_SECONDS=3600 but are invalidated on write, so they update immediately. No code was changed. Fix: on price update, also evict every `listing:<category>:*` entry for the product's category (e.g. a prefix delete on TtlCache, or a per-category version in the listing key). Add a test that a listing reflects an update. The existing test only covers product pages, which is why the gap was not caught.
+
+The category pages show old prices because a price change never invalidates the cached category listings. Only the product's own cache entry is cleared, and the listing cache lives for 10 minutes. I made no code changes.
+
+**The code path**
+
+- `src/pricing.js:6-13`, `updatePrice`: writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That is the only invalidation.
+- `src/catalog.js:12-20`, `Catalog.product`: caches the product under `product:<sku>` for `PRODUCT_TTL_SECONDS` (3600s). Because that key is deleted on write, product pages are fresh immediately.
+- `src/catalog.js:22-33`, `Catalog.listing`: caches the already-projected rows `{sku, name, priceCents}` under `listing:<category>:<page>` for `LISTING_TTL_SECONDS` (600s, `src/config.js:7`). Nothing removes these keys when a price changes.
+- `src/keys.js:4` builds the listing key from category and page only, so the update path has no key for the listings to delete.
+
+**Why the delay is what it is**
+
+The listing entry holds a copy of `priceCents`, and `updatePrice` never touches it. The stale value therefore lasts until the entry expires, which is up to 600 seconds. The 10-minute figure in the support report matches `LISTING_TTL_SECONDS`. The config comment says listings are cached separately because they are expensive to build, so the long TTL was a deliberate performance choice. Nobody added the matching invalidation.
+
+The existing test (`test/catalog.test.js:13-18`) only checks product pages, so it passes and the gap goes unnoticed.
+
+**Fix**
+
+In `updatePrice`, after the store update, also evict all listing entries for the product's category. The category is available from the returned `updated` object. There are two reasonable ways to do it:
+
+1. Add a `deletePrefix(prefix)` method to `TtlCache` and call `catalog.cache.deletePrefix(\`listing:${updated.category}:\`)`. This is simple and small. It scans the cache, which is fine at this size.
+2. Put a per-category version number in the listing key and bump it on price change. This avoids scanning but adds state.
+
+I would go with option 1. Add a test that reads a listing, updates a price, and then expects the listing to show the new price. Also check that listings for other categories are left alone.
+
+**Caveats**
+
+- Each process has its own in-memory cache, so eviction only reaches the process that performs the update. If `catalog-service` runs as several replicas, the other replicas stay stale until their TTLs expire. The code does not show how the service is deployed, so I could not confirm this. Shared invalidation would need a shared cache or a pub/sub message.
+- The same gap would apply to any other field copied into listing rows. Only `priceCents` is affected today.

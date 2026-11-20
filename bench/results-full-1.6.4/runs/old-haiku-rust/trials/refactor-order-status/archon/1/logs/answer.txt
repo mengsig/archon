@@ -1,0 +1,22 @@
+I've queued the refactor as item `qi_01M7WF7QVC67N29V7KT44KKP2M` on the `refactor-order-status` repository. It is queued, not yet run, and I haven't touched the repository myself.
+
+- **Pipeline:** `direct`, one agent that makes the change, checks it, and commits it. Archon ships it to the local branch only (`ship: local`), so nothing is pushed.
+- **Review:** `standard` (one reviewer), because the change touches shared code used by the report output.
+- **Brief:** it carries your spec verbatim. It also asks the agent to record the current parsing, error and report behaviour before changing anything, and to confirm it is unchanged afterwards.
+
+The first enqueue attempt used the `refactor` pipeline, which fixes its own review level and refused `standard`, so I used `direct` instead. I'll report the outcome when the item finishes.
+
+Done: Refactor orders status String into OrderStatus enum. Replaced the orders crate's String status with an OrderStatus enum. Branch archon/t44kkp2m-refactor-orders-status-string-into-order now has two commits on base 72861c5: 94d6872 adds tests/characterization.rs (13 tests pinning parsing, error text, transitions, status_counts ordering and CSV output; they passed on the untouched base first), and 9c6a37c adds src/status.rs (OrderStatus with as_str, Display via f.pad, FromStr, can_transition_to; public ParseStatusError), switches billing, shipping, order and report to the enum, and re-exports both types from the crate root. status_counts now returns Vec<(OrderStatus, usize)> still sorted by status name. The from_line error text is unchanged. Only src/status.rs contains the status literals. Checks on head 9c6a37c (tree 3295142a): cargo fmt --check OK; cargo clippy --all-targets -- -D warnings clean; cargo test 22 passed (characterization 13, orders 3, status 3, doc 0 plus lib 0). Base was not rustfmt-clean, so cargo fmt also reflowed existing lines in tests/orders.rs and the touched src files; whitespace only. Review: one reviewer (agt_01M7WFBDB542H9YXQNMW84JJGT) read base 72861c5 to head 9c6a37c and returned pass with no blocking findings. Non-blocking follow-ups: status_counts could collect-then-sort more simply; the public Order::status type change is the requested API break for external callers. Nothing pushed; no servers or processes were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFBDB542H9YXQNMW84JJGT)
+
+SHIPPED: commit 9c6a37cfbccc7a9e44ee309d6e1610f68968bc9a on the run branch
+Branch `archon/t44kkp2m-refactor-orders-status-string-into-order` in /home/mengsig/.local/share/archon-bench/f164-rqhhzj1d/archon-bench/work/20261120T122900Z/d7762dc91fb6c2f6b28b1afb/refactor-order-status holds it (9 files changed, 359 insertions(+), 28 deletions(-)). Review: `archon diff qi_01M7WF7QVC67N29V7KT44KKP2M`; land it in `main`: `archon merge qi_…
+
+Freed 0.1 GiB of build output: item qi_01M7WF7QVC67N29V7KT44KKP2M ended and its cargo target directory went.
+
+Replaced the orders crate's String status with an OrderStatus enum. Branch archon/t44kkp2m-refactor-orders-status-string-into-order now has two commits on base 72861c5: 94d6872 adds tests/characterization.rs (13 tests pinning parsing, error text, transitions, status_counts ordering and CSV output; they passed on the untouched base first), and 9c6a37c adds src/status.rs (OrderStatus with as_str, Display via f.pad, FromStr, can_transition_to; public ParseStatusError), switches billing, shipping, order and report to the enum, and re-exports both types from the crate root. status_counts now returns Vec<(OrderStatus, usize)> still sorted by status name. The from_line error text is unchanged. Only src/status.rs contains the status literals. Checks on head 9c6a37c (tree 3295142a): cargo fmt --check OK; cargo clippy --all-targets -- -D warnings clean; cargo test 22 passed (characterization 13, orders 3, status 3, doc 0 plus lib 0). Base was not rustfmt-clean, so cargo fmt also reflowed existing lines in tests/orders.rs and the touched src files; whitespace only. Review: one reviewer (agt_01M7WFBDB542H9YXQNMW84JJGT) read base 72861c5 to head 9c6a37c and returned pass with no blocking findings. Non-blocking follow-ups: status_counts could collect-then-sort more simply; the public Order::status type change is the requested API break for external callers. Nothing pushed; no servers or processes were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFBDB542H9YXQNMW84JJGT)
+
+SHIPPED: commit 9c6a37cfbccc7a9e44ee309d6e1610f68968bc9a on the run branch

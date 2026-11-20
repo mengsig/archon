@@ -1,0 +1,320 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W6SB85QC3RGSQ4W1738X8T",
+      "repo": "repo_01M7W6R2CS129CGB15TC2Z2R24",
+      "pipeline": "adaptive",
+      "title": "Implement safe_extract.py to SPEC.md with edge-case tests",
+      "brief": "Implement safe_extract.py in full compliance with SPEC.md and preserve the documented API: extract(entries, root) -> list[str]. Add focused tests beyond the existing basics, covering all specified validation errors and filesystem boundary cases, especially whole-batch validation before writes, path syntax, duplicates and file/directory collisions, invalid roots, symlinks (including dangling links), existing ancestors/targets, no overwrite/follow behavior, empty batches, exact bytes, and order. Use only the Python standard library. Run the relevant test suite and fix failures. Commit the completed work on the item branch; do not push or merge. Acceptance: implementation matches every requirement in SPEC.md, focused tests pass, and a commit is present.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W6SB85QC3RGSQ4W1738X8T",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T10:07:14.184330005Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T10:07:14.186765712Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T10:07:14.184330005Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W6SB8FPF6QDWMKW5YTX171",
+        "summary": "Implemented SPEC-compliant safe extraction with whole-batch validation, filesystem boundary checks, exclusive writes, and focused tests. `python -B -m unittest discover -v` passes (11 tests); `git diff --check` passes. Committed as 39e882b5158c07e1ad456b980c1670e51fbc29c8; no follow-ups remain.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W6X503D8BE05E53J414DAG), codex/gpt-6-luna (agent agt_01M7W6X516JDHN1G8XVAHCXKFR), codex/gpt-6-luna (agent agt_01M7W6X52471VJK92E8A6ZN9V0), codex/gpt-6-luna (agent agt_01M7W6Z5VKZJH89TBSJ30JSV4E)\n\nSHIPPED: commit 39e882b5158c07e1ad456b980c1670e51fbc29c8 on the run branch"
+      },
+      "created_at": "2026-11-20T10:07:14.181765474Z",
+      "updated_at": "2026-11-20T10:11:21.262034330Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W6SB8FPF6QDWMKW5YTX171",
+        "item": "qi_01M7W6SB85QC3RGSQ4W1738X8T",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M7W6SBFJENRZX7NRM5F3EV7H",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/1b353968940dcdb62dd7d311/.archon/data/worktrees/quality-safe-extract/qi_01M7W6SB85QC3RGSQ4W1738X8T",
+        "branch": "archon/w1738x8t-implement-safe-extract-py-to-spec-md-wit",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented SPEC-compliant safe extraction with whole-batch validation, filesystem boundary checks, exclusive writes, and focused tests. `python -B -m unittest discover -v` passes (11 tests); `git diff --check` passes. Committed as 39e882b5158c07e1ad456b980c1670e51fbc29c8; no follow-ups remain.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W6X503D8BE05E53J414DAG), codex/gpt-6-luna (agent agt_01M7W6X516JDHN1G8XVAHCXKFR), codex/gpt-6-luna (agent agt_01M7W6X52471VJK92E8A6ZN9V0), codex/gpt-6-luna (agent agt_01M7W6Z5VKZJH89TBSJ30JSV4E)\n\nSHIPPED: commit 39e882b5158c07e1ad456b980c1670e51fbc29c8 on the run branch"
+        },
+        "cost_usd": 0.02505856,
+        "started_at": "2026-11-20T10:07:14.390434426Z",
+        "finished_at": "2026-11-20T10:11:21.262034330Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W6SBFB3SW7RZBRN3PM3K23",
+        "run": "prun_01M7W6SB8FPF6QDWMKW5YTX171",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W6SBGAKTHMP7JKFR6MQK11",
+        "aether_task": "tsk_01M7W6SBGAKTHMP7JKFR6MQK12",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented SPEC-compliant safe extraction with whole-batch validation, filesystem boundary checks, exclusive writes, and focused tests. `python -B -m unittest discover -v` passes (11 tests); `git diff --check` passes. Committed as 39e882b5158c07e1ad456b980c1670e51fbc29c8; no follow-ups remain.",
+        "structured": {
+          "checks": [
+            "python -B -m unittest discover -v (11 tests passed)",
+            "git diff --check dc5b3ada84f395beb5175c3a658e40d39d25f696..HEAD (passed)"
+          ],
+          "commit": "39e882b5158c07e1ad456b980c1670e51fbc29c8",
+          "evidence": [
+            {
+              "after": "Ran 11 tests in 0.010s; OK.",
+              "before": "Ran 2 tests; both errored because extract raised NotImplementedError.",
+              "caption": "Baseline versus final test result.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "39e882b5158c07e1ad456b980c1670e51fbc29c8",
+          "pr": {
+            "body": "`safe_extract.py` validates batch shape, byte payloads, POSIX path syntax, duplicates, file/directory collisions, root type, existing ancestors and targets, and symlinks before any write. It then creates missing directories and files with exclusive mode, preserving exact bytes and entry order. Unexpected filesystem I/O errors propagate. `test_safe_extract.py` covers malformed inputs, validation-before-write behavior, path syntax, collisions, roots, links including dangling links, no overwrite, empty batches, exact bytes, order, and I/O error propagation. Verification: `python -B -m unittest discover -v` (11 passed); `git diff --check ...` (passed). Whole-change reviews read base dc5b3ada84f395beb5175c3a658e40d39d25f696 through 292c3fd33c9fb2a8070b66017802fc59f9d49ffa; two reviewers raised the same blocking root-I/O exception issue, which was fixed in 39e882b. A delta review read 292c3fd33c9fb2a8070b66017802fc59f9d49ffa through 39e882b5158c07e1ad456b980c1670e51fbc29c8 and passed. One whole-change reviewer also passed. No advisory findings remain. Assumptions and limits follow SPEC.md: caller provides a stable filesystem; rollback after I/O errors and concurrent filesystem changes are outside the API scope.",
+            "summary": "Implemented safe extraction and focused boundary tests. Before: extraction was unimplemented and the two basic tests errored. Now: the full suite passes 11 tests and validates whole-batch safety before creating files.",
+            "title": "feat: implement safe file extraction"
+          },
+          "review": {
+            "reviewed_head": "39e882b5158c07e1ad456b980c1670e51fbc29c8",
+            "reviewer_agents": [
+              "agt_01M7W6X503D8BE05E53J414DAG",
+              "agt_01M7W6X516JDHN1G8XVAHCXKFR",
+              "agt_01M7W6X52471VJK92E8A6ZN9V0",
+              "agt_01M7W6Z5VKZJH89TBSJ30JSV4E"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W6X503D8BE05E53J414DAG",
+                "base": "dc5b3ada84f395beb5175c3a658e40d39d25f696",
+                "findings": 1,
+                "head": "292c3fd33c9fb2a8070b66017802fc59f9d49ffa",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W6X516JDHN1G8XVAHCXKFR",
+                "base": "dc5b3ada84f395beb5175c3a658e40d39d25f696",
+                "findings": 1,
+                "head": "292c3fd33c9fb2a8070b66017802fc59f9d49ffa",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W6X52471VJK92E8A6ZN9V0",
+                "base": "dc5b3ada84f395beb5175c3a658e40d39d25f696",
+                "findings": 0,
+                "head": "292c3fd33c9fb2a8070b66017802fc59f9d49ffa",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W6Z5VKZJH89TBSJ30JSV4E",
+                "base": "292c3fd33c9fb2a8070b66017802fc59f9d49ffa",
+                "findings": 0,
+                "head": "39e882b5158c07e1ad456b980c1670e51fbc29c8",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W6X503D8BE05E53J414DAG",
+              "agt_01M7W6X516JDHN1G8XVAHCXKFR",
+              "agt_01M7W6X52471VJK92E8A6ZN9V0",
+              "agt_01M7W6Z5VKZJH89TBSJ30JSV4E"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "The change adds filesystem path validation and file creation behavior in safe_extract.py, with corresponding focused tests. All 11 tests pass. Two whole-change reviewers identified a blocking error-classification issue; the fix is committed and a delta reviewer confirmed it. Filesystem safety behavior makes medium the appropriate level."
+          },
+          "tree": "0f2f3892a56fd639ad136a7f6c361e488d12ee34"
+        },
+        "cost_usd": 0.02505856,
+        "started_at": "2026-11-20T10:07:14.411457594Z",
+        "finished_at": "2026-11-20T10:11:19.069521230Z"
+      }
+    ],
+    "spent_usd": 0.02505856,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W6SBFB3SW7RZBRN3PM3K23": {
+        "direct_usd": 0.01518692,
+        "delegated_usd": 0.00987164,
+        "agents": [
+          {
+            "agent": "agt_01M7W6X503D8BE05E53J414DAG",
+            "parent": "agt_01M7W6SBGAKTHMP7JKFR6MQK11",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.001917
+          },
+          {
+            "agent": "agt_01M7W6X516JDHN1G8XVAHCXKFR",
+            "parent": "agt_01M7W6SBGAKTHMP7JKFR6MQK11",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00144934
+          },
+          {
+            "agent": "agt_01M7W6X52471VJK92E8A6ZN9V0",
+            "parent": "agt_01M7W6SBGAKTHMP7JKFR6MQK11",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0029266200000000004
+          },
+          {
+            "agent": "agt_01M7W6Z5VKZJH89TBSJ30JSV4E",
+            "parent": "agt_01M7W6SBGAKTHMP7JKFR6MQK11",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0035786800000000003
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T10:07:14.184330005Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T10:07:14.186765712Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T10:07:14.184330005Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

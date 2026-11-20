@@ -1,0 +1,29 @@
+Implemented `extract(entries, root)` in safe_extract.py per SPEC.md and added focused tests in test_safe_extract.py. Committed as 94575d8 on main (author mengsig; no attribution lines, per the CLAUDE.md rule). All 41 tests pass with `python3 -m unittest -v test_safe_extract`.
+
+Behavior: the whole batch is validated before any write. Checks cover a list-only batch, the root (str or Path, existing real directory, not a symlink), entry shape (2-tuples), name rules, bytes-only data, duplicates and collisions in either order, and per-target filesystem checks (no symlinks, no existing target, ancestors must be directories). Writes use exclusive creation ("xb") and return names in input order. Unexpected OSErrors propagate.
+
+Assumptions I chose (the spec left these open): entries must be tuples, so lists are rejected; an empty-string root is rejected; only str and Path roots are accepted; a lone-surrogate name is rejected as not valid Unicode.
+
+Not committed: the tests were run in place, so `__pycache__/` was removed. The working tree is clean.
+
+I implemented `extract(entries, root)` in `safe_extract.py` according to `SPEC.md` and added focused tests. The work is committed as `94575d8` on `main`, with no attribution lines, following the CLAUDE.md rule. All 41 tests pass with `python3 -m unittest -v test_safe_extract`.
+
+**Behavior:** the whole batch is validated before any file is written. Validation covers:
+- the batch must be a list, so tuples, generators and iterators are rejected without being consumed;
+- the root must be a str or Path naming an existing real directory, not a symlink;
+- each entry must be a 2-tuple with a str name and bytes data;
+- names must be nonempty relative POSIX paths with no leading `/`, backslash, colon, NUL, or empty, `.` or `..` component;
+- duplicates and file/directory collisions are rejected in either order;
+- for each target, no existing component may be a symlink (dangling included), no ancestor may be a non-directory, and the target must be absent.
+
+Writes use exclusive creation (`"xb"`), so an existing file is never overwritten. Results are returned in input order. Unexpected OSErrors propagate.
+
+**Assumptions** where the spec was open:
+- Entries must be tuples, so a `[name, data]` list is rejected.
+- An empty-string root is rejected rather than treated as the current directory.
+- Only str and Path roots are accepted.
+- A name containing a lone surrogate is rejected as not valid Unicode.
+
+**Other notes:**
+- The permission-error test is skipped when running as root.
+- I ran the tests in place and removed the resulting `__pycache__/` directory. The working tree is clean.

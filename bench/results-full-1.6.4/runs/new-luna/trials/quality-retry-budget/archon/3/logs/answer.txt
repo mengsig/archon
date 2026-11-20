@@ -1,0 +1,14 @@
+Queued as [qi_01M7WAYNWR254A8BB4WGRRY29D]. The direct pipeline will implement the spec, add focused tests, and handle the requested commit.
+
+Done: Implement retry_budget.py to SPEC.md and add focused tests. Implemented SPEC.md-compliant retry scheduling with strict argument validation, saturating exponential backoff, uncapped Retry-After floors, and strict budget enforcement; added focused boundary tests. Before: retry_delay was a stub and all 3 existing tests errored. After: all 10 tests pass; py_compile and git diff --check pass. Independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WB1HVX7HBXY5JD1BA15KDB)
+
+SHIPPED: commit eb7d4ddd4451cbfec824e2164d2914e5a2a4f5d7 on the run branch
+Branch `archon/wgrry29d-implement-retry-budget-py-to-spec-md-and` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/a88fd75c9ff1acf25b584eb5/quality-retry-budget holds it (2 files changed, 86 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7WAYNWR254A8BB4WGRRY29D`; land it in `main`: `archon merge qi_01M7WAYNWR254A8BB4WGRRY29D`.
+
+Implemented SPEC.md-compliant retry scheduling with strict argument validation, saturating exponential backoff, uncapped Retry-After floors, and strict budget enforcement; added focused boundary tests. Before: retry_delay was a stub and all 3 existing tests errored. After: all 10 tests pass; py_compile and git diff --check pass. Independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WB1HVX7HBXY5JD1BA15KDB)
+
+SHIPPED: commit eb7d4ddd4451cbfec824e2164d2914e5a2a4f5d7 on the run branch

@@ -1,0 +1,15 @@
+All four tickets (TT-101 to TT-104) are implemented, each in its own commit, and the suite passes: `python3 -m unittest discover -s tests -t .` runs 44 tests, up from 4. Only the standard library is used, and `BACKLOG.md` is unchanged.
+
+Commits on `main`, in the `long-backlog` repo:
+- `1508747` TT-101: `parse_due` raises `InvalidDate` (a `ValueError`) for impossible dates, malformed input, out-of-range offsets and negative or unsigned offsets. The clamping is gone. Tests are in `tests/test_dates.py`.
+- `834b68e` TT-102: `to_csv` produces RFC 4180 output with CRLF line endings and quotes fields containing `,`, `"`, CR or LF. Tests are in `tests/test_export.py`, including a round-trip through `csv.reader`.
+- `b29c590` TT-103: `search` supports quoted phrases, `tag:` and `status:` terms, AND semantics and `QueryError`. Tests are in `tests/test_search.py`.
+- `c68d133` TT-104: `TaskStore.undo()` is LIFO across add, complete and delete, and raises `NothingToUndo` when empty. Tests are in `tests/test_store.py`.
+
+Judgment calls you may want to redirect:
+- **Commit attribution:** I left out the `Co-Authored-By` trailer. Your CLAUDE.md says not to add attribution lines, and it takes precedence over the reminder that asked for one. Commits use the repo's configured `mengsig` identity.
+- **Field and status names are case-sensitive:** `TAG:x` and `status:Open` raise `QueryError`. The spec only made tag values case-insensitive.
+- **Empty values raise:** `tag:` with no value raises `QueryError`. The spec didn't list this case.
+- **Quotes inside a term:** `tag:"needs review"` works. A term starting with a quote must be a complete quoted phrase, so `"login"page` raises. Quote characters in bare words are dropped.
+- **Empty phrase:** `""` matches every task, since the empty string is in every title.
+- **Undo of delete:** the task is snapshotted at deletion, so later changes made through the object returned by `delete()` are not restored.

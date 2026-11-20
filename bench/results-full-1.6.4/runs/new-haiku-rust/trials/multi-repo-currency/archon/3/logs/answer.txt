@@ -1,0 +1,57 @@
+Multi-currency change queued as initiative ini_01M7WG3DD8K83NQFR9EV54CQ3N: ledger (qi_01M7WG3DDA6WT6DN2AHZQBKK48) adds the currency column and reports (qi_01M7WG3DDZQJ52P791K3C3Z2MP) totals per account and currency, both against one shared CSV contract. Each runs the direct pipeline at balanced tier, medium effort, standard review, to save claude-code quota (7-day window 77% used, 33% elapsed, empty about 2026-11-21 05:12 UTC). Both ship local: commits land on local branches, nothing is pushed or merged.
+
+The multi-currency change is queued as one initiative, `ini_01M7WG3DD8K83NQFR9EV54CQ3N`, with one item per repository against a shared CSV contract.
+
+- **`ledger`** (`qi_01M7WG3DDA6WT6DN2AHZQBKK48`): adds the optional currency column, the four-column header, and the exit-2 error on a malformed code.
+- **`reports`** (`qi_01M7WG3DDZQJ52P791K3C3Z2MP`): totals per account and currency, treats old three-column input as USD, and exits 2 on a malformed code.
+
+Both items use the `direct` pipeline with standard review. Each runs at balanced tier and medium effort, because claude-code's seven-day window is 77% used with 33% of the time elapsed. At that pace it runs out around 2026-11-21 05:12 UTC, before its reset. I told the operator this in chat.
+
+Both repositories ship local, so the commits land on local branches. Nothing is pushed or merged. I have not read or run either repository's code myself; the items are queued and I'll act on their outcomes as they finish.
+
+Done: ledger: currency column. ledger: currency column implemented and committed on archon/hzqbkk48-ledger-currency-column as 55bd23c (tree 50f4a68), based on cef4446. Input lines accept an optional fourth column currency (three uppercase ASCII letters, trimmed like the other columns); missing means USD. Output header is date,account,amount_cents,currency and every row carries its currency. A malformed currency exits 2 with "line N: bad currency ..." on stderr; other input errors still exit 1. parse_line now returns a ParseError enum (Malformed / BadCurrency) with exit_status(). README updated. Checks: cargo fmt --check clean; cargo clippy --all-targets -D warnings clean; cargo test: 9 integration tests pass (the earlier -900 expectation was my test error and was corrected). Review: one reviewer (agt_01M7WG53FJKMCH9SM1VNXXZRVP) passed the head with no blocking findings. Open non-blocking items: the currency field is trimmed, so " EUR" is accepted, which is a deliberate choice to match the other columns and handle CRLF; the "US " test case does not exercise trailing-space rejection; a trailing tab with an empty 4th column exits 2 rather than defaulting to USD. Nothing is left running. Not pushed.
+REVIEW: pass (agt_01M7WG53FJKMCH9SM1VNXXZRVP)
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WG53FJKMCH9SM1VNXXZRVP)
+
+SHIPPED: commit 55bd23c2a6af2cdf01f434f36ceb3eaa1d238aad on the run branch
+Branch `archon/hzqbkk48-ledger-currency-column` in /home/mengsig/.local/share/archon-bench/f164-d_m8pmpw/archon-bench/work/20261120T122950Z/8cedf244dcc79d8254773329/ledger holds it (4 files changed, 163 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M7WG3DDA6WT6DN2AHZQBKK48`; land it in `main`: `archon merge qi_01M7WG3DDA6WT6DN2AHZQBKK48`.
+
+Freed 0.0 GiB of build output: item qi_01M7WG3DDA6WT6DN2AHZQBKK48 ended and its cargo target directory went.
+
+Done: reports: per-currency totals. reports now totals per account and currency. Header is `account,currency,total_cents`, rows sorted by account then currency. Input without a currency column counts as USD. A currency code that is not exactly three uppercase ASCII letters prints an error naming the line to stderr and exits 2, with nothing on stdout. Changed reports.py, test_reports.py (3 new tests, existing test kept) and README.md. Checks: `python3 -m unittest` gives 4 tests OK at head a632496 (tree 297fcd6). Manual runs match the contract. Before: `account,total_cents`, exit 0 on bad currency (not applicable). Risk is high because the output header and columns change, which breaks existing consumers. Reviewer agt_01M7WG56K0TPZKDQZ4TH0AGD33 passed the change with no blocking findings. Open follow-ups (non-blocking): a short row with the currency column present says "malformed currency code None" instead of naming the short row; line numbers for quoted fields with embedded newlines point at the record's end line; no tests yet for CRLF input or short rows. Nothing is pushed. No services were started. The ledger repo's own change is separate and not verified here.
+REVIEW: pass, reviewers agt_01M7WG56K0TPZKDQZ4TH0AGD33
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WG56K0TPZKDQZ4TH0AGD33)
+
+SHIPPED: commit a632496a28071f8300c6ba46c186b50dd7bb3e71 on the run branch
+Branch `archon/k3c3z2mp-reports-per-currency-totals` in /home/mengsig/.local/share/archon-bench/f164-d_m8pmpw/archon-bench/work/20261120T122950Z/8cedf244dcc79d8254773329/reports holds it (3 files changed, 92 insertions(+), 11 deletions(-)). Review: `archon diff qi_01M7WG3DDZQJ52P791K3C3Z2MP`; land it in `main`: `archon merge qi_01M7WG3DDZQJ52P791K3C3Z2MP`.
+
+Initiative finished; coordinated result queued.
+
+Multi-currency initiative ini_01M7WG3DD8K83NQFR9EV54CQ3N finished, both members succeeded and passed review. Nothing is pushed or merged.
+
+- ledger (qi_01M7WG3DDA6WT6DN2AHZQBKK48): commit 55bd23c on archon/hzqbkk48-ledger-currency-column. Optional fourth currency column, default USD, four-column header, malformed code exits 2 with "line N: bad currency" on stderr. cargo fmt, clippy -D warnings and 9 integration tests pass.
+- reports (qi_01M7WG3DDZQJ52P791K3C3Z2MP): commit a632496. Totals per account and currency, sorted by account then currency, old CSV counts as USD, malformed code exits 2. python3 -m unittest passes, 4 tests.
+
+Open non-blocking points from the agents:
+- ledger trims the currency field, so " EUR" is accepted.
+- ledger exits 2 on a trailing tab with an empty fourth column, rather than defaulting to USD.
+- reports' error for a short row with a currency column says "malformed currency code None" instead of naming the row.
+- reports has no tests yet for CRLF input or short rows.
+
+The reports header and columns change, so anything reading its output needs updating before it is deployed.
+
+reports now totals per account and currency. Header is `account,currency,total_cents`, rows sorted by account then currency. Input without a currency column counts as USD. A currency code that is not exactly three uppercase ASCII letters prints an error naming the line to stderr and exits 2, with nothing on stdout. Changed reports.py, test_reports.py (3 new tests, existing test kept) and README.md. Checks: `python3 -m unittest` gives 4 tests OK at head a632496 (tree 297fcd6). Manual runs match the contract. Before: `account,total_cents`, exit 0 on bad currency (not applicable). Risk is high because the output header and columns change, which breaks existing consumers. Reviewer agt_01M7WG56K0TPZKDQZ4TH0AGD33 passed the change with no blocking findings. Open follow-ups (non-blocking): a short row with the currency column present says "malformed currency code None" instead of naming the short row; line numbers for quoted fields with embedded newlines point at the record's end line; no tests yet for CRLF input or short rows. Nothing is pushed. No services were started. The ledger repo's own change is separate and not verified here.
+REVIEW: pass, reviewers agt_01M7WG56K0TPZKDQZ4TH0AGD33
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WG56K0TPZKDQZ4TH0AGD33)
+
+SHIPPED: commit a632496a28071f8300c6ba46c186b50dd7bb3e71 on the run branch
+
+ledger: currency column implemented and committed on archon/hzqbkk48-ledger-currency-column as 55bd23c (tree 50f4a68), based on cef4446. Input lines accept an optional fourth column currency (three uppercase ASCII letters, trimmed like the other columns); missing means USD. Output header is date,account,amount_cents,currency and every row carries its currency. A malformed currency exits 2 with "line N: bad currency ..." on stderr; other input errors still exit 1. parse_line now returns a ParseError enum (Malformed / BadCurrency) with exit_status(). README updated. Checks: cargo fmt --check clean; cargo clippy --all-targets -D warnings clean; cargo test: 9 integration tests pass (the earlier -900 expectation was my test error and was corrected). Review: one reviewer (agt_01M7WG53FJKMCH9SM1VNXXZRVP) passed the head with no blocking findings. Open non-blocking items: the currency field is trimmed, so " EUR" is accepted, which is a deliberate choice to match the other columns and handle CRLF; the "US " test case does not exercise trailing-space rejection; a trailing tab with an empty 4th column exits 2 rather than defaulting to USD. Nothing is left running. Not pushed.
+REVIEW: pass (agt_01M7WG53FJKMCH9SM1VNXXZRVP)
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WG53FJKMCH9SM1VNXXZRVP)
+
+SHIPPED: commit 55bd23c2a6af2cdf01f434f36ceb3eaa1d238aad on the run branch

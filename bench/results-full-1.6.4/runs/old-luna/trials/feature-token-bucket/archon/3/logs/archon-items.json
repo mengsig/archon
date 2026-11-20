@@ -1,0 +1,202 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WA8AKVG21WBGEKVDN7D90S",
+      "repo": "repo_01M7WA7EBD6S8GFRWM28HFZ4T8",
+      "pipeline": "direct",
+      "title": "Implement spec-compliant dependency-free rate limiter",
+      "brief": "Implement TokenBucket and KeyedLimiter in ratelimit.py exactly as specified in SPEC.md. Preserve standard-library-only dependency footprint. Handle all specified validation errors and edge cases: continuous fractional refill capped at capacity, failed acquisitions consume nothing, non-consuming wait_time, monotonic clock rollback semantics (freeze at latest observed time without changing tokens until clock passes it), per-key independence, LRU eviction on both try_acquire and wait_time, and evicted keys starting full. Check behavior beyond the basic tests in test_ratelimit.py with focused edge-case verification; do not change the spec. Commit the completed work as explicitly requested by the operator.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WA8ASYHSN76M6T93ARWMQW",
+        "summary": "Implemented TokenBucket and KeyedLimiter per SPEC.md, including continuous capped refill, rollback-safe timing, non-consuming waits and failed acquisitions, independent keyed buckets, LRU eviction, fresh buckets after eviction, and validation. Added focused edge-case regression tests. The original review found NaN validation bypasses; fixed and re-reviewed the delta. Final checks passed on the committed tree. Nothing remains open. REVIEW: pass\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WAC7XMKQQ0KXC2H38TBMAY), codex/gpt-6-luna (agent agt_01M7WAH1C7YRMV4JV6DXKSFV2F)\n\nSHIPPED: commit db5284f6376277a89259582519da477cc060ce2f on the run branch"
+      },
+      "created_at": "2026-11-20T11:07:50.970116597Z",
+      "updated_at": "2026-11-20T11:13:20.682669072Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WA8ASYHSN76M6T93ARWMQW",
+        "item": "qi_01M7WA8AKVG21WBGEKVDN7D90S",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WA8B0GBH2HY64S8YXH5Y62",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/1cd6febccdf19dc16eabe1db/.archon/data/worktrees/feature-token-bucket/qi_01M7WA8AKVG21WBGEKVDN7D90S",
+        "branch": "archon/vdn7d90s-implement-spec-compliant-dependency-free",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TokenBucket and KeyedLimiter per SPEC.md, including continuous capped refill, rollback-safe timing, non-consuming waits and failed acquisitions, independent keyed buckets, LRU eviction, fresh buckets after eviction, and validation. Added focused edge-case regression tests. The original review found NaN validation bypasses; fixed and re-reviewed the delta. Final checks passed on the committed tree. Nothing remains open. REVIEW: pass\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WAC7XMKQQ0KXC2H38TBMAY), codex/gpt-6-luna (agent agt_01M7WAH1C7YRMV4JV6DXKSFV2F)\n\nSHIPPED: commit db5284f6376277a89259582519da477cc060ce2f on the run branch"
+        },
+        "cost_usd": 0.02543826,
+        "started_at": "2026-11-20T11:07:51.157720324Z",
+        "finished_at": "2026-11-20T11:13:20.682669072Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WA8B081PGB2R35MQTGEC2Z",
+        "run": "prun_01M7WA8ASYHSN76M6T93ARWMQW",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7WA8B17ERNYPWZ0TAJRDBW9",
+        "aether_task": "tsk_01M7WA8B17ERNYPWZ0TAJRDBWA",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented TokenBucket and KeyedLimiter per SPEC.md, including continuous capped refill, rollback-safe timing, non-consuming waits and failed acquisitions, independent keyed buckets, LRU eviction, fresh buckets after eviction, and validation. Added focused edge-case regression tests. The original review found NaN validation bypasses; fixed and re-reviewed the delta. Final checks passed on the committed tree. Nothing remains open. REVIEW: pass",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (9 tests passed)",
+            "python -m compileall -q ratelimit.py test_ratelimit.py (passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "db5284f6376277a89259582519da477cc060ce2f",
+          "evidence": [
+            {
+              "after": "Ran 9 tests; OK. Focused edge checks passed; compileall and git diff --check passed.",
+              "before": "Ran 3 tests; FAILED (errors=3), each raised NotImplementedError during construction.",
+              "caption": "Baseline suite failed because the implementation was unimplemented; final suite passes all nine tests.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "db5284f6376277a89259582519da477cc060ce2f",
+          "pr": {
+            "body": "Implemented in ratelimit.py using the standard library only. Added regression coverage in test_ratelimit.py. Rejects NaN where positivity or bounded requests are required, preventing invalid inputs from corrupting bucket state. Verification: unittest (9 passed), compileall (passed), git diff --check (passed). No project-specific lint/build configuration or contributor guidance was present.",
+            "summary": "Implemented the dependency-free token bucket and keyed LRU limiter. Before: all three existing tests failed at unimplemented constructors; now: all nine tests pass, including refill, rollback, eviction, and validation edge cases.",
+            "title": "Implement spec-compliant token bucket limiter"
+          },
+          "review": {
+            "reviewed_head": "db5284f6376277a89259582519da477cc060ce2f",
+            "reviewer_agents": [
+              "agt_01M7WAC7XMKQQ0KXC2H38TBMAY",
+              "agt_01M7WAH1C7YRMV4JV6DXKSFV2F"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7WAC7XMKQQ0KXC2H38TBMAY",
+                "base": "385df52f8922a3d4e962185bf450eb12791c1b41",
+                "findings": 1,
+                "head": "d1a5424f6bd34939c4ab91b5036833fa155ad966",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7WAH1C7YRMV4JV6DXKSFV2F",
+                "base": "d1a5424f6bd34939c4ab91b5036833fa155ad966",
+                "findings": 0,
+                "head": "db5284f6376277a89259582519da477cc060ce2f",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7WAC7XMKQQ0KXC2H38TBMAY",
+              "agt_01M7WAH1C7YRMV4JV6DXKSFV2F"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "low",
+            "reviewer": "agt_01M7WAH1C7YRMV4JV6DXKSFV2F",
+            "why": "Contained limiter behavior implementation and validation correction; no concurrency, security, persistence, or public API break. The change is covered by nine passing unit tests and passed compile and diff checks."
+          },
+          "tree": "470eb3491de10750e700505797b52760eccc2e78"
+        },
+        "cost_usd": 0.025438260000000004,
+        "started_at": "2026-11-20T11:07:51.176354196Z",
+        "finished_at": "2026-11-20T11:13:17.586943638Z"
+      }
+    ],
+    "spent_usd": 0.02543826,
+    "gates": [],
+    "delegations": {
+      "stg_01M7WA8B081PGB2R35MQTGEC2Z": {
+        "direct_usd": 0.01629366,
+        "delegated_usd": 0.0091446,
+        "agents": [
+          {
+            "agent": "agt_01M7WAC7XMKQQ0KXC2H38TBMAY",
+            "parent": "agt_01M7WA8B17ERNYPWZ0TAJRDBW9",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00420418
+          },
+          {
+            "agent": "agt_01M7WAFMGVQ1HRWC920ET71QY3",
+            "parent": "agt_01M7WA8B17ERNYPWZ0TAJRDBW9",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0026178800000000004
+          },
+          {
+            "agent": "agt_01M7WAH1C7YRMV4JV6DXKSFV2F",
+            "parent": "agt_01M7WA8B17ERNYPWZ0TAJRDBW9",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00232254
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

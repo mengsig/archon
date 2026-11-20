@@ -1,0 +1,263 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W6Y2S3DYXZCZ5ESJVBWEQB",
+      "repo": "repo_01M7W6XPDEDZH52A8D23Z5C9X6",
+      "pipeline": "direct",
+      "title": "Implement ledger.py per SPEC.md with focused tests",
+      "brief": "Operator request, verbatim: \"Implement `ledger.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nRead SPEC.md in full first. Implement every documented behaviour in ledger.py: keep the documented API exactly, raise the specified errors for every specified error case, and handle each boundary case in the spec. Extend test_ledger.py (or add focused tests) to cover each spec requirement, error case and boundary, keeping the existing basic tests. Use only the Python standard library. Keep functions under 60 lines, validate inputs at the boundary, and do not hide failures. Commit the work with a clear message. Do not add any attribution lines to the commit.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W6Y2S3DYXZCZ5ESJVBWEQB",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T10:09:49.364718499Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-20T10:09:49.364718499Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-20T10:09:49.364718499Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Small self-contained module with a written spec; medium effort keeps cost low given claude-code quota pace."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W6Y2V0KV415SBCWQMAXHG0",
+        "summary": "Implemented ledger.py per SPEC.md (Ledger(balances), transfer, snapshot, MAX_BALANCE) and extended test_ledger.py to 25 tests, keeping the two original basic tests. Standard library only. Validation covers names, balances, amounts (validated before account lookup), non-dict input and bool rejection; unknown accounts raise KeyError; insufficient funds, destination overflow and same-account edge cases follow the spec. One threading.Lock per ledger makes transfers and snapshots linearizable. Two concurrency tests cover opposite transfers (no deadlock, total conserved) and snapshots never seeing a half transfer; worker threads are daemon threads with a 30 s join timeout so a deadlock fails the test rather than hanging it. Checks: `python3 -B -m unittest -v test_ledger` on final head 666a8eb: 25 tests OK. Baseline on main (stub): 2 errors (NotImplementedError). Judgment call: the lock is the task's own requirement in a new module, not a change to shared locking, so I proceeded and recorded risk as high rather than escalating. Review: whole-change pass at 4176c47 (agt_01M7W6ZQTTWEN51CYJD7VM0N38) with non-blocking notes, both handled (daemon threads fixed in 666a8eb; unhashable account names raise TypeError, which the spec does not define, left as is); delta pass 4176c47..666a8eb (agt_01M7W70WHW3BYHKSXH8NACD87D), no findings. Not done or open: no push, no PR (Archon ships). Two reviewer `claude -p` processes (pids 3820682, 3825797) were left behind by finished reviewer agents; they stop when this stage ends, and nothing else I started is running.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W6ZQTTWEN51CYJD7VM0N38), claude-code/claude-haiku-5-5 (agent agt_01M7W70WHW3BYHKSXH8NACD87D)\n\nSHIPPED: commit 666a8eb65140049d9c2b8fea4a12cdfa06475687 on the run branch"
+      },
+      "created_at": "2026-11-20T10:09:49.347347659Z",
+      "updated_at": "2026-11-20T10:11:50.460021627Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W6Y2V0KV415SBCWQMAXHG0",
+        "item": "qi_01M7W6Y2S3DYXZCZ5ESJVBWEQB",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W6Y43RBNECSF0QN5F9DQVB",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/694914b2d6bb5cbd885a4c9c/.archon/data/worktrees/quality-ledger-transfer/qi_01M7W6Y2S3DYXZCZ5ESJVBWEQB",
+        "branch": "archon/sjvbweqb-implement-ledger-py-per-spec-md-with-foc",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented ledger.py per SPEC.md (Ledger(balances), transfer, snapshot, MAX_BALANCE) and extended test_ledger.py to 25 tests, keeping the two original basic tests. Standard library only. Validation covers names, balances, amounts (validated before account lookup), non-dict input and bool rejection; unknown accounts raise KeyError; insufficient funds, destination overflow and same-account edge cases follow the spec. One threading.Lock per ledger makes transfers and snapshots linearizable. Two concurrency tests cover opposite transfers (no deadlock, total conserved) and snapshots never seeing a half transfer; worker threads are daemon threads with a 30 s join timeout so a deadlock fails the test rather than hanging it. Checks: `python3 -B -m unittest -v test_ledger` on final head 666a8eb: 25 tests OK. Baseline on main (stub): 2 errors (NotImplementedError). Judgment call: the lock is the task's own requirement in a new module, not a change to shared locking, so I proceeded and recorded risk as high rather than escalating. Review: whole-change pass at 4176c47 (agt_01M7W6ZQTTWEN51CYJD7VM0N38) with non-blocking notes, both handled (daemon threads fixed in 666a8eb; unhashable account names raise TypeError, which the spec does not define, left as is); delta pass 4176c47..666a8eb (agt_01M7W70WHW3BYHKSXH8NACD87D), no findings. Not done or open: no push, no PR (Archon ships). Two reviewer `claude -p` processes (pids 3820682, 3825797) were left behind by finished reviewer agents; they stop when this stage ends, and nothing else I started is running.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W6ZQTTWEN51CYJD7VM0N38), claude-code/claude-haiku-5-5 (agent agt_01M7W70WHW3BYHKSXH8NACD87D)\n\nSHIPPED: commit 666a8eb65140049d9c2b8fea4a12cdfa06475687 on the run branch"
+        },
+        "cost_usd": 0.03654392000000001,
+        "started_at": "2026-11-20T10:09:49.801735656Z",
+        "finished_at": "2026-11-20T10:11:50.460021627Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W6Y3CGFBHVJ3ZPC0W50QAX",
+        "run": "prun_01M7W6Y2V0KV415SBCWQMAXHG0",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W6Y468SKVE45SWQGR1CTAF",
+        "aether_task": "tsk_01M7W6Y468SKVE45SWQGR1CTAG",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "Implemented ledger.py per SPEC.md (Ledger(balances), transfer, snapshot, MAX_BALANCE) and extended test_ledger.py to 25 tests, keeping the two original basic tests. Standard library only. Validation covers names, balances, amounts (validated before account lookup), non-dict input and bool rejection; unknown accounts raise KeyError; insufficient funds, destination overflow and same-account edge cases follow the spec. One threading.Lock per ledger makes transfers and snapshots linearizable. Two concurrency tests cover opposite transfers (no deadlock, total conserved) and snapshots never seeing a half transfer; worker threads are daemon threads with a 30 s join timeout so a deadlock fails the test rather than hanging it. Checks: `python3 -B -m unittest -v test_ledger` on final head 666a8eb: 25 tests OK. Baseline on main (stub): 2 errors (NotImplementedError). Judgment call: the lock is the task's own requirement in a new module, not a change to shared locking, so I proceeded and recorded risk as high rather than escalating. Review: whole-change pass at 4176c47 (agt_01M7W6ZQTTWEN51CYJD7VM0N38) with non-blocking notes, both handled (daemon threads fixed in 666a8eb; unhashable account names raise TypeError, which the spec does not define, left as is); delta pass 4176c47..666a8eb (agt_01M7W70WHW3BYHKSXH8NACD87D), no findings. Not done or open: no push, no PR (Archon ships). Two reviewer `claude -p` processes (pids 3820682, 3825797) were left behind by finished reviewer agents; they stop when this stage ends, and nothing else I started is running.",
+        "structured": {
+          "checks": [
+            "python3 -B -m unittest -v test_ledger (final head 666a8eb: 25 tests OK)",
+            "python3 -B -m unittest test_ledger (after daemon-thread fix: 25 tests OK)",
+            "baseline on 38bb530 stub: python3 -B -m unittest test_ledger: 2 errors (NotImplementedError)"
+          ],
+          "commit": "666a8eb65140049d9c2b8fea4a12cdfa06475687",
+          "evidence": [
+            {
+              "after": "Ran 25 tests in 0.011s\n\nOK",
+              "before": "Ran 2 tests in 0.001s\n\nFAILED (errors=2)   (stub raises NotImplementedError)",
+              "caption": "Unit tests: stub on base 38bb530 vs. implementation on head 666a8eb",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "666a8eb65140049d9c2b8fea4a12cdfa06475687",
+          "pr": {
+            "body": "Approach: Ledger holds a private copy of validated balances and a single threading.Lock. transfer validates amount, then both accounts (KeyError for unknown), then under the lock checks source funds, same-account, and destination overflow before moving money; any failure leaves balances unchanged. snapshot copies under the lock. Key files: ledger.py, test_ledger.py. Checks: unittest on final head 666a8eb, 25 tests OK. Concurrency tests use daemon threads with a 30 s join timeout so a deadlock fails instead of hanging. Assumptions: unhashable account names raise TypeError (spec silent). Follow-ups: none blocking.",
+            "summary": "Made atomic ledger happen. Now can construct, transfer and snapshot with spec validation and errors, linearizable across threads. Before: stub raising NotImplementedError, now: 25 tests passing.",
+            "title": "Implement Ledger per SPEC.md with focused tests"
+          },
+          "review": {
+            "reviewed_head": "666a8eb65140049d9c2b8fea4a12cdfa06475687",
+            "reviewer_agents": [
+              "agt_01M7W6ZQTTWEN51CYJD7VM0N38",
+              "agt_01M7W70WHW3BYHKSXH8NACD87D"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W6ZQTTWEN51CYJD7VM0N38",
+                "base": "38bb53058bb65097ed868c6c495131cc886b8bbd",
+                "findings": 2,
+                "head": "4176c473cc67b27ff93b90423005b55e39458e24",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W70WHW3BYHKSXH8NACD87D",
+                "base": "4176c473cc67b27ff93b90423005b55e39458e24",
+                "findings": 0,
+                "head": "666a8eb65140049d9c2b8fea4a12cdfa06475687",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W6ZQTTWEN51CYJD7VM0N38",
+              "agt_01M7W70WHW3BYHKSXH8NACD87D"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "New per-ledger threading lock governs all transfers and snapshots (concurrency rubric). Only ledger.py and test_ledger.py touched; no existing code changed. Reviews found no blocking issues."
+          },
+          "tree": "7d6fb37b0bd66089e42652b200e78700e82060b8"
+        },
+        "cost_usd": 0.03654392000000001,
+        "started_at": "2026-11-20T10:09:49.968804204Z",
+        "finished_at": "2026-11-20T10:11:42.680800689Z"
+      }
+    ],
+    "spent_usd": 0.03654392000000001,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W6Y3CGFBHVJ3ZPC0W50QAX": {
+        "direct_usd": 0.023816640000000007,
+        "delegated_usd": 0.01272728,
+        "agents": [
+          {
+            "agent": "agt_01M7W6ZQTTWEN51CYJD7VM0N38",
+            "parent": "agt_01M7W6Y468SKVE45SWQGR1CTAF",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00809413
+          },
+          {
+            "agent": "agt_01M7W70WHW3BYHKSXH8NACD87D",
+            "parent": "agt_01M7W6Y468SKVE45SWQGR1CTAF",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "low",
+            "cost_usd": 0.004633150000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T10:09:49.364718499Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-20T10:09:49.364718499Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-20T10:09:49.364718499Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

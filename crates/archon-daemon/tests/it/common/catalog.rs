@@ -39,17 +39,30 @@ pub fn untiered(models: impl IntoIterator<Item = ModelRef>) -> ModelCatalog {
 }
 
 pub fn answer(fake: &FakeAether, catalog: &ModelCatalog) {
+    let aliases = catalog.aliases();
     let rows = catalog
         .models()
         .iter()
         .map(|entry| {
+            let named = aliases
+                .iter()
+                .filter(|(_, canonical)| **canonical == entry.model);
+            let named: Vec<String> = named.map(|(alias, _)| alias_name(alias, entry)).collect();
             json!({
                 "model": entry.model, "configured": true, "tier": entry.tier,
-                "is_default": entry.is_default,
+                "is_default": entry.is_default, "aliases": named,
             })
         })
         .collect::<Vec<_>>();
     fake.set_default("list_models", Scripted::reply("models", json!(rows)));
+}
+
+/// An alias as Aether lists it: a bare id on its model's own provider.
+fn alias_name(alias: &ModelRef, entry: &CatalogModel) -> String {
+    match alias.provider == entry.model.provider {
+        true => alias.model.clone(),
+        false => alias.to_string(),
+    }
 }
 
 impl Harness {

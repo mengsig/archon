@@ -170,10 +170,12 @@ fn current_draft(
     match saved_draft(store, draft_key)? {
         Some(item)
             if policy.check_plan(&item.model_plan).is_ok()
-                && item.model_plan.0.values().flatten().all(|c| {
-                    catalog.check(&c.model).is_ok_and(|id| id == c.model)
-                        && catalog.superseded_by(&c.model).is_none()
-                }) =>
+                && item
+                    .model_plan
+                    .0
+                    .values()
+                    .flatten()
+                    .all(|c| catalog.check(&c.model).is_ok_and(|id| id == c.model)) =>
         {
             Ok(item)
         }
@@ -235,8 +237,7 @@ fn cheap_choice<'a>(
     let canonical = |choice: &ModelChoice| {
         let mut choice = choice.clone();
         choice.model = catalog.check(&choice.model).ok()?;
-        (policy.check(&choice).is_ok() && catalog.superseded_by(&choice.model).is_none())
-            .then_some(choice)
+        policy.check(&choice).is_ok().then_some(choice)
     };
     // A cost speaks for the model that ran: an alias now naming another model drops it.
     let as_ran = |choice: &ModelChoice| canonical(choice).filter(|c| c.model == choice.model);
@@ -571,5 +572,29 @@ mod tests {
         let policy = archon_core::policy::ModelPolicy::default();
         let choice = cheap_choice(ran.into_iter(), &policy, &catalog, &dear).unwrap();
         assert_eq!(choice.model, dear, "only the model that ran is priced");
+    }
+
+    /// Supersession steers Archon's tier picks only: a listed, superseded
+    /// model that ran cheapest is still the errand's; a retired one is not.
+    #[test]
+    fn a_superseded_model_still_prices_the_errand_and_a_retired_one_does_not() {
+        let (old, new, gone): (ModelRef, ModelRef, ModelRef) = (
+            "p/old".parse().unwrap(),
+            "p/new".parse().unwrap(),
+            "p/gone".parse().unwrap(),
+        );
+        let listed = |model: &ModelRef| CatalogModel {
+            model: model.clone(),
+            tier: None,
+            is_default: false,
+        };
+        let mut catalog = ModelCatalog::new(vec![listed(&old), listed(&new), listed(&gone)]);
+        catalog.add_superseded(old.clone(), new.clone());
+        catalog.add_retired(gone.clone(), None);
+        let choices = [&gone, &old, &new].map(|m| ModelChoice::pinned(m.clone(), Effort::Low));
+        let ran = [(0.01, &choices[0]), (0.02, &choices[1]), (0.5, &choices[2])];
+        let policy = archon_core::policy::ModelPolicy::default();
+        let choice = cheap_choice(ran.into_iter(), &policy, &catalog, &new).unwrap();
+        assert_eq!(choice.model, old, "the superseded model ran cheapest");
     }
 }

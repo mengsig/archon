@@ -514,3 +514,88 @@ async fn a_legacy_key_with_another_plan_gets_no_catalog_exemption() {
     let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
     assert_eq!(items.len(), 1, "no second item");
 }
+
+/// A fingerprint kept from before `asked_plan` holds the alias it was asked with;
+/// and its replay judges that alias as its canonical id, as the allowlist names it.
+#[tokio::test]
+async fn a_legacy_keyed_alias_replay_passes_a_canonical_allowlist() {
+    use archon_aether::fake::Scripted;
+    use serde_json::json;
+    let h = Harness::new().await;
+    let (canonical, alias) = ("claude-code/claude-opus-5-5", "claude-code/opus");
+    let rows = json!([{"model": canonical, "configured": true, "aliases": ["opus"]}]);
+    h.catalog_server
+        .set_default("list_models", Scripted::reply("models", rows));
+    h.repo_config(&format!("[models]\nallow = [\"{canonical}\"]\n"));
+    let pin = serde_json::from_value(json!({"implement": [{"model": alias}]}));
+    let mut asked = request("direct", pin.unwrap(), "review=none");
+    asked.idempotency_key = Some("legacy-alias".into());
+    let first = h.cli(Request::Enqueue(asked.clone())).await;
+    let Ok(Reply::Item(first)) = first else {
+        panic!("the first enqueue is stored: {first:?}");
+    };
+    let mut legacy = first.model_plan.plan().clone();
+    for choice in legacy.0.values_mut().flatten() {
+        assert_eq!(choice.model.to_string(), canonical, "stored canonical");
+        choice.model = alias.parse().unwrap();
+    }
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let changed = conn.execute(
+        "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
+                                             '$.model_plan', json(?1))",
+        [serde_json::to_string(&legacy).unwrap()],
+    );
+    assert_eq!(changed.unwrap(), 1, "the alias as 1.6.3 stored it");
+
+    let again = h.cli(Request::Enqueue(asked)).await;
+    let Ok(Reply::Item(again)) = again else {
+        panic!("the replay returns the stored item: {again:?}");
+    };
+    assert_eq!(again.id, first.id);
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert_eq!(items.len(), 1, "no second item");
+}
+
+/// The next action a waiting item names for `item`.
+async fn next_action(h: &Harness, item: &QueueItemId) -> String {
+    let request = Request::GetItem { item: item.clone() };
+    let Ok(Reply::ItemDetail(detail)) = h.cli(request).await else {
+        panic!("expected item detail");
+    };
+    detail
+        .waiting_reason
+        .expect("a waiting item says why")
+        .next_action
+}
+
+/// A queued item whose pin left the catalog is re-planned in place, as retry
+/// refuses a queued item; once dispatch blocks it, retry takes its new plan.
+#[tokio::test]
+async fn a_pin_that_left_the_catalog_names_the_command_its_state_takes() {
+    let h = harness().await;
+    let pin = serde_json::from_value(serde_json::json!({"implement": [{"model": FAST}]}));
+    let Ok(Reply::Item(item)) = h
+        .cli(Request::Enqueue(request(
+            "direct",
+            pin.unwrap(),
+            "review=none",
+        )))
+        .await
+    else {
+        panic!("the enqueue is stored");
+    };
+    let retired = common::catalog::untiered(["codex/sol".parse().unwrap()]);
+    common::catalog::answer(&h.catalog_server, &retired);
+    let generation = h.ctx.aether.generation().unwrap();
+    let store = h.ctx.store.lock().await;
+    store.record_model_catalog(retired, archon_core::now(), Some(generation));
+    drop(store);
+    assert_eq!(h.state(&item.id).await, QueueState::Queued);
+    let queued = next_action(&h, &item.id).await;
+    assert!(queued.contains("update_item"), "{queued}");
+
+    h.dispatch().await;
+    assert!(h.state(&item.id).await.is_model_pin_block());
+    let blocked = next_action(&h, &item.id).await;
+    assert!(blocked.contains("archon queue retry"), "{blocked}");
+}

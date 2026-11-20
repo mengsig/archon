@@ -2228,10 +2228,12 @@ async fn a_reviewer_off_the_contract_s_named_models_is_cancelled() {
 /// The alias a contract issued before an upgrade may name for `ALLOWED`.
 const ALIAS: (&str, &str) = ("claude-code", "opus");
 
-/// The link's catalog reads `ALIAS` as `ALLOWED`, as after a catalog read.
+/// The link's catalog reads `ALIAS` as `ALLOWED`, as after a catalog read,
+/// and Aether's catalog lists it so.
 fn alias_allowed(harness: &Harness) {
     let alias = ModelRef::new(ALIAS.0, ALIAS.1);
     let canonical = ModelRef::new(ALLOWED.0, ALLOWED.1);
+    answer_alias(harness);
     let generation = harness.ctx.aether.generation().unwrap();
     let aliases = [(alias.clone(), canonical.clone())].into();
     harness
@@ -2240,6 +2242,21 @@ fn alias_allowed(harness: &Harness) {
         .install_aliases(generation, aliases)
         .unwrap();
     assert_eq!(harness.ctx.aether.aliases().get(&alias), Some(&canonical));
+}
+
+/// Aether's catalog: the test harness's models, `ALLOWED` with `ALIAS`.
+fn answer_alias(harness: &Harness) {
+    let canonical = ModelRef::new(ALLOWED.0, ALLOWED.1);
+    let mut rows: Vec<Value> = crate::common::catalog::default_models()
+        .models()
+        .iter()
+        .filter(|entry| entry.model != canonical)
+        .map(|entry| json!({"model": entry.model, "configured": true}))
+        .collect();
+    rows.push(json!({"model": canonical, "configured": true, "aliases": [ALIAS.1]}));
+    harness
+        .fake
+        .set_default("list_models", Scripted::reply("models", json!(rows)));
 }
 
 /// The reviewers of `STAGE` the watchdog cancelled, of one created under the
@@ -2610,4 +2627,67 @@ async fn a_child_on_an_allowed_alias_runs_though_the_aliases_clear_mid_check() {
         "the aliases cleared"
     );
     assert_eq!(cancelled(&harness), [], "the allowed child runs");
+}
+
+/// A started daemon holds no aliases until a catalog read: a child is
+/// checked under a fresh read of them, so an allowlist naming the alias of
+/// the model it reports by its canonical id lets it run.
+#[tokio::test]
+async fn a_child_checked_before_any_catalog_read_meets_the_policy_by_canonical_ids() {
+    let mut config = Config::default();
+    config.models.allow = vec![ModelRef::new(ALIAS.0, ALIAS.1)];
+    let harness = Harness::with(config, None).await;
+    let repo = tempfile::tempdir().unwrap();
+    running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    let (agents, pump) = running_pump(&harness).await;
+    assert!(
+        harness.ctx.aether.aliases().is_empty(),
+        "as after a reconnect"
+    );
+    answer_alias(&harness);
+    harness.fake.set_default("cancel", Scripted::ok());
+    let mut agent = agents.set(CHILD, "running");
+    agent["role"] = json!("worker");
+    agent["config"] = json!({"effort": "medium"});
+    agents.0.lock().unwrap().insert(CHILD.to_owned(), agent);
+    push(&harness, created(CHILD, STAGE, ALLOWED), keys::CURSOR_FLEET).await;
+    pump.abort();
+
+    assert_eq!(cancelled(&harness), [], "the allowed child runs");
+    let alias = ModelRef::new(ALIAS.0, ALIAS.1);
+    assert!(
+        harness.ctx.aether.aliases().contains_key(&alias),
+        "the read installed the aliases"
+    );
+}
+
+/// A read that lists no configured model is an outage, not a catalog without
+/// aliases: the child is checked under the last ones and they stay installed.
+#[tokio::test]
+async fn a_catalog_with_no_configured_model_keeps_the_last_aliases_for_a_child() {
+    let mut config = Config::default();
+    config.models.allow = vec![ModelRef::new(ALIAS.0, ALIAS.1)];
+    let harness = Harness::with(config, None).await;
+    let repo = tempfile::tempdir().unwrap();
+    running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    let (agents, pump) = running_pump(&harness).await;
+    alias_allowed(&harness);
+    harness
+        .fake
+        .set_default("list_models", Scripted::reply("models", json!([])));
+    harness.fake.set_default("cancel", Scripted::ok());
+    let mut agent = agents.set(CHILD, "running");
+    agent["role"] = json!("worker");
+    agent["config"] = json!({"effort": "medium"});
+    agents.0.lock().unwrap().insert(CHILD.to_owned(), agent);
+    push(&harness, created(CHILD, STAGE, ALLOWED), keys::CURSOR_FLEET).await;
+    pump.abort();
+
+    assert!(
+        !harness.fake.received_named("list_models").is_empty(),
+        "the watchdog read the catalog"
+    );
+    assert_eq!(cancelled(&harness), [], "the allowed child runs");
+    let alias = ModelRef::new(ALIAS.0, ALIAS.1);
+    assert!(harness.ctx.aether.aliases().contains_key(&alias));
 }

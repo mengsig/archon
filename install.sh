@@ -5,7 +5,7 @@ set -eu
 
 ARCHON_REPOSITORY="mengsig/archon"
 AETHER_REPOSITORY="mengsig/aether"
-AETHER_VERSION="v1.4.1"
+AETHER_VERSION="v1.4.2"
 # Every binary a release archive ships; archond is `archon daemon run`.
 BINARIES="archon"
 

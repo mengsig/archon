@@ -14,9 +14,26 @@ and +14% in the two rounds run (pre-rebase and final head), and Haiku's was
 missing_verdict_line`: their result had no verdict line. That note is only
 a record. The `direct` implement stage is ungated, so #450's restatement
 turn does not apply to it, and none of those stage records has a
-restatement. This evidence does not show what caused the slowdown. It is
-reported here as a finding, not tuned. Costs are incomplete or lower
-bounds, so their direction is unknown.
+restatement. It is reported here as a finding, not tuned. Costs are
+incomplete or lower bounds, so their direction is unknown.
+
+**Where the time went.** Across the three tasks that ran an item, the
+difference sits inside the stage agents, which include the reviewers they
+delegate. Waits between stages and orchestrator turns account for little of
+it. In the final round, stage time was 233 s on old against 368 s on new
+for Haiku, and 477 s against 516 s for Luna. Time outside the item
+(orchestrator turns before the enqueue and after the result) was 46 s against
+49 s and 119 s against 145 s. Leads delegated as many reviewers on Haiku (5
+each) and one more on Luna (4 against 3). The only 1.6.4 change visible in a
+timeline is #440: on Luna `quality-ledger-transfer`, the candidate's
+`direct` implement escalated on the spec's concurrency and the orchestrator
+switched the item to `adaptive`. That cost about 70 s: 35 s of escalated
+stage and 33 s waiting for the steer. It happened once in four candidate
+runs of that task. The run on `adaptive` was then faster than the old
+arm's. In the pre-rebase round Haiku went the other way (366 s old, 257 s
+new). There, Luna's extra stage time came from one long run and one retry
+after a reviewer answered "Approve", which 1.6.3 refuses too. So no 1.6.4
+change shows a repeatable slowdown.
 
 ## Final head runs
 

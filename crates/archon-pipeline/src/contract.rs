@@ -1960,8 +1960,8 @@ mod tests {
         }
     }
 
-    /// A lead delegates the reviewers its review level names and no more: a
-    /// further one only reads a fix's delta or replaces one that returned nothing.
+    /// A lead delegates the reviewers its review level names and no more: a further
+    /// one only for a read the rules require (a delta, an amend's whole read, a replacement).
     #[test]
     fn a_lead_delegates_exactly_the_reviewers_its_review_names() {
         let mut review_only = owing(1, false);

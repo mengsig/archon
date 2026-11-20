@@ -25,8 +25,9 @@ const PLAIN_BUDGET: usize = 3_650;
 const REVIEW_BUDGET: usize = 4_050;
 const RECORD_BUDGET: usize = 1_550;
 /// What holding a review adds: the record, the verdict, summary line and risk
-/// call each reviewer returns, the blocking class and the round cap.
-const REVIEW_HOLDER_BUDGET: usize = 2_200;
+/// call each reviewer returns, the blocking class and the round cap. 2,200
+/// before it capped the reviewers a lead delegates at those its review names.
+const REVIEW_HOLDER_BUDGET: usize = 2_300;
 /// What a work stage of a team pipeline adds: committing where the roles fork.
 const RUN_TREE_BUDGET: usize = 550;
 /// What judging the change's risk adds: the rubric, to the record stage and
@@ -41,8 +42,9 @@ const STRICT_SCENARIO_BUDGET: usize = 850;
 /// 152,000 before the building stages' user-outcome rule (#397), 153,300 before
 /// the `blocking` mark and the review-only lead's verdict section, 156,000
 /// before every verdict section asked for `submit_verdict`, 157,000 before a
-/// strict stage's rule named what its `fail` needs to re-run setup.
-const TOTAL_BUDGET: usize = 157_500;
+/// strict stage's rule named what its `fail` needs to re-run setup, 157,500
+/// before the review holders' reviewer-count rule.
+const TOTAL_BUDGET: usize = 157_800;
 
 /// One built-in stage's fixed input, in bytes.
 struct Cost {

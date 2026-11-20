@@ -536,10 +536,6 @@ fn review_rules(duty: ReviewDuty) -> String {
         true => REVIEW_SKIP_RULE,
         false => "",
     };
-    let count = match duty.records_verdict {
-        true => REVIEW_ONLY_COUNT_RULE,
-        false => REVIEWER_COUNT_RULE,
-    };
     // A review-only lead changes nothing: its findings are its verdict, never fixed.
     let (follow_ups, rests_on, rounds, coverage, open) = match duty.records_verdict {
         true => (
@@ -560,7 +556,7 @@ fn review_rules(duty: ReviewDuty) -> String {
     let rules = format!(
         "\n## Review on record\n\n\
          - Your stage holds this run's review: the change as it finally stands is reviewed \
-         by {who}. {count}\n\
+         by {who}. {REVIEWER_COUNT_RULE}\n\
          {REVIEWER_VERDICT_RULES}{follow_ups}\
          - Record it in `complete_task`'s `structured` data, beside any other keys, naming \
          the agent id `delegate` returned for {rests_on}:\n\n\
@@ -850,17 +846,10 @@ or, only where the stage prompt lets a change go without review:\n\n\
 {\"review\": {\"verdict\": \"skipped\", \"reason\": \"<why this change needed none>\"}}\n\
 ```\n\n";
 
-/// How many reviewers a lead delegates: what the review names, and one more
-/// only for a fix's delta read or in place of a reviewer that returned nothing.
-pub const REVIEWER_COUNT_RULE: &str = "Delegate no more whole-change reviewers than \
-that, not even to confirm a pass: a further reviewer is only a delta read the rules \
-below call for, such as of a fix after a blocking fail, or the replacement of one that \
-ended with no `verdict` and `head`.";
-
-/// A review-only lead fixes nothing, so it never owes a delta read.
-const REVIEW_ONLY_COUNT_RULE: &str = "Delegate no more reviewers than that, not even \
-to confirm a pass: a further reviewer only replaces one that ended with no `verdict` \
-and `head`.";
+/// How many reviewers a lead delegates: what the review names, and another
+/// only for a read the round, coverage or replacement rules require.
+pub const REVIEWER_COUNT_RULE: &str =
+    "No more, not even to confirm a pass: another only for a read the rules below require.";
 
 const REVIEWER_VERDICT_RULES: &str = "\
 - Paste this JSON verbatim into each reviewer's instructions as its `complete_task` `structured`, \
@@ -922,8 +911,7 @@ one must have passed the branch head itself: whole, or as a delta whose `base` a
 reviewer read the change up to. A pass of an earlier head only \
 anchors such a delta. A fail stands until a pass read past it, or after an amend or \
 rebase until a pass of the whole change. Name every reviewer of yours that \
-coverage rests on, earlier whole-change reads included, passed or failed. Anything else fails the run, \
-and nothing ships. \
+coverage rests on, earlier whole-change reads included, passed or failed. Anything else fails the run. \
 Never report `pass` for a review that did not run or did not pass: ";
 
 const REVIEW_LINE_RULE: &str = "\
@@ -1228,9 +1216,7 @@ finding `\"blocking\"`; an unmarked one blocks when its severity is critical or 
 /// its verdict is read, and restated once if unreadable, before it finishes.
 const SUBMIT_VERDICT_RULE: &str = "\
 - Before you finish, call `mcp__archon__submit_verdict` with that `summary` and \
-`structured` (skip it if you have no such tool) unless the verdict is plain: \
-`\"fail\"`, or `\"pass\"` with no finding marked blocking or unmarked at critical or \
-high, and the matching `VERDICT:` line last. If it asks, restate once as it says; \
+`structured` (skip it if you have no such tool). If it asks, restate once as it says; \
 that submission is final. Then finish with what you last submitted.\n";
 
 /// Where a strict stage's own `fail` leads, which its `on_fail` decides.
@@ -1978,31 +1964,30 @@ mod tests {
     /// further one only reads a fix's delta or replaces one that returned nothing.
     #[test]
     fn a_lead_delegates_exactly_the_reviewers_its_review_names() {
-        for (many, who) in [
-            (
-                1,
-                "reviewed by an agent you delegate to that wrote none of it. ",
-            ),
-            (3, "Delegate all 3 yourself; naming fewer fails the run."),
-        ] {
-            let text = work_contract(owing(many, false));
-            assert!(text.contains(who), "{many}: {text}");
-            assert_eq!(text.matches(REVIEWER_COUNT_RULE).count(), 1, "{many}");
-            assert!(REVIEWER_COUNT_RULE.contains("no more whole-change reviewers than that"));
-            assert!(REVIEWER_COUNT_RULE.contains("not even to confirm a pass"));
-            assert!(REVIEWER_COUNT_RULE.contains("delta read the rules below call for"));
-        }
-        let mut lead = owing(1, false);
-        lead.review = lead.review.map(|duty| ReviewDuty {
+        let mut review_only = owing(1, false);
+        review_only.review = review_only.review.map(|duty| ReviewDuty {
             records_verdict: true,
             ..duty
         });
-        let reviewing = work_contract(lead);
-        assert!(!reviewing.contains(REVIEWER_COUNT_RULE), "it reads no fix");
-        assert!(
-            reviewing.contains("Delegate no more reviewers than that, not even to confirm a pass")
-        );
-        assert!(!work_contract(owing(0, false)).contains("no more"));
+        for (owed, who) in [
+            (
+                owing(1, false),
+                "reviewed by an agent you delegate to that wrote none of it. ",
+            ),
+            (owing(3, false), "after their last reviewed head. "),
+            (
+                review_only,
+                "reviewed by an agent you delegate to that wrote none of it. ",
+            ),
+        ] {
+            let text = work_contract(owed);
+            let rule = format!("{who}{REVIEWER_COUNT_RULE}");
+            assert_eq!(text.matches(&rule).count(), 1, "{text}");
+        }
+        // The exceptions are the reads the rules below require, an amend's included.
+        assert!(REVIEWER_COUNT_RULE.contains("not even to confirm a pass"));
+        assert!(REVIEWER_COUNT_RULE.contains("only for a read the rules below require"));
+        assert!(!work_contract(owing(0, false)).contains(REVIEWER_COUNT_RULE));
     }
 
     /// A review-only lead records its verdict, a fail included, with

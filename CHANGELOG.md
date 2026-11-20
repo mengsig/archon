@@ -5,17 +5,15 @@
 ### Changed
 
 - Stage leads take fewer turns on a small, passing change. The stage
-  contract now says a lead delegates exactly the whole-change reviewers its
-  review level names, not one more to confirm a pass: a further reviewer is
-  only a delta read the review rules call for (such as of a fix after a
-  blocking fail) or the replacement of one that returned no verdict. Leads
-  paste the reviewer verdict JSON verbatim, and the reviewer adds its
-  `risk` call to that JSON. A gated stage with a plain verdict (`fail`, or
-  `pass` with no blocking finding and the matching `VERDICT:` line) skips
-  the `submit_verdict` round trip; any other verdict is still checked and
-  restated once.
+  contract now says a lead delegates no more whole-change reviewers than its
+  review level names, not even one to confirm a pass: a further reviewer is
+  only a read the review rules require (a delta read of a fix after a
+  blocking fail, a whole-change read after an amend or rebase, or the
+  replacement of one that counts for nothing). Leads paste the reviewer
+  verdict JSON verbatim, and the reviewer adds its `risk` call to that JSON.
 - A stage whose contract asks for no verdict, such as `direct`'s
-  `implement`, no longer records `verdict_note = missing_verdict_line`.
+  `implement`, no longer records `verdict_note = missing_verdict_line` when
+  it settles under its run's driver.
 
 ### Fixed
 

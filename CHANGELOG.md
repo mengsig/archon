@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Changed
+
+- Stage leads take fewer turns on a small, passing change. The stage
+  contract now says a lead delegates no more whole-change reviewers than its
+  review level names, not even one to confirm a pass: a further reviewer is
+  only a read the review rules require (a delta read of a fix after a
+  blocking fail, a whole-change read after an amend or rebase, or the
+  replacement of one that counts for nothing). Leads paste the reviewer
+  verdict JSON verbatim, and the reviewer adds its `risk` call to that JSON.
+- A stage whose contract asks for no verdict, such as `direct`'s
+  `implement`, no longer records `verdict_note = missing_verdict_line` when
+  it settles under its run's driver.
+
+### Fixed
+
+- The bench's archon arm no longer voids a trial when the orchestrator
+  delegates a helper: Aether lists the helper's events (its creation, task
+  and turns) among the orchestrator's, and the harness now skips every event
+  of an agent the orchestrator created. Any other agent's event still stops
+  the trial. Stage turns and time on the smoke tasks are back within 10% of
+  v1.6.3 (`bench/results-trim-1.6.5`).
+
 ## 1.6.4
 
 Released 2026-11-20.

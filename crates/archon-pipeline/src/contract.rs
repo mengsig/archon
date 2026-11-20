@@ -556,7 +556,7 @@ fn review_rules(duty: ReviewDuty) -> String {
     let rules = format!(
         "\n## Review on record\n\n\
          - Your stage holds this run's review: the change as it finally stands is reviewed \
-         by {who}.\n\
+         by {who}. {REVIEWER_COUNT_RULE}\n\
          {REVIEWER_VERDICT_RULES}{follow_ups}\
          - Record it in `complete_task`'s `structured` data, beside any other keys, naming \
          the agent id `delegate` returned for {rests_on}:\n\n\
@@ -846,8 +846,13 @@ or, only where the stage prompt lets a change go without review:\n\n\
 {\"review\": {\"verdict\": \"skipped\", \"reason\": \"<why this change needed none>\"}}\n\
 ```\n\n";
 
+/// How many reviewers a lead delegates: what the review names, and another
+/// only for a read the round, coverage or replacement rules require.
+pub const REVIEWER_COUNT_RULE: &str =
+    "No more, not even to confirm a pass: another only for a read the rules below require.";
+
 const REVIEWER_VERDICT_RULES: &str = "\
-- Paste this JSON into each reviewer's instructions as its `complete_task` `structured`, \
+- Paste this JSON verbatim into each reviewer's instructions as its `complete_task` `structured`, \
 never prose alone; a result without `verdict` and `head` counts for nothing. `base` \
 starts the diff read:\n\n\
 ```json\n\
@@ -906,8 +911,7 @@ one must have passed the branch head itself: whole, or as a delta whose `base` a
 reviewer read the change up to. A pass of an earlier head only \
 anchors such a delta. A fail stands until a pass read past it, or after an amend or \
 rebase until a pass of the whole change. Name every reviewer of yours that \
-coverage rests on, earlier whole-change reads included, passed or failed. Anything else fails the run, \
-and nothing ships. \
+coverage rests on, earlier whole-change reads included, passed or failed. Anything else fails the run. \
 Never report `pass` for a review that did not run or did not pass: ";
 
 const REVIEW_LINE_RULE: &str = "\
@@ -969,9 +973,9 @@ pub const SHIP_RECORD_JSON: &str = "\
 fn risk_rules(relays: bool) -> String {
     let reviewer = match relays {
         true => {
-            "- Give each reviewer the rubric and your level; it returns `\"risk\": \
-             {\"level\": …, \"why\": …}` in `structured`, confirming it or changing it with \
-             a reason. Relay the call your pass rests on as `risk.reviewer`; it stands.\n"
+            "- Give each reviewer the rubric and your level; it adds `\"risk\": \
+             {\"level\": …, \"why\": …}` to its verdict JSON, confirming it or changing it \
+             with a reason. Relay the call your pass rests on as `risk.reviewer`; it stands.\n"
         }
         false => "",
     };
@@ -1956,6 +1960,36 @@ mod tests {
         }
     }
 
+    /// A lead delegates the reviewers its review level names and no more: a further
+    /// one only for a read the rules require (a delta, an amend's whole read, a replacement).
+    #[test]
+    fn a_lead_delegates_exactly_the_reviewers_its_review_names() {
+        let mut review_only = owing(1, false);
+        review_only.review = review_only.review.map(|duty| ReviewDuty {
+            records_verdict: true,
+            ..duty
+        });
+        for (owed, who) in [
+            (
+                owing(1, false),
+                "reviewed by an agent you delegate to that wrote none of it. ",
+            ),
+            (owing(3, false), "after their last reviewed head. "),
+            (
+                review_only,
+                "reviewed by an agent you delegate to that wrote none of it. ",
+            ),
+        ] {
+            let text = work_contract(owed);
+            let rule = format!("{who}{REVIEWER_COUNT_RULE}");
+            assert_eq!(text.matches(&rule).count(), 1, "{text}");
+        }
+        // The exceptions are the reads the rules below require, an amend's included.
+        assert!(REVIEWER_COUNT_RULE.contains("not even to confirm a pass"));
+        assert!(REVIEWER_COUNT_RULE.contains("only for a read the rules below require"));
+        assert!(!work_contract(owing(0, false)).contains(REVIEWER_COUNT_RULE));
+    }
+
     /// A review-only lead records its verdict, a fail included, with
     /// `complete_task`; a lead that builds the change keeps `fail_task`.
     #[test]
@@ -2358,7 +2392,7 @@ mod tests {
             "reviewed by an agent you delegate to that wrote none of it",
             "{\"review\": {\"verdict\": \"pass\", \"reviewers\": [\"<agent id>\"]}}",
             "{\"review\": {\"verdict\": \"skipped\", \"reason\": \"<why this change needed none>\"}}",
-            "Paste this JSON into each reviewer's instructions",
+            "Paste this JSON verbatim into each reviewer's instructions",
             "never prose alone",
             "{\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\"",
             "Use `\"fail\"` with findings for failures",

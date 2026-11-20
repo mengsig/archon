@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Changed
+
+- Stage leads take fewer turns on a small, passing change. The stage
+  contract now says a lead delegates exactly the whole-change reviewers its
+  review level names, not one more to confirm a pass: a further reviewer is
+  only a delta read the review rules call for (such as of a fix after a
+  blocking fail) or the replacement of one that returned no verdict. Leads
+  paste the reviewer verdict JSON verbatim, and the reviewer adds its
+  `risk` call to that JSON. A gated stage with a plain verdict (`fail`, or
+  `pass` with no blocking finding and the matching `VERDICT:` line) skips
+  the `submit_verdict` round trip; any other verdict is still checked and
+  restated once.
+- A stage whose contract asks for no verdict, such as `direct`'s
+  `implement`, no longer records `verdict_note = missing_verdict_line`.
+
+### Fixed
+
+- The bench's archon arm no longer voids a trial when the orchestrator
+  delegates a helper: Aether lists the helper's `agent.created` event among
+  the orchestrator's events, and the harness now skips it.
+
 ## 1.6.4
 
 Released 2026-11-20.

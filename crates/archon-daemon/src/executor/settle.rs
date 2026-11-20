@@ -9,7 +9,7 @@ use archon_core::id::StageRunId;
 use archon_core::model_tier::ModelCatalog;
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
 use archon_core::run::{
-    PipelineRun, RecordRepair, RunState, StageOutcome, StageRun, StageState, Verdict,
+    PipelineRun, RecordRepair, RunState, StageOutcome, StageRun, StageState, Verdict, VerdictNote,
 };
 use archon_core::steer::RunEdit;
 use archon_pipeline::{EngineAction, PipelineSpec, SpawnPlan};
@@ -478,7 +478,11 @@ async fn persist(
     all: &[StageRun],
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
-    let settled = settled_stage(stage, outcome, archon_core::now());
+    let mut settled = settled_stage(stage, outcome, archon_core::now());
+    if let Some(driver) = table.drivers.get(&run.id) {
+        let holds = driver.holds_verdict(&settled.stage_id);
+        unnote_missing_verdict(&mut settled, holds);
+    }
     let (settled, owes_stop, kept) = {
         let mut store = ctx.store.lock().await;
         // A final restated verdict that is no pass stands over the result.
@@ -497,6 +501,21 @@ async fn persist(
         follow.descendant_stops.push(settled.id);
     }
     Ok(follow)
+}
+
+/// Drop the `missing_verdict_line` note of a stage whose contract asks for no
+/// verdict (`holds`): it gave none because none was owed, so the note says nothing.
+fn unnote_missing_verdict(settled: &mut StageRun, holds: bool) {
+    assert!(settled.state.is_terminal(), "only an outcome is noted");
+    if holds || settled.verdict_note != Some(VerdictNote::MissingVerdictLine) {
+        return;
+    }
+    assert_eq!(
+        settled.verdict,
+        Some(Verdict::Unknown),
+        "a note explains an unknown verdict"
+    );
+    settled.verdict_note = None;
 }
 
 /// Feed a stored settle to the run's driver and apply what it decides.
@@ -1460,6 +1479,70 @@ async fn open_gate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn running(stage: &str) -> StageRun {
+        let now = archon_core::now();
+        StageRun {
+            only_reviews: None,
+            id: StageRunId::new(),
+            run: archon_core::id::PipelineRunId::new(),
+            stage_id: stage.to_owned(),
+            kind: None,
+            attempt: 1,
+            fan_index: 0,
+            model_segments: Vec::new(),
+            infrastructure_failure: false,
+            record_repair: None,
+            host_context: Default::default(),
+            choice: archon_core::model::ModelChoice {
+                model: "claude-code/claude-sonnet-5".parse().unwrap(),
+                effort: archon_core::model::Effort::Medium,
+                tier: None,
+            },
+            aether_agent: None,
+            aether_task: None,
+            state: StageState::Running,
+            verdict: None,
+            verdict_note: None,
+            sizing: Default::default(),
+            restatement: None,
+            summary: None,
+            structured: None,
+            cost_usd: 0.0,
+            started_at: now,
+            finished_at: None,
+        }
+    }
+
+    /// A `direct` implement owes no verdict line, so its result's lack of one
+    /// is not noted; a stage whose contract asks for one keeps the note.
+    #[test]
+    fn only_a_stage_that_owes_a_verdict_notes_a_missing_one() {
+        let done = || StageOutcome::Completed {
+            summary: "Implemented it.".to_owned(),
+            structured: Some(serde_json::json!({"review": {"verdict": "pass"}})),
+        };
+        let now = archon_core::now();
+        let mut ungated = settled_stage(running("implement"), done(), now);
+        assert_eq!(ungated.verdict_note, Some(VerdictNote::MissingVerdictLine));
+        unnote_missing_verdict(&mut ungated, false);
+        assert_eq!(
+            (ungated.verdict, ungated.verdict_note),
+            (Some(Verdict::Unknown), None)
+        );
+        let mut gated = settled_stage(running("review"), done(), now);
+        unnote_missing_verdict(&mut gated, true);
+        assert_eq!(gated.verdict_note, Some(VerdictNote::MissingVerdictLine));
+        let hedged = StageOutcome::Completed {
+            summary: "Mostly fine.\nVERDICT: PASS or FAIL".to_owned(),
+            structured: None,
+        };
+        let mut other = settled_stage(running("implement"), hedged, now);
+        let note = other.verdict_note;
+        assert_ne!(note, Some(VerdictNote::MissingVerdictLine), "{note:?}");
+        unnote_missing_verdict(&mut other, false);
+        assert_eq!(other.verdict_note, note, "only a missing line is dropped");
+    }
 
     #[test]
     fn only_a_cause_that_clears_with_time_is_waited_out() {

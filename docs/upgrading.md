@@ -7,10 +7,12 @@ are in the [changelog](../CHANGELOG.md).
 
 ## From 1.5.x to 1.6.x
 
-Archon 1.6.3 requires Aether 1.4.1 or later. Upgrade an older Aether with
-`aether update --version v1.4.1` and restart aetherd, then run
-`archon update --yes --version v1.6.3`. Confirmed Archon updates select
-Aether 1.4.1 only for an older installation; at 1.4.1 or later they use
+Archon 1.6.4 requires Aether 1.4.2 or later. Upgrade an older Aether with
+`aether update --version v1.4.2` and restart aetherd, then run
+`archon update --yes --version v1.6.4`. Upgrade Aether first: the update
+from 1.6.3 runs 1.6.3's own Aether step, which does not pin 1.4.2.
+Confirmed updates run by 1.6.4 select Aether 1.4.2 only for an older
+installation; at 1.4.2 or later they use
 Aether's normal update, without pinning it to an older release. Keep a backup before the first daemon start: approved intent
 adds persistent requirement and clarification records. Existing queue items
 without intent keep their previous behavior.
@@ -144,7 +146,7 @@ them as `origin <stage>: model …; effort …` lines (`; tier …` for a tiered
 entry).
 
 The daemon may change a field again only when it filled that field itself:
-its source is `learned`, `tier`, `fallback`, `sizer` or `escalation` and the
+its source is `learned`, `tier`, `fallback`, `sizer`, `migrated` or `escalation` and the
 daemon chose it. Every other field is a pin, and so are these two:
 
 - `legacy_unknown`: an item stored before origins were recorded. Nothing is

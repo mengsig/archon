@@ -979,10 +979,10 @@ async fn a_cost_stop_of_unknown_billing_is_labelled_notional_cost() {
     }
 }
 
-/// An attempt 1.6.3 recorded names its model by the alias it was asked with;
-/// the plan names it canonical. The kept agent is the same model, so it fixes.
+/// An attempt 1.6.3 recorded names its model by the alias it was asked with.
+/// The alias may since name another model, so the kept agent is replaced.
 #[tokio::test]
-async fn a_kept_agent_recorded_by_an_alias_resumes_for_its_findings() {
+async fn a_kept_agent_recorded_by_an_alias_is_replaced_for_its_findings() {
     let h = harness().await;
     let alias: archon_core::model::ModelRef = "claude-code/sonnet".parse().unwrap();
     let mut catalog = common::catalog::default_models();
@@ -1002,6 +1002,6 @@ async fn a_kept_agent_recorded_by_an_alias_resumes_for_its_findings() {
     assert_eq!(reread.choice.model, alias);
 
     let fix = sent_back(&h).await;
-    assert_eq!(agent(&fix), implementer, "the kept agent fixes its work");
-    assert_eq!(fix.aether_task, None, "resumed by message, not spawned");
+    assert_ne!(agent(&fix), implementer, "a new agent fixes the work");
+    assert!(fix.aether_task.is_some(), "spawned, not resumed by message");
 }

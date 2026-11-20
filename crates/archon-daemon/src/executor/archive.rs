@@ -610,6 +610,7 @@ mod tests {
     fn stage(id: &str, attempt: u32, agent: Option<&str>, state: StageState) -> StageRun {
         let started_at = archon_core::now() + chrono::Duration::seconds(i64::from(attempt));
         StageRun {
+            only_reviews: None,
             id: StageRunId::new(),
             run: PipelineRunId::new(),
             stage_id: id.into(),
@@ -619,12 +620,16 @@ mod tests {
             choice: ModelChoice::pinned("claude-code/opus".parse().unwrap(), Effort::High),
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: None,
             host_context: Default::default(),
             aether_agent: agent.map(|a| AetherAgentId::parse(a).unwrap()),
             aether_task: None,
             finished_at: state.is_terminal().then_some(started_at),
             state,
             verdict: None,
+            verdict_note: None,
+            sizing: Default::default(),
+            restatement: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,

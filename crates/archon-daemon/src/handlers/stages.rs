@@ -297,6 +297,7 @@ mod tests {
 
     fn attempt(run: &PipelineRun, attempt: u32, agent: &AetherAgentId) -> StageRun {
         StageRun {
+            only_reviews: None,
             id: StageRunId::new(),
             run: run.id.clone(),
             stage_id: "implement".into(),
@@ -310,11 +311,15 @@ mod tests {
             },
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: None,
             host_context: Default::default(),
             aether_agent: Some(agent.clone()),
             aether_task: None,
             state: StageState::Running,
             verdict: None,
+            verdict_note: None,
+            sizing: Default::default(),
+            restatement: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,

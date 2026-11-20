@@ -229,6 +229,83 @@ async fn a_moved_parent_is_merged_forward_and_pushed_without_rewriting_child() {
     );
 }
 
+/// A restack fix is a lead of its own: it is issued the effort rule in force
+/// as its spawn is reserved, never the one the item it fixes was issued.
+#[tokio::test]
+async fn a_restack_fix_is_issued_its_own_effort_rule() {
+    let mut config = Config::default();
+    config.models.effort_sizing = Some(false);
+    let (mut h, parent, child) = stack_pair_with(config).await;
+    let requests = h.backend.requests();
+    let of_child = requests
+        .iter()
+        .rfind(|r| r.labels["archon.item"] == child.id.to_string());
+    let of_child = of_child.expect("the child's lead was spawned").clone();
+    assert_eq!(h.issued_effort_contract(&of_child).await, "floor");
+    let parent_run = h.run(&parent.id).await;
+    let child_run = h.run(&child.id).await;
+    commit(&child_run.workspace, "parent.txt", "child edits\n");
+    finish_item(&h, &child.id).await;
+    advance_branch(&h, &parent_run.branch, "parent.txt", "parent edits\n");
+    let mut sized = h.ctx.config.clone();
+    sized.models.effort_sizing = None;
+    h.restart_with(sized);
+    archon_daemon::executor::recover(&h.ctx).await.unwrap();
+    h.dispatch().await;
+    let fixes = restack_fixes(&h, &child.id).await;
+    assert_eq!(fixes.len(), 1, "{fixes:?}");
+    let fix = fixes[0].1.clone();
+    let requests = h.backend.requests();
+    let of_fix = requests.iter().rfind(|r| r.labels["archon.item"] == fix);
+    let of_fix = of_fix.expect("the fix's lead was spawned");
+    assert_eq!(h.issued_effort_contract(of_fix).await, "rubric", "its own");
+    let fix = h.item(&QueueItemId::parse(&fix).unwrap()).await;
+    let child = h.item(&child.id).await;
+    assert!(
+        child.model_plan.sizing().is_none(),
+        "enqueued with sizing off"
+    );
+    assert!(
+        fix.model_plan.sizing().is_none(),
+        "carried whole: never sized"
+    );
+    assert_eq!(*fix.model_plan.plan(), *child.model_plan.plan());
+}
+
+/// A11 check 3: a restack fix carries its child's plan whole, so it keeps the
+/// child's frozen sizing: its own title would class it ordinary.
+#[tokio::test]
+async fn a_restack_fix_keeps_its_child_s_frozen_sizing() {
+    use archon_core::effort_sizing::RiskClass;
+    use archon_core::model::Effort;
+    let (h, parent, child) = stack_pair().await;
+    let parent_run = h.run(&parent.id).await;
+    let child_run = h.run(&child.id).await;
+    commit(&child_run.workspace, "parent.txt", "child edits\n");
+    finish_item(&h, &child.id).await;
+    let mut risky = h.item(&child.id).await;
+    risky.title = "Fix the deadlock in the pump".into();
+    assert!(risky.resize_unstarted((Effort::XHigh, true, archon_core::now()), &|_| false));
+    h.ctx.store.lock().await.update_item(&risky).unwrap();
+    let child = h.item(&child.id).await;
+    let frozen = child
+        .model_plan
+        .sizing()
+        .expect("the child was sized")
+        .clone();
+    assert_eq!(frozen.risk_class, Some(RiskClass::Elevated));
+    advance_branch(&h, &parent_run.branch, "parent.txt", "parent edits\n");
+    h.dispatch().await;
+    let fixes = restack_fixes(&h, &child.id).await;
+    assert_eq!(fixes.len(), 1, "{fixes:?}");
+    let fix = h.item(&QueueItemId::parse(&fixes[0].1).unwrap()).await;
+    assert!(fix.title.starts_with("Restack "), "{}", fix.title);
+    assert_eq!(fix.model_plan.sizing(), Some(&frozen), "not sized again");
+    assert_eq!(*fix.model_plan.plan(), *child.model_plan.plan());
+    let implement = fix.model_plan.slot_sizing(&fix.id, "implement", 0).unwrap();
+    assert_eq!(implement.risk_class, RiskClass::Elevated);
+}
+
 #[tokio::test]
 async fn a_merge_conflict_enqueues_one_fix_on_the_child_branch_and_survives_restart() {
     let (mut h, parent, child) = stack_pair().await;
@@ -254,6 +331,29 @@ async fn a_merge_conflict_enqueues_one_fix_on_the_child_branch_and_survives_rest
     assert!(
         brief.contains(&format!("git merge {new_parent}")),
         "{brief}"
+    );
+    let fix = h.item(&fix_id).await;
+    let copied = crate::plan_origins::shown(&h, &fix).await;
+    let kept = crate::plan_origins::shown(&h, &child).await;
+    assert_eq!(copied.len(), kept.len());
+    let note = format!("copied from {}", child.id);
+    for (key, entries) in &kept {
+        for (fixed, had) in copied[key].iter().zip(entries) {
+            for (field, was) in [(&fixed.model, &had.model), (&fixed.effort, &had.effort)] {
+                assert_eq!(
+                    (field.source, field.by, field.at),
+                    (was.source, was.by, was.at)
+                );
+                assert!(
+                    field.note.as_deref().unwrap_or_default().starts_with(&note),
+                    "{key}"
+                );
+            }
+        }
+    }
+    assert!(
+        kept["implement"][0].model.is_pin(),
+        "the child's pin is the fix's pin"
     );
     h.cli(Request::Gc {
         older_than_secs: Some(0),
@@ -779,4 +879,41 @@ async fn a_restack_runs_no_program_the_repository_or_its_remote_configures() {
     assert!(child_run.workspace.join("parent2.txt").exists());
     let pushed = format!("refs/heads/{}", child_run.branch);
     assert_eq!(git(&remote, &["rev-parse", &pushed]), merged);
+}
+
+#[tokio::test]
+async fn a_restack_fix_waits_through_a_catalog_outage_with_no_attempt() {
+    let (h, parent, child) = stack_pair().await;
+    finish_item(&h, &child.id).await;
+    let sha = git(&h.repo, &["rev-parse", &h.run(&parent.id).await.branch]);
+    let fix = {
+        let mut store = h.ctx.store.lock().await;
+        let item = store.item(&child.id).unwrap();
+        let run = store.runs_for_item(&child.id).unwrap().pop().unwrap();
+        let stacked = store.stack_parents(&child.id).unwrap().remove(0);
+        store
+            .enqueue_stack_fix(&item, &run, &stacked, &sha, "parent.txt")
+            .unwrap()
+    };
+    let created = h.backend.created();
+
+    crate::refresh::catalog_outage(&h).await;
+    h.dispatch().await;
+    h.dispatch().await;
+    assert_eq!(h.state(&fix).await, QueueState::Queued);
+    assert_eq!(h.backend.created(), created, "no attempt during the outage");
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .runs_for_item(&fix)
+            .unwrap()
+            .is_empty()
+    );
+
+    crate::refresh::catalog_back(&h);
+    h.dispatch().await;
+    assert!(h.state(&fix).await.is_active(), "{:?}", h.state(&fix).await);
+    assert_eq!(h.backend.created(), created + 1);
 }

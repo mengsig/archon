@@ -47,18 +47,7 @@ pub fn governed_reviewer_rules(
         catalog
     };
     let tier = profile.default_tier;
-    let floor = profile.default_effort.max(Effort::Medium);
-    let floor = policy.max_effort.map_or(floor, |cap| cap.min(floor));
-    let (effort, sizing) = match effort_sizing {
-        true => (
-            floor.to_string(),
-            format!(" {}", super::reviewer_effort_rule(policy.max_effort)),
-        ),
-        false => (
-            super::unnamed_reviewer_effort(floor, policy.max_effort),
-            String::new(),
-        ),
-    };
+    let (effort, sizing) = profile_effort(profile.default_effort, policy.max_effort, effort_sizing);
     if let Some((model, resolved)) = resolve_default(tier, own, policy, profile, catalog) {
         assert!(
             policy.permits_model(&model),
@@ -77,7 +66,33 @@ pub fn governed_reviewer_rules(
             policy.describe()
         );
     }
-    unplaced_rules(own, policy, (&effort, &sizing), governed)
+    unplaced_rules(own, policy, (&effort, &sizing), catalog, governed)
+}
+
+/// The unnamed reviewers' effort from `[review] default_effort`, within `cap`,
+/// and the rule that sizes it. With the rubric it is the default as configured,
+/// `low` included; in 1.6.3's floors it is raised to at least medium.
+fn profile_effort(
+    configured: Effort,
+    cap: Option<Effort>,
+    effort_sizing: bool,
+) -> (String, String) {
+    let capped = |effort: Effort| cap.map_or(effort, |cap| cap.min(effort));
+    if effort_sizing {
+        let effort = capped(configured);
+        assert!(
+            cap.is_none_or(|cap| effort <= cap),
+            "the default respects the cap"
+        );
+        let rule = super::reviewer_effort_rule(cap);
+        return (effort.to_string(), format!(" {rule}"));
+    }
+    let floor = capped(configured.max(Effort::Medium));
+    assert!(
+        floor >= Effort::Medium || cap.is_some(),
+        "only a cap lowers the floor"
+    );
+    (super::unnamed_reviewer_effort(floor, cap), String::new())
 }
 
 /// The models [`governed_reviewer_rules`] names for the reviewers, so the
@@ -103,7 +118,7 @@ pub fn reviewer_models(
     if let Some((model, _)) = resolve_default(profile.default_tier, own, policy, profile, catalog) {
         return vec![model];
     }
-    let placed = unplaced_model(own, policy, governed).cloned();
+    let placed = unplaced_model(own, policy, catalog, governed);
     assert!(
         placed.as_ref().is_none_or(|m| policy.permits_model(m)),
         "a placed reviewer is one the policy permits"
@@ -133,7 +148,7 @@ pub fn governed_review_refusal(
     }
     let tier = profile.default_tier;
     if resolve_default(tier, own, policy, profile, &cost_reporting(catalog)).is_some()
-        || unplaced_model(own, policy, true).is_some()
+        || unplaced_model(own, policy, catalog, true).is_some()
     {
         return None;
     }
@@ -144,14 +159,7 @@ pub fn governed_review_refusal(
 }
 
 fn cost_reporting(catalog: &ModelCatalog) -> ModelCatalog {
-    ModelCatalog::new(
-        catalog
-            .models()
-            .iter()
-            .filter(|entry| provider_reports_cost(&entry.model.provider))
-            .cloned()
-            .collect(),
-    )
+    catalog.restricted(|entry| provider_reports_cost(&entry.model.provider))
 }
 
 /// The permitted model nearest the tier from below: the strongest tier first,
@@ -180,17 +188,27 @@ fn resolve_default(
 /// The model to name when neither the catalog nor the policy places one:
 /// the lead's own, else the first the allowlist permits. `governed` also
 /// requires its provider to report a dollar cost.
-fn unplaced_model<'a>(
-    own: &'a ModelRef,
-    policy: &'a ModelPolicy,
+fn unplaced_model(
+    own: &ModelRef,
+    policy: &ModelPolicy,
+    catalog: &ModelCatalog,
     governed: bool,
-) -> Option<&'a ModelRef> {
-    let eligible = |model: &&ModelRef| {
-        policy.permits_model(model) && (!governed || provider_reports_cost(&model.provider))
-    };
+) -> Option<ModelRef> {
     std::iter::once(own)
         .chain(policy.allow.iter().flatten())
-        .find(eligible)
+        .chain(
+            catalog
+                .models()
+                .iter()
+                .filter(|m| m.tier.is_none())
+                .map(|m| &m.model),
+        )
+        .find_map(|model| {
+            let canonical = catalog.check(model).ok()?;
+            (policy.permits_model(&canonical)
+                && (!governed || provider_reports_cost(&canonical.provider)))
+            .then_some(canonical)
+        })
 }
 
 /// Neither the catalog nor the policy places a model: name one the policy
@@ -199,6 +217,7 @@ fn unplaced_rules(
     own: &ModelRef,
     policy: &ModelPolicy,
     (effort, sizing): (&str, &str),
+    catalog: &ModelCatalog,
     governed: bool,
 ) -> String {
     assert!(!effort.is_empty(), "an effort to name");
@@ -206,7 +225,7 @@ fn unplaced_rules(
         sizing.is_empty() || sizing.starts_with(' '),
         "a sizing rule follows a sentence"
     );
-    let Some(model) = unplaced_model(own, policy, governed) else {
+    let Some(model) = unplaced_model(own, policy, catalog, governed) else {
         return format!(
             "- Delegate no reviewer: the model policy ({}) allows no model{}.\n",
             policy.describe(),
@@ -274,10 +293,67 @@ mod tests {
             None,
         );
         let config = ReviewConfig::default();
-        let none = ModelCatalog::default();
+        let none = ModelCatalog::new(vec![CatalogModel {
+            model: "claude-code/opus".parse().unwrap(),
+            tier: None,
+            is_default: false,
+        }]);
         assert!(governed_review_refusal(None, &own, &both, (&config, &none)).is_none());
         let rules = governed_reviewer_rules(None, &own, &both, (&config, &none), true, false);
         assert!(rules.contains("claude-code/opus"), "{rules}");
+    }
+
+    #[test]
+    fn a_budget_keeps_a_superseded_reviewer_whose_successor_cannot_serve() {
+        let own: ModelRef = "codex/balanced".parse().unwrap();
+        let config = ReviewConfig::default();
+        for successor in ["codex/strong", "claude-code/denied"] {
+            let denied = CatalogModel {
+                model: "claude-code/denied".parse().unwrap(),
+                tier: Some(Tier::Balanced),
+                is_default: false,
+            };
+            let models = catalog().models().iter().cloned().chain([denied]).collect();
+            let mut listed = ModelCatalog::new(models);
+            listed.add_superseded(
+                "claude-code/sonnet".parse().unwrap(),
+                successor.parse().unwrap(),
+            );
+            let policy =
+                ModelPolicy::from_lists(&[], &["claude-code/denied".parse().unwrap()], None);
+            let args = (&config, &listed);
+            assert!(
+                governed_review_refusal(None, &own, &policy, args).is_none(),
+                "{successor}"
+            );
+            let rules = governed_reviewer_rules(None, &own, &policy, args, true, false);
+            assert!(rules.contains("claude-code/sonnet"), "{successor}: {rules}");
+        }
+    }
+
+    #[test]
+    fn a_budget_falls_back_to_a_superseded_lead_the_tier_cannot_place() {
+        let own: ModelRef = "claude-code/old".parse().unwrap();
+        let entry = |model: &str, tier| CatalogModel {
+            model: model.parse().unwrap(),
+            tier: Some(tier),
+            is_default: false,
+        };
+        let mut listed = ModelCatalog::new(vec![
+            entry("claude-code/old", Tier::Strong),
+            entry("claude-code/new", Tier::Frontier),
+        ]);
+        listed.add_superseded(own.clone(), "claude-code/new".parse().unwrap());
+        let config = ReviewConfig::default();
+        let open = ModelPolicy::default();
+        let args = (&config, &listed);
+        assert!(governed_review_refusal(None, &own, &open, args).is_none());
+        assert_eq!(
+            reviewer_models(None, &own, &open, args, true),
+            vec![own.clone()]
+        );
+        let rules = governed_reviewer_rules(None, &own, &open, args, true, false);
+        assert!(rules.contains("claude-code/old"), "{rules}");
     }
 
     #[test]
@@ -393,7 +469,8 @@ mod tests {
             "{sized}"
         );
         assert!(
-            sized.contains("`low` for a trivial diff") && sized.contains(super::super::REASON_RULE)
+            sized.contains("`low` for a trivial or small low-risk diff")
+                && sized.contains(super::super::REASON_RULE)
         );
         assert!(
             !sized.contains("medium or higher"),
@@ -417,6 +494,80 @@ mod tests {
         assert!(at(false).contains("claude-code/sonnet at effort high up to x_high"));
         assert!(at(false).contains("Each effort is a floor, never a ceiling"));
         assert!(at(true).contains("claude-code/sonnet at effort high. That effort is the default"));
+    }
+
+    /// Every form of the profile's reviewer rule tells the effort rule it was
+    /// rendered with, placed or not and capped or not, as 1.6.3 rendered it.
+    #[test]
+    fn a_profile_reviewer_rule_states_the_effort_rule_it_was_rendered_with() {
+        use archon_core::model::EffortContract;
+        let own: ModelRef = "claude-code/sonnet".parse().unwrap();
+        let profile = ReviewConfig::default();
+        let only_fast = ModelPolicy::from_lists(&["third/fast".parse().unwrap()], &[], None);
+        let capped = ModelPolicy::from_lists(&[], &[], Some(Effort::Medium));
+        // A rule names only a model the catalog lists: the lead's own, untiered.
+        let untiered = ModelCatalog::new(vec![CatalogModel {
+            model: own.clone(),
+            tier: None,
+            is_default: false,
+        }]);
+        let forms = [
+            (
+                ModelPolicy::default(),
+                catalog(),
+                "at tier balanced and effort",
+            ),
+            (only_fast, catalog(), ": balanced unavailable under policy"),
+            (capped, catalog(), "and effort medium."),
+            (
+                ModelPolicy::default(),
+                untiered,
+                "Archon's cached catalog places no",
+            ),
+        ];
+        for (policy, catalog, form) in &forms {
+            for sizing in [false, true] {
+                let rules =
+                    governed_reviewer_rules(None, &own, policy, (&profile, catalog), false, sizing);
+                assert!(rules.contains(form), "{form:?} in {rules}");
+                let stated = super::super::stated_effort_contract(&rules);
+                assert_eq!(stated, Some(EffortContract::of(sizing)), "{rules}");
+            }
+        }
+    }
+
+    /// `[review] default_effort = "low"` is the unnamed reviewers' default
+    /// under the rubric; 1.6.3's floors still raise it to medium, and a cap
+    /// below the configured effort lowers it either way.
+    #[test]
+    fn a_low_review_default_is_honoured_only_under_the_rubric() {
+        let own: ModelRef = "claude-code/sonnet".parse().unwrap();
+        let config = ReviewConfig {
+            default_effort: Effort::Low,
+            ..ReviewConfig::default()
+        };
+        let rules = |policy: &ModelPolicy, sizing| {
+            governed_reviewer_rules(None, &own, policy, (&config, &catalog()), false, sizing)
+        };
+        let open = ModelPolicy::default();
+        let sized = rules(&open, true);
+        assert!(
+            sized.contains("at tier balanced and effort low. That effort is the default"),
+            "{sized}"
+        );
+        let floored = rules(&open, false);
+        assert!(
+            floored.contains("effort medium up to x_high, and high up to x_high"),
+            "{floored}"
+        );
+        assert!(!floored.contains("effort low"), "{floored}");
+        let high = ReviewConfig {
+            default_effort: Effort::High,
+            ..ReviewConfig::default()
+        };
+        let capped = ModelPolicy::from_lists(&[], &[], Some(Effort::Medium));
+        let sized = governed_reviewer_rules(None, &own, &capped, (&high, &catalog()), false, true);
+        assert!(sized.contains("effort medium. That effort is"), "{sized}");
     }
 
     fn assert_no_lookup_instruction(rules: &str) {
@@ -471,38 +622,28 @@ mod tests {
         let own: ModelRef = "codex/luna".parse().unwrap();
         let config = ReviewConfig::default();
         for catalog in [ModelCatalog::default(), catalog()] {
-            let rules = reviewer_profile_rules(
-                None,
-                &own,
-                &policy_allowing(&["codex/luna"]),
-                &config,
-                &catalog,
-            );
-            assert!(
-                rules.contains("on codex/luna at effort medium up to x_high"),
-                "{rules}"
-            );
-            assert_no_lookup_instruction(&rules);
+            let policy = policy_allowing(&["codex/luna"]);
+            let rules = reviewer_profile_rules(None, &own, &policy, &config, &catalog);
+            assert!(rules.contains("Delegate no reviewer"), "{rules}");
+            assert!(reviewer_models(None, &own, &policy, (&config, &catalog), false).is_empty());
         }
+        let untiered = ModelCatalog::new(vec![CatalogModel {
+            model: "third/other".parse().unwrap(),
+            tier: None,
+            is_default: false,
+        }]);
         let rules = reviewer_profile_rules(
             None,
             &own,
             &policy_allowing(&["third/other"]),
             &config,
-            &ModelCatalog::default(),
+            &untiered,
         );
         assert!(
             rules.contains("on third/other at effort medium up to x_high"),
             "{rules}"
         );
-        let rules = reviewer_profile_rules(
-            None,
-            &own,
-            &policy_allowing(&[]).narrowed_by(&policy_allowing(&["third/other"])),
-            &config,
-            &ModelCatalog::default(),
-        );
-        assert!(rules.contains("on third/other"), "{rules}");
+        assert_no_lookup_instruction(&rules);
         let none = ModelPolicy {
             allow: Some(Default::default()),
             ..ModelPolicy::default()

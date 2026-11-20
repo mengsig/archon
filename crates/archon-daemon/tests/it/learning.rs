@@ -1,6 +1,7 @@
 use crate::common;
 use archon_core::model::{Effort, ModelChoice};
 use archon_core::outcome::{Outcome, OutcomeResult, OutcomeStage};
+use archon_core::plan_origin::{Authority, PlanSource};
 use archon_core::protocol::{Reply, Request};
 use archon_core::queue::QueueState;
 use archon_core::run::{PipelineRun, RunState};
@@ -95,6 +96,8 @@ fn sample_outcome(
         review_rounds: 0,
         result: OutcomeResult::Succeeded,
         failure: None,
+        failure_source: None,
+        review_pr: None,
         corrections: Vec::new(),
         feedback: Vec::new(),
         context: None,
@@ -131,7 +134,7 @@ async fn seeded_outcomes_fill_the_plan_and_why_retains_sample_sizes() {
     assert!(why.routing["implement"].contains("n=5"));
     assert!(why.routing["implement"].contains("repository evidence"));
     let explicit = h.enqueue("explicit choice").await;
-    assert_eq!(explicit.model_plan, plan());
+    assert_eq!(*explicit.model_plan, plan());
 }
 
 #[tokio::test]
@@ -214,6 +217,13 @@ async fn distillation_queues_once_per_window_and_never_learns_from_itself() {
     let errands: Vec<_> = items.iter().filter(|i| i.pipeline == "errand").collect();
     assert_eq!(errands.len(), 1);
     assert_eq!(errands[0].budget_usd, Some(1.0));
+    for entries in crate::plan_origins::shown(&h, errands[0]).await.values() {
+        for origin in entries {
+            assert_eq!(origin.model.by, Authority::Daemon, "{origin:?}");
+            assert_eq!(origin.model.source, PlanSource::Fallback, "{origin:?}");
+        }
+    }
+    assert_eq!(crate::plan_origins::unattributed(&h).await, 0);
     h.dispatch().await;
     h.settle_running(|_| archon_core::run::StageOutcome::Completed {
         summary: "Distilled".into(),
@@ -247,7 +257,7 @@ async fn distillation_plans_only_a_model_aether_lists() {
     samples(&h, "codex/gpt-6.1-astra", 0.0, 2).await;
     samples(&h, "codex/listed", 0.3, 2).await;
     let listed = vec!["codex/listed".parse().unwrap()];
-    h.ctx.store.lock().await.set_learning_models(listed);
+    h.set_learning_models(listed).await;
     archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
     let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
     let errands: Vec<_> = items.iter().filter(|i| i.pipeline == "errand").collect();
@@ -280,7 +290,7 @@ async fn distillation_falls_back_to_a_listed_model_when_no_stage_ran_on_one() {
         "the orchestrator's model is not listed"
     );
     let listed = vec!["codex/listed".parse().unwrap()];
-    h.ctx.store.lock().await.set_learning_models(listed);
+    h.set_learning_models(listed).await;
     archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
     let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
     assert_eq!(errand_models(&items), ["codex/listed"]);
@@ -293,7 +303,7 @@ async fn distillation_queues_nothing_when_no_listed_model_is_permitted() {
     let h = Harness::with_config(config).await;
     samples(&h, "codex/gpt-6.1-astra", 0.0, 2).await;
     let listed = vec!["codex/denied".parse().unwrap()];
-    h.ctx.store.lock().await.set_learning_models(listed);
+    h.set_learning_models(listed).await;
     h.repo_config("[models]\ndeny = [\"codex/denied\"]\n");
     archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
     let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
@@ -568,13 +578,14 @@ async fn distillation_has_only_one_in_flight_per_repository() {
 
 #[tokio::test]
 async fn cold_start_explores_ready_models_within_policy_and_keeps_explanations() {
-    let h = Harness::new().await;
+    let h = Harness::with_config(Default::default()).await;
     let own = h.ctx.config.orchestrator.model.clone();
-    h.ctx.store.lock().await.set_learning_models(vec![
+    h.set_learning_models(vec![
         own.clone(),
         "codex/unseen".parse().unwrap(),
         "codex/denied".parse().unwrap(),
-    ]);
+    ])
+    .await;
     h.repo_config("[models]\ndeny = [\"codex/denied\"]\n");
     let mut unseen = 0;
     for n in 0..200 {
@@ -767,6 +778,7 @@ async fn ordinary_operator_chat_is_not_a_correction_but_structured_feedback_is()
     let item = h.enqueue("operator feedback").await;
     h.dispatch().await;
     let stage = h.running().await.pop().unwrap();
+    h.ctx.aether.replace(None).unwrap();
     let sent = h
         .cli(Request::Say {
             text: "Actually add another test for the typo".into(),
@@ -829,4 +841,164 @@ async fn stats_survive_the_removal_of_a_repository_with_runs() {
     assert_eq!(stats.pipelines.len(), 1);
     assert!(stats.repo_names.is_empty(), "the repository is gone");
     assert_eq!(stats.pipelines[0].estimated_saving_usd, None);
+}
+
+#[tokio::test]
+async fn distillation_rechecks_a_saved_draft_and_waits_for_a_listed_model() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 2;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.1, 2).await;
+    let draft = h.enqueue("obsolete distillation draft").await;
+    let repo = draft.repo.as_ref().unwrap();
+    let draft_key = format!("learning/distill-draft/{repo}/0");
+    let cursor_key = format!("learning/distilled-v2/{repo}");
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&draft_key, &serde_json::to_string(&draft).unwrap())
+        .unwrap();
+    h.set_learning_models(Vec::new()).await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .kv_get(&cursor_key)
+            .unwrap()
+            .is_none()
+    );
+    h.set_learning_models(vec!["codex/listed".parse().unwrap()])
+        .await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert_eq!(errand_models(&items), ["codex/listed"]);
+}
+
+/// An errand whose insert committed before its cursor did is kept, not drafted
+/// again: a model that left the catalog since cannot strand the cursor.
+#[tokio::test]
+async fn a_committed_distillation_is_kept_after_its_model_left_the_catalog() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 2;
+    config.learning.distill_daily_budget_usd = 10.0;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.1, 2).await;
+    h.set_learning_models(vec!["codex/listed".parse().unwrap()])
+        .await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert_eq!(errand_models(&items), ["codex/listed"]);
+    let errand = items.iter().find(|i| i.pipeline == "errand").unwrap();
+    let repo = errand.repo.as_ref().unwrap();
+    let cursor_key = format!("learning/distilled-v2/{repo}");
+    {
+        // The daemon stopped between the insert and its cursor; the errand ended.
+        let mut store = h.ctx.store.lock().await;
+        assert_eq!(store.kv_get(&cursor_key).unwrap().as_deref(), Some("2"));
+        store.kv_set(&cursor_key, "0").unwrap();
+        let cancelled = QueueState::Cancelled { reason: None };
+        store
+            .transition_item(&errand.id, cancelled, archon_core::now())
+            .unwrap();
+    }
+    h.set_learning_models(vec!["codex/next".parse().unwrap()])
+        .await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let store = h.ctx.store.lock().await;
+    assert_eq!(store.kv_get(&cursor_key).unwrap().as_deref(), Some("2"));
+    let items = store.items(&Default::default()).unwrap();
+    assert_eq!(errand_models(&items), ["codex/listed"], "no second errand");
+}
+
+/// Another item may hold the key the next errand is inserted under: it is not
+/// taken for the errand, and the cursor waits behind the key's conflict.
+#[tokio::test]
+async fn an_unrelated_item_under_an_errands_key_is_not_taken_for_the_errand() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 2;
+    config.learning.distill_daily_budget_usd = 10.0;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.1, 2).await;
+    let repo = h.ctx.store.lock().await.repos().unwrap()[0].id.clone();
+    let mut request = common::enqueue_request(common::REPO_NAME, PIPELINE, "unrelated", plan());
+    request.idempotency_key = Some(format!("learning:{repo}:0"));
+    let Reply::Item(unrelated) = h.cli(Request::Enqueue(request)).await.unwrap() else {
+        panic!("an enqueue replies with its item");
+    };
+    assert_eq!(unrelated.budget_usd, None, "no errand's budget");
+    h.set_learning_models(vec!["codex/listed".parse().unwrap()])
+        .await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let store = h.ctx.store.lock().await;
+    let cursor = store.kv_get(&format!("learning/distilled-v2/{repo}"));
+    assert_eq!(cursor.unwrap(), None, "the cursor did not move");
+    let tagged = store.kv_get(&format!("learning/distillation/{}", unrelated.id));
+    assert_eq!(tagged.unwrap(), None, "not marked as a distillation");
+    let items = store.items(&Default::default()).unwrap();
+    assert!(errand_models(&items).is_empty(), "no errand was inserted");
+}
+
+/// An item that replays the draft's own request under the errand's key is
+/// taken for it as before, whatever budget it has since been given.
+#[tokio::test]
+async fn a_replay_of_the_drafts_request_is_the_errand_whatever_its_budget() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 2;
+    config.learning.distill_daily_budget_usd = 10.0;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.1, 2).await;
+    let mut draft = h.enqueue("the draft's request").await;
+    draft.id = archon_core::id::QueueItemId::new();
+    draft.budget_usd = Some(1.0);
+    let asked = draft.model_plan.plan().clone();
+    draft.model_plan = archon_core::plan_origin::PlannedPlan::legacy(asked);
+    let mut twin = draft.clone();
+    twin.id = archon_core::id::QueueItemId::new();
+    let repo = draft.repo.clone().expect("the test repository");
+    {
+        let mut store = h.ctx.store.lock().await;
+        let key = format!("learning:{repo}:0");
+        store.insert_item(&twin, Some(&key)).unwrap();
+        twin.budget_usd = Some(2.0);
+        store.update_item(&twin).unwrap();
+        let saved = serde_json::to_string(&draft).unwrap();
+        let draft_key = format!("learning/distill-draft/{repo}/0");
+        store.save_learning_value(&draft_key, &saved).unwrap();
+    }
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let store = h.ctx.store.lock().await;
+    let cursor = store.kv_get(&format!("learning/distilled-v2/{repo}"));
+    assert_eq!(cursor.unwrap().as_deref(), Some("2"), "the window is used");
+    let tagged = store.kv_get(&format!("learning/distillation/{}", twin.id));
+    assert_eq!(tagged.unwrap().as_deref(), Some(repo.as_str()));
+    assert!(store.item(&draft.id).is_err(), "the draft was not inserted");
+}
+
+#[tokio::test]
+async fn a_learned_model_removed_from_the_catalog_cannot_be_chosen_again() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.explore_rate = 0.0;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.2, 5).await;
+    let learned = h
+        .enqueue_with("before removal", Default::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        learned.model_plan.0["implement"][0].model.to_string(),
+        "codex/cheap"
+    );
+    h.set_learning_models(vec![h.ctx.config.orchestrator.model.clone()])
+        .await;
+    let replaced = h
+        .enqueue_with("after removal", Default::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        replaced.model_plan.0["implement"][0].model,
+        h.ctx.config.orchestrator.model
+    );
 }

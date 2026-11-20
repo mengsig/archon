@@ -5,12 +5,12 @@
 use std::path::Path;
 
 use archon_core::catalog::{Gate, StageKind, WorkspaceMode};
-use archon_core::model::{EFFORT_RUBRIC, Effort, ModelChoice, ModelRef};
+use archon_core::model::{EFFORT_RUBRIC, Effort, EffortContract, ModelChoice, ModelRef};
 use archon_core::policy::ModelPolicy;
 use archon_core::run::StageOutcome;
 use serde::Serialize;
 
-use crate::spec::{Owed, ReviewDuty, Scenarios, StageSpec};
+use crate::spec::{LoopWhen, Owed, ReviewDuty, Scenarios, StageSpec};
 use crate::team::TeamSlot;
 
 mod checks;
@@ -70,8 +70,16 @@ pub fn instructions(
     if needs_verdict(stage) {
         out.push_str(VERDICT_RULES);
     }
+    if owed.review.is_some_and(|duty| duty.records_verdict) {
+        out.push_str(LEAD_VERDICT_RULES);
+    }
+    if holds_verdict(stage, owed) {
+        out.push_str(SUBMIT_VERDICT_RULE);
+    }
     if stage.scenarios == Scenarios::Strict {
         out.push_str(STRICT_SCENARIO_RULES);
+        out.push_str(&strict_fail_route(stage));
+        out.push_str(STRICT_PRIVATE_STACK_RULE);
     }
     // An agent that cannot delegate needs no telling that it reviews nothing.
     if let Some(duty) = owed
@@ -146,9 +154,7 @@ pub fn delegation_rules(
     let depth = depth_rule(depth);
     let bounds = review_bounds(experiments);
     let sizing = match effort_sizing {
-        true => format!(
-            "- Size each child's effort to its own task, whatever yours is: {EFFORT_RUBRIC}\n"
-        ),
+        true => format!("- {SIZED_CHILDREN}, whatever yours is: {EFFORT_RUBRIC}\n"),
         false => String::new(),
     };
     format!(
@@ -272,6 +278,8 @@ const DELEGATE_HAND_OFF: &str = "\
 hold, in a few lines: what done means, the paths that matter and what you found \
 there. Never your conversation or the project's history. Read a bounded local \
 question yourself instead of delegating it.\n\
+- Aether refuses a delegation with over 16 `references`: name others by path in the \
+objective.\n\
 - A reviewer's hand-off is the exact base and head commits, the changed paths, the \
 checks you ran with their results and the commit they ran on, the risks you know of, \
 and the repository guidance it must apply.\n";
@@ -339,6 +347,12 @@ fn contract_header(
 /// test stages, and for any gated stage.
 pub fn needs_verdict(stage: &StageSpec) -> bool {
     matches!(stage.kind, StageKind::Review | StageKind::Test) || stage.gate != Gate::None
+}
+
+/// Whether the stage's contract has a Verdict section: its result carries a
+/// verdict a gate reads, its own or a review-only run's.
+pub fn holds_verdict(stage: &StageSpec, owed: Owed) -> bool {
+    needs_verdict(stage) || owed.review.is_some_and(|duty| duty.records_verdict)
 }
 
 fn kind_name(kind: StageKind) -> &'static str {
@@ -474,6 +488,29 @@ project, and never kill by name or pattern;\n  \
 - read only, with no edits, commits, stashes or branch switches: for a reviewer \
 always, and for every child when your own workspace is READ-ONLY.\n";
 
+/// Who delegates the `many` reviewers a review asks for. A frozen review carries no
+/// earlier run's reads; a branch's earlier whole-change reads count toward `many`.
+fn delegate_all(many: u32, records_verdict: bool) -> String {
+    assert!(many > 1, "one reviewer needs no rule of all");
+    if records_verdict {
+        return format!(
+            "Delegate all {many} yourself, even in a repair: an earlier run's reviewers \
+             count for nothing, and naming fewer fails the run"
+        );
+    }
+    let rule = format!(
+        "Delegate all {many} yourself; naming fewer fails the run. Where earlier runs of \
+         this item reviewed this branch, each whole-change read they made still counts \
+         toward the {many}: delegate only the whole-change reviewers they lack, and one \
+         delta reviewer of the commits after their last reviewed head"
+    );
+    assert!(
+        rule.contains("only the whole-change reviewers they lack"),
+        "partial carry"
+    );
+    rule
+}
+
 /// What the stage holding its run's review does and records, for `duty`.
 fn review_rules(duty: ReviewDuty) -> String {
     assert!(
@@ -489,8 +526,8 @@ fn review_rules(duty: ReviewDuty) -> String {
         many => (
             format!(
                 "{many} agents you delegate to, each working alone and none of which \
-                 wrote any of it. Delegate all {many} yourself, even in a repair: an \
-                 earlier run's reviewers count for nothing, and naming fewer fails the run"
+                 wrote any of it. {}",
+                delegate_all(many, duty.records_verdict)
             ),
             format!("\"<agent id>\", … {many} or more"),
         ),
@@ -499,17 +536,34 @@ fn review_rules(duty: ReviewDuty) -> String {
         true => REVIEW_SKIP_RULE,
         false => "",
     };
+    // A review-only lead changes nothing: its findings are its verdict, never fixed.
+    let (follow_ups, rests_on, rounds, coverage, open) = match duty.records_verdict {
+        true => (
+            ".\n",
+            "each reviewer that read it",
+            REVIEW_ONLY_ROUNDS_RULE,
+            REVIEW_ONLY_COVERAGE_RULE,
+            REVIEW_ONLY_OPEN_RULE,
+        ),
+        false => (
+            " and `pr.body`.\n",
+            "each reviewer the pass rests on, a failed one whose findings you fixed included",
+            REVIEW_ROUNDS_RULE,
+            REVIEW_COVERAGE_RULE,
+            "with a blocking finding open, call `fail_task` and say which.",
+        ),
+    };
     let rules = format!(
         "\n## Review on record\n\n\
          - Your stage holds this run's review: the change as it finally stands is reviewed \
          by {who}.\n\
-         {REVIEWER_VERDICT_RULES}\
+         {REVIEWER_VERDICT_RULES}{follow_ups}\
          - Record it in `complete_task`'s `structured` data, beside any other keys, naming \
-         the agent id `delegate` returned for each reviewer the pass rests on, a failed \
-         one whose findings you fixed included:\n\n\
+         the agent id `delegate` returned for {rests_on}:\n\n\
          ```json\n{{\"review\": {{\"verdict\": \"pass\", \"reviewers\": [{named}]}}}}\n```\n\n\
          {skip}\
-         {REVIEW_CHECK_RULES}"
+         {rounds}{coverage}{open}\n\
+         {REVIEW_LINE_RULE}"
     );
     debug_assert!(rules.ends_with('\n'), "sections end with a newline");
     rules
@@ -569,7 +623,7 @@ fn floored_reviewer_rules(choices: &[ModelChoice], cap: Option<Effort>) -> Strin
         .collect();
     let rules = format!(
         "- Delegate every reviewer with role `reviewer`, each on one of these models, \
-         taken in turn: {}. Each effort is a floor, never a ceiling: Archon cancels a \
+         taken in turn: {}. {FLOORED_REVIEWERS}: Archon cancels a \
          child labelled `reviewer` on any other model, or below its model's effort, as it \
          spawns.\n",
         models.join("; ")
@@ -605,10 +659,11 @@ pub(crate) fn unnamed_reviewer_effort(floor: Effort, cap: Option<Effort>) -> Str
     )
 }
 
-/// The rubric's efforts for a review, cheapest first, with the diff each fits.
+/// The rubric's efforts for a review, cheapest first, with the diff each fits:
+/// [`EFFORT_RUBRIC`]'s reviews, level for level.
 const REVIEW_EFFORTS: [(Effort, &str); 4] = [
-    (Effort::Low, "for a trivial diff"),
-    (Effort::Medium, "for a small or low-risk diff"),
+    (Effort::Low, "for a trivial or small low-risk diff"),
+    (Effort::Medium, "for an ordinary diff"),
     (Effort::High, "for a risky diff or shared code"),
     (Effort::XHigh, "for concurrency or security analysis"),
 ];
@@ -627,7 +682,7 @@ pub(crate) fn reviewer_effort_rule(cap: Option<Effort>) -> String {
         _ => String::new(),
     };
     let rule = format!(
-        "That effort is the default, for a diff the rubric leaves open; otherwise the \
+        "{SIZED_REVIEWERS}; otherwise the \
          rubric decides: {}{ceiling}. This replaces any effort floor the stage prompt \
          names. {REASON_RULE}",
         levels.join(", ")
@@ -637,6 +692,101 @@ pub(crate) fn reviewer_effort_rule(cap: Option<Effort>) -> String {
         "every cap leaves the cheapest level"
     );
     rule
+}
+
+/// The words that tell a contract's effort rule apart. A lead's contract is
+/// stored with its spawn: one stored before its mode was recorded is read by them.
+const SIZED_CHILDREN: &str = "Size each child's effort to its own task";
+const SIZED_REVIEWERS: &str = "That effort is the default, for a diff the rubric leaves open";
+const FLOORED_REVIEWERS: &str = "Each effort is a floor, never a ceiling";
+/// Where those words sit in a rendered contract, and the rule lines they open.
+const REVIEWER_RULE: &str = "- Delegate every reviewer with role `reviewer`";
+const NAMED_REVIEWERS: &str = ", each on one of these models, taken in turn: ";
+const PROFILE_REVIEWERS: &str = ", on ";
+const DEADLINE_HEADING: &str = "\n## Deadline\n";
+const DELEGATION_HEADING: &str = "\n## Delegation\n";
+
+/// The effort rule contract `instructions` states, as rendered here: `None`
+/// when it states none, such as a contract that names no reviewer or child.
+/// Only its own rule lines tell, never text it quotes: the reviewer rule
+/// precedes the deadline and every quoting section, and the children's rule
+/// opens a line of the last section, the delegation rules.
+pub fn stated_effort_contract(instructions: &str) -> Option<EffortContract> {
+    let delegation = instructions
+        .rsplit_once(DELEGATION_HEADING)
+        .map_or("", |(_, own)| own);
+    let reviewer_rules = || own_reviewer_rules(instructions);
+    let floored = reviewer_rules().any(floored_reviewer_rule);
+    let sized_reviewers = reviewer_rules().any(|line| {
+        line.contains(&format!(
+            "{SIZED_REVIEWERS}; otherwise the rubric decides: "
+        ))
+    });
+    let sized_children = delegation
+        .lines()
+        .any(|line| line.starts_with(&format!("- {SIZED_CHILDREN}, whatever yours is: ")));
+    match (sized_reviewers || sized_children, floored) {
+        (true, false) => Some(EffortContract::Rubric),
+        (false, true) => Some(EffortContract::Floor),
+        // Both is no contract rendered here: the reader holds it to neither.
+        (true, true) | (false, false) => None,
+    }
+}
+
+/// Whether reviewer rule `line` holds its reviewers to 1.6.3's floors: the
+/// plan's named floor, or the profile's effort stated with no rubric beside it.
+fn floored_reviewer_rule(line: &str) -> bool {
+    assert!(line.starts_with(REVIEWER_RULE), "a reviewer rule line");
+    if line.contains(&format!(". {FLOORED_REVIEWERS}: Archon cancels a ")) {
+        return true;
+    }
+    let Some(profile) = line[REVIEWER_RULE.len()..].strip_prefix(PROFILE_REVIEWERS) else {
+        return false;
+    };
+    let states_effort = [" at effort ", " and effort "]
+        .iter()
+        .any(|words| profile.contains(words));
+    states_effort && !profile.contains(SIZED_REVIEWERS)
+}
+
+/// The reviewer rule lines of contract `instructions`: those before the
+/// deadline, which every section that quotes text follows.
+fn own_reviewer_rules(instructions: &str) -> impl Iterator<Item = &str> {
+    let before_quotes = instructions
+        .split_once(DEADLINE_HEADING)
+        .map_or(instructions, |(own, _)| own);
+    before_quotes
+        .lines()
+        .filter(|line| line.starts_with(REVIEWER_RULE))
+}
+
+/// The reviewers contract `instructions` names, as rendered here, each at
+/// its stated effort: empty when its rule leaves them to the model policy,
+/// `None` when it states no reviewer rule or one this cannot read.
+pub fn stated_reviewers(instructions: &str) -> Option<Vec<ModelChoice>> {
+    // The reviewer section is the last before the deadline.
+    let rule = own_reviewer_rules(instructions).last()?;
+    let after_role = rule.strip_prefix(REVIEWER_RULE)?;
+    let Some(listed) = after_role.strip_prefix(NAMED_REVIEWERS) else {
+        return Some(Vec::new());
+    };
+    let (listed, _) = listed.split_once(". ")?;
+    let named: Option<Vec<ModelChoice>> = listed.split("; ").map(stated_reviewer).collect();
+    assert!(
+        named.as_ref().is_none_or(|named| !named.is_empty()),
+        "a split yields at least one item"
+    );
+    named
+}
+
+/// One `{model} at effort {floor}[ up to {cap}| or higher]` of a reviewer rule.
+fn stated_reviewer(item: &str) -> Option<ModelChoice> {
+    let (model, efforts) = item.rsplit_once(" at effort ")?;
+    let floor = efforts.split(' ').next()?;
+    Some(ModelChoice::pinned(
+        model.parse().ok()?,
+        floor.parse().ok()?,
+    ))
 }
 
 /// What a lead owes whenever it moves a reviewer off the plan's effort.
@@ -711,8 +861,7 @@ before or after it.\n\n\
 - Blocking findings are correctness bugs, security or safety issues, failing or missing \
 tests for changed behaviour, and broken documented behaviour, as the brief narrows or \
 extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` or \
-`false`: only blocking ones fail. List the rest as follow-ups in your summary and \
-`pr.body`.\n";
+`false`: only blocking ones fail. List the rest as follow-ups in your summary";
 
 /// Failing review rounds of one stage attempt after which Archon stops the stage.
 /// A round is one commit that at least one of the lead's reviewers failed with a
@@ -721,7 +870,7 @@ extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` 
 /// which ends the run and hands the item to the orchestrator.
 pub const REVIEW_ROUND_CAP: usize = 3;
 
-const REVIEW_CHECK_RULES: &str = "\
+const REVIEW_ROUNDS_RULE: &str = "\
 - Delegate with `wait: false`, then use `wait_for`. On a blocking fail, edit nothing \
 until the reviewers still reading finish (they share your workspace); one you cancel \
 counts for nothing and needs a whole-change replacement. Fix every blocking finding \
@@ -730,18 +879,38 @@ asked again, so delegate a new one with `base` at the head the failed review rea
 given the fix commits and the open findings, to verify each is fixed and the fix \
 regresses nothing. No new whole-change read is needed. A commit after passes needs \
 only a delta read from the head they passed; an amend or rebase needs whole-change \
-reads. After 3 failed rounds Archon stops the stage and escalates.\n\
+reads. Tell every delta reviewer to fail only on a defect in its commits or an open \
+finding unfixed: a new finding in code a pass already read is `\"blocking\": false`. After 3 failed rounds Archon stops the stage and escalates.\n";
+
+/// A review-only lead's rounds: one, whose findings it records rather than fixes.
+const REVIEW_ONLY_ROUNDS_RULE: &str = "\
+- Delegate with `wait: false`, then use `wait_for`. This run changes nothing: on a \
+blocking fail, fix and commit nothing, and wait for the reviewers still reading (one \
+you cancel counts for nothing). Their blocking findings make your verdict `fail`.\n";
+
+/// A review-only lead's coverage: its head is frozen, so every read is whole and of it.
+const REVIEW_ONLY_COVERAGE_RULE: &str = "\
+- Archon checks a pass against Aether and the branch: each agent named must be a \
+different one you delegated to yourself that passed the whole change at this head, \
+as many as the review asks. Anything else fails the run. Never report `pass` for a \
+review that did not run or did not pass: ";
+
+const REVIEW_ONLY_OPEN_RULE: &str =
+    "with a blocking finding open, record `fail` as the Verdict section says.";
+
+const REVIEW_COVERAGE_RULE: &str = "\
 - Archon checks a pass against Aether and the branch. Each agent named must be a \
 different one you delegated to yourself that completed with that verdict. As many as \
 the review asks must have read the whole change, passing or with findings fixed, and \
 one must have passed the branch head itself: whole, or as a delta whose `base` a \
-named reviewer read the change up to. A pass of an earlier head only \
+reviewer read the change up to. A pass of an earlier head only \
 anchors such a delta. A fail stands until a pass read past it, or after an amend or \
-rebase until a pass of the whole change. Name every reviewer that coverage rests on, \
-earlier whole-change reads included, passed or failed. Anything else fails the run, \
+rebase until a pass of the whole change. Name every reviewer of yours that \
+coverage rests on, earlier whole-change reads included, passed or failed. Anything else fails the run, \
 and nothing ships. \
-Never report `pass` for a review that did not run or did not pass: with a blocking \
-finding open, call `fail_task` and say which.\n\
+Never report `pass` for a review that did not run or did not pass: ";
+
+const REVIEW_LINE_RULE: &str = "\
 - Archon adds the review as the last line of your summary: write no `REVIEW:` line \
 yourself.\n";
 
@@ -1010,15 +1179,61 @@ const VERDICT_RULES: &str = "\n## Verdict\n\n\
 - Put this in `complete_task`'s `structured` data, beside any other keys:\n\n\
 ```json\n\
 {\"verdict\": \"pass\" | \"fail\",\n \
-\"findings\": [{\"severity\": \"critical|high|medium|low\", \"title\": \"…\", \
-\"detail\": \"…\", \"path\": \"relative/path:line\"}]}\n\
+\"findings\": [{\"severity\": \"critical|high|medium|low\", \"blocking\": true | false, \
+\"title\": \"…\", \"detail\": \"…\", \"path\": \"relative/path:line\"}]}\n\
 ```\n\n\
 - The `verdict` is exactly `\"pass\"` or `\"fail\"`, no other word. The stage prompt \
 defines which findings make it `fail`; apply its rule exactly. A `fail` lists a \
 finding and always fails; a review with only advice is a `pass`.\n\
+- Mark each finding `\"blocking\": true` when that rule makes it fail the verdict, \
+else `false`: a pass beside a blocking finding counts as a fail, and an unmarked \
+finding blocks when its severity is critical or high.\n\
 - End the `summary` with a final line that is exactly `VERDICT: PASS` or \
 `VERDICT: FAIL`, matching the structured verdict. A missing or unreadable verdict \
 counts as a fail.\n";
+
+/// The verdict of a review-only run's lead: the review is the run's whole
+/// outcome, so a fail is recorded, not reported as a stage failure.
+const LEAD_VERDICT_RULES: &str = "\n## Verdict\n\n\
+- The review is this run's whole outcome: record its verdict with `complete_task`, \
+a fail included. `fail_task` means only that the review could not be done.\n\
+- Put this in `structured`, beside the review record:\n\n\
+```json\n\
+{\"verdict\": \"pass\" | \"fail\",\n \
+\"findings\": [{\"severity\": \"critical|high|medium|low\", \"blocking\": true | false, \
+\"title\": \"…\", \"detail\": \"issue, impact, remedy\", \"path\": \"relative/path:line\"}]}\n\
+```\n\n\
+- A blocking finding or a failed check makes it `fail`, which never merges. Mark each \
+finding `\"blocking\"`; an unmarked one blocks when its severity is critical or high.\n\
+- End the `summary` with a final line that is exactly `VERDICT: PASS` or \
+`VERDICT: FAIL`, matching the structured verdict.\n";
+
+/// Ends either Verdict section: a finished agent cannot be asked again, so
+/// its verdict is read, and restated once if unreadable, before it finishes.
+const SUBMIT_VERDICT_RULE: &str = "\
+- Before you finish, call `mcp__archon__submit_verdict` with that `summary` and \
+`structured` (skip it if you have no such tool). If it asks, restate once as it says; \
+that submission is final. Then finish with what you last submitted.\n";
+
+/// Where a strict stage's own `fail` leads, which its `on_fail` decides.
+fn strict_fail_route(stage: &StageSpec) -> String {
+    assert_eq!(stage.scenarios, Scenarios::Strict, "a strict stage's rule");
+    let route = match &stage.on_fail {
+        None => "`fail` fails the run".to_owned(),
+        Some(on_fail) => {
+            assert!(!on_fail.goto.is_empty(), "validated: on_fail names a stage");
+            match on_fail.when {
+                None => format!("`fail` re-runs `{}` while a loop remains", on_fail.goto),
+                Some(LoopWhen::EnvironmentFinding) => format!(
+                    "`fail` re-runs `{}` only with a finding whose `fault` is `environment` \
+                     while a loop remains, else fails the run",
+                    on_fail.goto
+                ),
+            }
+        }
+    };
+    format!("Your verdict judges only the environment: {route}.\n")
+}
 
 const STRICT_SCENARIO_RULES: &str = "\n## Strict scenario gate\n\n\
 - Each scenario lists `required_steps` ids and `steps` {id,required,status}; \
@@ -1028,8 +1243,9 @@ every required step must be present and pass.\n\
 `\"scenarios\": [{\"id\", \"title\", \"status\": \"pass\" | \"fail\" | \"skipped\" | \
 \"blocked\", \"evidence\"}]`, every scenario you ran.\n\
 - The gate fails on any status but `pass`, on an expected id missing from `scenarios`, \
-and on an empty list. Such a product defect fails the run with no loop back. Your verdict \
-judges only the environment: `fail` sends the run back to setup.\n\
+and on an empty list. Such a product defect fails the run with no loop back. ";
+
+const STRICT_PRIVATE_STACK_RULE: &str = "\
 - The stack you test is private: temporary homes (`HOME`, `XDG_*`), private sockets and \
 ports, config copied without secrets. Never read or write the state of the daemons \
 installed on this machine, or the user's homes.\n";
@@ -1150,6 +1366,8 @@ mod tests {
             assert!(text.contains("stage prompt defines which findings"));
             assert!(text.contains("exactly `\"pass\"` or `\"fail\"`, no other word"));
             assert!(text.contains("a review with only advice is a `pass`"));
+            assert!(text.contains("\"blocking\": true | false"), "{kind:?}");
+            assert!(text.contains("finding blocks when its severity is critical or high"));
         }
         let work = instructions(
             &stage(StageKind::Work, Gate::None, 1),
@@ -1256,6 +1474,9 @@ mod tests {
                 "Fix every blocking finding and commit, then re-review only the fix with one reviewer",
                 "delegate a new one with `base` at the head the failed review read",
                 "given the fix commits and the open findings",
+                "Tell every delta reviewer to fail only on a defect in its commits or an open \
+                 finding unfixed",
+                "a new finding in code a pass already read is `\"blocking\": false`",
                 "No new whole-change read is needed",
                 "A commit after passes needs only a delta read from the head they passed",
                 "an amend or rebase needs whole-change reads",
@@ -1632,6 +1853,7 @@ mod tests {
                 "Read a bounded local question yourself instead of delegating it",
                 "A reviewer's hand-off is the exact base and head commits, the changed paths",
                 "the checks you ran with their results and the commit they ran on",
+                "Aether refuses a delegation with over 16 `references`",
             ] {
                 assert!(
                     rules.contains(said),
@@ -1728,8 +1950,84 @@ mod tests {
             review: Some(ReviewDuty {
                 reviewers,
                 may_skip,
+                records_verdict: false,
             }),
             ship_record: false,
+        }
+    }
+
+    /// A review-only lead records its verdict, a fail included, with
+    /// `complete_task`; a lead that builds the change keeps `fail_task`.
+    #[test]
+    fn only_a_review_only_lead_records_a_fail_with_complete_task() {
+        let mut lead = owing(1, false);
+        lead.review = lead.review.map(|duty| ReviewDuty {
+            records_verdict: true,
+            ..duty
+        });
+        let reviewing = work_contract(lead);
+        assert!(reviewing.contains("record its verdict with `complete_task`, a fail included"));
+        assert!(reviewing.contains("\"blocking\": true | false"));
+        assert!(reviewing.contains("VERDICT: FAIL"));
+        assert!(reviewing.contains("with a blocking finding open, record `fail`"));
+        assert!(!reviewing.contains("call `fail_task` and say which"));
+        assert!(reviewing.contains("fix and commit nothing"));
+        assert!(!reviewing.contains("Fix every blocking finding"));
+        assert!(!reviewing.contains("pr.body") && !reviewing.contains("findings you fixed"));
+        assert!(!reviewing.contains("a failed one") && !reviewing.contains("delta"));
+        assert!(reviewing.contains("passed the whole change at this head"));
+        assert_eq!(reviewing.matches("## Verdict").count(), 1);
+        let building = work_contract(owing(1, false));
+        assert!(building.contains("with a blocking finding open, call `fail_task` and say which."));
+        assert!(building.contains("Fix every blocking finding and commit"));
+        assert!(building.contains("a failed one whose findings you fixed included:"));
+        assert!(building.contains("follow-ups in your summary and `pr.body`.\n"));
+        assert!(!building.contains("## Verdict"));
+        assert!(building.ends_with("write no `REVIEW:` line yourself.\n"));
+    }
+
+    /// A finished agent cannot be asked again, so every contract with a
+    /// Verdict section, and no other, has the verdict read before completion.
+    #[test]
+    fn only_a_contract_with_a_verdict_section_asks_for_submit_verdict() {
+        let rule = "- Before you finish, call `mcp__archon__submit_verdict`";
+        let contract = |kind, gate, owed| {
+            let (mode, part) = (WorkspaceMode::Worktree, TeamPart::Solo);
+            instructions(&stage(kind, gate, 1), mode, "/w", part, owed, None)
+        };
+        let mut lead = owing(1, false);
+        lead.review = lead.review.map(|duty| ReviewDuty {
+            records_verdict: true,
+            ..duty
+        });
+        let holders = [
+            (StageKind::Review, Gate::AllPass, Owed::default()),
+            (StageKind::Test, Gate::AllPass, Owed::default()),
+            (StageKind::Report, Gate::Majority, Owed::default()),
+            (StageKind::Work, Gate::None, lead),
+        ];
+        for (kind, gate, owed) in holders {
+            let text = contract(kind, gate, owed);
+            assert_eq!(text.matches(rule).count(), 1, "{kind:?}: {text}");
+            let verdict = text.split("## Verdict").nth(1).expect("a Verdict section");
+            assert!(
+                verdict.contains(rule),
+                "{kind:?}: the rule ends that section"
+            );
+            assert!(verdict.contains("that submission is final"), "{kind:?}");
+            assert!(
+                verdict.contains("(skip it if you have no such tool)"),
+                "{kind:?}"
+            );
+        }
+        let others = [
+            (StageKind::Work, Gate::None, Owed::default()),
+            (StageKind::Work, Gate::None, owing(1, false)),
+            (StageKind::Report, Gate::None, Owed::default()),
+        ];
+        for (kind, gate, owed) in others {
+            let text = contract(kind, gate, owed);
+            assert!(!text.contains("submit_verdict"), "{kind:?}: {text}");
         }
     }
 
@@ -1820,11 +2118,123 @@ mod tests {
         let capped = ModelPolicy::from_lists(&[], &[], Some(archon_core::model::Effort::Medium));
         let rules = reviewer_model_rules(Some(&named), &own, &capped, true);
         assert!(rules.contains("opus at effort medium; claude-code/haiku at effort low."));
-        assert!(rules.contains("`medium` for a small or low-risk diff; never above medium"));
+        assert!(rules.contains("`medium` for an ordinary diff; never above medium"));
         assert!(
             !rules.contains("x_high"),
             "the cap rules x_high out: {rules}"
         );
+    }
+
+    /// A contract stored before its mode was recorded is read by its words:
+    /// floors, the rubric, or neither, whichever rule rendered it.
+    #[test]
+    fn a_stored_contract_states_the_effort_rule_it_was_rendered_with() {
+        use archon_core::model::Effort::Medium;
+        let named = [ModelChoice {
+            model: "codex/m".parse().unwrap(),
+            effort: Medium,
+            tier: None,
+        }];
+        let own = model("claude-code/opus");
+        let open = ModelPolicy::default();
+        for sizing in [false, true] {
+            let reviewers = reviewer_model_rules(Some(&named), &own, &open, sizing);
+            let children = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, sizing);
+            let expected = Some(EffortContract::of(sizing));
+            assert_eq!(stated_effort_contract(&reviewers), expected, "{reviewers}");
+            let whole = format!("{reviewers}{children}");
+            assert_eq!(stated_effort_contract(&whole), expected, "{whole}");
+        }
+        let children = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, true);
+        assert_eq!(
+            stated_effort_contract(&children),
+            Some(EffortContract::Rubric)
+        );
+        let plain = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, false);
+        assert_eq!(stated_effort_contract(&plain), None, "it names no rule");
+        let unnamed = reviewer_model_rules(None, &own, &open, false);
+        assert_eq!(stated_effort_contract(&unnamed), None, "{unnamed}");
+    }
+
+    /// Words a contract quotes (a dependency's summary, a lesson, a pipeline
+    /// note) tell nothing: only the contract's own rule lines, where it renders them.
+    #[test]
+    fn quoted_rule_words_never_tell_a_contract_s_effort_rule() {
+        use archon_core::model::Effort::Medium;
+        let named = [ModelChoice {
+            model: "codex/m".parse().unwrap(),
+            effort: Medium,
+            tier: None,
+        }];
+        let own = model("claude-code/opus");
+        let open = ModelPolicy::default();
+        let deadline = "\n## Deadline\n\n- Archon stops you at noon.\n";
+        for sizing in [false, true] {
+            let reviewers = reviewer_model_rules(Some(&named), &own, &open, sizing);
+            let other = reviewer_model_rules(Some(&named), &own, &open, !sizing);
+            let children = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, sizing);
+            let quoted = format!("\n## Dependencies\n\n> {other}\n{other}");
+            let whole = format!("contract\n{reviewers}{deadline}{quoted}{children}");
+            let expected = Some(EffortContract::of(sizing));
+            assert_eq!(stated_effort_contract(&whole), expected, "{whole}");
+        }
+        let floored = reviewer_model_rules(Some(&named), &own, &open, false);
+        let sized = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, true);
+        let quoting = format!("contract\n{deadline}\n## Lessons\n\n{floored}{sized}");
+        let plain = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, false);
+        assert_eq!(
+            stated_effort_contract(&format!("{quoting}{plain}")),
+            None,
+            "the words sit only in quoting sections"
+        );
+    }
+
+    /// A contract's reviewers read back from its own rule, as either effort
+    /// rule renders them under any cap, never from a section that quotes one.
+    #[test]
+    fn a_contract_states_the_reviewers_it_names() {
+        use archon_core::model::Effort::{High, Medium, XHigh};
+        let named = [
+            ModelChoice::pinned("codex/gpt-5.5".parse().unwrap(), Medium),
+            ModelChoice::pinned("claude-code/opus".parse().unwrap(), High),
+        ];
+        let own = model("claude-code/opus");
+        let deadline = "\n## Deadline\n\n- Archon stops you at noon.\n";
+        for cap in [None, Some(High), Some(XHigh)] {
+            let policy = ModelPolicy {
+                max_effort: cap,
+                ..ModelPolicy::default()
+            };
+            for sizing in [false, true] {
+                let rules = reviewer_model_rules(Some(&named), &own, &policy, sizing);
+                let whole = format!("contract\n{rules}{deadline}");
+                assert_eq!(stated_reviewers(&whole), Some(named.to_vec()), "{whole}");
+            }
+        }
+        let open = ModelPolicy::default();
+        let fallback = reviewer_model_rules(None, &own, &open, false);
+        let left = format!("contract\n{fallback}{deadline}");
+        assert_eq!(
+            stated_reviewers(&left),
+            Some(Vec::new()),
+            "the policy bounds them"
+        );
+        let quoted = reviewer_model_rules(Some(&named), &own, &open, false);
+        let quoting = format!("contract\n{deadline}\n## Lessons\n\n{quoted}");
+        assert_eq!(stated_reviewers(&quoting), None, "quoted words never tell");
+        let mangled = "- Delegate every reviewer with role `reviewer`, each on one of these \
+                       models, taken in turn: codex at effort lowish. Each effort is a floor\n";
+        assert_eq!(
+            stated_reviewers(mangled),
+            None,
+            "an unreadable rule tells nothing"
+        );
+        let a_1_6_3_line = "- Delegate every reviewer with role `reviewer`, each on one of \
+             these models, taken in turn: codex/gpt-5 at effort medium up to x_high. Each \
+             effort is a floor, never a ceiling: Archon cancels a child labelled `reviewer` \
+             on any other model, or below its model's effort, as it spawns.\n";
+        let floor = ModelChoice::pinned("codex/gpt-5".parse().unwrap(), Medium);
+        assert_eq!(stated_reviewers(a_1_6_3_line), Some(vec![floor]));
     }
 
     /// The rubric sets a reviewer's effort from the diff, lower or higher than
@@ -1836,8 +2246,8 @@ mod tests {
         assert_eq!(
             open,
             "That effort is the default, for a diff the rubric leaves open; otherwise the \
-             rubric decides: `low` for a trivial diff, `medium` for a small or low-risk diff, \
-             `high` for a risky diff or shared code, `x_high` for concurrency or security \
+             rubric decides: `low` for a trivial or small low-risk diff, `medium` for an \
+             ordinary diff, `high` for a risky diff or shared code, `x_high` for concurrency or security \
              analysis. This replaces any \
              effort floor the stage prompt names. Off the default, lower or higher, state the \
              reason in one line in your result."
@@ -1848,12 +2258,13 @@ mod tests {
         assert!(!below_max.contains("`max`"), "{below_max}");
         let capped = reviewer_effort_rule(Some(Medium));
         assert!(
-            capped.contains("`medium` for a small or low-risk diff; never above medium"),
+            capped.contains("`medium` for an ordinary diff; never above medium"),
             "{capped}"
         );
         assert!(!capped.contains("`high`"), "{capped}");
         assert!(
-            reviewer_effort_rule(Some(Low)).contains("`low` for a trivial diff; never above low")
+            reviewer_effort_rule(Some(Low))
+                .contains("`low` for a trivial or small low-risk diff; never above low")
         );
         let choice = |effort| ModelChoice {
             model: "codex/m".parse().unwrap(),
@@ -1866,7 +2277,10 @@ mod tests {
             assert!(rules.contains(&format!(
                 "codex/m at effort {effort}. That effort is the default"
             )));
-            assert!(rules.contains("`low` for a trivial diff"), "{rules}");
+            assert!(
+                rules.contains("`low` for a trivial or small low-risk diff"),
+                "{rules}"
+            );
             assert!(rules.contains(REASON_RULE), "{rules}");
             assert!(!rules.contains(&format!("{effort} or higher")), "{rules}");
         }
@@ -1954,7 +2368,7 @@ mod tests {
             "no `complete_task` or YAML, nothing before or after it",
             "Each agent named must be a different one you delegated to yourself",
             "must have passed the branch head itself",
-            "Name every reviewer that coverage rests on, earlier whole-change reads included",
+            "Name every reviewer of yours that coverage rests on, earlier whole-change reads included",
             "Blocking findings are correctness bugs, security or safety issues",
             "mark every finding `\"blocking\": true` or `false`",
             "List the rest as follow-ups",
@@ -2001,12 +2415,32 @@ mod tests {
         for said in [
             "reviewed by 3 agents you delegate to, each working alone and none of which wrote any of it",
             "\"reviewers\": [\"<agent id>\", … 3 or more]",
-            // Repair leads after a refusal delegated one reviewer (1.4.11 re-gate).
-            "Delegate all 3 yourself, even in a repair: an earlier run's reviewers count for nothing",
-            "naming fewer fails the run",
+            "Delegate all 3 yourself; naming fewer fails the run",
+            // A run continuing a capped review owes the whole reads earlier runs lack, and a delta.
+            "each whole-change read they made still counts toward the 3: delegate only the \
+             whole-change reviewers they lack, and one delta reviewer of the commits after \
+             their last reviewed head",
         ] {
             assert!(strict.contains(said), "missing {said:?} in {strict}");
         }
+        // A frozen review carries nothing, so it owes all three whole reads again.
+        let mut frozen = owing(3, false);
+        frozen.review = frozen.review.map(|duty| ReviewDuty {
+            records_verdict: true,
+            ..duty
+        });
+        let frozen = work_contract(frozen);
+        assert!(
+            frozen.contains(
+                "Delegate all 3 yourself, even in a repair: an earlier run's \
+                             reviewers count for nothing"
+            ),
+            "{frozen}"
+        );
+        assert!(
+            !frozen.contains("whole-change reviewers they lack"),
+            "{frozen}"
+        );
         assert_eq!(strict.matches("skipped").count(), 0);
     }
 

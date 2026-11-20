@@ -12,8 +12,9 @@ use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
+use archon_core::model::ModelChoice;
 use archon_core::ports::{AgentUpdate, SpawnRequest};
-use archon_core::run::{StageOutcome, StageRun, StageState};
+use archon_core::run::{RecordRepair, StageOutcome, StageRun, StageState};
 use archon_pipeline::contract::SHIP_RECORD_JSON;
 use archon_pipeline::{ShipRecord, SpawnPlan};
 use archon_queue::Store;
@@ -69,27 +70,13 @@ pub(super) fn takeover(
         plan.resume.is_none() || (plan.keep && plan.attempt > 1),
         "only the kept agent of an earlier attempt is resumed"
     );
-    let before = if lost { plan.attempt } else { plan.attempt - 1 };
-    let runs = store.stage_runs(run)?;
-    let last = runs
-        .iter()
-        .filter(|s| s.stage_id == plan.stage_id && s.fan_index == plan.fan_index)
-        .filter(|s| s.attempt == before)
-        .max_by_key(|s| s.started_at);
-    let Some(last) = last else {
+    let Some((last, agent)) = kept_attempt(store, run, plan, lost)? else {
         return Ok(Takeover::Fresh);
     };
-    // An attempt that ended any other way had its agent stopped as it settled.
-    let waits = lost || last.state == StageState::Completed;
-    let Some(agent) = last.aether_agent.clone().filter(|_| waits) else {
-        return Ok(Takeover::Fresh);
-    };
-    if !is_kept(store, &last.id)? {
-        return Ok(Takeover::Fresh);
-    }
     // A steer that planned another model wants it from the start; a live retune
-    // already moved the agent to its current choice.
-    let same_model = *last.current_choice() == plan.choice;
+    // already moved the agent to its current choice. A tier is not the agent.
+    let current = last.current_choice();
+    let same_model = (&current.model, current.effort) == (&plan.choice.model, plan.choice.effort);
     let (Some(message), Some(parked_at)) = (&plan.resume, last.finished_at) else {
         return Ok(Takeover::Replace(agent));
     };
@@ -107,6 +94,156 @@ pub(super) fn takeover(
         message,
         asked_record: None,
     }))
+}
+
+/// The earlier attempt of `plan`'s slot whose kept agent still waits for it,
+/// with that agent; `lost`: see [`takeover`].
+fn kept_attempt(
+    store: &Store,
+    run: &PipelineRunId,
+    plan: &SpawnPlan,
+    lost: bool,
+) -> Result<Option<(StageRun, AetherAgentId)>, ArchonError> {
+    assert!(plan.attempt >= 1, "attempts are 1-based");
+    let before = if lost { plan.attempt } else { plan.attempt - 1 };
+    let runs = store.stage_runs(run)?;
+    let last = runs
+        .into_iter()
+        .filter(|s| s.stage_id == plan.stage_id && s.fan_index == plan.fan_index)
+        .filter(|s| s.attempt == before)
+        .max_by_key(|s| s.started_at);
+    let Some(last) = last else {
+        return Ok(None);
+    };
+    assert_eq!(&last.run, run, "the slot's attempts are of this run");
+    // An attempt that ended any other way had its agent stopped as it settled.
+    let waits = lost || last.state == StageState::Completed;
+    let Some(agent) = last.aether_agent.clone().filter(|_| waits) else {
+        return Ok(None);
+    };
+    if !is_kept(store, &last.id)? {
+        return Ok(None);
+    }
+    Ok(Some((last, agent)))
+}
+
+/// The model the kept agent `plan` resumes last ran, when the daemon alone
+/// moved its slot since: see [`held_on_agent`].
+pub(super) fn kept_model(
+    store: &Store,
+    (run, item): (
+        &archon_core::run::PipelineRun,
+        &archon_core::queue::QueueItem,
+    ),
+    plan: &SpawnPlan,
+    catalog: &archon_core::model_tier::ModelCatalog,
+) -> Result<Option<ModelChoice>, ArchonError> {
+    assert_eq!(run.item, item.id, "the run works for the item");
+    if plan.resume.is_none() {
+        return Ok(None);
+    }
+    let Some((last, _)) = kept_attempt(store, &run.id, plan, false)? else {
+        return Ok(None);
+    };
+    assert_eq!(last.stage_id, plan.stage_id, "the slot's own attempt");
+    Ok(held_on_agent(item, plan, last.current_choice(), catalog))
+}
+
+/// `plan` on the model and tier its agent `ran` (I1), keeping the plan's
+/// effort as a quota follow does, when the daemon alone moved the slot off
+/// that model and the catalog lists it (I3). A steer that pinned
+/// another model, or an unusable one, leaves the plan as it is.
+pub(super) fn held_on_agent(
+    item: &archon_core::queue::QueueItem,
+    plan: &SpawnPlan,
+    ran: &ModelChoice,
+    catalog: &archon_core::model_tier::ModelCatalog,
+) -> Option<ModelChoice> {
+    if plan.stage_id == archon_pipeline::acceptance::STAGE {
+        return None;
+    }
+    let slots = item
+        .model_plan
+        .choices_for(&plan.stage_id)
+        .map_or(0, <[_]>::len);
+    // An unknown or retired model is the catalog repair's to replace:
+    // a fresh agent is never created on one, should the agent not go on.
+    let model = catalog.check(&ran.model).ok()?;
+    if model == plan.choice.model || slots == 0 {
+        return None;
+    }
+    let slot = plan.fan_index as usize % slots;
+    let origin = item.model_plan.origin(&item.id, &plan.stage_id, slot);
+    let held = ModelChoice {
+        model,
+        tier: ran.tier.clone(),
+        ..plan.choice.clone()
+    };
+    assert_ne!(held.model, plan.choice.model, "only a moved slot is held");
+    assert_eq!(held.effort, plan.choice.effort, "a hold keeps the effort");
+    origin.model.is_movable().then_some(held)
+}
+
+/// Whether the fresh agent that replaces a kept one which would not go on
+/// needs another model than the reserved `request` names (I2): the stored
+/// plan's slot, when only the daemon held it on the kept agent's model, or
+/// quota routing would move it. Such an agent is a fresh attempt of its own.
+pub(super) async fn moves_unkept(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    request: &SpawnRequest,
+) -> Result<bool, ArchonError> {
+    assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
+    if stage.stage_id == archon_pipeline::acceptance::STAGE {
+        return Ok(false);
+    }
+    let table = ctx.runs.lock().await;
+    let Some(spec) = table.drivers.get(&stage.run).map(|d| d.spec().clone()) else {
+        return Ok(false);
+    };
+    let store = ctx.store.lock().await;
+    let item = store.item(&store.run(&stage.run)?.item)?;
+    if unheld(&item, stage, &request.choice) != request.choice {
+        return Ok(true);
+    }
+    let repo = (item.repo.as_ref())
+        .map(|id| store.repo(&crate::resolve::repo_ref(id)))
+        .transpose()?;
+    let fresh = (stage.stage_id.as_str(), &request.choice);
+    Ok(crate::quota::fresh_route_moves(
+        ctx,
+        &store,
+        (&item, &spec),
+        fresh,
+        repo.as_ref(),
+    ))
+}
+
+/// The choice a fresh agent of `stage` starts from: the stored plan's slot
+/// when the daemon alone moved it off the model `held` keeps, else `held`.
+fn unheld(
+    item: &archon_core::queue::QueueItem,
+    stage: &StageRun,
+    held: &ModelChoice,
+) -> ModelChoice {
+    let slots = item
+        .model_plan
+        .choices_for(&stage.stage_id)
+        .unwrap_or_default();
+    if slots.is_empty() {
+        return held.clone();
+    }
+    let slot = stage.fan_index as usize % slots.len();
+    let origin = item.model_plan.origin(&item.id, &stage.stage_id, slot);
+    if slots[slot].model == held.model || !origin.model.is_movable() {
+        return held.clone();
+    }
+    let stored = ModelChoice {
+        effort: held.effort,
+        ..slots[slot].clone()
+    };
+    assert_eq!(stored.effort, held.effort, "a fresh agent keeps the effort");
+    stored
 }
 
 /// Record that the agent of resumed attempt `stage` was told `text` after
@@ -165,14 +302,19 @@ async fn takes_over(
     }
 }
 
-/// Give the kept agent its deadline, new grant and findings, keyed by the stage run;
-/// `false` when it cannot go on and a fresh agent takes the attempt (`request` is never spawned).
+/// Give the kept agent its deadline, new grant, the choice a woken one is
+/// `retune`d to, and its findings, keyed by the stage run; `false` when it
+/// cannot go on and a fresh agent takes the attempt (`request` is never spawned).
 pub(super) async fn hand_over(
     ctx: &DaemonContext,
     stage: &StageRun,
     kept: &KeptAgent,
-    request: &SpawnRequest,
+    (request, retune): (&SpawnRequest, Option<ModelChoice>),
 ) -> Result<bool, ArchonError> {
+    assert!(
+        retune.as_ref().is_none_or(|choice| *choice == stage.choice),
+        "a woken agent is retuned to what its attempt records"
+    );
     assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
     assert!(!kept.message.trim().is_empty(), "resumed with findings");
     let agent = &kept.agent;
@@ -187,9 +329,9 @@ pub(super) async fn hand_over(
         regranted_cap(&store, stage, agent, request.cost_budget_usd)?
     };
     let update = AgentUpdate {
+        choice: retune,
         deadline: request.deadline,
         cost_budget_usd,
-        ..AgentUpdate::default()
     };
     let key = stage.id.as_str();
     let handed = match ctx.backend.update_agent(agent, update).await {
@@ -390,6 +532,11 @@ async fn recorded(
     else {
         return Ok(Some(outcome));
     };
+    // A stated failure settles as sent, on its merits: the reply is read
+    // before any record is asked for or put beside an earlier summary.
+    if StageOutcome::states_failure(summary, structured.as_ref()) {
+        return Ok(Some(outcome));
+    }
     if let Some(first) = &kept.asked_record {
         assert!(!first.trim().is_empty(), "a final message has a summary");
         let structured = structured.clone();
@@ -402,7 +549,9 @@ async fn recorded(
     let Err(why) = ShipRecord::read(structured.as_ref()) else {
         return Ok(Some(outcome));
     };
-    if !records_ship(ctx, stage).await {
+    // The repair turn's broken record fails the run: it is not asked again.
+    let repair_spent = stage.record_repair == Some(RecordRepair::Spent);
+    if repair_spent || !records_ship(ctx, stage).await {
         return Ok(Some(outcome));
     }
     let why = if structured.is_none() {

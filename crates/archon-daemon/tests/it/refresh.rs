@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use archon_core::autonomy::{AutonomyPatch, ReviewLevel};
 use archon_core::error::ArchonError;
-use archon_core::model::ModelPlan;
 use archon_core::notify::NotificationKind;
+use archon_core::plan_origin::{Authority, PlanSource};
 use archon_core::protocol::{EnqueueRequest, Reply, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::PipelineRun;
@@ -53,7 +53,7 @@ async fn enqueue_in(
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,
@@ -885,14 +885,29 @@ async fn a_refresh_runs_the_stage_defaults_not_its_owner_s_overrides() {
         archon_core::model::Effort::Max,
     )];
     assert_ne!(defaults.choices_for("implement"), Some(pricey.as_slice()));
-    stored.model_plan.0.insert("implement".into(), pricey);
+    stored
+        .model_plan
+        .legacy_mut()
+        .0
+        .insert("implement".into(), pricey);
     stored.model_reasons = Some([("implement".into(), "a hard change".into())].into());
     stored.stage_timeouts = [("implement".to_owned(), 45)].into();
     h.ctx.store.lock().await.update_item(&stored).unwrap();
     advance_origin(&h, "upstream.txt", "elsewhere\n");
     let fix = refresh(&h, &owner).await.unwrap();
     assert_eq!(fix.pipeline, "direct");
-    assert_eq!(fix.model_plan, defaults, "the stage defaults");
+    assert_eq!(*fix.model_plan, *defaults, "the stage defaults");
+    let note = format!("for the refresh of {}", owner.id);
+    for (key, entries) in crate::plan_origins::shown(&h, &fix).await {
+        for origin in entries {
+            for field in [&origin.model, &origin.effort] {
+                assert_eq!(field.by, Authority::Daemon, "{key}: not the owner's pin");
+                assert!(!field.is_pin(), "{key}: {field:?}");
+                let said = field.note.as_deref().unwrap_or_default();
+                assert!(said.starts_with(&note), "{key}: {said}");
+            }
+        }
+    }
     assert_eq!(fix.model_reasons, None);
     assert_eq!(
         fix.stage_timeouts,
@@ -930,6 +945,20 @@ async fn a_refresh_takes_the_plan_and_stage_timeouts_it_is_given() {
         refused.contains("stage_timeouts names stage \"ship_it\""),
         "{refused}"
     );
+    let unknown = Request::RefreshItem {
+        item: owner.id.clone(),
+        model_plan: Some(
+            serde_json::from_value(json!({
+                "implement": [{"model": "codex/gpt-6.1-astra"}]
+            }))
+            .unwrap(),
+        ),
+        model_reasons: None,
+        stage_timeouts: Default::default(),
+    };
+    let refusal = h.orchestrator(unknown).await.unwrap_err().to_string();
+    assert!(refusal.contains("codex/gpt-6.1-astra"), "{refusal}");
+    assert!(refusal.contains("nearest"), "{refusal}");
     let two = [("medium", REVIEW_MODEL), ("low", REVIEW_MODEL)]
         .map(|(effort, model)| json!({"model": model, "effort": effort}));
     let too_many = Request::RefreshItem {
@@ -952,9 +981,19 @@ async fn a_refresh_takes_the_plan_and_stage_timeouts_it_is_given() {
         Some([high].as_slice())
     );
     assert_eq!(
-        fix.model_reasons.unwrap()["implement"],
+        fix.model_reasons.as_ref().unwrap()["implement"],
         "conflicts to resolve"
     );
+    let implement = &crate::plan_origins::shown(&h, &fix).await["implement"][0];
+    for field in [&implement.model, &implement.effort] {
+        assert_eq!(
+            (field.source, field.by),
+            (PlanSource::Explicit, Authority::Orchestrator)
+        );
+        let named = format!("for the refresh of {}", owner.id);
+        let said = field.note.as_deref().unwrap_or_default();
+        assert!(said.starts_with(&named), "{said}");
+    }
     assert_eq!(fix.stage_timeouts, [("implement".to_owned(), 30)].into());
 }
 
@@ -1063,9 +1102,9 @@ async fn a_refresh_defaults_missing_or_disallowed_models_and_refuses_an_empty_po
         let (h, _gh) = delivering().await;
         let (owner, _) = shipped(&h, "model fallback").await;
         let mut stored = h.ctx.store.lock().await.item(&owner.id).unwrap();
-        stored.model_plan.0.clear();
+        stored.model_plan.legacy_mut().0.clear();
         if !missing {
-            stored.model_plan.0.insert(
+            stored.model_plan.legacy_mut().0.insert(
                 "build".into(),
                 vec![common::choice(
                     "blocked/model",
@@ -1405,4 +1444,415 @@ async fn a_refresh_with_nothing_to_merge_ends_at_once() {
     let runs = h.ctx.store.lock().await.runs_for_item(&fix.id).unwrap();
     assert!(runs.is_empty(), "no run started: {runs:?}");
     assert!(h.running().await.is_empty(), "no agent");
+}
+
+/// A refresh whose pipelines no longer load still has nothing to merge once
+/// its branch took the base in: it ends at once, as before the model catalog.
+#[tokio::test]
+async fn a_refresh_with_nothing_to_merge_ends_though_its_pipelines_no_longer_load() {
+    let (h, _gh) = delivering().await;
+    let (owner, run) = shipped(&h, "the change").await;
+    let upstream = advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    let merging = ["merge", "--quiet", "--no-edit", upstream.as_str()];
+    on_branch(&h, &run.branch, |tree| {
+        git(tree, &merging);
+    });
+    let broken = h.repo.join(".archon/pipelines").join(&fix.pipeline);
+    std::fs::create_dir_all(&broken).unwrap();
+    std::fs::write(broken.join("pipeline.toml"), "not a pipeline").unwrap();
+
+    h.dispatch().await;
+    let reason = match h.state(&fix.id).await {
+        QueueState::Cancelled {
+            reason: Some(reason),
+        } => reason,
+        other => panic!("the refresh ends: {other:?}"),
+    };
+    assert!(reason.starts_with("nothing to merge"), "{reason}");
+    assert!(h.running().await.is_empty(), "no agent");
+}
+
+/// Aether stops answering `list_models` and archond drops its catalog.
+pub(crate) async fn catalog_outage(h: &Harness) {
+    h.catalog_server.set_default(
+        "list_models",
+        archon_aether::fake::Scripted::refuse("internal", "catalog unavailable"),
+    );
+    h.ctx
+        .store
+        .lock()
+        .await
+        .invalidate_model_catalog("catalog unavailable".into());
+}
+
+/// Aether answers again; the next pass must read a fresh catalog itself.
+pub(crate) fn catalog_back(h: &Harness) {
+    common::catalog::answer(&h.catalog_server, &common::catalog::default_models());
+}
+
+#[tokio::test]
+async fn a_refresh_item_waits_through_a_catalog_outage_with_no_attempt() {
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "the change").await;
+    advance_origin(&h, "change.txt", "upstream wording\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    let created = h.backend.created();
+
+    catalog_outage(&h).await;
+    h.dispatch().await;
+    h.dispatch().await;
+    assert_eq!(h.state(&fix.id).await, QueueState::Queued);
+    assert_eq!(h.backend.created(), created, "no attempt during the outage");
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .runs_for_item(&fix.id)
+            .unwrap()
+            .is_empty()
+    );
+
+    catalog_back(&h);
+    h.dispatch().await;
+    assert!(h.state(&fix.id).await.is_active());
+    assert_eq!(h.backend.created(), created + 1);
+}
+
+/// A refresh is a lead of its own: it is issued the effort rule in force as
+/// its spawn is reserved, never the one its owner was issued.
+#[tokio::test]
+async fn a_refresh_is_issued_the_effort_rule_in_force_not_its_owner_s() {
+    let (mut h, _gh) = delivering().await;
+    let owner = enqueue(&h, "the change").await;
+    h.dispatch().await;
+    let lead = h.backend.requests()[0].clone();
+    assert_eq!(lead.labels["archon.item"], owner.id.to_string());
+    assert_eq!(
+        h.issued_effort_contract(&lead).await,
+        "rubric",
+        "the default"
+    );
+    settle_reviewed(&h, None).await;
+    let state = h.state(&owner.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    let mut rolled_back = h.ctx.config.clone();
+    rolled_back.models.effort_sizing = Some(false);
+    h.restart_with(rolled_back);
+    executor::recover(&h.ctx).await.unwrap();
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    h.dispatch().await;
+    let requests = h.backend.requests();
+    let of_fix = requests
+        .iter()
+        .rfind(|r| r.labels["archon.item"] == fix.id.to_string());
+    let of_fix = of_fix.expect("the refresh's lead was spawned");
+    assert_eq!(h.issued_effort_contract(of_fix).await, "floor", "its own");
+}
+
+/// A11 check 4: a refresh is sized as the item it is stored as. Its clean
+/// merge waives the review, so the owner's strict level no longer raises it.
+#[tokio::test]
+async fn a_waived_refresh_is_sized_for_the_review_it_gets() {
+    use archon_core::effort_sizing::RiskClass;
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "the change").await;
+    let mut stored = h.item(&owner.id).await;
+    stored.autonomy.review = ReviewLevel::Strict;
+    h.ctx.store.lock().await.update_item(&stored).unwrap();
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    assert_eq!(fix.autonomy.review, ReviewLevel::None, "a clean merge");
+    let sizing = fix.model_plan.sizing().expect("a refresh is sized");
+    assert_eq!(
+        sizing.risk_class,
+        Some(RiskClass::Ordinary),
+        "{:?}",
+        sizing.risk_signals
+    );
+    let spec = archon_pipeline::Catalog::builtin()
+        .get("direct")
+        .unwrap()
+        .clone();
+    for (key, choices) in &fix.model_plan.0 {
+        let own = spec.default_effort(key).expect("a key of direct");
+        assert_eq!(choices[0].effort, own, "{key}: its own stage default");
+        let origin = fix.model_plan.origin(&fix.id, key, 0).effort;
+        assert_eq!(
+            (origin.source, origin.by),
+            (PlanSource::Sizer, Authority::Daemon)
+        );
+    }
+    assert_eq!(
+        fix,
+        h.item(&fix.id).await,
+        "the reply is the refresh as stored"
+    );
+}
+
+/// A11 check 4: with sizing off a refresh's plan is the one routing decision
+/// origin/next makes, whatever its owner was sized to.
+#[tokio::test]
+async fn a_refresh_with_sizing_off_is_not_sized_and_borrows_nothing_of_its_owner() {
+    let (mut h, _gh) = delivering().await;
+    let owner = enqueue(&h, "the change").await;
+    let mut tagged = h.item(&owner.id).await;
+    tagged.tags = vec!["risk:critical".into()];
+    h.ctx.store.lock().await.update_item(&tagged).unwrap();
+    h.dispatch().await;
+    settle_reviewed(&h, None).await;
+    let state = h.state(&owner.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    let defaults = owner.model_plan.plan().clone();
+    let mut rolled_back = h.ctx.config.clone();
+    rolled_back.models.effort_sizing = Some(false);
+    h.restart_with(rolled_back);
+    executor::recover(&h.ctx).await.unwrap();
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    assert_eq!(
+        fix.tags,
+        ["risk:critical"],
+        "the sizer would make it critical"
+    );
+    assert!(
+        fix.model_plan.sizing().is_none(),
+        "nothing is sized with sizing off"
+    );
+    assert_eq!(
+        *fix.model_plan.plan(),
+        defaults,
+        "the stage defaults, as 1.6.3 fills them"
+    );
+    for key in fix.model_plan.0.keys() {
+        let origin = fix.model_plan.origin(&fix.id, key, 0).effort;
+        assert_eq!(origin.source, PlanSource::Fallback, "{key}");
+    }
+    let stored = serde_json::to_value(&fix).unwrap();
+    assert!(stored.get("effort_sizing").is_none(), "{stored}");
+}
+
+/// Record `count` finished `direct` runs whose `implement` ran `model`, so the
+/// model is a learned route for the repository.
+async fn learn_implement_route(h: &Harness, model: &str, cost: f64, count: usize) {
+    let low = archon_core::model::Effort::Low;
+    learn_implement_route_at(h, (model, low), cost, count).await;
+}
+
+/// [`learn_implement_route`] of `model` run at `effort`.
+async fn learn_implement_route_at(
+    h: &Harness,
+    (model, effort): (&str, archon_core::model::Effort),
+    cost: f64,
+    count: usize,
+) {
+    use archon_core::outcome::{Outcome, OutcomeResult, OutcomeStage};
+    use archon_core::run::RunState;
+    for n in 0..count {
+        let item = enqueue(h, &format!("learn {model} {n}")).await;
+        let now = archon_core::now();
+        let mut store = h.ctx.store.lock().await;
+        let dispatching = QueueState::Dispatching;
+        store.transition_item(&item.id, dispatching, now).unwrap();
+        let mut run = PipelineRun {
+            id: archon_core::id::PipelineRunId::new(),
+            item: item.id.clone(),
+            pipeline: "direct".into(),
+            shipped: false,
+            aether_run: None,
+            workspace: h.repo.clone(),
+            team_root: None,
+            branch: "archon/seeded".into(),
+            state: RunState::Running {
+                stage_id: "implement".into(),
+                attempt: 1,
+            },
+            cost_usd: cost,
+            started_at: now,
+            finished_at: None,
+        };
+        store.insert_run(&run).unwrap();
+        let running = QueueState::Running {
+            run: run.id.clone(),
+        };
+        store.transition_item(&item.id, running, now).unwrap();
+        run.finish(
+            RunState::Succeeded {
+                summary: "done".into(),
+            },
+            now,
+        )
+        .unwrap();
+        let done = QueueState::Succeeded {
+            run: run.id.clone(),
+            summary: "done".into(),
+        };
+        store.finish_run(&run, done, now).unwrap();
+        let stage = OutcomeStage {
+            stage: "implement".into(),
+            choice: common::choice(model, effort),
+            cost_usd: cost,
+            wall_secs: 30,
+            attempts: 1,
+            passed: Some(true),
+        };
+        let outcome = Outcome {
+            run: run.id.clone(),
+            item: item.id.clone(),
+            repo: item.repo.clone(),
+            pipeline: "direct".into(),
+            diff: None,
+            stages: vec![stage],
+            review_rounds: 0,
+            result: OutcomeResult::Succeeded,
+            failure: None,
+            failure_source: None,
+            review_pr: None,
+            corrections: Vec::new(),
+            feedback: Vec::new(),
+            context: None,
+            merged: None,
+            cost_usd: cost,
+            cost_provisional: true,
+            count_estimates: true,
+            wall_secs: 30,
+            finished_at: now,
+        };
+        store.record_outcome(&outcome).unwrap();
+    }
+}
+
+/// A11: with sizing on, a learned route's effort is advice: a model learned
+/// at x_high is still taken under a policy cap of high, run within the cap.
+/// With sizing off the cap rules the route out, as in 1.6.3.
+#[tokio::test]
+async fn a_learned_model_is_taken_under_a_cap_below_its_advised_effort_only_with_sizing_on() {
+    use archon_core::model::Effort::{High, XHigh};
+    for sizing in [true, false] {
+        let (mut h, _gh) = delivering().await;
+        let mut capped = h.ctx.config.clone();
+        capped.models.max_effort = Some(High);
+        capped.models.effort_sizing = Some(sizing);
+        capped.learning.explore_rate = 0.0;
+        h.restart_with(capped);
+        learn_implement_route_at(&h, ("codex/cheap", XHigh), 0.2, 5).await;
+        let fresh = enqueue(&h, "learned").await;
+        let chosen = &fresh.model_plan.0["implement"][0];
+        let learned = chosen.model.to_string() == "codex/cheap";
+        assert_eq!(learned, sizing, "sizing {sizing}: {chosen:?}");
+        assert!(chosen.effort <= High, "within the cap: {chosen:?}");
+    }
+}
+
+/// A11 check 4: with sizing off a refresh makes origin/next's one routing
+/// decision. A route learned since the owner was planned is not applied to it
+/// by a second pass, though a fresh enqueue picks it up.
+#[tokio::test]
+async fn a_refresh_with_sizing_off_makes_one_routing_decision_and_applies_no_learned_route() {
+    let (mut h, _gh) = delivering().await;
+    let owner = enqueue(&h, "the change").await;
+    h.dispatch().await;
+    settle_reviewed(&h, None).await;
+    let mut rolled_back = h.ctx.config.clone();
+    rolled_back.models.effort_sizing = Some(false);
+    // No exploration, so the fresh control takes the learned route every time.
+    rolled_back.learning.explore_rate = 0.0;
+    h.restart_with(rolled_back);
+    executor::recover(&h.ctx).await.unwrap();
+    let own = owner.model_plan.0["implement"][0].clone();
+    learn_implement_route(&h, &own.model.to_string(), 2.0, 5).await;
+    learn_implement_route(&h, "codex/cheap", 0.2, 5).await;
+    let fresh = enqueue(&h, "learned").await;
+    assert_eq!(
+        fresh.model_plan.0["implement"][0].model.to_string(),
+        "codex/cheap",
+        "the learned route is eligible, so a second pass would take it"
+    );
+
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    // As if the owner was enqueued with learning off: a routing pass under
+    // either id would now leave what it chose.
+    forget_routing(&h, &owner.id).await;
+    let fix = refresh(&h, &owner).await.expect("queued");
+    assert_ne!(fix.id, owner.id, "a refresh is an item of its own");
+    assert_eq!(
+        routing_kept(&h, &owner.id).await,
+        [None, None],
+        "not routed"
+    );
+    assert_eq!(routing_kept(&h, &fix.id).await, [None, None], "not routed");
+    assert_eq!(fix.model_plan.0["implement"][0].model, own.model);
+    assert!(fix.model_plan.sizing().is_none(), "not sized");
+    for key in fix.model_plan.0.keys() {
+        let origin = fix.model_plan.origin(&fix.id, key, 0);
+        assert_ne!(origin.model.source, PlanSource::Learned, "{key}");
+    }
+    let [choices, evidence] = routing_kept(&h, &fresh.id).await;
+    assert!(
+        choices.is_some() && evidence.is_some(),
+        "routing keeps its choice"
+    );
+}
+
+/// A11 check 2: a retry keeps its frozen plan whole. A route learned since
+/// the item was planned, which a fresh enqueue takes, is not applied to the
+/// slot the retried item's plan filled by default, nor does it move the sizing.
+#[tokio::test]
+async fn a_retry_applies_no_route_learned_since_its_plan_was_frozen() {
+    use crate::effort_sizing::{cancel, retry};
+    let (mut h, _gh) = delivering().await;
+    let mut steady = h.ctx.config.clone();
+    steady.learning.explore_rate = 0.0;
+    h.restart_with(steady);
+    let owner = enqueue(&h, "the change").await;
+    let own = owner.model_plan.0["implement"][0].clone();
+    let origin = owner.model_plan.origin(&owner.id, "implement", 0);
+    assert_ne!(
+        origin.model.source,
+        PlanSource::Explicit,
+        "a defaulted slot"
+    );
+    assert!(owner.model_plan.sizing().is_some(), "sized");
+    cancel(&h, &owner.id).await;
+    learn_implement_route(&h, &own.model.to_string(), 2.0, 5).await;
+    learn_implement_route(&h, "codex/cheap", 0.2, 5).await;
+    let fresh = enqueue(&h, "learned").await;
+    let learned = fresh.model_plan.0["implement"][0].model.to_string();
+    assert_eq!(learned, "codex/cheap", "eligible: a fresh plan takes it");
+    // As if planned with learning off, so routing chooses for it afresh.
+    forget_routing(&h, &owner.id).await;
+    let retried = retry(&h, &owner.id).await.expect("retried");
+    let [offered, _] = routing_kept(&h, &owner.id).await;
+    let offered = offered.expect("a retry routes its unnamed slots, as 1.6.3 does");
+    assert!(
+        offered.contains("cheap"),
+        "the route was offered: {offered}"
+    );
+    assert_eq!(
+        retried.model_plan, owner.model_plan,
+        "models, origins and sizing"
+    );
+    assert_eq!(
+        retried.model_plan.0["implement"][0], own,
+        "the frozen choice"
+    );
+}
+
+async fn forget_routing(h: &Harness, id: &archon_core::id::QueueItemId) {
+    let mut store = h.ctx.store.lock().await;
+    for what in ["choices", "routing"] {
+        store.kv_delete(&format!("learning/{what}/{id}")).unwrap();
+    }
+    drop(store);
+    assert_eq!(routing_kept(h, id).await, [None, None]);
+}
+
+/// What learned routing kept for item `id`: its choices and their evidence,
+/// written whenever it routes the item.
+async fn routing_kept(h: &Harness, id: &archon_core::id::QueueItemId) -> [Option<String>; 2] {
+    let store = h.ctx.store.lock().await;
+    let kept = |what: &str| store.kv_get(&format!("learning/{what}/{id}")).unwrap();
+    [kept("choices"), kept("routing")]
 }

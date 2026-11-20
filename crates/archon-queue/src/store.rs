@@ -28,7 +28,7 @@ mod graph;
 mod handoffs;
 pub mod initiatives;
 mod items;
-pub use items::Asked;
+pub use items::{Asked, PlanFieldCount};
 mod lessons;
 mod merges;
 mod model_evidence;
@@ -68,6 +68,7 @@ use archon_core::id::{
 use archon_core::merge::MergeRequest;
 use archon_core::notify::{FeedEntry, FeedItem, Question};
 use archon_core::protocol::{ItemQuery, RepoRef, RunPlan};
+use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{PauseState, QueueItem, QueueState};
 use archon_core::repo::Repo;
 use archon_core::run::{OperatorGate, PipelineRun, StageRun};
@@ -155,6 +156,7 @@ struct Learned {
     /// Aether's connected models with their tiers, refreshed while stale.
     catalog: archon_core::model_tier::ModelCatalog,
     catalog_at: Option<archon_core::Timestamp>,
+    catalog_generation: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -360,16 +362,51 @@ impl Store {
     ) -> Result<QueueItem, ArchonError> {
         items::insert(&mut self.conn, item, idempotency_key, asked)
     }
+    /// The stored item when `item` replays idempotency `key` (see
+    /// `items::replayed`); a different request under the key is refused.
+    pub fn replayed_enqueue(
+        &self,
+        item: &QueueItem,
+        key: &str,
+        asked: (&Asked, Option<&OntoTarget>),
+    ) -> Result<Option<QueueItem>, ArchonError> {
+        let mut stored = items::replayed(&self.conn, item, key, asked)?;
+        if let Some(stored) = &mut stored {
+            self.canonicalize_items(std::slice::from_mut(stored));
+        }
+        Ok(stored)
+    }
+    /// The plan a fingerprint from before `asked_plan` filled for idempotency
+    /// `key`, which a replay of it is matched by (see `items::legacy_plan`).
+    pub fn legacy_replay_plan(
+        &self,
+        key: &str,
+    ) -> Result<Option<archon_core::model::ModelPlan>, ArchonError> {
+        items::legacy_plan(&self.conn, key)
+    }
     pub fn item(&self, id: &QueueItemId) -> Result<QueueItem, ArchonError> {
-        items::load(&self.conn, id)
+        let mut item = items::load(&self.conn, id)?;
+        self.canonicalize_items(std::slice::from_mut(&mut item));
+        Ok(item)
+    }
+    /// How many plan fields of the unfinished items read as unattributed or
+    /// legacy, and how many of their rows do not decode at all.
+    pub fn plan_field_count(&self) -> Result<PlanFieldCount, ArchonError> {
+        items::plan_field_count(&self.conn)
     }
     /// The item an enqueue with idempotency `key` stored, if any.
     pub fn item_by_key(&self, key: &str) -> Result<Option<QueueItem>, ArchonError> {
-        items::by_key(&self.conn, key)
+        let mut item = items::by_key(&self.conn, key)?;
+        if let Some(item) = &mut item {
+            self.canonicalize_items(std::slice::from_mut(item));
+        }
+        Ok(item)
     }
     /// Newest first, at most `limit` (default 50) items.
     pub fn items(&self, query: &ItemQuery) -> Result<Vec<QueueItem>, ArchonError> {
-        items::list(&self.conn, query)
+        let mut items = items::list(&self.conn, query)?;
+        self.canonicalize_items(&mut items);
+        Ok(items)
     }
     /// Items whose id starts with a checked `qi_…` prefix, oldest first, at
     /// most `limit`.
@@ -378,7 +415,17 @@ impl Store {
         prefix: &str,
         limit: usize,
     ) -> Result<Vec<QueueItem>, ArchonError> {
-        items::with_id_prefix(&self.conn, prefix, limit)
+        let mut items = items::with_id_prefix(&self.conn, prefix, limit)?;
+        self.canonicalize_items(&mut items);
+        Ok(items)
+    }
+
+    fn canonicalize_items(&self, items: &mut [QueueItem]) {
+        if let Some(catalog) = self.fresh_model_catalog() {
+            for item in items {
+                item.model_plan.canonicalize_aliases(&catalog);
+            }
+        }
     }
     /// Apply a checked transition; returns the updated item. Runs named by
     /// the next state must belong to the item, and an item with a live run
@@ -421,6 +468,16 @@ impl Store {
         at: Timestamp,
     ) -> Result<Vec<QueueItemId>, ArchonError> {
         items::requeue_orphaned_dispatching(&mut self.conn, at)
+    }
+
+    /// Return an admitted item without a live run to the queue after a
+    /// pre-run admission condition changes.
+    pub fn release_dispatching(
+        &mut self,
+        id: &QueueItemId,
+        at: Timestamp,
+    ) -> Result<bool, ArchonError> {
+        items::release_dispatching(&mut self.conn, id, at)
     }
 
     // ----- pipeline and stage runs ------------------------------------------
@@ -801,6 +858,13 @@ impl Store {
         effort: Option<archon_core::model::Effort>,
     ) -> Result<(), ArchonError> {
         delegated::record(&self.conn, agent, parent, model, effort)
+    }
+    /// The agent that delegated to `agent`, as [`Self::record_delegated`] stored it.
+    pub fn delegated_parent(
+        &self,
+        agent: &AetherAgentId,
+    ) -> Result<Option<AetherAgentId>, ArchonError> {
+        delegated::parent_of(&self.conn, agent)
     }
     /// Every agent beneath `agent`, at any depth, with what each was charged.
     pub fn delegated_beneath(

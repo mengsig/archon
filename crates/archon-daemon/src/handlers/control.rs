@@ -52,6 +52,10 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
         pid: std::process::id(),
         started_at: ctx.started_at,
         aether: link_status(ctx),
+        orchestrator_refresh_delayed: match &aether.orchestrator {
+            Some(info) if info.freshness.is_some() => None,
+            _ => supervisor::unrecorded_refresh_delay(ctx).await?,
+        },
         orchestrator: aether.orchestrator,
         caps,
         pause: snapshot.pause,
@@ -78,6 +82,9 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
         merge_granted: counts.merges.granted,
         health: Some(aether.health),
         quota: crate::quota::status(ctx),
+        unattributed_plan_fields: count(counts.plan_fields.unattributed),
+        legacy_plan_fields: count(counts.plan_fields.legacy),
+        unreadable_plan_items: count(counts.plan_fields.unreadable),
         recovery: ctx.recovery.progress(),
         integration,
         stage_warnings,
@@ -101,6 +108,7 @@ struct StoreCounts {
     directives: Vec<Directive>,
     open_gates: usize,
     merges: super::autonomy::MergesNow,
+    plan_fields: archon_queue::store::PlanFieldCount,
 }
 
 impl StoreCounts {
@@ -124,6 +132,7 @@ impl StoreCounts {
             directives: store.directives(now)?,
             open_gates: store.open_gates()?.len(),
             merges: super::autonomy::merges_now(&store)?,
+            plan_fields: store.plan_field_count()?,
         })
     }
 }
@@ -431,6 +440,9 @@ pub(super) async fn list_pipelines(
 ) -> Result<Reply, ArchonError> {
     let env = repo_env(ctx, repo).await?;
     let mut listing = env.catalog()?.listing();
+    if ctx.config.models.effort_sizing() {
+        archon_pipeline::sized_nudges::sized_nudges(&mut listing);
+    }
     let Some(name) = pipeline else {
         return Ok(Reply::Catalog(listing));
     };
@@ -452,7 +464,7 @@ pub(super) async fn model_policy(
     repo: Option<&RepoRef>,
 ) -> Result<Reply, ArchonError> {
     let env = repo_env(ctx, repo).await?;
-    Ok(Reply::ModelPolicy(env.policy(&ctx.config)))
+    Ok(Reply::ModelPolicy(env.resolved_policy(ctx)))
 }
 
 async fn repo_env(ctx: &DaemonContext, repo: Option<&RepoRef>) -> Result<RepoEnv, ArchonError> {

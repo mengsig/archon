@@ -46,6 +46,21 @@ pub(super) struct Held {
     /// coalescing window. A digest drops this, and waits the window.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub at_once: bool,
+    /// Its place in the order a flush numbers held news in, from 1; 0 for
+    /// news held since the last flush, which no flush waits for.
+    #[serde(default, skip_serializing_if = "is_unnumbered")]
+    pub seq: u64,
+}
+
+fn is_unnumbered(seq: &u64) -> bool {
+    *seq == 0
+}
+
+/// The lowest number among `held`, 0 when none is numbered: a digest or a
+/// batch of it is as early as its earliest news for a waiting flush.
+pub(super) fn first_seq(held: &[Held]) -> u64 {
+    let numbered = held.iter().map(|news| news.seq).filter(|seq| *seq > 0);
+    numbered.min().unwrap_or(0)
 }
 
 impl Held {
@@ -57,6 +72,7 @@ impl Held {
             quiet,
             defer_until: None,
             at_once: false,
+            seq: 0,
         }
     }
 
@@ -194,6 +210,13 @@ pub(super) fn compact(held: Vec<Held>, facts: &Facts, now: Timestamp) -> Vec<Hel
             Relevance::Current | Relevance::Stale => false,
         };
     }
+    // The digest stands for its earliest dropped news.
+    let dropped_seqs = held.iter().zip(&keep).filter(|(_, kept)| !**kept);
+    let seq = dropped_seqs
+        .map(|(news, _)| news.seq)
+        .filter(|seq| *seq > 0)
+        .min()
+        .unwrap_or(0);
     let (dropped, kept) = split_kept(held, &keep);
     if dropped.is_empty() {
         return kept;
@@ -204,6 +227,7 @@ pub(super) fn compact(held: Vec<Held>, facts: &Facts, now: Timestamp) -> Vec<Hel
         quiet,
         defer_until,
         at_once: false,
+        seq,
     }];
     events.extend(kept);
     events
@@ -262,7 +286,7 @@ fn classify(held: &[Held], facts: &Facts, now: Timestamp) -> Vec<Relevance> {
         .iter()
         .rev()
         .map(
-            |news| match relevance_of(&news.event, facts, &mut finished_later) {
+            |news| match relevance_of(&news.event, facts, now, &mut finished_later) {
                 Relevance::Current if news.is_old(now) => Relevance::Stale,
                 verdict => verdict,
             },
@@ -279,13 +303,20 @@ fn classify(held: &[Held], facts: &Facts, now: Timestamp) -> Vec<Relevance> {
 /// asked for on GitHub is pinned then, as its thread awaits the outcome. An
 /// `item_blocked` stays current while the item is still blocked. An earlier
 /// digest is folded into the new one. A `mirror` change is rare and says what
-/// the orchestrator reads is stale, so it is always kept.
+/// the orchestrator reads is stale, so it is always kept. A `github_watch` is
+/// kept too: its walk stored the baseline, so no later walk tells it again.
+/// A `quota_pace` is told once per window, so it is kept until that resets.
 fn relevance_of(
     event: &TriggerEvent,
     facts: &Facts,
+    now: Timestamp,
     finished_later: &mut HashSet<QueueItemId>,
 ) -> Relevance {
     match event {
+        TriggerEvent::QuotaPace { pace, .. } => match pace.resets_at > now {
+            true => Relevance::Pinned,
+            false => Relevance::Stale,
+        },
         TriggerEvent::OrchestratorBriefing { .. }
         | TriggerEvent::OperatorAnswer { .. }
         | TriggerEvent::AgentMessage { .. }
@@ -294,7 +325,8 @@ fn relevance_of(
         | TriggerEvent::ChatCommand { .. }
         | TriggerEvent::ChatMergeRefused { .. }
         | TriggerEvent::MergeFinished { .. }
-        | TriggerEvent::Mirror { .. } => Relevance::Pinned,
+        | TriggerEvent::Mirror { .. }
+        | TriggerEvent::GithubWatch { .. } => Relevance::Pinned,
         TriggerEvent::GateOpened { question, .. } => {
             match facts.open_gate_questions.contains(question) {
                 true => Relevance::Pinned,
@@ -374,6 +406,43 @@ mod tests {
         }
     }
 
+    fn pace(resets_at: Timestamp) -> TriggerEvent {
+        TriggerEvent::QuotaPace {
+            provider: "codex".into(),
+            pace: archon_core::quota::pace::WindowPace {
+                window: "7d".into(),
+                window_minutes: 10080,
+                used_percent: 78,
+                elapsed_percent: 29,
+                resets_at,
+                empty_at: None,
+                short: true,
+            },
+            note: "choose".into(),
+            providers: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_pace_warning_outlives_a_full_batch_until_its_window_resets() {
+        let now = archon_core::now();
+        let ahead = now + chrono::TimeDelta::days(5);
+        let mut held = vec![at(pace(ahead), now), at(pace(now), now)];
+        held.extend((0..MAX_BATCH_EVENTS).map(|n| at(budget(&n.to_string()), now)));
+        let events = compacted(held, &Facts::default(), now);
+        let kept: Vec<_> = (events.iter())
+            .filter_map(|event| match event {
+                TriggerEvent::QuotaPace { pace, .. } => Some(pace.resets_at),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            kept,
+            [ahead],
+            "kept while its window runs, dropped once it reset"
+        );
+    }
+
     fn blocked(item: &QueueItemId) -> TriggerEvent {
         TriggerEvent::ItemBlocked {
             item: item.clone(),
@@ -420,6 +489,29 @@ mod tests {
         };
         assert!(note.contains("list_queue") && note.contains("archon log"));
         dropped.clone()
+    }
+
+    /// A flush waits for a digest as long as for the earliest news it folds.
+    #[test]
+    fn a_digest_takes_the_earliest_number_of_the_news_it_drops() {
+        let now = archon_core::now();
+        let backlog = || -> Vec<Held> {
+            (0..MAX_BATCH_EVENTS + 2)
+                .map(|n| at(budget(&n.to_string()), now))
+                .collect()
+        };
+        let mut held = backlog();
+        held[0].seq = 5;
+        held[1].seq = 3;
+        held[2].seq = 7;
+        let kept = compact(held, &Facts::default(), now);
+        assert!(matches!(kept[0].event, TriggerEvent::NewsDigest { .. }));
+        assert_eq!(kept[0].seq, 3, "the earliest of the dropped two");
+        assert_eq!(kept[1].seq, 7, "kept news keeps its number");
+        assert_eq!(first_seq(&kept), 3);
+        let unnumbered = compact(backlog(), &Facts::default(), now);
+        assert_eq!(unnumbered[0].seq, 0, "no flush waits for it");
+        assert_eq!(first_seq(&unnumbered), 0);
     }
 
     #[test]
@@ -471,6 +563,32 @@ mod tests {
         assert_eq!(
             scopes,
             ["4", "5", "6", "7", "8", "9", "10", "11", "12", "13"]
+        );
+    }
+
+    #[test]
+    fn watched_repository_news_survives_compaction_however_old_or_crowded() {
+        let now = archon_core::now();
+        let long_ago = now - TimeDelta::hours(3);
+        let watch = TriggerEvent::GithubWatch {
+            repo: "ccso".into(),
+            repository: "owner/ccso".into(),
+            changes: vec![],
+            rest: BTreeMap::from([("new_pr".to_owned(), vec![7])]),
+            truncated: false,
+            note: None,
+            operator: false,
+            trust: "news only".into(),
+        };
+        let mut held: Vec<Held> = (0..MAX_BATCH_EVENTS).map(|_| at(answer(), now)).collect();
+        held.insert(0, at(watch.clone(), long_ago));
+        held.push(at(budget("daily"), now));
+        let events = compacted(held, &Facts::default(), now);
+        assert_eq!(dropped(&events), BTreeMap::from([("budget".to_owned(), 1)]));
+        assert_eq!(
+            events.iter().filter(|e| **e == watch).count(),
+            1,
+            "the watch's details are delivered, not counted"
         );
     }
 

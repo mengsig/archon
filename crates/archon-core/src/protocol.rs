@@ -222,6 +222,10 @@ pub struct ClientFrame {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "frame", rename_all = "snake_case")]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "most frames are replies; boxing them would allocate once per reply"
+)]
 pub enum ServerFrame {
     /// `id: 0` is the daemon explaining why it is closing the connection.
     Reply {
@@ -281,6 +285,20 @@ pub enum Request {
         path: String,
         /// Where it goes in the store; the path's last component if unset.
         name: Option<String>,
+        /// Aether's out-of-band MCP caller identity, never a tool argument.
+        caller: Option<AetherAgentId>,
+    },
+    /// A stage agent has its verdict read before it completes, and is asked
+    /// once to restate one Archon cannot read (ARCHITECTURE §6.4).
+    SubmitVerdict {
+        /// The `summary` it is about to complete with.
+        summary: String,
+        /// The `structured` data it is about to complete with.
+        #[serde(default)]
+        structured: Option<serde_json::Value>,
+        /// Sent as the restatement an earlier answer asked for, which is final.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        restating: bool,
         /// Aether's out-of-band MCP caller identity, never a tool argument.
         caller: Option<AetherAgentId>,
     },
@@ -759,6 +777,19 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         priority: Option<Priority>,
     },
+    /// Watch, re-time or (`remove`) stop watching a registered repository's
+    /// open pull requests; replies with every watch. Never registers one, and
+    /// GitHub-borne operator authority cannot reach it.
+    WatchRepo {
+        repo: RepoRef,
+        /// At least [`github_links::MIN_WATCH_MINUTES`]; the sync's default when left out.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        interval_minutes: Option<u32>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        remove: bool,
+    },
+    /// Every repository watch.
+    RepoWatches,
 }
 
 /// Who may make a request and whether it changes Archon.
@@ -821,7 +852,8 @@ impl Request {
             | Self::RunPlan { .. }
             | Self::ItemLinks { .. }
             | Self::IssueItems { .. }
-            | Self::ListGithubObjects { .. } => Read,
+            | Self::ListGithubObjects { .. }
+            | Self::RepoWatches => Read,
             Self::CheckUpdates | Self::RemoteStatus => OperatorRead,
             Self::OperatorCommand { .. }
             | Self::UndoAuthority { .. }
@@ -859,6 +891,7 @@ impl Request {
             | Self::Resume(_)
             | Self::MessageOrchestrator { .. }
             | Self::PublishArtifact { .. }
+            | Self::SubmitVerdict { .. }
             | Self::ApproveIntent(_)
             | Self::Enqueue(_)
             | Self::UpdateItem { .. }
@@ -885,7 +918,8 @@ impl Request {
             | Self::RequestMerge { .. }
             | Self::LinkIssue { .. }
             | Self::UnlinkIssue { .. }
-            | Self::ImportIssue { .. } => Change,
+            | Self::ImportIssue { .. }
+            | Self::WatchRepo { .. } => Change,
         }
     }
 
@@ -1217,6 +1251,8 @@ pub enum Reply {
     Gc(Box<GcReport>),
     Artifacts(Box<ArtifactListing>),
     ArtifactPage(Box<ArtifactPage>),
+    /// How `submit_verdict` read a stage's verdict, and what it decided.
+    VerdictCheck(crate::run::VerdictCheck),
     CostReport(Box<CostReport>),
     ModelEvidence(Box<ModelEvidenceReport>),
     Initiative(Box<InitiativeDetail>),
@@ -1256,6 +1292,7 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         synced_at: Option<Timestamp>,
     },
+    RepoWatches(Vec<github_links::RepoWatchView>),
 }
 
 /// What one gc pass did (ARCHITECTURE §13.2). Paths are real paths.
@@ -1498,6 +1535,10 @@ pub struct DaemonStatus {
     pub started_at: Timestamp,
     pub aether: AetherLinkStatus,
     pub orchestrator: Option<OrchestratorInfo>,
+    /// Why an unfinished upgrade refresh has not happened, when `orchestrator`
+    /// cannot say: none is recorded, or its creation is not. `None` from an older archond.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orchestrator_refresh_delayed: Option<String>,
     pub caps: Caps,
     pub pause: PauseState,
     pub running_agents: u32,
@@ -1554,6 +1595,18 @@ pub struct DaemonStatus {
     /// archond that asked Aether while answering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<StatusHealth>,
+    /// Plan fields of unfinished items no writer accounted for, which
+    /// archond treats as pins; `0` from an older archond.
+    #[serde(default)]
+    pub unattributed_plan_fields: u32,
+    /// Plan fields of unfinished items stored before origins were recorded,
+    /// pins as well; `0` from an older archond.
+    #[serde(default)]
+    pub legacy_plan_fields: u32,
+    /// Unfinished items whose row does not decode, so their fields are in
+    /// neither count; `0` from an older archond.
+    #[serde(default)]
+    pub unreadable_plan_items: u32,
     /// Each provider's quota headroom for stage routing, as archond last
     /// read it from Aether. `None` before a reading or from an older archond.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1626,6 +1679,10 @@ pub struct ProviderQuotaStatus {
     /// The earliest reset among its windows still ahead.
     pub next_reset: Option<Timestamp>,
     pub windows: Vec<crate::quota::QuotaWindow>,
+    /// Each trusted window's spend against its time passed; empty while the
+    /// reading is stale or names no window length and reset.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pace: Vec<crate::quota::pace::WindowPace>,
 }
 
 impl ProviderQuotaStatus {
@@ -1656,6 +1713,10 @@ impl ProviderQuotaStatus {
                 "{lead}{} {}% left",
                 window.name, window.remaining_percent
             );
+        }
+        if !self.pace.is_empty() {
+            let paces: Vec<String> = self.pace.iter().map(|p| p.describe()).collect();
+            let _ = write!(line, "; pace {}", paces.join(", "));
         }
         line
     }
@@ -1861,14 +1922,7 @@ impl OrchestratorInfo {
             "generation {}, created by {}",
             self.generation, fresh.created_by
         );
-        match fresh.prompt_outdated {
-            Some(true) => line.push_str("; prompt outdated"),
-            Some(false) => {}
-            None => line.push_str("; prompt unknown (the instructions file cannot be read)"),
-        }
-        if fresh.tools_outdated {
-            line.push_str("; tools outdated");
-        }
+        line.push_str(&fresh.describe_outdated());
         if let Some(drift) = &fresh.settings_drift {
             let _ = write!(
                 line,
@@ -1907,6 +1961,10 @@ pub struct OrchestratorFreshness {
     /// ones it was created with; `None` when they match or were not recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings_drift: Option<SettingsDrift>,
+    /// Why the fresh generation an upgrade owes it has not started yet;
+    /// `None` when none is owed, or `refresh_on_upgrade` is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_delayed: Option<String>,
 }
 
 /// Model and effort as `provider/model effort`.
@@ -1917,12 +1975,38 @@ pub struct SettingsDrift {
 }
 
 impl OrchestratorFreshness {
+    /// The prompt and tools part of the status line. A refresh Archon owes
+    /// and will make itself is shown as delayed, with why, not as outdated.
+    fn describe_outdated(&self) -> String {
+        let prompt = self.prompt_outdated == Some(true);
+        let mut line = String::new();
+        if let Some(reason) = &self.refresh_delayed {
+            let what = match (prompt, self.tools_outdated) {
+                (true, true) => " (prompt and tools)",
+                (true, false) => " (prompt)",
+                (false, true) => " (tools)",
+                (false, false) => "",
+            };
+            let _ = write!(line, "; upgrade refresh{what} delayed: {reason}");
+        } else if prompt {
+            line.push_str("; prompt outdated");
+        }
+        if self.prompt_outdated.is_none() {
+            line.push_str("; prompt unknown (the instructions file cannot be read)");
+        }
+        if self.tools_outdated && self.refresh_delayed.is_none() {
+            line.push_str("; tools outdated");
+        }
+        line
+    }
+
     /// Whether a restart is owed, or may be when the prompt is unknown.
     pub fn is_stale(&self) -> bool {
         self.prompt_outdated != Some(false)
             || self.tools_outdated
             || self.new_lessons > 0
             || self.settings_drift.is_some()
+            || self.refresh_delayed.is_some()
     }
 }
 
@@ -1978,6 +2062,8 @@ pub enum WaitingReasonCode {
     Blocked,
     /// Every provider that meets one of its stages' floors is out of quota.
     ProviderQuota,
+    /// A model or the model catalog is unavailable.
+    ModelCatalogUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -2013,6 +2099,9 @@ pub struct ItemDetail {
     /// How the cost of each stage run that delegated splits.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub delegations: BTreeMap<StageRunId, StageDelegation>,
+    /// Where each plan entry's model and effort came from, keyed like the plan.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plan_origins: BTreeMap<String, Vec<crate::plan_origin::EntryOrigin>>,
     /// The default effort of each plan key, to see which choices exceed it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub default_efforts: BTreeMap<String, Effort>,
@@ -2403,6 +2492,47 @@ mod tests {
     use super::*;
     use crate::github::OperatorUsers;
 
+    /// A refresh Archon owes and will make itself is shown as delayed, with
+    /// why: "prompt outdated" is only said when the operator must restart.
+    #[test]
+    fn an_owed_refresh_is_described_as_delayed_with_its_reason() {
+        let info = |freshness: serde_json::Value| -> OrchestratorInfo {
+            serde_json::from_value(serde_json::json!({
+                "agent": "agt_01M52R3JSXYHJJA0AZX2B6MCD7", "model": "claude-code/opus",
+                "effort": "high", "status": "ready", "restarts": 0, "generation": 7,
+                "freshness": freshness,
+            }))
+            .unwrap()
+        };
+        let outdated = serde_json::json!({
+            "created_by": "1.6.3", "prompt_outdated": true, "tools_outdated": true,
+            "new_lessons": 0,
+        });
+        let unowed = info(outdated.clone());
+        assert_eq!(unowed.freshness.as_ref().unwrap().refresh_delayed, None);
+        assert_eq!(
+            unowed.describe_freshness(),
+            "generation 7, created by 1.6.3; prompt outdated; tools outdated"
+        );
+        let mut delayed = outdated;
+        delayed["refresh_delayed"] = "2 attempts failed, the last with: busy".into();
+        let owed = info(delayed.clone());
+        assert_eq!(
+            owed.describe_freshness(),
+            "generation 7, created by 1.6.3; upgrade refresh (prompt and tools) delayed: \
+             2 attempts failed, the last with: busy"
+        );
+        assert!(owed.freshness.as_ref().unwrap().is_stale());
+        delayed["prompt_outdated"] = false.into();
+        delayed["tools_outdated"] = false.into();
+        let unfinished = info(delayed).describe_freshness();
+        assert!(
+            unfinished
+                .ends_with("; upgrade refresh delayed: 2 attempts failed, the last with: busy"),
+            "{unfinished}"
+        );
+    }
+
     #[test]
     fn client_frames_flatten_the_command_beside_req() {
         let frame = ClientFrame {
@@ -2536,7 +2666,7 @@ mod tests {
             priority: Priority::Normal,
             dependencies: vec![],
             tags: vec![],
-            model_plan: crate::model::ModelPlan::default(),
+            model_plan: Default::default(),
             model_reasons: None,
             budget_usd: None,
             stage_timeouts: BTreeMap::new(),

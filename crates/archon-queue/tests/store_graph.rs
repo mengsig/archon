@@ -5,9 +5,11 @@ mod common;
 use archon_core::error::ArchonError;
 use archon_core::github::GithubThread;
 use archon_core::id::QueueItemId;
-use archon_core::model::{ModelChoice, ModelPlanDraft};
+use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelPlanDraft};
+use archon_core::plan_origin::PlannedPlan;
 use archon_core::protocol::ItemQuery;
 use archon_core::queue::{PauseState, Priority, QueueItem, QueueState};
+use archon_core::repo::Repo;
 use archon_core::run::StageState;
 use archon_queue::Store;
 use archon_queue::dispatch::DependencyState;
@@ -87,7 +89,11 @@ fn rerouted(first: &QueueItem) -> QueueItem {
         model: "codex/gpt-6.1-sol".parse().unwrap(),
         ..choice()
     };
-    retry.model_plan.0.insert("implement".into(), vec![other]);
+    retry
+        .model_plan
+        .legacy_mut()
+        .0
+        .insert("implement".into(), vec![other]);
     assert_ne!(retry.model_plan, first.model_plan);
     retry
 }
@@ -105,7 +111,7 @@ fn a_retry_that_routing_fills_otherwise_returns_the_first_item() {
     assert_eq!(again.unwrap(), first);
     // Naming another plan is another request.
     let named = Asked {
-        model_plan: ModelPlanDraft::from(retry.model_plan.clone()),
+        model_plan: ModelPlanDraft::from(retry.model_plan.plan().clone()),
         ..Asked::default()
     };
     let err = store.insert_enqueued(&retry, Some("enq-1"), &named);
@@ -126,7 +132,7 @@ fn a_fingerprint_of_the_filled_plan_still_matches_a_retry_filled_alike() {
         .unwrap();
     // The fingerprint as stores wrote it before `asked_plan`.
     let conn = rusqlite::Connection::open(&path).unwrap();
-    let plan = serde_json::to_string(&first.model_plan).unwrap();
+    let plan = serde_json::to_string(first.model_plan.plan()).unwrap();
     let changed = conn.execute(
         "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
                                              '$.model_plan', json(?1))",
@@ -142,6 +148,210 @@ fn a_fingerprint_of_the_filled_plan_still_matches_a_retry_filled_alike() {
     assert_eq!(again.unwrap().id, first.id);
     let err = store.insert_enqueued(&rerouted(&first), Some("old"), &Asked::default());
     assert!(matches!(err, Err(ArchonError::Invalid(_))), "{err:?}");
+    assert_eq!(count(&store), 1);
+}
+
+fn legacy_keyed_store(repo: &Repo, first: &QueueItem) -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut store = Store::open(&path).unwrap();
+    store.insert_repo(repo).unwrap();
+    let named = Asked {
+        model_plan: ModelPlanDraft::from(first.model_plan.plan().clone()),
+        ..Asked::default()
+    };
+    store.insert_enqueued(first, Some("old"), &named).unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let plan = serde_json::to_string(first.model_plan.plan()).unwrap();
+    let changed = conn.execute(
+        "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
+                                             '$.model_plan', json(?1))",
+        [plan],
+    );
+    assert_eq!(changed.unwrap(), 1);
+    (dir, store)
+}
+
+/// The enqueue handler asks for a replay before any live model check; a
+/// legacy fingerprint matches only once the retry's plan is filled.
+#[test]
+fn a_legacy_fingerprint_replays_by_its_filled_plan_alone() {
+    let repo = common::repo("alpha");
+    let first = item(Some(&repo), "fix");
+    let (_dir, store) = legacy_keyed_store(&repo, &first);
+    let named = Asked {
+        model_plan: ModelPlanDraft::from(first.model_plan.plan().clone()),
+        ..Asked::default()
+    };
+    let unfilled = QueueItem {
+        intent: None,
+        id: QueueItemId::new(),
+        model_plan: PlannedPlan::unattributed(&QueueItemId::new(), ModelPlan::default()),
+        ..first.clone()
+    };
+    let early = store.replayed_enqueue(&unfilled, "old", (&named, None));
+    assert_eq!(
+        early.unwrap(),
+        None,
+        "an unfilled plan waits for the stored one"
+    );
+    let stored = store.legacy_replay_plan("old").unwrap();
+    assert_eq!(stored.as_ref(), Some(first.model_plan.plan()));
+    let filled = QueueItem {
+        model_plan: PlannedPlan::unattributed(&unfilled.id, stored.unwrap()),
+        ..unfilled
+    };
+    let again = store.replayed_enqueue(&filled, "old", (&named, None));
+    assert_eq!(again.unwrap().map(|i| i.id), Some(first.id.clone()));
+    assert_eq!(store.legacy_replay_plan("unused").unwrap(), None);
+}
+
+#[test]
+fn a_changed_request_under_a_legacy_fingerprint_key_is_refused() {
+    let repo = common::repo("alpha");
+    let first = item(Some(&repo), "fix");
+    let (_dir, store) = legacy_keyed_store(&repo, &first);
+    let named = Asked {
+        model_plan: ModelPlanDraft::from(first.model_plan.plan().clone()),
+        ..Asked::default()
+    };
+    assert_eq!(
+        first.model_plan.plan().0["implement"][0].effort,
+        Effort::High
+    );
+    let mut lower = first.model_plan.plan().clone();
+    lower.0.get_mut("implement").unwrap()[0].effort = Effort::Low;
+    let id = QueueItemId::new();
+    let other_effort = QueueItem {
+        model_plan: PlannedPlan::unattributed(&id, lower),
+        id,
+        ..first.clone()
+    };
+    let retitled = QueueItem {
+        title: "another".into(),
+        id: QueueItemId::new(),
+        ..first.clone()
+    };
+    // Routing that fills the plan otherwise is another request too.
+    let unnamed = Asked::default();
+    let retries = [
+        (&other_effort, &named),
+        (&retitled, &named),
+        (&rerouted(&first), &unnamed),
+    ];
+    for (retry, asked) in retries {
+        let err = store.replayed_enqueue(retry, "old", (asked, None));
+        assert!(matches!(err, Err(ArchonError::Invalid(_))), "{err:?}");
+    }
+}
+
+/// A store from before canonical ids kept a named alias as asked: the same
+/// request, whose plan now holds the alias's canonical id, still replays.
+#[test]
+fn a_fingerprint_of_a_named_alias_matches_its_retry_resolved_to_a_canonical_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut store = Store::open(&path).unwrap();
+    let repo = common::repo("alpha");
+    store.insert_repo(&repo).unwrap();
+    let alias = ModelChoice {
+        model: "claude-code/opus".parse().unwrap(),
+        ..choice()
+    };
+    let mut first = item(Some(&repo), "fix");
+    let plan = first.model_plan.legacy_mut();
+    plan.0.insert("implement".into(), vec![alias.clone()]);
+    let named = Asked {
+        model_plan: ModelPlanDraft::from(first.model_plan.plan().clone()),
+        ..Asked::default()
+    };
+    store.insert_enqueued(&first, Some("old"), &named).unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let plan = serde_json::to_string(first.model_plan.plan()).unwrap();
+    let changed = conn.execute(
+        "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
+                                             '$.model_plan', json(?1))",
+        [plan],
+    );
+    assert_eq!(changed.unwrap(), 1);
+    let canonical = ModelChoice {
+        model: "claude-code/claude-opus-5-5".parse().unwrap(),
+        ..alias
+    };
+    let mut retry = QueueItem {
+        intent: None,
+        id: QueueItemId::new(),
+        ..first.clone()
+    };
+    let plan = retry.model_plan.legacy_mut();
+    plan.0.insert("implement".into(), vec![canonical]);
+    let again = store.insert_enqueued(&retry, Some("old"), &named);
+    assert_eq!(again.unwrap().id, first.id);
+    // Another model under the key is another request, named or filled.
+    let other = Asked {
+        model_plan: ModelPlanDraft::from(rerouted(&first).model_plan.plan().clone()),
+        ..Asked::default()
+    };
+    let err = store.insert_enqueued(&rerouted(&first), Some("old"), &other);
+    assert!(matches!(err, Err(ArchonError::Invalid(_))), "{err:?}");
+    assert_eq!(count(&store), 1);
+}
+
+/// A fingerprint of 1.6.3 holds the plan as the request filled it. A retry
+/// whose plan the sizer will change as it is stored still matches it.
+#[test]
+fn a_fingerprint_of_the_filled_plan_matches_a_retry_whose_plan_is_still_to_size() {
+    use archon_core::effort_sizing::StageFacts;
+    use archon_core::model::Effort;
+    use archon_core::plan_origin::{EffortSizer, PlanSource, PlanWriter, Sizing};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut store = Store::open(&path).unwrap();
+    let repo = common::repo("alpha");
+    store.insert_repo(&repo).unwrap();
+    let facts = |_: &str| {
+        let kind = archon_core::catalog::StageKind::Work;
+        Some(StageFacts::new(Effort::Medium, kind, false))
+    };
+    let to_size = |title: &str| {
+        let mut made = item(Some(&repo), title);
+        made.tags = vec!["risk:critical".into()];
+        let mut writer = PlanWriter::new(&made.id, t(1));
+        let filled = made.model_plan.plan().clone();
+        writer.filled(filled, (PlanSource::Fallback, PlanSource::Fallback));
+        let (cap, size) = (Effort::XHigh, None);
+        let facts = &facts;
+        made.model_plan = writer.finish(Sizing::On(EffortSizer {
+            cap,
+            raises: true,
+            size,
+            facts,
+        }));
+        assert!(made.model_plan.has_unsized());
+        made
+    };
+    let first = to_size("fix");
+    let filled = serde_json::to_string(first.model_plan.plan()).unwrap();
+    let stored = store
+        .insert_enqueued(&first, Some("old"), &Asked::default())
+        .unwrap();
+    assert_ne!(
+        serde_json::to_string(stored.model_plan.plan()).unwrap(),
+        filled,
+        "stored at the sized effort"
+    );
+    // The fingerprint as 1.6.3 wrote it: the filled plan, no `asked_plan`.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let changed = conn.execute(
+        "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
+                                             '$.model_plan', json(?1))",
+        [filled],
+    );
+    assert_eq!(changed.unwrap(), 1);
+    let retry = to_size("fix");
+    assert_ne!(retry.id, first.id, "a retry mints its own id");
+    let again = store.insert_enqueued(&retry, Some("old"), &Asked::default());
+    assert_eq!(again.unwrap().id, stored.id, "the same request");
     assert_eq!(count(&store), 1);
 }
 

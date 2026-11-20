@@ -22,6 +22,7 @@ pub mod risk;
 mod scenarios;
 mod sections;
 pub mod ship;
+pub mod sized_nudges;
 pub mod spec;
 pub mod swarm;
 pub mod team;
@@ -30,7 +31,7 @@ pub mod workers;
 
 pub use catalog::{Catalog, CatalogSources};
 pub use engine::{ApprovedProposal, EngineAction, OperatorWait, RunDriver, SpawnPlan};
-pub use gate::{record_refusal, refuses_ship_record};
+pub use gate::{record_refusal, refuses_ship_record, submission_text};
 pub use ship::{ShipOutcome, ShipPlan, ShipRecord, attribution_lines, pr_body};
 pub use spec::PipelineSpec;
 pub use template::RunVars;

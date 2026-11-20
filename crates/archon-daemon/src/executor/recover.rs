@@ -7,7 +7,7 @@ use std::sync::Arc;
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::run::{PipelineRun, StageRun};
+use archon_core::run::{PipelineRun, RECOVERY_STAGE, StageRun};
 use archon_core::steer::{RunEdit, Then};
 use archon_pipeline::autonomy::OperatorGates;
 use archon_pipeline::{PipelineSpec, RunDriver};
@@ -376,12 +376,19 @@ fn quarantine_run(ctx: &DaemonContext, run: &PipelineRun, error: &ArchonError) {
     }
 }
 
+/// The blocker of a run recovery could not resume; it opens with
+/// [`archon_core::run::UNRESUMABLE_RUN`], which the failure class reads.
 fn unresumable_message(run: &PipelineRun, error: &ArchonError) -> String {
-    format!(
+    let message = format!(
         "cannot resume the run: {error}. `archon queue retry {item}` runs it again once \
          fixed; `archon queue cancel {item}` gives it up",
         item = run.item
-    )
+    );
+    assert!(
+        message.starts_with(archon_core::run::UNRESUMABLE_RUN),
+        "the class reads the opening"
+    );
+    message
 }
 
 /// [`resume_run`] for one run whose stored state may be unusable: a failure
@@ -401,7 +408,7 @@ async fn resume_isolated(
         other => return other,
     };
     quarantine_run(ctx, &run, &error);
-    let stage = run.state.live_stage().unwrap_or("recovery").to_owned();
+    let stage = run.state.live_stage().unwrap_or(RECOVERY_STAGE).to_owned();
     let message = unresumable_message(&run, &error);
     let failed = finish::fail_run(ctx, table, run, stage, message, true);
     settled(
@@ -439,7 +446,7 @@ async fn fail_unreadable(
     for (id, data) in &dropped {
         tracing::error!(run = %run.id, stage_run = %id, bytes = data.len(), "unreadable stage row removed; saved under quarantine-rows");
     }
-    let stage = run.state.live_stage().unwrap_or("recovery").to_owned();
+    let stage = run.state.live_stage().unwrap_or(RECOVERY_STAGE).to_owned();
     let message = unresumable_message(&run, &error);
     let failed = finish::fail_run(ctx, table, run.clone(), stage, message, true);
     let subject = format!("run {}", run.id);
@@ -462,7 +469,7 @@ pub(super) async fn resume_run(
     let mut driver = match build_driver(ctx, &run).await {
         Ok(driver) => driver,
         Err(error) => {
-            let stage = run.state.live_stage().unwrap_or("recovery").to_owned();
+            let stage = run.state.live_stage().unwrap_or(RECOVERY_STAGE).to_owned();
             quarantine_run(ctx, &run, &error);
             let message = unresumable_message(&run, &error);
             return finish::fail_run(ctx, table, run, stage, message, true).await;
@@ -546,9 +553,14 @@ pub(super) async fn driver_of(
     };
     let operator_gates = OperatorGates::for_run(&spec, &item.autonomy);
     let experiments = crate::experiments::item_dir(&ctx.paths, &item.id);
-    let driver = RunDriver::new(Arc::new(spec), item.model_plan, vars)?
-        .with_gates(operator_gates)?
-        .with_experiments(experiments);
+    let driver = RunDriver::new(
+        Arc::new(spec),
+        item.model_plan
+            .dispatched(&item.id, archon_core::plan_origin::TierMove::InRun),
+        vars,
+    )?
+    .with_gates(operator_gates)?
+    .with_experiments(experiments);
     let mut driver = super::proposal::start_past(driver, approved)?;
     for gate in gates {
         assert_eq!(gate.run, run.id, "gates_for_run returns the run's gates");

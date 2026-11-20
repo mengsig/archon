@@ -7,6 +7,7 @@ use archon_core::id::RepoId;
 use archon_core::lesson::{Lesson, LessonKind, LessonScope, LessonSource, LessonState};
 use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelRef};
 use archon_core::outcome::Outcome;
+use archon_core::plan_origin::{PlanSource, PlanWriter, Sizing};
 use archon_core::queue::{Priority, QueueItem, QueueState};
 use archon_core::run::{PipelineRun, RunState};
 use std::sync::Arc;
@@ -65,12 +66,16 @@ pub async fn maintenance(ctx: &DaemonContext) -> Result<(), ArchonError> {
 
 async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     let env = crate::resolve::RepoEnv::load(ctx, Some(repo)).await?;
-    let policy = env.policy(&ctx.config);
     let key = format!("learning/distilled-v2/{repo}");
     // 0 still disables errands: only a positive reservation is lifted.
     let daily = ctx.config.learning.distill_daily_budget_usd;
     let budgets_enabled = crate::resolve::caps(ctx).await.budgets_enabled;
     let reservation = (budgets_enabled || daily == 0.0).then_some(daily);
+    let catalog = super::catalog(ctx).await?;
+    let policy = env.resolved_policy(ctx);
+    if catalog.not_ready_reason().is_some() {
+        return Ok(());
+    }
     let mut store = ctx.store.lock().await;
     if !store.distillation_available(repo, reservation)? {
         return Ok(());
@@ -90,24 +95,24 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     }
     assert!(count > 0);
     let draft_key = format!("learning/distill-draft/{repo}/{consumed}");
-    let item = match store.kv_get(&draft_key)? {
-        Some(raw) => serde_json::from_str(&raw)
-            .map_err(|e| ArchonError::Corrupt(format!("distillation draft: {e}")))?,
+    let enqueue_key = format!("learning:{repo}:{consumed}");
+    // An errand inserted before its cursor moved is kept, never drafted again.
+    let item = match committed_errand(&store, &draft_key, &enqueue_key)? {
+        Some(committed) => committed,
         None => {
-            let listed = store.learning_models();
-            let choice = cheap_choice(&window, &policy, &listed, &ctx.config.orchestrator.model)?;
-            let evidence = distillation_input(&store, repo, &window)?;
-            let item = errand(repo, &window, choice, &evidence)?;
-            store.save_learning_value(
-                &draft_key,
-                &serde_json::to_string(&item)
-                    .map_err(|e| ArchonError::Corrupt(format!("save distillation draft: {e}")))?,
-            )?;
-            item
+            let orchestrator = &ctx.config.orchestrator.model;
+            let checks = (&policy, &catalog);
+            let draft = current_draft(&store, &draft_key, repo, &window, checks, orchestrator)?;
+            // The draft's bound: a replay of its request keeps its own budget.
+            assert!(draft.budget_usd.is_some_and(|b| b <= 1.0));
+            store.insert_item(&draft, Some(&enqueue_key))?
         }
     };
-    assert!(item.budget_usd.is_some_and(|b| b <= 1.0));
-    let item = store.insert_item(&item, Some(&format!("learning:{repo}:{consumed}")))?;
+    assert_eq!(
+        item.repo.as_ref(),
+        Some(repo),
+        "an errand of its repository"
+    );
     store.save_learning_value(&format!("learning/distillation/{}", item.id), repo.as_str())?;
     store.save_learning_value(&key, &(consumed + count).to_string())?;
     store.save_learning_value(
@@ -116,6 +121,78 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     )?;
     ctx.dispatch.notify_one();
     Ok(())
+}
+
+/// The errand the saved draft was inserted as under `enqueue_key`. Another
+/// item under that key is not one: its insert meets the key's conflict.
+fn committed_errand(
+    store: &archon_queue::Store,
+    draft_key: &str,
+    enqueue_key: &str,
+) -> Result<Option<QueueItem>, ArchonError> {
+    let Some(keyed) = store.item_by_key(enqueue_key)? else {
+        return Ok(None);
+    };
+    let Some(draft) = saved_draft(store, draft_key)? else {
+        return Ok(None);
+    };
+    if draft.id != keyed.id {
+        return Ok(None);
+    }
+    assert_eq!(keyed.repo, draft.repo, "the draft's own repository");
+    assert_eq!(keyed.pipeline, draft.pipeline, "the draft's own pipeline");
+    Ok(Some(keyed))
+}
+
+fn saved_draft(
+    store: &archon_queue::Store,
+    draft_key: &str,
+) -> Result<Option<QueueItem>, ArchonError> {
+    let Some(raw) = store.kv_get(draft_key)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&raw)
+        .map(Some)
+        .map_err(|e| ArchonError::Corrupt(format!("distillation draft: {e}")))
+}
+
+fn current_draft(
+    store: &archon_queue::Store,
+    draft_key: &str,
+    repo: &RepoId,
+    window: &[Outcome],
+    (policy, catalog): (
+        &archon_core::policy::ModelPolicy,
+        &archon_core::model_tier::ModelCatalog,
+    ),
+    orchestrator: &ModelRef,
+) -> Result<QueueItem, ArchonError> {
+    match saved_draft(store, draft_key)? {
+        Some(item)
+            if policy.check_plan(&item.model_plan).is_ok()
+                && item
+                    .model_plan
+                    .0
+                    .values()
+                    .flatten()
+                    .all(|c| catalog.check(&c.model).is_ok_and(|id| id == c.model)) =>
+        {
+            Ok(item)
+        }
+        _ => {
+            let ran = window.iter().flat_map(|o| &o.stages);
+            let ran = ran.map(|stage| (stage.cost_usd, &stage.choice));
+            let choice = cheap_choice(ran, policy, catalog, orchestrator)?;
+            let evidence = distillation_input(store, repo, window)?;
+            let item = errand(repo, window, choice, &evidence)?;
+            store.save_learning_value(
+                draft_key,
+                &serde_json::to_string(&item)
+                    .map_err(|e| ArchonError::Corrupt(format!("save distillation draft: {e}")))?,
+            )?;
+            Ok(item)
+        }
+    }
 }
 
 fn distillation_input(
@@ -149,43 +226,40 @@ fn distillation_input(
         .map_err(|e|ArchonError::Corrupt(format!("distillation input: {e}")))
 }
 
-/// The cheapest earlier stage choice, else the first allowed model, else the
-/// orchestrator's; once Aether's catalog is read, only a model it lists.
-fn cheap_choice(
-    outcomes: &[Outcome],
+/// The cheapest choice that `ran` at its cost, else the first allowed model, else
+/// the orchestrator's; once Aether's catalog is read, only a model it lists.
+fn cheap_choice<'a>(
+    ran: impl Iterator<Item = (f64, &'a ModelChoice)>,
     policy: &archon_core::policy::ModelPolicy,
-    listed: &[ModelRef],
+    catalog: &archon_core::model_tier::ModelCatalog,
     orchestrator: &ModelRef,
 ) -> Result<ModelChoice, ArchonError> {
-    assert!(listed.is_sorted(), "learning_models is sorted");
-    let is_listed = |m: &ModelRef| listed.is_empty() || listed.binary_search(m).is_ok();
-    let cheapest = outcomes
-        .iter()
-        .flat_map(|o| &o.stages)
-        .filter(|s| policy.check(&s.choice).is_ok() && is_listed(&s.choice.model))
-        .min_by(|a, b| a.cost_usd.total_cmp(&b.cost_usd))
-        .map(|s| s.choice.clone());
-    let choice = cheapest.unwrap_or_else(|| {
-        let allowed = policy.allow.iter().flatten();
-        let model = allowed
-            .chain(std::iter::once(orchestrator))
-            .chain(listed)
-            .find(|m| policy.permits_model(m) && is_listed(m))
-            .unwrap_or(orchestrator);
-        ModelChoice {
-            model: model.clone(),
-            effort: Effort::Low,
-            tier: None,
-        }
-    });
-    policy.check(&choice)?;
-    assert!(policy.permits_model(&choice.model));
-    if !is_listed(&choice.model) {
-        return Err(ArchonError::Policy(format!(
-            "no model Aether lists is allowed for distillation; {} is not listed",
-            choice.model
-        )));
-    }
+    let canonical = |choice: &ModelChoice| {
+        let mut choice = choice.clone();
+        choice.model = catalog.check(&choice.model).ok()?;
+        policy.check(&choice).is_ok().then_some(choice)
+    };
+    // A cost speaks for the model that ran: an alias now naming another model drops it.
+    let as_ran = |choice: &ModelChoice| canonical(choice).filter(|c| c.model == choice.model);
+    let cheapest = ran
+        .filter_map(|(cost, choice)| Some((cost, as_ran(choice)?)))
+        .min_by(|(left, _), (right, _)| left.total_cmp(right))
+        .map(|(_, choice)| choice);
+    let choice = cheapest
+        .or_else(|| {
+            policy
+                .allow
+                .iter()
+                .flatten()
+                .chain(std::iter::once(orchestrator))
+                .chain(catalog.models().iter().map(|m| &m.model))
+                .find_map(|model| canonical(&ModelChoice::pinned(model.clone(), Effort::Low)))
+        })
+        .ok_or_else(|| {
+            ArchonError::Policy("no model Aether lists is allowed for distillation".to_owned())
+        })?;
+    debug_assert!(policy.check(&choice).is_ok());
+    debug_assert!(catalog.check(&choice.model).is_ok());
     Ok(choice)
 }
 
@@ -210,10 +284,17 @@ fn errand(
     assert!(!outcomes.is_empty());
     assert!(outcomes.iter().all(|o| o.repo.as_ref() == Some(repo)));
     let now = archon_core::now();
+    let id = archon_core::id::QueueItemId::new();
+    let mut plan = PlanWriter::new(&id, now);
+    let chosen = ModelPlan(std::collections::BTreeMap::from([(
+        "errand".into(),
+        vec![choice],
+    )]));
+    plan.filled(chosen, (PlanSource::Fallback, PlanSource::Fallback));
     Ok(QueueItem {
         intent: None,
         onto: None,
-        id: archon_core::id::QueueItemId::new(),
+        id,
         repo: Some(repo.clone()),
         pipeline: "errand".into(),
         title: "Distill run outcomes into lessons".into(),
@@ -221,10 +302,8 @@ fn errand(
         priority: Priority::Low,
         dependencies: Vec::new(),
         tags: vec!["archon:distillation".into()],
-        model_plan: ModelPlan(std::collections::BTreeMap::from([(
-            "errand".into(),
-            vec![choice],
-        )])),
+        // The daemon chose its errand's model and effort itself: not sized.
+        model_plan: plan.finish(Sizing::Off { policy_cap: None }),
         model_reasons: None,
         budget_usd: Some(1.0),
         autonomy: Default::default(),
@@ -464,4 +543,58 @@ async fn report_error(ctx: &DaemonContext, error: &ArchonError) -> Result<(), Ar
     assert!(item.seq > 0);
     crate::feed::publish(ctx, vec![item]);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use archon_core::model_tier::{CatalogModel, ModelCatalog};
+
+    /// An earlier cost speaks for the model that ran it, never for the model
+    /// its alias names now.
+    #[test]
+    fn a_cost_under_an_alias_does_not_price_its_current_target() {
+        let current: ModelRef = "claude-code/claude-haiku-5".parse().unwrap();
+        let alias: ModelRef = "claude-code/haiku".parse().unwrap();
+        let dear: ModelRef = "claude-code/claude-sonnet-5".parse().unwrap();
+        let listed = |model: &ModelRef| CatalogModel {
+            model: model.clone(),
+            tier: None,
+            is_default: false,
+        };
+        let mut catalog = ModelCatalog::new(vec![listed(&current), listed(&dear)]);
+        catalog.add_alias(alias.clone(), current.clone());
+        let (cheap, costly) = (
+            ModelChoice::pinned(alias, Effort::Low),
+            ModelChoice::pinned(dear.clone(), Effort::Low),
+        );
+        let ran = [(0.01, &cheap), (0.5, &costly)];
+        let policy = archon_core::policy::ModelPolicy::default();
+        let choice = cheap_choice(ran.into_iter(), &policy, &catalog, &dear).unwrap();
+        assert_eq!(choice.model, dear, "only the model that ran is priced");
+    }
+
+    /// Supersession steers Archon's tier picks only: a listed, superseded
+    /// model that ran cheapest is still the errand's; a retired one is not.
+    #[test]
+    fn a_superseded_model_still_prices_the_errand_and_a_retired_one_does_not() {
+        let (old, new, gone): (ModelRef, ModelRef, ModelRef) = (
+            "p/old".parse().unwrap(),
+            "p/new".parse().unwrap(),
+            "p/gone".parse().unwrap(),
+        );
+        let listed = |model: &ModelRef| CatalogModel {
+            model: model.clone(),
+            tier: None,
+            is_default: false,
+        };
+        let mut catalog = ModelCatalog::new(vec![listed(&old), listed(&new), listed(&gone)]);
+        catalog.add_superseded(old.clone(), new.clone());
+        catalog.add_retired(gone.clone(), None);
+        let choices = [&gone, &old, &new].map(|m| ModelChoice::pinned(m.clone(), Effort::Low));
+        let ran = [(0.01, &choices[0]), (0.02, &choices[1]), (0.5, &choices[2])];
+        let policy = archon_core::policy::ModelPolicy::default();
+        let choice = cheap_choice(ran.into_iter(), &policy, &catalog, &new).unwrap();
+        assert_eq!(choice.model, old, "the superseded model ran cheapest");
+    }
 }

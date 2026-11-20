@@ -2,6 +2,329 @@
 
 ## Unreleased
 
+## 1.6.4
+
+Released 2026-11-20.
+
+Archon 1.6.4 requires **Aether 1.4.2**. The installer selects Aether
+`v1.4.2` when no Aether is installed and keeps an existing one. A confirmed
+`archon update` run by 1.6.4 selects `v1.4.2` for an older installation.
+The update from 1.6.3 runs 1.6.3's own Aether step, so upgrade Aether first
+with `aether update --version v1.4.2` and restart aetherd. Features
+that need nothing new from Aether still work with Aether 1.4.1, as their
+entries say.
+
+### Added
+
+- Every item records where each field of its model plan came from, beside
+  the plan as `model_origins`: for each stage entry, separately for the model
+  and the effort, the source (`explicit`, `learned`, `tier`, `fallback`,
+  `sizer` for the effort sizer, `migrated` for a model the catalog no
+  longer serves that archond replaced, and `escalation`, which nothing sets
+  yet), who
+  chose it (operator, orchestrator or daemon) and when; a
+  tiered entry also records who asked for its tier.
+  Enqueue, initiative members, update, retry, steers, pipeline switches,
+  refreshes, restack fixes, dispatch tier resolution, provider reroutes and
+  the distillation errand all record it. A steer that names the value already
+  stored still records it as explicit. `get_item` shows each entry's origin.
+  `archon status` counts, over unfinished items, the fields no writer
+  accounted for (`unattributed`, which should be zero) and the fields stored
+  before origins were recorded (`legacy_unknown`).
+- The daemon moves a model or effort again only when it filled that field
+  itself, including a `migrated` one. A field a caller named, a legacy one
+  and an unattributed one are pins for dispatch, reroutes, quota holds and
+  recovery.
+  A pinned tier is still resolved to a model when dispatch starts a run, and
+  moves only within that tier afterwards.
+
+- Repository watches ([#442](https://github.com/mengsig/archon/pull/442)):
+  the orchestrator's `watch_repo` tool has the GitHub sync watch a registered
+  repository's open pull requests, with one conditional `GET` per page of 100
+  per interval (at least 5 minutes) and no model cost while nothing changes.
+  Each walk of the list is compared with the stored snapshot (head,
+  `updated_at`, requested reviewers, comment and review counts), and a new
+  pull request, head or review request (a user or a team), or a new comment
+  or review, raises one `github_watch` trigger, which is news with no
+  operator standing; a label or edit alone does not. A watch is eventually
+  consistent: a walk the request budget cuts short stores nothing and resumes
+  five minutes later, and a pull request a page shift hides is told by the
+  next walk, so news can be an interval late but is not lost
+  (`docs/vnext/ARCHITECTURE.md` §f lists the accepted limits). A trigger
+  tells 20 changes in full and names every other by kind and number; a
+  change names every difference of its pull request (`also`). Watch news is
+  kept through news compaction and folded into one event per repository
+  while it is held, which names at most 10,000 pull request numbers and
+  reviewers and says `truncated` past that. A restarted archond asks no
+  watch in its first five minutes, and `repo_watches` marks a watch
+  `truncated` when its list fills the 1,000 newest open pull requests a walk
+  reads. Only a registered repository with a github.com `origin` can be
+  watched, so a watch inherits the registration's trust and reads nothing
+  the sync of linked issues could not; `watch_repo` never registers one.
+  GitHub requests cannot set or remove a watch; removing the repository
+  drops it, whoever removes it. The orchestrator prompt now forbids polling
+  GitHub from a schedule.
+- The orchestrator prompt and the `direct` pipeline's notes and nudge now
+  send work that names concurrency, locking, security or a migration to
+  `adaptive` ([#440](https://github.com/mengsig/archon/pull/440)). This is
+  guidance: nothing re-routes an enqueue by its words. An `implement`
+  ESCALATE for such risk carries a "re-queue on adaptive" hint.
+- `queue show` prints that a reviewer is exempt from a stage's worker policy
+  ([#440](https://github.com/mengsig/archon/pull/440)).
+- Review verdicts are recorded
+  ([#448](https://github.com/mengsig/archon/pull/448)). A `review`
+  pipeline's FAIL completes the lead with `VERDICT: FAIL` and structured
+  findings, and the run and item fail with those findings listed first. It
+  never merges. `archon model-evidence` scores review-only leads.
+  - Findings carry `"blocking": true|false`: a pass beside a non-blocking
+    high finding stays a pass, and an unmarked finding keeps the severity
+    rule.
+  - A stage run keeps `verdict_note` (`disputed_pass`,
+    `missing_verdict_line`, `hedged_verdict`). `archon model-evidence`
+    reports `disputed=` apart from the pass share. Old Unknown verdicts are
+    read again from their stored results. No migration.
+- A disputed pass gets one restatement turn before completion
+  ([#450](https://github.com/mengsig/archon/pull/450)). A stage that holds
+  its run's verdict can submit it through the new `submit_verdict` tool
+  while it still runs. A verdict Archon cannot read as pass or fail is asked
+  back once; the restatement is final, and a restated FAIL fails the stage
+  whatever it finishes with. The one ask is kept by stage attempt across
+  archond restarts and stage-run replacements. e2e-testing, e2e-strict and
+  release-journey re-run `setup` only for a FAIL with a finding whose
+  `fault` is `environment` (`on_fail.when = "environment_finding"`), so a
+  disputed pass costs one extra turn, and re-runs setup only when its
+  restatement is such a FAIL. It needs no
+  Aether change and works with Aether 1.4.1.
+- A deterministic effort sizer for unpinned efforts
+  ([#451](https://github.com/mengsig/archon/pull/451),
+  [#452](https://github.com/mengsig/archon/pull/452)). At enqueue each item
+  gets a risk class (mechanical, ordinary, elevated, critical) from its
+  title, brief, tags, review level and diff size.
+  - Effort is the orchestrator's choice: the sizer never changes an effort a
+    plan sets and never raises one unless `[models] sizer_max_effort` is
+    set; it only lowers default-effort stages of mechanical items. With
+    `sizer_max_effort` set (global config only), it may raise default-effort
+    stages of elevated and critical items up to that effort. The policy's
+    `max_effort` caps everything. `x_high` is planned only on Claude Code
+    and Codex.
+  - The sizer never changes an effort a learned route supplies; that effort
+    is still held to the policy and engine caps. Each attempt records
+    `risk_class`, `effort_source` and `effort_reasons`.
+  - The decision is frozen in the stored plan. A retry keeps it. A revise or
+    reshape clips carried values to the current caps with a reason. A steer
+    re-sizes only stages not yet started.
+  - A woken sized agent is held to its stored plan and the policy cap, and
+    retuned to match. A pin over the policy cap is still refused.
+  - `[models] effort_sizing = false` restores 1.6.3 behaviour. New fields
+    are optional, and it works with Aether 1.4.1.
+- The orchestrator's notice that an item failed or was cancelled now adds a
+  failure class and a suggested next step
+  ([#453](https://github.com/mengsig/archon/pull/453)). Initiative members
+  send no such notice. Archon never raises effort or changes models on its
+  own after a failure.
+- Archon shows each provider's quota pace and warns once when a window is
+  projected to run out before it resets
+  ([#454](https://github.com/mengsig/archon/pull/454)).
+
+### Changed
+
+- A completed stage whose delivery record is broken gets one repair turn
+  before the run fails. A record is broken when the result has no
+  `structured`, or names no reviewer although a review is owed. The stage is
+  entered again with the refusal quoted, and a kept agent is resumed in
+  place. Reviewers are still checked against the agents the lead delegated
+  itself, so a repair cannot name one that never reviewed.
+  - One turn, marked. Each stage run now carries a persisted `record_repair`
+    marker, `open` or `spent`. The repair attempt and every later attempt of
+    its stage are `spent`: a broken record of one fails the run, with no fix
+    loop, and its kept agent is not asked for the record again. So does a
+    `spent` attempt whose `structured` still holds no valid ship record.
+  - A stated failure always wins in a stage that owes a delivery record (a
+    review or the ship record). A fail verdict in `structured` or in the
+    summary's last `VERDICT:` line, or a summary that opens with `ESCALATE:`
+    or `BLOCKED:`, fails the stage with the reply as its agent sent it,
+    whatever the stage's gate and even beside a valid record. It gets no
+    repair turn and no record request, and nothing of it ships. When a
+    resumed agent writes more after its record block, its whole reply is its
+    summary, so a failure stated there counts and an indented or fenced
+    example does not. A stage that owes no record is judged as before.
+  - Such a reply, and one with no `structured` at all, is recorded as sent
+    before archond checks anything else in it: the gate passes neither, and
+    the repaired reply is verified in full. Only the cap on review rounds is
+    still applied first. A reply with `structured` is verified as before,
+    whatever its record lacks.
+  - A record refused on its merits, such as one with too few reviewers, gets
+    no repair turn. A broken one is repaired before the stage's gate and
+    scenario checks read it.
+  - A stage run whose outcome was recorded before this release carries no
+    marker and replays as it was decided then: gate, scenarios, then the
+    record, with no repair turn. A stage run still going at the upgrade is
+    marked when its outcome is recorded, and gets its repair turn.
+  - A run that fails on a second broken record is a failed run like any
+    other: with `[review] auto_repair` on, the item's one automatic retry
+    may still follow it.
+- The stage contract states that Aether refuses a delegation with more than
+  16 `references`.
+- An initiative member's plan is checked as an enqueue's is: an effort above
+  its stage's default needs a reason, given in the member's new
+  `model_reasons`.
+- **The orchestrator costs less to keep.** A stage's `info` message no
+  longer wakes it: it rides with the next wake, or wakes it by itself after
+  30 minutes plus the coalescing window (`trigger_coalesce_ms`), while relay,
+  escalation and question still wake it as before (`[orchestrator]
+  quiet_info`, default true). A backlog too large for one trigger goes out
+  in several, in order. The orchestrator compacts at `[orchestrator]
+  compaction_tokens` (default 160,000, at most 200,000) when the
+  connected Aether announces the `compaction_tokens` feature (Aether 1.4.2);
+  Aether 1.4.1 keeps the model's threshold and is sent nothing new. The
+  threshold applies to generations created from then on. Idle for
+  `idle_compact_after_minutes` (default 50) with more than half that in
+  context, it is compacted once before its prompt cache expires. After an
+  upgrade that changes its prompt or tools, a fresh generation replaces it
+  at its next quiet idle moment, retried every ten minutes while it fails
+  and announced in the feed after three failures
+  (`[orchestrator] refresh_on_upgrade`, default true). Until then `archon
+  status` shows `upgrade refresh delayed` with the reason in place of
+  `prompt outdated`, also while no successor could be started. News held
+  for the orchestrator is kept, not dropped, while Aether refuses to create
+  it. The prompt now has long
+  multi-step work, such as report pages and statistics, queued as items.
+  Nothing migrates. The rollback is the switches: `quiet_info = false`,
+  `compaction_tokens = 0`, `idle_compact_after_minutes = 0` and
+  `refresh_on_upgrade = false`; a threshold already sent stays with that
+  generation until `archon orchestrator restart`. An older binary is not
+  supported on a store a newer release migrated.
+
+- Effort sizing by the rubric is now the default (`[models]
+  effort_sizing`, on unless set false;
+  [#449](https://github.com/mengsig/archon/pull/449)). The orchestrator
+  prompt says when to use low. The direct, adaptive and code-audit nudges
+  are served in the rubric's wording by archond and `archon pipelines list`.
+  Reviewer efforts are defaults a lead may lower for a small low-risk diff.
+  `[review] default_effort = "low"` is honoured. A stage the plan leaves out
+  takes its own effort. The MCP effort enum says `max` needs `[models]
+  max_effort`. Each spawn records the effort rule and reviewers it was
+  issued. The watchdog, recovery and replay read that record: a resumed
+  lead keeps the effort rule and reviewers its agent was issued, while the
+  current model policy (`max_effort`, allow and deny lists) still applies.
+  A 1.6.3 spawn is read from its own rule lines (permissive when they tell
+  nothing). Rollback: set `effort_sizing = false` and restart; new spawns
+  then get 1.6.3's effort rules, byte for byte, and in-flight spawns keep
+  their rule. Other contract text, such as the `submit_verdict` and review
+  coverage rules, stays as 1.6.4 writes it.
+- A failed run's failure class now comes from its stage records, not from
+  words in its error ([#446](https://github.com/mengsig/archon/pull/446)):
+  `timeout` when the stage that ended the run timed out, `infrastructure`
+  when Aether reported an infrastructure failure, `budget` when the item's
+  budget guard, archond's spawn budget preflight or Aether's cost cap
+  stopped it, and `review` when a review-holding stage did not pass. A
+  recorded stage kind always wins over the stage id. Only the prefixes
+  Archon writes itself are still read (`BLOCKED:`, `ESCALATE:`, the budget
+  guards' blockers, Aether's exact cost-stop grammar, the spawns the daemon
+  gave up on). A stage whose spawn archond refused because it cannot enforce
+  that stage's dollar budget (`stage <id> refused at spawn: model policy:
+  cannot enforce the dollar budget for …`) is `budget`, as in 1.6.3: no
+  model ran, so it is no loss. Store migration V24 recomputes stored rows
+  whose runs are kept and logs old and new counts per class. Pruned runs,
+  unreadable runs and runs missing stage rows keep their old class, marked
+  `legacy_163`. The old class stays in `failure_class_163` for one release.
+- When `create_agent` keeps failing on a full disk or a transport or
+  internal Aether error, the stage is marked an infrastructure failure
+  ([#446](https://github.com/mengsig/archon/pull/446)).
+- The pipeline lines of `archon model-evidence` count only runs that
+  finished in the report's range
+  ([#446](https://github.com/mengsig/archon/pull/446)). BLOCKED and
+  ESCALATED are counted in `blocked=` and `escalated=`, not as losses.
+  Review pipelines add `prs_passed=<passed>/<reviewed>` and
+  `median_rounds_to_pass`, counted only from a recorded reviewer verdict.
+  `archon lessons stats` shows the same columns.
+- Pipeline validation reserves the stage ids archond fails runs under for
+  its own stops (`budget`, `ship`, `recovery`), so a run's failure class can
+  no longer mistake a user stage for the daemon's stop
+  ([#447](https://github.com/mengsig/archon/pull/447)). `archon doctor`
+  lists any user pipeline that no longer loads.
+- Every way a model enters Archon is checked against one fresh Aether model
+  catalog ([#443](https://github.com/mengsig/archon/pull/443)): aliases
+  resolve to canonical ids, and unlisted or retired ids are refused, naming
+  the nearest ids or the successor. Dispatch fails closed: with no ready
+  catalog an item waits as `model_catalog_unavailable`, and a retired pin
+  blocks with a re-plan hint. A daemon-chosen model moves to a listed
+  successor, or else to a permitted tier pick, learned choice or fallback,
+  and the item stays held when none is eligible. A superseded model is replaced by its same-provider successor
+  in Archon's own tier picks wherever that successor can serve the request;
+  pins and fallbacks keep the model named. A kept agent resumed or woken
+  after a quota move keeps the model it ran, and fresh stages and cold
+  retries follow quota routing; a daemon pick the catalog supersedes, with
+  no eligible successor, still runs. Model catalog checks also cover legacy
+  plans, the watchdog and a catalog outage, and a superseded model still
+  counts for learned routing and errand pricing
+  ([#456](https://github.com/mengsig/archon/pull/456)).
+- A retry that is not `fresh`, after a stage reached its review-round
+  limit, continues on its branch
+  ([#455](https://github.com/mengsig/archon/pull/455)). Earlier runs'
+  reviews still count while the branch holds their commits. The new commits then need a delta review, plus any
+  whole-change reads the review level still lacks. A delta review fails only
+  on its own commits or an earlier finding left unfixed. Nothing carries
+  when the reviewed head was rewritten or an earlier recorded fail can no
+  longer be read. The cap's error lists the choices: continue, accept or
+  stop.
+
+### Fixed
+
+- A child delegated after a stage's deadline was extended gets the extended
+  deadline, and so does a nested child. Before, a child created from the
+  lead's row before the move landed kept the old deadline and stopped early,
+  as did any agent it delegated in turn. The raise is one compare-and-raise
+  under the stage's steering lock, so it never lowers an extension made at
+  the same time.
+- A reviewer that Aether blocks as exhausted on a quota or usage limit is
+  cancelled after 3 minutes, and its lead is told to delegate the review on
+  another allowed provider or to fail the task so the orchestrator re-plans.
+  Before, it waited until the stage deadline, and a held stage's deadline
+  kept moving. The check runs on its own 30-second timer, apart from
+  dispatch. Every 30 seconds it starts a check of each running stage and
+  waits for none, so a slow stage delays no other; a stage whose last check
+  still runs is passed over. A check waits at most 10 seconds for each
+  request to Aether, and the cancel comes within 5 minutes of the block
+  first being seen. A wait recorded ahead of the clock, as after the
+  clock is set back, counts from now and is saved so. A quota restored within the 3 minutes stops nothing: the
+  block is read again, with one `get_agent`, right before the cancel. The
+  cancel carries the hint as its reason, and the lead is messaged after it.
+  Known limitation: a reviewer whose quota returns in the one Aether round
+  trip before the cancel is still cancelled, as Aether has no conditional
+  cancel.
+- Cost reports attribute recorded delegates to the stage they worked for and
+  use each delegate's model and effort. The CLI and MCP report lead and
+  delegated spend separately, and can group by effort. Archon now records
+  delegation links for the orchestrator's helpers too.
+
+- A review item's frozen head cannot be moved by an amendment, retry or
+  steer ([#440](https://github.com/mengsig/archon/pull/440)). A review that
+  names another head than the one checked out fails the stage and says to
+  queue a new review item at that head.
+
+### Upgrading
+
+Items stored by 1.6.3 or earlier have no origins. Each of their fields reads
+as `legacy_unknown` and is treated as a pin; nothing is backfilled. Stored
+origins that cannot be read make every field of that item `unattributed`.
+Store migrations are one-way: back up `archon.db` before `archon update`.
+Downgrading the binary is not supported once a store migration of the release
+has run, because an older schema refuses a newer store. See
+[docs/upgrading.md](docs/upgrading.md#plan-origins).
+
+Store migration V24 is one-way
+([#446](https://github.com/mengsig/archon/pull/446)). Once it has run, an
+older archond refuses the store ("store schema version 24 is newer than
+this archon supports"). Stop archond and back up `archon.db` (with any
+`archon.db-wal`) before `archon update`; going back means restoring that
+copy. See [docs/upgrading.md](docs/upgrading.md#store-migration-v24).
+
+A user pipeline with a stage named `budget`, `recovery` or `ship` (other
+than a `kind = "ship"` agent) no longer loads, and its name is unavailable
+([#447](https://github.com/mengsig/archon/pull/447)); `archon doctor` names
+it. Rename the stage, for example to `budget-stage`.
+
 ## 1.6.3
 
 Released 2026-11-18.

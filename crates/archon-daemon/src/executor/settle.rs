@@ -6,14 +6,17 @@ use std::time::{Duration, Instant};
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
+use archon_core::model_tier::ModelCatalog;
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
-use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState, Verdict};
+use archon_core::run::{
+    PipelineRun, RecordRepair, RunState, StageOutcome, StageRun, StageState, Verdict,
+};
 use archon_core::steer::RunEdit;
-use archon_pipeline::{EngineAction, SpawnPlan};
+use archon_pipeline::{EngineAction, PipelineSpec, SpawnPlan};
 
 use super::{
     FollowUp, RunTable, SettleRetry, descendants, engine_wait, finish, gates, notional, pages,
-    recover, resume, ship, siblings, spawn, stall, swarm, team,
+    recover, restatement, resume, ship, siblings, spawn, stall, swarm, team,
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
@@ -42,7 +45,19 @@ pub(super) async fn settle(
         None
     };
     match settle_verified(ctx, id, outcome).await {
-        Err(error) if super::gh::is_failure(&error) => hold_for_retry(ctx, id, error).await,
+        Err(error) if super::gh::is_failure(&error) => {
+            hold_for_retry(
+                ctx,
+                id,
+                "verifying the completed stage against GitHub",
+                error,
+            )
+            .await
+        }
+        Err(ArchonError::Unavailable(why)) if why.starts_with(super::model_catalog::RETRY_WAIT) => {
+            let error = ArchonError::Unavailable(why);
+            hold_for_retry(ctx, id, "settling the stage", error).await
+        }
         Err(error) => Err(error),
         Ok(follow) => {
             let cleared = super::coordination::clear_stage(ctx, &id.to_string()).await?;
@@ -86,6 +101,7 @@ async fn claim_verification(
 async fn hold_for_retry(
     ctx: &DaemonContext,
     id: &StageRunId,
+    operation: &str,
     error: ArchonError,
 ) -> Result<FollowUp, ArchonError> {
     let item = {
@@ -97,8 +113,8 @@ async fn hold_for_retry(
         let mut table = ctx.runs.lock().await;
         schedule_retry(&mut table, id)
     };
-    tracing::warn!(stage = %id, %item, %error, failures, "verifying a completed stage failed on GitHub; retrying");
-    let what = format!("Item {item}: verifying the completed stage {id} against GitHub");
+    tracing::warn!(stage = %id, %item, %error, failures, operation, "stage settlement will retry");
+    let what = format!("Item {item}: {operation} ({id})");
     let subject = format!("stage:{id}");
     super::coordination::isolate(ctx, &subject, Some(&item), &what, Err(error)).await?;
     Ok(FollowUp::default())
@@ -137,7 +153,7 @@ async fn settle_verified(
         };
         return settle_locked(ctx, &mut table, id, outcome).await;
     }
-    let (stage, run, review, daemon_ships, planner, record_stage, records_build) = {
+    let (stage, run, review, daemon_ships, planner, record_stage, records_build, as_sent) = {
         let table = ctx.runs.lock().await;
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
@@ -161,6 +177,7 @@ async fn settle_verified(
         let records_build = driver.is_some_and(|d| {
             archon_pipeline::acceptance::reports_requirements(d.spec(), &stage.stage_id)
         });
+        let as_sent = driver.is_some_and(|d| decided_as_sent(d, &stage, &outcome));
         (
             stage,
             run,
@@ -169,12 +186,16 @@ async fn settle_verified(
             planner,
             record_stage,
             records_build,
+            as_sent,
         )
     };
     if review.reviewers > 0
         && let Some(capped) = super::review::capped_at_completion(ctx, &stage).await?
     {
         return settle_capped(ctx, id, capped).await;
+    }
+    if as_sent {
+        return settle_as_sent(ctx, &stage, &run, outcome).await;
     }
     // Leave the stage live until verification is persisted. If interrupted,
     // reconnect reconciliation reads the task outcome and verifies it again.
@@ -248,7 +269,8 @@ async fn settle_verified(
         (current_stage, current_run, all)
     };
     if refused
-        && let Some(follow) = infra_retry(ctx, &table, &stage, &run, &all, &outcome, true).await?
+        && let Some(follow) =
+            infra_retry(ctx, &mut table, &stage, &run, &all, &outcome, true).await?
     {
         return Ok(follow);
     }
@@ -305,6 +327,55 @@ async fn assign_roles(
     progress(ctx, run, text).await
 }
 
+/// Whether the gate decides `stage`'s completed `outcome` as its agent sent
+/// it: a stated failure, or no `structured`, of a stage that owes a record.
+fn decided_as_sent(
+    driver: &archon_pipeline::RunDriver,
+    stage: &StageRun,
+    outcome: &StageOutcome,
+) -> bool {
+    assert!(!stage.state.is_terminal(), "only a live stage settles");
+    let StageOutcome::Completed {
+        summary,
+        structured,
+    } = outcome
+    else {
+        panic!("only a completed outcome is verified")
+    };
+    driver.decides_as_sent(&stage.stage_id, summary, structured.as_ref())
+}
+
+/// Persist a completed `outcome` unverified, for the gate to decide as sent:
+/// it fails or repairs it and passes neither, so nothing unverified ships.
+async fn settle_as_sent(
+    ctx: &DaemonContext,
+    seen: &StageRun,
+    seen_run: &PipelineRun,
+    outcome: StageOutcome,
+) -> Result<FollowUp, ArchonError> {
+    assert!(matches!(outcome, StageOutcome::Completed { .. }));
+    assert_eq!(seen.run, seen_run.id, "a stage settles into its own run");
+    let mut table = ctx.runs.lock().await;
+    let (stage, run, all) = {
+        let store = ctx.store.lock().await;
+        let stage = store.stage_run(&seen.id)?;
+        let run = store.run(&stage.run)?;
+        if stage.state != seen.state || run.state != seen_run.state {
+            // Cancellation, another settle or a driver decision won the race.
+            return Ok(FollowUp::poke());
+        }
+        // So does the review cap's stop, marked meanwhile.
+        if stall::escalation_marked(&store, &seen.id)? {
+            let escalated = stall::intended(&store, &seen.id, outcome)?;
+            drop(store);
+            return settle_locked(ctx, &mut table, &seen.id, escalated).await;
+        }
+        let all = store.stage_runs(&run.id)?;
+        (stage, run, all)
+    };
+    Box::pin(persist(ctx, &mut table, stage, run, &all, outcome)).await
+}
+
 /// Settle one stage run while the caller holds the run table. A stage run
 /// that is already terminal is left alone (events arrive at least once).
 /// Completed outcomes must be verified outside the lock via `settle`;
@@ -319,13 +390,15 @@ pub(super) async fn settle_locked(
         !matches!(outcome, StageOutcome::Completed { .. }),
         "completed outcomes must use unlocked verification"
     );
-    let (stage, run, all, outcome) = {
+    let (stage, run, all, outcome, flagged) = {
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
         let run = store.run(&stage.run)?;
         let all = store.stage_runs(&run.id)?;
+        let flagged = matches!(outcome, StageOutcome::Failed { infra: true, .. });
+        let lost = stage.aether_agent.is_none() && lost_before_spawn(&run, &outcome);
         let outcome = blame_missing_workspace(&store, &stage, &run, outcome)?;
-        (stage, run, all, outcome)
+        (stage, run, all, outcome, flagged || lost)
     };
     if stage.state.is_terminal() {
         return Ok(FollowUp::default());
@@ -333,6 +406,7 @@ pub(super) async fn settle_locked(
     if let Some(follow) = infra_retry(ctx, table, &stage, &run, &all, &outcome, false).await? {
         return Ok(follow);
     }
+    let outcome = recorded(outcome, flagged);
     // Cancellation also polls settlement deep inside a request's follow-up chain.
     Box::pin(persist(ctx, table, stage, run, &all, outcome)).await
 }
@@ -361,14 +435,38 @@ fn blame_missing_workspace(
         return Ok(outcome);
     }
     let error = format!(
-        "{} {}; the engine said: {error}",
+        "{} {}{}{error}",
         spawn::WORKSPACE_MISSING,
-        workspace.display()
+        workspace.display(),
+        StageOutcome::ENGINE_SAID,
     );
     Ok(StageOutcome::Failed {
         error,
         infra: false,
     })
+}
+
+/// Whether a stage run's workspace was gone before its agent was created:
+/// the spawn's own refusal of it, or any failure once the run's tree is gone.
+/// A worker tree never made because preparing it was refused is not.
+fn lost_before_spawn(run: &PipelineRun, outcome: &StageOutcome) -> bool {
+    assert!(run.workspace.is_absolute(), "run workspaces are absolute");
+    let StageOutcome::Failed { error, .. } = outcome else {
+        return false;
+    };
+    error.starts_with(spawn::WORKSPACE_MISSING) || !run.workspace.is_dir()
+}
+
+/// `outcome` as it is recorded, after the retry decision read it: a failure
+/// the machine caused (`flagged`) stays so though its workspace went.
+fn recorded(outcome: StageOutcome, flagged: bool) -> StageOutcome {
+    match outcome {
+        StageOutcome::Failed { error, infra } => StageOutcome::Failed {
+            error,
+            infra: infra || flagged,
+        },
+        other => other,
+    }
 }
 
 /// Record a final outcome and apply the driver's resulting decision.
@@ -381,12 +479,15 @@ async fn persist(
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
     let settled = settled_stage(stage, outcome, archon_core::now());
-    let (owes_stop, kept) = {
+    let (settled, owes_stop, kept) = {
         let mut store = ctx.store.lock().await;
+        // A final restated verdict that is no pass stands over the result.
+        let settled = restatement::bound(&store, settled)?;
         let kept = resume::after_settle(&store, &settled)?;
         let owes_stop = descendants::owe(&mut store, &settled, false)?;
         store.upsert_stage_run(&settled)?;
-        (owes_stop, kept)
+        restatement::forget(&mut store, &settled)?;
+        (settled, owes_stop, kept)
     };
     table.spawn_errors.remove(&settled.id);
     let mut follow = decide(ctx, table, run, &settled, all).await?;
@@ -450,7 +551,13 @@ pub(super) fn settled_stage(
             summary,
             structured,
         } => {
-            stage.verdict = Some(Verdict::extract(&summary, structured.as_ref()));
+            // A review-only lead's review record states its verdict when its result states none.
+            let (verdict, note) = match stage.only_reviews {
+                Some(true) => Verdict::read_review_lead(&summary, structured.as_ref()),
+                _ => Verdict::read(&summary, structured.as_ref()),
+            };
+            stage.verdict = Some(verdict);
+            stage.verdict_note = note;
             stage.summary = Some(summary);
             stage.structured = structured;
             StageState::Completed
@@ -466,6 +573,8 @@ pub(super) fn settled_stage(
         StageOutcome::TimedOut => StageState::TimedOut,
     };
     stage.finished_at = Some(now.max(stage.started_at));
+    // A stage started by an earlier release is marked as its outcome lands.
+    stage.record_repair.get_or_insert(RecordRepair::Open);
     debug_assert!(stage.state.is_terminal());
     stage
 }
@@ -577,7 +686,7 @@ impl RetryKind {
 /// agent in place, and only a refused wake spawns a fresh agent, the cold retry.
 async fn infra_retry(
     ctx: &DaemonContext,
-    table: &RunTable,
+    table: &mut RunTable,
     stage: &StageRun,
     run: &PipelineRun,
     all: &[StageRun],
@@ -628,7 +737,7 @@ pub(super) async fn deadline_stopped(
     if outcome == StageOutcome::TimedOut {
         let woken = respawn(
             ctx,
-            &table,
+            &mut table,
             (&stage, &run, &all),
             &outcome,
             DEADLINE_PASSED,
@@ -647,7 +756,7 @@ pub(super) async fn deadline_stopped(
 /// A run that took a deadline wake is the slot's last: what ends it is final.
 async fn respawn(
     ctx: &DaemonContext,
-    table: &RunTable,
+    table: &mut RunTable,
     (stage, run, all): (&StageRun, &PipelineRun, &[StageRun]),
     outcome: &StageOutcome,
     error: &str,
@@ -693,18 +802,12 @@ async fn respawn(
         extension,
         engine_login: kind == RetryKind::EngineLogin,
     };
-    let Some(replacement) = replace(ctx, table, run, all, &failed, reserved, refusal).await? else {
+    let replaced = replace(ctx, table, run, all, &failed, reserved, refusal).await?;
+    let Some((replacement, woken)) = replaced else {
         return Ok(None);
     };
-    let text = retry_text(
-        stage,
-        run,
-        error,
-        kind,
-        wake.is_some(),
-        waits,
-        (retry, limit),
-    );
+    assert!(!woken || wake.is_some(), "only a planned wake is kept");
+    let text = retry_text(stage, run, error, kind, woken, waits, (retry, limit));
     progress(ctx, run, text).await?;
     // Issued at once, or by the sweep once a disk hold ends; in either
     // case after what the failed agent delegated is stopped and reaped.
@@ -842,16 +945,17 @@ async fn disk_nearly_full(ctx: &DaemonContext) -> bool {
 }
 
 /// Reserve the replacement of `failed`, the `retry` of its slot, and then
-/// persist the failure; `None` when the driver or the budget allows none.
+/// persist the failure; with whether it still wakes the failed agent, or
+/// `None` when the driver or the budget allows none.
 async fn replace(
     ctx: &DaemonContext,
-    table: &RunTable,
+    table: &mut RunTable,
     run: &PipelineRun,
     all: &[StageRun],
     failed: &StageRun,
     retry: spawn::Retry,
     refusal: Option<(&str, usize)>,
-) -> Result<Option<StageRunId>, ArchonError> {
+) -> Result<Option<(StageRunId, bool)>, ArchonError> {
     assert!(
         failed.state.is_terminal(),
         "only a failed stage run is replaced"
@@ -875,16 +979,194 @@ async fn replace(
             archon_pipeline::swarm::MAX_CORRECTIONS,
         ));
     }
-    let mut store = ctx.store.lock().await;
+    let spec = driver.spec().clone();
+    let mut retry = retry;
+    // A deadline wake goes on in the stopped agent, on the model it runs: nothing
+    // is chosen here, and issuing it waits for a catalog that lists that model.
+    let mut store = if retry.extension.is_some() {
+        assert!(retry.wake.is_some(), "only a wake is extended");
+        // The plan's choice may since have moved, or never been the agent's.
+        assert!(
+            failed.aether_agent.is_some(),
+            "a wake keeps the stopped agent"
+        );
+        plan.choice = failed.current_choice().clone();
+        ctx.store.lock().await
+    } else {
+        let catalog = crate::learned::catalog(ctx).await?;
+        let mut store = ctx.store.lock().await;
+        let read = ((run, &*spec), &catalog);
+        plan = retry_choice(ctx, (&mut store, table), read, (failed, plan), &mut retry)?;
+        store
+    };
     // Owed before the replacement exists, so it never starts beside them.
-    descendants::owe(&mut store, failed, retry.wake.is_some())?;
+    let woken = retry.wake.is_some();
+    descendants::owe(&mut store, failed, woken)?;
     let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, retry)? else {
         return Ok(None);
     };
     // Replacement first: a crash in between leaves a superseded live
     // stage run, never a failure that looks final on resume.
-    store.upsert_stage_run(failed)?;
-    Ok(Some(id))
+    // The attempt goes on, so its restatement is kept for the replacement too.
+    let failed = restatement::bound(&store, failed.clone())?;
+    store.upsert_stage_run(&failed)?;
+    Ok(Some((id, woken)))
+}
+
+/// The plan `failed`'s retry runs: a wake keeps the stopped agent on the
+/// model it ran (I1) unless a steer, retirement or judge moves it; a fresh
+/// retry is routed by quota as a fresh stage is (I2).
+fn retry_choice(
+    ctx: &DaemonContext,
+    (store, table): (&mut archon_queue::Store, &mut RunTable),
+    ((run, spec), catalog): ((&PipelineRun, &PipelineSpec), &ModelCatalog),
+    (failed, chosen): (&StageRun, SpawnPlan),
+    retry: &mut spawn::Retry,
+) -> Result<SpawnPlan, ArchonError> {
+    assert_eq!(failed.run, run.id, "the failed attempt is the run's");
+    assert_eq!(
+        failed.stage_id, chosen.stage_id,
+        "the retry is the failed slot's"
+    );
+    let mut plan = super::model_catalog::retry_plan(ctx, store, table, run, chosen, catalog, spec)?;
+    let ran = failed.current_choice();
+    if retry.wake.is_some() {
+        let item = store.item(&run.item)?;
+        if let Some(held) = super::resume::held_on_agent(&item, &plan, ran, catalog) {
+            plan.choice = held;
+        }
+    }
+    // The agent a wake keeps runs the model it was last steered to.
+    let kept = catalog.canonical_alias(&ran.model);
+    let woken = retry.wake.is_some().then_some(kept);
+    retry_judge(ctx, store, run, &mut plan, woken)?;
+    if plan.choice.model != *kept {
+        retry.wake = None;
+    }
+    if retry.wake.is_none() {
+        route_fresh(ctx, (store, table), (run, spec), &mut plan, catalog)?;
+    }
+    Ok(plan)
+}
+
+/// Route fresh retry `plan` by quota, letting the run's driver follow a
+/// stored plan the move changed, as a reserved stage's move is followed.
+fn route_fresh(
+    ctx: &DaemonContext,
+    (store, table): (&mut archon_queue::Store, &mut RunTable),
+    (run, spec): (&PipelineRun, &PipelineSpec),
+    plan: &mut SpawnPlan,
+    catalog: &ModelCatalog,
+) -> Result<(), ArchonError> {
+    let mut item = store.item(&run.item)?;
+    assert_eq!(item.id, run.item, "the run works for the item");
+    let repo = item
+        .repo
+        .as_ref()
+        .map(|id| store.repo(&crate::resolve::repo_ref(id)))
+        .transpose()?;
+    let before = item.model_plan.plan().clone();
+    let resume = plan.resume.clone();
+    crate::quota::route_replacement(ctx, store, (&mut item, spec), plan, repo.as_ref())?;
+    assert_eq!(
+        plan.resume, resume,
+        "routing leaves what the attempt is told"
+    );
+    let after = item.model_plan.plan();
+    if before != *after {
+        super::model_catalog::follow_models(table, &run.id, (&before, after), catalog);
+    }
+    Ok(())
+}
+
+/// An acceptance retry is judged by the `woken` judge while it is still
+/// eligible, else by one selected as its first attempt was, never the placeholder.
+fn retry_judge(
+    ctx: &DaemonContext,
+    store: &mut archon_queue::Store,
+    run: &PipelineRun,
+    plan: &mut SpawnPlan,
+    woken: Option<&archon_core::model::ModelRef>,
+) -> Result<(), ArchonError> {
+    if plan.stage_id != archon_pipeline::acceptance::STAGE {
+        return Ok(());
+    }
+    let item = store.item(&run.item)?;
+    let plans = std::slice::from_mut(plan);
+    let selected = super::acceptance::select_model(ctx, store, &item, run, plans, woken);
+    match selected {
+        Ok(()) => {
+            assert_eq!(plan.choice.tier, None, "a judge is selected, never tiered");
+            Ok(())
+        }
+        Err(error) if error.is_store() => Err(error),
+        Err(error) => Err(ArchonError::Unavailable(format!(
+            "{}: {error}",
+            super::model_catalog::RETRY_WAIT
+        ))),
+    }
+}
+
+pub(super) async fn replace_refused_model(
+    ctx: &DaemonContext,
+    table: &mut RunTable,
+    stage: &StageRun,
+    reason: String,
+) -> Result<FollowUp, ArchonError> {
+    let (run, all) = {
+        let store = ctx.store.lock().await;
+        (store.run(&stage.run)?, store.stage_runs(&stage.run)?)
+    };
+    let error = format!("cannot create agent: {reason}");
+    if run.state.is_terminal() {
+        return settle_locked(
+            ctx,
+            table,
+            &stage.id,
+            StageOutcome::Cancelled {
+                reason: Some(error),
+            },
+        )
+        .await;
+    }
+    let outcome = StageOutcome::Failed {
+        error: error.clone(),
+        infra: true,
+    };
+    let failed = settled_stage(stage.clone(), outcome, archon_core::now());
+    let retry = spawn::Retry {
+        nth: all.iter().filter(|s| spawn::same_slot_as(s, stage)).count(),
+        wake: None,
+        not_before: None,
+        extension: None,
+        engine_login: false,
+    };
+    match replace(ctx, table, &run, &all, &failed, retry, None).await {
+        Ok(Some((id, _))) => Ok(FollowUp {
+            issue: vec![id],
+            descendant_stops: vec![stage.id.clone()],
+            ..FollowUp::default()
+        }),
+        // The model was refused, not the machine: no infrastructure failure.
+        Ok(None) => spawn::fail_stage_and_run(ctx, table, stage, error, false).await,
+        Err(ArchonError::Unavailable(why)) => {
+            let subject = format!("stage:{}", stage.id);
+            let what = format!(
+                "Stage {} waits for a model; re-plan item {}",
+                stage.stage_id, run.item
+            );
+            super::coordination::isolate(
+                ctx,
+                &subject,
+                Some(&run.item),
+                &what,
+                Err(ArchonError::Invalid(why)),
+            )
+            .await?;
+            Ok(FollowUp::default())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// The agent cap a replaced planner is told, from the repository as it is now.
@@ -1010,8 +1292,9 @@ async fn cancel_siblings(
             let outcome = StageOutcome::Cancelled {
                 reason: Some(reason.clone()),
             };
-            let settled = settled_stage(stage, outcome, now);
+            let settled = restatement::bound(&store, settled_stage(stage, outcome, now))?;
             store.upsert_stage_run(&settled)?;
+            restatement::forget(&mut store, &settled)?;
             table.spawn_errors.remove(&id);
             cancelled.push((settled, reason));
         }

@@ -74,6 +74,9 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Directive(directive) => directive_recorded(directive),
         Reply::Cleared(count) => format!("Cleared {count} directive(s)."),
         Reply::GithubComment { url } => format!("Posted {url}"),
+        Reply::RepoWatches(watches) => {
+            listing("watched repositories", watches.iter().map(watch_line))
+        }
         Reply::CostReport(report) => cost::report(report),
         Reply::ModelEvidence(report) => report.text(),
         Reply::Initiatives(all) => initiatives::list(all),
@@ -85,6 +88,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Settings(view) => view.describe(),
         Reply::Artifacts(listing) => artifacts::listing(listing),
         Reply::ArtifactPage(page) => artifacts::page(page),
+        Reply::VerdictCheck(check) => check.message(),
         Reply::RequestStatus(status) => tracked::status(status),
         // Replies without a prose view retain their complete wire representation.
         _ => serde_json::to_string(reply)
@@ -171,6 +175,24 @@ fn listing(noun: &str, lines: impl ExactSizeIterator<Item = String>) -> String {
     text
 }
 
+fn watch_line(watch: &archon_core::protocol::github_links::RepoWatchView) -> String {
+    let repository = watch
+        .repository
+        .as_deref()
+        .unwrap_or("no github.com origin now");
+    let open = match watch.tracked_pull_requests {
+        Some(count) if watch.truncated => {
+            format!("{count} pull requests tracked, all a walk reads: older ones are not watched")
+        }
+        Some(count) => format!("{count} pull requests tracked"),
+        None => "not read yet".to_owned(),
+    };
+    format!(
+        "{} ({repository}): every {} min, {open}",
+        watch.repo, watch.interval_minutes
+    )
+}
+
 fn repo_line(repo: &Repo) -> String {
     let base = repo.base_branch.as_deref().unwrap_or("HEAD");
     let pipeline = repo.default_pipeline.as_deref().unwrap_or("none");
@@ -213,6 +235,9 @@ fn item_line(item: &QueueItem, reason_chars: usize) -> String {
     if let Some(risk) = item.risk {
         let _ = write!(line, ", risk {risk}");
     }
+    if let Some(check) = &item.model_plan.catalog_check {
+        let _ = write!(line, ", {check}");
+    }
     if let Some(detail) = state_detail(&item.state) {
         let _ = write!(line, "; {}", clip(&detail, reason_chars));
     }
@@ -241,6 +266,47 @@ fn state_detail(state: &QueueState) -> Option<String> {
         } => Some(format!("cancelled: {reason}")),
         QueueState::Queued | QueueState::Dispatching | QueueState::Cancelled { reason: None } => {
             None
+        }
+    }
+}
+
+/// Where each plan entry's model and effort came from, one line per entry.
+fn origin_text(
+    text: &mut String,
+    origins: &std::collections::BTreeMap<String, Vec<archon_core::plan_origin::EntryOrigin>>,
+) {
+    if origins.is_empty() {
+        return;
+    }
+    text.push_str("\nPlan origins:");
+    for (key, entries) in origins {
+        for (slot, origin) in entries.iter().enumerate() {
+            let _ = write!(
+                text,
+                "\n  {key}[{slot}]: model {}; effort {}",
+                origin.model, origin.effort
+            );
+            if let Some(tier) = &origin.tier {
+                let _ = write!(text, "; tier {tier}");
+            }
+        }
+    }
+}
+
+/// How the sizer classed the item and why each sized plan entry has its
+/// effort; nothing for an item no key of which was sized.
+fn sizing_text(text: &mut String, item: &archon_core::queue::QueueItem) {
+    let Some(sizing) = item.model_plan.sizing() else {
+        return;
+    };
+    let Some(class) = sizing.risk_class else {
+        return;
+    };
+    let signals = sizing.risk_signals.join(", ");
+    let _ = write!(text, "\nEffort sizing: risk class {class} ({signals})");
+    for (key, reasons) in item.model_plan.effort_reasons(&item.id) {
+        for (slot, reason) in reasons.iter().enumerate() {
+            let _ = write!(text, "\n  {key}[{slot}]: {reason}");
         }
     }
 }
@@ -276,6 +342,8 @@ fn item_detail(detail: &ItemDetail) -> String {
         ),
         item.autonomy.describe()
     );
+    origin_text(&mut text, &detail.plan_origins);
+    sizing_text(&mut text, item);
     if let Some(provider) = &item.routed_provider {
         let _ = write!(
             text,

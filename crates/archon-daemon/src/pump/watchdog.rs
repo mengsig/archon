@@ -16,7 +16,7 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::config::RepoConfig;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId};
-use archon_core::model::{Effort, ModelChoice, ModelRef};
+use archon_core::model::{Effort, EffortContract, ModelChoice, ModelRef};
 use archon_core::notify::NotificationKind;
 use archon_core::policy::ModelPolicy;
 use archon_core::protocol::RepoRef;
@@ -25,6 +25,7 @@ use serde_json::Value;
 
 use super::fleet;
 use crate::context::DaemonContext;
+use crate::executor::StoredSpawn;
 use crate::mirror::{self, Reach};
 use crate::triggers::{self, TriggerEvent};
 use crate::{executor, feed};
@@ -80,6 +81,7 @@ pub(super) async fn agent_created(
     let Some(parent) = &event.parent else {
         return Ok(());
     };
+    assert_eq!(event.agent.as_ref(), Some(agent), "the event's own agent");
     assert_ne!(parent, agent, "an agent is not its own parent");
     let node_run = executor::node_run(&*ctx.store.lock().await, parent)?;
     if let Some(run) = node_run {
@@ -89,18 +91,23 @@ pub(super) async fn agent_created(
     let Some(item) = parent_item(ctx, parent).await? else {
         return Ok(());
     };
-    let delegated = {
+    // One read of the aliases: the model and every policy it meets use the same ids.
+    let aliases = current_aliases(ctx).await?;
+    let model = aliases.get(model).unwrap_or(model);
+    let belongs_to_run = {
         let mut store = ctx.store.lock().await;
         let run = store.agent_run(parent)?;
         if let Some(run) = &run {
             store.link_agent_run(agent, run)?;
-            // Its stage's cost includes it, with the effort Aether holds.
+        }
+        if run.is_some() || item.is_none() {
             store.record_delegated(agent, parent, model, None)?;
         }
         run.is_some()
     };
-    if delegated {
+    if belongs_to_run {
         record_effort(ctx, agent, parent, model).await?;
+        executor::lift_new_child(ctx, agent, parent).await?;
     }
     if already_checked(ctx, agent).await? {
         return Ok(());
@@ -109,12 +116,33 @@ pub(super) async fn agent_created(
     let most = ctx.config.limits.max_delegation_depth;
     let refusal = match depth_refusal(depth, most, item.is_none()) {
         Some(refusal) => Some(refusal),
-        None => violation(ctx, (agent, parent), model, item.as_ref()).await?,
+        None => violation(ctx, (agent, parent), (model, &aliases), item.as_ref()).await?,
     };
     match refusal {
         Some(refusal) => cancel_child(ctx, agent, model, item, &refusal).await,
         None => ctx.store.lock().await.kv_delete(&unchecked_key(agent)),
     }
+}
+
+/// The catalog's aliases, each to its canonical id, as one read of them holds them.
+pub(super) type Aliases = std::collections::BTreeMap<ModelRef, ModelRef>;
+
+/// The aliases of a catalog read in the last few minutes: the link has none
+/// before a start's first read. While Aether gives no usable catalog, the link's last ones.
+async fn current_aliases(ctx: &DaemonContext) -> Result<std::sync::Arc<Aliases>, ArchonError> {
+    let catalog = crate::learned::catalog(ctx).await?;
+    if let Some(reason) = catalog.not_ready_reason() {
+        tracing::debug!(reason, "child checked with the link's aliases");
+        return Ok(ctx.aether.aliases());
+    }
+    let aliases = catalog.aliases();
+    debug_assert!(
+        aliases
+            .values()
+            .all(|canonical| !aliases.contains_key(canonical)),
+        "an alias names a canonical id"
+    );
+    Ok(std::sync::Arc::new(aliases))
 }
 
 /// Record the effort Aether created the delegated `agent` with, so a stage
@@ -239,23 +267,39 @@ fn depth_refusal(depth: u32, most: u32, helper: bool) -> Option<String> {
 async fn violation(
     ctx: &DaemonContext,
     (agent, parent): (&AetherAgentId, &AetherAgentId),
-    model: &ModelRef,
+    (model, aliases): (&ModelRef, &Aliases),
     item: Option<&QueueItemId>,
 ) -> Result<Option<String>, ArchonError> {
     assert_ne!(agent, parent, "an agent is not its own parent");
+    assert!(
+        aliases
+            .get(model)
+            .is_none_or(|canonical| canonical == model),
+        "the child's model is read under these aliases"
+    );
     let Some(item) = item else {
-        return helper_violation(ctx, agent, model).await;
+        let held = held_by_aether(ctx, agent).await?;
+        let refusal = helper_violation(ctx, (model, aliases), held.as_ref()).await?;
+        if let Some(ChildEffort::Known(effort)) = held.as_ref().map(child_effort) {
+            let mut store = ctx.store.lock().await;
+            store.record_delegated(agent, parent, model, Some(effort))?;
+        }
+        return Ok(refusal);
     };
-    let policy = item_policy(ctx, item).await?;
-    let reviewers = ctx.store.lock().await.item(item)?.model_plan;
-    let Some(named) = reviewers.reviewer_choices() else {
+    let policy = item_policy(ctx, item, aliases).await?;
+    let lead = contract_reviewers::lead_spawn(ctx, parent).await?;
+    // The reviewers the lead's contract named, never the plan's now (A10).
+    let named = lead.as_ref().and_then(StoredSpawn::named_reviewers);
+    let Some(named) = named.map(|named| canonical_reviewers(named, aliases)) else {
         if let Some(refusal) = policy_violation(ctx, agent, model, &policy).await? {
             return Ok(Some(refusal));
         }
         let Some(held) = held_by_aether(ctx, agent).await? else {
             return Ok(None);
         };
-        if let Some(refusal) = contract_reviewers::violation(ctx, parent, model, &held).await? {
+        if let Some(refusal) =
+            contract_reviewers::violation(ctx, parent, (model, aliases), &held).await?
+        {
             return Ok(Some(refusal));
         }
         return contract_reviewers::alone_violation(ctx, parent, &held).await;
@@ -271,11 +315,29 @@ async fn violation(
     let Some(held) = held else {
         return Ok(None);
     };
-    let sizing = ctx.config.models.effort_sizing;
-    if let Some(refusal) = reviewer_refusal(named, model, &held, sizing) {
+    // The rule the lead was issued, never the one in force now (A10).
+    let issued = lead.as_ref().and_then(StoredSpawn::issued_effort_contract);
+    if let Some(refusal) = reviewer_refusal(&named, model, &held, issued) {
         return Ok(Some(refusal));
     }
     contract_reviewers::alone_violation(ctx, parent, &held).await
+}
+
+/// `named` under the ids the catalog gives them, as the child's model is read:
+/// a contract issued before aliases were resolved may name one.
+fn canonical_reviewers(mut named: Vec<ModelChoice>, aliases: &Aliases) -> Vec<ModelChoice> {
+    assert!(
+        !named.is_empty(),
+        "a contract that names reviewers names one"
+    );
+    let count = named.len();
+    for choice in &mut named {
+        if let Some(canonical) = aliases.get(&choice.model) {
+            choice.model = canonical.clone();
+        }
+    }
+    assert_eq!(named.len(), count, "each reviewer keeps its place");
+    named
 }
 
 /// Why a child of an item with no reviewer plan breaks the model policy.
@@ -295,22 +357,22 @@ async fn policy_violation(
     Ok(policy_refusal(policy, model, &held).map(|refusal| refusal.to_string()))
 }
 
-/// Why a reviewer child breaks the plan's reviewers: by default it runs on no
-/// model the plan names, or below that model's effort, a floor. With
-/// `effort_sizing` only the model is held; the lead sizes the effort, the
-/// model policy's `max_effort` alone bounding it. A child whose role is no
-/// reviewer's is not held to the plan.
+/// Why a reviewer child breaks the plan's reviewers under the effort rule
+/// its lead was `issued`: under floors it runs on no model the plan names,
+/// or below that model's effort. Under the rubric, or a rule nothing
+/// recorded, only the model is held; the lead sizes the effort, the model
+/// policy's `max_effort` alone bounding it. Any other role is not held.
 fn reviewer_refusal(
     named: &[ModelChoice],
     model: &ModelRef,
     held: &Value,
-    effort_sizing: bool,
+    issued: Option<EffortContract>,
 ) -> Option<String> {
     let role = held.get("role").and_then(Value::as_str).unwrap_or_default();
     if !role.eq_ignore_ascii_case("reviewer") {
         return None;
     }
-    if !effort_sizing {
+    if issued == Some(EffortContract::Floor) {
         return floored_reviewer_refusal(named, model, held);
     }
     if named.iter().any(|c| c.model == *model) {
@@ -368,7 +430,11 @@ fn floored_reviewer_refusal(
 }
 
 /// Global policy narrowed by the item's repository, as for its stages.
-async fn item_policy(ctx: &DaemonContext, item: &QueueItemId) -> Result<ModelPolicy, ArchonError> {
+async fn item_policy(
+    ctx: &DaemonContext,
+    item: &QueueItemId,
+    aliases: &Aliases,
+) -> Result<ModelPolicy, ArchonError> {
     let repo = {
         let store = ctx.store.lock().await;
         match store.item(item)?.repo {
@@ -376,12 +442,14 @@ async fn item_policy(ctx: &DaemonContext, item: &QueueItemId) -> Result<ModelPol
             None => None,
         }
     };
-    let global = ctx.config.models.policy();
+    let global = ctx.config.models.policy().canonicalized(aliases);
     let Some(repo) = repo else {
         return Ok(global);
     };
     match RepoConfig::load(&repo.path) {
-        Ok(config) => Ok(global.narrowed_by(&config.models.policy_overlay())),
+        Ok(config) => {
+            Ok(global.narrowed_by(&config.models.policy_overlay().canonicalized(aliases)))
+        }
         // The dispatcher refuses such a repo's new work; keep watching
         // without its narrowing rather than stop watching.
         Err(error) => {
@@ -395,14 +463,13 @@ async fn item_policy(ctx: &DaemonContext, item: &QueueItemId) -> Result<ModelPol
 /// or worktree, or it breaks the policy as the repositories it reads narrow it.
 async fn helper_violation(
     ctx: &DaemonContext,
-    agent: &AetherAgentId,
-    model: &ModelRef,
+    (model, aliases): (&ModelRef, &Aliases),
+    held: Option<&Value>,
 ) -> Result<Option<String>, ArchonError> {
-    let held = held_by_aether(ctx, agent).await?;
-    let roots = held.as_ref().map(scope_roots).unwrap_or_default();
+    let roots = held.map(scope_roots).unwrap_or_default();
     let reach = mirror_reach(ctx, roots.clone()).await?;
-    let policy = mirror::helper_policy(ctx, &reach).await?;
-    let refusal = match &held {
+    let policy = mirror::helper_policy(ctx, &reach, aliases).await?;
+    let refusal = match held {
         Some(held) => policy_refusal(&policy, model, held),
         None => model_refusal(&policy, model),
     };
@@ -728,7 +795,9 @@ mod reviewer_tests {
             tier: None,
         }];
         let reviewer = |effort| json!({"role": "reviewer", "config": {"effort": effort}});
-        let refusal = |model: &ModelRef, held: &Value| reviewer_refusal(&named, model, held, false);
+        let refusal = |model: &ModelRef, held: &Value| {
+            reviewer_refusal(&named, model, held, Some(EffortContract::Floor))
+        };
         assert!(refusal(&model, &reviewer("medium")).is_none());
         assert!(refusal(&model, &reviewer("high")).is_none());
         assert!(refusal(&model, &reviewer("max")).is_none());
@@ -753,14 +822,18 @@ mod reviewer_tests {
     fn an_empty_reviewer_plan_refuses_its_reviewers_without_panicking() {
         let model: ModelRef = "claude-code/claude-haiku-5-5".parse().unwrap();
         let reviewer = json!({"role": "reviewer", "config": {"effort": "high"}});
-        for sizing in [false, true] {
-            let refusal = reviewer_refusal(&[], &model, &reviewer, sizing).expect("no plan");
+        for issued in [
+            None,
+            Some(EffortContract::Floor),
+            Some(EffortContract::Rubric),
+        ] {
+            let refusal = reviewer_refusal(&[], &model, &reviewer, issued).expect("no plan");
             assert!(
                 refusal.contains("breaks the item's reviewer plan"),
                 "{refusal}"
             );
         }
-        assert!(reviewer_refusal(&[], &model, &json!({"role": "worker"}), false).is_none());
+        assert!(reviewer_refusal(&[], &model, &json!({"role": "worker"}), None).is_none());
     }
 
     /// `[models] effort_sizing` lets the lead size a reviewer's effort: only
@@ -774,23 +847,27 @@ mod reviewer_tests {
             tier: None,
         }];
         let reviewer = |effort| json!({"role": "reviewer", "config": {"effort": effort}});
-        let refusal = |model: &ModelRef, held: &Value| reviewer_refusal(&named, model, held, true);
-        for effort in ["low", "medium", "high", "x_high", "max"] {
+        // A lead issued no recorded rule is held to no stricter one than the rubric.
+        for issued in [Some(EffortContract::Rubric), None] {
+            let refusal =
+                |model: &ModelRef, held: &Value| reviewer_refusal(&named, model, held, issued);
+            for effort in ["low", "medium", "high", "x_high", "max"] {
+                assert!(
+                    refusal(&model, &reviewer(effort)).is_none(),
+                    "a {effort} reviewer on the plan's model runs under {issued:?}"
+                );
+            }
+            assert!(refusal(&model, &json!({"role":"reviewer"})).is_none());
+            let other = "codex/gpt-6-luna".parse().unwrap();
+            let off_plan = refusal(&other, &reviewer("high")).expect("off the plan");
             assert!(
-                refusal(&model, &reviewer(effort)).is_none(),
-                "a {effort} reviewer on the plan's model runs: the lead sizes it to the diff"
+                off_plan.contains("reviewer on codex/gpt-6-luna breaks the item's reviewer plan")
+                    && off_plan.contains("claude-code/claude-haiku-5-5 (default effort medium)"),
+                "{off_plan}"
             );
-        }
-        assert!(refusal(&model, &json!({"role":"reviewer"})).is_none());
-        let other = "codex/gpt-6-luna".parse().unwrap();
-        let off_plan = refusal(&other, &reviewer("high")).expect("off the plan");
-        assert!(
-            off_plan.contains("reviewer on codex/gpt-6-luna breaks the item's reviewer plan")
-                && off_plan.contains("claude-code/claude-haiku-5-5 (default effort medium)"),
-            "{off_plan}"
-        );
-        for role in ["worker", "preview-builder", "review-assistant"] {
-            assert!(refusal(&other, &json!({"role":role})).is_none());
+            for role in ["worker", "preview-builder", "review-assistant"] {
+                assert!(refusal(&other, &json!({"role":role})).is_none());
+            }
         }
     }
 }

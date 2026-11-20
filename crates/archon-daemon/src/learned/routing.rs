@@ -2,7 +2,7 @@ use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::feedback::ChoiceStanding;
 use archon_core::id::{QueueItemId, RepoId};
-use archon_core::model::{ModelChoice, ModelPlan, ModelRef};
+use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelRef};
 use archon_core::model_tier::Tier;
 use archon_core::outcome::DiffSize;
 use archon_core::policy::ModelPolicy;
@@ -10,6 +10,30 @@ use archon_pipeline::PipelineSpec;
 use archon_queue::Store;
 use archon_queue::store::{CohortEvidence, RouteEvidence, RouteQuery};
 use std::collections::BTreeMap;
+
+/// The policy learned routes are chosen within. With effort sizing on, a
+/// route's effort is advice the sizer replaces, so the effort cap rules out no model.
+pub(crate) fn advice_policy(policy: &ModelPolicy, sizing: bool) -> ModelPolicy {
+    let mut advice = policy.clone();
+    if sizing {
+        advice.max_effort = None;
+    }
+    assert!(advice.max_effort.is_none() || advice == *policy);
+    advice
+}
+
+/// `plan` chosen within [`advice_policy`], each effort held to `cap`, the
+/// policy's, until the sizer decides it.
+pub(crate) fn held_to(mut plan: ModelPlan, cap: Option<Effort>) -> ModelPlan {
+    let Some(cap) = cap else {
+        return plan;
+    };
+    for choice in plan.0.values_mut().flatten() {
+        choice.effort = choice.effort.min(cap);
+    }
+    assert!(plan.0.values().flatten().all(|c| c.effort <= cap));
+    plan
+}
 
 /// What the evidence of `repo` picks for the stages of `spec` within
 /// `policy`, pooled over every diff size; empty when nothing is learned.
@@ -51,8 +75,17 @@ pub(crate) fn plan_for_item(
                 .map_err(|e| ArchonError::Corrupt(format!("stored model defaults: {e}")))
         })
         .transpose()?;
+    let catalog = store.model_catalog();
     let (mut plan, mut reasons) = match saved {
-        Some(saved) if policy.check_plan(&saved.0).is_ok() => saved,
+        Some(saved)
+            if policy.check_plan(&saved.0).is_ok()
+                && saved.0.0.values().flatten().all(|choice| {
+                    eligible_model(&catalog, &choice.model, max_tier)
+                        .is_some_and(|id| id == choice.model)
+                }) =>
+        {
+            saved
+        }
         _ => select_plan(
             store,
             repo,
@@ -107,7 +140,22 @@ pub(crate) fn item_size(
             _ => {}
         }
     }
-    let runs = store.runs_for_item(&item.id)?;
+    measured_size(store, &item.id)
+}
+
+/// The diff size `item`'s last run measured: what the effort sizer freezes
+/// with a plan's first sizing. The item's `diff:` tag is the sizer's to read.
+/// An item being enqueued is not stored yet and has run nothing.
+pub(crate) fn measured_size(
+    store: &Store,
+    item: &QueueItemId,
+) -> Result<Option<DiffSize>, ArchonError> {
+    let runs = match store.runs_for_item(item) {
+        Ok(runs) => runs,
+        Err(ArchonError::NotFound(_)) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    debug_assert!(runs.iter().all(|run| run.item == *item));
     runs.last()
         .map(|r| store.outcome(&r.id))
         .transpose()
@@ -198,15 +246,46 @@ fn stage_evidence(
     }
     seed(store, &mut cohort.routes, query, policy);
     let catalog = store.model_catalog();
-    let within = |m: &ModelRef| catalog.tier_of(m).is_none_or(|tier| tier <= max_tier);
     cohort
         .routes
-        .retain(|e| policy.check(&e.route.choice).is_ok() && within(&e.route.choice.model));
+        .retain(|e| applies(&catalog, (policy, max_tier), &e.route.choice));
     assert!(cohort.routes.iter().all(|e| e.route.stage == query.stage));
     assert!(cohort.routes.iter().all(|e| e.route.passed <= e.route.runs));
     let local = cohort.routes.iter().all(|e| e.route.repo.is_some());
     assert!(!cohort.feedback_history || local, "corrections never pool");
     Ok(cohort)
+}
+
+/// Whether evidence recorded on `choice` counts now: it speaks only for the
+/// model it ran, so an alias since moved to another model counts for neither.
+fn applies(
+    catalog: &archon_core::model_tier::ModelCatalog,
+    (policy, max_tier): (&ModelPolicy, Tier),
+    choice: &ModelChoice,
+) -> bool {
+    let listed = eligible_model(catalog, &choice.model, max_tier);
+    listed.is_some_and(|id| id == choice.model) && policy.check(choice).is_ok()
+}
+
+fn eligible_model(
+    catalog: &archon_core::model_tier::ModelCatalog,
+    model: &ModelRef,
+    max_tier: Tier,
+) -> Option<ModelRef> {
+    // Listed and not retired: supersession steers only Archon's own tier picks.
+    match catalog.check(model) {
+        Ok(canonical)
+            if catalog
+                .tier_of(&canonical)
+                .is_none_or(|tier| tier <= max_tier) =>
+        {
+            Some(canonical)
+        }
+        result => {
+            tracing::info!(%model, ?result, "skipping ineligible learned model");
+            None
+        }
+    }
 }
 
 /// The corrected choice's samples in its cohort, read past the policy, and
@@ -248,9 +327,6 @@ fn seed(
 ) {
     use archon_core::{model::Effort, outcome::LearnedRoute};
     let ready = store.learning_models();
-    if !ready.is_empty() {
-        evidence.retain(|e| ready.contains(&e.route.choice.model));
-    }
     for model in ready {
         let choice = ModelChoice {
             model,
@@ -437,6 +513,46 @@ mod tests {
         assert_eq!(trial.route.choice.model.model, "tiny");
         assert!(explored);
         assert!(choose(&options[..1], false).is_none());
+    }
+    #[test]
+    fn evidence_under_an_alias_counts_for_neither_the_alias_nor_its_target() {
+        use archon_core::model_tier::{CatalogModel, ModelCatalog};
+        let current: ModelRef = "claude-code/claude-opus-5-5".parse().unwrap();
+        let alias: ModelRef = "claude-code/opus".parse().unwrap();
+        let mut catalog = ModelCatalog::new(vec![CatalogModel {
+            model: current.clone(),
+            tier: Some(Tier::Frontier),
+            is_default: false,
+        }]);
+        catalog.add_alias(alias.clone(), current.clone());
+        let read = (&ModelPolicy::default(), Tier::Frontier);
+        let ran = |model: &ModelRef| ModelChoice::pinned(model.clone(), Effort::Low);
+        assert!(applies(&catalog, read, &ran(&current)));
+        assert!(
+            !applies(&catalog, read, &ran(&alias)),
+            "it ran an older model"
+        );
+    }
+    #[test]
+    fn evidence_on_a_superseded_model_counts_and_on_a_retired_one_does_not() {
+        use archon_core::model_tier::{CatalogModel, ModelCatalog};
+        let [old, new, gone]: [ModelRef; 3] =
+            ["p/old", "p/new", "p/gone"].map(|m| m.parse().unwrap());
+        let listed = |model: &ModelRef| CatalogModel {
+            model: model.clone(),
+            tier: Some(Tier::Balanced),
+            is_default: false,
+        };
+        let mut catalog = ModelCatalog::new(vec![listed(&old), listed(&new), listed(&gone)]);
+        catalog.add_superseded(old.clone(), new.clone());
+        catalog.add_retired(gone.clone(), None);
+        let read = (&ModelPolicy::default(), Tier::Frontier);
+        let ran = |model: &ModelRef| ModelChoice::pinned(model.clone(), Effort::Low);
+        assert!(
+            applies(&catalog, read, &ran(&old)),
+            "superseded, still listed"
+        );
+        assert!(!applies(&catalog, read, &ran(&gone)), "retired");
     }
     #[test]
     fn exploration_is_stable_and_ten_percent_is_a_hard_configuration_ceiling() {

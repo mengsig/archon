@@ -349,6 +349,55 @@ fn outcomes_captured_without_estimates_learn_the_codex_estimate() {
 }
 
 #[test]
+fn refused_agent_creation_is_absent_from_cost_and_routing_evidence() {
+    let mut store = store();
+    let item = store
+        .insert_item(&item(None, "refused model"), None)
+        .unwrap();
+    let run = start(&mut store, &item.id);
+    let error = "cannot create agent: unknown model";
+    let mut stage = stage(&run, 0);
+    stage.state = StageState::Failed {
+        error: error.into(),
+    };
+    for error in [
+        format!("stage {} refused at spawn: policy", stage.stage_id),
+        "workspace missing: /tmp/item".into(),
+        "preparing the experiments directory failed: access denied".into(),
+        "preparing the role's worktree failed: io: inspecting /tmp/role".into(),
+        "create_agent failed on a full disk 5 times".into(),
+    ] {
+        let mut refused = stage.clone();
+        refused.state = StageState::Failed { error };
+        assert!(refused.zero_cost_create_refusal());
+        refused.cost_usd = 0.5;
+        assert!(!refused.zero_cost_create_refusal());
+    }
+    stage.finished_at = Some(t(30));
+    store.upsert_stage_run(&stage).unwrap();
+    settle_run(
+        &mut store,
+        &run,
+        QueueState::Failed {
+            run: Some(run.id.clone()),
+            error: error.into(),
+        },
+        t(50),
+    );
+    store
+        .capture_outcome(&store.run(&run.id).unwrap(), None, true)
+        .unwrap();
+    let outcome = store.outcome(&run.id).unwrap().unwrap();
+    assert!(outcome.stages.is_empty());
+    assert!(
+        store
+            .route_evidence(None, "direct", "implement", None)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn infrastructure_failure_does_not_become_negative_model_evidence() {
     let mut store = store();
     let item = store.insert_item(&item(None, "infra"), None).unwrap();
@@ -357,6 +406,7 @@ fn infrastructure_failure_does_not_become_negative_model_evidence() {
     stage.state = StageState::Failed {
         error: "Aether unavailable".into(),
     };
+    stage.infrastructure_failure = true;
     stage.finished_at = Some(t(30));
     store.upsert_stage_run(&stage).unwrap();
     settle_run(

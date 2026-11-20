@@ -7,8 +7,9 @@ use archon_core::catalog::StageKind;
 use archon_core::cost::format_usd;
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::model::{ModelPlan, ModelReasons};
-use archon_core::protocol::{ClientKind, ItemPatch, Reply};
+use archon_core::model::ModelReasons;
+use archon_core::plan_origin::PlannedPlan;
+use archon_core::protocol::{ItemPatch, Reply};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::steer::{RunEdit, Steer, SteerRecord, SteeredBy};
 use archon_pipeline::PipelineSpec;
@@ -16,68 +17,177 @@ use archon_pipeline::PipelineSpec;
 use super::items;
 use super::revise::{self, Ceiling};
 use crate::context::DaemonContext;
-use crate::executor::steer::{self as live, Asked, Current, Sources};
+use crate::executor::steer::{self as live, Asked, Current, Erased, Sources};
 use crate::executor::{frozen, revived};
 use crate::knobs;
 use crate::resolve::RepoEnv;
+use crate::sizing;
 
 /// An item can start or end between reading its state and taking the run
 /// table; a steer follows it this often before it gives up.
 const STATE_CHANGES: usize = 3;
-
-/// The orchestrator steers through the MCP bridge, the operator otherwise.
-fn steered_by(client: ClientKind) -> SteeredBy {
-    match client {
-        ClientKind::ArchonMcp => SteeredBy::Orchestrator,
-        _ => SteeredBy::Operator,
-    }
-}
 
 /// Replies `Reply::Item` with the item as steered (`ItemBudgetsOff` when
 /// it set a budget while budgets are off). Its `autonomy` is checked first
 /// and applied after the rest, as `update_item` would.
 pub(super) async fn steer(
     ctx: &DaemonContext,
-    client: ClientKind,
+    by: SteeredBy,
     id: &QueueItemId,
     mut steer: Steer,
 ) -> Result<Reply, ArchonError> {
     steer.check()?;
     let Some(knobs) = steer.autonomy.take() else {
-        return steer_run_or_waiting(ctx, client, id, steer).await;
+        return steer_run_or_waiting(ctx, by, id, steer).await;
     };
     let patch = ItemPatch {
         autonomy: Some(knobs),
         ..ItemPatch::default()
     };
     if steer == Steer::default() {
-        return items::update(ctx, id, patch).await;
+        return items::update(ctx, id, patch, by.into()).await;
     }
     let item = ctx.store.lock().await.item(id)?;
     revise::prepare(ctx, &item, &knobs, Ceiling::Enforced).await?;
-    let steered = steer_run_or_waiting(ctx, client, id, steer).await?;
-    let revised = items::update(ctx, id, patch).await?;
-    Ok(match (steered, revised) {
-        (Reply::ItemBudgetsOff(_), Reply::Item(item)) => Reply::ItemBudgetsOff(item),
-        (_, revised) => revised,
-    })
+    // With sizing off, the steer is delivered before the update is stored, as in 1.6.3.
+    if ctx.config.models.effort_sizing() && matches!(item.state, QueueState::Running { .. }) {
+        // Boxed: the handlers' dispatch future holds this one inline.
+        let both = Box::pin(steer_running_then_update(
+            ctx,
+            by,
+            id,
+            &steer,
+            patch.clone(),
+        ))
+        .await?;
+        if let Some(reply) = both {
+            return Ok(reply);
+        }
+    }
+    let steered = steer_run_or_waiting(ctx, by, id, steer).await?;
+    let revised = items::update(ctx, id, patch, by.into()).await?;
+    Ok(budgets_off_of(steered, revised))
 }
 
-async fn steer_run_or_waiting(
+/// The reply to a steer and the update after it: the update's item, said
+/// to be set while budgets are off when the steer's was.
+fn budgets_off_of(steered: Reply, revised: Reply) -> Reply {
+    match (steered, revised) {
+        (Reply::ItemBudgetsOff(_), Reply::Item(item)) => Reply::ItemBudgetsOff(item),
+        (_, revised) => revised,
+    }
+}
+
+/// Steer the live run of item `id` with `steer` and update it with `patch`
+/// in one hold of the run table; `None` when it has no live run (any more).
+async fn steer_running_then_update(
     ctx: &DaemonContext,
-    client: ClientKind,
+    by: SteeredBy,
     id: &QueueItemId,
-    steer: Steer,
-) -> Result<Reply, ArchonError> {
+    steer: &Steer,
+    patch: ItemPatch,
+) -> Result<Option<Reply>, ArchonError> {
+    let mut steer = steer.clone();
+    let catalog = steer_catalog(ctx, &mut steer).await?;
     let item = ctx.store.lock().await.item(id)?;
     let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
     let sources = Sources::read(&env, &item, &steer)?;
     let asked = Asked {
-        by: steered_by(client),
+        by,
         env: &env,
         sources: &sources,
         steer: &steer,
         plan: None,
+        catalog: catalog.as_ref(),
+    };
+    let Some((steered, revised)) = steer_and_update(ctx, &asked, id, patch).await? else {
+        return Ok(None);
+    };
+    let steered = items::item_reply(ctx, steered, steer.budget_usd.is_some()).await;
+    Ok(Some(budgets_off_of(steered, revised)))
+}
+
+/// Steer the live run of item `id` as `asked` says and store `patch` of it
+/// under one hold of the run table, so no stage of the run starts between
+/// the two and the stages it has not started are sized once, for both. The
+/// Aether work both owe follows after; `None` when the item has no live run.
+async fn steer_and_update(
+    ctx: &DaemonContext,
+    asked: &Asked<'_>,
+    id: &QueueItemId,
+    patch: ItemPatch,
+) -> Result<Option<(QueueItem, Reply)>, ArchonError> {
+    let (follow, steered, stored) = {
+        let mut table = ctx.runs.lock().await;
+        let steering: Erased<'_, _> = Box::pin(live::steer_stored(ctx, &mut table, asked, id));
+        let Some((follow, steered)) = steering.await? else {
+            return Ok(None);
+        };
+        let by = asked.by.into();
+        let storing: Erased<'_, _> =
+            Box::pin(items::update_steered(ctx, &mut table, id, (patch, by)));
+        let stored = storing.await;
+        (follow, steered, stored)
+    };
+    assert_eq!(&steered.id, id, "the item that was steered");
+    // The steer is stored whether or not the update was, so its work is owed.
+    live::follow_steer(ctx, id, follow).await;
+    ctx.dispatch.notify_one();
+    let revised = match stored? {
+        items::SteeredUpdate::Stored(stored) => items::finish_update(ctx, id, *stored).await,
+        items::SteeredUpdate::RunEnded(patch) => {
+            let updating: Erased<'_, _> = Box::pin(items::update(ctx, id, patch, asked.by.into()));
+            updating.await?
+        }
+    };
+    Ok(Some((steered, revised)))
+}
+
+/// The catalog a steer that changes the plan is checked in, its named model
+/// put by its canonical id once the catalog is ready; `None` for any other steer.
+/// An effort-only steer counts: its agent update waits on the catalog too.
+async fn steer_catalog(
+    ctx: &DaemonContext,
+    steer: &mut Steer,
+) -> Result<Option<archon_core::model_tier::ModelCatalog>, ArchonError> {
+    let changes_plan = steer.model.is_some()
+        || steer.effort.is_some()
+        || steer.switch_pipeline.is_some()
+        || steer.insert_stage.is_some();
+    if !changes_plan {
+        return Ok(None);
+    }
+    let catalog = crate::learned::request_catalog(ctx).await?;
+    if let Some(model) = &mut steer.model
+        && catalog.not_ready_reason().is_none()
+    {
+        *model = catalog.check(model)?;
+        assert_eq!(
+            model,
+            catalog.canonical_alias(model),
+            "a checked model is canonical"
+        );
+    }
+    Ok(Some(catalog))
+}
+
+async fn steer_run_or_waiting(
+    ctx: &DaemonContext,
+    by: SteeredBy,
+    id: &QueueItemId,
+    mut steer: Steer,
+) -> Result<Reply, ArchonError> {
+    let catalog = steer_catalog(ctx, &mut steer).await?;
+    let item = ctx.store.lock().await.item(id)?;
+    let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
+    let sources = Sources::read(&env, &item, &steer)?;
+    let asked = Asked {
+        by,
+        env: &env,
+        sources: &sources,
+        steer: &steer,
+        plan: None,
+        catalog: catalog.as_ref(),
     };
     let item = steer_as(ctx, &asked, id).await?;
     Ok(super::items::item_reply(ctx, item, steer.budget_usd.is_some()).await)
@@ -111,17 +221,17 @@ async fn steer_as(
 /// steered into its run; everything else is patched as on any item.
 pub(super) async fn update(
     ctx: &DaemonContext,
-    client: ClientKind,
+    by: SteeredBy,
     id: &QueueItemId,
     mut patch: ItemPatch,
 ) -> Result<Reply, ArchonError> {
     let item = ctx.store.lock().await.item(id)?;
     let steers = patch.brief_append.is_some() || patch.model_plan.is_some();
     let QueueState::Running { run } = &item.state else {
-        return items::update(ctx, id, patch).await;
+        return items::update(ctx, id, patch, by.into()).await;
     };
     if !steers {
-        return items::update(ctx, id, patch).await;
+        return items::update(ctx, id, patch, by.into()).await;
     }
     if let Some(knobs) = &patch.autonomy {
         revise::prepare(ctx, &item, knobs, Ceiling::Enforced).await?;
@@ -137,29 +247,37 @@ pub(super) async fn update(
         ));
     }
     let asked = Asked {
-        by: steered_by(client),
+        by,
         env: &env,
         sources: &Sources::default(),
         steer: &steer,
-        plan: running_plan(ctx, &env, run, &mut patch).await?,
+        catalog: None,
+        plan: running_plan(ctx, (&env, by), run, &mut patch).await?,
     };
     assert!(patch.brief_append.is_none() && patch.model_plan.is_none());
-    if live::steer_run(ctx, &asked, id).await?.is_none() {
-        return Err(ArchonError::Unavailable(format!(
+    let ended = || {
+        ArchonError::Unavailable(format!(
             "item {id} ended its run while it was updated; send the update again"
-        )));
+        ))
+    };
+    if !ctx.config.models.effort_sizing() {
+        // As 1.6.3: the note is delivered before the rest of the patch is stored.
+        live::steer_run(ctx, &asked, id).await?.ok_or_else(ended)?;
+        return items::update(ctx, id, patch, by.into()).await;
     }
-    items::update(ctx, id, patch).await
+    // Boxed: the handlers' dispatch future holds this one inline.
+    let both = Box::pin(steer_and_update(ctx, &asked, id, patch)).await?;
+    Ok(both.ok_or_else(ended)?.1)
 }
 
 /// The model plan `patch` gives a running item, taken out of the patch with
 /// its reasons, and filled and checked for the stages its run has now.
 async fn running_plan(
     ctx: &DaemonContext,
-    env: &RepoEnv,
+    (env, by): (&RepoEnv, SteeredBy),
     run: &archon_core::id::PipelineRunId,
     patch: &mut ItemPatch,
-) -> Result<Option<(ModelPlan, Option<ModelReasons>)>, ArchonError> {
+) -> Result<Option<(PlannedPlan, Option<ModelReasons>)>, ArchonError> {
     let Some(plan) = patch.model_plan.take() else {
         return Ok(None);
     };
@@ -172,8 +290,9 @@ async fn running_plan(
     let spec = frozen::thaw(ctx, &run.id, &run.pipeline).await?;
     let reasons = patch.model_reasons.take();
     let route = crate::knobs::ItemRoute::new(&item);
-    let given = items::resolve_draft(ctx, (env, route), &spec, plan, reasons.as_ref()).await?;
-    let plan = items::filled_plan(ctx, route, env, &spec, &spec, given).await?;
+    let asked = (plan, reasons.as_ref());
+    let given = items::resolve_draft(ctx, (env, route), &spec, asked, (by.into(), None)).await?;
+    let plan = items::filled_plan(ctx, route, env, &spec, &spec, given, None).await?;
     items::check_plan(ctx, env, &spec, &plan)?;
     items::check_reasons(&spec, reasons.as_ref())?;
     assert!(plan.0.len() >= spec.file.stages.len(), "a choice per stage");
@@ -290,9 +409,25 @@ async fn changed_item(
         what.push("updated stage timeouts for future spawns".to_owned());
     }
     if let Some(effort) = steer.effort {
-        asked.env.policy(&ctx.config).check_effort(effort)?;
+        asked.env.resolved_policy(ctx).check_effort(effort)?;
     }
-    what.extend(retune(steer, stages, &mut item)?);
+    what.extend(retune(steer, stages, (&mut item, asked.by))?);
+    if let Some(catalog) = asked.catalog {
+        item.model_plan = item
+            .model_plan
+            .checked_request_catalog(catalog, Some(loaded.model_plan.plan()))?;
+    }
+    // Nothing of a waiting item has started: every sized stage follows its new class.
+    let policy = asked.env.resolved_policy(ctx);
+    let before = sizing::Inputs::of(loaded);
+    if sizing::resize(
+        (&ctx.config, &policy),
+        &mut item,
+        &Default::default(),
+        &before,
+    ) {
+        what.push(sizing::RESIZED.to_owned());
+    }
     items::check_plan(ctx, asked.env, stages, &item.model_plan)?;
     assert!(!what.is_empty(), "a checked steer changes something");
     Ok(Changed { item, what, shape })
@@ -352,7 +487,16 @@ async fn store_steer(
         if let QueueState::Failed { run, .. } = &loaded.state {
             revive = true;
             if let Some(run) = run {
+                let before = sizing::Inputs::of(&item);
                 item = revived(&store.run(run)?, edit, item)?;
+                // Its brief now names the failure, and is what the sizer reads as it is stored.
+                let policy = asked.env.resolved_policy(ctx);
+                let unstarted = Default::default();
+                let resized =
+                    sizing::resize((&ctx.config, &policy), &mut item, &unstarted, &before);
+                if resized && !what.iter().any(|done| done == sizing::RESIZED) {
+                    what.push(sizing::RESIZED.to_owned());
+                }
             }
             revived_run = run.clone();
             what.push("queued it again on its branch".to_owned());
@@ -385,7 +529,7 @@ async fn store_steer(
 fn retune(
     steer: &Steer,
     spec: &PipelineSpec,
-    item: &mut QueueItem,
+    (item, by): (&mut QueueItem, SteeredBy),
 ) -> Result<Option<String>, ArchonError> {
     if steer.model.is_none() && steer.effort.is_none() {
         return Ok(None);
@@ -400,7 +544,14 @@ fn retune(
     if let (Some(effort), Some(default)) = (steer.effort, spec.default_effort(stage)) {
         knobs::check_effort_reason(stage, effort, default, item.model_reasons.as_ref())?;
     }
-    let Some(choices) = item.model_plan.0.get_mut(stage).filter(|_| known) else {
+    let named = (steer.model.as_ref(), steer.effort);
+    let steered = match known {
+        true => item
+            .model_plan
+            .steer(&item.id, stage, named, (by.into(), archon_core::now())),
+        false => None,
+    };
+    let Some(choices) = steered else {
         let ids: Vec<&str> = spec.file.stages.iter().map(|s| s.id.as_str()).collect();
         return Err(ArchonError::Invalid(format!(
             "item {} has no stage {stage:?}; its stages are {}",
@@ -409,9 +560,6 @@ fn retune(
         )));
     };
     assert!(!choices.is_empty(), "a plan gives every stage a choice");
-    for choice in choices.iter_mut() {
-        *choice = choice.steered(steer.model.as_ref(), steer.effort);
-    }
     Ok(Some(format!(
         "stage `{stage}` now runs on {} at effort {}",
         choices[0].model, choices[0].effort

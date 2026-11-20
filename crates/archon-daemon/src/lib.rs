@@ -55,6 +55,7 @@ mod knobs;
 pub mod learned;
 mod resolve;
 pub mod settings;
+mod sizing;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -412,6 +413,12 @@ fn spawn_link_workers(
         supervisor::watch_stalls
     );
     supervised!(workers, ctx, "mcp health", supervisor::watch_mcp);
+    supervised!(
+        workers,
+        ctx,
+        "orchestrator economy",
+        supervisor::watch_economy
+    );
     supervised!(workers, ctx, "transcript posts", posts::run);
     supervised!(workers, ctx, "github watcher", github::watch_github);
     supervised!(
@@ -420,7 +427,11 @@ fn spawn_link_workers(
         "memory feedback",
         handlers::deliver_memory_feedback
     );
-    assert_eq!(workers.len(), before + 9, "every link worker is supervised");
+    assert_eq!(
+        workers.len(),
+        before + 10,
+        "every link worker is supervised"
+    );
 }
 
 /// The link workers (`spawn_link_workers`) under `policy`, handled as the
@@ -434,7 +445,7 @@ pub async fn run_link_workers(
     assert!(ctx.recovery.is_recovered(), "workers start once recovered");
     let mut workers = Workers::new(policy);
     spawn_link_workers(&mut workers, &ctx, endpoint, starter);
-    assert_eq!(workers.len(), 9, "only the link workers run");
+    assert_eq!(workers.len(), 10, "only the link workers run");
     while let Some(ended) = workers.next_ended().await {
         if let Some(fatal) = worker_ended(&ctx, ended).await {
             return Err(fatal);
@@ -464,6 +475,7 @@ fn spawn_workers(
         "mergeability waits",
         executor::coordination::watch_mergeability
     );
+    worker!("quota waits", executor::quota_wait::watch);
     worker!("trigger delivery", triggers::deliver_loop);
     worker!("store pruning", prune::run);
     worker!("wal checkpoints", readers::checkpoint);
@@ -483,7 +495,7 @@ fn spawn_workers(
     }
     assert_eq!(
         workers.len(),
-        22 + usize::from(auto_gc) + usize::from(verifies),
+        24 + usize::from(auto_gc) + usize::from(verifies),
         "every daemon worker is supervised"
     );
 }

@@ -12,6 +12,7 @@ pub(super) async fn snapshot(
     match Box::pin(handlers::route(
         ctx,
         ClientKind::ArchonCli,
+        archon_core::steer::SteeredBy::Operator,
         Request::Settings { repo: repo.clone() },
     ))
     .await?

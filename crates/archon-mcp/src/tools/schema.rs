@@ -51,6 +51,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         lessons::record_lesson(),
         refresh_item(),
         publish_artifact(),
+        submit_verdict(),
         list_artifacts(),
         read_artifact(),
         request_merge(),
@@ -61,6 +62,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         clear_notifications(),
         request_status(),
         approve_intent(),
+        watch_repo(),
     ]
 }
 
@@ -166,6 +168,24 @@ fn publish_artifact() -> ToolDefinition {
                 "name": {"type": "string", "minLength": 1, "description": "Name in the store. Default: the path's last component."}
             }),
             &["path"],
+        ),
+        false,
+    )
+}
+
+fn submit_verdict() -> ToolDefinition {
+    define(
+        "submit_verdict",
+        "Submit verdict",
+        "Stage agents with a Verdict section: have the result you will finish with read \
+         first. An unreadable verdict is asked back; the `restating` one is final.",
+        object(
+            json!({
+                "summary": {"type": "string", "minLength": 1, "description": "The `summary` you will finish with."},
+                "structured": {"type": "object"},
+                "restating": {"type": "boolean", "description": "Only when asked to restate."}
+            }),
+            &["summary"],
         ),
         false,
     )
@@ -294,7 +314,7 @@ fn stage_timeouts() -> Value {
         "additionalProperties": {"type": "integer", "minimum": 1}})
 }
 
-fn model_reasons() -> Value {
+pub(super) fn model_reasons() -> Value {
     json!({"type": "object", "description": "Why per stage id (not pipeline).",
         "additionalProperties": {"type": "string", "maxLength": MAX_MODEL_REASON_CHARS}})
 }
@@ -309,6 +329,15 @@ fn model_plan(what: &str) -> Value {
     ))
 }
 
+/// An effort; `max` is refused unless the operator raised the cap to it.
+fn effort() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["low", "medium", "high", "x_high", "xhigh", "max"],
+        "description": "`max` needs `[models] max_effort = \"max\"`.",
+    })
+}
+
 /// The shape of a model plan, with `description` as the whole of its text.
 fn described_model_plan(description: &str) -> Value {
     let choice = json!({
@@ -317,7 +346,7 @@ fn described_model_plan(description: &str) -> Value {
             "model": model_ref(),
             "tier": {"type": "string", "enum": ["fast", "balanced", "strong", "frontier", "strongest"]},
             "provider": {"type": "string", "minLength": 1},
-            "effort": {"type": "string", "enum": ["low", "medium", "high", "x_high", "xhigh", "max"]},
+            "effort": effort(),
         },
         "anyOf": [{"required": ["model"]}, {"required": ["tier"]}],
         "additionalProperties": false,
@@ -523,8 +552,8 @@ fn cost_report() -> ToolDefinition {
     define(
         "cost_report",
         "Spend report",
-        "Spend by local day as budgets count it, grouped `by`, with a total. \
-         `(none)` is spend with no such owner: the orchestrator's, and agents outside a stage.",
+        "Spend over local days as budgets count it, grouped `by`, with a total. \
+         Shows lead spend (including the orchestrator) and recorded delegate spend. +         Delegates use their own model and effort.",
         object(
             json!({
                 "since": {"type": "string", "minLength": 1, "description": format!("First day: `YYYY-MM-DD`, or days back as `7d` (the last 7 days, with today) or `2w`. Default: {DEFAULT_DAYS}d.")},
@@ -870,6 +899,24 @@ fn clear_directive() -> ToolDefinition {
         object(
             json!({"directive": {"type": "string"}, "all": {"type": "boolean"}}),
             &[],
+        ),
+        false,
+    )
+}
+
+fn watch_repo() -> ToolDefinition {
+    define(
+        "watch_repo",
+        "Watch pull requests",
+        "Instead of polling: archond reads a registered github.com repo's open PRs and \
+         raises `github_watch` (news, no operator standing) on a change. Not on GitHub's word.",
+        object(
+            json!({
+                "repo": repo_ref("Registered name or id."),
+                "interval_minutes": {"type": "integer", "minimum": 5, "maximum": 1440},
+                "remove": {"type": "boolean"},
+            }),
+            &["repo"],
         ),
         false,
     )

@@ -115,15 +115,21 @@ fn best<'a>(scored: &[(&'a str, f64)]) -> &'a str {
 impl ModelCatalog {
     /// Each provider's best allowed tier at or below `requested`.
     pub fn best_tiers(&self, requested: Tier, policy: &ModelPolicy) -> BTreeMap<&str, Tier> {
+        self.best_tiers_above((requested, Tier::Fast), policy)
+    }
+
+    /// [`Self::best_tiers`] where a successor below `floor` never replaces
+    /// a superseded model that meets it.
+    pub fn best_tiers_above(
+        &self,
+        (requested, floor): (Tier, Tier),
+        policy: &ModelPolicy,
+    ) -> BTreeMap<&str, Tier> {
         let mut best = BTreeMap::new();
-        for m in self.models() {
-            let Some(tier) = m.tier.filter(|t| *t <= requested) else {
-                continue;
-            };
-            if policy.permits_model(&m.model) {
-                let held = best.entry(m.model.provider.as_str()).or_insert(tier);
-                *held = (*held).max(tier);
-            }
+        for m in self.tier_candidates((requested, floor), None, policy) {
+            let tier = m.tier.expect("tier candidates have a tier");
+            let held = best.entry(m.model.provider.as_str()).or_insert(tier);
+            *held = (*held).max(tier);
         }
         debug_assert!(best.values().all(|t| *t <= requested));
         best
@@ -142,7 +148,7 @@ impl ModelCatalog {
             "a floor never exceeds the tier asked for"
         );
         let scored: Vec<(&str, f64)> = self
-            .best_tiers(requested, policy)
+            .best_tiers_above((requested, floor), policy)
             .into_iter()
             .filter(|(_, best)| *best >= floor)
             .map(|(provider, _)| (provider, f64::from(route.weights.weight(provider))))

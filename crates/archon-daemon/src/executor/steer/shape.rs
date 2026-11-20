@@ -10,7 +10,7 @@ use archon_core::autonomy::{
 };
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::model::ModelPlan;
+use archon_core::plan_origin::{PlanWriter, PlannedPlan};
 use archon_core::policy::ModelPolicy;
 use archon_core::queue::QueueItem;
 use archon_core::run::PipelineRun;
@@ -88,7 +88,7 @@ pub(crate) struct Reshaped {
     /// The pipeline the edit yields.
     pub spec: PipelineSpec,
     /// The item's plan for exactly the stages of `spec`.
-    pub plan: ModelPlan,
+    pub plan: PlannedPlan,
     pub autonomy: Autonomy,
     /// For the item's history.
     pub what: String,
@@ -166,15 +166,18 @@ pub(crate) fn reshape(
     let autonomy = within_ceiling(ctx, env, &reshaped, &removed, item.autonomy, knobs)?;
     let what = noting_review(what, item.autonomy.review, autonomy.review);
     let repo = env.repo.as_ref().map(|repo| &repo.id);
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let learning = Learning {
         store,
         repo,
         policy: &policy,
         max_tier: env.max_default_tier(&ctx.config),
+        fill: knobs::EffortFill::of(&ctx.config, &policy),
+        config: &ctx.config,
     };
-    let plan = projected_plan(&learning, spec, &reshaped, &item.model_plan)?;
-    policy.check_plan(&plan)?;
+    let plan = projected_plan(&learning, spec, &reshaped, item)?
+        .checked_request_catalog(&store.model_catalog(), Some(item.model_plan.plan()))?;
+    plan.check_request_policy(&policy)?;
     Ok(Some(Reshaped {
         edit,
         spec: reshaped,
@@ -243,35 +246,55 @@ struct Learning<'a> {
     repo: Option<&'a archon_core::id::RepoId>,
     policy: &'a ModelPolicy,
     max_tier: archon_core::model_tier::Tier,
+    /// The effort a stage the plan leaves out takes from the choice it borrows.
+    fill: knobs::EffortFill,
+    config: &'a archon_core::config::Config,
 }
 
-/// `plan` for the stages of `new`: the choices of the stages it keeps, then
-/// what was learned for the repository, then the first choice it had.
+/// `item`'s plan for the stages of `new`: the choices of the stages it keeps,
+/// then what was learned for the repository, then the first choice it had
+/// (at each stage's own effort under the effort rubric).
 fn projected_plan(
     learning: &Learning<'_>,
     old: &PipelineSpec,
     new: &PipelineSpec,
-    plan: &ModelPlan,
-) -> Result<ModelPlan, ArchonError> {
-    let stages = old.file.stages.iter();
-    let fallback = stages
-        .filter_map(|stage| plan.choices_for(&stage.id))
-        .find_map(|choices| choices.first().cloned());
-    let mut kept = plan.clone();
-    kept.0.retain(|id, _| new.is_plan_key(id));
-    for (id, choices) in &mut kept.0 {
-        if let Some(stage) = new.stage(id) {
-            choices.truncate(stage.choice_limit() as usize);
-        }
-    }
+    item: &QueueItem,
+) -> Result<PlannedPlan, ArchonError> {
     let Learning {
         store,
         repo,
         policy,
         max_tier,
+        fill,
+        config,
     } = *learning;
+    // Held to the cap first, so the stage that borrows the first choice borrows it capped.
+    let cap = crate::sizing::carried_cap(config, policy);
+    let mut plan = item.model_plan.clone();
+    plan.clip_sized(&item.id, cap, archon_core::now());
+    let plan = &plan;
+    let stages = old.file.stages.iter();
+    let fallback = stages
+        .filter_map(|stage| plan.choices_for(&stage.id))
+        .find_map(|choices| choices.first().cloned());
+    let mut kept = PlanWriter::new(&item.id, archon_core::now());
+    kept.carry(plan, &item.id, cap, |id| {
+        let limit = new
+            .stage(id)
+            .map_or(usize::MAX, |s| s.choice_limit() as usize);
+        new.is_plan_key(id).then_some(limit)
+    });
     let bounds = (policy, max_tier);
-    let filled = knobs::fill_plan(store, repo, (new, new), kept, bounds, fallback.as_ref())?;
+    knobs::fill_plan(
+        store,
+        repo,
+        (new, new),
+        &mut kept,
+        bounds,
+        (fallback.as_ref(), fill),
+    )?;
+    let measured = || crate::learned::measured_size(store, &item.id);
+    let filled = crate::sizing::finish((config, policy), new, measured, kept)?;
     let unfilled = new.file.stages.iter();
     if let Some(stage) = unfilled
         .into_iter()
@@ -355,8 +378,17 @@ pub(crate) async fn shaped(
     item: &QueueItem,
     spec: PipelineSpec,
 ) -> Result<PipelineSpec, ArchonError> {
+    let store = ctx.read_store().await?;
+    shaped_in(&store, item, spec)
+}
+
+pub(crate) fn shaped_in(
+    store: &Store,
+    item: &QueueItem,
+    spec: PipelineSpec,
+) -> Result<PipelineSpec, ArchonError> {
     assert_eq!(spec.name(), item.pipeline, "the item's own pipeline");
-    let Some(raw) = ctx.read_store().await?.kv_get(&key(&item.id))? else {
+    let Some(raw) = store.kv_get(&key(&item.id))? else {
         return Ok(spec);
     };
     let whole: RunEdit = serde_json::from_str(&raw)

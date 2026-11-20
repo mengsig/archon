@@ -68,6 +68,17 @@ pub struct ItemBudget {
     pub spent_usd: f64,
 }
 
+/// How every [`ItemBudget::used_up`] blocker opens: the daemon's own stop,
+/// classed as a budget failure whichever stage it was reported under.
+pub const BUDGET_USED_UP: &str = "BLOCKED: the item's budget is used up";
+
+/// How the blocker opens when Aether's usage cannot be priced against the cap.
+pub const BUDGET_UNENFORCEABLE: &str = "BLOCKED: cannot enforce the item's dollar budget";
+
+/// How archond's spawn preflight refuses a stage whose own dollar budget it
+/// cannot enforce, before any agent exists: a budget failure, not the model's.
+pub const STAGE_BUDGET_UNENFORCEABLE: &str = "cannot enforce the dollar budget for ";
+
 impl ItemBudget {
     pub fn left(self) -> f64 {
         self.cap_usd - self.spent_usd
@@ -79,7 +90,7 @@ impl ItemBudget {
         assert!(self.left() <= 0.0, "only a used-up budget blocks");
         assert!(self.cap_usd > 0.0, "a zero cap is no budget");
         format!(
-            "BLOCKED: the item's budget is used up: {} spent of its {} cap ({} over); raise \
+            "{BUDGET_USED_UP}: {} spent of its {} cap ({} over); raise \
              it with `archon queue steer {item} --budget-usd <USD>`, then `archon queue retry {item}`",
             format_usd_fine(self.spent_usd),
             format_usd_fine(self.cap_usd),
@@ -108,14 +119,15 @@ pub enum CostGroup {
     Repo,
     Pipeline,
     Model,
-    /// The provider of the model a stage ran, as provider weights route it.
+    /// The provider of each spending agent's recorded model.
     Provider,
     Item,
     Stage,
+    Effort,
 }
 
 impl CostGroup {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Day,
         Self::Repo,
         Self::Pipeline,
@@ -123,10 +135,10 @@ impl CostGroup {
         Self::Provider,
         Self::Item,
         Self::Stage,
+        Self::Effort,
     ];
 
-    /// The key of spend with no such owner. With no item it is the
-    /// orchestrator's and its helpers'; a stage or model also misses delegates.
+    /// The label of spend without a key in this grouping.
     pub fn ownerless(self) -> String {
         match self {
             Self::Item | Self::Pipeline => "(orchestrator)".to_owned(),
@@ -144,6 +156,7 @@ impl CostGroup {
             Self::Provider => "provider",
             Self::Item => "item",
             Self::Stage => "stage",
+            Self::Effort => "effort",
         }
     }
 }
@@ -295,14 +308,23 @@ impl CostAmounts {
     }
 }
 
+/// Budget-counted spend from stage leads and the orchestrator, and from
+/// recorded delegates. The rest of `counted_usd` lacks attribution.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CostSplit {
+    pub lead_usd: f64,
+    pub delegated_usd: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CostRow {
-    /// The day, repository name, pipeline, `provider/model`, item id or
-    /// stage id. `None` gathers spend with no such owner: the
-    /// orchestrator's, and agents outside a stage for model and stage.
+    /// The grouping key, including an explicit orchestrator bucket where applicable.
+    /// `None` gathers spend without a key in this grouping.
     pub key: Option<String>,
     #[serde(flatten)]
     pub amounts: CostAmounts,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split: Option<CostSplit>,
 }
 
 /// `Reply::CostReport`. Days in order for `by = day`; otherwise the most
@@ -315,6 +337,8 @@ pub struct CostReport {
     pub estimates_counted: bool,
     pub rows: Vec<CostRow>,
     pub total: CostAmounts,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split: Option<CostSplit>,
 }
 
 #[cfg(test)]
@@ -362,6 +386,23 @@ mod tests {
         ] {
             assert_eq!(serde_json::to_value(basis).unwrap(), basis.name());
         }
+    }
+
+    #[test]
+    fn a_report_from_an_older_daemon_has_no_attribution_split() {
+        let amounts = serde_json::json!({
+            "counted_usd": 2.5, "cost_usd": 2.0, "estimated_cost_usd": 0.5,
+        });
+        let mut row = amounts.clone();
+        row["key"] = serde_json::json!("implement");
+        let report: CostReport = serde_json::from_value(serde_json::json!({
+            "range": {"since": "2026-11-18", "until": "2026-11-18"},
+            "by": "stage", "estimates_counted": true, "rows": [row], "total": amounts,
+        }))
+        .unwrap();
+        assert_eq!(report.split, None);
+        assert_eq!(report.rows[0].split, None);
+        assert_eq!(report.total.counted_usd, 2.5);
     }
 
     #[test]

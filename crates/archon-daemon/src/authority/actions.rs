@@ -24,8 +24,10 @@ pub(super) async fn check_channel(
         ));
     }
     if message.channel.is_github()
-        && (matches!(action, Request::ConfigureGithubWatcher { .. })
-            || matches!(action, Request::RepoAdd(add) if add.github_watch))
+        && (matches!(
+            action,
+            Request::ConfigureGithubWatcher { .. } | Request::WatchRepo { .. }
+        ) || matches!(action, Request::RepoAdd(add) if add.github_watch))
     {
         return Err(ArchonError::Forbidden(
             "GitHub cannot change watcher repositories, allowlists or operators; use operator chat"
@@ -202,5 +204,7 @@ pub(super) async fn apply(ctx: &DaemonContext, action: Request) -> Result<Reply,
     }
     // Only callers that checked the finite allowlist and verified authority
     // reach this internal router. No socket identity is fabricated.
-    Box::pin(handlers::route(ctx, ClientKind::ArchonCli, action)).await
+    // The operator granted the authority this action runs under.
+    let by = archon_core::steer::SteeredBy::Operator;
+    Box::pin(handlers::route(ctx, ClientKind::ArchonCli, by, action)).await
 }

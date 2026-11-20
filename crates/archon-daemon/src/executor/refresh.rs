@@ -15,7 +15,8 @@ use std::path::Path;
 use archon_core::autonomy::{ProposalMode, ReportMode, ReviewLevel};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::model::{ModelPlan, ModelPlanDraft, ModelReasons};
+use archon_core::model::{ModelPlanDraft, ModelReasons};
+use archon_core::plan_origin::{Authority, PlanSource, PlanWriter};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{PipelineRun, StageOutcome};
@@ -37,6 +38,7 @@ pub(crate) async fn refresh_item(
     ctx: &DaemonContext,
     id: &QueueItemId,
     asked: Asked,
+    by: Authority,
 ) -> Result<QueueItem, ArchonError> {
     let (owner, run, repo) = target(ctx, id).await?;
     let env = RepoEnv::new(Some(repo.clone()))?;
@@ -44,8 +46,8 @@ pub(crate) async fn refresh_item(
         Some(onto) => onto.head_ref.clone(),
         None => base_for(ctx, &owner, &run, &env).await?,
     };
-    let catalog = crate::learned::catalog(ctx).await?;
-    let (mut prepared, daemon_ships) = refresh_owner(ctx, &owner, &env, &catalog, asked)?;
+    let catalog = crate::learned::request_catalog(ctx).await?;
+    let (mut prepared, daemon_ships) = refresh_owner(ctx, &owner, &env, &catalog, (asked, by))?;
     let child_head = match repo.ship == ShipMode::Pr && run.shipped {
         true => check_pr_open(ctx, &repo, &run).await?,
         false => None,
@@ -226,7 +228,7 @@ fn refresh_owner(
     owner: &QueueItem,
     env: &RepoEnv,
     catalog: &archon_core::model_tier::ModelCatalog,
-    asked: Asked,
+    (asked, by): (Asked, Authority),
 ) -> Result<(QueueItem, bool), ArchonError> {
     let mut item = owner.clone();
     item.autonomy.proposal = ProposalMode::Off;
@@ -235,19 +237,32 @@ fn refresh_owner(
     knobs::check_ceiling(&env.autonomy(ctx), env, &base, item.autonomy)?;
     crate::handlers::check_reasons(&spec, asked.model_reasons.as_ref())?;
     crate::handlers::check_stage_timeouts(ctx, &spec, &asked.stage_timeouts)?;
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let weights = env.provider_weights(&ctx.config);
     let quota = crate::quota::view(ctx);
     let route = knobs::ItemRoute::new(owner).by(weights.as_ref(), quota.as_ref());
     let tiers = knobs::TierScope::new(&ctx.config, &policy, catalog).routed(route);
     let max_tier = env.max_default_tier(&ctx.config);
     let fallback = knobs::default_choice(&ctx.config, tiers, max_tier, &spec);
-    let given = match asked.model_plan {
-        Some(draft) => knobs::resolve_plan(&spec, draft, asked.model_reasons.as_ref(), tiers)?,
-        None => ModelPlan::default(),
-    };
-    let plan = knobs::fill_stage_tiers(tiers, max_tier, &spec, given);
-    item.model_plan = knobs::fill_static_stages(&base, &spec, plan, fallback.as_ref())?;
+    let fallback = (
+        fallback.as_ref(),
+        knobs::EffortFill::of(&ctx.config, &policy),
+    );
+    // Built fresh from the request and the refresh's own fill, never from the owner's origins.
+    let mut writer = PlanWriter::new(&owner.id, archon_core::now());
+    if let Some(draft) = asked.model_plan.filter(|draft| !draft.0.is_empty()) {
+        let reasons = asked.model_reasons.as_ref();
+        let given = knobs::resolve_plan(&spec, draft.clone(), reasons, tiers)?;
+        writer.request(&draft, given, by);
+    }
+    let tiered = knobs::fill_stage_tiers(tiers, max_tier, &spec, writer.plan().clone());
+    writer.filled(tiered, (PlanSource::Tier, PlanSource::Fallback));
+    let fallen = knobs::fill_static_stages(&base, &spec, writer.plan().clone(), fallback)?;
+    writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
+    // No diff size: a refresh is sized from what it records itself.
+    let sizer = (&ctx.config, &policy);
+    item.model_plan = crate::sizing::finish(sizer, &spec, || Ok(None), writer)?;
+    item.model_plan.record_catalog(catalog);
     item.model_reasons = asked.model_reasons;
     item.stage_timeouts = refresh_timeouts(&ctx.config.limits, &spec, asked.stage_timeouts);
     for stage in &spec.file.stages {
@@ -783,6 +798,7 @@ mod tests {
     /// A completed stage of a run, its result naming `commit` as a ship record.
     fn recorded(commit: &str) -> archon_core::run::StageRun {
         archon_core::run::StageRun {
+            only_reviews: None,
             id: archon_core::id::StageRunId::new(),
             run: archon_core::id::PipelineRunId::new(),
             stage_id: "build".into(),
@@ -796,11 +812,15 @@ mod tests {
             },
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: None,
             host_context: Default::default(),
             aether_agent: None,
             aether_task: None,
             state: archon_core::run::StageState::Completed,
             verdict: None,
+            verdict_note: None,
+            sizing: Default::default(),
+            restatement: None,
             summary: None,
             structured: Some(serde_json::json!({"commit": commit, "tree": "b".repeat(40),
                 "pr": {"title": "t", "body": "b"},

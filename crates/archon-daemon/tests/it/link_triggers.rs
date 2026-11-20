@@ -271,6 +271,231 @@ async fn a_refused_payload_is_dropped_with_a_note_and_later_news_still_flows() {
     assert!(harness.system_notes().await[0].contains("payload too large"));
 }
 
+/// Aether refuses a trigger payload over its limit, and a refused batch is
+/// dropped: a backlog larger than one trigger takes goes out in several, in order.
+#[tokio::test]
+async fn a_backlog_too_large_for_one_trigger_goes_out_in_several_and_loses_nothing() {
+    use archon_aether::wire::MAX_TRIGGER_PAYLOAD_BYTES;
+    let encoded = |payload: &Value| serde_json::to_vec(payload).unwrap().len();
+    let harness = harness().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    live_orchestrator(&harness);
+    let as_aether = move |frame: &Value| match encoded(&frame["payload"]) {
+        bytes if bytes > MAX_TRIGGER_PAYLOAD_BYTES => Scripted::refuse(
+            "invalid_argument",
+            "this trigger payload is above the limit",
+        ),
+        _ => Scripted::ok(),
+    };
+    harness
+        .fake
+        .set_responder("trigger", std::sync::Arc::new(as_aether));
+    let pushed: Vec<String> = (0..6)
+        .map(|index| format!("{index}{}", "x".repeat(400_000)))
+        .collect();
+    let together: usize = pushed.iter().map(String::len).sum();
+    assert!(together > MAX_TRIGGER_PAYLOAD_BYTES, "over one trigger");
+    for reason in &pushed {
+        triggers::push(&harness.ctx, blocked(reason)).await.unwrap();
+    }
+    let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
+    let sent = harness.fake.wait_for("trigger", 3, WAIT).await;
+    harness
+        .eventually("every batch is delivered", || async {
+            triggers::held(&harness.ctx).await.unwrap().is_empty()
+        })
+        .await;
+    delivery.abort();
+    let sent_all = harness.fake.received_named("trigger");
+    assert_eq!(sent_all.len(), sent.len(), "three batches, none retried");
+    let delivered: Vec<&str> = sent.iter().flat_map(reasons).collect();
+    assert_eq!(delivered, pushed, "each event once, in the order pushed");
+    for trigger in &sent {
+        assert_eq!(reasons(trigger).len(), 2, "the oldest two that fit");
+        assert!(encoded(&trigger["payload"]) <= MAX_TRIGGER_PAYLOAD_BYTES / 2 + 4096);
+    }
+    assert_ne!(sent[0]["idempotency_key"], sent[1]["idempotency_key"]);
+    assert_ne!(sent[1]["idempotency_key"], sent[2]["idempotency_key"]);
+    let notes = harness.system_notes().await;
+    assert!(notes.is_empty(), "nothing was refused: {}", notes.len());
+}
+
+/// Aether refuses a trigger past 2 MiB: a long backlog goes out in several,
+/// in order, each within its share.
+#[tokio::test]
+async fn a_backlog_past_a_triggers_size_goes_out_in_several() {
+    let harness = harness().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    live_orchestrator(&harness);
+    harness.fake.set_default("trigger", Scripted::ok());
+    let reasons_sent: Vec<String> = (0..5)
+        .map(|n| format!("{n}{}", "x".repeat(300 * 1024)))
+        .collect();
+    let hold = supervisor::hold_switch(&harness.ctx).await;
+    let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
+    for reason in &reasons_sent {
+        triggers::push(&harness.ctx, blocked(reason)).await.unwrap();
+    }
+    drop(hold);
+    harness.fake.wait_for("trigger", 2, WAIT).await;
+    harness
+        .eventually("every reason is delivered", || async {
+            triggers::held(&harness.ctx).await.unwrap().is_empty()
+        })
+        .await;
+    delivery.abort();
+    let sent = harness.fake.received_named("trigger");
+    assert!(sent.len() >= 2, "one trigger cannot carry it all");
+    let mut delivered = Vec::new();
+    for trigger in &sent {
+        assert!(trigger["payload"].to_string().len() < 2 * 1024 * 1024);
+        delivered.extend(reasons(trigger).into_iter().map(str::to_owned));
+    }
+    assert_eq!(delivered, reasons_sent, "all of it, in order");
+}
+
+/// A flush of news past a trigger's size waits for every batch it splits
+/// into, not just the first, before the operator's turn starts.
+#[tokio::test]
+async fn a_flush_waits_for_every_batch_a_large_backlog_splits_into() {
+    let mut config = Config::default();
+    config.orchestrator.trigger_coalesce_ms = 60_000;
+    let harness = Harness::with(config, None).await;
+    harness.connect().await;
+    let delivery = delivering(&harness).await;
+    // The second batch is acknowledged only on a retry, a second later.
+    harness.fake.script("trigger", Scripted::ok());
+    harness
+        .fake
+        .script("trigger", Scripted::refuse("internal", "busy"));
+    let reasons_sent: Vec<String> = (0..5)
+        .map(|n| format!("{n}{}", "x".repeat(300 * 1024)))
+        .collect();
+    for reason in &reasons_sent {
+        triggers::push_quiet(&harness.ctx, blocked(reason))
+            .await
+            .unwrap();
+    }
+
+    triggers::flush_quiet(&harness.ctx).await.unwrap();
+    let held = triggers::held(&harness.ctx).await.unwrap();
+    let sent = harness.fake.received_named("trigger");
+    delivery.abort();
+    assert!(held.is_empty(), "{} events still held", held.len());
+    assert!(sent.len() >= 3, "two batches, the second retried");
+    let delivered: std::collections::BTreeSet<&str> =
+        sent.iter().flat_map(|trigger| reasons(trigger)).collect();
+    assert_eq!(
+        delivered.len(),
+        reasons_sent.len(),
+        "every batch went first"
+    );
+}
+
+/// News pushed while a flush waits compacts what it waits for behind a
+/// digest, moving it into a later batch: the flush still waits for it.
+#[tokio::test]
+async fn a_flush_waits_for_its_news_after_a_concurrent_compaction_moves_it() {
+    let harness = harness().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "1").await;
+    triggers::collapse_for_new_orchestrator(&harness.ctx)
+        .await
+        .unwrap();
+    live_orchestrator(&harness);
+    harness.fake.set_default("trigger", Scripted::ok());
+    // The batch after the digest is acknowledged only on a retry.
+    harness.fake.script("trigger", Scripted::ok());
+    harness
+        .fake
+        .script("trigger", Scripted::refuse("internal", "busy"));
+    let answer = TriggerEvent::ChatAnswer {
+        number: None,
+        applied: true,
+        text: "a".repeat(1536 * 1024),
+    };
+    triggers::push_quiet(&harness.ctx, answer).await.unwrap();
+    let ctx = harness.ctx.clone();
+    let flush = tokio::spawn(async move { triggers::flush_quiet(&ctx).await });
+    harness
+        .eventually("the flush marked the answer", || async {
+            triggers::due(&harness.ctx).await.unwrap()
+        })
+        .await;
+    for n in 0..triggers::MAX_PENDING {
+        let filler = blocked(&format!("filler {n}"));
+        triggers::push_quiet(&harness.ctx, filler).await.unwrap();
+    }
+    let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
+
+    tokio::time::timeout(WAIT, flush)
+        .await
+        .expect("the flush ends")
+        .unwrap()
+        .unwrap();
+    let held = triggers::held(&harness.ctx).await.unwrap();
+    let sent = harness.fake.received_named("trigger");
+    delivery.abort();
+    let answered = held
+        .iter()
+        .any(|event| matches!(event, TriggerEvent::ChatAnswer { .. }));
+    assert!(!answered, "the flush returned with the answer still held");
+    let told: Vec<&str> = sent.iter().flat_map(|trigger| types(trigger)).collect();
+    assert!(told.contains(&"chat_answer"), "{told:?}");
+}
+
+/// Two overlapping flushes each wait for their own news: the first returns
+/// once its batch is acknowledged, while the second's is still retried.
+#[tokio::test]
+async fn an_earlier_flush_does_not_wait_for_news_a_later_flush_marked() {
+    let harness = harness().await;
+    let delivery = delivering(&harness).await;
+    // Each batch is acknowledged only on its retry, a second later.
+    let busy = Scripted::refuse("internal", "busy");
+    harness.fake.script("trigger", busy.clone());
+    harness.fake.script("trigger", Scripted::ok());
+    harness.fake.script("trigger", busy);
+    triggers::push(&harness.ctx, blocked("first"))
+        .await
+        .unwrap();
+    harness.fake.wait_for("trigger", 1, WAIT).await;
+    let ctx = harness.ctx.clone();
+    let first = tokio::spawn(async move { triggers::flush_quiet(&ctx).await });
+    // Marking takes one store write; the retry is a second away.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    triggers::push_quiet(&harness.ctx, blocked("second"))
+        .await
+        .unwrap();
+    let ctx = harness.ctx.clone();
+    let second = tokio::spawn(async move { triggers::flush_quiet(&ctx).await });
+
+    tokio::time::timeout(WAIT, first)
+        .await
+        .expect("the first flush ends")
+        .unwrap()
+        .unwrap();
+    let held = triggers::held(&harness.ctx).await.unwrap();
+    let left: Vec<&str> = held
+        .iter()
+        .map(|event| match event {
+            TriggerEvent::ItemBlocked { reason, .. } => reason.as_str(),
+            other => other.kind(),
+        })
+        .collect();
+    assert_eq!(
+        left,
+        ["second"],
+        "it returned with only the later news held"
+    );
+    tokio::time::timeout(WAIT, second)
+        .await
+        .expect("the second flush ends")
+        .unwrap()
+        .unwrap();
+    assert!(triggers::held(&harness.ctx).await.unwrap().is_empty());
+    delivery.abort();
+}
+
 #[tokio::test]
 async fn delivery_creates_the_orchestrator_when_none_exists() {
     let harness = harness().await;

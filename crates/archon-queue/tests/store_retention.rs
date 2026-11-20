@@ -167,6 +167,35 @@ fn old_settled_items_go_with_their_history_and_learning_and_budgets_stay() {
     );
 }
 
+/// A crash between a stage's settlement and its key's removal leaves a
+/// verdict restatement behind: it goes with its run, and no other run's does.
+#[test]
+fn a_pruned_run_takes_the_verdict_restatements_left_under_it() {
+    let mut store = store();
+    let old = settled_item(&mut store, 1, 2.0, 30, 50);
+    let recent = settled_item(&mut store, 2, 1.0, 31 * DAY, 31 * DAY);
+    let run_of = |store: &Store, item: &QueueItem| store.runs_for_item(&item.id).unwrap().remove(0);
+    let (old_run, recent_run) = (run_of(&store, &old), run_of(&store, &recent));
+    let left = [
+        format!("verdict_restatement:{}:1:0:e2e", old_run.id),
+        format!("verdict_restatement:{}:2:1:odd:stage", old_run.id),
+    ];
+    let stays = format!("verdict_restatement:{}:1:0:e2e", recent_run.id);
+    for key in left.iter().chain([&stays]) {
+        store.kv_set(key, "{}").unwrap();
+    }
+
+    let pruned = store.prune_history(cutoff(), 100, |_, _| false).unwrap();
+    assert_eq!((pruned.runs, pruned.kv), (1, 2), "{pruned:?}");
+    for key in &left {
+        assert_eq!(store.kv_get(key).unwrap(), None, "{key}");
+    }
+    assert!(
+        store.kv_get(&stays).unwrap().is_some(),
+        "a kept run's stays"
+    );
+}
+
 #[test]
 fn spend_of_a_day_budgets_still_count_keeps_its_item() {
     let mut store = store();

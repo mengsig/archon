@@ -66,7 +66,7 @@ Contents:
         ▲                  │ aether link (1 connection, 2 subscriptions) · worktrees · lavish │
         │                  │ SQLite store (archon.db)                                         │
         │                  └───────────────▲──────────────────────────────┬───────────────────┘
-        │                    archon protocol│                              │ aether protocol v24
+        │                    archon protocol│                              │ aether protocol v26
         │                                  │                              ▼
         │          ┌──── archon mcp (stdio) ◀── spawned by ──┐   ┌───────── aetherd ─────────┐
         └──────────┤                                         └───┤ orchestrator agent (root) │
@@ -101,7 +101,7 @@ archon-core ◀── archon-aether ◀──┐
 | Crate | Owns | Must not |
 | --- | --- | --- |
 | `archon-core` | Ids (Archon's and Aether's), domain records (repo, queue item, run, stage run, feed), `Config` schema and loading, `ModelPolicy`, the Archon daemon protocol (`protocol`), the `AgentBackend` port trait (`ports`), pipeline catalog vocabulary (`catalog`), and the MCP tool names (`mcp_tools`). | Do I/O beyond reading config files. |
-| `archon-aether` | Rust client for Aether protocol v24 (falls back to 23 down to 17): transport, handshake, request multiplexing, subscriptions, typed subset of commands and events (`wire`, `events`), the reconnecting `AetherLink`, and `AetherBackend: AgentBackend`. | Know about queues or pipelines. |
+| `archon-aether` | Rust client for Aether protocol v26 (falls back to 25 down to 17): transport, handshake, request multiplexing, subscriptions, typed subset of commands and events (`wire`, `events`), the reconnecting `AetherLink`, and `AetherBackend: AgentBackend`. | Know about queues or pipelines. |
 | `archon-queue` | `Store` (SQLite, migrations): repos, items, dependencies, runs, stage runs, feed, questions, spend ledger, pause state, kv cursors, tracked requests. Its read-only readers and `Checkpointer` (§16). Pure scheduler `plan_dispatch`. | Talk to Aether. |
 | `archon-pipeline` | Pipeline discovery (built-in, user, repo), TOML parse and validation, prompt templating, and the `RunDriver` state machine (gates, loops, fan-out). | Do I/O except reading pipeline files; spawn anything. |
 | `archon-client` | Async client for the Archon daemon socket (`connect`, `connect_or_start`, `request`, `subscribe_feed`), and the NDJSON framing shared with the server. | Contain daemon logic. |
@@ -114,8 +114,8 @@ archon-core ◀── archon-aether ◀──┐
 ## 4. Aether integration
 
 Everything below was checked against Aether's source (`aether-protocol`,
-`aether-core`, `clients/protocol.schema.json`, protocol version **24**; the
-daemon also serves 23 down to 17, Aether's own floor).
+`aether-core`, `clients/protocol.schema.json`, protocol version **26**; Archon
+negotiates older versions down to 17, Aether's protocol floor).
 
 The lean creation extension is checked against **v17 + host_context feature**;
 protocol 17 and later alone do not imply support.
@@ -146,19 +146,19 @@ protocol 17 and later alone do not imply support.
 ### 4.2 Handshake
 
 ```json
-{"req":1,"cmd":"hello","protocol_version":24,"client_name":"archon",
- "client_version":"1.6.3","features":["history_expired"]}
+{"req":1,"cmd":"hello","protocol_version":26,"client_name":"archon",
+ "client_version":"1.6.4","features":["history_expired"]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
 schema_version, pid, features, daemon_protocol_version?, min_protocol_version?,
 idle_timeout_secs?, submission_horizon?}`. If Aether refuses the handshake with `incompatible`
-and the newest protocol it serves is 23 down to 17, Archon reconnects and
+and the newest protocol it serves is 25 down to 17, Archon reconnects and
 says hello at that one: an aetherd not yet upgraded keeps working, and
 images and command notes wait for the protocols that carry them (19 and 23).
 No supported Aether serves less than 17, so every connection stores GitHub
 watcher allowlists and operator logins. Any other refusal is reported as
-"Archon speaks Aether protocol 17..24; the daemon serves {min}..{max}". A change to `instance_id` between connections means
+"Archon speaks Aether protocol 17..26; the daemon serves {min}..{max}". A change to `instance_id` between connections means
 Aether restarted, which triggers reconciliation (§16).
 
 ### 4.3 Commands Archon uses
@@ -769,7 +769,9 @@ narrows this in three ways:
 1. Stage agents get `tools: except [mcp__archon__…]`: every Archon tool, or
    only the mutating ones for an item with `tools = yolo` (§18.4).
 2. Tool calls are treated as orchestrator calls, except `message_orchestrator`,
-   which requires stage-agent caller metadata (§5.5). `archond` lets a
+   which requires stage-agent caller metadata (§5.5), and the stage's own
+   `publish_artifact` and `submit_verdict` (§8.6), which act only on the
+   calling stage run. `archond` lets a
    mutating tool through only for the current orchestrator, by the caller
    Aether names (§11).
 3. Operator-only actions (raising an autonomy ceiling, caps, repo removal,
@@ -824,6 +826,15 @@ orchestrator sees all of Archon's tools. Guarded stages now expose only
    `get_stage` with its run, which reads every stage's output in full (§11);
    a cancelled item's is its cancel reason, so it names nothing. A compacted batch keeps at most ten events besides
    pinned ones (§5.4), so its summaries stay near 40,000 characters.
+   A failed or cancelled item's summary ends with a line, kept past that
+   clip, giving its failure class, read from its failing stage's record:
+   *structural* (a failed verdict or check, the review cap, a timeout, a
+   missing workspace), *environmental* (quota, an engine crash, the catalog)
+   or *external* (a cancel, an operator blocker), and a suggested next
+   attempt naming the model and effort that ran: the same, one effort step
+   up, or a stronger model. It is advice only: archond never raises an
+   effort or changes a model after a failure, and a retry without a
+   `model_plan` runs the stored plan; the orchestrator chooses (A12).
 
 ### 5.2 Questions
 
@@ -1014,16 +1025,23 @@ arrives. An unbudgeted stage makes no capability queries.
 
 `archon cost` and the `cost_report` tool (`CostReport`) report the ledger
 over a range of local days, grouped by day, repository (by name), pipeline,
-model (`provider/model`), item or stage. `--since` and `--until` take a date
+model (`provider/model`), provider, item, stage or effort. `--since` and `--until` take a date
 (`2026-09-01`) or whole days back from today (`7d`, `2w`): as a start, `7d`
 is the last 7 days with today; as an end, `1d` ends yesterday, so `since Nd`
 and `until Nd` never overlap. Hours are refused, since the ledger keeps days.
 The default is the last 7 days, grouped by day. One SQL query sums
 `spend_daily` for the rows and another for the total, in one read
-transaction; only a grouping by owner joins the items, repositories and
-stage runs. Each row and the total show provider-reported billing (`cost_usd`),
+transaction. The grouped query follows `delegated_agents` parent links to the
+owning stage. A recorded delegate uses its own model and effort. An agent
+whose effort was never recorded goes under `(no effort)`. Itemless spend
+without stage or delegation records is reported under `(orchestrator)` in
+model, provider and effort groupings, including any older unlinked helpers.
+Each row and the total show provider-reported billing (`cost_usd`),
 list-price/API-equivalent estimates (`estimated_cost_usd`), unclassified cost
 (`unclassified_cost_usd`), and the budget-counted amount (`counted_usd`).
+The `split` gives the lead (including the orchestrator) and recorded delegate
+portions of the budget-counted amount. Unlinked orchestrator helpers remain
+in the orchestrator's lead portion.
 Aether's raw `cost_usd` is classified by `total.cost_basis`: `provider_reported`
 is billing, `list_price` is an estimate, and `unknown` or `mixed` is
 unclassified because no trustworthy split is supplied. Separate raw
@@ -1159,7 +1177,8 @@ Aether's successor or waking the agent in place keeps its context, so
 neither forces compaction. Compaction:
 
 - always keeps every `operator_answer`, `agent_message`, `message_cap_reached`, `chat_answer`,
-  `chat_merge_refused` and `merge_finished`,
+  `chat_merge_refused`, `merge_finished` and `github_watch` (its walk stored
+  the baseline, so no later walk tells its news again),
   every `lavish_feedback` whose report is still `open` in Lavish, every
   `gate_opened` whose question is still open, and every current
   `item_finished` with an `origin`, whose GitHub thread awaits the outcome;
@@ -1183,6 +1202,14 @@ News held behind a stuck batch is also compacted by the same rules when a
 push takes it past 40 events, so the outbox stays bounded however long the
 batch in flight is retried. A later compaction folds that digest's counts
 into its own, so one batch never carries two digests.
+
+Aether refuses a trigger whose payload encodes to more than 2 MiB, and a
+batch it refuses is dropped with a `System` note. So a batch is keyed from at
+most 1 MiB of held events, the oldest that fit, the other half being room for
+its directives and wrapping. Held news larger than that stays pending in
+order and is keyed in the batches after it, on the same terms (compacted for
+a new generation, quiet news with a flush). An event over 1 MiB by itself
+goes alone.
 
 An `operator_answer` includes the stored question context, with `question_text`
 clipped to 512 characters (including an ellipsis). Its summary starts with
@@ -1432,7 +1459,9 @@ in a new worktree off the base branch (§13).
   - A transport error (`Protocol`, `Io`) or Aether's `internal` code: a
     failure inside the link or inside Aether, not a verdict on the request.
     It is re-issued the same way, and after 5 failures in a row the stage
-    run is `failed` with the last error.
+    run is `failed` with the last error (`create_agent kept failing: …`) as
+    an infrastructure failure: no agent ran, so the slot gets
+    `limits.infra_retries` and the run is not a scored loss.
   - A failure on a full disk (its text says `database or disk is full`,
     `No space left on device` or `ENOSPC`, whatever the code): the stage
     run stays `spawning`, and the disk hold (§7.3) engages. It is re-issued
@@ -1475,7 +1504,31 @@ in a new worktree off the base branch (§13).
   archond moves it to 30 min from now, in Aether (the lead and every live
   agent beneath it whose deadline is lower, one by one when Aether cannot
   update a subtree) and in the stored request, and
-  never times it out while held. A later deadline a steer stored is kept,
+  never times it out while held. A reviewer Aether itself blocks as
+  `exhausted` (quota or usage limit) is cancelled after 3 minutes, and its
+  lead is told to delegate the review on another allowed provider or fail
+  its task. The check runs every 30 seconds on its own worker
+  (`executor::quota_wait::watch`), apart from dispatch. Each time it starts
+  a check of every running stage as a task of its own and waits for none,
+  so no stage delays another's check; a stage whose last check still runs
+  is passed over. A check waits at most 10 seconds for each request to
+  Aether (20 for the listing of a stage's agents, which is two); an
+  unanswered read keeps the wait as recorded and is asked again next time.
+  A check that stops nothing ends within one period, so the worst case is
+  3 minutes, two periods and the 50 seconds of requests up to the cancel:
+  within 5 minutes of the block first being seen. A wait recorded ahead of
+  the clock counts from now and is saved so. The reviewer's own block
+  is read again with one `get_agent` right before the cancel, which carries
+  that hint as its reason; the lead is messaged once the cancel is
+  accepted. Known limitation: Aether has no conditional cancel, so a
+  reviewer whose quota returns within the one round trip between that read
+  and the cancel is still cancelled, and its lead re-plans the review.
+  When any agent of a running stage's tree gets a new child, every live
+  agent beneath the lead with a deadline below the stored one is raised to
+  it. The read and the raise run under the stage's steering lock, as every
+  deadline move does, so they are one compare-and-raise that lowers no
+  extension.
+  A later deadline a steer stored is kept,
   and sent to Aether again if the steer landed while the move was in flight.
   An agent `blocked` for inspection is moved on in the same way only while
   the stage watchdog is on, because the watchdog resumes it or fails its
@@ -1652,7 +1705,16 @@ Per stage:
    of the stage it re-enters and of every later stage.
 4. On failure with `on_fail.goto = X`, while the loop count is below
    `on_fail.max_loops`, re-enter stage X with `attempt + 1` and
-   `{{feedback}}` set to the failing agents' summaries and findings. When the
+   `{{feedback}}` set to the failing agents' summaries and findings. With
+   `on_fail.when = "environment_finding"` the loop is taken only when a
+   completed member's settled verdict reads `Fail` and the findings that
+   verdict came with hold one with `"fault": "environment"`
+   (`StageRun::verdict_names_environment`: the result's
+   `structured.findings`, or the final restatement's when that stands over
+   the result, §8.6); a verdict that reads `Unknown` never takes it,
+   whatever its findings name. Otherwise the run finishes `failed` at the
+   stage, its error saying X was not re-run (`RunDriver::loop_withheld`).
+   When the
    loops are exhausted, or there is no `goto`, finish with
    `failed{stage_id, error}`.
 
@@ -2154,17 +2216,26 @@ The orchestrator chooses independently for each stage, following operator
 provider preferences and exact model requests first. Pipeline nudges are
 advice, not routing rules. Its prompt asks what reasoning and ambiguity remain,
 what a wrong result would break and how tests or review would catch it, and
-which available model and effort are the cheapest plausible choices. The
-highest effort (`x_high`) is for a reasoning problem it can name that
-inspecting the work left unresolved; that the operator prefers strong models is
-not one. With `[models] effort_sizing = true` (off by default) one effort
-rubric (`archon_core::model::EFFORT_RUBRIC`) sizes every effort Archon asks an
-agent to choose instead, word for word in the orchestrator prompt and in every
-stage contract that may delegate: `low` for lookups, listing, formatting and
-mechanical edits; `medium` for routine changes and reviews of small or low-risk
-diffs; `high` for non-trivial design, risky diffs and reviews of shared code;
+which available model and effort are the cheapest plausible choices. With
+`[models] effort_sizing` (on unless the global config sets it `false`) one
+effort rubric (`archon_core::model::EFFORT_RUBRIC`) sizes every effort Archon
+asks an agent to choose, word for word in the orchestrator prompt and in every
+stage contract that may delegate: `low` for lookups, listing, formatting,
+mechanical edits and reviews of trivial or small low-risk diffs; `medium` for
+routine changes and reviews of ordinary diffs; `high` for non-trivial design, risky diffs and reviews of shared code;
 `x_high` for hard reasoning, such as root-causing a regression, concurrency or
 security analysis, or a fix that failed twice. Take the cheapest that fits.
+With it off (1.6.3's rules), the highest effort (`x_high`) is for a reasoning
+problem the orchestrator can name that inspecting the work left unresolved;
+that the operator prefers strong models is not one. Each spawn records which
+rule its contract was rendered with (`effort_contract`) and the reviewers it
+named (`issued_reviewers`), and the watchdog holds a lead's reviewers to that
+record, never to the config in force or the item's plan as edited since. A
+resumed or woken lead is held to the spawn that created its agent, found
+through its run's stage runs. A spawn stored by 1.6.3 is read by its own
+reviewer and delegation rule lines, never text its contract quotes, for its
+rule and the reviewers it named; one that tells nothing holds no reviewer to
+a floor or a plan's models, only to the model policy.
 Reviewers need independent discovery: another provider at the same tier counts, and several fast-tier reviewers, or a fast-tier team checked by
 one stronger-tier judge at low effort, can beat one balanced reviewer for far
 less. A failed stage prompts reconsideration through `retry_item`'s
@@ -2188,7 +2259,10 @@ request, naming the tiers there are. The tier is resolved at enqueue and again
 when the run starts, from Aether's catalog as it is then; the resolved model,
 the tier asked for and any fallback are stored on the plan and on every attempt
 (`ModelChoice.tier`), and `get_item` shows both. The daemon caches the catalog
-for five minutes; with none read yet, a stored resolution stands.
+for five minutes. While Aether lists no configured model, a tier cannot be
+resolved: an enqueue asking for one is refused with the outage named, an
+exact pin is stored with its catalog check deferred, and dispatch holds the
+item with `model_catalog_unavailable` until a read succeeds.
 
 **Provider weights.** With `[models] provider_weights` set (a repository's
 entries and default override the global ones), each item is routed to one provider
@@ -2261,6 +2335,39 @@ row pools the models that served it (the tier an attempt recorded, else
 Aether's tier for its model now), so evidence survives a model replaced within
 its tier.
 
+**Effort sizer.** With `[models] effort_sizing` on, every effort a plan does
+not name is sized (lowered only, unless `sizer_max_effort` is set) by the daemon (`archon_core::effort_sizing`, pure functions
+over what the item records). `classify` gives the item a risk class,
+`mechanical`, `ordinary`, `elevated` or `critical`, from its tags, title
+prefix and words, brief, review level and known diff size; `size_effort` maps
+the class to an effort from the stage's own declared default (`low` for
+mechanical work, the default otherwise; with `sizer_max_effort` set, at least
+`high` for elevated and `x_high` for critical), within the policy's
+`max_effort` and that setting, never above the stage default when it is unset. `x_high` is
+planned only for the providers that run it (`claude-code`, `codex`). The
+precedence is pin and non-default efforts kept, then cap, class, stage default; it is decided
+in one function, `plan_origin::sizing::decide`, which is where an escalation
+would enter between the pin and the class.
+
+The decision is frozen in the stored plan. Every plan writer ends in
+`daemon::sizing::finish`, which reads the switch and the caps in one place:
+`PlanWriter::finish` records each key it wrote with that key's own stage
+facts, carried keys keep the record they have, and `QueueItem::settle_sizing`
+decides the recorded keys from the item's own stored fields where the store
+writes the item, so a refresh, a restack fix and an initiative member are
+each sized as the item they are stored as. The record (`effort_sizing` beside
+`model_plan` and `model_origins`) holds the class, its signals and, per key,
+the stage facts, the cap and one reason per entry; a sized effort's origin
+has the source `sizer`. A retry carries the record; only a steer or an update
+that changes the title, brief, tags or review level sizes again, and only the
+stages not yet started (`QueueItem::resize_unstarted`). Recovery, the
+watchdog, the dispatcher and replayed spawns read the stored plan and size
+nothing. A writer that carries a sized effort above the cap in force lowers
+it and records why; dispatch does the same against the policy's cap alone; a
+pinned effort above the policy's cap is refused. Each attempt stores its
+`risk_class`, `effort_source` and `effort_reasons`, and `model_evidence`
+groups attempts by class and source for display; routing reads neither.
+
 **Workers.** Every stage takes the key `<stage>.workers` in `model_plan` and
 `model_reasons`: up to four `{model|tier, effort}` choices for the workers its
 lead delegates to, else the pipeline's `[pipeline.workers]` default. Archon
@@ -2279,11 +2386,11 @@ The stage contract tells the lead to delegate reviewers with role `reviewer` on
 those models, each effort a floor and the model policy's `max_effort` the
 only ceiling: the delegation watchdog (§7.4) cancels a child with such a role
 on another model or below its model's effort as it spawns, before it does
-any work, and the contract states the floor so the lead delegates at it. With
-`[models] effort_sizing = true` each effort is instead the default for its
-reviewer, kept where the rubric leaves the diff open. Otherwise the rubric
-decides the review's level (`low` for a trivial diff, `medium` for a small or
-low-risk one, `high` for a risky diff or shared code, `x_high` for concurrency
+any work, and the contract states the floor so the lead delegates at it, when
+the lead was issued 1.6.3's rule (`effort_sizing = false`). Under the rubric,
+the default, each effort is instead the default for its reviewer, kept where the rubric leaves the diff open. Otherwise the rubric
+decides the review's level (`low` for a trivial or small low-risk diff,
+`medium` for an ordinary one, `high` for a risky diff or shared code, `x_high` for concurrency
 or security analysis), and the lead states the reason in one line in its result,
 lower or higher; the watchdog then cancels only a reviewer on another model. This check relies on the lead using
 the required reviewer role; children with other roles follow the general model
@@ -2296,8 +2403,8 @@ lead's, or the lead's own when the policy allows no other, and the watchdog hold
 reviewers only to the model policy. The `[review]` profile's contract asks such
 reviewers for at least medium effort, and at least high when the lead rates the
 change's risk medium or high, within the policy's `max_effort`. With effort
-sizing on it names its `default_effort`, raised to medium, as such a reviewer's
-default, sized to the diff the same way.
+sizing on it names its `default_effort` (default `medium`; `low` is honoured)
+as such a reviewer's default, sized to the diff the same way.
 
 **Stage timeouts.** `enqueue`, `update_item` and `steer_item` take `stage_timeouts`, a
 `{"<stage-id>": minutes}` map for the item: each stage it names runs with that
@@ -2315,7 +2422,12 @@ sorted by stage then median completed cost, with model/effort tie breakers and
 uncompleted groups last within a stage. Each line shows attempts, completed
 attempts, median and nearest-rank p90 cost per completed attempt, median minutes
 of completed attempts with finish times, and review/test recorded verdict pass
-share (unknown verdicts do not pass). Costs are API-equivalent totals from the
+share (unknown verdicts do not pass). A review-only run's lead counts as a
+verdict stage once it is spawned as one (`only_reviews`); its attempts from
+before stay out of the share. A pass its own findings dispute
+(`verdict_note = disputed_pass`) is shown as `disputed=` and left out of the
+share: a format clash, not a fail of the model. An unknown verdict stored
+before notes is read again from its stored result, a lead's by its review record. Costs are API-equivalent totals from the
 latest agent ledger totals, whatever the budgets count, falling back to stored stage cost when there is
 no ledger row. Completed n below five is marked as a small sample. Output is
 limited to 60 groups and states the omitted count. This evidence recommends
@@ -2409,6 +2521,9 @@ Validation rules (load-time errors):
 - There are 1 to 32 stages. Stage ids are unique and each `prompt` file
   exists inside the pipeline directory (symlinks may not lead out of it).
 - `goto` names an **earlier** stage, and `max_loops` is at most 10.
+  `on_fail.when = "environment_finding"`, on a gated stage that is no team,
+  limits the loop to a verdict read as `fail` with an environment finding
+  (§6.4).
 - `timeout_minutes` is between 1 and 43200 (30 days). It is the stage
   agent's `deadline` as written: a larger value is refused, never clamped.
 - `fan_out` is between 1 and 16. A value above 1 is refused for `work` and
@@ -2542,7 +2657,44 @@ review rounds of `executor/review/rounds.rs` count only blocking fails: at
 `REVIEW_ROUND_CAP` (three) the stage is cancelled and fails with an
 `ESCALATE:` error, marked first like a stall (§16) so its cancel does not
 settle it as cancelled, and retried by the next sweep when the cancel goes
-unanswered. A child of a live, owing lead delegated with role `reviewer` that
+unanswered. The error names the last failed head and the orchestrator's three
+choices, ahead of the findings so a clipped summary keeps them: continue with
+a non-fresh `retry_item`; accept the head with a `retry_item` whose
+`brief_append` moves the open findings to follow-ups, and whose new lead has
+the head read whole again by as many reviewers as the level needs; or stop by
+leaving the item failed. The cap is per stage attempt, so the retry's run gets
+three rounds of its own.
+
+Reviews carry across runs on one branch. When it checks a stage, archond also
+reads the completed `reviewer` children of the same stage's leads in the item's
+earlier runs with the same branch and worktree (`carried_reads`), and places
+their verdicts like the lead's own. Once a carried read's head is one the
+branch no longer holds, after an amend or rebase, the history is rewritten and
+nothing is carried, so the run owes the whole review again; a fresh retry is on a new
+branch and carries nothing; a `review` item's frozen head carries nothing. A
+carried read anchors the lead's deltas, and every carried whole-change read
+counts toward the level, so a lead whose carried whole reads make the level
+owes one named reviewer, a delta of its own commits from the last reviewed
+head, and one whose carried reads fall short owes the whole reads they lack
+as well; the contract says so. A carried
+fail stands as one of the run's own would, until a pass reads past it. A run
+whose own named reads make the level by themselves is judged without the
+carried ones, as on a fresh branch: that is how an accepted head ships. The
+record lists the carried reviewers after the named ones. An earlier review
+Aether cannot return is logged and carries nothing; when it is a fail an
+earlier attempt's round tally recorded, nothing at all is carried, so that
+fail cannot go unanswered. Aether 1.4.1 and 1.4.2
+cannot wake a lead whose run ended (`wake` and `restart` need a live parent,
+and the run node is retired with the run), so a retry never resumes the
+escalated lead. Archon does not edit the brief for it: the orchestrator's
+`brief_append` on the non-fresh `retry_item` gives the new lead the head, the
+open findings and the delta-only review. Each delta reviewer is told to fail
+only on a defect in its commits or an open finding left unfixed; a new finding
+in code a pass already read is advisory, `"blocking": false`, and goes to the
+orchestrator as a follow-up. The verdict carries no finding locations, so the
+round tally counts the reviewer's own blocking marks.
+
+A child of a live, owing lead delegated with role `reviewer` that
 completes with no verdict the gate reads (`executor/review/restate.rs`) is
 told to the lead at once: archond records the reviewer under
 `review_restate:<stage run>`, interrupts the lead's turn (a Luna lead calls
@@ -2614,9 +2766,9 @@ literal `{{`.
 | `performance` | measure → optimize → verify (test, all_pass, goto optimize ×3) → review (1, all_pass, goto optimize ×2) | tier = strong, independent_reviewers. For a specific slow path with a measurable goal; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (fan_out 2, report) → report | Agents drive the product as a user would and report defects. workspace = worktree |
 | `code-audit` | scope (work) → audit (fan_out 3, report) → report | Security, reliability and maintainability lenses produce HTML with high/critical issue drafts. No code changes or ship. workspace = worktree, tier = strong, independent_reviewers. Use `ask` for one question. |
-| `e2e-testing` | setup → e2e (test gate, goto setup ×1) → report | The report stage produces HTML and screenshots under `.archon/reports/` for Lavish. |
-| `e2e-strict` | setup → e2e (test gate, `scenarios = "strict"`, goto setup ×1) → report | As `e2e-testing`, but archond fails the run on any failed, skipped or missing scenario of the manifest setup writes, with no loop back. |
-| `release-journey` | setup → journeys (test gate, `scenarios = "strict"`, goto setup ×1) → report | Runs the repository's `.archon/journeys.toml` journeys in the shipped artifact, with real engines, in a private stack; archond fails the run on any journey run that does not pass ([journeys.md](journeys.md)). |
+| `e2e-testing` | setup → e2e (test gate, goto setup ×1 for an environment finding) → report | The report stage produces HTML and screenshots under `.archon/reports/` for Lavish. |
+| `e2e-strict` | setup → e2e (test gate, `scenarios = "strict"`, goto setup ×1 for an environment finding) → report | As `e2e-testing`, but archond fails the run on any failed, skipped or missing scenario of the manifest setup writes, with no loop back. |
+| `release-journey` | setup → journeys (test gate, `scenarios = "strict"`, goto setup ×1 for an environment finding) → report | Runs the repository's `.archon/journeys.toml` journeys in the shipped artifact, with real engines, in a private stack; archond fails the run on any journey run that does not pass ([journeys.md](journeys.md)). |
 | `review` | review (work, `allow_delegation`, holds the review) | tier = balanced, independent_reviewers. Queued `onto` someone else's pull request, a fork's included; no `[pipeline.ship]`, so it commits and pushes nothing. Its lead has the frozen head reviewed at the item's review level, `standard` unless the item asks (§8.2); a pass lets the operator merge that pull request at that head (§18.6). |
 | `ask` | answer | workspace = repo-readonly (a disposable snapshot of the repository's `HEAD` commit, §13), requires_repo = false, tier = balanced |
 | `errand` | errand (report) | workspace = scratch, requires_repo = false, tier = balanced. A small job answered in its summary and optionally as one self-contained Lavish page. No repository changes or outward side effects; read an attached checkout only, and run code on a throwaway copy in scratch. Other files are temporary and collected after `worktrees.gc_after` (default 7d; §13.2). |
@@ -2651,7 +2803,7 @@ its contract carries no delegation section.
 > an error starting `BLOCKED:`; if the task does not fit this pipeline, with
 > one starting `ESCALATE:`. When done, call `complete_task` with a concise
 > `summary`. Review and test stages must include structured
-> `{"verdict":"pass"|"fail","findings":[{"severity":"…","title":"…","detail":"…","path":"…"}]}`
+> `{"verdict":"pass"|"fail","findings":[{"severity":"…","blocking":true|false,"title":"…","detail":"…","path":"…"}]}`
 > and must end the summary with `VERDICT: PASS` or `VERDICT: FAIL`. Ship
 > stages include `{"pr_url":"…"}` or `{"commit":"…"}` in structured data, and
 > never amend, rebase, squash or reset the commits they are given: only a
@@ -2757,6 +2909,75 @@ A field that is exactly `approve_with_nonblocking_finding(s)` or
 `pass_disputed` and the head checks still hold it; a `VERDICT:` line or
 prose with those words is not read as one.
 
+**Restatement before completion.** Aether cannot ask a finished agent
+again, and archond reads the verdict when the task settles
+(`executor/settle.rs`), so the one question comes before that. A contract
+with a Verdict section (`contract::holds_verdict`: a verdict stage, or the
+lead of a review-only run) tells its agent to call `submit_verdict` with the
+`summary` and `structured` it will finish with. `executor/restatement.rs`
+answers only the agent of a live stage run whose driver says it holds a
+verdict, refuses a `structured` that is no object before anything is
+stored, reads the submission as settlement will (`Verdict::read`, or
+`read_review_lead`) and applies `Restatement::submit`
+(`archon_core::run::restatement`). The stage run must be its attempt's
+current one, the newest of its slot as the engine picks it (§6.4): after a
+crash mid-replacement the superseded stage run is still live, and its agent
+is refused rather than restating for the replacement. An agent can call
+before Archon recorded that it is its stage's (a spawn whose reply is on
+its way, a wake not yet bound to the replacement stage run). When a
+`spawning` stage resumes the caller, or no stage run holds the caller and
+a create was sent, the call waits up to 5 s for the record
+(`spawn_recorded`, no lock held) and is then read again; any other caller
+is refused at once.
+
+- With nothing asked, a pass or a fail is `accepted` and keeps no state. An
+  `Unknown` is `restate`: its `VerdictNote` is stored and the answer says
+  what to change and to send it with `"restating": true`.
+- With an ask owed, an `Unknown` sent without `restating` restates nothing:
+  it gets the same ask again and changes no state, so an answer lost
+  between the kv write and the agent (an archond crash, a dropped reply)
+  spends nothing. A submission marked `restating`, or one that reads as a
+  pass or a fail, is the restatement: `final`, stored with its reading,
+  with whether its findings name the environment (`environment`) and, when
+  it is no pass, with its summary and findings as a report shows them,
+  clipped to 8,000 characters (`said`).
+- After that every submission answers the stored final reading unread.
+
+The record is keyed by stage attempt, `kv.verdict_restatement:<run>:
+<attempt>:<fan index>:<stage id>`, not by stage run: a replacement of the
+attempt's stage run (its agent woken at a deadline or after a restart, a
+fresh agent after an infrastructure failure) reads the same record, so the
+attempt is asked for one restatement across archond restarts, repeated
+calls and replacements, and a later attempt has its own. Every terminal
+path copies the record onto the stage run that ends (`restatement::bound`,
+`StageRun.restatement`): settlement, a replacement, a steer's abort, a
+cancelled sibling, a failed spawn. For a completed stage `bound` records
+the weaker of the final restatement and the result's own reading (fail
+before unknown before pass). A restated fail therefore fails whatever the
+agent finished with, a restatement that still reads `Unknown` counts
+exactly as an unreadable result does, and a pass is only ever the finished
+result's own: the tool never turns a result the gate would refuse into a
+pass. When the restatement stands over the result
+(`StageRun::restated_over`), the loop of §6.4 reads the restatement's
+`environment`, never the result's findings, and the failure report, which
+is the `{{feedback}}` a loop passes on, shows what the restatement said
+(`StageRun::restated_said`) ahead of the result the agent finished with.
+The verdict, the evidence that routes it and the reason the next agent
+reads come from one submission. An ask never answered,
+and a stage that never calls the tool, leave the result's reading as it
+is. The record is deleted when a stage run of the attempt ends and no other
+one is live (`restatement::forget`): a stage run a replacement follows keeps
+it, and so does a superseded one that settles late after a crash between
+reserving its replacement and recording its own end (§6.4). The stall sweep
+deletes any whose attempt has no live stage run, or whose run is gone
+(`forget_ended`), and history pruning takes a run's leftover records with
+the run (§16). The tool is one of
+`STAGE_TOOLS`, so stage agents keep it in every `tools` mode; an Aether
+whose `archon` server entry has no class for it treats it as `external`,
+which a headless stage agent's approval policy does not gate, so no Aether
+change or version is needed. Its answers never name `complete_task`: a
+woken agent's task has ended, and it finishes as its instructions say.
+
 Two error prefixes end a run at once, with no loop, no infra retry and the
 stage's live siblings cancelled (`StageOutcome::ends_run`):
 
@@ -2805,7 +3026,32 @@ what archond stores and delivers; one that names no single object of that
 type is refused, saying so. 40 digits are resolved too, as in a SHA-256
 worktree they abbreviate; elsewhere they stay the full SHA-1 id. The gate checks the record before the
 review: a pass without one fails the run at that stage, so no delivery is
-ever asked for without it. Stages after the record stage cannot commit
+ever asked for without it. A result without `structured`, or a pass that
+names no reviewer, first gets one repair turn: the stage is entered again
+with the refusal quoted. Every stage run carries a persisted
+`record_repair` marker. `open` means a broken record of that attempt gets
+the turn. The repair attempt and each later attempt of its stage are
+`spent`: a broken record of one fails the run without a fix loop, as does
+an invalid ship record in its `structured`, and its kept agent is not asked
+for the record again. The marker is set when the
+attempt starts, or when its outcome is recorded if an older archond
+started it. An outcome recorded before the marker has none and is
+evaluated in the order of that time (gate, scenarios, record, no stated
+failure read), so a replay keeps the decision already taken. In a stage
+that owes a record, a stated failure is judged first and on its merits: a
+fail verdict in `structured` or the summary's last `VERDICT:` line, or a
+summary that opens with `ESCALATE:` or `BLOCKED:`, fails the stage as its
+agent sent it, with no repair turn. A broken record that states none is
+judged before the gate and scenarios. archond records a stated failure
+and a reply with no `structured` as sent (`settle::settle_as_sent`), after
+the review-round cap and before its own checks of the result, so no check
+rewrites what the gate must read; the gate passes neither. Every other
+reply, the repaired one included, is verified in full first. A resumed
+agent's reply that goes on after its record block is its summary whole, so
+its lines are read where they stand in its Markdown. A stage that owes no record
+is judged as before. A run failed on a second broken record may still get
+the item's one automatic retry (`[review] auto_repair`).
+Stages after the record stage cannot commit
 (§8.2), so what they verified is that tree.
 
 When the last stage passes, the driver emits `Ship(ShipPlan)`: the record,
@@ -3274,7 +3520,8 @@ provider_weights = {}          # e.g. { "claude-code" = 7, codex = 3 }; {} = orc
 # default_provider_weight = 1  # a provider the table omits; 0 never routes to it
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages leave; global only
 interactive_providers = []     # providers also used by hand; they keep the interactive reserve
-effort_sizing = false          # true: size every agent's effort by the effort rubric; global only
+effort_sizing = true           # false: 1.6.3's effort rules and reviewer floors; global only
+# sizer_max_effort = "x_high"  # unset: the sizer only lowers; set: it may raise default efforts; global only
 
 [limits]
 budgets_enabled = true         # false: no dollar budget is enforced; spend still recorded
@@ -3594,8 +3841,9 @@ id.
 
 Every tool that changes Archon acts for the orchestrator, and the agents it
 delegates to inherit its tool exposure (§4.4). So a mutating tool other than
-`message_orchestrator` answers only the current orchestrator, and `archond`
-is the one that decides:
+`message_orchestrator` and a stage's own `publish_artifact` and
+`submit_verdict` answers only the current orchestrator, and `archond` is the
+one that decides:
 
 - `archon mcp` wraps such a call as `ForAgent { caller, request }` (§10),
   with the agent Aether named on the call (`send_caller_meta = true`, §5.5),
@@ -3668,7 +3916,7 @@ can reach the socket (§5.5).
 | `refresh_item` | `{item, model_plan?, model_reasons?, stage_timeouts?}` | `RefreshItem` (§13: a finished item's base, fetched from `origin`, merged into the same branch and pull request) |
 | `queue_status` | `{}` | `Status` |
 | `model_evidence` | `{repo?, pipeline?, stage?, since?}` | `ModelEvidence` (30 local days by default; stage attempt observations, at most 60 groups) |
-| `cost_report` | `{since?, until?, by?: day\|repo\|pipeline\|model\|item\|stage}` | `CostReport` (§5.3) |
+| `cost_report` | `{since?, until?, by?: day\|repo\|pipeline\|model\|provider\|item\|stage\|effort}` | `CostReport` (§5.3) |
 | `pause` / `resume` | `{scope: "global"\|"repo"\|"pipeline", name?}` | `Pause` / `Resume` |
 | `notify` | `{kind: question\|decision\|blocker\|outcome\|progress, text, item?}` | `Notify` |
 | `clear_notifications` | `{item?, all?}` | `ClearNotifications` (resolves the blockers archond posted for the item in Aether's notification center, or every open blocker and outcome with `all`; archond also does so itself when the item is steered, answered or finished) |
@@ -3678,10 +3926,12 @@ can reach the socket (§5.5).
 | `autonomy_policy` | `{repo?}` | `Autonomy` |
 | `set_directive` | `{text, expires_in_hours?}` | `SetDirective` |
 | `clear_directive` | `{directive?, all?}` | `ClearDirective` |
+| `watch_repo` | `{repo, interval_minutes?, remove?}` | `WatchRepo` (a registered repository with a github.com `origin` only; the GitHub sync walks its open pull requests with one conditional `GET` per page of 100 per interval, at least 5 minutes, and two count `GET`s for each pull request that is new or moved, all within the pass's request budget; it compares the walk with the stored snapshot and raises a `github_watch` trigger, `operator: false`, only on a new or first-seen pull request, head, review request, comment or review; eventually consistent, with the limits in `docs/vnext/ARCHITECTURE.md` §f; it inherits the registration's trust, as registering stays the operator's (the orchestrator only on the operator's word, never GitHub's) and the watch never registers; refused through GitHub-borne authority; removing the repository drops it) |
 | `github_reply` | `{repository, number, body}` | `GithubReply` (Archon's watched repositories only; see `docs/github-watcher.md`) |
 | `record_lesson` | `{kind: routing\|practice\|pitfall\|pipeline, text, repo?, pipeline?, item?}` | `RecordLesson` (§19; active at once, advice only) |
 | `request_merge` | `{item, reason?}` | `RequestMerge` (the orchestrator only, for the operator's own request; archond asks the operator to confirm unless `grant_merge` covers it; §18.6) |
 | `request_status` | `{request}` | `RequestStatus` (§11.1; the caller's own changes only) |
+| `submit_verdict` | `{summary, structured?, restating?}` | `SubmitVerdict` (the agent of a running stage whose contract has a Verdict section only; `structured` is an object; answers `accepted`, `restate`, or `final` for the one sent as `restating`; §8.6) |
 
 `refresh_item`, `retry_item`, `steer_item`, `update_item`, `cancel_item`,
 `notify`, `github_reply`, `request_merge` and `message_orchestrator` also
@@ -5092,7 +5342,8 @@ whichever is longest: feed rows the feed never shows, and settled items with
 their runs, stage runs, gates, run edits, pull request links, merge
 requests, stacks, dependencies, spend and the per-item `kv` families
 (`steers:`, `shape:`, `restack_fix:`, `restack_target:`,
-`learning/applied/<run>`, `run_review:<run>`, a `pr_settled:` no kept
+`learning/applied/<run>`, `run_review:<run>`, a `verdict_restatement:<run>:…`
+a crash left behind (§8.6), a `pr_settled:` no kept
 run shares, `authority_confirmation:` of a closed question). Outcomes and lesson uses
 stay for learning (store schema 18 dropped their keys to runs and items; a
 reshaped run's outcome keeps a `learning/reshaped/<run>` mark). An item
@@ -5408,7 +5659,7 @@ propose again.
 | --- | --- | --- |
 | Orchestrator | The operator's `[approval] default`. Hides `integrate_workspace`, and `delegate` while Aether names no callers (§11). | `approval: {"require_for": []}`. Hides the same tools. |
 | Its delegated children | Inherit its approval policy and tool exposure. `archond` refuses them Archon's mutating tools (§11). | The same, so nothing waits. |
-| Stage agents | Approval gates nothing (they are headless, §4.5). A leaf, unless the stage sets `allow_delegation` (`leaf = false`). Exposes `message_orchestrator`, hides the other Archon tools and Aether's schedule tools. | Approval gates nothing. May delegate (`leaf = false`). Exposes `message_orchestrator` and Archon's read-only tools; hides Aether's schedule tools. |
+| Stage agents | Approval gates nothing (they are headless, §4.5). A leaf, unless the stage sets `allow_delegation` (`leaf = false`). Exposes the stage tools (`message_orchestrator`, the artifact tools, `submit_verdict`, `request_status`), hides the other Archon tools and Aether's schedule tools. | Approval gates nothing. May delegate (`leaf = false`). Exposes the same stage tools and Archon's read-only tools; hides Aether's schedule tools. |
 | Their subagents | Inherit their parent's approval policy and tool exposure. | The same, so nothing waits. |
 
 A stage agent's `tools` knob is the item's. The orchestrator serves every
@@ -5760,6 +6011,136 @@ choice, time, delivery key and known spend checkpoint. Queue display uses the
 current segment; quality is credited only to completed segments, and earlier
 segments retain cost without being labeled failures. Late corrections to estimates
 can make segment cost allocation approximate; the run's ledger total remains current.
+
+**Failure class.** A failed run's class is read from structure, never from its
+error's words. The daemon's own `ship` step runs no stage and fails a run under
+the id `ship`: such a run is `ship`, or `budget`, `blocked` or `escalated` when
+the delivery's error opens with the daemon's own prefix for one. A pipeline may
+name a stage `ship` too. A ship stage of that name (by its recorded kind, or by
+its id for a 1.4.x stage run that kept none) is the pipeline's own ship agent,
+and its records are read by the rules below as any stage's. For a stage of
+another kind they are read instead only
+when that stage failed the run itself: the run failed in the very words of one
+of its stage runs that the daemon ends a run on (one that failed with a
+`BLOCKED:` or `ESCALATE:` prefix, or a spawn the daemon gave up on, which has no
+agent; an agent's plain task failure goes to the gate, which may pass it over),
+the error opens `BLOCKED:` or `ESCALATE:` and a slot of its
+last attempt failed with such a prefix, or the error is the driver's word on
+the stage, which opens with the stage's quoted id (`stage `ship` failed…`,
+`stage `ship` was aborted…`, `stage `ship`: the operator asked…`, `team stage
+`ship` has no roles…`). Otherwise that stage explains nothing, however it
+ended: completed, skipped by a steer, or with a failed slot its gate passed.
+One limit: archond's own failure of a live stage named `ship`, written in other
+words (a team merge that failed, say), is read as the ship step's, so it is
+`ship` whatever that stage's records would give. The records cannot tell the
+two apart; a pipeline with no stage named `ship` has no such case.
+
+For every other run the records come first: the newest stage run of each slot of
+the failing stage's last attempt, lowest slot first, as the driver reads
+them. When the run failed in the very words of one of them, whole or as the
+driver clips a long error (`StageOutcome::run_stop_error`), that stage run
+ended it and its own record is read first, whatever a sibling slot recorded;
+of slots that failed in the same words it is the lowest. Failing that, it is
+the lowest slot that failed with an `ESCALATE:` or `BLOCKED:` prefix, the one
+the driver stops a run on. Then
+every slot's record is read, in this order:
+- the stage run that ended the run, when it failed its own task with an
+  `ESCALATE:` or `BLOCKED:` prefix, gives `escalated` or `blocked` by its own
+  prefix, whatever the run's error opens with or shares with the daemon's
+  words. A failure flagged `infrastructure_failure` is the backend's, in the
+  backend's words, so it is read by its flag below;
+- a timeout gives `timeout`;
+- Aether's cost-cap stop gives `budget`, even though Aether also marks that
+  agent failed. Aether gives no structured signal for it, so its text is
+  matched exactly: `cost budget of $<limit>: <cost> spent`, alone or inside
+  Aether's whole budget message up to "Details are in the exhaustion.failed
+  event.", with the count of live descendants a whole number, followed by
+  nothing or Archon's whole notional-cost label. The amounts are the ones
+  Aether's formatters write for a stop: a positive limit exactly as
+  `format_usd` spells it (at most six decimals and no trailing zero, `$5` or
+  `$2.5`; an amount below that precision in its shortest form), and a spend
+  with exactly four decimals (`$5.0100`, or `≥ $5.0100 (<gap>)` with one of
+  Aether's gap labels) that can have reached the limit, as Aether stops an
+  agent at `spend >= limit`: at four decimals it reads no less than the least
+  amount Aether writes as that limit. Any other text is no budget stop and falls to the rules below:
+  `$9 spent`, `$5.00`, `$0.0000009` (which Aether writes `$0.000001`),
+  `$5: $4.9999 spent` and `not reported` among them;
+- `infrastructure_failure` gives `infrastructure`. So does a spawn the daemon
+  gave up on: the stage run has no agent and its error opens `create_agent
+  failed on a full disk` or `create_agent kept failing: `. archond flags both
+  itself; the words are read only for 1.6.3 records, and never on a stage run
+  that has an agent. Across the slots of one attempt a flagged slot outranks
+  the cost stop read in a sibling's words, unless the run failed in that
+  sibling's words. The flag also stays on a spawn that kept failing when its
+  workspace went meanwhile: the failure then opens `workspace missing:`.
+- archond's spawn preflight refusing an unflagged stage run with no agent
+  because it cannot enforce that stage's dollar budget (`stage <id> refused at
+  spawn: model policy: cannot enforce the dollar budget for …`, written by
+  `run::refused_at_spawn`) gives `budget`: no model ran, so it scores no loss.
+
+Only when no record names the stop is the run's error read, and only for the
+prefixes the daemon writes on purpose. The budget guards' blockers (`BLOCKED:
+the item's budget is used up`, `BLOCKED: cannot enforce the item's dollar
+budget`) give `budget`, whichever stage the daemon stopped the run under, and
+another `BLOCKED:` or `ESCALATE:` prefix gives `blocked` or `escalated`. So a
+recorded timeout or infrastructure failure of that stage's last attempt
+outranks the guard's words, and a stage that fails its own task in those words
+is `blocked`. Otherwise the same stage runs decide:
+- a completed stage run the gate failed for stating a failure (the gate's own
+  headline, `its agent stated a failure`) gives `escalated` or `blocked` when
+  its summary opens `ESCALATE:` or `BLOCKED:`, as the same words through
+  `fail_task` do; a stated fail verdict is read by the rules below;
+- a review-kind stage, a review-only run's lead (`only_reviews`), one whose
+  result holds a `review` whose verdict reads pass or fail, or one whose review
+  tally (kv `review_rounds:<stage run>`, kept by archond as reviewers settle)
+  holds a reviewer's fail, gives `review` unless every slot passed. A slot passes as the gate reads it: by its verdict,
+  by its nested `review.verdict`, and only if Archon did not refuse that review.
+  A gate failure that names the declared review as not on record (the gate's own
+  headline) also gives `review`;
+- a test stage gives `verification`, and a ship stage `ship`;
+- anything else is `other`.
+
+A run recovery could not resume (`cannot resume the run: `) is `infrastructure`:
+recovery removes the stage rows it cannot read before it fails the run, so the
+rows left do not say what stopped it.
+
+A recorded stage kind always wins over the stage id. Only a stage run from
+before Archon kept kinds (1.4.x) is read by its id, as a test or ship stage, and
+as a review only when it also holds a pass or fail verdict. A 1.6.3 work stage,
+which kept no `only_reviews`, is a review failure only by the pass or fail of
+its carried `review` or by its tally: a carried `review` that states neither
+leaves it a work stage. Each class records its source: `structure`, `recomputed` by
+migration V24, or `legacy_163`. A run is `legacy_163`, keeps its 1.6.3 class and
+has no lesson use rescored when it was pruned before V24, when V24 could not
+read its records, when its outcome observed more runs of a stage than are still
+stored, when recovery failed it (`cannot resume the run: `), or when the stage
+that ended it left no record (the `ship` step and prefixed stops excepted). A
+record V24 cannot read is any row of the run, its stage runs, its observed
+stages or its review tallies that SQLite holds as something other than text,
+that does not decode, that names no stage or attempt 0, or that observed a stage
+with no attempts; so is a stage run the store would not write (settled with no
+finish time), and a run or stage run whose row holds, in any column that
+repeats its record (a stage run's id, stage, attempt, slot, state and start,
+a run's item, pipeline and start, and whether either has ended), another
+value than the record or one SQLite cannot read, or an agent claim that is
+not the record's agent. V24 logs
+the run and goes on, and never stops the migration for one, nor for an outcome
+filed under an empty run key, which keeps its class. Nor for a lesson: one V24
+cannot recount (its row, its use or its epoch is unreadable, or it holds what
+no lesson holds) keeps its stored counts, and the lesson clusters stay as they
+were when any stored lesson is unfit to write back or holds the record of
+another lesson. An outcome also keeps the pull request it reviewed,
+`review_pr`, so pruning the item does not lose the report's pull request counts.
+It is kept only when a reviewer's verdict is on record for the run: a review
+stage's pass or fail, the pass or fail of the `review` a stage's result carries
+(unless Archon refused it), or a reviewer's fail in the tally. The carried
+verdict is read as the gate reads it: as one line, and no more than its first
+400 characters. A tally counts only in the shape archond stores: an object of
+the fields archond has kept, in which each fail names its reviewer's Aether
+agent id (`agt_` and a ULID), the commit that reviewer read (7 to 64 lowercase
+hexadecimal digits) and its findings (`titles` before they were described). A
+tally in any other shape is unreadable, so no reviewer's fail. A
+review-only target or assignment alone is no review.
 
 **Attribution.** Structured operator feedback is explicit:
 `correction {"item":"qi_…","stage":"implement","cause":"quality","reason":"…"}`.

@@ -140,10 +140,17 @@ pub fn status(status: &DaemonStatus, names: &RepoNames, verbose: bool) -> String
 /// Aether, the orchestrator and what archond depends on, one line each.
 fn link_lines(out: &mut String, status: &DaemonStatus, verbose: bool) {
     let _ = writeln!(out, "aether: {}", aether_link(&status.aether));
-    let orchestrator = status
-        .orchestrator
-        .as_ref()
-        .map_or_else(|| "not running".to_owned(), orchestrator_line);
+    let orchestrator = match (&status.orchestrator, &status.orchestrator_refresh_delayed) {
+        (Some(info), None) => orchestrator_line(info),
+        (Some(info), Some(reason)) => {
+            format!(
+                "{}; upgrade refresh delayed: {reason}",
+                orchestrator_line(info)
+            )
+        }
+        (None, Some(reason)) => format!("not running; upgrade refresh delayed: {reason}"),
+        (None, None) => "not running".to_owned(),
+    };
     let _ = writeln!(out, "orchestrator: {orchestrator}");
     if let Some(mcp) = &status.mcp {
         let _ = writeln!(out, "mcp: {}", mcp_line(mcp, archon_core::now()));
@@ -151,6 +158,27 @@ fn link_lines(out: &mut String, status: &DaemonStatus, verbose: bool) {
     let stale = status.health.as_ref().map(|h| h.stale(archon_core::now()));
     if let Some(stale) = stale.filter(|s| !s.is_empty()) {
         let _ = writeln!(out, "health: STALE {}", sanitize_line(&stale.join("; ")));
+    }
+    if status.unattributed_plan_fields > 0 {
+        let _ = writeln!(
+            out,
+            "plan origins: {} field(s) no writer accounted for, treated as pins",
+            status.unattributed_plan_fields
+        );
+    }
+    if status.legacy_plan_fields > 0 {
+        let _ = writeln!(
+            out,
+            "plan origins: {} field(s) stored before origins were recorded, treated as pins",
+            status.legacy_plan_fields
+        );
+    }
+    if status.unreadable_plan_items > 0 {
+        let _ = writeln!(
+            out,
+            "plan origins: {} unfinished item(s) that cannot be read are not counted",
+            status.unreadable_plan_items
+        );
     }
     if status.held_news > 0 {
         let line = held_news_line(status.held_news, status.held_news_due);
@@ -972,6 +1000,7 @@ pub(crate) mod tests {
             started_at: archon_core::now(),
             aether,
             orchestrator: None,
+            orchestrator_refresh_delayed: None,
             caps: Caps::default(),
             pause: PauseState::default(),
             running_agents: 0,
@@ -998,6 +1027,9 @@ pub(crate) mod tests {
             waiting_total: 0,
             waiting_next_offset: None,
             health: None,
+            unattributed_plan_fields: 0,
+            legacy_plan_fields: 0,
+            unreadable_plan_items: 0,
             quota: None,
             recovery: None,
             integration: Vec::new(),
@@ -1007,6 +1039,20 @@ pub(crate) mod tests {
             github_outbox: Vec::new(),
             github_outbox_pending: 0,
         }
+    }
+
+    #[test]
+    fn status_says_why_no_orchestrator_runs_while_an_upgrade_refresh_is_unfinished() {
+        let mut up = status_with(AetherLinkStatus::Disconnected {
+            error: "x".into(),
+            retry_at: None,
+        });
+        let plain = status(&up, &RepoNames::new(), false);
+        assert!(plain.contains("orchestrator: not running\n"), "{plain}");
+        up.orchestrator_refresh_delayed = Some("the fresh generation has not started".into());
+        let delayed = status(&up, &RepoNames::new(), false);
+        let line = "orchestrator: not running; upgrade refresh delayed: the fresh generation has not started\n";
+        assert!(delayed.contains(line), "{delayed}");
     }
 
     #[test]
@@ -1059,6 +1105,27 @@ pub(crate) mod tests {
                 "restarted 6 times; generation 7, created by 1.2.3; prompt outdated; \
                  tools outdated; 1 new lesson\n"
             ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn status_says_why_a_refresh_waits_when_the_orchestrator_s_creation_is_unrecorded() {
+        let mut up = status_with(AetherLinkStatus::Disconnected {
+            error: "x".into(),
+            retry_at: None,
+        });
+        up.orchestrator = Some(
+            serde_json::from_value(serde_json::json!({
+                "agent": "agt_0001", "model": "claude-code/opus", "effort": "high",
+                "status": "ready", "restarts": 0, "generation": 2,
+            }))
+            .unwrap(),
+        );
+        up.orchestrator_refresh_delayed = Some("it waits until idle".into());
+        let text = status(&up, &RepoNames::new(), false);
+        assert!(
+            text.contains("one it tracks; upgrade refresh delayed: it waits until idle\n"),
             "{text}"
         );
     }
@@ -1162,6 +1229,7 @@ pub(crate) mod tests {
                 reserve_percent: 0,
                 next_reset: Some(reset),
                 windows: vec![],
+                pace: vec![],
             }],
         });
         let text = status(&up, &RepoNames::new(), false);
@@ -1171,6 +1239,20 @@ pub(crate) mod tests {
             ),
             "{text}"
         );
+        let quota = up.quota.as_mut().unwrap();
+        quota.providers[0].pace = vec![archon_core::quota::pace::WindowPace {
+            window: "7d".into(),
+            window_minutes: 10080,
+            used_percent: 70,
+            elapsed_percent: 30,
+            resets_at: reset,
+            empty_at: Some("2026-10-14T06:00:00Z".parse().unwrap()),
+            short: true,
+        }];
+        let text = status(&up, &RepoNames::new(), false);
+        let pace = "; pace 7d used 70% at 30% elapsed, empty ~2026-10-14 06:00 UTC, \
+                    before its reset 2026-10-16 18:30 UTC\n";
+        assert!(text.contains(pace), "{text}");
     }
 
     #[test]

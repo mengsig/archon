@@ -155,11 +155,38 @@ impl fmt::Display for Effort {
 
 /// How every agent Archon prompts sizes an effort, from the cheapest up. The
 /// orchestrator prompt and every stage contract carry it word for word.
-pub const EFFORT_RUBRIC: &str = "`low` for lookups, listing, formatting and mechanical \
-edits; `medium` for routine changes and reviews of small or low-risk diffs; `high` for \
-non-trivial design, risky diffs and reviews of shared code; `x_high` for hard reasoning, \
-such as root-causing a regression, concurrency or security analysis, or a fix that \
-failed twice. Take the cheapest that fits.";
+pub const EFFORT_RUBRIC: &str = "`low` for lookups, listing, formatting, mechanical edits \
+and reviews of trivial or small low-risk diffs; `medium` for routine changes and reviews of \
+ordinary diffs; `high` for non-trivial design, risky diffs and reviews of shared code; `x_high` \
+for hard reasoning, such as root-causing a regression, concurrency or security analysis, or \
+a fix that failed twice. Take the cheapest that fits.";
+
+/// How a lead's contract states efforts. Decided as its spawn is reserved,
+/// from `[models] effort_sizing`, and stored with the request it shapes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffortContract {
+    /// 1.6.3's default: a planned reviewer effort is a floor; no rubric.
+    Floor,
+    /// The effort rubric: efforts are defaults the lead sizes to the task,
+    /// so only a planned reviewer's model is held.
+    Rubric,
+}
+
+impl EffortContract {
+    /// The contract `[models] effort_sizing` asks for.
+    pub fn of(effort_sizing: bool) -> Self {
+        match effort_sizing {
+            true => Self::Rubric,
+            false => Self::Floor,
+        }
+    }
+
+    /// Whether the contract carries the rubric.
+    pub fn sized(self) -> bool {
+        self == Self::Rubric
+    }
+}
 
 /// What the orchestrator chose for one agent: model and effort are
 /// mandatory, mirroring Aether's `delegate`, which inherits neither.
@@ -182,6 +209,18 @@ impl ModelChoice {
             effort,
             tier: None,
         }
+    }
+
+    /// Follow a plan entry moved from `was` to `now`: a copy still on `was`'s
+    /// model takes `now`'s, and its tier too unless the copy set its own.
+    pub fn follow(&mut self, was: &ModelChoice, now: &ModelChoice) {
+        if self.model != was.model {
+            return;
+        }
+        if self.tier == was.tier {
+            self.tier = now.tier.clone();
+        }
+        self.model = now.model.clone();
     }
 
     /// The model and effort alone, as evidence and Aether compare them.

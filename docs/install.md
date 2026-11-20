@@ -40,12 +40,12 @@ profile, and it never touches Archon's configuration or data.
 Set these in the environment of `sh`, after the pipe:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mengsig/archon/main/install.sh | ARCHON_VERSION=v1.6.3 sh
+curl -fsSL https://raw.githubusercontent.com/mengsig/archon/main/install.sh | ARCHON_VERSION=v1.6.4 sh
 ```
 
 | Variable | Effect |
 | --- | --- |
-| `ARCHON_VERSION` | Install this release, such as `v1.6.3`, instead of the latest. |
+| `ARCHON_VERSION` | Install this release, such as `v1.6.4`, instead of the latest. |
 | `ARCHON_INSTALL_DIR` | Install here instead of `~/.local/bin`. The directory must be yours to write. |
 | `ARCHON_SKIP_AETHER=1` | Do not install Aether; print the command that does. |
 | `ARCHON_NONINTERACTIVE=1` | Ask nothing: a missing Aether is installed without a question. |
@@ -81,13 +81,14 @@ aether schema | grep -E '^  "(min_)?protocol_version"'
 
 Update an Aether that is too old with `aether update`.
 
-Archon 1.6.3 requires **Aether 1.4.1**, including its worker policy
-and reference attachment support. The installer selects Aether `v1.4.1`
+Archon 1.6.4 requires **Aether 1.4.2**, including its worker policy
+and reference attachment support. The installer selects Aether `v1.4.2`
 when no `aether` is installed; it preserves an existing installation.
-Upgrade an older existing Aether with `aether update --version v1.4.1`
-and restart aetherd before using Archon 1.6.3.
-A confirmed `archon update` pins Aether to `v1.4.1` only when the installed
-Aether is older. At 1.4.1 or later it runs `aether update --yes`, allowing
+Upgrade an older existing Aether with `aether update --version v1.4.2`
+and restart aetherd before using Archon 1.6.4.
+A confirmed `archon update` run by Archon 1.6.4 pins Aether to
+`v1.4.2` only when the installed Aether is older. The update from 1.6.3 runs
+1.6.3's own Aether step, so upgrade Aether first as above. At 1.4.2 or later it runs `aether update --yes`, allowing
 future releases without forcing a downgrade;
 `--check`, `--requirements`, `--no-restart` and a declined question leave
 Aether as it is. Check the installed release with `aether --version`.
@@ -129,7 +130,7 @@ Every release carries, for each archive, a `.sha256` file, and one
 `SHA256SUMS` file that lists all of them.
 
 ```sh
-tag=v1.6.3
+tag=v1.6.4
 target=x86_64-unknown-linux-musl
 base=https://github.com/mengsig/archon/releases/download/$tag
 curl -fsSLO "$base/archon-$target.tar.gz"
@@ -150,7 +151,7 @@ archive holds `LICENSE` and `THIRD-PARTY-NOTICES`; the installer and
 ```sh
 archon update            # install the latest release when it is newer
 archon update --check    # only report: exit 0 when up to date, 10 when a newer release exists
-archon update --version v1.6.3     # install exactly this release
+archon update --version v1.6.4     # install exactly this release
 ```
 
 A release that needs more than this, such as 1.5.0 from 1.4.x, lists its
@@ -244,7 +245,7 @@ Each `archon`, `archon tui` and `archon chat` on a terminal looks for a
 newer release of Archon and of Aether before it opens, and offers:
 
 ```text
-Archon 1.6.4 is available (this is 1.6.3).
+Archon 1.6.5 is available (this is 1.6.4).
 Update and restart now? [Y/n/s] (s: skip these versions)
 ```
 

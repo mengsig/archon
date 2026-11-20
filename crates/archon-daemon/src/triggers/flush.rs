@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 
-use super::{read_outbox, write_outbox};
+use super::{Outbox, read_outbox, write_outbox};
 use crate::context::DaemonContext;
 
 /// Longest an operator message waits behind held news. Delivery retries
@@ -15,16 +15,13 @@ const FLUSH_WAIT: Duration = Duration::from_secs(10);
 /// Send every held event now, quiet news included, and return once Aether
 /// has it, so a message sent next reaches the orchestrator after it.
 pub async fn flush_quiet(ctx: &DaemonContext) -> Result<(), ArchonError> {
-    let Some(target) = mark_flush(ctx).await? else {
+    let Some(through) = mark_flush(ctx).await? else {
         return Ok(());
     };
     ctx.triggers.urgent.notify_waiters();
     ctx.triggers.news.notify_one();
-    let mut settled = ctx.triggers.settled.subscribe();
-    let reached = tokio::time::timeout(FLUSH_WAIT, settled.wait_for(|count| *count >= target));
-    match reached.await {
-        Ok(Ok(_)) => Ok(()),
-        Ok(Err(closed)) => unreachable!("the sender lives in the context: {closed}"),
+    match tokio::time::timeout(FLUSH_WAIT, delivered_through(ctx, through)).await {
+        Ok(result) => result,
         Err(_) => {
             tracing::warn!(
                 waited = ?FLUSH_WAIT,
@@ -35,26 +32,62 @@ pub async fn flush_quiet(ctx: &DaemonContext) -> Result<(), ArchonError> {
     }
 }
 
-/// Mark held news to go out at once, and the settled-batch count reached
-/// once it has: `None` when nothing is held or in flight.
+/// Wait until no news numbered `through` or lower is held or in flight.
+/// Only a settled batch can end that, so each settle is a cue to look again.
+async fn delivered_through(ctx: &DaemonContext, through: u64) -> Result<(), ArchonError> {
+    assert!(through > 0, "news is numbered from 1");
+    let mut settled = ctx.triggers.settled.subscribe();
+    loop {
+        settled.borrow_and_update();
+        let outbox = read_outbox(&*ctx.store.lock().await)?;
+        if !waits_on(&outbox, through) {
+            return Ok(());
+        }
+        let changed = settled.changed().await;
+        assert!(changed.is_ok(), "the sender lives in the context");
+    }
+}
+
+/// Whether `outbox` still holds news numbered `through` or lower. Unnumbered
+/// news came after every flush; a compaction's digest takes its earliest number.
+fn waits_on(outbox: &Outbox, through: u64) -> bool {
+    let early = |seq: u64| seq > 0 && seq <= through;
+    let in_flight = outbox.in_flight.as_ref();
+    in_flight.is_some_and(|batch| early(batch.first_seq))
+        || outbox.pending.iter().any(|news| early(news.seq))
+}
+
+/// Number the batch in flight and every held event not yet numbered, and
+/// mark the news to go out at once: the last number, `None` when nothing is held.
 async fn mark_flush(ctx: &DaemonContext) -> Result<Option<u64>, ArchonError> {
     let mut store = ctx.store.lock().await;
     let mut outbox = read_outbox(&store)?;
-    // Keying takes every pending event, so they leave in one batch after the one in flight.
-    let ahead = u64::from(outbox.in_flight.is_some()) + u64::from(!outbox.pending.is_empty());
-    if ahead == 0 {
+    if outbox.in_flight.is_none() && outbox.pending.is_empty() {
         return Ok(None);
     }
-    if !outbox.pending.is_empty() && !outbox.flush {
-        outbox.flush = true;
-        write_outbox(&mut store, &outbox)?;
+    let mut last = outbox.last_seq;
+    let batch = outbox
+        .in_flight
+        .as_mut()
+        .filter(|batch| batch.first_seq == 0);
+    if let Some(batch) = batch {
+        last += 1;
+        batch.first_seq = last;
     }
+    for news in outbox.pending.iter_mut().filter(|news| news.seq == 0) {
+        last += 1;
+        news.seq = last;
+    }
+    outbox.last_seq = last;
+    outbox.flush = outbox.flush || !outbox.pending.is_empty();
+    write_outbox(&mut store, &outbox)?;
+    assert!(
+        last > 0 && waits_on(&outbox, last),
+        "the flush waits for what it numbered"
+    );
     assert!(
         outbox.pending.is_empty() || outbox.is_due(archon_core::now()),
         "flushed news is due"
     );
-    // Read under the store lock, which every settled batch is counted under.
-    let target = *ctx.triggers.settled.borrow() + ahead;
-    assert!(ahead <= 2, "one batch in flight and one keyed next at most");
-    Ok(Some(target))
+    Ok(Some(last))
 }

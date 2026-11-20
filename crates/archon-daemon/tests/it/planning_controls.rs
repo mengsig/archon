@@ -285,15 +285,19 @@ async fn unnamed_reviewers_receive_the_profile_in_the_spawn_contract() {
     config.review.default_tier = Tier::Strong;
     config.review.default_effort = Effort::Medium;
     let h = Harness::with_config(config).await;
-    h.ctx
-        .store
-        .lock()
-        .await
-        .set_model_catalog(ModelCatalog::new(vec![CatalogModel {
+    h.set_catalog(ModelCatalog::new(vec![
+        CatalogModel {
+            model: MODEL.parse().unwrap(),
+            tier: None,
+            is_default: false,
+        },
+        CatalogModel {
             model: "codex/reviewer".parse().unwrap(),
             tier: Some(Tier::Strong),
             is_default: true,
-        }]));
+        },
+    ]))
+    .await;
     let Request::Enqueue(mut request) = reviewer_enqueue() else {
         unreachable!()
     };

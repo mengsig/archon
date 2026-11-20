@@ -453,6 +453,24 @@
       ],
       "type": "object"
     },
+    "Authority": {
+      "description": "Who chose a plan field.",
+      "oneOf": [
+        {
+          "enum": [
+            "operator",
+            "orchestrator",
+            "daemon"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "Nobody known: a legacy or an unattributed field.",
+          "type": "string"
+        }
+      ]
+    },
     "Autonomy": {
       "additionalProperties": false,
       "description": "Every knob set. The default is standard review, no proposal or report,\nmanual merge and guarded tools.",
@@ -684,6 +702,46 @@
         "why"
       ],
       "type": "object"
+    },
+    "CatalogCheck": {
+      "description": "The result worth surfacing alongside a stored model plan.",
+      "oneOf": [
+        {
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "const": "deferred",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "status": {
+              "const": "warnings",
+              "type": "string"
+            },
+            "warnings": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "status",
+            "warnings"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "CatalogListing": {
       "properties": {
@@ -985,6 +1043,26 @@
         "at"
       ],
       "type": "object"
+    },
+    "CheckDecision": {
+      "description": "What `submit_verdict` did with a submission.",
+      "oneOf": [
+        {
+          "const": "accepted",
+          "description": "It reads as a pass or a fail: the stage completes with it.",
+          "type": "string"
+        },
+        {
+          "const": "restate",
+          "description": "It reads as neither: the stage is asked, once, to restate it.",
+          "type": "string"
+        },
+        {
+          "const": "final",
+          "description": "The restated verdict, whatever it reads as: nothing later changes it.",
+          "type": "string"
+        }
+      ]
     },
     "Checks": {
       "additionalProperties": false,
@@ -1411,6 +1489,43 @@
           "required": [
             "cmd",
             "path"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent has its verdict read before it completes, and is asked\nonce to restate one Archon cannot read (ARCHITECTURE §6.4).",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "submit_verdict",
+              "type": "string"
+            },
+            "restating": {
+              "description": "Sent as the restatement an earlier answer asked for, which is final.",
+              "type": "boolean"
+            },
+            "structured": {
+              "default": null,
+              "description": "The `structured` data it is about to complete with."
+            },
+            "summary": {
+              "description": "The `summary` it is about to complete with.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "summary"
           ],
           "type": "object"
         },
@@ -3487,6 +3602,48 @@
             "ref"
           ],
           "type": "object"
+        },
+        {
+          "description": "Watch, re-time or (`remove`) stop watching a registered repository's\nopen pull requests; replies with every watch. Never registers one, and\nGitHub-borne operator authority cannot reach it.",
+          "properties": {
+            "cmd": {
+              "const": "watch_repo",
+              "type": "string"
+            },
+            "interval_minutes": {
+              "description": "At least [`github_links::MIN_WATCH_MINUTES`]; the sync's default when left out.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "remove": {
+              "type": "boolean"
+            },
+            "repo": {
+              "$ref": "#/$defs/RepoRef"
+            }
+          },
+          "required": [
+            "cmd",
+            "repo"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every repository watch.",
+          "properties": {
+            "cmd": {
+              "const": "repo_watches",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
         }
       ],
       "properties": {
@@ -3657,13 +3814,14 @@
             "pipeline",
             "model",
             "item",
-            "stage"
+            "stage",
+            "effort"
           ],
           "type": "string"
         },
         {
           "const": "provider",
-          "description": "The provider of the model a stage ran, as provider weights route it.",
+          "description": "The provider of each spending agent's recorded model.",
           "type": "string"
         }
       ]
@@ -3719,6 +3877,16 @@
           },
           "type": "array"
         },
+        "split": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostSplit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "total": {
           "$ref": "#/$defs/CostAmounts"
         }
@@ -3750,10 +3918,20 @@
           "type": "number"
         },
         "key": {
-          "description": "The day, repository name, pipeline, `provider/model`, item id or\nstage id. `None` gathers spend with no such owner: the\norchestrator's, and agents outside a stage for model and stage.",
+          "description": "The grouping key, including an explicit orchestrator bucket where applicable.\n`None` gathers spend without a key in this grouping.",
           "type": [
             "string",
             "null"
+          ]
+        },
+        "split": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostSplit"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "unclassified_cost_usd": {
@@ -3767,6 +3945,24 @@
         "counted_usd",
         "cost_usd",
         "estimated_cost_usd"
+      ],
+      "type": "object"
+    },
+    "CostSplit": {
+      "description": "Budget-counted spend from stage leads and the orchestrator, and from\nrecorded delegates. The rest of `counted_usd` lacks attribution.",
+      "properties": {
+        "delegated_usd": {
+          "format": "double",
+          "type": "number"
+        },
+        "lead_usd": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lead_usd",
+        "delegated_usd"
       ],
       "type": "object"
     },
@@ -3953,6 +4149,13 @@
         "lavish_available": {
           "type": "boolean"
         },
+        "legacy_plan_fields": {
+          "default": 0,
+          "description": "Plan fields of unfinished items stored before origins were recorded,\npins as well; `0` from an older archond.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "mcp": {
           "anyOf": [
             {
@@ -4004,6 +4207,13 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "orchestrator_refresh_delayed": {
+          "description": "Why an unfinished upgrade refresh has not happened, when `orchestrator`\ncannot say: none is recorded, or its creation is not. `None` from an older archond.",
+          "type": [
+            "string",
+            "null"
           ]
         },
         "pause": {
@@ -4064,6 +4274,20 @@
         "started_at": {
           "format": "date-time",
           "type": "string"
+        },
+        "unattributed_plan_fields": {
+          "default": 0,
+          "description": "Plan fields of unfinished items no writer accounted for, which\narchond treats as pins; `0` from an older archond.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unreadable_plan_items": {
+          "default": 0,
+          "description": "Unfinished items whose row does not decode, so their fields are in\nneither count; `0` from an older archond.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "upgrade": {
           "description": "The upgrade under way, in one line.",
@@ -4627,6 +4851,33 @@
         }
       ]
     },
+    "EntryOrigin": {
+      "description": "The origins of one plan entry's model and effort, each on its own, and of\nits tier when the entry has one.",
+      "properties": {
+        "effort": {
+          "$ref": "#/$defs/FieldOrigin"
+        },
+        "model": {
+          "$ref": "#/$defs/FieldOrigin"
+        },
+        "tier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FieldOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who asked for the tier the daemon resolves the model in; present\nexactly when the choice has a tier."
+        }
+      },
+      "required": [
+        "model",
+        "effort"
+      ],
+      "type": "object"
+    },
     "ErrorCode": {
       "oneOf": [
         {
@@ -4976,6 +5227,36 @@
       "required": [
         "feedback",
         "penalizing"
+      ],
+      "type": "object"
+    },
+    "FieldOrigin": {
+      "description": "The origin of one field (the model, the effort or the tier) of one plan entry.",
+      "properties": {
+        "at": {
+          "description": "When the field was last chosen; `None` when nobody knows.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "by": {
+          "$ref": "#/$defs/Authority"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/PlanSource"
+        }
+      },
+      "required": [
+        "source",
+        "by"
       ],
       "type": "object"
     },
@@ -5852,6 +6133,16 @@
             }
           ]
         },
+        "model_reasons": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Why an effort of `model_plan` is above its stage's default, as in an enqueue.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
         "onto": {
           "anyOf": [
             {
@@ -6215,6 +6506,16 @@
           },
           "type": "array"
         },
+        "plan_origins": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/EntryOrigin"
+            },
+            "type": "array"
+          },
+          "description": "Where each plan entry's model and effort came from, keyed like the plan.",
+          "type": "object"
+        },
         "runs": {
           "items": {
             "$ref": "#/$defs/PipelineRun"
@@ -6484,6 +6785,16 @@
             "null"
           ]
         },
+        "catalog_check": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogCheck"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "created_at": {
           "format": "date-time",
           "type": "string"
@@ -6494,6 +6805,17 @@
             "$ref": "#/$defs/QueueItemId"
           },
           "type": "array"
+        },
+        "effort_sizing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanSizing"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The sizing decisions frozen into this plan; absent on a plan no key\nof which was ever sized, which is every plan of 1.6.3."
         },
         "fresh_retries": {
           "default": 0,
@@ -6536,6 +6858,16 @@
             }
           ],
           "description": "The issue the item came from or closes; feature `github_links`."
+        },
+        "model_origins": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanOrigins"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "model_plan": {
           "$ref": "#/$defs/ModelPlan"
@@ -6755,6 +7087,49 @@
         "at",
         "to",
         "by"
+      ],
+      "type": "object"
+    },
+    "KeySizing": {
+      "description": "How one plan key was sized.",
+      "properties": {
+        "cap": {
+          "$ref": "#/$defs/Effort",
+          "description": "The cap in force when the key was sized."
+        },
+        "facts": {
+          "$ref": "#/$defs/StageFacts",
+          "description": "The key's own stage facts, so no later reader borrows another's."
+        },
+        "reasons": {
+          "description": "What the sizer said of each choice, one per choice once sized.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "risk_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RiskClass"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The class the key was sized with; `None` until its item's own title,\nbrief, tags and review level decide it, as the item is stored."
+        },
+        "risk_signals": {
+          "description": "The signals of that class, so a key sized before they moved shows it.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "facts",
+        "cap"
       ],
       "type": "object"
     },
@@ -8312,6 +8687,13 @@
           },
           "type": "array"
         },
+        "sizing": {
+          "description": "By (risk class, effort source), lowest class first; attempts with no\nsizing record are left out. Advisory display only.",
+          "items": {
+            "$ref": "#/$defs/SizingEvidenceRow"
+          },
+          "type": "array"
+        },
         "tiers": {
           "default": [],
           "description": "By (stage, tier, effort); attempts on a model Aether places in no tier are left out.",
@@ -8341,6 +8723,13 @@
           "$ref": "#/$defs/ModelChoice"
         },
         "completed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "disputed": {
+          "default": 0,
+          "description": "Completed attempts whose pass their own findings dispute: a format clash\nkept out of `verdicts`, so it is no fail of the model.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -9118,6 +9507,13 @@
             "null"
           ]
         },
+        "refresh_delayed": {
+          "description": "Why the fresh generation an upgrade owes it has not started yet;\n`None` when none is owed, or `refresh_on_upgrade` is off.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "settings_drift": {
           "anyOf": [
             {
@@ -9296,9 +9692,22 @@
     },
     "PipelineEvidence": {
       "properties": {
+        "blocked": {
+          "default": 0,
+          "description": "Runs a stage ended with `BLOCKED:` or `ESCALATE:`: no loss, as routing\nreads them, and never scored.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "correction_rate": {
           "format": "double",
           "type": "number"
+        },
+        "escalated": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "estimated_saving_usd": {
           "format": "double",
@@ -9331,6 +9740,17 @@
               "type": "null"
             }
           ]
+        },
+        "review_prs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewPrs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For a pipeline that reviews existing pull requests: each one counted once."
         },
         "runs": {
           "format": "uint64",
@@ -9509,6 +9929,124 @@
         "stages"
       ],
       "type": "object"
+    },
+    "PlanOrigins": {
+      "description": "The origins of a plan, written for one item.",
+      "properties": {
+        "entries": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/EntryOrigin"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "item": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The item these origins were written for; `None` describes no item."
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "type": "object"
+    },
+    "PlanSizing": {
+      "description": "The sizing record of a plan: its item's class when a key was last sized,\nand every key the sizer decided. A key without an entry was never sized.",
+      "properties": {
+        "keys": {
+          "additionalProperties": {
+            "$ref": "#/$defs/KeySizing"
+          },
+          "type": "object"
+        },
+        "risk_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RiskClass"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "risk_signals": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiffSize"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The diff size the item's last run measured when the plan was first\nsized. A size learned later never changes it; a `diff:` tag overrides it."
+        }
+      },
+      "type": "object"
+    },
+    "PlanSource": {
+      "description": "How a plan field got its value.",
+      "oneOf": [
+        {
+          "const": "explicit",
+          "description": "Named by a request or a steer.",
+          "type": "string"
+        },
+        {
+          "const": "learned",
+          "description": "The learned route of the repository.",
+          "type": "string"
+        },
+        {
+          "const": "tier",
+          "description": "Resolved inside a tier the request or the stage asked for.",
+          "type": "string"
+        },
+        {
+          "const": "fallback",
+          "description": "The stage's or the pipeline's default.",
+          "type": "string"
+        },
+        {
+          "const": "sizer",
+          "description": "Sized by the daemon for an effort nobody pinned.",
+          "type": "string"
+        },
+        {
+          "const": "escalation",
+          "description": "Raised by the daemon after a failure. No writer sets it yet.",
+          "type": "string"
+        },
+        {
+          "const": "migrated",
+          "description": "Moved by the daemon off a model that can no longer run it.",
+          "type": "string"
+        },
+        {
+          "const": "legacy_unknown",
+          "description": "Stored before origins were recorded.",
+          "type": "string"
+        },
+        {
+          "const": "unattributed",
+          "description": "No writer accounted for it.",
+          "type": "string"
+        }
+      ]
     },
     "PrRef": {
       "description": "A pull request with what is known of its state; the reference's fields\nsit beside the state.",
@@ -9802,6 +10340,13 @@
             "null"
           ]
         },
+        "pace": {
+          "description": "Each trusted window's spend against its time passed; empty while the\nreading is stale or names no window length and reset.",
+          "items": {
+            "$ref": "#/$defs/WindowPace"
+          },
+          "type": "array"
+        },
         "provider": {
           "type": "string"
         },
@@ -9915,6 +10460,7 @@
       "type": "string"
     },
     "QueueItem": {
+      "description": "An item's model plan with where each field came from and how its efforts\nwere sized. Serialized as the item's `model_plan`, `model_origins` and\n`effort_sizing` keys, so stored items and older readers see the plan as before.",
       "properties": {
         "autonomy": {
           "$ref": "#/$defs/Autonomy",
@@ -9939,6 +10485,16 @@
             "null"
           ]
         },
+        "catalog_check": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogCheck"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "created_at": {
           "format": "date-time",
           "type": "string"
@@ -9949,6 +10505,17 @@
             "$ref": "#/$defs/QueueItemId"
           },
           "type": "array"
+        },
+        "effort_sizing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanSizing"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The sizing decisions frozen into this plan; absent on a plan no key\nof which was ever sized, which is every plan of 1.6.3."
         },
         "fresh_retries": {
           "default": 0,
@@ -9975,6 +10542,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/IntentBinding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_origins": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanOrigins"
             },
             {
               "type": "null"
@@ -10149,7 +10726,7 @@
           "type": "object"
         },
         {
-          "description": "A dependency failed or was cancelled; needs an operator decision.",
+          "description": "A failed dependency or an invalid model pin needs an operator decision.",
           "properties": {
             "reason": {
               "type": "string"
@@ -10327,6 +10904,21 @@
         "bytes"
       ],
       "type": "object"
+    },
+    "RecordRepair": {
+      "description": "Whether a stage's one record repair turn is still to give when an attempt\nof it completes with a broken delivery record.",
+      "oneOf": [
+        {
+          "const": "open",
+          "description": "A broken record of this attempt gets the repair turn.",
+          "type": "string"
+        },
+        {
+          "const": "spent",
+          "description": "The attempt is the repair turn or follows it: a broken record of it\nfails the run, and its agent is not asked for the record again.",
+          "type": "string"
+        }
+      ]
     },
     "RecoveryProgress": {
       "description": "`DaemonStatus::recovery`: how far archond is in recovering its runs.\nUntil it is done, changes are refused and nothing is dispatched.",
@@ -11174,6 +11766,23 @@
           "type": "object"
         },
         {
+          "description": "How `submit_verdict` read a stage's verdict, and what it decided.",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/VerdictCheck"
+            },
+            "reply": {
+              "const": "verdict_check",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "data": {
               "$ref": "#/$defs/CostReport"
@@ -11641,6 +12250,25 @@
             "data"
           ],
           "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "items": {
+                "$ref": "#/$defs/RepoWatchView"
+              },
+              "type": "array"
+            },
+            "reply": {
+              "const": "repo_watches",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -11894,6 +12522,58 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "RepoWatchView": {
+      "description": "A registered repository whose open pull requests the GitHub sync watches.",
+      "properties": {
+        "fetched_at": {
+          "description": "When the last completed walk of the list began, one of 304s too.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "interval_minutes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "repo": {
+          "description": "The registered repository's name.",
+          "type": "string"
+        },
+        "repository": {
+          "description": "Its GitHub `origin`, `owner/name`, as last resolved.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "since": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "tracked_pull_requests": {
+          "description": "Pull requests the watch keeps a row of; absent before the first walk.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "truncated": {
+          "description": "The list filled the 1,000 pull requests a walk reads: older ones, if\nthere are any, are not watched.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "repo",
+        "interval_minutes",
+        "since"
+      ],
       "type": "object"
     },
     "ReportId": {
@@ -12172,6 +12852,43 @@
           "required": [
             "cmd",
             "path"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent has its verdict read before it completes, and is asked\nonce to restate one Archon cannot read (ARCHITECTURE §6.4).",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "submit_verdict",
+              "type": "string"
+            },
+            "restating": {
+              "description": "Sent as the restatement an earlier answer asked for, which is final.",
+              "type": "boolean"
+            },
+            "structured": {
+              "default": null,
+              "description": "The `structured` data it is about to complete with."
+            },
+            "summary": {
+              "description": "The `summary` it is about to complete with.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "summary"
           ],
           "type": "object"
         },
@@ -14249,6 +14966,48 @@
             "ref"
           ],
           "type": "object"
+        },
+        {
+          "description": "Watch, re-time or (`remove`) stop watching a registered repository's\nopen pull requests; replies with every watch. Never registers one, and\nGitHub-borne operator authority cannot reach it.",
+          "properties": {
+            "cmd": {
+              "const": "watch_repo",
+              "type": "string"
+            },
+            "interval_minutes": {
+              "description": "At least [`github_links::MIN_WATCH_MINUTES`]; the sync's default when left out.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "remove": {
+              "type": "boolean"
+            },
+            "repo": {
+              "$ref": "#/$defs/RepoRef"
+            }
+          },
+          "required": [
+            "cmd",
+            "repo"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every repository watch.",
+          "properties": {
+            "cmd": {
+              "const": "repo_watches",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -14379,6 +15138,41 @@
       ],
       "type": "string"
     },
+    "Restatement": {
+      "description": "What a stage attempt's one restatement stands at.",
+      "properties": {
+        "asked": {
+          "$ref": "#/$defs/VerdictNote",
+          "description": "Why the first unreadable submission read as no verdict."
+        },
+        "environment": {
+          "description": "Whether the restated submission's findings name the environment as at fault.",
+          "type": "boolean"
+        },
+        "restated": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VerdictReading"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the restated submission read as, which is final; `None` while it is owed."
+        },
+        "said": {
+          "description": "The summary and findings of a restated submission that is no pass, clipped:\na failure report shows them where it stands over the stage's result.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "asked"
+      ],
+      "type": "object"
+    },
     "Result_of_Reply_or_ErrorReply": {
       "oneOf": [
         {
@@ -14420,6 +15214,45 @@
         "strict",
         "standard",
         "none"
+      ],
+      "type": "string"
+    },
+    "ReviewPrs": {
+      "description": "The pull requests a review pipeline's scored runs judged, each counted\nonce however many heads it was reviewed at.",
+      "properties": {
+        "median_rounds_to_pass": {
+          "description": "Over the passed ones: scored runs up to and including the first pass.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "passed": {
+          "description": "Pull requests with a passing run.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reviewed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "reviewed",
+        "passed"
+      ],
+      "type": "object"
+    },
+    "RiskClass": {
+      "description": "How risky an item's work is, settled before any effort is chosen.",
+      "enum": [
+        "mechanical",
+        "ordinary",
+        "elevated",
+        "critical"
       ],
       "type": "string"
     },
@@ -14795,6 +15628,73 @@
         }
       ]
     },
+    "SizingEvidenceRow": {
+      "description": "The attempts whose effort the sizer decided or advised, pooled by the\nitem's risk class and where the effort came from. For display only:\nno route and no later sizing reads it.",
+      "properties": {
+        "attempts": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "completed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "disputed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "effort_source": {
+          "$ref": "#/$defs/PlanSource"
+        },
+        "median_cost_usd": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "median_minutes": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "p90_cost_usd": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "passed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "risk_class": {
+          "$ref": "#/$defs/RiskClass"
+        },
+        "verdicts": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "risk_class",
+        "effort_source",
+        "attempts",
+        "completed",
+        "verdicts",
+        "passed",
+        "disputed"
+      ],
+      "type": "object"
+    },
     "StageDelegation": {
       "description": "How the cost of a stage run that delegated splits; the two amounts add up\nto the stage run's `cost_usd`.",
       "properties": {
@@ -14849,6 +15749,24 @@
         "item",
         "run",
         "stages"
+      ],
+      "type": "object"
+    },
+    "StageFacts": {
+      "description": "The stage facts one plan key is sized from: its own, never another key's.",
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/Effort",
+          "description": "The stage's own declared default effort for this key."
+        },
+        "checks": {
+          "default": false,
+          "description": "Whether the key's agents check work: a review or test stage, or reviewers.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "base"
       ],
       "type": "object"
     },
@@ -14976,6 +15894,23 @@
           "format": "double",
           "type": "number"
         },
+        "effort_reasons": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "effort_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the effort it ran at came from: the sizer, or the pin it advised."
+        },
         "fan_index": {
           "description": "0-based slot within a fan-out stage; 0 for single-agent stages.",
           "format": "uint32",
@@ -15017,6 +15952,46 @@
           },
           "type": "array"
         },
+        "only_reviews": {
+          "description": "Whether the stage's work is only the review its pipeline declares (a\nreview-only run's lead); `None` on stage runs recorded before Archon kept it.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "record_repair": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecordRepair"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the attempt stands to its stage's one record repair turn; `None`\non a stage run from before Archon gave one, which is replayed as then."
+        },
+        "restatement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Restatement"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The one restatement of its verdict the attempt was asked for through\n`submit_verdict`; `None` when it was never asked."
+        },
+        "risk_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RiskClass"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The class the attempt's plan key was sized with."
+        },
         "run": {
           "$ref": "#/$defs/PipelineRunId"
         },
@@ -15046,6 +16021,17 @@
               "type": "null"
             }
           ]
+        },
+        "verdict_note": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VerdictNote"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why `verdict` is `Unknown`; `None` for any other verdict, and on stage\nruns recorded before Archon kept it."
         }
       },
       "required": [
@@ -16087,6 +17073,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "disputed": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
         "effort": {
           "$ref": "#/$defs/Effort"
         },
@@ -16309,6 +17301,65 @@
       ],
       "type": "string"
     },
+    "VerdictCheck": {
+      "description": "The answer to one `submit_verdict` call.",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/CheckDecision"
+        },
+        "reading": {
+          "$ref": "#/$defs/VerdictReading",
+          "description": "The submission's reading; for a `final` given before, that one's."
+        }
+      },
+      "required": [
+        "decision",
+        "reading"
+      ],
+      "type": "object"
+    },
+    "VerdictNote": {
+      "description": "Why a stage's verdict is `Unknown`.",
+      "oneOf": [
+        {
+          "const": "disputed_pass",
+          "description": "A worded pass beside a finding that blocks it (marked `\"blocking\": true`,\nor unmarked at a blocking severity), and nothing else against it.",
+          "type": "string"
+        },
+        {
+          "const": "missing_verdict_line",
+          "description": "No verdict where a result may give one: no `structured` verdict and no\n`VERDICT:` line.",
+          "type": "string"
+        },
+        {
+          "const": "hedged_verdict",
+          "description": "A verdict given in words that read as no verdict: a choice, a condition,\na pass taken back, or a structured verdict its summary contradicts.",
+          "type": "string"
+        }
+      ]
+    },
+    "VerdictReading": {
+      "description": "A verdict as Archon read it, with why when it is `Unknown`.",
+      "properties": {
+        "note": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VerdictNote"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "verdict"
+      ],
+      "type": "object"
+    },
     "Versions": {
       "description": "Archon's and Aether's versions, for `status` and `queue_status`.",
       "properties": {
@@ -16436,6 +17487,11 @@
         {
           "const": "provider_quota",
           "description": "Every provider that meets one of its stages' floors is out of quota.",
+          "type": "string"
+        },
+        {
+          "const": "model_catalog_unavailable",
+          "description": "A model or the model catalog is unavailable.",
           "type": "string"
         }
       ]
@@ -16804,6 +17860,59 @@
         "id",
         "name",
         "role"
+      ],
+      "type": "object"
+    },
+    "WindowPace": {
+      "description": "One window's pace, as of the reading it was computed from.",
+      "properties": {
+        "elapsed_percent": {
+          "description": "Percent of the window's time passed, 0 to 100.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "empty_at": {
+          "default": null,
+          "description": "When it runs out at its rate so far; `None` while nothing is spent.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resets_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "short": {
+          "description": "Used runs ahead of elapsed by more than the margin, so at this rate\nthe window runs out before it resets.",
+          "type": "boolean"
+        },
+        "used_percent": {
+          "description": "Percent of the window's quota spent, 0 to 100.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "type": "string"
+        },
+        "window_minutes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "window",
+        "window_minutes",
+        "used_percent",
+        "elapsed_percent",
+        "resets_at",
+        "short"
       ],
       "type": "object"
     },

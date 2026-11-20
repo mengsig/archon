@@ -46,6 +46,48 @@ fn report(store: &Store, query: ModelEvidenceQuery, range: DayRange) -> ModelEvi
 }
 
 #[test]
+fn model_evidence_keeps_a_recorded_alias_apart_from_its_current_target() {
+    use archon_core::model_tier::{CatalogModel, ModelCatalog};
+    let mut store = store();
+    let item = store.insert_item(&item(None, "alias"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    for (n, name, cost) in [(0, "opus", 1.0), (1, "claude-opus-5-5", 3.0)] {
+        let mut stage = running_stage(&run, n, n);
+        stage.stage_id = "review".into();
+        stage.choice.model = format!("claude-code/{name}").parse().unwrap();
+        stage.state = StageState::Completed;
+        stage.finished_at = Some(t(120));
+        stage.cost_usd = cost;
+        stage.verdict = Some(Verdict::Pass);
+        store.upsert_stage_run(&stage).unwrap();
+    }
+    let mut catalog = ModelCatalog::new(vec![CatalogModel {
+        model: "claude-code/claude-opus-5-5".parse().unwrap(),
+        tier: None,
+        is_default: false,
+    }]);
+    catalog.add_alias(
+        "claude-code/opus".parse().unwrap(),
+        "claude-code/claude-opus-5-5".parse().unwrap(),
+    );
+    store.set_model_catalog(catalog);
+    let report = report(&store, Default::default(), range(0, 1000));
+    let mut rows: Vec<_> = report
+        .rows
+        .iter()
+        .map(|r| (r.choice.model.to_string(), r.attempts, r.median_cost_usd))
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        rows,
+        vec![
+            ("claude-code/claude-opus-5-5".to_string(), 1, Some(3.0)),
+            ("claude-code/opus".to_string(), 1, Some(1.0)),
+        ]
+    );
+}
+
+#[test]
 fn groups_by_stage_model_effort_and_measures_completed_attempts_only() {
     let mut store = store();
     let item = store.insert_item(&item(None, "fixture"), None).unwrap();
@@ -530,4 +572,176 @@ fn evidence_also_groups_by_stage_tier_and_effort() {
         text.contains("Tier review strong medium n=3 completed=3"),
         "{text}"
     );
+}
+
+#[test]
+fn direct_evidence_excludes_an_unbilled_refusal_before_agent_creation() {
+    let mut store = store();
+    let item = store
+        .insert_item(&item(None, "model refused"), None)
+        .unwrap();
+    let run = start(&mut store, &item.id);
+    let mut stage = running_stage(&run, 0, 0);
+    stage.aether_agent = None;
+    stage.cost_usd = 0.0;
+    stage.state = StageState::Failed {
+        error: "cannot create agent: unknown model".into(),
+    };
+    stage.finished_at = Some(t(120));
+    store.upsert_stage_run(&stage).unwrap();
+    let report = report(&store, Default::default(), range(0, 1000));
+    assert!(report.rows.is_empty());
+    assert!(report.providers.is_empty());
+}
+
+/// A pass its own findings dispute is a format clash: counted apart, not as a
+/// fail of the model, while a hedged or missing verdict still counts against it.
+#[test]
+fn a_disputed_pass_is_counted_apart_from_the_pass_share() {
+    use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
+    use archon_core::run::VerdictNote;
+    let mut store = store();
+    let item = store.insert_item(&item(None, "fixture"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let attempts = [
+        (Verdict::Pass, None),
+        (Verdict::Fail, None),
+        (Verdict::Unknown, Some(VerdictNote::DisputedPass)),
+        (Verdict::Unknown, Some(VerdictNote::DisputedPass)),
+        (Verdict::Unknown, Some(VerdictNote::HedgedVerdict)),
+        (Verdict::Unknown, None),
+    ];
+    for (n, (verdict, note)) in attempts.into_iter().enumerate() {
+        let mut stage = running_stage(&run, n as u32, n as u32);
+        stage.stage_id = "test".into();
+        stage.state = StageState::Completed;
+        stage.finished_at = Some(t(160));
+        stage.cost_usd = 1.;
+        stage.verdict = Some(verdict);
+        stage.verdict_note = note;
+        store.upsert_stage_run(&stage).unwrap();
+    }
+    let model = running_stage(&run, 0, 0).choice.model;
+    store.set_model_catalog(ModelCatalog::new(vec![CatalogModel {
+        model,
+        tier: Some(Tier::Strong),
+        is_default: false,
+    }]));
+    let report = report(&store, Default::default(), range(0, 0));
+    let row = &report.rows[0];
+    assert_eq!(row.completed, 6);
+    assert_eq!((row.passed, row.verdicts, row.disputed), (1, 4, 2));
+    let tier = &report.tiers[0];
+    assert_eq!((tier.passed, tier.verdicts, tier.disputed), (1, 4, 2));
+    let text = report.text();
+    assert!(text.contains("pass=1/4 (25%) disputed=2"), "{text}");
+}
+
+/// The nine F1 results, stored before verdict notes as `Unknown` with no note,
+/// are read again from their results: disputed passes, not fails of the model.
+#[test]
+fn disputed_passes_stored_before_notes_are_counted_apart() {
+    const F1: &str = include_str!("../../archon-core/tests/fixtures/f1_astra_e2e.json");
+    let results: Vec<serde_json::Value> = serde_json::from_str(F1).unwrap();
+    assert_eq!(results.len(), 9);
+    let mut store = store();
+    let item = store.insert_item(&item(None, "fixture"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    for (n, result) in results.iter().enumerate() {
+        let mut stage = running_stage(&run, n as u32, n as u32);
+        stage.stage_id = "test".into();
+        stage.state = StageState::Completed;
+        stage.finished_at = Some(t(160));
+        stage.summary = Some(result["summary"].as_str().unwrap().to_owned());
+        stage.structured = Some(result["structured"].clone());
+        stage.verdict = Some(Verdict::Unknown);
+        assert_eq!(stage.verdict_note, None, "stored before notes");
+        store.upsert_stage_run(&stage).unwrap();
+    }
+    let report = report(&store, Default::default(), range(0, 0));
+    let row = &report.rows[0];
+    assert_eq!(
+        (row.completed, row.passed, row.verdicts, row.disputed),
+        (9, 0, 0, 9)
+    );
+}
+
+/// The sizer's attempts are pooled by risk class and effort source for
+/// display. The grouping changes no other row, and the outcome that routing
+/// learns from records nothing of it.
+#[test]
+fn sized_attempts_are_grouped_for_display_and_routing_reads_none_of_it() {
+    use archon_core::effort_sizing::RiskClass;
+    use archon_core::plan_origin::PlanSource;
+    use archon_core::queue::QueueState;
+    use archon_core::run::AttemptSizing;
+    let sized = |class, source| AttemptSizing {
+        risk_class: Some(class),
+        effort_source: Some(source),
+        effort_reasons: Some(format!("sizer: {class} -> high")),
+    };
+    let build = |with_sizing: bool| {
+        let mut store = store();
+        let item = store.insert_item(&item(None, "fixture"), None).unwrap();
+        let run = start(&mut store, &item.id);
+        let recorded = [
+            Some(sized(RiskClass::Critical, PlanSource::Sizer)),
+            Some(sized(RiskClass::Critical, PlanSource::Sizer)),
+            Some(sized(RiskClass::Ordinary, PlanSource::Explicit)),
+            None,
+        ];
+        for (n, sizing) in recorded.into_iter().enumerate() {
+            let mut stage = running_stage(&run, n as u32, n as u32);
+            stage.started_at = t(100);
+            stage.finished_at = Some(t(160));
+            stage.state = StageState::Completed;
+            stage.cost_usd = 1.0 + n as f64;
+            stage.sizing = sizing.filter(|_| with_sizing).unwrap_or_default();
+            store.upsert_stage_run(&stage).unwrap();
+        }
+        let done = QueueState::Succeeded {
+            run: run.id.clone(),
+            summary: "done".into(),
+        };
+        common::settle_run(&mut store, &run, done, t(200));
+        let finished = store.run(&run.id).unwrap();
+        store.capture_outcome(&finished, None, true).unwrap();
+        let routes = store
+            .route_evidence(None, "direct", "implement", None)
+            .unwrap();
+        let outcome = store.outcome(&run.id).unwrap().unwrap();
+        let learned = serde_json::json!({ "routes": routes, "stages": outcome.stages });
+        (
+            report(&store, ModelEvidenceQuery::default(), range(0, 1000)),
+            learned,
+        )
+    };
+    let (plain, plain_learned) = build(false);
+    let (grouped, learned) = build(true);
+    assert!(plain.sizing.is_empty(), "{:?}", plain.sizing);
+    assert!(!plain.text().contains("Sized "), "{}", plain.text());
+    let rows: Vec<_> = grouped
+        .sizing
+        .iter()
+        .map(|r| (r.risk_class, r.effort_source, r.attempts, r.median_cost_usd))
+        .collect();
+    let expected = [
+        (RiskClass::Ordinary, PlanSource::Explicit, 1, Some(3.0)),
+        (RiskClass::Critical, PlanSource::Sizer, 2, Some(1.5)),
+    ];
+    assert_eq!(rows, expected);
+    let text = grouped.text();
+    assert!(
+        text.contains("Sized critical by sizer n=2 completed=2"),
+        "{text}"
+    );
+    assert!(text.contains("Sized ordinary by explicit n=1"), "{text}");
+    assert_eq!((&grouped.rows, &grouped.tiers), (&plain.rows, &plain.tiers));
+    assert_eq!(grouped.providers, plain.providers);
+    assert_eq!(
+        learned, plain_learned,
+        "routing learns nothing from a sizing"
+    );
+    let unsized_report: serde_json::Value = serde_json::to_value(&plain).unwrap();
+    assert!(unsized_report.get("sizing").is_none(), "{unsized_report}");
 }

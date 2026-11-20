@@ -137,8 +137,10 @@ work goes to Aether's memory.
 ### After upgrading
 
 A running orchestrator keeps the prompt, tools and workspace it was created
-with, also across Aether's `restart`. Run `archon orchestrator restart` once
-after upgrading so that a new orchestrator starts with the current ones.
+with, also across Aether's `restart`. When an upgrade changes its prompt
+or tools, `archond` starts a fresh generation at its next idle moment, as
+`archon orchestrator restart` would; run that yourself to change the
+workspace or to catch up sooner.
 
 Archon's tools that change something answer only the current orchestrator,
 and `archond` knows who is calling only when Aether names the agent behind
@@ -171,7 +173,10 @@ Archon keeps outcomes and short lessons in its own store. `archon lessons stats`
 shows per-repository pipeline pass rates, correction rates, median cost and wall
 time, and learned model defaults with sample sizes. The existing
 `model_evidence` tool includes compact pipeline evidence for the
-orchestrator's pipeline selection. These are observations, not guarantees.
+orchestrator's pipeline selection, of the runs that finished in its range;
+a pipeline that reviews existing pull requests also shows the pull requests
+passed of those reviewed, each counted once, and the median scored runs a
+passed one took. These are observations, not guarantees.
 Estimated model savings compare median stage costs with the static default a
 plan would have had without learning, need at least five samples of that
 default, and are shown per planned run. Missing baseline evidence is reported
@@ -199,7 +204,12 @@ permissions. Duplicate text is merged; operator edits take precedence. Wins
 are successful runs without corrections; every other scored run is a loss.
 A run that a cancel, a budget cap, a timeout or an infrastructure failure
 stopped is not scored: it counts as neither a use nor a win, and `lessons
-stats` leaves it out of `pass=` (`scored=` says how many runs remain). Five or
+stats` leaves it out of `pass=` (`scored=` says how many runs remain). Its
+pipeline lines also leave out runs a stage ended with `BLOCKED:` or
+`ESCALATE:`, counted in `blocked=` and `escalated=` instead. A run's failure
+class comes from its stage records (the stage that ended it timed out, failed
+on infrastructure, hit a cost cap, or held a review that did not pass), never
+from words in its error. Five or
 more scored uses can retract a lesson whose raw Wilson lower bound (z = 1.96)
 drops below 0.3, and that bound is strict: 2 wins in 5 retract, and so do 3
 wins in 5 (bound 0.23); 4 wins in 5 (0.38) keep the lesson. For example, a
@@ -619,10 +629,22 @@ every outcome to the feed itself and wakes the orchestrator for:
 - an item a GitHub thread asked for, to post the result there;
 - a review-fix loop that has failed three rounds (commits a reviewer failed
   with a blocking finding) in one stage attempt: Archon stops the stage with an
-  `ESCALATE:` failure that lists the open blocking findings, which ends the run,
-  so the orchestrator reshapes the work or retries the item with a steer note;
-- a stage agent's message, a gate that opened, your answer to its question,
-  feedback on a report, a budget that was reached, a cancelled helper.
+  `ESCALATE:` failure that lists the open blocking findings and the last failed
+  head, which ends the run. The orchestrator decides: it continues with
+  `retry_item`, accepts the head with a `brief_append` that moves the open
+  findings to follow-ups and has it read whole again, or leaves it failed. A retry on the branch keeps the
+  earlier reviews, so its new lead reviews only the new commits once those
+  reviews make the level. Aether cannot
+  resume the lead that escalated, so the orchestrator's `brief_append` gives the
+  new lead the head and the open findings;
+- a stage agent's relay, escalation or question, a gate that opened, your
+  answer to its question, feedback on a report, a budget that was reached, a
+  cancelled helper.
+
+A stage's `info` message waits for the next wake, and wakes the
+orchestrator by itself only after 30 minutes and the usual coalescing
+window (`quiet_info = false` under `[orchestrator]` makes it wake as other
+messages do).
 
 A cancelled item waits. So does a routine success when you turn success
 wakes off, which saves a turn per item; the outcome is still posted to the
@@ -835,7 +857,7 @@ with `/`.
 ### Images
 
 The orchestrator sees the images you send it when aetherd speaks protocol 19
-or later. Archon 1.6.3 requires Aether 1.4.1, which supports image paste
+or later. Archon 1.6.4 requires Aether 1.4.2, which supports image paste
 and reference attachments. An older aetherd without image support refuses
 a message with images and says so.
 In `archon chat`:
@@ -874,7 +896,7 @@ reference, `[image: shot.png, 14.2 KB]`, not the image. In the terminal UI
 | `archon say [--image <path>]… "…"` | send one message, with any images, to the orchestrator and exit |
 | `archon questions` / `archon answer <n> "…"` | list or answer open questions; `Q<n>` is permanent and the same in the chat |
 | `archon status` | waiting items and their next action, daemon, orchestrator, `archon` MCP server health, caps, spend, Aether link and total storage (`--verbose` lists each directory) |
-| `archon cost [--since <date\|7d>] [--until <date\|1d>] [--by day\|repo\|pipeline\|model\|provider\|item\|stage]` | spend as the budgets count it, grouped (by day over the last 7 days by default), with a total; spend with no owner in the grouping is the `(orchestrator)` row under `--by item` or `--by pipeline`, and `(no <group>)`, such as `(no repo)`, under the others |
+| `archon cost [--since <date\|7d>] [--until <date\|1d>] [--by day\|repo\|pipeline\|model\|provider\|item\|stage\|effort]` | spend as the budgets count it, grouped by day over the last 7 days by default, with lead and delegated subtotals. Stage grouping includes the stage's descendants. Model and effort groupings use each agent's own recorded values and show an `(orchestrator)` row. Missing values appear as `(no <group>)`, such as `(no effort)`. |
 | `archon model-evidence [--repo <name\|id>] [--pipeline <name>] [--stage <id>] [--since <date\|30d>]` | recorded stage attempts, completed cost median/p90, median minutes and review/test pass shares; small samples marked, at most 60 groups; evidence only |
 | `archon queue add --title … --brief-file <path\|-> [--model-plan-file <json\|toml>] [--stage-timeout <stage>=<minutes>]…` | enqueue scripted work through the daemon's MCP-equivalent policy checks; stages the plan leaves out get Archon's default model; prints the id or the item with `--json`; a title is one line without control or bidirectional-override characters, and a brief is at most 1 MiB (1048576 bytes) with no NUL |
 | `archon queue wait <id>… [--timeout 30m]` | wait for every item to become terminal, bounded to 30m by default; exit 0 all succeeded, 3 failed/cancelled, 4 timeout, 5 failed/cancelled dependency |
@@ -1168,7 +1190,10 @@ lead has the whole pull request, from its merge base with the base branch,
 reviewed at the item's `review` level (`standard`, one reviewer, by
 default) while it runs the checks. It commits nothing; a review whose
 branch moved off the frozen head is refused. A pass records the exact head
-its reviewers passed, which `queue show` and `get_item` show.
+its reviewers passed, which `queue show` and `get_item` show. A fail is a
+recorded verdict too: the lead completes with `VERDICT: FAIL` and its
+findings, the item fails with them, and `archon model-evidence --pipeline
+review` counts it in the lead's pass share.
 
 `archon merge`, `/merge` and `request_merge` of that item then merge the
 pull request, under the usual confirmation or `grant_merge`, only:

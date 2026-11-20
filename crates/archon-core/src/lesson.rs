@@ -476,6 +476,17 @@ fn holdout_point(lesson: &LessonId, item: &QueueItemId) -> f64 {
     point
 }
 
+/// The pull requests a review pipeline's scored runs judged, each counted
+/// once however many heads it was reviewed at.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReviewPrs {
+    pub reviewed: u64,
+    /// Pull requests with a passing run.
+    pub passed: u64,
+    /// Over the passed ones: scored runs up to and including the first pass.
+    pub median_rounds_to_pass: Option<f64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PipelineEvidence {
     pub repo: Option<RepoId>,
@@ -485,6 +496,15 @@ pub struct PipelineEvidence {
     #[serde(default)]
     pub scored: u64,
     pub pass_rate: f64,
+    /// Runs a stage ended with `BLOCKED:` or `ESCALATE:`: no loss, as routing
+    /// reads them, and never scored.
+    #[serde(default)]
+    pub blocked: u64,
+    #[serde(default)]
+    pub escalated: u64,
+    /// For a pipeline that reviews existing pull requests: each one counted once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_prs: Option<ReviewPrs>,
     pub median_cost_usd: f64,
     pub median_wall_secs: f64,
     pub correction_rate: f64,

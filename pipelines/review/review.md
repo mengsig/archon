@@ -39,13 +39,14 @@ moves off that head.
 3. **Verify.** While they read, run the project's build, lint and tests on
    this head once, read-only: build output goes to the cache your contract
    names, never into the tree. A failing check is a blocking finding.
-4. **Finish.** With every reviewer passed and the checks green, call
-   `complete_task` with the review record your contract requires, naming the
-   agent id of each reviewer the pass rests on, and no ship record. With a
-   blocking finding or a failed check, do not fix anything: call `fail_task`
-   with each finding (path, issue, impact, remedy) and the checks' output, so
-   the author can address them. Leave a clean tree, every child finished or
-   cancelled.
+4. **Finish.** Call `complete_task` with the verdict and review record your
+   contract requires, naming the agent id of each reviewer it rests on, and no
+   ship record. With every reviewer passed and the checks green, the verdict
+   is `pass`. With a blocking finding or a failed check it is `fail`: fix
+   nothing, list each finding (path, issue, impact, remedy, `blocking`) and
+   give the checks' output, so the author can address them. Call `fail_task`
+   only when the review could not be done. Leave a clean tree, every child
+   finished or cancelled.
 
 Keep the summary to what the orchestrator acts on: the pull request and head
 reviewed, the verdict, the checks with their results, and advisory findings

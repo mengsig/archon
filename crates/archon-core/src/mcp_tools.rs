@@ -69,6 +69,7 @@ pub const TOOLS: &[ToolName] = &[
     tool("record_lesson", ToolClass::Mutation),
     tool("refresh_item", ToolClass::Mutation),
     tool("publish_artifact", ToolClass::Mutation),
+    tool("submit_verdict", ToolClass::Mutation),
     tool("list_artifacts", ToolClass::ReadOnly),
     tool("read_artifact", ToolClass::ReadOnly),
     tool("request_merge", ToolClass::Mutation),
@@ -79,14 +80,16 @@ pub const TOOLS: &[ToolName] = &[
     tool("clear_notifications", ToolClass::Mutation),
     tool("request_status", ToolClass::ReadOnly),
     tool("approve_intent", ToolClass::Mutation),
+    tool("watch_repo", ToolClass::Mutation),
 ];
 
 /// The tools a stage agent keeps whatever its item's `tools` mode: its
-/// messages to the orchestrator, its item's artifacts, and what became of a
-/// message whose answer never came.
-pub const STAGE_TOOLS: [&str; 5] = [
+/// messages to the orchestrator, its item's artifacts, its verdict's check,
+/// and what became of a message whose answer never came.
+pub const STAGE_TOOLS: [&str; 6] = [
     "message_orchestrator",
     "publish_artifact",
+    "submit_verdict",
     "list_artifacts",
     "read_artifact",
     "request_status",

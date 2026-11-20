@@ -7,10 +7,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::Timestamp;
 use crate::autonomy::Autonomy;
+use crate::effort_sizing::{self, RiskInput};
 use crate::error::ArchonError;
 use crate::github::GithubThread;
 use crate::id::{InitiativeId, PipelineRunId, QueueItemId, RepoId};
-use crate::model::{ModelPlan, ModelReasons};
+use crate::model::{Effort, ModelReasons};
 use crate::pull_request::OntoPullRequest;
 
 /// The longest brief an enqueue accepts, well under the protocol frame cap.
@@ -124,7 +125,7 @@ pub enum QueueState {
     Running {
         run: PipelineRunId,
     },
-    /// A dependency failed or was cancelled; needs an operator decision.
+    /// A failed dependency or an invalid model pin needs an operator decision.
     Blocked {
         reason: String,
     },
@@ -142,6 +143,18 @@ pub enum QueueState {
 }
 
 impl QueueState {
+    const MODEL_PIN_PREFIX: &'static str = "model pin: ";
+
+    pub fn model_pin_block(reason: &str) -> Self {
+        Self::Blocked {
+            reason: format!("{}{reason}", Self::MODEL_PIN_PREFIX),
+        }
+    }
+
+    pub fn is_model_pin_block(&self) -> bool {
+        matches!(self, Self::Blocked { reason } if reason.starts_with(Self::MODEL_PIN_PREFIX))
+    }
+
     /// Every [`kind`](Self::kind), in lifecycle order: the names state
     /// filters accept.
     pub const KINDS: [&'static str; 7] = [
@@ -215,7 +228,10 @@ pub struct QueueItem {
     /// Items that must have succeeded before this one dispatches.
     pub dependencies: Vec<QueueItemId>,
     pub tags: Vec<String>,
-    pub model_plan: ModelPlan,
+    /// The plan and where each of its fields came from: the JSON keys
+    /// `model_plan` and `model_origins`.
+    #[serde(flatten)]
+    pub model_plan: crate::plan_origin::PlannedPlan,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_reasons: Option<ModelReasons>,
     /// Dollar cap for this item's whole run; `None` falls back to config.
@@ -301,6 +317,44 @@ impl QueueItem {
         );
         self.brief = brief;
         Ok(())
+    }
+
+    /// Size every plan key recorded for sizing and not yet sized, from this
+    /// item's own title, brief, tags and review level. `true` when one was.
+    pub fn settle_sizing(&mut self, at: Timestamp) -> bool {
+        let input = RiskInput {
+            title: &self.title,
+            brief: &self.brief,
+            tags: &self.tags,
+            review: self.autonomy.review,
+            size: effort_sizing::tagged_size(&self.tags),
+        };
+        let settled = self.model_plan.settle(&self.id, input, at);
+        assert!(!self.model_plan.has_unsized(), "a settled plan is sized");
+        settled
+    }
+
+    /// Size again, within `cap` (a stage's own default unless `raises`), the sized plan keys `started` does not name
+    /// when this item's title, brief, tags or review level now class it
+    /// otherwise. `true` when a key was sized again.
+    pub fn resize_unstarted(
+        &mut self,
+        (cap, raises, at): (Effort, bool, Timestamp),
+        started: &dyn Fn(&str) -> bool,
+    ) -> bool {
+        self.settle_sizing(at);
+        let input = RiskInput {
+            title: &self.title,
+            brief: &self.brief,
+            tags: &self.tags,
+            review: self.autonomy.review,
+            size: effort_sizing::tagged_size(&self.tags),
+        };
+        let resized = self
+            .model_plan
+            .resize(&self.id, input, (cap, raises, at), started);
+        assert!(!self.model_plan.has_unsized(), "a sized plan stays sized");
+        resized
     }
 }
 
@@ -415,7 +469,7 @@ mod tests {
             priority: Priority::Normal,
             dependencies: vec![],
             tags: vec![],
-            model_plan: ModelPlan::default(),
+            model_plan: Default::default(),
             model_reasons: None,
             budget_usd: None,
             stage_timeouts: BTreeMap::new(),

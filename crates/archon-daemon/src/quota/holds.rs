@@ -41,9 +41,12 @@ pub(crate) fn item_hold(
     } else {
         spec
     };
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let route = ItemRoute::new(item).by(Some(&weights), Some(view))?;
-    let hold = knobs::quota_hold(&item.model_plan, &spec, (catalog, &policy), route);
+    // Read as dispatch will resolve it, so the hold is for the run it starts.
+    let when = archon_core::plan_origin::TierMove::Dispatch;
+    let plan = item.model_plan.dispatched(&item.id, when);
+    let hold = knobs::quota_hold(&plan, &spec, (catalog, &policy), route);
     if let Some(hold) = &hold {
         tracing::debug!(item = %item.id, stage = %hold.stage, until = ?hold.until, "held for provider quota");
     }
@@ -71,7 +74,7 @@ pub(crate) fn spawn_hold(
     if plans.is_empty() || catalog.is_empty() || !view.any_exhausted() {
         return None;
     }
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let read = (catalog, view);
     super::reroute::first_hold(item, (spec, plans), (&weights, &policy), read)
 }

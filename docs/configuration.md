@@ -61,35 +61,152 @@ stays on its provider. `status` and `queue_status`
 show each provider's headroom, reserve and next reset. Reserves and interactive
 providers are global settings only.
 
+Whatever the weights, `status` and `queue_status` also show each window's pace:
+its used percent against its elapsed percent. When a window is projected to run
+out before it resets (used ahead of elapsed by more than
+`pacing_margin_percent`, default 10, global only), Archon tells the operator and
+the orchestrator once per window and throttles nothing. See
+[Quota pace](quota-pacing.md).
+
 Unnamed reviewers use the global `[review]` profile. `default_tier` is a
 preference, not a floor: Archon picks the best model the effective model policy
 (global and repository) permits at or below it, preferring a different provider
 from the lead when `prefer_other_provider` is set and a permitted model of
 another provider exists. If no permitted model reaches the tier, the contract
 names the best permitted one, or the lead's own model, and says so; the agent is
-never sent to look for a model the policy would refuse. `default_effort` is a
-floor raised to at least medium: the contract asks for that effort or higher,
-and for at least high when the lead rates the change's risk medium or high. The
-model policy's effort cap still applies. In an explicit `<stage>.review` plan
-each effort is a floor too: a reviewer below it is cancelled as it spawns, and
-one above it runs, up to the policy's cap.
+never sent to look for a model the policy would refuse. `default_effort`
+(default `medium`) is each reviewer's default, which the lead may lower to
+`low` for a small, low-risk diff or raise by the effort rubric below. In an
+explicit `<stage>.review` plan each effort is a default too: archond cancels a
+reviewer only on a model the plan does not name, or above the policy's cap.
 
-`[models] effort_sizing = true` (default `false`, global only) opts in to
-sizing every effort by one rubric instead. The orchestrator then sizes each
-stage's effort, and every delegating contract each child's: `low` for lookups,
-listing, formatting and mechanical edits; `medium` for routine changes and
-reviews of small or low-risk diffs; `high` for non-trivial design, risky diffs
-and reviews of shared code; `x_high` for hard reasoning, such as root-causing a
-regression, concurrency or security analysis, or a fix that failed twice. A reviewer's `default_effort`, or
-its effort in a `<stage>.review` plan, becomes its default rather than a floor:
-the rubric moves it, from `low` for a trivial diff to `x_high` for concurrency
-or security analysis, the lead states the reason in one line, and archond
-cancels only a reviewer on a model the plan does not name. The stage prompts
-keep 1.4.12's wording, effort floors included; under the opt-in the contract's
-reviewer rule says it replaces any floor a stage prompt names. Off, agents see
-the effort rules of 1.4.12, and `max_effort` caps both. The default cap is
-`x_high`; set global `[models] max_effort = "max"` explicitly to allow `max`.
+`[models] effort_sizing` (default `true` since 1.6.4, global only) sizes every
+effort by one rubric. The orchestrator sizes each stage's effort, and every
+delegating contract each child's: `low` for lookups, listing, formatting,
+mechanical edits and reviews of trivial or small low-risk diffs; `medium` for
+routine changes and reviews of ordinary diffs; `high` for non-trivial design,
+risky diffs and reviews of shared code; `x_high` for hard reasoning, such as root-causing a regression,
+concurrency or security analysis, or a fix that failed twice. A reviewer's
+effort moves with it, and the lead states the reason in one line. A stage the
+plan leaves out, or that a knob or a steer inserts, takes its own effort from
+its pipeline, within the policy's cap, rather than the pipeline tier's or the
+first stage's, and the built-in stage nudges are served (by `list_pipelines`
+and `archon pipelines list`) worded by the rubric. The stage prompts keep 1.4.12's wording, effort floors
+included; the contract's reviewer rule says it replaces any floor a stage
+prompt names.
+
+To roll back, set `effort_sizing = false` in the global `[models]` and restart
+archond (and `archon orchestrator restart`, as a running orchestrator keeps
+its prompt across a restart of the same build). New spawns then get 1.6.3's
+effort rules, byte for byte: agents see
+1.4.12's effort wording, `default_effort` is a floor raised to at least medium
+(at least high when the lead rates the change's risk medium or high), and a
+`<stage>.review` plan's effort is a floor, so a reviewer below it is cancelled
+as it spawns. In-flight spawns keep the rule they were issued: archond records
+it with each spawn, so a lead spawned before the switch, and one resumed,
+woken or replayed after the restart, is held to its own rule, never the one in
+force now, and to the reviewers its contract named, not the item's plan as
+edited since. A spawn stored by 1.6.3 is read by its own reviewer and
+delegation rule lines, reviewers included; where they tell nothing, no
+reviewer is cancelled for its effort or held to a plan's models. A model
+policy change the operator makes (`max_effort`, allow or deny lists) still
+applies to running leads. `max_effort` caps every effort either way. The default cap is `x_high`; set global
+`[models] max_effort = "max"` explicitly to allow `max`.
 A repository may only narrow the global cap.
+
+With `effort_sizing` on, archond also sizes the efforts nobody named, as it
+writes an item's plan. Effort is the orchestrator's choice: the sizer never
+changes an effort a plan sets (a request, retry, `update_item` or steer, or a
+`<stage>.review` or workers entry), and never raises one unless
+`[models] sizer_max_effort` is set. By default it only lowers the
+default-effort stages of mechanical items. It first gives the item a risk class from what the item
+records, and nothing else: its tags, its title and brief, its review level and
+a known diff size (a `diff:small`, `diff:medium` or `diff:large` tag, or the
+size learned from an earlier run of the item).
+
+| Class | The item has | An unnamed effort (default-effort stage) becomes |
+| --- | --- | --- |
+| `mechanical` | a `docs:`, `style:`, `chore(release)` or `chore(deps)` title, a version bump, or a tag or title word such as `docs`, `changelog`, `lint`, `typo` or `formatting`, and nothing riskier | `low` |
+| `ordinary` | none of the others | the stage's own default effort |
+| `elevated` | a security, concurrency, locking or migration word in the title or brief; `review = strict`; a large diff; or a `release`, `ci`, `api`, `public-api` or `workflow` tag or title word | the stage's default; at least `high` with `sizer_max_effort` set |
+| `critical` | the `risk:critical` tag, or one of those risk words together with a strict review or a large diff | the stage's default; `x_high` with `sizer_max_effort` set |
+
+Each plan key is sized from its own stage: a stage that `insert_stage`, a
+refresh or a re-shaped pipeline adds starts from the default effort that stage
+declares, never from the entry it was filled from. The order of precedence is:
+an effort the plan names (a pin) or a learned route's effort is kept; only a
+stage default is sized, by the class and the cap. A learned route supplies the
+model and its effort stays, so an effort above `max_effort` does
+not rule its model out (with sizing off it does, as in 1.6.3). `x_high` is
+planned only for Claude Code and Codex models, which run it; any other
+provider gets `high`, and the reason says so.
+
+`sizer_max_effort` (global only) is unset by default, and then the sizer
+never raises an effort: each stage's ceiling is its own default. Set it, for
+example to `"x_high"`, to let the sizer raise default-effort stages of
+elevated and critical items up to that effort; the policy's `max_effort` caps
+it too, so the cap is the lower of the two. Each entry's reason says which
+rule applied (`unchanged`, `default-lowered`, or the raised target). An effort held down by it reads `sizer: critical -> x_high;
+capped at high; consider a stronger tier`.
+
+The decision is stored with the plan and never made twice. Each item keeps the
+class, the signals that gave it and one reason per plan entry (`get_item` and
+`archon queue show` list them; a pinned entry reads `sizer: critical ->
+x_high; the plan pins medium`), and each attempt records its `risk_class`,
+`effort_source` and `effort_reasons`. `archon model-evidence` and the
+`model_evidence` tool group attempts by class and source for reading only:
+routing never reads the grouping.
+
+- A retry keeps the sizing its item already has. It is not sized again from a
+  diff size or a route learned since.
+- A steer or an update that changes the title, the brief (a steer note
+  included), the tags or the review level sizes again only the stages that
+  have not started. A stage that ran keeps its effort and its reason. A
+  request that changes none of them sizes nothing again, so a retry's
+  `brief_append` leaves the carried sizing as it is until one does. An
+  update of a running item that steers a note or a plan and changes its tags
+  or review level stores both parts at once, before the note is delivered,
+  so no stage starts sized for one part alone. With sizing off, the note is
+  delivered first and the rest stored after, as in 1.6.3.
+- An update of a plan written by 1.6.3 or while sizing was off sizes
+  nothing, so it is taken as 1.6.3 takes it.
+- A plan written while sizing was off, or by 1.6.3, has no sizing and gets
+  none when it is carried whole, as a restack fix carries its item's plan.
+- Changing `effort_sizing` or `sizer_max_effort` and restarting affects only
+  plans sized from then on. With sizing off, a stage added to a sized plan
+  gets 1.6.3's effort and its attempt records no class.
+
+Three rules decide what a cap lowered later does to a stored effort:
+
+1. At dispatch, with no new plan, only the policy's `max_effort` lowers an
+   effort the sizer set. When a run starts, the lowered effort is stored in
+   the plan with its reason, so a recovered run reads the same plan; a later
+   stage of a running run is held to the policy's cap as it is when that
+   stage's agent is reserved, and its attempt records the reason (`; this
+   attempt: clipped from x_high to the cap high`) while the stored plan keeps
+   what it holds. A lower `sizer_max_effort` alone leaves the plan as it is.
+   Recovery of a live run reads its stored plan unchanged and loads no
+   repository config. An agent already reserved or sent is issued as it was
+   stored. An agent woken in place after an infrastructure failure starts
+   from the model and effort it runs and, where the sizer set its effort, is
+   held like a new agent of its slot to the stored plan and the policy's cap:
+   it is retuned to that before it goes on, a fresh agent that replaces a
+   refused wake gets the same, and the attempt records it. A pinned effort
+   over the cap still refuses the wake, as in 1.6.3.
+2. When a retry, a revision or a re-shape writes the plan again with carried
+   entries, each carried effort the sizer set is lowered to the lower of
+   `max_effort` and `sizer_max_effort`, with the same recorded reason. With
+   `effort_sizing = false`, only `max_effort` lowers it.
+3. A pinned effort above `max_effort` is refused, as in 1.6.3, in every case.
+   A pin is never lowered silently.
+
+In the same two places a sized `x_high` whose model has since moved to a
+provider that runs none (a tier resolved again at dispatch, a model a steer
+named) is lowered to `high`, and the reason says which provider. An effort
+the plan pins is left as it is there too. A new agent, or a replacement of a
+lost one, never runs a sized effort above what its item's stored plan holds
+for its slot when it is reserved, so a quota move that lowered the plan
+holds in a running daemon as it does after a restart.
 
 `auto_repair` (default `true`) covers a run that fails only because the gate
 refused the review or the ship record it owes (a delta read not anchored, a
@@ -122,7 +239,7 @@ On, the run is refused instead.
 ```toml
 [review]                       # reviewers with no explicit <stage>.review plan
 default_tier = "balanced"
-default_effort = "low"         # raised to medium, or high for a riskier change
+default_effort = "medium"      # the default; the lead may lower it to low for a small, low-risk diff
 prefer_other_provider = true
 auto_repair = true             # one automatic retry when the review, ship record, requirement results or a fixable delivery is refused
 independent_acceptance = false # true: refuse intent acceptance with no model apart from every builder
@@ -135,7 +252,9 @@ max_effort = "high"            # default x_high; max must be explicitly allowed
 # default_provider_weight = 1  # a provider the table leaves out (the default; 0 = never)
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages leave (the defaults)
 # interactive_providers = ["claude-code"]   # providers someone uses by hand; global only
-# effort_sizing = false        # true: size every agent's effort by the effort rubric; global only
+# effort_sizing = true         # the default; false: 1.6.3's effort rules and reviewer floors; global only
+# sizer_max_effort = "x_high"  # unset: the sizer only lowers; set: it may raise default efforts up to this; global only
+# pacing_margin_percent = 10   # warn once a window's used % runs this far past its elapsed % (the default); global only
 
 [limits]
 max_parallel_agents = 8        # running stage agents (default 8); 0 = unlimited
@@ -185,6 +304,10 @@ name = "Archon"                # the orchestrator's name in Aether
 # instructions_file = "~/orchestrator.md"   # appended to the built-in prompt
 trigger_coalesce_ms = 2000     # triggers within this window wake it once
 validate_before_handoff = true # validate a user-facing build before calling it ready
+compaction_tokens = 160000     # compact at this context size; 0: the model's own threshold
+idle_compact_after_minutes = 50 # compact an idle, large context before its cache expires; 0: never
+quiet_info = true              # stage `info` messages ride with the next wake, at most 30 min late plus the coalescing window
+refresh_on_upgrade = true      # replace a generation an upgrade outdated at its next idle moment
 
 [models]
 # deny = ["codex/gpt-6.1-terra"] # never used, whatever `allow` says
@@ -354,6 +477,36 @@ independent validation item and reports that item's outcome
 ([product journeys](journeys.md#before-a-hand-off)). Set
 `validate_before_handoff = false` under `[orchestrator]` to have it relay
 the build's success as is.
+
+A stage's `info` message does not wake the orchestrator: it rides with the
+next wake, or wakes it by itself once it has waited 30 minutes and then the
+`trigger_coalesce_ms` window. A relay still wakes it after that window
+alone; an escalation or a question is urgent and wakes it at once, skipping
+the window. `quiet_info = false` makes every message wake it. News too large for one trigger goes out in several, in order. The
+orchestrator compacts its context at `compaction_tokens` (from 100,000 to
+200,000, within every orchestrator model's window) when the connected Aether serves a
+per-agent threshold (its `compaction_tokens` feature); an older Aether keeps
+the model's own threshold. The threshold is set when a generation is created,
+so a change reaches the next generation. When it has been idle for
+`idle_compact_after_minutes` with more than half that threshold in context
+(half of 160,000 when `compaction_tokens = 0`), Archon asks Aether to
+compact it once, before the hour-long prompt cache expires, so the next wake
+does not rewrite the whole context. 0 turns either part off. After an upgrade
+that changes the orchestrator's prompt or tools, Archon starts a fresh
+generation at its next idle moment, with the same hand-off as `archon
+orchestrator restart`: it waits until the orchestrator has waited for mail,
+unpaused, for two minutes with no news due. A failed refresh is retried
+every ten minutes while the orchestrator stays idle, and the feed says so
+after three failures; a refresh stopped halfway is finished with a fresh
+generation, never a checkpoint restart of the outdated one. Until it
+happens, `archon status` shows `upgrade refresh (prompt) delayed:` and the
+reason (the idle moment it waits for, or the latest failure) where it used to
+show `prompt outdated`; if the refresh stopped the old generation and its
+successor cannot start, it shows `not running; upgrade refresh delayed:` and
+the latest failure. Stored records that disagree about the orchestrator's
+generation count as a refresh stopped halfway. `refresh_on_upgrade = false`
+turns it off. Like a manual restart, it can still meet a wake Aether starts
+in the same instant.
 
 The helper agents the orchestrator delegates to
 ([guide](guide.md#what-the-orchestrator-does-without-queueing)) work in a
@@ -738,7 +891,10 @@ and `codex/gpt-6-luna`. The orchestrator's own model is the one model you
 set, because it must be known before any agent runs. To use Codex alone,
 set `[orchestrator] model` to an available `codex/…` entry before starting
 Archon. If you do set `[models] allow`, include the orchestrator's model as
-well as every model the stages may use.
+well as every model the stages may use. Archon checks the orchestrator's
+model against the allowlist by its canonical id once Aether's catalog
+resolves it; a model outside it is refused with a blocker, and no
+orchestrator starts.
 
 ```toml
 [orchestrator]

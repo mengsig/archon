@@ -22,11 +22,11 @@ use crate::connection::{BoxRead, BoxWrite, EventSink, Router, Shared, WRITE_QUEU
 use crate::events::AetherEvent;
 use crate::github::{WatcherConfig, WatcherStatus};
 use crate::wire::{
-    Agent, AgentPatch, AgentQuery, ArchiveTarget, CLIENT_NAME, CONVERSATION_FEATURE, Command,
-    CreateAgent, DaemonDefaults, EventQuery, ExpiredSpan, HISTORY_EXPIRED_FEATURE, Hello,
-    IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, ModelInfo, NOTE_LEVEL_PROTOCOL_VERSION,
-    NOTES_FEATURE, NOTES_PROTOCOL_VERSION, NoteLevel, PROTOCOL_VERSION, ProviderInfo, RawReply,
-    Subscribed, Task, Welcome,
+    Agent, AgentPatch, AgentQuery, ArchiveTarget, CLIENT_NAME, COMPACTION_TOKENS_FEATURE,
+    CONVERSATION_FEATURE, Command, CreateAgent, DaemonDefaults, EventQuery, ExpiredSpan,
+    HISTORY_EXPIRED_FEATURE, Hello, IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, ModelInfo,
+    NOTE_LEVEL_PROTOCOL_VERSION, NOTES_FEATURE, NOTES_PROTOCOL_VERSION, NoteLevel,
+    PROTOCOL_VERSION, ProviderInfo, RawReply, Subscribed, Task, Welcome,
 };
 
 /// Events Aether replays to a subscription per page, each page checked
@@ -202,7 +202,7 @@ enum Handshake {
 }
 
 impl AetherClient {
-    /// Handshake at protocol 24, falling back to the newest served version down to 17.
+    /// Handshake at the preferred protocol, falling back to the newest served version down to 17.
     /// Incompatible refusals report both protocol windows.
     pub async fn connect(endpoint: &Endpoint) -> Result<Self, ArchonError> {
         Self::connect_with(endpoint, ClientOptions::default()).await
@@ -502,6 +502,12 @@ impl AetherClient {
         self.request(command, "note_appended").await.map(drop)
     }
 
+    /// Whether aetherd applies a per-agent `compaction_tokens` at creation.
+    pub fn serves_compaction_tokens(&self) -> bool {
+        let features = &self.welcome().features;
+        features.iter().any(|f| f == COMPACTION_TOKENS_FEATURE)
+    }
+
     /// Whether aetherd keeps important posts and serves `get_conversation`.
     pub fn serves_conversation(&self) -> bool {
         let features = &self.welcome().features;
@@ -750,6 +756,14 @@ impl AetherClient {
         self.request(command, "ok").await.map(drop)
     }
 
+    /// Have Aether compact `agent`'s context before its next turn.
+    pub async fn compact(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        let command = Command::Compact {
+            agent: agent.clone(),
+        };
+        self.request(command, "ok").await.map(drop)
+    }
+
     /// Stop the turn `agent` is in. `false` when it was in none.
     pub async fn interrupt(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
         #[derive(serde::Deserialize)]
@@ -866,6 +880,11 @@ impl AetherClient {
 
     pub async fn list_models(&self) -> Result<Vec<ModelInfo>, ArchonError> {
         self.typed(Command::ListModels, "models").await
+    }
+
+    pub async fn list_retired_models(&self) -> Result<Vec<crate::wire::RetiredModel>, ArchonError> {
+        self.typed(Command::ListRetiredModels, "retired_models")
+            .await
     }
 
     /// Each enabled provider's login state, as `aether auth --json` prints it.
@@ -1124,10 +1143,10 @@ mod tests {
         let text = "client protocol 17 is not served: this daemon speaks 25 to 26";
         assert_eq!(
             incompatible_message(text),
-            "Archon speaks Aether protocol 17..24; the daemon serves 25..26"
+            "Archon speaks Aether protocol 17..26; the daemon serves 25..26"
         );
         let odd = incompatible_message("go away");
-        assert!(odd.starts_with("Archon speaks Aether protocol 17..24"));
+        assert!(odd.starts_with("Archon speaks Aether protocol 17..26"));
         assert!(odd.ends_with("go away"));
     }
 
@@ -1143,7 +1162,8 @@ mod tests {
         assert_eq!(serving(16, 17), Some(17), "Aether's floor is still spoken");
         assert_eq!(serving(15, 16), None, "older than Aether's own floor");
         assert_eq!(serving(14, 15), None);
-        assert_eq!(serving(24, 25), None, "newer: retrying older cannot help");
+        assert_eq!(serving(24, 25), Some(25));
+        assert_eq!(serving(27, 28), None, "newer: retrying older cannot help");
         assert_eq!(fallback_version("unauthorized"), None);
     }
 

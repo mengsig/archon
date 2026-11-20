@@ -70,7 +70,7 @@ pub fn item(repo: Option<&Repo>, title: &str) -> QueueItem {
         priority: Priority::Normal,
         dependencies: vec![],
         tags: vec!["t1".into()],
-        model_plan: plan,
+        model_plan: archon_core::plan_origin::PlannedPlan::legacy(plan),
         model_reasons: None,
         budget_usd: Some(2.5),
         autonomy: Autonomy::default(),
@@ -172,6 +172,7 @@ pub fn settle_run(
 
 pub fn stage(run: &PipelineRun, fan_index: u32) -> StageRun {
     StageRun {
+        only_reviews: None,
         id: StageRunId::new(),
         run: run.id.clone(),
         stage_id: "implement".into(),
@@ -180,12 +181,16 @@ pub fn stage(run: &PipelineRun, fan_index: u32) -> StageRun {
         fan_index,
         model_segments: Vec::new(),
         infrastructure_failure: false,
+        record_repair: None,
         host_context: Default::default(),
         choice: choice(),
         aether_agent: None,
         aether_task: None,
         state: StageState::Spawning,
         verdict: None,
+        verdict_note: None,
+        sizing: Default::default(),
+        restatement: None,
         summary: None,
         structured: None,
         cost_usd: 0.0,

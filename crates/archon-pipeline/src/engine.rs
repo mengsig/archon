@@ -10,9 +10,10 @@ use std::sync::Arc;
 use archon_core::catalog::{StageKind, WorkspaceMode};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
-use archon_core::model::{ModelChoice, ModelPlan};
+use archon_core::model::{ModelChoice, ModelPlan, ModelRef};
 use archon_core::run::{
-    GateDecision, GateSubject, PipelineRun, RunState, StageOutcome, StageRun, StageState,
+    GateDecision, GateSubject, PipelineRun, RecordRepair, RunState, StageOutcome, StageRun,
+    StageState,
 };
 use archon_core::steer::Then;
 use serde::{Deserialize, Serialize};
@@ -61,6 +62,8 @@ pub struct SpawnPlan {
     pub stage_id: String,
     /// The stage's kind, recorded on its stage run for later attribution.
     pub kind: StageKind,
+    /// The stage's work is only the review its pipeline declares.
+    pub only_reviews: bool,
     pub attempt: u32,
     /// 0-based slot within the stage's `fan_out`.
     pub fan_index: u32,
@@ -93,6 +96,9 @@ pub struct SpawnPlan {
     /// The stage finishes the build: an item bound to approved intent owes
     /// `requirement_results` in its result ([`crate::acceptance::reports_requirements`]).
     pub reports_requirements: bool,
+    /// Whether the stage's one record repair turn is still to give, which
+    /// the daemon persists on the attempt's stage run.
+    pub record_repair: RecordRepair,
 }
 
 /// A proposal the operator approved in an earlier run of the item, for the
@@ -109,7 +115,7 @@ pub struct ApprovedProposal {
 
 /// Errors carried into `RunState::Failed` are capped; the full feedback
 /// stays in the stage runs.
-pub const MAX_ERROR_CHARS: usize = 8_000;
+pub const MAX_ERROR_CHARS: usize = archon_core::run::MAX_RUN_ERROR_CHARS;
 
 /// Operator revisions per gate stage and run, like `on_fail.max_loops`.
 pub const MAX_REVISIONS: u32 = 5;
@@ -194,6 +200,8 @@ struct Position {
     entered: BTreeSet<(usize, u32)>,
     /// Gate stages the operator approved, with the operator's note.
     approved: BTreeMap<String, Option<String>>,
+    /// Stages given their record repair turn: at most one each per run.
+    repaired: BTreeSet<usize>,
     /// What the record stage's latest pass left for the delivery.
     record: Option<Recorded>,
     /// Why the record stage's latest pass left nothing to deliver.
@@ -224,6 +232,7 @@ impl Position {
             previous: BTreeMap::new(),
             entered: BTreeSet::new(),
             approved: BTreeMap::new(),
+            repaired: BTreeSet::new(),
             record: None,
             no_change: None,
         };
@@ -360,6 +369,30 @@ impl RunDriver {
     /// The pipeline the run follows, with its stages' tier floors.
     pub fn spec(&self) -> &Arc<PipelineSpec> {
         &self.spec
+    }
+
+    /// Follow models repaired in the stored plan without overwriting a
+    /// choice that this driver has independently changed. Each of this
+    /// driver's models is read by its `canonical` id, as the stored plan names it.
+    pub fn follow_models(
+        &mut self,
+        (before, after): (&ModelPlan, &ModelPlan),
+        canonical: impl Fn(&ModelRef) -> ModelRef,
+    ) {
+        assert!(
+            before.0.keys().eq(after.0.keys()),
+            "repair preserves plan keys"
+        );
+        for (key, choices) in &mut self.plan.0 {
+            let (Some(old), Some(new)) = (before.0.get(key), after.0.get(key)) else {
+                continue;
+            };
+            assert_eq!(old.len(), new.len(), "repair preserves plan slots");
+            for ((choice, was), now) in choices.iter_mut().zip(old).zip(new) {
+                choice.model = canonical(&choice.model);
+                choice.follow(was, now);
+            }
+        }
     }
 
     /// The stages that wait for the operator once they pass.
@@ -529,12 +562,35 @@ impl RunDriver {
         records.is_some_and(|stage| stage.id == stage_id)
     }
 
+    /// Whether stage `stage_id` owes a record and its reply states a failure
+    /// or has no `structured`: the gate then decides the reply as sent.
+    pub fn decides_as_sent(
+        &self,
+        stage_id: &str,
+        summary: &str,
+        structured: Option<&serde_json::Value>,
+    ) -> bool {
+        let Some(stage) = self.spec.stage(stage_id) else {
+            return false;
+        };
+        gate::decided_as_sent(self.spec.owed(stage), summary, structured)
+    }
+
     /// How many independent reviewers stage `stage_id` owes this run as the
     /// review its pipeline declares; `0` when it holds none.
     pub fn reviewers_owed(&self, stage_id: &str) -> u32 {
         let stage = self.spec.stage(stage_id);
         let duty = stage.and_then(|stage| self.spec.review_duty(stage));
         duty.map_or(0, |duty| duty.reviewers)
+    }
+
+    /// Whether stage `stage_id`'s result carries a verdict a gate reads, so
+    /// its agent may have it read with `submit_verdict` before it completes.
+    pub fn holds_verdict(&self, stage_id: &str) -> bool {
+        let Some(stage) = self.spec.stage(stage_id) else {
+            return false;
+        };
+        crate::contract::holds_verdict(stage, self.spec.owed(stage))
     }
 
     /// Whether this instance cancelled `stage_run` as the live sibling of
@@ -945,6 +1001,22 @@ impl RunDriver {
         let owed = self.spec.owed(stage);
         let (headline, report) = match gate::evaluate(stage, at.attempt, members, owed) {
             GroupResult::Fail { headline, report } => (headline, report),
+            // Keyed on the marker its stage run was created with, so a
+            // replay decides a persisted broken record as it was decided.
+            GroupResult::Unrecorded { headline, report } => match members[0].record_repair {
+                Some(RecordRepair::Open) => {
+                    at.repaired.insert(at.stage);
+                    let feedback = sections::record_repair(stage, at.attempt, owed, &report);
+                    at.enter(at.stage, &mut counts.entries, feedback);
+                    return None;
+                }
+                // A second broken record: no fix loop can hand it in either.
+                Some(RecordRepair::Spent) => {
+                    return Some(self.stop_failed(at.stage, "", &headline, &report));
+                }
+                // From before repair turns: it failed its stage, as then.
+                None => (headline, report),
+            },
             GroupResult::Defect { headline, report } => {
                 return Some(self.stop_failed(at.stage, "", &headline, &report));
             }
@@ -982,6 +1054,10 @@ impl RunDriver {
                 }
             }
         };
+        if let Some(withheld) = self.loop_withheld(at.stage, &counts.loops, members) {
+            let report = format!("{withheld}\n\n{report}");
+            return Some(self.failed_stop(at.stage, &counts.loops, &headline, &report));
+        }
         match self.loop_target(at.stage, &mut counts.loops) {
             Some(target) => {
                 at.enter(target, &mut counts.entries, report);
@@ -989,6 +1065,32 @@ impl RunDriver {
             }
             None => Some(self.failed_stop(at.stage, &counts.loops, &headline, &report)),
         }
+    }
+
+    /// Why a failed group of `stage` does not take an `on_fail` loop it still
+    /// has: `on_fail.when` asks for a failure this one is not. `None` when
+    /// it loops, or has no loop left to withhold.
+    fn loop_withheld(&self, stage: usize, loops: &[u32], members: &[&StageRun]) -> Option<String> {
+        let spec = &self.spec.file.stages[stage];
+        let on_fail = spec.on_fail.as_ref()?;
+        let when = on_fail.when?;
+        if loops[stage] >= on_fail.max_loops {
+            return None;
+        }
+        let failing: Vec<&StageRun> = members
+            .iter()
+            .copied()
+            .filter(|member| !gate::member_passes(spec, member))
+            .collect();
+        if when.applies(&failing) {
+            return None;
+        }
+        assert!(!on_fail.goto.is_empty(), "validated: on_fail names a stage");
+        Some(format!(
+            "No verdict read as `fail` with a finding that names the environment as at fault \
+             (`\"fault\": \"environment\"`), so `{}` was not re-run.",
+            on_fail.goto
+        ))
     }
 
     /// The abort recorded for this attempt of the stage, or the standing
@@ -1293,6 +1395,10 @@ impl RunDriver {
             .then(|| self.plan.reviewer_choices().unwrap_or_default().to_vec());
         let workers = self.spec.worker_policy(stage, &self.plan);
         let reports_requirements = crate::acceptance::reports_requirements(&self.spec, &stage.id);
+        let record_repair = match at.repaired.contains(&at.stage) {
+            true => RecordRepair::Spent,
+            false => RecordRepair::Open,
+        };
         fans.iter()
             .map(|&fan| {
                 assert!(fan < stage.fan_out, "slot {fan} outside fan_out");
@@ -1312,6 +1418,7 @@ impl RunDriver {
                 EngineAction::Spawn(SpawnPlan {
                     stage_id: stage.id.clone(),
                     kind: stage.kind,
+                    only_reviews: self.spec.reviews_only() && self.spec.holds_review(stage),
                     attempt: at.attempt,
                     fan_index: fan,
                     fan_count: stage.fan_out,
@@ -1328,6 +1435,7 @@ impl RunDriver {
                     reviewers: reviewers.clone(),
                     workers: workers.clone(),
                     reports_requirements,
+                    record_repair,
                 })
             })
             .collect()
@@ -1445,6 +1553,7 @@ impl RunDriver {
             previous: BTreeMap::new(),
             entered: BTreeSet::new(),
             approved: BTreeMap::new(),
+            repaired: BTreeSet::new(),
             record: None,
             no_change: None,
         };
@@ -1619,7 +1728,7 @@ fn passed_record(members: &[&StageRun], duty: Option<ReviewDuty>) -> Recorded {
 fn blocked_stop(stage: &StageSpec, group: &[Option<&StageRun>]) -> Option<Replay> {
     let error = group.iter().flatten().find_map(|m| match &m.state {
         StageState::Failed { error } if StageOutcome::ends_run(error) => {
-            Some(error.trim().to_owned())
+            Some(StageOutcome::run_stop_error(error))
         }
         _ => None,
     })?;
@@ -1633,7 +1742,7 @@ fn blocked_stop(stage: &StageSpec, group: &[Option<&StageRun>]) -> Option<Replay
         cancel,
         state: RunState::Failed {
             stage_id: stage.id.clone(),
-            error: gate::clip(&error, MAX_ERROR_CHARS),
+            error,
         },
     })
 }

@@ -44,6 +44,7 @@ fn enqueue_initiative() -> Request {
             title: None,
             pipeline: None,
             model_plan: None,
+            model_reasons: None,
             autonomy: Default::default(),
             after: Vec::new(),
         }],

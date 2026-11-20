@@ -175,7 +175,7 @@ pub enum Command {
     ///
     /// Amounts are what the budgets count: reported cost, plus API-equivalent
     /// estimates unless `limits.count_estimated_cost` is off. Spend is kept by
-    /// local calendar day, the day the daily budget counts.
+    /// local calendar day. Lead and delegated columns show portions of counted spend.
     Cost {
         /// First day: a date like 2026-09-01, or days back like 7d (the last
         /// 7 days with today) or 2w. The last 7 days by default.
@@ -747,6 +747,7 @@ pub enum CostBy {
     Provider,
     Item,
     Stage,
+    Effort,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -813,6 +814,12 @@ pub enum QueueCommand {
     Retry {
         /// The item's qi_… id, or enough of its start to name one item.
         item: String,
+        /// Replace the stage choices from a JSON or TOML model plan.
+        #[arg(long)]
+        model_plan_file: Option<PathBuf>,
+        /// Supply reasons for efforts above the stage default.
+        #[arg(long, requires = "model_plan_file")]
+        model_reasons_file: Option<PathBuf>,
         /// Start again from the base branch's head on a new branch; the old
         /// worktree is moved aside with everything in it and the old branch
         /// is kept, as is any pull request open from it. Worktree gc deletes
@@ -1803,7 +1810,7 @@ mod tests {
             "--until",
             "1d",
             "--by",
-            "model",
+            "effort",
         ]) else {
             panic!()
         };
@@ -1811,7 +1818,7 @@ mod tests {
             (since.as_deref(), until.as_deref()),
             (Some("2026-09-01"), Some("1d"))
         );
-        assert_eq!(by, CostBy::Model);
+        assert_eq!(by, CostBy::Effort);
         assert!(Cli::try_parse_from(["archon", "cost", "--by", "week"]).is_err());
         let cli = Cli::try_parse_from(["archon", "cost", "--json"]).unwrap();
         assert!(cli.json && matches!(cli.command, Some(Command::Cost { .. })));

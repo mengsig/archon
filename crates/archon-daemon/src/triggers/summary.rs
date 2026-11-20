@@ -127,6 +127,10 @@ fn label(event: &TriggerEvent) -> String {
             None => format!("report feedback: {report}"),
         },
         TriggerEvent::Budget { scope, .. } => format!("budget limit reached: {scope}"),
+        TriggerEvent::QuotaPace { provider, pace, .. } => format!(
+            "quota pace: {provider} {} {}% used at {}% elapsed",
+            pace.window, pace.used_percent, pace.elapsed_percent
+        ),
         TriggerEvent::PolicyViolation {
             agent,
             model,
@@ -148,6 +152,18 @@ fn label(event: &TriggerEvent) -> String {
         TriggerEvent::PrChecks {
             item, url, state, ..
         } => format!("pull request checks {state}: {url} ({item})"),
+        TriggerEvent::GithubWatch {
+            repository,
+            changes,
+            rest,
+            ..
+        } => {
+            let rest: std::collections::BTreeSet<u64> = rest.values().flatten().copied().collect();
+            let count = changes.len() + rest.len();
+            format!(
+                "github watch: {repository}, {count} pull request(s) changed, no operator standing"
+            )
+        }
     }
 }
 

@@ -13,7 +13,6 @@ use archon_core::config::{AetherMode, Config};
 use archon_core::error::ArchonError;
 use archon_core::id::QuestionId;
 use archon_core::merge::{MergeAuthority, MergeRequest, MergeState};
-use archon_core::model::ModelPlan;
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::protocol::{ClientKind, EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
@@ -70,7 +69,7 @@ async fn enqueue(h: &Harness, pipeline: &str, review: ReviewLevel) -> QueueItem 
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         stage_timeouts: Default::default(),
         model_reasons: None,
         budget_usd: None,
@@ -539,6 +538,7 @@ async fn verified_github_merge_refuses_unsent_items_and_merges_the_pinned_head()
     let fake = FakeAether::start(&h.dir.path().join("merge-authority.sock"))
         .await
         .unwrap();
+    common::catalog::answer(&fake, &common::catalog::default_models());
     let status = json!({"revision": 1, "repositories": [], "config": {
         "enabled": true, "mention_regex": "m", "label_regex": "l", "poll_interval_secs": 120,
         "repositories": [{"repository": "o/r", "enabled": true, "agent": ORCHESTRATOR,

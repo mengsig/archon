@@ -78,6 +78,7 @@ async fn recorded_sample(
     for (n, (stage, choice)) in attempts.iter().enumerate() {
         let attempt = attempts[..n].iter().filter(|(s, _)| s == stage).count() as u32 + 1;
         let stage_run = StageRun {
+            only_reviews: None,
             id: StageRunId::new(),
             run: run.id.clone(),
             stage_id: (*stage).into(),
@@ -87,11 +88,15 @@ async fn recorded_sample(
             choice: (*choice).clone(),
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: None,
             host_context: Default::default(),
             aether_agent: None,
             aether_task: None,
             state: StageState::Completed,
             verdict: None,
+            verdict_note: None,
+            sizing: Default::default(),
+            restatement: None,
             summary: Some("done".into()),
             structured: None,
             cost_usd: cost,
@@ -186,6 +191,8 @@ fn outcome(
         review_rounds: 0,
         result: OutcomeResult::Succeeded,
         failure: None,
+        failure_source: None,
+        review_pr: None,
         corrections: Vec::new(),
         feedback: Vec::new(),
         context: None,

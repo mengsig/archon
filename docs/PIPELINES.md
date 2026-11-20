@@ -112,7 +112,7 @@ min_tier = "strong"          # default: the tier asked for; the lowest tier a we
 tier = "strong"              # default: the pipeline's default choice; this stage's tier when the plan names no model
 allow_delegation = false     # true lets the stage agent delegate, whatever the item's tools
 nudge = "Advice for this stage's model choice."
-on_fail = { goto = "fix", max_loops = 2 }   # optional fix loop
+on_fail = { goto = "fix", max_loops = 2 }   # optional fix loop; `when = "environment_finding"` loops only for a `fail` naming an environment fault
 scenarios = "lenient"        # default lenient; strict lets archond fail a test stage on its scenario list (see "Strict scenarios")
 
 [[stage]]                    # a team stage (see "Team stages")
@@ -146,6 +146,13 @@ the field:
 
 - `name` equals the directory name and matches `[a-z0-9-]+`. `version` is 1.
 - There are 1 to 32 stages. Stage ids are unique and match `[a-z0-9-]+`.
+- No stage takes a reserved id: `budget`, `ship` or `recovery`. Archon fails
+  a run under these ids for its own stops (the item's dollar budget, the
+  delivery of a `[pipeline.ship]` record, and a run it could not resume), so a
+  stage of the same id would blur its own failure with that stop. The one
+  exception is a `ship` stage of kind `ship`, the pipeline's own ship agent.
+  Rename any other stage, for example `budget` to `budget-stage`. `archon doctor` lists a user pipeline
+  that breaks this rule, and its name stays unavailable until it is renamed.
 - Each `prompt` is a plain file name (no `/`, no leading `.`) that exists in
   the directory. Symlinks are followed only while they stay inside the
   pipeline directory. Files are limited to 256 KiB.
@@ -167,6 +174,8 @@ the field:
   or `any`): their agents return a verdict, and `gate = "none"` would ignore
   it.
 - `on_fail.goto` names an **earlier** stage, and `max_loops` is at most 10.
+- `on_fail.when`, when set, is `"environment_finding"`, on a gated stage that
+  is not a team: it reads the findings of a verdict that reads as `fail`.
 - `scenarios = "strict"` is only allowed on a `test` stage with one agent.
 
 These bounds (32 stages, `fan_out` 16, `max_loops` 10) belong to the file
@@ -229,7 +238,7 @@ by either route. It says to:
 - choose each child's model and effort within the model policy that
   applies to the item, which the section states in words. The watchdog
   cancels a child outside it;
-- with `[models] effort_sizing = true` only, size each child's effort to its
+- unless `[models] effort_sizing = false`, size each child's effort to its
   own task by the effort rubric, from `low` for lookups and mechanical edits
   up to `x_high` for hard reasoning, the cheapest that fits;
 - wait for every child or cancel it before finishing;
@@ -436,7 +445,22 @@ findings it fixed:
 
 When the object is missing, the verdict is anything else, or the pass names
 fewer reviewers than the level asks for, Archon fails the run at that stage
-and nothing ships. At `none` the contract tells the agent to delegate no
+and nothing ships. A record that is broken rather than refused gets one
+repair turn first. Broken means a result without `structured`, or a pass that
+names no reviewer. The stage is entered once more with the refusal quoted.
+The reviewers it then names are checked as above, so they must be agents it
+delegated itself. The repair attempt is marked as one on its stage run: a
+second broken record fails the run, with no fix loop, as does an invalid
+ship record on that attempt, and a kept agent is not asked for its record
+again. Where `[review] auto_repair` is on, the
+item's one automatic retry may still follow that failed run. In a stage that
+owes a record, a stated failure always wins over it: a fail verdict in
+`structured` or in the summary's last `VERDICT:` line, or a summary that
+opens with `ESCALATE:` or `BLOCKED:`, fails the stage as sent, with or
+without a gate, gets no repair turn and ships nothing. When a resumed agent
+writes more after its record block, its whole reply is its summary. A stage
+whose outcome was recorded before repair turns existed keeps the decision
+taken then. At `none` the contract tells the agent to delegate no
 reviewer and record no review.
 
 A pass is not taken on the agent's word. As the stage ends, Archon lists
@@ -533,7 +557,8 @@ record beside anything else it returns:
               {"kind": "output", "caption": "cargo test", "text": "…"}]}
 ```
 
-A pass without a readable record fails the run at that stage. Stages after
+A pass without a readable record fails the run at that stage, after one
+repair turn when its record is broken. Stages after
 it (reviews, tests) verify that tree and commit nothing more. The `risk` key
 is the level archond labels the pull request with (see
 [risk labels](guide.md#risk-labels)); a missing or invalid one never fails
@@ -631,7 +656,15 @@ The run state machine is `RunDriver` in `crates/archon-pipeline`:
    as `{{feedback}}`. A prompt that does not show `{{feedback}}` gets it
    appended under `## Feedback to address`, so feedback is never lost. Each
    stage counts its own loops. When the loops run out, or the stage has no
-   `on_fail`, the run fails at that stage.
+   `on_fail`, the run fails at that stage. With `on_fail.when =
+   "environment_finding"` the stage loops only when an agent's verdict reads
+   as `fail` and its findings list one with `"fault": "environment"`; any
+   other failure (a fail naming only the product, a verdict Archon cannot
+   read whatever its findings say, a timeout, a crash) fails the run at that
+   stage, and the error says the `goto` stage was not re-run. The findings
+   are those of the verdict that settled: a restated verdict's, when it
+   stands over the completed result. The built-in end-to-end pipelines use
+   it, because their `setup` stage can only fix the environment.
 6. **Blocked.** An agent that fails with an error starting `BLOCKED:` ends
    the run immediately. There is no loop, its live siblings are cancelled, and
    the operator gets a blocker in chat. Use `BLOCKED:` for "a human must act",
@@ -943,8 +976,14 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   and with `ESCALATE:` when the task does not fit the pipeline.
 - **Review and test stages, and any gated stage.** The result carries
   `structured` data `{"verdict": "pass"|"fail", "findings": [{"severity",
-  "title", "detail", "path"}]}`, and the summary ends with `VERDICT: PASS` or
-  `VERDICT: FAIL`. Archon reads a structured `verdict` key first, whatever
+  "blocking", "title", "detail", "path"}]}`, and the summary ends with `VERDICT: PASS` or
+  `VERDICT: FAIL`. Each finding is marked `"blocking": true` when the stage
+  prompt's rule makes it fail the verdict, else `false`; an unmarked finding
+  blocks when its severity is `blocking`, `blocker`, `critical` or `high`.
+  Archon stores why a verdict reads as unknown beside it (`verdict_note`:
+  `disputed_pass`, `missing_verdict_line` or `hedged_verdict`). Before it
+  finishes, the agent calls `submit_verdict` with the result it is about to
+  finish with (see "Restating a verdict" below). Archon reads a structured `verdict` key first, whatever
   it holds, then a structured `result` or `status` that opens with a
   verdict word or a `VERDICT:` label (decisive even when unreadable), then
   the summary's last `VERDICT:` line that starts at column 0 outside block quotes and fences (an indented
@@ -989,6 +1028,44 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   list indentation and fences, and reads other constructs as plain lines;
   a verdict it cannot settle counts as fail, never as pass, so write a
   plain `VERDICT:` line at column 0.
+- **Restating a verdict.** A finished agent cannot be asked again, so every
+  contract with a Verdict section tells its agent to call `submit_verdict`
+  with the `summary` and `structured` (an object) it is about to finish
+  with. Archon reads them as the gate will. A pass or a fail is accepted and
+  the agent finishes. A verdict that reads as neither (a pass beside a
+  blocking finding, no verdict, a hedged one) is answered with what to
+  change, and the agent submits the corrected result with `"restating":
+  true`: that submission is final, whatever it reads as. An unreadable
+  submission repeated without the mark restates nothing and is given the
+  same ask again, so an answer lost on its way costs nothing; a submission
+  that reads as a pass or a fail after the ask is the restatement, marked
+  or not. The ask and the final answer are kept per stage attempt: neither
+  a restarted archond nor a replacement of the attempt's stage run (its
+  agent woken at a deadline, a fresh agent after an infrastructure failure)
+  gets a second one, and a later attempt has its own. A final restatement
+  that is a fail, or still unreadable, is the stage's verdict even if the
+  agent then finishes with a pass, and its findings, not the result's, say
+  whether it names the environment. The failure report, and the feedback a
+  loop passes on, then show what that restatement said (its summary and
+  findings, up to 8,000 characters) ahead of the result the agent finished
+  with. A pass is only ever read from the
+  finished result itself, so the tool cannot pass what the gate would not.
+  Only the agent of the attempt's current stage run is answered: one whose
+  stage run a replacement superseded is refused, and one that calls before
+  Archon recorded its spawn or wake waits a few seconds for the record.
+  A stage whose agent never calls the tool, or was asked and never
+  answered, is read from its result as before. Every stage run of the
+  attempt that ends keeps the ask and the restated reading as
+  `restatement`.
+- **A review-only run's lead** (the stage holding the review of a pipeline
+  that delivers nothing, such as `review`). The review is the run's whole
+  outcome, so its verdict is recorded with `complete_task`, a fail included,
+  in the same `structured` `verdict` and `findings` beside the review record;
+  `fail_task` means only that the review could not be done. The lead fixes
+  and commits nothing: blocking findings make its verdict `fail`, and the
+  item's error lists them. A result stating no verdict of its own (metadata
+  such as `"status": "done"` states none) is read by its review record's. The
+  run fails on any verdict but pass, which never merges.
 - **The stage `[pipeline.ship]` names.** `## Ship record`: commit with the
   repository's git identity, leave a clean tree, do not push, and return
   `commit`, `tree`, `checks` and `pr` in `structured` (see "Shipping").
@@ -1235,9 +1312,9 @@ back to the built-in.
 | `performance` | measure → optimize → verify (`all_pass`, back to optimize ×3) → review (1, `all_pass`, back to optimize ×2) | strong tier, independent reviewer. For a specific slow path with a measurable goal, not speculative micro-optimization; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (2 exploratory testers) → report (HTML) | balanced tier, independent testers |
 | `code-audit` | scope → audit (3 lenses, report) → report (HTML with issue drafts) | strong tier, independent auditors. Read-and-report only; findings become follow-up items. Use `ask` for a single question or `agent-testing` to exercise the product. |
-| `e2e-testing` | setup → e2e (`all_pass`, back to setup ×1) → report (HTML with screenshots) | balanced tier. Lenient: product defects land in the report, not the gate. |
-| `e2e-strict` | setup → e2e (`all_pass`, strict scenarios, back to setup ×1) → report (HTML with screenshots) | balanced tier. Any failed, skipped or missing scenario fails the run. For release validation. |
-| `release-journey` | setup → journeys (`all_pass`, strict scenarios, back to setup ×1) → report (HTML with screenshots) | balanced tier. Runs the repository's [product journeys](journeys.md) in the shipped artifact with real engines; any journey that does not pass fails the run. |
+| `e2e-testing` | setup → e2e (`all_pass`, back to setup ×1 for an environment finding) → report (HTML with screenshots) | balanced tier. Lenient: product defects land in the report, not the gate. |
+| `e2e-strict` | setup → e2e (`all_pass`, strict scenarios, back to setup ×1 for an environment finding) → report (HTML with screenshots) | balanced tier. Any failed, skipped or missing scenario fails the run. For release validation. |
+| `release-journey` | setup → journeys (`all_pass`, strict scenarios, back to setup ×1 for an environment finding) → report (HTML with screenshots) | balanced tier. Runs the repository's [product journeys](journeys.md) in the shipped artifact with real engines; any journey that does not pass fails the run. |
 | `review` | review (work, delegation enabled, holds the review) | balanced tier; review level `standard` unless the item asks. Queued `onto` someone else's pull request, a fork's included; changes and pushes nothing. A pass of the frozen head is what lets `archon merge` merge that pull request (see the [guide](guide.md#reviewing-a-contributors-pull-request)). |
 | `ask` | answer | balanced tier. Read-only, and no repository required. With one, it works in a disposable snapshot of the repository's `HEAD` commit, so it sees committed work only. |
 | `errand` | errand (report) | balanced tier. A small job answered in text or as a Lavish page, with no repository changes or outward side effects. Scratch workspace, repository optional. Use `ask` for repository questions in text, and a shipping pipeline for changes. |
@@ -1298,8 +1375,8 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   the known risks, not the conversation. Its effort is the lead's choice,
   never below the effort its contract names: medium for ordinary risk,
   high where the risk is medium or more, or security or an invariant is at
-  stake. With `[models] effort_sizing = true` the contract's effort is a
-  default instead and its effort rubric decides, the lead stating the reason
+  stake, when `[models] effort_sizing = false`. By default the contract's
+  effort is a default instead and its effort rubric decides, the lead stating the reason
   for a move in one line in its result.
 - **Fixes.** Blocking findings are fixed in new commits and the affected
   checks rerun; the full suite runs again only for a fix with broad impact
@@ -1309,9 +1386,15 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   invariant, or adds scope: one new child reads only the fix, given the
   open findings, whatever the level; only the first whole-change read takes
   three where the level asks for three. Follow-ups (non-blocking findings)
-  are listed in the `pr.body` and left. Archon stops the stage after three
-  failed rounds and escalates; only an unresolved blocking finding, a
-  failed check or a review that did not run fails the stage.
+  are listed in the `pr.body` and left. A delta reviewer fails only on a
+  defect in the commits it was given or an open finding left unfixed; a new
+  finding in code a pass already read is a follow-up. Archon stops the stage
+  after three failed rounds and escalates; only an unresolved blocking
+  finding, a failed check or a review that did not run fails the stage. A
+  retry on the same branch keeps the earlier runs' reviews while the branch
+  holds their heads, so its new lead owes only the whole reads they lack and
+  a delta review of its own commits; a
+  fresh retry or a rewritten history owes the whole review again.
 
 That review is the pipeline's: `adaptive` declares
 `[pipeline.review] level = "standard"` on `build` (see "A declared
@@ -1478,6 +1561,16 @@ screenshots. They differ in what fails the run.
 | `e2e-strict` | `.archon/e2e/scenarios.json`, which setup writes from the brief | fails the run at once | loops back to setup once, then fails |
 | `release-journey` | the repository's `.archon/journeys.toml` ([format](journeys.md#archonjourneystoml)) | fails the run at once | loops back to setup once, then fails |
 
+An environment fault is a verdict that reads as `fail` whose findings
+include one with `"fault": "environment"`. Only that sends the run back to
+`setup`, which can fix nothing else (`on_fail.when =
+"environment_finding"`): a `fail` naming only the product, a timeout or a
+crash fails the run at the test stage with one `setup` run spent, and so
+does a verdict Archon cannot read (a pass its own findings dispute, a
+missing or hedged verdict), whatever its findings name. A tester whose
+verdict cannot be read is asked once to restate it, before it finishes,
+through `submit_verdict`.
+
 Use `e2e-testing` to explore and report: a run can succeed while its
 scenarios fail, so read the report, not the run state. Use `e2e-strict` when
 the run decides whether a change is fit to ship, and `release-journey` for
@@ -1501,7 +1594,9 @@ the manifest's scenario ids as `expected` and every scenario it ran as
 ```
 
 The verdict judges only the environment: `fail` means the results cannot be
-trusted, and the run loops back as `on_fail` says. Given a `pass`, archond
+trusted, and the run loops back as `on_fail` says (in the built-in
+pipelines, only with a finding whose `"fault"` is `"environment"`; any
+other `fail` fails the run). Given a `pass`, archond
 judges the list itself. The gate fails when any scenario's status is not
 `pass` (a `fail`, `skipped` or `blocked` one), when an `expected` id is
 missing from `scenarios`, and when either list is empty or unreadable: a run

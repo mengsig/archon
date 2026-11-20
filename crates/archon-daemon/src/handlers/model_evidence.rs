@@ -4,6 +4,7 @@
 use std::collections::{HashMap, hash_map::Entry};
 
 use archon_core::catalog::StageKind;
+use archon_core::cost::DayRange;
 use archon_core::error::ArchonError;
 use archon_core::id::RepoId;
 use archon_core::model_evidence::{ModelEvidenceQuery, ModelEvidenceReport};
@@ -56,6 +57,10 @@ pub(super) async fn report(
     }
     let catalog = ctx.store.lock().await.model_catalog();
     let mut report = snapshot.report(&catalog, |_, stage| {
+        // A review-only lead records its run's review verdict; one recorded before 1.6.4 has none.
+        if stage.only_reviews == Some(true) {
+            return Ok(true);
+        }
         Ok(runs
             .get(&stage.run)
             .and_then(Option::as_ref)
@@ -63,33 +68,33 @@ pub(super) async fn report(
             .is_some_and(|s| matches!(s.kind, StageKind::Review | StageKind::Test)))
     })?;
     if ctx.config.learning.enabled {
-        add_pipelines(ctx, query, &mut report).await?;
+        add_pipelines(ctx, query, &range, &mut report).await?;
     }
     Ok(Reply::ModelEvidence(Box::new(report)))
 }
 
-/// Learning's per-pipeline evidence, with the names of the repositories it
-/// cites so the report names them as `cost` does.
+/// Learning's per-pipeline evidence of the runs that finished in `range`,
+/// with the names of the repositories it cites so the report names them as
+/// `cost` does.
 async fn add_pipelines(
     ctx: &DaemonContext,
     query: &ModelEvidenceQuery,
+    range: &DayRange,
     report: &mut ModelEvidenceReport,
 ) -> Result<(), ArchonError> {
     assert!(report.pipelines.is_empty(), "pipelines are added once");
     let store = ctx.store.lock().await;
     let repo = query.repo.as_ref().map(|r| store.repo(r)).transpose()?;
-    let stats = store.learning_stats(repo.as_ref().map(|r| &r.id))?;
-    let cited: Vec<&RepoId> = stats
-        .pipelines
-        .iter()
-        .filter_map(|p| p.repo.as_ref())
-        .collect();
-    report.repo_names = stats
-        .repo_names
+    let pipeline = query.pipeline.as_deref();
+    let pipelines = store.pipeline_lines(repo.as_ref().map(|r| &r.id), pipeline, range)?;
+    let cited: Vec<&RepoId> = pipelines.iter().filter_map(|p| p.repo.as_ref()).collect();
+    report.repo_names = store
+        .repos()?
         .into_iter()
-        .filter(|(id, _)| cited.contains(&id))
+        .filter(|r| cited.contains(&&r.id))
+        .map(|r| (r.id, r.name))
         .collect();
-    report.pipelines = stats.pipelines;
+    report.pipelines = pipelines;
     debug_assert!(report.repo_names.len() <= report.pipelines.len());
     Ok(())
 }

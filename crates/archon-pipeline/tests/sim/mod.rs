@@ -10,7 +10,10 @@ use std::sync::Arc;
 use archon_core::Timestamp;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::model::ModelPlan;
-use archon_core::run::{GateDecision, PipelineRun, RunState, StageRun, StageState, Verdict};
+use archon_core::run::{
+    GateDecision, PipelineRun, RecordRepair, Restatement, RunState, StageRun, StageState, Verdict,
+    VerdictReading,
+};
 use archon_core::steer::Then;
 use archon_pipeline::autonomy::OperatorGates;
 use archon_pipeline::spec::PipelineSpec;
@@ -28,10 +31,21 @@ pub enum Agent {
     Done(&'static str),
     /// Completed with a summary and structured data, without a verdict.
     DoneStructured(&'static str, serde_json::Value),
+    /// Completed with a summary and structured data, its verdict persisted
+    /// as archond reads it.
+    Recorded(&'static str, serde_json::Value),
+    /// As `Recorded`, persisted as archond did before it kept a verdict's note
+    /// or read a review-only lead by its review record.
+    RecordedBeforeNotes(&'static str, serde_json::Value),
     /// Completed with a structured `pass`.
     Pass,
     /// Completed with a structured `fail` carrying one finding titled so.
     Fail(&'static str),
+    /// As `Fail`, its finding naming the environment (`"fault": "environment"`).
+    EnvironmentFail(&'static str),
+    /// As `Recorded`, after `submit_verdict` left this restatement: its
+    /// verdict is bound by it as archond's settlement binds it.
+    Restated(&'static str, serde_json::Value, Restatement),
     /// Completed with only a summary `VERDICT:` line, verdict not persisted.
     SummaryVerdict(&'static str),
     /// Completed without any verdict.
@@ -72,6 +86,9 @@ pub struct Sim {
     /// Whether the record stage's agent writes the ship record its contract
     /// asks for; a test of a missing record turns it off.
     pub writes_record: bool,
+    /// Stage runs are persisted as a release before record repair turns
+    /// did: with no marker of one.
+    pub before_repairs: bool,
     /// Persisted steered aborts, oldest first.
     pub aborts: Vec<(String, u32, Then)>,
     /// The approved proposal the run started past, as the daemon persists it.
@@ -126,6 +143,7 @@ impl Sim {
             shipped: None,
             open_ship: None,
             writes_record: true,
+            before_repairs: false,
             aborts: Vec::new(),
             approved_proposal: None,
             clock,
@@ -176,6 +194,11 @@ impl Sim {
         let index = self.live_index(stage, fan);
         let at = self.tick();
         apply_agent(&mut self.stages[index], &agent, at);
+        // The daemon marks an outcome it records, on a run from before too.
+        if !self.before_repairs {
+            let marker = &mut self.stages[index].record_repair;
+            marker.get_or_insert(RecordRepair::Open);
+        }
         let records = self.spec.ship_record_stage().is_some_and(|s| s.id == stage);
         if records && self.writes_record {
             write_ship_record(&mut self.stages[index]);
@@ -568,6 +591,7 @@ impl Sim {
         let id = StageRunId::new();
         self.plans.insert(id.clone(), plan.clone());
         self.stages.push(StageRun {
+            only_reviews: Some(plan.only_reviews),
             id,
             run: self.run.id.clone(),
             stage_id: plan.stage_id.clone(),
@@ -576,12 +600,16 @@ impl Sim {
             fan_index: plan.fan_index,
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: (!self.before_repairs).then_some(plan.record_repair),
             host_context: Default::default(),
             choice: plan.choice.clone(),
             aether_agent: None,
             aether_task: None,
             state: StageState::Running,
             verdict: None,
+            verdict_note: None,
+            sizing: Default::default(),
+            restatement: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,
@@ -646,14 +674,26 @@ fn gang_admit(plans: &[SpawnPlan], free: usize) -> usize {
 }
 
 fn apply_agent(stage: &mut StageRun, agent: &Agent, at: Timestamp) {
+    // Persisted as the daemon reads it: a review-only lead by its review record too.
+    let lead = stage.only_reviews == Some(true);
     let completed = |summary: String, structured: Option<serde_json::Value>, persist: bool| {
-        let verdict = persist.then(|| Verdict::extract(&summary, structured.as_ref()));
+        let read = match lead {
+            true => Verdict::read_review_lead(&summary, structured.as_ref()),
+            false => Verdict::read(&summary, structured.as_ref()),
+        };
+        let verdict = persist.then_some(read);
         (StageState::Completed, Some(summary), structured, verdict)
     };
     let (state, summary, structured, verdict) = match agent {
         Agent::Done(text) => completed((*text).to_owned(), None, false),
         Agent::DoneStructured(text, data) => {
             completed((*text).to_owned(), Some(data.clone()), false)
+        }
+        Agent::Recorded(text, data) => completed((*text).to_owned(), Some(data.clone()), true),
+        Agent::RecordedBeforeNotes(text, data) => {
+            let verdict = Verdict::extract(text, Some(data));
+            let state = (StageState::Completed, Some((*text).to_owned()));
+            (state.0, state.1, Some(data.clone()), Some((verdict, None)))
         }
         Agent::Pass => completed(
             "Looks correct and well tested.\nVERDICT: PASS".into(),
@@ -667,6 +707,27 @@ fn apply_agent(stage: &mut StageRun, agent: &Agent, at: Timestamp) {
             ]})),
             true,
         ),
+        Agent::EnvironmentFail(title) => completed(
+            format!("The environment is at fault: {title}.\nVERDICT: FAIL"),
+            Some(serde_json::json!({"verdict": "fail", "findings": [{
+                "severity": "high", "blocking": true, "fault": "environment",
+                "title": title, "detail": "fix the setup scripts"
+            }]})),
+            true,
+        ),
+        Agent::Restated(text, data, restatement) => {
+            let (state, summary, structured, read) =
+                completed((*text).to_owned(), Some(data.clone()), true);
+            let read = VerdictReading::new(read.expect("persisted"));
+            let stands = restatement.bind(read);
+            stage.restatement = Some(restatement.clone());
+            (
+                state,
+                summary,
+                structured,
+                Some((stands.verdict, stands.note)),
+            )
+        }
         Agent::SummaryVerdict(text) => completed((*text).to_owned(), None, false),
         Agent::NoVerdict => completed("I looked around.".into(), None, true),
         Agent::Error(error) => (
@@ -691,7 +752,8 @@ fn apply_agent(stage: &mut StageRun, agent: &Agent, at: Timestamp) {
     stage.state = state;
     stage.summary = summary;
     stage.structured = structured;
-    stage.verdict = verdict;
+    stage.verdict = verdict.map(|(verdict, _)| verdict);
+    stage.verdict_note = verdict.and_then(|(_, note)| note);
     stage.finished_at = Some(at);
 }
 

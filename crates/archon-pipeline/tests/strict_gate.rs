@@ -132,14 +132,15 @@ fn an_environment_fault_loops_back_to_setup_once_in_every_mode() {
         ("release-journey", "journeys"),
     ] {
         let mut sim = at_test_stage(pipeline);
-        let back = sim.settle(test, 0, Agent::Fail("display :99 never came up"));
+        let back = sim.settle(test, 0, Agent::EnvironmentFail("display :99 never came up"));
         assert_eq!(spawned(&back), slots(&[("setup", 2, 0)]), "{pipeline}");
         assert!(
             spawn_plans(&back)[0].prompt.contains("display :99"),
             "{pipeline}"
         );
         sim.settle("setup", 0, Agent::Done("started Xvfb"));
-        let (stage, error) = failed(&sim.settle(test, 0, Agent::Fail("display :99 again")));
+        let again = sim.settle(test, 0, Agent::EnvironmentFail("display :99 again"));
+        let (stage, error) = failed(&again);
         assert_eq!(stage, test, "{pipeline}");
         assert!(
             error.contains("after 1 of 1 fix loop(s)"),
@@ -202,7 +203,7 @@ fn passing_journeys_reach_the_report_and_succeed() {
 #[test]
 fn a_strict_stage_contract_names_the_gate_and_the_private_stack() {
     let mut sim = at_test_stage("release-journey");
-    let back = sim.settle("journeys", 0, Agent::Fail("no display"));
+    let back = sim.settle("journeys", 0, Agent::EnvironmentFail("no display"));
     let setup = &spawn_plans(&back)[0].instructions;
     assert!(!setup.contains("## Strict scenario gate"), "{setup}");
     let journeys = sim.settle("setup", 0, Agent::Done("ready"));
@@ -211,6 +212,8 @@ fn a_strict_stage_contract_names_the_gate_and_the_private_stack() {
         "## Strict scenario gate",
         "\"expected\"",
         "with no loop back",
+        "`fail` re-runs `setup` only with a finding whose `fault` is `environment` while a loop \
+         remains, else fails the run.",
         "Never read or write the state of the daemons installed on this machine",
     ] {
         assert!(contract.contains(said), "missing {said:?} in {contract}");

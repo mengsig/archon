@@ -10,6 +10,7 @@ use archon_core::catalog::{
 };
 use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelPlan, ModelReasons};
+use archon_core::run::{BUDGET_STAGE, RECOVERY_STAGE, SHIP_STEP};
 use serde::{Deserialize, Serialize};
 
 use crate::template;
@@ -17,6 +18,8 @@ use crate::template;
 pub const SCHEMA_VERSION: u32 = 1;
 /// The stage the 1.0 built-ins ran their ship agent as; archond ships them now.
 pub const RETIRED_SHIP_STAGE: &str = "ship";
+/// Stage ids archond fails runs under for its own stops, which no stage may take.
+pub const RESERVED_STAGE_IDS: [&str; 3] = [BUDGET_STAGE, SHIP_STEP, RECOVERY_STAGE];
 pub const MAX_FAN_OUT: u32 = 16;
 pub const MAX_LOOPS: u32 = 10;
 /// 30 days. Stage agents get exactly the configured timeout; a larger one
@@ -107,6 +110,9 @@ pub struct ReviewDuty {
     /// Whether a reasoned `skipped` stands in for the one reviewer: only where
     /// a ship agent still judges it, as pipelines with a ship stage have.
     pub may_skip: bool,
+    /// Whether the review is all its run does (a review-only run's lead, with
+    /// reviewers): its result records the verdict, a fail included, through `complete_task`.
+    pub records_verdict: bool,
 }
 
 /// What a stage owes on its result besides passing its gate.
@@ -272,6 +278,34 @@ pub struct OnFail {
     /// An earlier stage to re-enter with `{{feedback}}`.
     pub goto: String,
     pub max_loops: u32,
+    /// Which failures loop; unset, every one does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<LoopWhen>,
+}
+
+/// The failures of a stage that take its `on_fail` loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopWhen {
+    /// Only one where a failing agent's result lists a finding with
+    /// `"fault": "environment"`: any other fails the run at the stage.
+    EnvironmentFinding,
+}
+
+impl LoopWhen {
+    /// Whether the failed group `failing` takes the loop: one of its members
+    /// settled a readable `fail` whose findings name the environment. A
+    /// verdict that reads as neither pass nor fail takes none, whatever it lists.
+    pub(crate) fn applies(self, failing: &[&archon_core::run::StageRun]) -> bool {
+        use archon_core::run::{StageState, Verdict};
+        match self {
+            Self::EnvironmentFinding => failing.iter().any(|member| {
+                member.state == StageState::Completed
+                    && crate::gate::verdict_of(member) == Verdict::Fail
+                    && member.verdict_names_environment()
+            }),
+        }
+    }
 }
 
 /// A loaded, validated pipeline with its prompt templates in memory.
@@ -367,10 +401,17 @@ impl PipelineSpec {
         }
         let reviewers = reviewers(review.level);
         let ship_agent = self.file.stages.iter().any(|s| s.kind == StageKind::Ship);
-        Some(ReviewDuty {
+        let duty = ReviewDuty {
             reviewers,
             may_skip: ship_agent && reviewers == 1,
-        })
+            // At level `none` nothing is reviewed, so there is no verdict to record.
+            records_verdict: !self.delivers() && reviewers > 0,
+        };
+        assert!(
+            !(duty.may_skip && duty.records_verdict),
+            "a ship agent delivers"
+        );
+        Some(duty)
     }
 
     /// The effort a plan key gets when it names none: a stage's, or, for the
@@ -471,7 +512,7 @@ impl PipelineSpec {
     /// longer has; `true` when any went. User pipelines and run snapshots keep theirs.
     pub fn drop_retired_ship(
         &self,
-        plan: &mut ModelPlan,
+        plan: &mut archon_core::plan_origin::PlannedPlan,
         reasons: Option<&mut ModelReasons>,
     ) -> bool {
         let shipped_by_daemon = self.file.pipeline.ship.is_some();
@@ -481,7 +522,7 @@ impl PipelineSpec {
         {
             return false;
         }
-        let choice = plan.0.remove(RETIRED_SHIP_STAGE).is_some();
+        let choice = plan.remove_key(RETIRED_SHIP_STAGE);
         let reason = reasons.is_some_and(|r| r.remove(RETIRED_SHIP_STAGE).is_some());
         assert!(!plan.0.contains_key(RETIRED_SHIP_STAGE), "removed above");
         assert!(
@@ -586,6 +627,9 @@ impl PipelineSpec {
         }
         if self.stage_index(&stage.id) != Some(index) {
             return Err("id is used by more than one stage".into());
+        }
+        if takes_reserved_id(stage) {
+            return Err(reserved_stage_id(&stage.id));
         }
         validate_roles(stage)?;
         self.validate_roles_from(index, stage)?;
@@ -701,6 +745,18 @@ impl PipelineSpec {
         if on_fail.max_loops > MAX_LOOPS {
             return Err(format!("on_fail.max_loops must be at most {MAX_LOOPS}"));
         }
+        if on_fail.when.is_none() {
+            return Ok(());
+        }
+        // Only a gated verdict lists findings; a team also fails on its merge.
+        let stage = &self.file.stages[index];
+        if stage.gate == Gate::None || stage.kind == StageKind::Team {
+            return Err(
+                "on_fail.when reads a failing verdict's findings, so it needs a gated stage \
+                 that is no team"
+                    .into(),
+            );
+        }
         Ok(())
     }
 
@@ -799,6 +855,22 @@ pub(crate) fn check_stage_count(count: usize) -> Result<(), ArchonError> {
 
 fn invalid(message: impl Into<String>) -> ArchonError {
     ArchonError::Pipeline(message.into())
+}
+
+/// Whether `stage` takes an id archond fails runs under for its own stops. A
+/// `ship` stage is the pipeline's own ship agent: `validate_daemon_ship` keeps
+/// it from sharing a run with the daemon's ship step, so the id is its own.
+fn takes_reserved_id(stage: &StageSpec) -> bool {
+    let ship_agent = stage.id == SHIP_STEP && stage.kind == StageKind::Ship;
+    RESERVED_STAGE_IDS.contains(&stage.id.as_str()) && !ship_agent
+}
+
+fn reserved_stage_id(id: &str) -> String {
+    format!(
+        "id {id:?} is reserved for archond's own stops ({}); rename the stage, for example to {:?}",
+        RESERVED_STAGE_IDS.join(", "),
+        format!("{id}-stage"),
+    )
 }
 
 /// Stage ids and pipeline names: `[a-z0-9-]+`, safe in roles, labels and

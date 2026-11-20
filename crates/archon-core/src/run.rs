@@ -6,10 +6,18 @@ use serde::{Deserialize, Serialize};
 use crate::Timestamp;
 use crate::aether_ids::{AetherAgentId, AetherRunId, AetherTaskId};
 use crate::catalog::StageKind;
+use crate::effort_sizing::RiskClass;
 use crate::error::ArchonError;
 use crate::id::{PipelineRunId, QuestionId, QueueItemId, ReportId, StageRunId};
 use crate::model::ModelChoice;
+use crate::plan_origin::{PlanSource, SlotSizing};
 use crate::verdict_prose::reports_problem;
+
+mod restatement;
+mod verdict_note;
+
+pub use restatement::{CheckDecision, Restatement, Submission, VerdictCheck, VerdictReading};
+pub use verdict_note::VerdictNote;
 
 /// What a review/test stage concluded, as [`Verdict::extract`] reads it from
 /// the stage agent's result; anything unreadable is `Unknown` and fails a gate.
@@ -27,6 +35,22 @@ const BLOCKING_SEVERITIES: [&str; 4] = ["blocking", "blocker", "critical", "high
 /// `structured` keys a result may give its verdict under, in the order read.
 const VERDICT_KEYS: [&str; 3] = ["verdict", "result", "status"];
 
+/// The `fault` a finding gives when the environment, not the product, failed.
+const ENVIRONMENT_FAULT: &str = "environment";
+
+/// Whether `structured.findings` holds a finding that names the environment
+/// as at fault (`"fault": "environment"`): what a stage that loops back only
+/// to fix the environment (`on_fail.when`) loops for.
+pub fn names_environment(structured: &serde_json::Value) -> bool {
+    let Some(findings) = structured.get("findings").and_then(|f| f.as_array()) else {
+        return false;
+    };
+    findings.iter().any(|finding| {
+        let fault = finding.get("fault").and_then(|fault| fault.as_str());
+        fault.is_some_and(|fault| fault.trim().eq_ignore_ascii_case(ENVIRONMENT_FAULT))
+    })
+}
+
 impl Verdict {
     /// `structured.verdict`, else a readable `structured.result` or `status`,
     /// else the summary's last `VERDICT:` line. A pass counts only when
@@ -42,22 +66,40 @@ impl Verdict {
         }
     }
 
+    /// Whether a result states a fail where it may give a verdict: a
+    /// `structured` field or the summary's last `VERDICT:` line, either alone.
+    pub fn states_fail(summary: &str, structured: Option<&serde_json::Value>) -> bool {
+        let in_structured = structured.and_then(Self::as_worded) == Some(Self::Fail);
+        in_structured || Self::from_summary(summary) == Some(Self::Fail)
+    }
+
     /// Whether anything in a result takes a pass back: the summary's last
     /// `VERDICT:` line or [`summary_json`] verdict reading other than pass,
     /// or a blocking finding in `structured` or that JSON.
     pub fn pass_disputed(summary: &str, structured: Option<&serde_json::Value>) -> bool {
+        Self::findings_dispute(summary, structured) || Self::words_dispute(summary)
+    }
+
+    /// Whether `structured`, the summary's JSON or a wrapped summary's JSON
+    /// lists a finding that [blocks](Self::blocks) a pass.
+    fn findings_dispute(summary: &str, structured: Option<&serde_json::Value>) -> bool {
         let json = summary_json(summary);
         // A summary written as `{summary, structured}` holds a summary of its own, read one level deep.
-        let inner = wrapped_summary(summary);
-        let inner_json = inner.as_deref().and_then(summary_json);
-        let blocking = [structured, json.as_ref(), inner_json.as_ref()]
+        let inner_json = wrapped_summary(summary).as_deref().and_then(summary_json);
+        [structured, json.as_ref(), inner_json.as_ref()]
             .into_iter()
             .flatten()
-            .any(Self::lists_blocking);
-        let inner_disagrees = inner
-            .as_deref()
-            .is_some_and(|inner| Self::summary_disagrees(inner, inner_json.as_ref()));
-        blocking || inner_disagrees || Self::summary_disagrees(summary, json.as_ref())
+            .any(Self::lists_blocking)
+    }
+
+    /// Whether the summary's words, or a wrapped summary's, read as anything but pass.
+    fn words_dispute(summary: &str) -> bool {
+        let inner = wrapped_summary(summary);
+        let inner_disagrees = inner.as_deref().is_some_and(|inner| {
+            let inner_json = summary_json(inner);
+            Self::summary_disagrees(inner, inner_json.as_ref())
+        });
+        inner_disagrees || Self::summary_disagrees(summary, summary_json(summary).as_ref())
     }
 
     /// Whether the text after a JSON verdict opening the summary takes its
@@ -86,12 +128,10 @@ impl Verdict {
     }
 
     /// Whether the summary's last `VERDICT:` line or its JSON's verdict,
-    /// `result` or `status` reads as anything but pass.
+    /// `result` or `status` reads as anything but pass, in words: the JSON's
+    /// findings are [`Self::findings_dispute`]'s to judge.
     fn summary_disagrees(summary: &str, json: Option<&serde_json::Value>) -> bool {
-        let said = [
-            Self::from_summary(summary),
-            json.and_then(Self::from_structured),
-        ];
+        let said = [Self::from_summary(summary), json.and_then(Self::as_worded)];
         said.into_iter().flatten().any(|said| said != Self::Pass)
     }
 
@@ -808,6 +848,52 @@ impl StageOutcome {
     /// orchestrator: the work needs another shape than this run has.
     pub const ESCALATE_PREFIX: &'static str = "ESCALATE:";
 
+    /// What Aether's error says of an agent it stopped at its cost budget.
+    pub const COST_BUDGET_STOP: &'static str = "cost budget of $";
+
+    /// How Aether's budget message opens around the stop reason it names.
+    pub const BUDGET_STOP_MESSAGE: &'static str = "Stopped by its budget (";
+
+    /// What Aether's budget message says of the stopped agent's subtree, right
+    /// after the stop reason it wraps.
+    pub const BUDGET_STOP_SUBTREE: [&'static str; 2] = [
+        "its live subtree was cancelled with it",
+        "no new subtree cancellation was requested",
+    ];
+
+    /// Archon's whole label after a cost stop whose dollars may be notional.
+    pub const NOTIONAL_COST_LABEL: &'static str = " (notional cost: Claude Code reports list-price \
+        dollars whether or not its login bills them, and Aether showed no fresh subscription usage \
+        window with headroom for it, so the budget was enforced; under a subscription, raise or \
+        unset the item's budget)";
+
+    /// How the daemon's error opens when Aether's disk stayed full through
+    /// every spawn retry: an infrastructure stop, also on 1.6.3 records.
+    pub const DISK_FULL_SPAWN: &'static str = "create_agent failed on a full disk";
+
+    /// How the daemon's error opens when Aether or the way to it failed
+    /// through every spawn retry: an infrastructure stop, also on 1.6.3 records.
+    pub const SPAWN_KEPT_FAILING: &'static str = "create_agent kept failing: ";
+
+    /// How the daemon's error opens when a failed stage's workspace is gone.
+    pub const WORKSPACE_MISSING: &'static str = "workspace missing:";
+
+    /// What follows the missing workspace's path when the daemon wraps the
+    /// stage's own error: `workspace missing: <path>; the engine said: <error>`.
+    pub const ENGINE_SAID: &'static str = "; the engine said: ";
+
+    /// Whether `error` is exactly Aether's cost-budget stop: its bare reason or
+    /// its whole budget message, with nothing after but Archon's notional label.
+    pub fn is_cost_budget_stop(error: &str) -> bool {
+        let stop = error
+            .strip_suffix(Self::NOTIONAL_COST_LABEL)
+            .unwrap_or(error);
+        match stop.strip_prefix(Self::BUDGET_STOP_MESSAGE) {
+            Some(wrapped) => cost_stop_tail(wrapped).is_some_and(is_budget_message_rest),
+            None => cost_stop_tail(stop) == Some(""),
+        }
+    }
+
     pub fn is_operator_blocker(&self) -> bool {
         matches!(self, Self::Failed { error, .. } if error.trim_start().starts_with(Self::BLOCKED_PREFIX))
     }
@@ -818,6 +904,175 @@ impl StageOutcome {
         let error = error.trim_start();
         error.starts_with(Self::BLOCKED_PREFIX) || error.starts_with(Self::ESCALATE_PREFIX)
     }
+
+    /// Whether a completed result states its own failure: a fail verdict
+    /// ([`Verdict::states_fail`]), or a summary opening as a `fail_task`
+    /// error that [ends its run](Self::ends_run) would.
+    pub fn states_failure(summary: &str, structured: Option<&serde_json::Value>) -> bool {
+        Self::ends_run(summary) || Verdict::states_fail(summary, structured)
+    }
+
+    /// The error of the run that a stage's blocker or escalation `error`
+    /// ends: trimmed, and clipped to what a run's error carries.
+    pub fn run_stop_error(error: &str) -> String {
+        let stop = clip(error.trim(), MAX_RUN_ERROR_CHARS);
+        assert!(stop.chars().count() <= MAX_RUN_ERROR_CHARS + CLIP_MARKER.chars().count());
+        assert!(!stop.starts_with(char::is_whitespace), "trimmed");
+        stop
+    }
+}
+
+/// Errors carried into `RunState::Failed` are capped; the full feedback
+/// stays in the stage runs.
+pub const MAX_RUN_ERROR_CHARS: usize = 8_000;
+
+/// What [`clip`] ends a text it cut with.
+pub const CLIP_MARKER: &str = "\n\n[… truncated by Archon]";
+
+/// At most `max` characters, cut on a char boundary with a visible marker.
+pub fn clip(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        None => text.to_owned(),
+        Some((cut, _)) => format!("{}{CLIP_MARKER}", &text[..cut]),
+    }
+}
+
+/// What follows Aether's stop reason `cost budget of ${limit}: {cost} spent`
+/// at the start of `text`; `None` when `text` does not open with one Aether
+/// can write: it stops an agent only once the spend has reached the limit.
+fn cost_stop_tail(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix(StageOutcome::COST_BUDGET_STOP)?;
+    let (limit, rest) = rest.split_once(": ")?;
+    let (cost, tail) = rest.split_once(" spent")?;
+    let spend = aether_spend(cost)?;
+    let budget = aether_limit(limit)?;
+    reaches(spend, limit, budget).then_some(tail)
+}
+
+/// Whether `rest` is all of Aether's budget message after the reason:
+/// `); {subtree}, {n} descendant(s) were live at the stop. Details are in the
+/// exhaustion.failed event.`
+fn is_budget_message_rest(rest: &str) -> bool {
+    let Some(rest) = rest.strip_prefix("); ") else {
+        return false;
+    };
+    let after_subtree = StageOutcome::BUDGET_STOP_SUBTREE
+        .iter()
+        .find_map(|subtree| rest.strip_prefix(subtree)?.strip_prefix(", "));
+    let Some(counted) = after_subtree else {
+        return false;
+    };
+    let digits = counted.bytes().take_while(u8::is_ascii_digit).count();
+    let (count, said) = counted.split_at(digits);
+    let ending =
+        " descendant(s) were live at the stop. Details are in the exhaustion.failed event.";
+    // Aether counts the descendants in a `u64`.
+    is_whole_number(count) && count.parse::<u64>().is_ok() && said == ending
+}
+
+/// The labels Aether gives a cost gap (`CostGap::label`), each in the
+/// parentheses after a spend that is a floor.
+const AETHER_COST_GAPS: [&str; 5] = [
+    "some unpriced",
+    "some cost unknown",
+    "usage not fully reported",
+    "interrupted run, cost unknown",
+    "multiple cost gaps",
+];
+
+/// The dollars of `cost` when it is a spend as Aether's `cost_line` says one
+/// in a stop: `$1.2345`, or a floor `≥ $1.2345 (some unpriced)`. A stop has
+/// reached a positive limit, so its spend is never `not reported`.
+fn aether_spend(cost: &str) -> Option<&str> {
+    let dollars = match cost.strip_prefix("≥ $") {
+        None => cost.strip_prefix('$')?,
+        Some(floor) => {
+            let (dollars, gap) = floor.split_once(' ')?;
+            let label = gap.strip_prefix('(')?.strip_suffix(')')?;
+            AETHER_COST_GAPS.contains(&label).then_some(dollars)?
+        }
+    };
+    is_aether_spend(dollars).then_some(dollars)
+}
+
+/// Digits as a formatter writes a whole number: no sign, no leading zero.
+fn is_whole_number(text: &str) -> bool {
+    let digits = !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    digits && (text == "0" || !text.starts_with('0'))
+}
+
+/// Whether `text` is dollars exactly as Aether writes a spend (`{:.4}`): a
+/// plain decimal of four places, with no sign or exponent, that Rust writes
+/// back unchanged for the amount it names.
+fn is_aether_spend(text: &str) -> bool {
+    let Some((whole, fraction)) = text.split_once('.') else {
+        return false;
+    };
+    let four = fraction.len() == 4 && fraction.bytes().all(|b| b.is_ascii_digit());
+    let written = |spent: f64| format!("{spent:.4}") == text;
+    is_whole_number(whole) && four && text.parse::<f64>().is_ok_and(written)
+}
+
+/// Aether's `format_usd` for a budget, which it keeps positive and finite:
+/// six decimals with the zeros trimmed, or the shortest exact form of an
+/// amount below that precision.
+fn aether_format_usd(amount: f64) -> String {
+    assert!(
+        amount.is_finite() && amount > 0.0,
+        "Aether refuses any other budget"
+    );
+    let fixed = format!("{amount:.6}");
+    let trimmed = fixed.trim_end_matches('0').trim_end_matches('.');
+    assert!(!trimmed.is_empty(), "formatting {amount} left nothing");
+    if trimmed == "0" {
+        return amount.to_string();
+    }
+    trimmed.to_owned()
+}
+
+/// The budget `text` names when it is one exactly as Aether writes it: a plain
+/// decimal that [`aether_format_usd`] writes back unchanged for that amount.
+fn aether_limit(text: &str) -> Option<f64> {
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, "0"));
+    let plain = is_whole_number(whole)
+        && !fraction.is_empty()
+        && fraction.bytes().all(|b| b.is_ascii_digit());
+    if !plain {
+        return None;
+    }
+    let budget = text.parse::<f64>().ok()?;
+    let positive = budget.is_finite() && budget > 0.0;
+    (positive && aether_format_usd(budget) == text).then_some(budget)
+}
+
+/// Whether a spend Aether writes as `spend` can have reached the `budget` it
+/// writes as `limit`. Aether stops at `spend >= limit`, so at four decimals
+/// the spend reads no less than the least budget written as `limit` does.
+fn reaches(spend: &str, limit: &str, budget: f64) -> bool {
+    assert!(is_aether_spend(spend), "{spend} is no spend Aether writes");
+    let least = least_budget_written(limit, budget);
+    let floor = format!("{least:.4}");
+    // Both are plain decimals of four places: the longer one is the larger.
+    (spend.len(), spend) >= (floor.len(), floor.as_str())
+}
+
+/// The least amount Aether writes as `limit`, as it writes `budget`. It never
+/// writes a larger amount as a smaller number, so those amounts are neighbours.
+fn least_budget_written(limit: &str, budget: f64) -> f64 {
+    assert_eq!(aether_format_usd(budget), limit, "the budget reads so");
+    // Positive floats order as their bits do, and zero is no budget.
+    let (mut below, mut least) = (0_u64, budget.to_bits());
+    while least - below > 1 {
+        let middle = below + (least - below) / 2;
+        if aether_format_usd(f64::from_bits(middle)) == limit {
+            least = middle;
+        } else {
+            below = middle;
+        }
+    }
+    let least = f64::from_bits(least);
+    assert!(least > 0.0 && least <= budget, "{least} is a budget");
+    least
 }
 
 impl StageState {
@@ -837,6 +1092,10 @@ pub struct StageRun {
     /// runs recorded before Archon kept it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<StageKind>,
+    /// Whether the stage's work is only the review its pipeline declares (a
+    /// review-only run's lead); `None` on stage runs recorded before Archon kept it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub only_reviews: Option<bool>,
     /// 1-based; grows with each retry/fix loop iteration.
     pub attempt: u32,
     /// 0-based slot within a fan-out stage; 0 for single-agent stages.
@@ -848,16 +1107,68 @@ pub struct StageRun {
     pub infrastructure_failure: bool,
     #[serde(default)]
     pub host_context: crate::config::HostContext,
+    /// How the attempt stands to its stage's one record repair turn; `None`
+    /// on a stage run from before Archon gave one, which is replayed as then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_repair: Option<RecordRepair>,
     /// Aether identifiers, present once Aether acknowledged creation.
     pub aether_agent: Option<AetherAgentId>,
     pub aether_task: Option<AetherTaskId>,
     pub state: StageState,
     pub verdict: Option<Verdict>,
+    /// Why `verdict` is `Unknown`; `None` for any other verdict, and on stage
+    /// runs recorded before Archon kept it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict_note: Option<VerdictNote>,
+    /// How the attempt's effort was chosen: `risk_class`, `effort_source` and
+    /// `effort_reasons`, each absent when the sizer never decided its plan key.
+    #[serde(flatten)]
+    pub sizing: AttemptSizing,
+    /// The one restatement of its verdict the attempt was asked for through
+    /// `submit_verdict`; `None` when it was never asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restatement: Option<Restatement>,
     pub summary: Option<String>,
     pub structured: Option<serde_json::Value>,
     pub cost_usd: f64,
     pub started_at: Timestamp,
     pub finished_at: Option<Timestamp>,
+}
+
+/// How an attempt's effort was chosen, copied from its item's stored plan as
+/// the attempt is reserved. Display and grouping only: nothing routes on it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AttemptSizing {
+    /// The class the attempt's plan key was sized with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_class: Option<RiskClass>,
+    /// Where the effort it ran at came from: the sizer, or the pin it advised.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort_source: Option<PlanSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort_reasons: Option<String>,
+}
+
+impl From<SlotSizing> for AttemptSizing {
+    fn from(sized: SlotSizing) -> Self {
+        Self {
+            risk_class: Some(sized.risk_class),
+            effort_source: Some(sized.effort_source),
+            effort_reasons: Some(sized.reason),
+        }
+    }
+}
+
+/// Whether a stage's one record repair turn is still to give when an attempt
+/// of it completes with a broken delivery record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordRepair {
+    /// A broken record of this attempt gets the repair turn.
+    Open,
+    /// The attempt is the repair turn or follows it: a broken record of it
+    /// fails the run, and its agent is not asked for the record again.
+    Spent,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -872,7 +1183,31 @@ pub struct ModelSegment {
 /// why it refused the review pass the result claims.
 pub const REVIEW_REFUSED_KEY: &str = "unverified";
 
+/// How a team slot refused before any agent, its role's worktree unprepared, starts.
+pub const ROLE_WORKTREE_FAILED: &str = "preparing the role's worktree failed:";
+
+/// The headline a gate fails a stage with when the review its pipeline
+/// declares is not on record, e.g. a skip the pipeline does not allow.
+pub const REVIEW_NOT_ON_RECORD: &str = "the review this pipeline declares is not on record";
+
+/// The headline a gate fails a completed stage with when its own result
+/// states a failure: a fail verdict, or a summary opening as a run stop.
+pub const STATED_FAILURE: &str = "its agent stated a failure";
+
 impl StageRun {
+    pub fn zero_cost_create_refusal(&self) -> bool {
+        self.cost_usd == 0.0
+            && self.aether_agent.is_none()
+            && matches!(&self.state, StageState::Failed { error }
+                if error.starts_with("cannot create agent:") || error.starts_with("create_agent kept failing:")
+                    || error.starts_with("create_agent failed on a full disk")
+                    || error.starts_with("workspace missing:")
+                    || error.starts_with("preparing the experiments directory failed:")
+                    || error.starts_with(ROLE_WORKTREE_FAILED)
+                    || error.strip_prefix("stage ").and_then(|s| s.strip_prefix(&self.stage_id))
+                        .is_some_and(|s| s.starts_with(" refused at spawn:")))
+    }
+
     /// Whether its agent failed on its engine's login: an infrastructure
     /// failure, never evidence about the model.
     pub fn failed_on_engine_login(&self) -> bool {
@@ -937,6 +1272,159 @@ pub fn retry_label(retry: u32) -> String {
         n => format!(" retry {n}"),
     }
 }
+
+/// The kv key of the review tally archond keeps for stage run `stage`: the
+/// failing verdicts the stage's reviewers returned.
+pub fn review_tally_key(stage: &StageRunId) -> String {
+    format!("review_rounds:{stage}")
+}
+
+/// The most of a field of `structured.review` that Archon reads: a verdict,
+/// a reviewer's model or a skip reason is one line of a summary.
+pub const MAX_REVIEW_FIELD_CHARS: usize = 400;
+
+/// `text` as one trimmed line of at most [`MAX_REVIEW_FIELD_CHARS`]
+/// characters: how the gate and the outcome store read a review's field.
+pub fn review_field(text: &str) -> String {
+    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line: String = joined.chars().take(MAX_REVIEW_FIELD_CHARS).collect();
+    assert!(!line.contains('\n'), "one line");
+    assert!(line.chars().count() <= MAX_REVIEW_FIELD_CHARS);
+    line
+}
+
+/// A stored review tally, read for the failing verdicts it holds: the fails
+/// with a blocking finding, and the rest as (agent, head). It decodes only as
+/// archond stores one, so a tally of any other shape is corrupt.
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "serde_json::Value")]
+pub struct TalliedFails {
+    reviewers: usize,
+}
+
+impl TryFrom<serde_json::Value> for TalliedFails {
+    type Error = String;
+
+    fn try_from(stored: serde_json::Value) -> Result<Self, Self::Error> {
+        if !stored.is_object() {
+            return Err(format!("{stored} is no tally: archond stores an object"));
+        }
+        let tally: StoredTally = serde_json::from_value(stored).map_err(|e| e.to_string())?;
+        Ok(Self {
+            reviewers: tally.fails.len() + tally.other_fails.len(),
+        })
+    }
+}
+
+impl TalliedFails {
+    /// How many failing verdicts the tally holds: archond keeps one a reviewer.
+    pub fn reviewers(&self) -> usize {
+        self.reviewers
+    }
+}
+
+/// Every field archond has kept in a tally, each in the type it wrote: `told`
+/// by 1.4 alone, the rest as they were added.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[expect(
+    dead_code,
+    reason = "a field nothing reads still holds the tally to its shape"
+)]
+struct StoredTally {
+    fails: Vec<StoredFail>,
+    #[serde(default)]
+    told: bool,
+    #[serde(default)]
+    read: Vec<TalliedAgent>,
+    #[serde(default)]
+    earlier: Option<Vec<TalliedAgent>>,
+    #[serde(default)]
+    other_fails: Vec<(TalliedAgent, ReadCommit)>,
+    #[serde(default)]
+    every_fail_kept: bool,
+    #[serde(default)]
+    reread: Vec<TalliedAgent>,
+}
+
+/// One failing verdict as archond keeps it, in either shape it has written:
+/// its reviewer, the head that reviewer read, and its blocking findings or,
+/// before they were described, their titles.
+#[derive(Debug, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+#[expect(dead_code, reason = "decoding each field is the check")]
+enum StoredFail {
+    Described {
+        agent: TalliedAgent,
+        head: ReadCommit,
+        findings: Vec<String>,
+    },
+    Titled {
+        agent: TalliedAgent,
+        head: ReadCommit,
+        titles: Vec<String>,
+    },
+}
+
+/// A reviewer as archond names one in a tally: the id Aether gave it, `agt_`
+/// and a ULID in the 26 characters Aether writes.
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "String")]
+#[expect(dead_code, reason = "decoding it is the check")]
+struct TalliedAgent(String);
+
+impl TryFrom<String> for TalliedAgent {
+    type Error = String;
+
+    fn try_from(agent: String) -> Result<Self, Self::Error> {
+        let ulid = agent.strip_prefix("agt_").unwrap_or_default();
+        let written = |id: ulid::Ulid| id.to_string() == ulid;
+        if ulid::Ulid::from_string(ulid).is_ok_and(written) {
+            return Ok(Self(agent));
+        }
+        Err(format!("{agent:?} is no agent id Aether writes"))
+    }
+}
+
+/// The commit a reviewer read, as archond takes one from a verdict: 7 to 64
+/// lowercase hexadecimal digits.
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "String")]
+#[expect(dead_code, reason = "decoding it is the check")]
+struct ReadCommit(String);
+
+impl TryFrom<String> for ReadCommit {
+    type Error = String;
+
+    fn try_from(head: String) -> Result<Self, Self::Error> {
+        let hex = head.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        if (7..=64).contains(&head.len()) && hex {
+            return Ok(Self(head));
+        }
+        Err(format!("{head:?} is no commit a reviewer read"))
+    }
+}
+
+/// How the error of a run that recovery could not resume opens: its stage
+/// rows may be gone, so the store stopped it and no stage record explains it.
+pub const UNRESUMABLE_RUN: &str = "cannot resume the run: ";
+
+/// The error archond fails a stage and its run with when it refused the
+/// stage's spawn before any agent existed.
+pub fn refused_at_spawn(stage_id: &str, error: &ArchonError) -> String {
+    format!("stage {stage_id} refused at spawn: {error}")
+}
+
+/// The stage id a run stopped by its item's dollar budget fails under; no
+/// stage of that id runs.
+pub const BUDGET_STAGE: &str = "budget";
+
+/// The stage id a failed delivery is reported under; no agent runs it.
+pub const SHIP_STEP: &str = "ship";
+
+/// The stage id a run that recovery could not resume fails under when no stage
+/// was live; no agent runs it.
+pub const RECOVERY_STAGE: &str = "recovery";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -1147,6 +1635,31 @@ mod tests {
         assert_eq!(slot_retries(slots), [0, 1, 0, 0, 2, 0]);
         assert_eq!(retry_label(0), "");
         assert_eq!(retry_label(2), " retry 2");
+    }
+
+    /// Only a finding's own `fault` names the environment: its wording, its
+    /// title and any other key do not send a run back to setup.
+    #[test]
+    fn only_a_finding_whose_fault_is_environment_names_the_environment() {
+        let naming = [
+            json!({"findings": [{"fault": "environment"}]}),
+            json!({"findings": [{"fault": "product"}, {"fault": " Environment "}]}),
+        ];
+        for structured in naming {
+            assert!(names_environment(&structured), "{structured}");
+        }
+        let silent = [
+            json!({"findings": [{"fault": "product"}]}),
+            json!({"findings": [{"title": "the environment is broken", "severity": "high"}]}),
+            json!({"findings": [{"fault": "environment or product"}, {"fault": true}]}),
+            json!({"fault": "environment", "findings": []}),
+            json!({"findings": "environment"}),
+            json!({"verdict": "fail"}),
+            json!(null),
+        ];
+        for structured in silent {
+            assert!(!names_environment(&structured), "{structured}");
+        }
     }
 
     #[test]
@@ -1991,8 +2504,327 @@ mod tests {
         assert_eq!(done.live_stage(), None);
     }
 
+    #[test]
+    fn a_cost_stop_is_read_only_as_aether_and_archon_write_it() {
+        let label = StageOutcome::NOTIONAL_COST_LABEL;
+        assert_eq!(
+            label,
+            " (notional cost: Claude Code reports list-price dollars whether or not its login bills them, and Aether showed no fresh subscription usage window with headroom for it, so the budget was enforced; under a subscription, raise or unset the item's budget)",
+            "the label 1.6.3 stored"
+        );
+        let reason = "cost budget of $2: $2.0100 spent";
+        let message = format!(
+            "Stopped by its budget ({reason}); its live subtree was cancelled with it, 3 \
+             descendant(s) were live at the stop. Details are in the exhaustion.failed event."
+        );
+        for stop in [reason.to_owned(), message.clone()] {
+            assert!(StageOutcome::is_cost_budget_stop(&stop), "{stop}");
+            let labelled = format!("{stop}{label}");
+            assert!(StageOutcome::is_cost_budget_stop(&labelled), "{labelled}");
+            for inexact in [
+                format!(" {stop}"),
+                format!("{stop} "),
+                format!("{stop} (notional cost: as I see it)"),
+                format!("{stop}{label} and more"),
+                format!("{stop}{label}{label}"),
+            ] {
+                assert!(!StageOutcome::is_cost_budget_stop(&inexact), "{inexact}");
+            }
+        }
+        for limit in ["1e3", "+5", "inf", "NaN", ".5", "5.", "", "5 or so"] {
+            let odd = format!("cost budget of ${limit}: $9.0000 spent");
+            assert!(!StageOutcome::is_cost_budget_stop(&odd), "{odd}");
+        }
+    }
+
+    /// Aether writes a limit with `format_usd` (six decimals, zeros trimmed, or
+    /// the shortest exact form below that) and a spend with `{:.4}`.
+    #[test]
+    fn a_cost_stop_holds_only_amounts_aether_can_write() {
+        let stop = |limit: &str, cost: &str| format!("cost budget of ${limit}: {cost} spent");
+        for limit in [
+            "5",
+            "120",
+            "0.3",
+            "2.5",
+            "0.000001",
+            "0.0000004",
+            "0.0000001",
+        ] {
+            let said = stop(limit, "$120.0000");
+            assert!(StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+        // Aether refuses a zero budget, and writes each of the others another way.
+        let unwritten = [
+            "0",
+            "0.0",
+            "5.00",
+            "2.50",
+            "05",
+            "00",
+            "5.0",
+            "1.0000001",
+            "0.0000010",
+            "0.0000009",
+            "0.0000006",
+            "0.00000010",
+        ];
+        for limit in unwritten {
+            let said = stop(limit, "$120.0000");
+            assert!(!StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+        for cost in [
+            "$5.0000",
+            "$12.3456",
+            "≥ $5.0000 (some unpriced)",
+            "≥ $9.0000 (some cost unknown)",
+            "≥ $9.0000 (usage not fully reported)",
+            "≥ $9.0000 (interrupted run, cost unknown)",
+            "≥ $9.0000 (multiple cost gaps)",
+        ] {
+            let said = stop("5", cost);
+            assert!(StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+        for cost in [
+            "$9",
+            "$5.01",
+            "$5.010",
+            "$5.01000",
+            "$05.0100",
+            "$.0100",
+            // No amount is written so: a number that large keeps no such decimals.
+            "$70368744177664.0001",
+            "$9007199254740993.0000",
+            "≥ $9 (some unpriced)",
+            "≥ $9.00 (some unpriced)",
+            "≥ $9.0000 (for the smoke tests)",
+            "≥ $9.0000(some unpriced)",
+            "≥$9.0000 (some unpriced)",
+            "≥ $9.0000",
+            "$9.0000 (some unpriced)",
+        ] {
+            let said = stop("5", cost);
+            assert!(!StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+    }
+
+    /// Aether stops an agent at `spend >= limit`, and its budget is positive,
+    /// so a stop never says less was spent, nor that no cost was reported.
+    #[test]
+    fn a_cost_stop_says_a_spend_that_reached_its_limit() {
+        let stop = |limit: &str, cost: &str| format!("cost budget of ${limit}: {cost} spent");
+        let reached = [
+            ("5", "$5.0000"),
+            ("5", "$10.0000"),
+            ("9.5", "$10.0000"),
+            // Four decimals round a spend down by up to half a unit.
+            ("5.00005", "$5.0000"),
+            ("4.99995", "$4.9999"),
+            ("0.03125", "$0.0312"),
+            ("0.0000001", "$0.0000"),
+            ("0.000001", "$0.0000"),
+            ("0.00005", "$0.0000"),
+            ("4294967296.00045", "$4294967296.0005"),
+            ("4294967296.00044", "$4294967296.0004"),
+        ];
+        for (limit, cost) in reached {
+            let said = stop(limit, cost);
+            assert!(StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+        let short = [
+            ("5", "$4.9999"),
+            ("5", "$0.0100"),
+            ("10", "$9.0000"),
+            ("5.00006", "$5.0000"),
+            ("0.000051", "$0.0000"),
+            // No amount written as that limit is written as so small a spend.
+            ("4294967296.00045", "$4294967296.0004"),
+            ("5", "≥ $1.0000 (some unpriced)"),
+            ("0.5", "not reported"),
+            ("0.5", "not reported (usage not fully reported)"),
+            ("0.5", "not reported (some unpriced)"),
+        ];
+        for (limit, cost) in short {
+            let said = stop(limit, cost);
+            assert!(!StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+    }
+
+    /// Every stop Aether's own formatters write for a spend at or over a
+    /// budget is read as one, and none for a spend clearly short of it.
+    #[test]
+    fn every_cost_stop_aether_formats_is_read() {
+        let limits = [
+            0.000_000_1,
+            0.000_000_4,
+            0.000_001,
+            0.031_25,
+            0.1 + 0.2,
+            0.5,
+            1.0,
+            1.005,
+            2.5,
+            4.999_95,
+            5.000_05,
+            9.999_999_49,
+            10.0,
+            99.999_96,
+            120.0,
+            1234.5678,
+            1_000_000.000_001,
+            4_294_967_296.000_45,
+            70_368_744_177_664.5,
+            9e15,
+        ];
+        let over = [0.0, 1e-7, 0.000_04, 0.000_05, 0.0001, 0.37, 1000.0];
+        for limit in limits {
+            for extra in over {
+                let cost: f64 = limit + extra;
+                assert!(cost >= limit, "Aether stops at the limit");
+                let said = format!(
+                    "cost budget of ${}: ${cost:.4} spent",
+                    aether_format_usd(limit)
+                );
+                assert!(StageOutcome::is_cost_budget_stop(&said), "{said}");
+                let floor = format!(
+                    "cost budget of ${}: ≥ ${cost:.4} (multiple cost gaps) spent",
+                    aether_format_usd(limit)
+                );
+                assert!(StageOutcome::is_cost_budget_stop(&floor), "{floor}");
+            }
+            // A float this large holds no thousandth: none is short by one.
+            if limit < 0.001 || limit - 0.001 == limit {
+                continue;
+            }
+            let short = format!(
+                "cost budget of ${}: ${:.4} spent",
+                aether_format_usd(limit),
+                limit - 0.001
+            );
+            assert!(!StageOutcome::is_cost_budget_stop(&short), "{short}");
+        }
+    }
+
+    #[test]
+    fn a_budget_message_counts_its_descendants_as_aether_does() {
+        let message = |count: &str| {
+            format!(
+                "Stopped by its budget (cost budget of $2: $2.0100 spent); no new subtree \
+                 cancellation was requested, {count} descendant(s) were live at the stop. \
+                 Details are in the exhaustion.failed event."
+            )
+        };
+        for count in ["0", "3", "18446744073709551615"] {
+            let said = message(count);
+            assert!(StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+        for count in [
+            "",
+            "03",
+            "007",
+            "-1",
+            "+3",
+            "3.0",
+            "18446744073709551616",
+            "many",
+        ] {
+            let said = message(count);
+            assert!(!StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+    }
+
+    #[test]
+    fn a_review_field_is_one_line_of_at_most_its_cap() {
+        assert_eq!(review_field("  PASS\n"), "PASS");
+        assert_eq!(review_field("not\n\tpassed  yet"), "not passed yet");
+        let long = format!("PASS{}x", "-".repeat(MAX_REVIEW_FIELD_CHARS - 4));
+        let read = review_field(&long);
+        assert_eq!(read.chars().count(), MAX_REVIEW_FIELD_CHARS);
+        assert_eq!(Verdict::of_phrase(&read), Some(Verdict::Pass));
+        assert_eq!(Verdict::of_phrase(&long), None, "the whole text names none");
+    }
+
+    #[test]
+    fn a_review_tally_decodes_only_in_the_shape_archond_stores() {
+        let read = |tally: &str| serde_json::from_str::<TalliedFails>(tally);
+        let fail =
+            r#"{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":["a bug"]}"#;
+        let stored = [
+            (r#"{"fails":[]}"#.to_owned(), 0),
+            (format!(r#"{{"fails":[{fail}]}}"#), 1),
+            (format!(r#"{{"fails":[{fail}],"told":true}}"#), 1),
+            (
+                r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","titles":[]}]}"#.to_owned(),
+                1,
+            ),
+            (
+                format!(
+                    r#"{{"fails":[{fail}],"read":["agt_01JB000000000000000000000R","agt_01JB000000000000000000000S"],"earlier":["agt_01JB000000000000000000000Q"],
+                    "other_fails":[["agt_01JB000000000000000000000S","{}"]],"every_fail_kept":true,"reread":[]}}"#,
+                    "f".repeat(64)
+                ),
+                2,
+            ),
+        ];
+        for (tally, reviewers) in stored {
+            let read = read(&tally).unwrap_or_else(|e| panic!("{tally}: {e}"));
+            assert_eq!(read.reviewers(), reviewers, "{tally}");
+        }
+        for unstorable in [
+            r#"{}"#,
+            r#"[[]]"#,
+            r#"{"fails":[],"told":"yes"}"#,
+            r#"{"fails":[],"told":null}"#,
+            r#"{"fails":[],"round":1}"#,
+            r#"{"fails":[{"agent":"agt_r","head":"abc1234","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_not an agent","head":"abc1234","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_01jb000000000000000000000r","head":"abc1234","findings":[]}]}"#,
+            r#"{"fails":[{"agent":"agt_81JB000000000000000000000R","head":"abc1234","findings":[]}]}"#,
+            r#"{"fails":[{"agent":"tsk_01JB000000000000000000000R","head":"abc1234","findings":[]}]}"#,
+            r#"{"fails":[],"other_fails":[["agt_not an agent","abc1234"]]}"#,
+            r#"{"fails":[],"read":["agt_r"]}"#,
+            r#"{"fails":[],"earlier":["agt_r"]}"#,
+            r#"{"fails":[],"reread":["agt_r"]}"#,
+            r#"{"fails":[null]}"#,
+            r#"{"fails":[{"agent":"not an agent"}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R"}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234"}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"not an agent","head":"abc1234","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":" ","head":"abc1234","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc123","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"ABC1234","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"the head","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":"a bug"}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":[7]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":[],"titles":[]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":[],"pass":true}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":null,"titles":[]}]}"#,
+            r#"{"fails":[["agt_01JB000000000000000000000R","abc1234",[]]]}"#,
+            r#"{"fails":[],"other_fails":[["not an agent","abc1234"]]}"#,
+            r#"{"fails":[],"other_fails":[["agt_01JB000000000000000000000R","abc1234","more"]]}"#,
+            r#"{"fails":[],"other_fails":[["agt_01JB000000000000000000000R","HEAD"]]}"#,
+            r#"{"fails":[],"other_fails":[["agt_01JB000000000000000000000R"]]}"#,
+            r#"{"fails":[],"read":"agt_01JB000000000000000000000R"}"#,
+            r#"{"fails":[],"every_fail_kept":"yes"}"#,
+        ] {
+            assert!(read(unstorable).is_err(), "{unstorable}");
+        }
+        let listed = format!("[[{fail}]]");
+        assert!(read(&listed).is_err(), "{listed}");
+        assert!(
+            read(&format!(
+                r#"{{"fails":[{{"agent":"agt_01JB000000000000000000000R","head":"{}","findings":[]}}]}}"#,
+                "a".repeat(65)
+            ))
+            .is_err()
+        );
+    }
+
     fn stage(state: StageState, structured: Option<serde_json::Value>) -> StageRun {
         StageRun {
+            only_reviews: None,
             id: StageRunId::new(),
             run: PipelineRunId::new(),
             stage_id: "ship".into(),
@@ -2001,6 +2833,7 @@ mod tests {
             fan_index: 0,
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: None,
             host_context: Default::default(),
             choice: ModelChoice {
                 model: "claude-code/opus".parse().unwrap(),
@@ -2011,6 +2844,9 @@ mod tests {
             aether_task: None,
             state,
             verdict: None,
+            verdict_note: None,
+            sizing: Default::default(),
+            restatement: None,
             summary: None,
             structured,
             cost_usd: 0.0,
@@ -2045,7 +2881,9 @@ mod tests {
         let review = |review: serde_json::Value| Some(serde_json::json!({"review": review}));
         let refused = review(serde_json::json!({"verdict": "pass", REVIEW_REFUSED_KEY: "why"}));
         assert!(stage(StageState::Completed, refused).review_refused());
-        let checked = review(serde_json::json!({"verdict": "pass", "reviewer_agents": ["agt_r"]}));
+        let checked = review(
+            serde_json::json!({"verdict": "pass", "reviewer_agents": ["agt_01JB000000000000000000000R"]}),
+        );
         assert!(!stage(StageState::Completed, checked).review_refused());
         let blank = review(serde_json::json!({REVIEW_REFUSED_KEY: "  "}));
         assert!(!stage(StageState::Completed, blank).review_refused());

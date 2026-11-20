@@ -2,6 +2,7 @@
 //! agent backend, and a temp git repository carrying a test pipeline.
 #![allow(dead_code)]
 
+pub mod catalog;
 pub mod delivery;
 pub mod fake_ops;
 pub mod team;
@@ -128,6 +129,13 @@ pub async fn connect_aether_for_delegations(h: &Harness) -> archon_aether::fake:
     let fake = archon_aether::fake::FakeAether::start(&h.dir.path().join("aetherd.sock"))
         .await
         .expect("fake aetherd binds");
+    let catalog = h.ctx.store.lock().await.model_catalog();
+    let catalog = if catalog.unavailable_reason().is_some() {
+        catalog::default_models()
+    } else {
+        catalog
+    };
+    catalog::answer(&fake, &catalog);
     fake.set_default(
         "get_agent",
         archon_aether::fake::Scripted::refuse("not_found", "agent already ended"),
@@ -145,6 +153,7 @@ pub async fn connect_aether_for_delegations(h: &Harness) -> archon_aether::fake:
 /// A daemon context over a temp directory with a registered repository.
 pub struct Harness {
     pub ctx: Arc<DaemonContext>,
+    pub catalog_server: archon_aether::fake::FakeAether,
     pub backend: Arc<FakeBackend>,
     pub repo: PathBuf,
     pub dir: tempfile::TempDir,
@@ -188,6 +197,7 @@ impl Harness {
     pub async fn new() -> Self {
         let mut config = Config::default();
         config.review.auto_repair = false;
+        config.learning.explore_rate = 0.0;
         Self::with_config(config).await
     }
 
@@ -249,6 +259,14 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         }
         let repo = init_repo(&root.join("repo"));
         let aether = Arc::new(AetherLink::new());
+        let catalog_server = archon_aether::fake::FakeAether::start(&root.join("catalog.sock"))
+            .await
+            .expect("fake catalog");
+        catalog::answer(&catalog_server, &catalog::default_models());
+        let client = archon_aether::AetherClient::connect(&catalog_server.endpoint())
+            .await
+            .expect("catalog connection");
+        aether.replace(Some(Arc::new(client))).unwrap();
         let backend = make(aether.clone());
         let free_bytes = Arc::new(AtomicU64::new(u64::MAX));
         let disk = fake_disk(&free_bytes);
@@ -257,6 +275,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         let harness = Self {
             ctx: Arc::new(ctx),
             backend: fake,
+            catalog_server,
             repo,
             dir,
             free_bytes,
@@ -347,24 +366,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         title: &str,
         model_plan: ModelPlan,
     ) -> Result<QueueItem, ArchonError> {
-        let request = EnqueueRequest {
-            intent: None,
-            onto: None,
-            stage_timeouts: Default::default(),
-            repo: Some(RepoRef(repo.into())),
-            pipeline: Some(pipeline.into()),
-            title: title.into(),
-            brief: format!("brief for {title}"),
-            priority: Default::default(),
-            depends_on: Vec::new(),
-            tags: Vec::new(),
-            model_plan: model_plan.into(),
-            model_reasons: None,
-            budget_usd: None,
-            idempotency_key: None,
-            autonomy: Default::default(),
-            origin: None,
-        };
+        let request = enqueue_request(repo, pipeline, title, model_plan);
         match self.cli(Request::Enqueue(request)).await? {
             Reply::Item(item) => Ok(item),
             other => panic!("enqueue replied {other:?}"),
@@ -457,8 +459,13 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
     /// Simulate a crash and restart: a fresh context (empty run table) over
     /// the same store and directories, sharing the backend.
     pub fn restart(&mut self) {
-        let root = self.dir.path().canonicalize().expect("canonical tempdir");
         let config = self.ctx.config.clone();
+        self.restart_with(config);
+    }
+
+    /// [`Self::restart`] with `config` edited, as an operator restarts on.
+    pub fn restart_with(&mut self, config: Config) {
+        let root = self.dir.path().canonicalize().expect("canonical tempdir");
         let backend = self.ctx.backend.clone();
         assert_eq!(
             Arc::strong_count(&self.ctx),
@@ -468,8 +475,35 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         let lavish = self.ctx.lavish.clone();
         let disk = fake_disk(&self.free_bytes);
         let link = Arc::new(AetherLink::new());
+        if let Ok(client) = self.ctx.aether.client() {
+            link.replace(Some(client)).unwrap();
+        }
         let ctx = context(&root, config, link, backend, lavish, disk, &self.ops);
         self.ctx = Arc::new(ctx);
+    }
+
+    /// The effort rule `request`'s stored spawn records as issued.
+    pub async fn issued_effort_contract(
+        &self,
+        request: &archon_core::ports::SpawnRequest,
+    ) -> serde_json::Value {
+        self.stored_spawn(request).await["effort_contract"].clone()
+    }
+
+    /// `request`'s spawn as Archon stored it.
+    pub async fn stored_spawn(
+        &self,
+        request: &archon_core::ports::SpawnRequest,
+    ) -> serde_json::Value {
+        let store = self.ctx.store.lock().await;
+        let key = format!("spawn_request:{}", request.idempotency_key);
+        let raw = store.kv_get(&key).expect("kv").expect("a stored spawn");
+        let spawn: serde_json::Value = serde_json::from_str(&raw).expect("json");
+        assert_eq!(
+            spawn["request"]["idempotency_key"],
+            request.idempotency_key.as_str()
+        );
+        spawn
     }
 
     /// Set what the fake disk has free.
@@ -775,6 +809,8 @@ struct FakeState {
     /// Stage agents a test holds in their turn after their task settled.
     in_turn: BTreeSet<AetherAgentId>,
     requests: Vec<SpawnRequest>,
+    /// What each checked create was checked on, in order.
+    checked: Vec<archon_core::ports::CheckedOn>,
     by_key: BTreeMap<String, SpawnedAgent>,
     failures: VecDeque<ArchonError>,
     cancel_failures: VecDeque<ArchonError>,
@@ -797,9 +833,18 @@ struct FakeState {
     lost_replies: u32,
     outcomes: BTreeMap<AetherTaskId, StageOutcome>,
     cancelled: Vec<AetherAgentId>,
+    /// The reason each cancel call gave, refused ones included, in order.
+    cancel_reasons: Vec<(AetherAgentId, String)>,
+    /// Every agent whose own quota block was read, in order.
+    quota_reads: Vec<AetherAgentId>,
+    /// Agents about or to which every request (pulse, quota block,
+    /// descendants, cancel, message) is answered only after this long.
+    slow_answers: BTreeMap<AetherAgentId, std::time::Duration>,
     /// Every accepted `update_agent`, in order.
     updates: Vec<(AetherAgentId, AgentUpdate)>,
     update_failures: VecDeque<ArchonError>,
+    /// The key of every accepted keyed update: Aether makes a repeat once.
+    update_keys: BTreeSet<String>,
     /// Every `interrupt` call, in order.
     interrupts: Vec<AetherAgentId>,
     next: u32,
@@ -807,6 +852,8 @@ struct FakeState {
     recorded: BTreeMap<String, SpawnRequest>,
     /// Every `create_run_node` call, including repeats.
     node_requests: Vec<RunNodeRequest>,
+    /// The earlier nodes each run-node lookup was told to leave out.
+    node_lookups: Vec<Vec<AetherAgentId>>,
     node_by_key: BTreeMap<String, CreatedNode>,
     node_recorded: BTreeMap<String, RunNodeRequest>,
     node_failures: VecDeque<ArchonError>,
@@ -828,6 +875,9 @@ struct FakeState {
     live_checks: Vec<AetherAgentId>,
     /// Agents whose `is_live` or `is_stopped` waits for its gate, once recorded.
     live_holds: BTreeMap<AetherAgentId, Arc<tokio::sync::Semaphore>>,
+    /// Agents whose next `send_message` waits for its gate, and the calls held.
+    message_holds: BTreeMap<AetherAgentId, Arc<tokio::sync::Semaphore>>,
+    messages_held: u32,
     next_node: u32,
     /// Messages delivered, once per key, in order: key, recipient, content.
     delivered: Vec<(String, AetherAgentId, String)>,
@@ -848,6 +898,8 @@ struct FakeState {
     stalls: Vec<(String, Arc<tokio::sync::Semaphore>)>,
     /// What `pulse` reports of an agent's tree; an empty pulse otherwise.
     pulses: BTreeMap<AetherAgentId, TreePulse>,
+    /// The pulse an agent reports once it was read this many more times.
+    pulses_after_reads: BTreeMap<AetherAgentId, (usize, TreePulse)>,
     /// What `open_tool_call` reports of an agent until its turn is interrupted.
     open_calls: BTreeMap<AetherAgentId, OpenToolCall>,
     /// Every `clear_inspection` that resumed a tree: its lead and the note.
@@ -859,6 +911,9 @@ struct FakeState {
     update_hook: Option<Box<dyn FnOnce() + Send>>,
     /// Runs once, as the next `interrupt` is made.
     interrupt_hook: Option<Box<dyn FnOnce() + Send>>,
+    /// Runs once, as the next `network_default` is read.
+    host_context_hook: Option<(usize, Box<dyn FnOnce() + Send>)>,
+    network_hook: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl FakeState {
@@ -988,13 +1043,39 @@ impl FakeBackend {
         self.state().requests.clone()
     }
 
+    /// What each checked create was checked on (`AgentBackend::spawn_on`).
+    pub fn checked(&self) -> Vec<archon_core::ports::CheckedOn> {
+        self.state().checked.clone()
+    }
+
     /// Distinct agents created (one per idempotency key).
     pub fn created(&self) -> usize {
         self.state().by_key.len()
     }
 
+    /// The agent created under idempotency key `key`, whether or not its
+    /// reply reached Archon.
+    pub fn created_for(&self, key: &str) -> Option<AetherAgentId> {
+        let state = self.state();
+        state.by_key.get(key).map(|spawned| spawned.agent.clone())
+    }
+
     pub fn cancelled(&self) -> Vec<AetherAgentId> {
         self.state().cancelled.clone()
+    }
+
+    pub fn cancel_reasons(&self) -> Vec<(AetherAgentId, String)> {
+        self.state().cancel_reasons.clone()
+    }
+
+    /// Every request about or to `agent` (its pulse, quota block or
+    /// descendants, its cancel, a message to it) answers only after `delay`.
+    pub fn slow_answers(&self, agent: &AetherAgentId, delay: std::time::Duration) {
+        self.state().slow_answers.insert(agent.clone(), delay);
+    }
+
+    pub fn quota_reads(&self) -> Vec<AetherAgentId> {
+        self.state().quota_reads.clone()
     }
 
     /// Every agent `archive` cleared from the view, in order, repeats included.
@@ -1099,6 +1180,11 @@ impl FakeBackend {
         self.state().node_requests.clone()
     }
 
+    /// The earlier nodes each run-node lookup left out, oldest lookup first.
+    pub fn node_lookups(&self) -> Vec<Vec<AetherAgentId>> {
+        self.state().node_lookups.clone()
+    }
+
     /// Distinct run nodes created (one per idempotency key).
     pub fn nodes_created(&self) -> usize {
         self.state().node_by_key.len()
@@ -1174,6 +1260,17 @@ impl FakeBackend {
         self.state().update_hook = Some(Box::new(hook));
     }
 
+    /// Run `hook` once, as Aether's network default is next read.
+    pub fn on_next_network_default(&self, hook: impl FnOnce() + Send + 'static) {
+        self.state().network_hook = Some(Box::new(hook));
+    }
+
+    /// Run `hook` once, as the host context is resolved after `skip` more
+    /// lookups: the last lookup comes after the run node, before the create.
+    pub fn on_host_context(&self, skip: usize, hook: impl FnOnce() + Send + 'static) {
+        self.state().host_context_hook = Some((skip, Box::new(hook)));
+    }
+
     /// Run `hook` once, as the next `interrupt` is made.
     pub fn on_next_interrupt(&self, hook: impl FnOnce() + Send + 'static) {
         self.state().interrupt_hook = Some(Box::new(hook));
@@ -1182,6 +1279,16 @@ impl FakeBackend {
     /// `pulse` reports `pulse` for `agent`'s tree from now on.
     pub fn set_pulse(&self, agent: &AetherAgentId, pulse: TreePulse) {
         self.state().pulses.insert(agent.clone(), pulse);
+    }
+
+    /// `agent` reports `pulse` once its current pulse was read `reads` more
+    /// times, as when Aether changes its state between two reads.
+    pub fn set_pulse_after_reads(&self, agent: &AetherAgentId, reads: usize, pulse: TreePulse) {
+        assert!(reads >= 1, "the current pulse is read at least once");
+        let mut state = self.state();
+        state
+            .pulses_after_reads
+            .insert(agent.clone(), (reads, pulse));
     }
 
     /// `network_default` reports `network` from now on: Aether's
@@ -1208,6 +1315,20 @@ impl FakeBackend {
     /// The next `send_message` calls fail with these errors, in order.
     pub fn fail_next_message(&self, error: ArchonError) {
         self.state().message_failures.push_back(error);
+    }
+
+    /// Hold the next `send_message` to `agent` until the returned gate gets a
+    /// permit, later ones not; [`Self::messages_held`] counts the calls held.
+    pub fn hold_next_message(&self, agent: &AetherAgentId) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let earlier = (self.state().message_holds).insert(agent.clone(), gate.clone());
+        assert!(earlier.is_none(), "one hold per agent");
+        gate
+    }
+
+    /// How many `send_message` calls have reached a hold's gate.
+    pub fn messages_held(&self) -> u32 {
+        self.state().messages_held
     }
 
     /// Messages delivered, once per idempotency key, oldest first.
@@ -1252,7 +1373,8 @@ impl FakeBackend {
         let known = state.knows(parent) || state.delegated.iter().any(|d| d.agent == *parent);
         assert!(known, "only a created agent delegates: {parent}");
         let n = state.delegated.len() + 1;
-        let agent = AetherAgentId::parse(&format!("agt_child{n:04}")).expect("agent id");
+        // As Aether names an agent: `agt_` and the 26 characters of a ULID.
+        let agent = AetherAgentId::parse(&format!("agt_{n:026}")).expect("agent id");
         let task = AetherTaskId::parse(&format!("tsk_child{n:04}")).expect("task id");
         state.delegated.push(Descendant {
             agent: agent.clone(),
@@ -1374,17 +1496,83 @@ impl FakeBackend {
     }
 }
 
+/// A plain enqueue of `title` into `pipeline` of the repository `repo`.
+pub fn enqueue_request(
+    repo: &str,
+    pipeline: &str,
+    title: &str,
+    model_plan: ModelPlan,
+) -> EnqueueRequest {
+    EnqueueRequest {
+        intent: None,
+        onto: None,
+        stage_timeouts: Default::default(),
+        repo: Some(RepoRef(repo.into())),
+        pipeline: Some(pipeline.into()),
+        title: title.into(),
+        brief: format!("brief for {title}"),
+        priority: Default::default(),
+        depends_on: Vec::new(),
+        tags: Vec::new(),
+        model_plan: model_plan.into(),
+        model_reasons: None,
+        budget_usd: None,
+        idempotency_key: None,
+        autonomy: Default::default(),
+        origin: None,
+    }
+}
+
 #[async_trait]
 impl AgentBackend for FakeBackend {
+    async fn find_spawn(
+        &self,
+        request: &SpawnRequest,
+    ) -> Result<Option<SpawnedAgent>, ArchonError> {
+        Ok(self.state().by_key.get(&request.idempotency_key).cloned())
+    }
+    async fn find_run_node(
+        &self,
+        request: &RunNodeRequest,
+        earlier: &[AetherAgentId],
+    ) -> Result<Option<CreatedNode>, ArchonError> {
+        let mut state = self.state();
+        state.node_lookups.push(earlier.to_vec());
+        Ok(state.node_by_key.get(&request.idempotency_key).cloned())
+    }
+
     async fn host_context(
         &self,
         requested: archon_core::config::HostContext,
     ) -> Result<archon_core::config::HostContext, ArchonError> {
+        let hook = {
+            let mut state = self.state();
+            match state.host_context_hook.take() {
+                Some((0, hook)) => Some(hook),
+                Some((skip, hook)) => {
+                    state.host_context_hook = Some((skip - 1, hook));
+                    None
+                }
+                None => None,
+            }
+        };
+        if let Some(hook) = hook {
+            hook();
+        }
         Ok(if self.state().host_context_supported {
             requested
         } else {
             archon_core::config::HostContext::Full
         })
+    }
+
+    async fn spawn_on(
+        &self,
+        request: SpawnRequest,
+        checked: archon_core::ports::CheckedOn,
+    ) -> Result<SpawnedAgent, ArchonError> {
+        self.state().checked.push(checked);
+        self.spawn(request).await
     }
 
     async fn spawn(&self, request: SpawnRequest) -> Result<SpawnedAgent, ArchonError> {
@@ -1476,6 +1664,10 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn network_default(&self) -> Result<NetworkPolicy, ArchonError> {
+        let hook = self.state().network_hook.take();
+        if let Some(hook) = hook {
+            hook();
+        }
         Ok(self.state().network_default())
     }
 
@@ -1543,8 +1735,15 @@ impl AgentBackend for FakeBackend {
         Ok(state.logged_out.get(provider).cloned())
     }
 
-    async fn cancel(&self, agent: &AetherAgentId, _reason: &str) -> Result<(), ArchonError> {
+    async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError> {
+        let delay = self.state().slow_answers.get(agent).copied();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
         let mut state = self.state();
+        state
+            .cancel_reasons
+            .push((agent.clone(), reason.to_owned()));
         if let Some(error) = state.cancel_failures.pop_front() {
             return Err(error);
         }
@@ -1609,7 +1808,12 @@ impl AgentBackend for FakeBackend {
         key: &str,
     ) -> Result<(), ArchonError> {
         assert!(!key.is_empty(), "a keyed update has a key");
-        self.update_agent(agent, update).await
+        if self.state().update_keys.contains(key) {
+            return Ok(());
+        }
+        self.update_agent(agent, update).await?;
+        self.state().update_keys.insert(key.to_owned());
+        Ok(())
     }
 
     /// Ends a held turn, as Aether's interrupt does.
@@ -1631,6 +1835,11 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn descendants(&self, agent: &AetherAgentId) -> Result<Vec<Descendant>, ArchonError> {
+        let delay = self.state().slow_answers.get(agent).copied();
+        if let Some(delay) = delay {
+            // Two requests, as Aether answers them: the agent, then its run's.
+            tokio::time::sleep(delay * 2).await;
+        }
         let hold = {
             let mut state = self.state();
             state.descendant_checks.push(agent.clone());
@@ -1668,14 +1877,35 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn pulse(&self, agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
+        let delay = self.state().slow_answers.get(agent).copied();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
         let mut state = self.state();
         if let Some(error) = state.pulse_failures.pop_front() {
             return Err(error);
         }
-        if !state.knows(agent) {
+        let delegated = state.delegated.iter().any(|d| d.agent == *agent);
+        if !state.knows(agent) && !delegated {
             return Ok(None);
         }
-        Ok(Some(state.pulses.get(agent).copied().unwrap_or_default()))
+        let read = state.pulses.get(agent).copied().unwrap_or_default();
+        if let Some((reads, next)) = state.pulses_after_reads.remove(agent) {
+            match reads {
+                0 | 1 => drop(state.pulses.insert(agent.clone(), next)),
+                more => drop(
+                    state
+                        .pulses_after_reads
+                        .insert(agent.clone(), (more - 1, next)),
+                ),
+            }
+        }
+        Ok(Some(read))
+    }
+
+    async fn quota_blocked(&self, agent: &AetherAgentId) -> Result<Option<bool>, ArchonError> {
+        self.state().quota_reads.push(agent.clone());
+        Ok(self.pulse(agent).await?.map(|pulse| pulse.quota_blocked))
     }
 
     async fn open_tool_call(
@@ -1755,6 +1985,19 @@ impl AgentBackend for FakeBackend {
     ) -> Result<(), ArchonError> {
         // A real call leaves the task, so deliveries to one stage interleave.
         tokio::task::yield_now().await;
+        let hold = {
+            let mut state = self.state();
+            let hold = state.message_holds.remove(to);
+            state.messages_held += u32::from(hold.is_some());
+            hold
+        };
+        if let Some(gate) = hold {
+            let _open = gate.acquire().await.expect("the hold's gate stays open");
+        }
+        let delay = self.state().slow_answers.get(to).copied();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
         let mut state = self.state();
         state.message_calls.push(idempotency_key.to_owned());
         if let Some(error) = state.message_failures.pop_front() {
@@ -1869,7 +2112,7 @@ pub async fn legacy_gate_item(h: &Harness, mut item: QueueItem) -> QueueItem {
             .unwrap()
             .is_empty()
     );
-    item.model_plan.0.remove("intent-acceptance");
+    item.model_plan.remove_key("intent-acceptance");
     h.ctx.store.lock().await.update_item(&item).unwrap();
     item
 }

@@ -113,7 +113,7 @@ impl Machine {
             path: vec![tools],
             env: Vec::new(),
         };
-        machine.aether_installer("[ \"$AETHER_VERSION\" = v1.4.1 ]");
+        machine.aether_installer("[ \"$AETHER_VERSION\" = v1.4.2 ]");
         machine
     }
 
@@ -547,7 +547,7 @@ fn a_skipped_aether_is_not_installed_and_the_command_is_printed() {
         "{text}"
     );
     let command = format!(
-        "curl -fsSL {} | AETHER_VERSION=\"v1.4.1\" AETHER_INSTALL_DIR=\"{}\" sh",
+        "curl -fsSL {} | AETHER_VERSION=\"v1.4.2\" AETHER_INSTALL_DIR=\"{}\" sh",
         machine.aether_installer_url(),
         machine.bin().display()
     );
@@ -612,7 +612,7 @@ fn a_failed_aether_step_keeps_archon_and_prints_the_retry_command() {
             "{errors}"
         );
         let command = format!(
-            "curl -fsSL {} | AETHER_VERSION=\"v1.4.1\" AETHER_INSTALL_DIR=\"{}\" sh",
+            "curl -fsSL {} | AETHER_VERSION=\"v1.4.2\" AETHER_INSTALL_DIR=\"{}\" sh",
             machine.aether_installer_url(),
             machine.bin().display()
         );

@@ -10,7 +10,6 @@ use std::time::Duration;
 
 use archon_core::autonomy::AutonomyPatch;
 use archon_core::id::QueueItemId;
-use archon_core::model::ModelPlan;
 use archon_core::protocol::{
     Clearable, EnqueueRequest, Reply, RepoPatch, RepoRef, Request, TiersPatch,
 };
@@ -88,7 +87,7 @@ async fn started(h: &Harness, pipeline: &str) -> (QueueItem, PipelineRun) {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

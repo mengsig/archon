@@ -160,6 +160,174 @@ async fn a_refused_deadline_wake_times_out_without_a_fresh_agent() {
     assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
 }
 
+/// A deadline wake is a stage attempt on the stage's model: a pin the catalog
+/// retired wakes nothing and times out, and the fleet event is handled.
+#[tokio::test]
+async fn a_retired_pin_is_not_woken_at_its_deadline_and_holds_no_fleet_event() {
+    const HAIKU: &str = "claude-code/claude-haiku-5-5";
+    let h = Harness::new().await;
+    let mut plan = common::plan();
+    let pin = common::choice(HAIKU, archon_core::model::Effort::Medium);
+    plan.0.insert("implement".into(), vec![pin]);
+    let item = h
+        .enqueue_with("retired at its deadline", plan)
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let first = h.running().await.remove(0);
+    assert_eq!(first.choice.model.to_string(), HAIKU);
+    let listed = common::catalog::default_models();
+    let listed = listed.models().iter().map(|entry| entry.model.clone());
+    let kept = listed.filter(|model| model.to_string() != HAIKU);
+    common::catalog::answer(&h.catalog_server, &common::catalog::untiered(kept));
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog changed".into());
+    drop(store);
+    stop_at_deadline(&h, &first, true).await;
+
+    assert!(h.backend.woken().is_empty(), "a retired pin is not woken");
+    assert_eq!(h.backend.requests().len(), 1, "no fresh agent");
+    let stages = h.stages(&item.id).await;
+    assert!(
+        stages.iter().all(|s| s.state == StageState::TimedOut),
+        "{stages:?}"
+    );
+    assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
+}
+
+/// A deadline wake through a catalog outage waits for the catalog, then wakes
+/// the same agent with its full extension: the outage never times it out.
+#[tokio::test]
+async fn a_deadline_wake_through_a_catalog_outage_wakes_once_the_catalog_answers() {
+    let h = Harness::new().await;
+    let item = h.enqueue("ran out of time in an outage").await;
+    h.dispatch().await;
+    let first = h.running().await.remove(0);
+    let agent = first.aether_agent.clone().expect("an agent");
+    crate::refresh::catalog_outage(&h).await;
+    stop_at_deadline(&h, &first, true).await;
+
+    assert!(h.backend.woken().is_empty(), "no wake without a catalog");
+    assert!(h.state(&item.id).await.is_active(), "the item waits");
+    let waiting = h.live_stages().await.remove(0);
+    assert_eq!(waiting.state, StageState::Spawning, "a reserved wake");
+    let told_before = archon_core::now() - chrono::Duration::minutes(5);
+    common::set_deadline(&h, &waiting, told_before).await;
+
+    crate::refresh::catalog_back(&h);
+    h.dispatch().await;
+    assert_eq!(h.backend.woken(), [agent], "its own agent is woken");
+    assert_eq!(h.backend.requests().len(), 1, "no fresh agent");
+    let woken = h.ctx.store.lock().await.stage_run(&waiting.id).unwrap();
+    assert_eq!(woken.state, StageState::Running);
+    let until = common::stored_deadline(&h, &woken)
+        .await
+        .expect("a deadline");
+    let left = until - archon_core::now();
+    assert!(
+        left > chrono::Duration::minutes(9),
+        "a full extension: {left}"
+    );
+    let told = h.backend.resumed_with(&woken);
+    let at = until.format("%Y-%m-%d %H:%M UTC").to_string();
+    assert!(
+        told.contains(&at),
+        "told the restarted deadline {at}: {told}"
+    );
+}
+
+/// The first stage's agent, running and steered alone onto `model`; its plan
+/// keeps `common::MODEL`.
+async fn steered_alone(h: &Harness, model: &str) -> StageRun {
+    use archon_core::model::Effort;
+    h.enqueue("runs beside its plan's model").await;
+    h.dispatch().await;
+    let first = h.running().await.remove(0);
+    assert_eq!(first.choice.model.to_string(), common::MODEL);
+    let store = h.ctx.store.lock().await;
+    let steered = common::choice(model, Effort::Medium);
+    let at = archon_core::now();
+    store
+        .record_model_segment(&first.id, "steered", &steered, at, false)
+        .unwrap();
+    let first = store.stage_run(&first.id).unwrap();
+    assert_eq!(first.current_choice().model.to_string(), model);
+    first
+}
+
+/// A deadline wake records the model its stopped agent runs, never the plan's.
+#[tokio::test]
+async fn a_deadline_wake_records_the_stopped_agent_s_model() {
+    let h = Harness::new().await;
+    let first = steered_alone(&h, common::REVIEW_MODEL).await;
+    stop_at_deadline(&h, &first, true).await;
+
+    let agent = first.aether_agent.clone().expect("an agent");
+    assert_eq!(h.backend.woken(), [agent], "its agent is woken");
+    let woken = h.running().await.remove(0);
+    assert_ne!(woken.id, first.id);
+    let recorded = woken.choice.model.to_string();
+    assert_eq!(
+        recorded,
+        common::REVIEW_MODEL,
+        "recorded on the agent's model"
+    );
+}
+
+/// A deadline wake checks the model its stopped agent runs: one the catalog
+/// does not list is not woken, though the plan's model is listed.
+#[tokio::test]
+async fn a_deadline_wake_of_an_agent_on_an_unlisted_model_times_out() {
+    let h = Harness::new().await;
+    let first = steered_alone(&h, "codex/unlisted").await;
+    stop_at_deadline(&h, &first, true).await;
+
+    assert!(
+        h.backend.woken().is_empty(),
+        "an unlisted model is not woken"
+    );
+    let stages = h.ctx.store.lock().await.stage_runs(&first.run).unwrap();
+    assert!(
+        stages.iter().all(|s| s.state == StageState::TimedOut),
+        "{stages:?}"
+    );
+}
+
+/// A wake resumes its agent and sends no delegation policy: a named reviewer
+/// the catalog no longer lists never stops the wake of a listed lead.
+#[tokio::test]
+async fn a_deadline_wake_goes_on_though_its_named_reviewer_left_the_catalog() {
+    use archon_core::model::{Effort, ModelPlan};
+    let h = Harness::new().await;
+    common::delivery::add_origin(&h);
+    let lead_choice = common::choice(common::MODEL, Effort::Medium);
+    let reviewer = common::choice(common::REVIEW_MODEL, Effort::Medium);
+    let plan = ModelPlan(
+        [
+            ("build".to_owned(), vec![lead_choice]),
+            ("build.review".to_owned(), vec![reviewer.clone()]),
+        ]
+        .into(),
+    );
+    h.enqueue_in("adaptive", "a reviewed change", plan)
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let lead = h.running().await.remove(0);
+    let sent = h.backend.requests()[0].clone();
+    let bounds = sent.delegation_policy.expect("a delegating lead");
+    assert!(bounds.exempt_models.contains(&reviewer.model), "{bounds:?}");
+    let catalog = common::catalog::default_models();
+    let listed = catalog.models().iter().map(|m| m.model.clone());
+    let without_reviewer: Vec<_> = listed.filter(|model| *model != reviewer.model).collect();
+    h.set_catalog(common::catalog::untiered(without_reviewer))
+        .await;
+
+    stop_at_deadline(&h, &lead, true).await;
+    let agent = lead.aether_agent.clone().expect("an agent");
+    assert_eq!(h.backend.woken(), [agent], "the listed lead is woken");
+}
+
 async fn sweep(h: &Harness) {
     dispatcher::dispatch_once(&h.ctx)
         .await
@@ -227,4 +395,246 @@ async fn an_unanswered_deadline_warning_is_sent_again() {
         .iter()
         .filter(|(_, t)| t.contains("stage deadline"));
     assert_eq!(warned.count(), 1);
+}
+
+/// Aether's `agent.created` for `child`, delegated by `stage`'s lead.
+fn child_created(stage: &StageRun, child: &archon_core::aether_ids::AetherAgentId) -> AetherEvent {
+    AetherEvent {
+        seq: 2,
+        at: archon_core::now(),
+        agent: Some(child.clone()),
+        task: None,
+        parent: stage.aether_agent.clone(),
+        run: None,
+        kind: EventKind::AgentCreated {
+            model: common::REVIEW_MODEL.parse().expect("model"),
+            name: "reviewer".into(),
+        },
+    }
+}
+
+/// Run one item to its first stage and extend its deadline, as a steer does:
+/// the stage, the deadline it had and the one it has now.
+async fn extended(h: &Harness) -> (StageRun, Timestamp, Timestamp) {
+    h.enqueue("needs more time").await;
+    h.dispatch().await;
+    let stage = h.running().await.remove(0);
+    let old = common::stored_deadline(h, &stage)
+        .await
+        .expect("a deadline");
+    let later = old + chrono::Duration::hours(2);
+    common::set_deadline(h, &stage, later).await;
+    (stage, old, later)
+}
+
+#[tokio::test]
+async fn a_child_created_after_an_extension_gets_the_new_deadline() {
+    let h = Harness::new().await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let (stage, old, later) = extended(&h).await;
+    let lead = stage.aether_agent.clone().expect("a lead");
+    let child = h.backend.delegate(&lead, common::REVIEW_MODEL);
+    // Aether copied the lead's row as it stood before the move landed.
+    h.backend.limit_delegated(&child, old);
+    pump::handle_fleet_event(&h.ctx, &child_created(&stage, &child))
+        .await
+        .expect("handled");
+    let raised: Vec<_> = h
+        .backend
+        .updates()
+        .into_iter()
+        .filter(|(agent, _)| *agent == child)
+        .map(|(_, update)| update.deadline)
+        .collect();
+    assert_eq!(raised, [Some(later)], "the child gets the stage's deadline");
+}
+
+/// A child that delegated before its creation was handled passed the old
+/// deadline on; handling the child raises the grandchild too.
+#[tokio::test]
+async fn a_grandchild_delegated_before_its_parent_was_handled_gets_the_new_deadline() {
+    let h = Harness::new().await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let (stage, old, later) = extended(&h).await;
+    let lead = stage.aether_agent.clone().expect("a lead");
+    let child = h.backend.delegate(&lead, common::REVIEW_MODEL);
+    h.backend.limit_delegated(&child, old);
+    let grandchild = h.backend.delegate(&child, common::REVIEW_MODEL);
+    h.backend.limit_delegated(&grandchild, old);
+    pump::handle_fleet_event(&h.ctx, &child_created(&stage, &child))
+        .await
+        .expect("handled");
+    let updates = h.backend.updates();
+    for agent in [&child, &grandchild] {
+        let raised: Vec<_> = (updates.iter())
+            .filter(|(to, _)| to == agent)
+            .map(|(_, update)| update.deadline)
+            .collect();
+        assert_eq!(raised, [Some(later)], "{agent} gets the stage's deadline");
+    }
+}
+
+#[tokio::test]
+async fn a_child_created_with_the_stage_deadline_or_none_is_left_alone() {
+    let h = Harness::new().await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let (stage, _, later) = extended(&h).await;
+    let lead = stage.aether_agent.clone().expect("a lead");
+    let current = h.backend.delegate(&lead, common::REVIEW_MODEL);
+    h.backend.limit_delegated(&current, later);
+    let unlimited = h.backend.delegate(&lead, common::REVIEW_MODEL);
+    for child in [&current, &unlimited] {
+        pump::handle_fleet_event(&h.ctx, &child_created(&stage, child))
+            .await
+            .expect("handled");
+    }
+    let touched = h
+        .backend
+        .updates()
+        .into_iter()
+        .filter(|(agent, _)| *agent == current || *agent == unlimited);
+    assert_eq!(touched.count(), 0, "no child's deadline is changed");
+}
+
+/// Aether's `agent.created` for `agent`, delegated by `parent`.
+fn delegated_by(
+    parent: &archon_core::aether_ids::AetherAgentId,
+    agent: &archon_core::aether_ids::AetherAgentId,
+) -> AetherEvent {
+    AetherEvent {
+        seq: 3,
+        at: archon_core::now(),
+        agent: Some(agent.clone()),
+        task: None,
+        parent: Some(parent.clone()),
+        run: None,
+        kind: EventKind::AgentCreated {
+            model: common::REVIEW_MODEL.parse().expect("model"),
+            name: "worker".into(),
+        },
+    }
+}
+
+/// The deadlines sent to `agent`, in order.
+fn deadlines_sent(h: &Harness, agent: &archon_core::aether_ids::AetherAgentId) -> Vec<Timestamp> {
+    let updates = h.backend.updates().into_iter();
+    updates
+        .filter(|(to, _)| to == agent)
+        .filter_map(|(_, update)| update.deadline)
+        .collect()
+}
+
+/// A grandchild created from its parent's row before that parent was raised
+/// is raised on its own event, whose parent is no stage lead.
+#[tokio::test]
+async fn a_nested_child_created_after_an_extension_gets_the_new_deadline() {
+    let h = Harness::new().await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let (stage, old, later) = extended(&h).await;
+    let lead = stage.aether_agent.clone().expect("a lead");
+    let child = h.backend.delegate(&lead, common::REVIEW_MODEL);
+    h.backend.limit_delegated(&child, old);
+    pump::handle_fleet_event(&h.ctx, &child_created(&stage, &child))
+        .await
+        .expect("handled");
+    assert_eq!(deadlines_sent(&h, &child), [later]);
+    // Delegated from the child's row as it stood before its raise landed.
+    let grandchild = h.backend.delegate(&child, common::REVIEW_MODEL);
+    h.backend.limit_delegated(&grandchild, old);
+    pump::handle_fleet_event(&h.ctx, &delegated_by(&child, &grandchild))
+        .await
+        .expect("handled");
+    assert_eq!(
+        deadlines_sent(&h, &grandchild),
+        [later],
+        "the nested child is raised"
+    );
+}
+
+/// A steer extending the deadline while a late child is raised is never
+/// lowered by that raise: the read and the raise are one under the lock.
+#[tokio::test]
+async fn a_late_child_raise_never_lowers_a_concurrent_extension() {
+    use archon_core::protocol::{Reply, Request};
+    use std::time::Duration;
+    let h = Harness::new().await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let (stage, old, _) = extended(&h).await;
+    let lead = stage.aether_agent.clone().expect("a lead");
+    let child = h.backend.delegate(&lead, common::REVIEW_MODEL);
+    h.backend.limit_delegated(&child, old);
+    let checks_before = h.backend.descendant_checks().len();
+    let gate = h.backend.hold_descendants_after(0);
+    let (ctx, event) = (h.ctx.clone(), child_created(&stage, &child));
+    let lifting = tokio::spawn(async move { pump::handle_fleet_event(&ctx, &event).await });
+    let held = async {
+        while h.backend.descendant_checks().len() <= checks_before {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), held)
+        .await
+        .expect("the raise reads the lead's tree");
+    let item = h.ctx.store.lock().await.run(&stage.run).unwrap().item;
+    let request = Request::SteerItem {
+        item,
+        steer: archon_core::steer::Steer {
+            extend_minutes: Some(45),
+            ..Default::default()
+        },
+    };
+    let release = async {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        gate.add_permits(1);
+    };
+    let (steered, ()) = tokio::join!(h.cli(request), release);
+    assert!(matches!(steered, Ok(Reply::Item(_))), "{steered:?}");
+    tokio::time::timeout(Duration::from_secs(10), lifting)
+        .await
+        .expect("the raise ends")
+        .unwrap()
+        .expect("handled");
+    let stored = common::stored_deadline(&h, &stage)
+        .await
+        .expect("a deadline");
+    let sent = deadlines_sent(&h, &child);
+    assert_eq!(
+        sent.last(),
+        Some(&stored),
+        "the child ends at the extension: {sent:?}"
+    );
+}
+
+/// A refused wake's timed-out stage records the effort it ran at, and its
+/// failure reaches the orchestrator as structural, naming that effort.
+#[tokio::test]
+async fn a_refused_deadline_wake_reports_the_effort_it_ran_at() {
+    use archon_daemon::triggers::{self, TriggerEvent};
+
+    let h = Harness::new().await;
+    let item = h.enqueue("ran out of time, advised").await;
+    h.dispatch().await;
+    let first = h.running().await.remove(0);
+    stop_at_deadline(&h, &first, false).await;
+
+    let ran = h.backend.requests()[0].choice.clone();
+    let stages = h.stages(&item.id).await;
+    assert!(!stages.is_empty());
+    for stage in &stages {
+        assert_eq!(stage.state, StageState::TimedOut, "{stage:?}");
+        assert_eq!(stage.choice, ran, "the record holds what ran: {stage:?}");
+    }
+    let held = triggers::held(&h.ctx).await.unwrap();
+    let summary = held
+        .iter()
+        .find_map(|event| match event {
+            TriggerEvent::ItemFinished {
+                item: id, summary, ..
+            } if id == &item.id => Some(summary.clone()),
+            _ => None,
+        })
+        .expect("the failure is reported");
+    assert!(summary.contains("Failure class: structural"), "{summary}");
+    let step = format!("one effort step up from {} on {}", ran.effort, ran.model);
+    assert!(summary.contains(&step), "{summary}");
 }

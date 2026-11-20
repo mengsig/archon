@@ -151,7 +151,7 @@ impl Default for ReviewConfig {
     fn default() -> Self {
         Self {
             default_tier: Tier::Balanced,
-            default_effort: Effort::Low,
+            default_effort: Effort::Medium,
             prefer_other_provider: true,
             auto_repair: true,
             independent_acceptance: false,
@@ -320,6 +320,61 @@ pub struct OrchestratorConfig {
     /// Have the orchestrator queue an independent validation item before it
     /// calls a user-facing build ready; off, it relays the success as is.
     pub validate_before_handoff: bool,
+    /// Context size at which the orchestrator compacts, sent to an aetherd
+    /// that serves it; 0 keeps the model's own threshold.
+    pub compaction_tokens: u32,
+    /// Minutes idle, above half the threshold, after which Archon has the
+    /// orchestrator compacted before its prompt cache expires; 0 never.
+    pub idle_compact_after_minutes: u32,
+    /// Stage `info` messages ride with the next wake, at most
+    /// [`QUIET_INFO_MAX_WAIT_MINUTES`] late, instead of waking it.
+    pub quiet_info: bool,
+    /// After an upgrade that changed the orchestrator's prompt or tools,
+    /// start a fresh generation at its next idle moment.
+    pub refresh_on_upgrade: bool,
+}
+
+/// The smallest `compaction_tokens` Aether accepts.
+pub const MIN_COMPACTION_TOKENS: u32 = 100_000;
+/// The largest `compaction_tokens`: within every orchestrator model's
+/// window, so Aether applies it as sent and the idle rule can halve it.
+pub const MAX_COMPACTION_TOKENS: u32 = 200_000;
+/// `compaction_tokens` by default, and the threshold the idle rule halves
+/// when `compaction_tokens` is 0.
+pub const DEFAULT_COMPACTION_TOKENS: u32 = 160_000;
+/// The longest a quiet `info` message waits for the orchestrator's next wake.
+pub const QUIET_INFO_MAX_WAIT_MINUTES: i64 = 30;
+/// The prompt cache lasts an hour; idle compaction must come before it
+/// ends, with minutes to spare for the once-a-minute check.
+const IDLE_COMPACT_MAX_MINUTES: u32 = 55;
+
+impl OrchestratorConfig {
+    fn validate(&self) -> Result<(), ArchonError> {
+        let tokens = self.compaction_tokens;
+        if tokens != 0 && !(MIN_COMPACTION_TOKENS..=MAX_COMPACTION_TOKENS).contains(&tokens) {
+            return Err(ArchonError::Config(format!(
+                "orchestrator.compaction_tokens {tokens} must be 0 or from \
+                 {MIN_COMPACTION_TOKENS} to {MAX_COMPACTION_TOKENS}"
+            )));
+        }
+        if self.idle_compact_after_minutes > IDLE_COMPACT_MAX_MINUTES {
+            return Err(ArchonError::Config(format!(
+                "orchestrator.idle_compact_after_minutes {} must be at most {IDLE_COMPACT_MAX_MINUTES}: \
+                 the prompt cache expires after an hour",
+                self.idle_compact_after_minutes
+            )));
+        }
+        Ok(())
+    }
+
+    /// The context size above which an idle orchestrator is compacted.
+    pub fn idle_compact_floor(&self) -> u64 {
+        let threshold = match self.compaction_tokens {
+            0 => DEFAULT_COMPACTION_TOKENS,
+            tokens => tokens,
+        };
+        u64::from(threshold / 2)
+    }
 }
 
 impl Default for OrchestratorConfig {
@@ -332,6 +387,10 @@ impl Default for OrchestratorConfig {
             trigger_coalesce_ms: 2000,
             wake_on_success: true,
             validate_before_handoff: true,
+            compaction_tokens: DEFAULT_COMPACTION_TOKENS,
+            idle_compact_after_minutes: 50,
+            quiet_info: true,
+            refresh_on_upgrade: true,
         }
     }
 }
@@ -357,9 +416,15 @@ pub struct ModelsConfig {
     /// Providers the operator also uses by hand, which keep the
     /// `interactive` reserve; global only.
     pub interactive_providers: Vec<String>,
-    /// Opt in to sizing every agent's effort by the effort rubric; off, the
-    /// prompts and reviewer floors are 1.4.12's. Global only.
-    pub effort_sizing: bool,
+    /// Size every agent's effort by the effort rubric (unset: on, since
+    /// 1.6.4); `false` restores 1.6.3's prompts and reviewer floors. Global only.
+    pub effort_sizing: Option<bool>,
+    /// Lets the daemon's sizer raise efforts up to this; unset, it only
+    /// lowers them. The policy's `max_effort` still caps it. Global only.
+    pub sizer_max_effort: Option<Effort>,
+    /// Points a window's used share may run ahead of its elapsed share
+    /// before Archon warns it runs out early (unset: 10). Global only.
+    pub pacing_margin_percent: Option<u8>,
 }
 
 /// Percent of each quota window held back from tier-only stage routing.
@@ -385,6 +450,33 @@ impl Default for ReservePercent {
 pub const DEFAULT_MAX_TIER: Tier = Tier::Strong;
 
 impl ModelsConfig {
+    /// Whether agents size efforts by the rubric: on unless set to `false`.
+    pub fn effort_sizing(&self) -> bool {
+        self.effort_sizing.unwrap_or(true)
+    }
+
+    /// Whether the sizer may raise a stage above its default: only when
+    /// `sizer_max_effort` is set; unset, it only lowers.
+    pub fn sizer_raises(&self) -> bool {
+        self.sizer_max_effort.is_some()
+    }
+
+    /// The most the sizer sets when it may raise, and the ceiling carried
+    /// sized efforts are clipped to: `x_high` unless set.
+    pub fn sizer_max_effort(&self) -> Effort {
+        self.sizer_max_effort.unwrap_or(Effort::XHigh)
+    }
+
+    /// The pacing margin in force:
+    /// [`crate::quota::pace::DEFAULT_MARGIN_PERCENT`] unless set.
+    pub fn pacing_margin_percent(&self) -> u8 {
+        let margin = self
+            .pacing_margin_percent
+            .unwrap_or(crate::quota::pace::DEFAULT_MARGIN_PERCENT);
+        debug_assert!(margin <= 100, "check_weights validates the margin");
+        margin
+    }
+
     pub fn policy(&self) -> ModelPolicy {
         ModelPolicy::from_lists(&self.allow, &self.deny, self.max_effort)
     }
@@ -439,6 +531,11 @@ impl ModelsConfig {
         if reserve.orchestrator > 100 || reserve.interactive > 100 {
             return Err(ArchonError::Config(
                 "models.reserve_percent values are percentages, 0 to 100".into(),
+            ));
+        }
+        if self.pacing_margin_percent.is_some_and(|m| m > 100) {
+            return Err(ArchonError::Config(
+                "models.pacing_margin_percent is a percentage, 0 to 100".into(),
             ));
         }
         Ok(())
@@ -1200,6 +1297,7 @@ impl Config {
             ));
         }
         self.limits.validate()?;
+        self.orchestrator.validate()?;
         self.autonomy.validate()?;
         self.worktrees.validate()?;
         self.artifacts.validate()?;
@@ -1208,14 +1306,18 @@ impl Config {
         self.notify.validate()?;
         self.remote.validate()?;
         self.models.check_weights()?;
-        let orchestrator = crate::model::ModelChoice {
-            model: self.orchestrator.model.clone(),
-            effort: self.orchestrator.effort,
-            tier: None,
+        // An alias may name another provider's model, so the allowlist is
+        // decided at orchestrator creation, on the model the catalog resolves.
+        let orchestrator = crate::model::ModelChoice::pinned(
+            self.orchestrator.model.clone(),
+            self.orchestrator.effort,
+        );
+        let policy = self.models.policy();
+        let checked = match policy.deny.contains(&orchestrator.model) {
+            true => policy.check(&orchestrator),
+            false => policy.check_effort(orchestrator.effort),
         };
-        self.models
-            .policy()
-            .check(&orchestrator)
+        checked
             .map_err(|e| ArchonError::Config(format!("orchestrator.model violates [models]: {e}")))
     }
 }
@@ -1227,11 +1329,23 @@ impl RepoConfig {
         config.models.check_weights()?;
         if config.models.reserve_percent.is_some()
             || !config.models.interactive_providers.is_empty()
-            || config.models.effort_sizing
+            || config.models.effort_sizing == Some(true)
         {
             return Err(ArchonError::Config(format!(
                 "{}: models.reserve_percent, models.interactive_providers and \
                  models.effort_sizing are set in Archon's global config only",
+                path.display()
+            )));
+        }
+        if config.models.pacing_margin_percent.is_some() {
+            return Err(ArchonError::Config(format!(
+                "{}: models.pacing_margin_percent is set in Archon's global config only",
+                path.display()
+            )));
+        }
+        if config.models.sizer_max_effort.is_some() {
+            return Err(ArchonError::Config(format!(
+                "{}: models.sizer_max_effort is set in Archon's global config only",
                 path.display()
             )));
         }
@@ -1331,14 +1445,15 @@ mod tests {
     fn review_defaults_and_overrides_are_validated() {
         let default: Config = toml::from_str("").unwrap();
         assert_eq!(default.review.default_tier, Tier::Balanced);
-        assert_eq!(default.review.default_effort, Effort::Low);
+        // Medium: 1.6.3 raised its `low` to medium, and the rubric now honours `low`.
+        assert_eq!(default.review.default_effort, Effort::Medium);
         assert!(default.review.prefer_other_provider);
         assert!(default.review.auto_repair);
         let configured: Config = toml::from_str(
-            "[review]\ndefault_tier = 'strong'\ndefault_effort = 'medium'\nprefer_other_provider = false\nauto_repair = false",
+            "[review]\ndefault_tier = 'strong'\ndefault_effort = 'low'\nprefer_other_provider = false\nauto_repair = false",
         ).unwrap();
         assert_eq!(configured.review.default_tier, Tier::Strong);
-        assert_eq!(configured.review.default_effort, Effort::Medium);
+        assert_eq!(configured.review.default_effort, Effort::Low);
         assert!(!configured.review.prefer_other_provider);
         assert!(!configured.review.auto_repair);
         for invalid in [
@@ -1385,6 +1500,39 @@ mod tests {
         assert_eq!(config.limits.caps().max_parallel_agents, 8);
         assert!(config.orchestrator.wake_on_success);
         assert!(config.orchestrator.validate_before_handoff);
+        assert_eq!(config.orchestrator.compaction_tokens, 160_000);
+        assert_eq!(config.orchestrator.idle_compact_after_minutes, 50);
+        assert!(config.orchestrator.quiet_info);
+        assert!(config.orchestrator.refresh_on_upgrade);
+    }
+
+    #[test]
+    fn orchestrator_economy_settings_switch_off_with_zero_and_refuse_unsafe_values() {
+        let off: Config = toml::from_str(
+            "[orchestrator]\ncompaction_tokens = 0\nidle_compact_after_minutes = 0\nquiet_info = false",
+        )
+        .unwrap();
+        off.validate().unwrap();
+        assert_eq!(off.orchestrator.idle_compact_floor(), 80_000);
+        assert!(!off.orchestrator.quiet_info);
+        for refused in [50_000, 200_001] {
+            let raw = format!("[orchestrator]\ncompaction_tokens = {refused}");
+            let error = toml::from_str::<Config>(&raw)
+                .unwrap()
+                .validate()
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("orchestrator.compaction_tokens"),
+                "{error}"
+            );
+        }
+        let late: Config =
+            toml::from_str("[orchestrator]\nidle_compact_after_minutes = 56").unwrap();
+        let error = late.validate().unwrap_err().to_string();
+        assert!(error.contains("idle_compact_after_minutes"), "{error}");
+        let set: Config = toml::from_str("[orchestrator]\ncompaction_tokens = 200000").unwrap();
+        set.validate().unwrap();
+        assert_eq!(set.orchestrator.idle_compact_floor(), 100_000);
     }
 
     #[test]
@@ -1491,22 +1639,63 @@ mod tests {
         assert!(refused.contains("must name a provider"), "{refused}");
     }
 
-    /// Effort sizing is an opt-in: off, stage agents see 1.4.12's effort rules.
+    /// Effort sizing is on unless the global config sets it to `false`, the
+    /// rollback to 1.6.3; a repository may not set it either way.
     #[test]
-    fn effort_sizing_is_off_unless_the_global_config_opts_in() {
-        assert!(!Config::default().models.effort_sizing);
+    fn effort_sizing_is_on_unless_the_global_config_turns_it_off() {
+        assert!(Config::default().models.effort_sizing());
         let blank: Config = toml::from_str("[models]\nmax_effort = 'x_high'").unwrap();
-        assert!(
-            !blank.models.effort_sizing,
-            "naming [models] opts in to nothing"
-        );
-        let opted: Config = toml::from_str("[models]\neffort_sizing = true").unwrap();
-        opted.validate().unwrap();
-        assert!(opted.models.effort_sizing);
+        assert_eq!(blank.models.effort_sizing, None);
+        assert!(blank.models.effort_sizing(), "unset is on");
+        let off: Config = toml::from_str("[models]\neffort_sizing = false").unwrap();
+        off.validate().unwrap();
+        assert!(!off.models.effort_sizing());
         let dir = tempfile::tempdir().unwrap();
         let file = crate::paths::repo_archon_dir(dir.path()).join(CONFIG_FILE_NAME);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        RepoConfig::load(dir.path()).expect("a repository that leaves it unset loads");
         std::fs::write(&file, "[models]\neffort_sizing = true\n").unwrap();
+        let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
+        // 1.6.3's refusal of its own global-only keys reads as it did.
+        let why = "models.reserve_percent, models.interactive_providers and \
+                   models.effort_sizing are set in Archon's global config only";
+        assert!(refused.ends_with(why), "{refused}");
+        // 1.6.3 loaded a repository's `false`; it stays loadable and inert.
+        std::fs::write(&file, "[models]\neffort_sizing = false\n").unwrap();
+        let inert = RepoConfig::load(dir.path()).expect("a repository's false still loads");
+        assert_eq!(inert.models.effort_sizing, Some(false));
+    }
+
+    /// The sizer's own ceiling is `x_high` unless the global config lowers
+    /// it; a repository may not set it.
+    #[test]
+    fn sizer_max_effort_defaults_to_x_high_and_stays_global() {
+        assert_eq!(Config::default().models.sizer_max_effort(), Effort::XHigh);
+        assert!(!Config::default().models.sizer_raises());
+        let set: Config = toml::from_str("[models]\nsizer_max_effort = 'high'").unwrap();
+        set.validate().unwrap();
+        assert_eq!(set.models.sizer_max_effort(), Effort::High);
+        let dir = tempfile::tempdir().unwrap();
+        let file = crate::paths::repo_archon_dir(dir.path()).join(CONFIG_FILE_NAME);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "[models]\nsizer_max_effort = \"high\"\n").unwrap();
+        let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
+        let why = "models.sizer_max_effort is set in Archon's global config only";
+        assert!(refused.ends_with(why), "{refused}");
+    }
+
+    #[test]
+    fn pacing_margin_defaults_to_ten_is_a_percentage_and_stays_global() {
+        assert_eq!(Config::default().models.pacing_margin_percent(), 10);
+        let set: Config = toml::from_str("[models]\npacing_margin_percent = 0").unwrap();
+        set.validate().unwrap();
+        assert_eq!(set.models.pacing_margin_percent(), 0);
+        let over: Config = toml::from_str("[models]\npacing_margin_percent = 101").unwrap();
+        assert!(over.validate().is_err(), "a margin is a percentage");
+        let dir = tempfile::tempdir().unwrap();
+        let file = crate::paths::repo_archon_dir(dir.path()).join(CONFIG_FILE_NAME);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "[models]\npacing_margin_percent = 5\n").unwrap();
         let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
         assert!(refused.contains("global config only"), "{refused}");
     }
@@ -1755,16 +1944,28 @@ mod tests {
         }
     }
 
+    /// `codex/opus` may be a catalog alias of the one allowed model, so the
+    /// allowlist waits for orchestrator creation; a raw deny and the cap do not.
     #[test]
-    fn orchestrator_outside_allowlist_is_refused() {
-        let text = r#"
+    fn orchestrator_allowlist_waits_for_the_catalog_but_deny_and_cap_do_not() {
+        let alias = r#"
             [orchestrator]
-            model = "codex/gpt-5"
+            model = "codex/opus"
             [models]
-            allow = ["claude-code/claude-opus-5-5"]
+            allow = ["claude-code/canonical"]
         "#;
-        let config: Config = toml::from_str(text).unwrap();
-        assert!(matches!(config.validate(), Err(ArchonError::Config(_))));
+        let config: Config = toml::from_str(alias).unwrap();
+        config.validate().expect("its canonical id may be allowed");
+        for refused in [
+            "[orchestrator]\nmodel = \"codex/gpt-5\"\n[models]\ndeny = [\"codex/gpt-5\"]",
+            "[orchestrator]\neffort = \"high\"\n[models]\nmax_effort = \"low\"",
+        ] {
+            let config: Config = toml::from_str(refused).unwrap();
+            assert!(
+                matches!(config.validate(), Err(ArchonError::Config(_))),
+                "{refused}"
+            );
+        }
     }
 
     #[test]

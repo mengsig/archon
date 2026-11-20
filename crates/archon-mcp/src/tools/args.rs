@@ -66,6 +66,15 @@ fn query_request(tool: &str, args: &mut Args) -> Result<Option<Request>, ToolErr
             name: args.optional_text("name")?,
             caller: None,
         },
+        "submit_verdict" => Request::SubmitVerdict {
+            summary: args.required_text("summary")?,
+            // An object, as `complete_task` takes it: nothing else is read.
+            structured: args
+                .optional::<Map<String, Value>>("structured")?
+                .map(Value::Object),
+            restating: args.optional("restating")?.unwrap_or(false),
+            caller: None,
+        },
         "list_artifacts" => Request::ListArtifacts {
             item: args.required("item")?,
         },
@@ -138,6 +147,11 @@ fn action_request(tool: &str, args: &mut Args) -> Result<Request, ToolError> {
         "set_directive" => set_directive(args)?,
         "clear_directive" => clear_directive(args)?,
         "github_reply" => github_reply(args)?,
+        "watch_repo" => Request::WatchRepo {
+            repo: RepoRef(args.required_text("repo")?),
+            interval_minutes: args.optional("interval_minutes")?,
+            remove: args.optional("remove")?.unwrap_or(false),
+        },
         "enqueue_initiative" => initiatives::enqueue_initiative(args)?,
         "update_initiative" => initiatives::update_initiative(args)?,
         "steer_item" => steer::steer_item(args)?,

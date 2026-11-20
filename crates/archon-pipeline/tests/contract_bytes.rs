@@ -20,7 +20,9 @@ const POLICY: &str = "any model the policy allows";
 /// Byte budgets, a little above what the built-ins weigh today. A work
 /// stage's carries the tree-check rule and the foreground-check rule.
 const PLAIN_BUDGET: usize = 3_650;
-const REVIEW_BUDGET: usize = 3_550;
+/// 3,550 before the verdict section asked for each finding's `blocking` mark,
+/// 3,800 before it asked for `submit_verdict` ahead of `complete_task`.
+const REVIEW_BUDGET: usize = 4_050;
 const RECORD_BUDGET: usize = 1_550;
 /// What holding a review adds: the record, the verdict, summary line and risk
 /// call each reviewer returns, the blocking class and the round cap.
@@ -32,11 +34,15 @@ const RUN_TREE_BUDGET: usize = 550;
 const RISK_BUDGET: usize = 1_350;
 /// What the record stage's summary and evidence rules add.
 const EVIDENCE_BUDGET: usize = 2_100;
-/// What a strict scenario stage adds: the list it records and the private stack.
-const STRICT_SCENARIO_BUDGET: usize = 800;
+/// What a strict scenario stage adds: the list it records, where its own
+/// `fail` leads, and the private stack.
+const STRICT_SCENARIO_BUDGET: usize = 850;
 /// 131,000 before `e2e-strict` and `release-journey` added six stages of about 20.6 kB,
-/// 152,000 before the building stages' user-outcome rule (#397).
-const TOTAL_BUDGET: usize = 153_000;
+/// 152,000 before the building stages' user-outcome rule (#397), 153,300 before
+/// the `blocking` mark and the review-only lead's verdict section, 156,000
+/// before every verdict section asked for `submit_verdict`, 157,000 before a
+/// strict stage's rule named what its `fail` needs to re-run setup.
+const TOTAL_BUDGET: usize = 157_500;
 
 /// One built-in stage's fixed input, in bytes.
 struct Cost {
@@ -165,7 +171,8 @@ fn built_in_contracts_stay_within_their_byte_budgets() {
     println!("BYTES total contract+delegation = {total}");
     assert!(over.is_empty(), "contracts over their budget: {over:?}");
     // 139,966 B while every shipping pipeline ended in a ship agent; 130,312 B
-    // once every delegation section carried the effort rubric.
+    // once every delegation section carried the effort rubric; 153,088 B once
+    // it named Aether's 16-reference limit.
     assert!(total <= TOTAL_BUDGET, "built-in contracts total {total} B");
 }
 
@@ -178,8 +185,9 @@ fn direct_is_the_cheapest_shipping_pipeline() {
     assert_eq!(direct.delegation, 0, "no reviewer at its own review level");
     // 1,600 B before the prompt carried the PR-body attribution rule, 1,700
     // before it said to run the full check in the foreground, 1,800 before it
-    // asked for before and after evidence.
-    assert!(direct.prompt <= 2_000, "prompt is {} B", direct.prompt);
+    // asked for before and after evidence, 2,000 before it named the
+    // re-queue hint for risky work.
+    assert!(direct.prompt <= 2_100, "prompt is {} B", direct.prompt);
     let fixed = |pipeline: &str| -> usize {
         let stages = costs.iter().filter(|c| c.pipeline == pipeline);
         stages.map(|c| c.contract + c.delegation + c.prompt).sum()

@@ -7,7 +7,6 @@
 use crate::common;
 
 use archon_core::autonomy::{AutonomyPatch, ReviewLevel};
-use archon_core::model::ModelPlan;
 use archon_core::notify::NotificationKind;
 use archon_core::ports::SpawnRequest;
 use archon_core::protocol::{
@@ -41,7 +40,7 @@ async fn enqueue(h: &Harness, title: &str) -> QueueItem {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

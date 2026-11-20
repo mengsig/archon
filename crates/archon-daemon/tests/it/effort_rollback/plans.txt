@@ -1,0 +1,100 @@
+adaptive: {
+  "build": [
+    {
+      "model": {
+        "provider": "claude-code",
+        "model": "claude-opus-5-5"
+      },
+      "effort": "medium"
+    }
+  ]
+}
+direct: {
+  "implement": [
+    {
+      "model": {
+        "provider": "claude-code",
+        "model": "claude-opus-5-5"
+      },
+      "effort": "medium"
+    }
+  ]
+}
+swarm: {
+  "build": [
+    {
+      "model": {
+        "provider": "claude-code",
+        "model": "claude-opus-5-5"
+      },
+      "effort": "medium"
+    }
+  ],
+  "integrate": [
+    {
+      "model": {
+        "provider": "claude-code",
+        "model": "claude-opus-5-5"
+      },
+      "effort": "medium"
+    }
+  ],
+  "plan": [
+    {
+      "model": {
+        "provider": "claude-code",
+        "model": "claude-opus-5-5"
+      },
+      "effort": "medium"
+    }
+  ]
+}
+refactor: {
+  "baseline": [
+    {
+      "model": {
+        "provider": "claude-code",
+        "model": "claude-opus-5-5"
+      },
+      "effort": "medium"
+    }
+  ],
+  "refactor": [
+    {
+      "model": {
+        "provider": "claude-code",
+        "model": "claude-opus-5-5"
+      },
+      "effort": "medium"
+    }
+  ],
+  "review": [
+    {
+      "model": {
+        "provider": "claude-code",
+        "model": "claude-opus-5-5"
+      },
+      "effort": "medium"
+    }
+  ],
+  "verify": [
+    {
+      "model": {
+        "provider": "claude-code",
+        "model": "claude-opus-5-5"
+      },
+      "effort": "medium"
+    }
+  ]
+}
+review: {
+  "review": [
+    {
+      "model": {
+        "provider": "claude-code",
+        "model": "claude-opus-5-5"
+      },
+      "effort": "medium"
+    }
+  ]
+}

@@ -19,7 +19,7 @@ use crate::memory::MemoryQuery;
 
 /// Archon asks for this first, and falls back to the newest protocol an
 /// older aetherd serves, down to [`MIN_PROTOCOL_VERSION`].
-pub const PROTOCOL_VERSION: u32 = 24;
+pub const PROTOCOL_VERSION: u32 = 26;
 /// Aether's own floor: no supported aetherd serves an older protocol, and
 /// from 17 on its GitHub watcher stores `allowed_users` and `operator_users`.
 pub const MIN_PROTOCOL_VERSION: u32 = 17;
@@ -30,6 +30,9 @@ pub const NOTES_PROTOCOL_VERSION: u32 = 23;
 /// The first protocol whose notes carry a `level`.
 pub const NOTE_LEVEL_PROTOCOL_VERSION: u32 = 24;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
+/// Aether refuses a trigger whose payload encodes to more than this, far below a
+/// frame: an eighth of its engine's 16 MiB input line (`aether_core::limits`).
+pub const MAX_TRIGGER_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
 pub const CLIENT_NAME: &str = "archon";
 pub const HOST_CONTEXT_FEATURE: &str = "host_context";
 pub const REPOSITORY_ROOT_FEATURE: &str = "repository_root";
@@ -46,6 +49,8 @@ pub const SUBTREE_UPDATE_FEATURE: &str = "subtree_update";
 /// Both sides handle the `history_expired` code; Archon lists it in its hello,
 /// and an aetherd that lists it back reports expired history by that code.
 pub const HISTORY_EXPIRED_FEATURE: &str = "history_expired";
+/// `create_agent` honours `config.compaction_tokens` (Aether 1.4.2).
+pub const COMPACTION_TOKENS_FEATURE: &str = "compaction_tokens";
 /// What every aetherd's refusal says about expired history, with or without
 /// the `history_expired` code: `...within sequence range 1..=2; ...`.
 const HISTORY_EXPIRED_TEXT: &str = "event history expired within sequence range ";
@@ -166,6 +171,10 @@ pub enum Command {
         agent: AetherAgentId,
         reason: Option<String>,
     },
+    /// Compact the agent's context before its next turn.
+    Compact {
+        agent: AetherAgentId,
+    },
     /// Stops the running turn only; the agent waits for its next message.
     Interrupt {
         agent: AetherAgentId,
@@ -206,6 +215,7 @@ pub enum Command {
         query: EventQuery,
     },
     ListModels,
+    ListRetiredModels,
     AuthStatus,
     Providers,
     McpServers {
@@ -442,6 +452,10 @@ pub struct AgentConfig {
     /// child outside it. An aetherd that predates it ignores the field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delegation_policy: Option<archon_core::delegation::WorkerPolicy>,
+    /// Context size at which the agent compacts; send it only to an aetherd
+    /// that lists [`COMPACTION_TOKENS_FEATURE`], as an older one ignores it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compaction_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -641,6 +655,19 @@ pub struct Agent {
     /// When the agent last logged an event; absent or null when unknown.
     #[serde(default)]
     pub last_event_at: Option<Timestamp>,
+    #[serde(default)]
+    pub stats: AgentStats,
+}
+
+/// The fields of an agent's `stats` Archon reads.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct AgentStats {
+    /// The context its latest model request carried; absent when unknown.
+    #[serde(default)]
+    pub context_tokens: Option<u64>,
+    /// When its latest turn ended.
+    #[serde(default)]
+    pub last_turn_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
@@ -663,6 +690,10 @@ pub struct AgentSettings {
     /// As Aether wrote it; it may name an effort Archon does not know.
     #[serde(default)]
     pub effort: Option<String>,
+    /// The agent's own compaction threshold; absent from an aetherd that
+    /// predates it, or when the agent keeps its model's.
+    #[serde(default)]
+    pub compaction_tokens: Option<u32>,
     /// Aether's hard cap in dollars; `None` when it has none.
     #[serde(default)]
     pub cost_budget: Option<f64>,
@@ -735,11 +766,20 @@ pub struct ModelInfo {
     #[serde(default)]
     pub aliases: Vec<String>,
     #[serde(default)]
+    pub superseded_by: Option<serde_json::Value>,
+    #[serde(default)]
     pub capabilities: ModelCapabilities,
     /// Aether's capability tier; `None` when it places the model in none or
     /// names a tier this Archon does not know.
     #[serde(default, deserialize_with = "known_tier")]
     pub tier: Option<Tier>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RetiredModel {
+    pub model: ModelRef,
+    #[serde(default)]
+    pub successor: Option<serde_json::Value>,
 }
 
 fn known_tier<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Option<Tier>, D::Error> {

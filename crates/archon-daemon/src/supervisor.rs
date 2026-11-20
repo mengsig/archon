@@ -3,6 +3,7 @@
 
 mod authority;
 mod callers;
+mod economy;
 mod lineage;
 mod mcp;
 mod origin;
@@ -16,16 +17,17 @@ use std::time::Duration;
 use archon_aether::AetherClient;
 use archon_aether::backend::LIVE_STATES;
 use archon_aether::wire::{
-    Agent, AgentConfig, ApprovalPolicy, CreateAgent, NetworkPolicy, Scope, ToolExposure,
+    Agent, AgentConfig, AgentQuery, ApprovalPolicy, CreateAgent, NetworkPolicy, Scope, ToolExposure,
 };
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::attachment::ImageAttachment;
 use archon_core::autonomy::{AutonomyPolicy, ToolsMode};
-use archon_core::config::{AetherMode, Config, HostContext};
+use archon_core::config::{AetherMode, Config, HostContext, OrchestratorConfig};
 use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, StoreId};
-use archon_core::model::ModelChoice;
+use archon_core::model::{ModelChoice, ModelRef};
+use archon_core::model_tier::ModelCatalog;
 use archon_core::notify::{AnswerVia, NotificationKind, Question};
 use archon_core::protocol::{OrchestratorFreshness, OrchestratorInfo};
 use archon_core::run::GateDecision;
@@ -40,6 +42,10 @@ use lineage::newest_incarnation;
 use retired::{Sweep, cancel_orphans};
 
 pub(crate) use authority::{authorize, saw_call};
+pub use economy::{
+    ECONOMY_CHECK_INTERVAL, Economy, RefreshTried, economize, idle_compaction_due, is_idle,
+    refresh_left_behind, refresh_owed, retry_due, watch_economy,
+};
 pub use mcp::{
     HEALS_BEFORE_BLOCKER, MCP_CHECK_INTERVAL, check_mcp, check_mcp_soon, heal_status, mcp_status,
     owe_orchestrator_restart, watch_mcp,
@@ -87,6 +93,15 @@ const RESTARTS_KEY: &str = "orchestrator_restarts";
 const BLOCKER_KEY: &str = "orchestrator_blocker";
 const STORE_ID_KEY: &str = "store_id";
 const HOST_CONTEXT_KEY: &str = "orchestrator_host_context";
+/// `kv`: the [`FrozenThreshold`] of the generation's creation, written before
+/// its first request, so every retry under its key sends the same one.
+const COMPACTION_TOKENS_KEY: &str = "orchestrator_compaction_tokens";
+/// `kv`: the [`FrozenModel`] of the generation's creation, written with its
+/// other frozen settings, so every retry under its key sends the same model.
+const ORCHESTRATOR_MODEL_KEY: &str = "orchestrator_model";
+/// `kv`: the generation this build allocated whose creation key no request
+/// has used yet. Absent for a generation an older build may have sent.
+const UNSENT_GENERATION_KEY: &str = "orchestrator_unsent_generation";
 /// Set once the GitHub watcher is wanted; never cleared by archond.
 const GITHUB_WANTED_KEY: &str = "orchestrator_github";
 
@@ -149,7 +164,7 @@ pub fn orchestrator_instructions(
     );
     let user_pipelines = archon_core::paths::config_dir().join("pipelines");
     let prompt = builtin_prompt(github, config.orchestrator.validate_before_handoff);
-    let mut text = sized_efforts(prompt, config.models.effort_sizing);
+    let mut text = sized_efforts(prompt, config.models.effort_sizing());
     let depth = config.limits.max_delegation_depth;
     text.push_str(&installation(workspace, &user_pipelines, depth));
     if let Some(path) = &config.orchestrator.instructions_file {
@@ -370,12 +385,23 @@ pub fn orchestrator_create_agent(
             long_lived: true,
             leaf: false,
             delegation_policy: None,
+            compaction_tokens: None,
         }),
         approval: orchestrator_approval(config),
         run: None,
         start: true,
-        idempotency_key: Some(format!("archon-orchestrator-{store}-{generation}")),
+        idempotency_key: Some(creation_key(store, generation)),
     }
+}
+
+/// The idempotency key every attempt to create `generation` sends.
+fn creation_key(store: &StoreId, generation: u64) -> String {
+    format!("{}{generation}", creation_key_prefix(store))
+}
+
+/// What every creation key of `store` starts with, before its generation.
+fn creation_key_prefix(store: &StoreId) -> String {
+    format!("archon-orchestrator-{store}-")
 }
 
 /// `None` keeps the operator's `[approval] default` (the orchestrator is
@@ -419,8 +445,12 @@ async fn ensure_locked(ctx: &DaemonContext) -> Result<AetherAgentId, ArchonError
     let client = ctx.aether.client()?;
     let Some(stored) = current_orchestrator(ctx).await? else {
         let _switch = switching(ctx).await;
-        let id = create_generation(ctx, &client).await?;
-        adopt(ctx, &id).await?;
+        let id = if records_ahead_of_counter(ctx).await? {
+            replace_generation(ctx, &client).await?
+        } else {
+            create_generation(ctx, &client).await?
+        };
+        adopt(ctx, &id, Revival::Recreated).await?;
         return Ok(id);
     };
     let lineage = match newest_incarnation(&client, &stored).await {
@@ -446,7 +476,39 @@ async fn ensure_locked(ctx: &DaemonContext) -> Result<AetherAgentId, ArchonError
             .send_if_modified(|current| replace_if_changed(current, &agent.id));
         return Ok(agent.id);
     }
+    if economy::refresh_owed_by(ctx).await? {
+        return finish_refresh(ctx, &client, &agent).await;
+    }
     revive(ctx, &client, &agent).await
+}
+
+/// A refresh stopped `dead` but never started its successor: a checkpoint
+/// restart would bring back the outdated instructions, so start the fresh
+/// generation it owed instead.
+async fn finish_refresh(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    dead: &Agent,
+) -> Result<AetherAgentId, ArchonError> {
+    let state = state_of(dead);
+    assert!(
+        !LIVE_STATES.contains(&state.as_str()),
+        "{} is live",
+        dead.id
+    );
+    assert_eq!(
+        dead.role, ORCHESTRATOR_ROLE,
+        "only an orchestrator is refreshed"
+    );
+    if state != "cancelled" {
+        cancel_orphans(client, &dead.id).await?;
+    }
+    let _switch = switching(ctx).await;
+    retired::retire(ctx, std::slice::from_ref(&dead.id), Sweep::Done).await?;
+    let id = replace_generation(ctx, client).await?;
+    let why = "is a fresh generation, as an upgrade changed its prompt or tools";
+    announce_revival(ctx, &id, Revival::Recreated, why).await?;
+    Ok(id)
 }
 
 /// Adopt `to`, the agent Aether restarted the orchestrator `from` into (the
@@ -585,19 +647,30 @@ pub async fn current_orchestrator(
 pub async fn restart_orchestrator(ctx: &DaemonContext) -> Result<AetherAgentId, ArchonError> {
     let _serial = ctx.supervisor.serial.lock().await;
     let client = ctx.aether.client()?;
+    let why = "was restarted by the operator";
+    let _switch = switching(ctx).await;
+    replace_orchestrator(ctx, &client, "restarted by the operator", why, None).await
+}
+
+/// Cancel the orchestrator and start a fresh generation, briefed and handed
+/// the held news as any new generation is; the caller holds `serial` and
+/// the [`switching`] guard, so no trigger is submitted meanwhile. With
+/// `checked`, only that agent is cancelled, never a successor found since.
+async fn replace_orchestrator(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    reason: &str,
+    why: &str,
+    checked: Option<&AetherAgentId>,
+) -> Result<AetherAgentId, ArchonError> {
+    assert!(!reason.trim().is_empty(), "a cancel says why");
+    assert!(!why.trim().is_empty(), "the operator is told why");
     if let Some(stored) = current_orchestrator(ctx).await? {
-        cancel_newest(ctx, &client, &stored, "restarted by the operator").await?;
+        cancel_newest(ctx, client, &stored, reason, checked).await?;
     }
     revival::reset(ctx).await?;
-    let _switch = switching(ctx).await;
-    let id = replace_generation(ctx, &client).await?;
-    announce_revival(
-        ctx,
-        &id,
-        Revival::Recreated,
-        "was restarted by the operator",
-    )
-    .await?;
+    let id = replace_generation(ctx, client).await?;
+    announce_revival(ctx, &id, Revival::Recreated, why).await?;
     Ok(id)
 }
 
@@ -622,7 +695,7 @@ pub(crate) async fn relink_orchestrator(
     };
     let why = "lost Archon's tools when the archon MCP server failed";
     let reason = "restarted to get Archon's tools back";
-    let Some(old) = cancel_newest(ctx, &client, &stored, reason).await? else {
+    let Some(old) = cancel_newest(ctx, &client, &stored, reason, None).await? else {
         // Aether forgot it: there is no checkpoint to restart from.
         let _switch = switching(ctx).await;
         let id = replace_generation(ctx, &client).await?;
@@ -639,11 +712,13 @@ pub(crate) async fn relink_orchestrator(
 
 /// Cancel the orchestrator `stored` leads to, with all it runs, and record its
 /// restart chain. Returns that agent; `None` if Aether forgot `stored`.
+/// `Unavailable`, cancelling nothing, when it is not the `checked` agent.
 async fn cancel_newest(
     ctx: &DaemonContext,
     client: &AetherClient,
     stored: &AetherAgentId,
     reason: &str,
+    checked: Option<&AetherAgentId>,
 ) -> Result<Option<AetherAgentId>, ArchonError> {
     assert!(!reason.trim().is_empty(), "a cancel says why");
     let lineage = match newest_incarnation(client, stored).await {
@@ -652,6 +727,11 @@ async fn cancel_newest(
         Err(e) => return Err(e),
     };
     let newest = lineage.newest.id;
+    if checked.is_some_and(|checked| *checked != newest) {
+        return Err(ArchonError::Unavailable(format!(
+            "orchestrator {stored} was restarted as {newest} since it was checked; it is left running"
+        )));
+    }
     if !lineage.retired.is_empty() {
         // Each was restarted into the next: what it left running still runs.
         retired::retire(ctx, &lineage.retired, Sweep::Owed).await?;
@@ -717,9 +797,28 @@ async fn info_for(
 }
 
 /// How generation `generation` compares with one this archond would start
-/// now; `None` when an Archon that recorded no origin created it. Until the
-/// GitHub choice is recorded (an upgrade), either choice counts as current.
+/// now, and why a refresh it is owed has not happened yet; `None` when an
+/// Archon that recorded no origin created it.
 pub async fn freshness(
+    ctx: &DaemonContext,
+    generation: u64,
+) -> Result<Option<OrchestratorFreshness>, ArchonError> {
+    let Some(mut fresh) = compared_with_today(ctx, generation).await? else {
+        return Ok(None);
+    };
+    fresh.refresh_delayed = economy::refresh_delay(ctx, generation, &fresh).await?;
+    Ok(Some(fresh))
+}
+
+/// Why an unfinished upgrade refresh has not happened, for a `status` whose
+/// orchestrator cannot say; `None` when no refresh is unfinished.
+pub async fn unrecorded_refresh_delay(ctx: &DaemonContext) -> Result<Option<String>, ArchonError> {
+    economy::unrecorded_refresh_delay(ctx).await
+}
+
+/// [`freshness`] without the refresh's delay. Until the GitHub choice is
+/// recorded (an upgrade), either choice counts as current.
+async fn compared_with_today(
     ctx: &DaemonContext,
     generation: u64,
 ) -> Result<Option<OrchestratorFreshness>, ArchonError> {
@@ -759,11 +858,18 @@ pub async fn deliver_operator_message(
     if text.trim().is_empty() && images.is_empty() {
         return Err(ArchonError::Invalid("an empty message was not sent".into()));
     }
-    let orchestrator = ensure_orchestrator(ctx).await?;
+    ensure_orchestrator(ctx).await?;
     // The turn this message starts also reads the routine news held for it,
     // in mirrors as current as the repositories are now.
     crate::triggers::flush_quiet(ctx).await?;
     ctx.mirrors.request();
+    // No switch runs while it is sent, and it goes to the one in charge now.
+    let _steady = steady(ctx).await;
+    let Some(orchestrator) = current_orchestrator(ctx).await? else {
+        return Err(ArchonError::Unavailable(
+            "the orchestrator is being replaced; send the message again".into(),
+        ));
+    };
     let client = ctx.aether.client()?;
     client
         .send_message(&orchestrator, text, images, feed_item.as_str())
@@ -917,12 +1023,17 @@ async fn revive_now(
 }
 
 /// Restart `dead` from its checkpoint. A fresh generation loses the chat, so
-/// only when Aether will never restart it; any other failure is retried.
+/// only when Aether will never restart it, or a refresh owes one: its
+/// checkpoint holds the outdated instructions. Any other failure is retried.
 async fn restart_or_replace(
     ctx: &DaemonContext,
     client: &AetherClient,
     dead: &AetherAgentId,
 ) -> Result<(AetherAgentId, Revival), ArchonError> {
+    if economy::refresh_owed_by(ctx).await? {
+        tracing::info!(%dead, "a refresh is unfinished; starting its fresh generation instead of a restart");
+        return Ok((replace_generation(ctx, client).await?, Revival::Recreated));
+    }
     match client.restart(dead).await {
         Ok(successor) => {
             callers::record_delegation(ctx, &successor).await?;
@@ -980,7 +1091,7 @@ async fn record_revival(
     id: &AetherAgentId,
     how: Revival,
 ) -> Result<(), ArchonError> {
-    adopt(ctx, id).await?;
+    adopt(ctx, id, how).await?;
     {
         let mut store = ctx.store.lock().await;
         let restarts = store
@@ -1000,12 +1111,18 @@ async fn record_revival(
 /// Record `id` as the orchestrator and wake the pump's subscription. A new
 /// agent (not one woken in place) owes no restart for the MCP tools unless
 /// the server is down (see [`mcp::orchestrator_replaced`]).
-async fn adopt(ctx: &DaemonContext, id: &AetherAgentId) -> Result<(), ArchonError> {
+async fn adopt(ctx: &DaemonContext, id: &AetherAgentId, how: Revival) -> Result<(), ArchonError> {
     let previous = {
         let mut store = ctx.store.lock().await;
         let previous = store.kv_get(keys::ORCHESTRATOR_AGENT)?;
-        store.kv_set(keys::ORCHESTRATOR_AGENT, id.as_str())?;
-        store.kv_delete(BLOCKER_KEY)?;
+        // One transaction: a stop never leaves a fresh successor stored beside
+        // the marker of the refresh it ends. An agent woken or restarted from
+        // a checkpoint (Aether's own restart) keeps the outdated instructions.
+        let ended: &[&str] = match how {
+            Revival::Recreated => &[BLOCKER_KEY, economy::REFRESH_UNFINISHED_KEY],
+            Revival::Woken | Revival::Restarted => &[BLOCKER_KEY],
+        };
+        store.kv_update(&[(keys::ORCHESTRATOR_AGENT, id.as_str())], ended)?;
         previous
     };
     ctx.supervisor.current.send_replace(Some(id.clone()));
@@ -1033,12 +1150,28 @@ async fn replace_generation(
     create_generation(ctx, client).await
 }
 
+/// One transaction, so a stop never leaves the old agent or its frozen settings
+/// under the new generation, marked unsent; a refresh the records only imply is
+/// marked in it.
 async fn advance_generation(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let mut store = ctx.store.lock().await;
     let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
-    store.kv_set(keys::ORCHESTRATOR_GENERATION, &(generation + 1).to_string())?;
-    store.kv_delete(keys::ORCHESTRATOR_AGENT)?;
-    store.kv_delete(HOST_CONTEXT_KEY)
+    let owed = economy::unfinished_refresh(&store, generation)?.map(|from| from.to_string());
+    let next = next_generation(&store, generation)?.to_string();
+    let mut set = vec![
+        (keys::ORCHESTRATOR_GENERATION, next.as_str()),
+        (UNSENT_GENERATION_KEY, next.as_str()),
+    ];
+    if let Some(from) = &owed {
+        set.push((economy::REFRESH_UNFINISHED_KEY, from.as_str()));
+    }
+    let cleared = [
+        keys::ORCHESTRATOR_AGENT,
+        HOST_CONTEXT_KEY,
+        COMPACTION_TOKENS_KEY,
+        ORCHESTRATOR_MODEL_KEY,
+    ];
+    store.kv_update(&set, &cleared)
 }
 
 /// The configured orchestrator model and effort, as `provider/model effort`.
@@ -1056,16 +1189,14 @@ async fn create_generation(
     ctx: &DaemonContext,
     client: &AetherClient,
 ) -> Result<AetherAgentId, ArchonError> {
-    let config = &ctx.config;
-    let choice = ModelChoice {
-        model: config.orchestrator.model.clone(),
-        effort: config.orchestrator.effort,
-        tier: None,
+    let store = store_id(ctx).await?;
+    let (model, landed) = match creation_model(ctx, client, &store).await? {
+        Creating::On(model) => (model, None),
+        Creating::Landed { model, agent } => (model, Some(*agent)),
     };
-    if let Err(refusal) = config.models.policy().check(&choice) {
-        blocker_once(ctx, &format!("Archon will not start the orchestrator: {refusal}. Change [orchestrator] model or [models] in the config.")).await?;
-        return Err(refusal);
-    }
+    let mut config = ctx.config.clone();
+    config.orchestrator.model = model;
+    let config = &config;
     let workspace = &ctx.paths.orchestrator_workspace;
     std::fs::create_dir_all(workspace)
         .map_err(|e| ArchonError::io(format!("creating {}", workspace.display()), e))?;
@@ -1076,17 +1207,10 @@ async fn create_generation(
     if !delegation {
         instructions.push_str(callers::NO_DELEGATION_NOTE);
     }
-    let generation = {
-        let mut store = ctx.store.lock().await;
-        let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?.max(1);
-        store.kv_set(keys::ORCHESTRATOR_GENERATION, &generation.to_string())?;
-        origin::record_lessons(&mut store, generation)?;
-        // Chosen once per generation, so a retried create sends the same text.
-        instructions.push_str(&crate::learned::lessons_for_orchestrator(&store)?);
-        generation
-    };
-    let store = store_id(ctx).await?;
+    // Read before the freeze: a key frozen is one the create alone may follow.
     let network = client.daemon_defaults().await?.network_default;
+    let (generation, frozen) =
+        settle_generation(ctx, client, config, &store, &mut instructions).await?;
     let sent = instructions.clone();
     let request = orchestrator_create_agent(
         config,
@@ -1097,16 +1221,258 @@ async fn create_generation(
         network,
         delegation,
     );
-    let agent = create_orchestrator(ctx, client, request).await?;
+    let agent = match landed {
+        Some(agent) => {
+            callers::record_delegation(ctx, &agent).await?;
+            agent
+        }
+        None => create_orchestrator(ctx, client, request, frozen).await?,
+    };
     let created = agent.config.instructions.as_deref();
     let mut store = ctx.store.lock().await;
-    let settings = configured_settings(config);
+    let settings = configured_settings(&ctx.config);
     origin::record_created(&mut store, generation, &prompt, &sent, created, &settings)?;
     drop(store);
     tracing::info!(agent = %agent.id, generation, delegation, github, "orchestrator created");
     brief_created_orchestrator(ctx, client, &agent.id, generation).await?;
     crate::triggers::collapse_for_new_orchestrator(ctx).await?;
     Ok(agent.id)
+}
+
+/// How the stored generation's creation goes on.
+enum Creating {
+    /// A create is sent, or sent again, on this model.
+    On(ModelRef),
+    /// An earlier send froze `model`, which the policy allows no longer, and
+    /// left `agent`: it is taken as it is and nothing is sent.
+    Landed { model: ModelRef, agent: Box<Agent> },
+}
+
+/// The model the stored generation's creation sends. A key that may have been
+/// sent repeats its frozen model, else the raw configured one an older build
+/// sent: no catalog refusal, so the replay reaches Aether, but the model policy
+/// still holds. A first send is checked against both (§7.4, point 3).
+async fn creation_model(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    store_id: &StoreId,
+) -> Result<Creating, ArchonError> {
+    let configured = ctx.config.orchestrator.model.clone();
+    assert!(!configured.model.is_empty(), "the config was validated");
+    let (creation, frozen) = {
+        let mut store = ctx.store.lock().await;
+        let generation = allocated_generation(&mut store)?;
+        let first = store.kv_get(UNSENT_GENERATION_KEY)? == Some(generation.to_string());
+        let key = creation_key(store_id, generation);
+        let frozen = frozen_model(&store, &key)?;
+        (Creation { key, first }, frozen)
+    };
+    assert!(!creation.key.is_empty(), "a keyed creation");
+    if let Some(frozen) = frozen {
+        if let Some(replay) = frozen_replay(ctx, client, frozen).await? {
+            return Ok(replay);
+        }
+        // The key was left behind: its successor is a first send.
+        return checked_model(ctx, &configured).await.map(Creating::On);
+    }
+    if !creation.first {
+        let aliases = crate::learned::catalog(ctx).await?.aliases();
+        let named = aliases.get(&configured).unwrap_or(&configured);
+        check_policy(ctx, named, &aliases).await?;
+        return Ok(Creating::On(configured));
+    }
+    checked_model(ctx, &configured).await.map(Creating::On)
+}
+
+/// The catalog a frozen replay is read in. Without one an alias the policy
+/// denies by its canonical id would pass, so the replay waits for one.
+async fn ready_catalog(ctx: &DaemonContext) -> Result<ModelCatalog, ArchonError> {
+    let catalog = crate::learned::catalog(ctx).await?;
+    if let Some(reason) = catalog.not_ready_reason() {
+        let why = format!("the orchestrator creation waits for the model catalog: {reason}");
+        return Err(ArchonError::Unavailable(why));
+    }
+    assert!(!catalog.is_empty(), "a ready catalog lists models");
+    Ok(catalog)
+}
+
+/// The replay of a possibly sent key that froze a model. One the policy allows
+/// no longer, or a labelled key's model the catalog refuses, is never sent
+/// again: the agent the key left is taken, else a fresh generation follows (`None`).
+async fn frozen_replay(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    frozen: FrozenModel,
+) -> Result<Option<Creating>, ArchonError> {
+    let model = frozen.model;
+    assert!(!model.model.is_empty(), "a frozen model names a model");
+    let catalog = ready_catalog(ctx).await?;
+    let aliases = catalog.aliases();
+    let named = aliases.get(&model).unwrap_or(&model).clone();
+    let policy = policy_refusal(ctx, &named, &aliases);
+    // An unlabelled key may have landed unseen: Aether alone can answer its replay.
+    let listed = || catalog.check(&named).err().filter(|_| frozen.labelled);
+    let Some(refusal) = policy.or_else(listed) else {
+        return Ok(Some(Creating::On(model)));
+    };
+    if !frozen.labelled {
+        let text = format!(
+            "Archon will not resend an orchestrator creation an older build may have sent: {refusal}. Change [models] in the config."
+        );
+        blocker_once(ctx, &text).await?;
+        return Err(refusal);
+    }
+    if let Some(agent) = landed_orchestrator(client, &frozen.key).await? {
+        tracing::warn!(agent = %agent.id, %refusal, "the orchestrator a creation left runs a model Archon would not send now; taken as it is");
+        let agent = Box::new(agent);
+        return Ok(Some(Creating::Landed { model, agent }));
+    }
+    tracing::warn!(%model, %refusal, "an orchestrator creation that never landed froze a model Archon would not send now; a fresh generation replaces it");
+    advance_generation(ctx).await?;
+    let left = ctx.store.lock().await.kv_get(ORCHESTRATOR_MODEL_KEY)?;
+    assert!(left.is_none(), "a fresh generation froze no model");
+    Ok(None)
+}
+
+/// The live orchestrator creation `key` left in Aether, found by the label
+/// only that creation sends; `None` when it never landed or its agent is gone.
+async fn landed_orchestrator(
+    client: &AetherClient,
+    key: &str,
+) -> Result<Option<Agent>, ArchonError> {
+    assert!(!key.is_empty(), "a keyed creation");
+    let agents = client.list_agents(AgentQuery::default()).await?;
+    let mut landed = agents.into_iter().filter(|agent| {
+        let labelled = agent
+            .scope
+            .as_ref()
+            .is_some_and(|scope| scope.labels.get(CREATION_LABEL).map(String::as_str) == Some(key));
+        agent.parent.is_none()
+            && agent.role == ORCHESTRATOR_ROLE
+            && labelled
+            && LIVE_STATES.contains(&state_of(agent).as_str())
+    });
+    let found = landed.next();
+    if landed.next().is_some() {
+        return Err(ArchonError::Corrupt(format!(
+            "several live orchestrators carry creation key {key}; one key creates one agent"
+        )));
+    }
+    Ok(found)
+}
+
+/// The configured model canonicalised by the catalog and accepted by the
+/// model policy; a refusal leaves a blocker and is returned.
+async fn checked_model(
+    ctx: &DaemonContext,
+    configured: &ModelRef,
+) -> Result<ModelRef, ArchonError> {
+    let catalog = crate::learned::request_catalog(ctx).await?;
+    let model = match catalog.check(configured) {
+        Ok(model) => model,
+        Err(error) => {
+            blocker_once(ctx, &format!("Orchestrator model: {error}")).await?;
+            return Err(error);
+        }
+    };
+    assert!(
+        !model.model.is_empty(),
+        "the catalog returns a listed model"
+    );
+    if let Some(successor) = catalog.superseded_by(&model) {
+        tracing::warn!(%model, %successor, "configured orchestrator model is superseded");
+    }
+    check_policy(ctx, &model, &catalog.aliases()).await?;
+    Ok(model)
+}
+
+/// Refuse an orchestrator `model` outside `[models]`, both read in `aliases`;
+/// a refusal leaves a blocker and is returned.
+async fn check_policy(
+    ctx: &DaemonContext,
+    model: &ModelRef,
+    aliases: &std::collections::BTreeMap<ModelRef, ModelRef>,
+) -> Result<(), ArchonError> {
+    assert!(
+        !model.provider.is_empty() && !model.model.is_empty(),
+        "the orchestrator names a provider's model"
+    );
+    let Some(refusal) = policy_refusal(ctx, model, aliases) else {
+        return Ok(());
+    };
+    blocker_once(ctx, &format!("Archon will not start the orchestrator: {refusal}. Change [orchestrator] model or [models] in the config.")).await?;
+    Err(refusal)
+}
+
+/// Why `[models]` refuses the orchestrator `model`, both read in `aliases`.
+fn policy_refusal(
+    ctx: &DaemonContext,
+    model: &ModelRef,
+    aliases: &std::collections::BTreeMap<ModelRef, ModelRef>,
+) -> Option<ArchonError> {
+    assert!(
+        !model.provider.is_empty() && !model.model.is_empty(),
+        "the orchestrator names a provider's model"
+    );
+    let choice = ModelChoice {
+        model: model.clone(),
+        effort: ctx.config.orchestrator.effort,
+        tier: None,
+    };
+    let policy = ctx.config.models.policy().canonicalized(aliases);
+    policy.check(&choice).err()
+}
+
+/// Settle, under one store lock and before any request, what the stored
+/// generation's creation sends on every attempt: its number, the lessons its
+/// first attempt chose (appended to `instructions`) and its frozen settings,
+/// read from `config` with its orchestrator model already canonical.
+async fn settle_generation(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    config: &Config,
+    store_id: &StoreId,
+    instructions: &mut String,
+) -> Result<(u64, FrozenSettings), ArchonError> {
+    assert!(
+        !instructions.trim().is_empty(),
+        "the lessons follow a prompt"
+    );
+    let mut store = ctx.store.lock().await;
+    let generation = allocated_generation(&mut store)?;
+    origin::record_lessons(&mut store, generation)?;
+    // Chosen once per generation, so a retried create sends the same text.
+    instructions.push_str(&crate::learned::lessons_for_orchestrator(&store)?);
+    let unsent = store.kv_get(UNSENT_GENERATION_KEY)?;
+    let creation = Creation {
+        key: creation_key(store_id, generation),
+        first: unsent == Some(generation.to_string()),
+    };
+    let host_context = config.aether.host_context;
+    let configured = host_context.for_model(&config.orchestrator.model);
+    let frozen = freeze_settings(
+        &mut store,
+        &config.orchestrator,
+        client,
+        &creation,
+        configured,
+    )?;
+    Ok((generation, frozen))
+}
+
+/// The stored generation, or the first one, allocated here with its mark
+/// that no request has used its creation key.
+fn allocated_generation(store: &mut archon_queue::Store) -> Result<u64, ArchonError> {
+    let stored = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
+    if stored > 0 {
+        return Ok(stored);
+    }
+    let first = [
+        (keys::ORCHESTRATOR_GENERATION, "1"),
+        (UNSENT_GENERATION_KEY, "1"),
+    ];
+    store.kv_update(&first, &[])?;
+    Ok(1)
 }
 
 /// A stopped, unadopted agent cannot be revived by `ensure_locked`: retire it
@@ -1149,11 +1515,71 @@ async fn create_orchestrator(
     ctx: &DaemonContext,
     client: &AetherClient,
     mut request: CreateAgent,
+    frozen: FrozenSettings,
 ) -> Result<archon_aether::wire::Agent, ArchonError> {
     assert_eq!(request.role, ORCHESTRATOR_ROLE);
     assert!(request.parent.is_none() && request.start);
+    assert!(request.idempotency_key.is_some(), "a keyed creation");
     let config = request.config.as_mut().expect("orchestrator config");
-    let mut store = ctx.store.lock().await;
+    config.host_context = frozen.host_context;
+    config.compaction_tokens = frozen.compaction_tokens;
+    if frozen.labelled {
+        let key = request.idempotency_key.clone().expect("a keyed creation");
+        let scope = request.scope.as_mut().expect("an orchestrator scope");
+        scope.labels.insert(CREATION_LABEL.to_owned(), key);
+    }
+    let agent = client.create_agent(request).await?;
+    callers::record_delegation(ctx, &agent).await?;
+    Ok(agent)
+}
+
+/// The compaction threshold a creation key sends: `tokens: None` is sending
+/// none, which a retry repeats as exactly as a number.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct FrozenThreshold {
+    key: String,
+    tokens: Option<u32>,
+}
+
+/// The orchestrator model a creation key sends, and whether every send of it
+/// carries [`CREATION_LABEL`]: one a build without it may have sent does not.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct FrozenModel {
+    key: String,
+    model: ModelRef,
+    #[serde(default)]
+    labelled: bool,
+}
+
+/// The label naming the creation key an orchestrator was created under.
+const CREATION_LABEL: &str = "archon.creation";
+
+/// What every attempt of one creation key sends.
+struct FrozenSettings {
+    host_context: HostContext,
+    compaction_tokens: Option<u32>,
+    labelled: bool,
+}
+
+/// One keyed creation: `first` when this build allocated its generation and
+/// no request has used the key. One an older build left may have been sent.
+struct Creation {
+    key: String,
+    first: bool,
+}
+
+/// Settle what `creation` sends, in one transaction before its request: the
+/// host context and compaction threshold it froze, else today's. A key that
+/// may have been sent with nothing frozen was sent by a build that sent none.
+fn freeze_settings(
+    store: &mut archon_queue::Store,
+    config: &OrchestratorConfig,
+    client: &AetherClient,
+    creation: &Creation,
+    configured: HostContext,
+) -> Result<FrozenSettings, ArchonError> {
+    let key = creation.key.as_str();
+    assert!(!key.is_empty(), "a keyed creation");
     let frozen: Option<HostContext> = match store.kv_get(HOST_CONTEXT_KEY)? {
         Some(raw) => Some(
             serde_json::from_str(&raw)
@@ -1161,22 +1587,168 @@ async fn create_orchestrator(
         ),
         None => None,
     };
-    let requested = frozen.unwrap_or(config.host_context);
-    config.host_context = client.welcome().effective_host_context(requested);
-    // A full fallback is frozen too, so a retry under this key never turns lean.
-    if frozen.is_some() || !requested.is_full() {
-        store.kv_set(
-            HOST_CONTEXT_KEY,
-            &serde_json::to_string(&config.host_context)?,
-        )?;
-    }
-    if requested != config.host_context {
+    // Lean is always frozen, so a possibly sent key with nothing frozen sent full.
+    let requested = match frozen {
+        Some(frozen) => frozen,
+        None if creation.first => configured,
+        None => HostContext::Full,
+    };
+    let host_context = client.welcome().effective_host_context(requested);
+    if requested != host_context {
         tracing::warn!("Aether lacks host_context; orchestrator creation falls back to full");
     }
-    drop(store);
-    let agent = client.create_agent(request).await?;
-    callers::record_delegation(ctx, &agent).await?;
-    Ok(agent)
+    let threshold = match frozen_threshold(store, key)? {
+        Some(frozen) => frozen,
+        None => FrozenThreshold {
+            key: key.to_owned(),
+            tokens: compaction_threshold(config, client.serves_compaction_tokens())
+                .filter(|_| creation.first),
+        },
+    };
+    let threshold_raw = serde_json::to_string(&threshold)?;
+    let host_raw = serde_json::to_string(&host_context)?;
+    let stored = frozen_model(store, key)?;
+    // Labelled from a key's first send on, so its replays carry the same label.
+    let labelled = stored
+        .as_ref()
+        .map_or(creation.first, |frozen| frozen.labelled);
+    let model = FrozenModel {
+        key: key.to_owned(),
+        model: config.model.clone(),
+        labelled,
+    };
+    if let Some(frozen) = stored {
+        assert_eq!(frozen, model, "a frozen model is the one sent");
+    }
+    let model_raw = serde_json::to_string(&model)?;
+    let mut set = vec![
+        (COMPACTION_TOKENS_KEY, threshold_raw.as_str()),
+        (ORCHESTRATOR_MODEL_KEY, model_raw.as_str()),
+    ];
+    // A full fallback is frozen too, so a retry under this key never turns lean.
+    if frozen.is_some() || !requested.is_full() {
+        set.push((HOST_CONTEXT_KEY, host_raw.as_str()));
+    }
+    store.kv_update(&set, &[UNSENT_GENERATION_KEY])?;
+    Ok(FrozenSettings {
+        host_context,
+        compaction_tokens: threshold.tokens,
+        labelled,
+    })
+}
+
+/// The model frozen for creation `key`; `None` when none was, or the one
+/// stored belongs to another creation and is replaced.
+fn frozen_model(
+    store: &archon_queue::Store,
+    key: &str,
+) -> Result<Option<FrozenModel>, ArchonError> {
+    let Some(raw) = store.kv_get(ORCHESTRATOR_MODEL_KEY)? else {
+        return Ok(None);
+    };
+    let frozen: FrozenModel = serde_json::from_str(&raw).map_err(|error| {
+        ArchonError::Corrupt(format!("kv {ORCHESTRATOR_MODEL_KEY} = {raw:?}: {error}"))
+    })?;
+    if frozen.model.model.is_empty() {
+        return Err(ArchonError::Corrupt(format!(
+            "kv {ORCHESTRATOR_MODEL_KEY}: an empty model is never sent"
+        )));
+    }
+    Ok(Some(frozen).filter(|frozen| frozen.key == key))
+}
+
+/// The threshold frozen for creation `key`; `None` when none was, or the one
+/// stored belongs to another creation and is replaced.
+fn frozen_threshold(
+    store: &archon_queue::Store,
+    key: &str,
+) -> Result<Option<FrozenThreshold>, ArchonError> {
+    let Some(raw) = store.kv_get(COMPACTION_TOKENS_KEY)? else {
+        return Ok(None);
+    };
+    let frozen: FrozenThreshold = serde_json::from_str(&raw).map_err(|error| {
+        ArchonError::Corrupt(format!("kv {COMPACTION_TOKENS_KEY} = {raw:?}: {error}"))
+    })?;
+    if frozen.tokens == Some(0) {
+        return Err(ArchonError::Corrupt(format!(
+            "kv {COMPACTION_TOKENS_KEY}: 0 is never sent"
+        )));
+    }
+    Ok(Some(frozen).filter(|frozen| frozen.key == key))
+}
+
+/// Whether, with no agent stored, the records name a creation the counter has
+/// not reached: its key may be used, so the next one must follow every key recorded.
+async fn records_ahead_of_counter(ctx: &DaemonContext) -> Result<bool, ArchonError> {
+    let store = ctx.store.lock().await;
+    let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
+    assert!(
+        store.kv_get(keys::ORCHESTRATOR_AGENT)?.is_none(),
+        "only an unstored agent is compared with the counter"
+    );
+    ahead_of(&store, generation)
+}
+
+pub(super) fn ahead_of(store: &archon_queue::Store, generation: u64) -> Result<bool, ArchonError> {
+    let created = origin::recorded_generation(store)?.is_some_and(|created| created > generation);
+    Ok(created || frozen_for_another(store, generation)?)
+}
+
+/// Whether the settings stored beside generation `generation`'s agent were frozen
+/// for another creation. No stored threshold is a build that froze none: no mismatch.
+fn frozen_for_another(store: &archon_queue::Store, generation: u64) -> Result<bool, ArchonError> {
+    if store.kv_get(COMPACTION_TOKENS_KEY)?.is_none() {
+        return Ok(false);
+    }
+    Ok(frozen_generation(store)? != Some(generation))
+}
+
+/// The generation whose creation key the stored threshold was frozen under;
+/// `None` when none is stored or it names no creation of this store.
+fn frozen_generation(store: &archon_queue::Store) -> Result<Option<u64>, ArchonError> {
+    let Some(raw) = store.kv_get(COMPACTION_TOKENS_KEY)? else {
+        return Ok(None);
+    };
+    let Some(store_id) = store.kv_get(STORE_ID_KEY)? else {
+        return Ok(None);
+    };
+    let prefix = creation_key_prefix(&StoreId::parse(&store_id)?);
+    // An unreadable row names no creation; the fresh generation replaces it.
+    let Ok(frozen) = serde_json::from_str::<FrozenThreshold>(&raw) else {
+        return Ok(None);
+    };
+    let Some(number) = frozen.key.strip_prefix(&prefix) else {
+        return Ok(None);
+    };
+    let generation = number.parse::<u64>().ok();
+    Ok(generation.filter(|generation| generation.to_string() == number))
+}
+
+/// The generation after every one the store records as begun: the counter, the
+/// creation last recorded and the one its settings were frozen for. No key is reused.
+fn next_generation(store: &archon_queue::Store, generation: u64) -> Result<u64, ArchonError> {
+    let created = origin::recorded_generation(store)?.unwrap_or(0);
+    let frozen = frozen_generation(store)?.unwrap_or(0);
+    let last = generation.max(created).max(frozen);
+    last.checked_add(1).ok_or_else(|| {
+        let key = keys::ORCHESTRATOR_GENERATION;
+        ArchonError::Corrupt(format!("kv {key}: no generation follows {last}"))
+    })
+}
+
+/// The orchestrator's compaction threshold to send: the configured one, and
+/// only to an aetherd that applies it (an older one would ignore it).
+fn compaction_threshold(config: &OrchestratorConfig, served: bool) -> Option<u32> {
+    let tokens = config.compaction_tokens;
+    assert!(
+        tokens == 0 || tokens >= archon_core::config::MIN_COMPACTION_TOKENS,
+        "the config was validated"
+    );
+    assert!(
+        tokens <= archon_core::config::MAX_COMPACTION_TOKENS,
+        "the config was validated"
+    );
+    (served && tokens > 0).then_some(tokens)
 }
 
 /// Post a supervisor `Blocker` unless the same one is already standing.
@@ -1535,6 +2107,7 @@ mod tests {
             "`item_finished`: a failure, a blocker, an item tagged `notify`, one with a GitHub \
              `origin` to answer, and a success unless the operator turned that off.",
             "Relay code review, CI and approved-intent acceptance separately.",
+            "Other messages do not wait.",
             "A trigger states all `directives` once, then only `directive_changes`; if you hold \
              fewer than `directives_in_force`, read `autonomy_policy`.",
             "A mirror holds the registered repository's local base commit (HEAD when no base \
@@ -1555,10 +2128,15 @@ mod tests {
     fn builtin_prompt_teaches_every_tool_the_orchestrator_has() {
         let prompt = prompt();
         assert!(!archon_core::mcp_tools::TOOLS.is_empty());
-        // Artifact tools are the stage agents'; the prompt is at its byte limit.
-        let artifacts = ["publish_artifact", "list_artifacts", "read_artifact"];
+        // These are the stage agents' tools; the prompt is at its byte limit.
+        let stage_only = [
+            "publish_artifact",
+            "list_artifacts",
+            "read_artifact",
+            "submit_verdict",
+        ];
         for tool in archon_core::mcp_tools::TOOLS {
-            if artifacts.contains(&tool.name) {
+            if stage_only.contains(&tool.name) {
                 continue;
             }
             assert!(
@@ -1610,12 +2188,12 @@ mod tests {
         assert!(at.is_sorted(), "cheapest shape first: {at:?}");
         for said in [
             "Take the first that fits",
-            "every repository in `list_repos` has a mirror, so reading code takes no item",
+            "or a `list_repos` mirror's code (no item)",
             "Queue clear changes at once, in one message; read code only to split them or judge \
              risk, not to fix or test them.",
             "a large request is a backlog ordered with `depends_on` and `priority`",
-            "Never change a repository, build, run apps or drive journeys, yourself or through \
-             a child.",
+            "Never change a repository, build, run apps, drive journeys or do long multi-step \
+             work (reports, statistics), yourself or through a child.",
             "A mirror holds the registered repository's local base commit",
             "Before you say a file has or lacks a change, or a commit or fix is present, read \
              the file in the mirror or run `git log`, `git show` or `git grep` there",
@@ -1644,6 +2222,8 @@ mod tests {
              daemon ships.",
             "`adaptive`: one lead that keeps its context through real fixes, or integrates parts \
              that split.",
+            "Send work that names concurrency, locking, security or a migration here, never to \
+             `direct`.",
             "Never bundle unrelated changes into it.",
             "`swarm`: 3 or more independent parts in disjoint files, built at once by cheap \
              workers.",
@@ -1659,19 +2239,19 @@ mod tests {
             assert!(prompt.contains(said), "missing {said:?}");
         }
         let rubric = archon_core::model::EFFORT_RUBRIC;
-        assert!(!prompt.contains("`max`"), "default prompt: {prompt}");
-        assert!(
-            prompt.contains("`x_high` only for a named reasoning problem inspection left open."),
-            "1.4.12's effort rule unless `[models] effort_sizing` opts in"
-        );
-        assert!(
-            !prompt.contains("Size each stage's effort"),
-            "no sizing by default"
-        );
         let mut config = Config::default();
-        config.models.effort_sizing = true;
-        let sized = orchestrator_instructions(&config, Path::new("/data/orchestrator"), true);
-        let prompt = unwrapped(&sized.unwrap());
+        config.models.effort_sizing = Some(false);
+        let rolled = orchestrator_instructions(&config, Path::new("/data/orchestrator"), true);
+        let rolled = unwrapped(&rolled.unwrap());
+        assert!(!rolled.contains("`max`"), "rolled back prompt: {rolled}");
+        assert!(
+            rolled.contains("`x_high` only for a named reasoning problem inspection left open."),
+            "1.4.12's effort rule when `[models] effort_sizing = false` rolls back"
+        );
+        assert!(
+            !rolled.contains("Size each stage's effort"),
+            "no sizing when rolled back"
+        );
         assert!(!prompt.contains("`max`"), "sized prompt: {prompt}");
         assert!(
             prompt.contains(&format!("Size each stage's effort to its task: {rubric}")),
@@ -1736,6 +2316,7 @@ mod tests {
             "`steer_item` blames no model; once a run delivers, only its `note` reaches it.",
             "One failed with `ESCALATE:` does not fit its pipeline: do not retry it; \
              `switch_pipeline` or `insert_stage` revives it on its branch.",
+            "A stop at the review-round cap is the exception: its error lists your choices.",
             "An item that `depends_on` an unmerged one of its repository stacks on its branch \
              and pull request.",
             "Queue a chain at once; wait for no merge.",
@@ -1951,8 +2532,8 @@ mod tests {
     /// own or a helper's, whether or not the hand-off rule is on.
     #[test]
     fn the_orchestrator_never_does_validation_work_itself() {
-        let ban = "Never change a repository, build, run apps or drive journeys, yourself or \
-                   through a child.";
+        let ban = "Never change a repository, build, run apps, drive journeys or do long \
+                   multi-step work (reports, statistics), yourself or through a child.";
         let mut config = Config::default();
         config.orchestrator.validate_before_handoff = false;
         for config in [Config::default(), config] {
@@ -2048,8 +2629,10 @@ mod tests {
     }
 
     /// The prompt is paid for on every turn; the tools describe themselves.
-    /// Includes 1 KiB for approved-intent and clarification guidance.
-    const BUDGET_BYTES: usize = 14 * 1024 + 768;
+    /// Includes 1 KiB for approved-intent and clarification guidance, 128 B
+    /// for routing risky work to `adaptive`, 64 B for the rule against
+    /// polling GitHub from a schedule, and 64 B for the review-cap exception.
+    const BUDGET_BYTES: usize = 14 * 1024 + 768 + 128 + 64 + 64;
 
     #[test]
     fn builtin_prompt_stays_within_its_budget() {

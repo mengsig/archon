@@ -6,9 +6,6 @@ use serde_json::Value;
 
 use crate::spec::ReviewDuty;
 
-/// A reviewer's model or a skip reason is one line of a summary.
-const MAX_FIELD_CHARS: usize = 400;
-
 /// Most reviewers one record may name: more is a lead listing its tree.
 pub const MAX_NAMED_REVIEWERS: usize = 12;
 
@@ -539,6 +536,23 @@ pub fn claimed_reviewers(structured: &Value) -> Option<Vec<String>> {
     Some(agents.collect())
 }
 
+/// Whether `structured` holds a review that names no reviewer: no `review`
+/// object, or one that neither fails, is skipped nor lists an agent.
+pub(crate) fn names_no_reviewer(structured: &Value) -> bool {
+    let Some(review) = structured.get("review") else {
+        return true;
+    };
+    let verdict = one_line(review.get("verdict").and_then(Value::as_str).unwrap_or(""));
+    let judged_without = verdict.eq_ignore_ascii_case("skipped")
+        || matches!(Said::of_phrase(&verdict), Some(Said::Fail));
+    if judged_without {
+        return false;
+    }
+    let named = review.get("reviewers").and_then(Value::as_array);
+    let mut agents = named.into_iter().flatten().filter_map(Value::as_str);
+    !agents.any(|agent| !one_line(agent).is_empty())
+}
+
 /// Put Archon's finding on a result's review, replacing whatever its agent
 /// wrote there: the reviewers it found, or why they do not make the pass.
 pub fn record_check(structured: &mut Value, found: Option<Result<Vec<Reviewer>, String>>) {
@@ -696,12 +710,10 @@ pub fn record_implicit(structured: &mut Value, agents: &[String]) {
     review.insert(IMPLICIT_REVIEWER_AGENTS.into(), agents.to_vec().into());
 }
 
-/// `text` as one trimmed line of at most [`MAX_FIELD_CHARS`] characters.
+/// `text` as one trimmed line, capped as a summary's line is: the read the
+/// outcome store shares, so both take the same verdict from a review.
 fn one_line(text: &str) -> String {
-    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let line: String = joined.chars().take(MAX_FIELD_CHARS).collect();
-    debug_assert!(!line.contains('\n') && line.chars().count() <= MAX_FIELD_CHARS);
-    line
+    archon_core::run::review_field(text)
 }
 
 #[cfg(test)]
@@ -712,14 +724,17 @@ mod tests {
     const ONE: ReviewDuty = ReviewDuty {
         reviewers: 1,
         may_skip: false,
+        records_verdict: false,
     };
     const ONE_OR_SKIP: ReviewDuty = ReviewDuty {
         reviewers: 1,
         may_skip: true,
+        records_verdict: false,
     };
     const THREE: ReviewDuty = ReviewDuty {
         reviewers: 3,
         may_skip: false,
+        records_verdict: false,
     };
 
     fn read(structured: Value) -> Result<Evidence, String> {
@@ -1891,6 +1906,7 @@ mod tests {
         let skipped = read(json!({"review": {"verdict": "skipped", "reason": reason}})).unwrap();
         let line = skipped.line();
         assert!(!line.contains('\n'), "{line}");
-        assert!(line.chars().count() <= MAX_FIELD_CHARS + "REVIEW: skipped: ".len());
+        let cap = archon_core::run::MAX_REVIEW_FIELD_CHARS;
+        assert!(line.chars().count() <= cap + "REVIEW: skipped: ".len());
     }
 }

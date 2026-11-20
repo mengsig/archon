@@ -249,6 +249,7 @@ fn item_detail(stage: StageRun) -> ItemDetail {
     item.id = run.item.clone();
     ItemDetail {
         acceptance: Default::default(),
+        plan_origins: Default::default(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),
@@ -271,6 +272,7 @@ fn item_detail(stage: StageRun) -> ItemDetail {
 
 fn long_review(run: PipelineRunId) -> StageRun {
     StageRun {
+        only_reviews: None,
         id: StageRunId::new(),
         run,
         stage_id: "review".into(),
@@ -279,12 +281,16 @@ fn long_review(run: PipelineRunId) -> StageRun {
         fan_index: 0,
         model_segments: Vec::new(),
         infrastructure_failure: false,
+        record_repair: None,
         host_context: Default::default(),
         choice: choice(),
         aether_agent: None,
         aether_task: None,
         state: StageState::Completed,
         verdict: Some(Verdict::Fail),
+        verdict_note: None,
+        sizing: Default::default(),
+        restatement: None,
         summary: Some("s".repeat(3_000)),
         structured: Some(json!({"findings": []})),
         cost_usd: 0.0,

@@ -491,6 +491,16 @@ async fn github_confirmations_bind_the_thread_and_never_change_the_watcher() {
         .await
         .unwrap_err();
     assert!(result.to_string().contains("GitHub cannot change watcher"));
+    let watch = Request::WatchRepo {
+        repo: archon_core::protocol::RepoRef(common::REPO_NAME.into()),
+        interval_minutes: None,
+        remove: false,
+    };
+    let result = h
+        .orchestrator(cited(watch, 1, "grant requested merges"))
+        .await
+        .unwrap_err();
+    assert!(result.to_string().contains("GitHub cannot change watcher"));
 }
 
 #[tokio::test]

@@ -5,17 +5,23 @@ use std::collections::BTreeMap;
 
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
+use archon_core::model_tier::ModelCatalog;
 use archon_core::protocol::{WaitingOn, WaitingReason, WaitingReasonCode as Code};
 use archon_core::queue::{QueueItem, QueueState};
+use archon_core::run::{StageRun, StageState};
+use archon_queue::dispatch::ModelHoldKind;
 use archon_queue::{DispatchSnapshot, Store};
 
 use crate::context::DaemonContext;
 use crate::dispatcher;
+use crate::executor;
 
 pub(super) struct WaitingView {
     snapshot: DispatchSnapshot,
     connected: bool,
     reasons: BTreeMap<QueueItemId, (Code, usize)>,
+    /// Running items whose next stage waits for a usable model, with why.
+    held_stages: BTreeMap<QueueItemId, (ModelHoldKind, String)>,
 }
 
 impl WaitingView {
@@ -28,9 +34,13 @@ impl WaitingView {
             .enumerate()
             .map(|(index, candidate)| (candidate.item.clone(), (codes[&candidate.item], index)))
             .collect();
+        let mut held_stages = model_held_stages(&snapshot);
+        let catalog = dispatcher::catalog_for_view(ctx).await?;
+        held_reserved(&*ctx.read_store().await?, &catalog, &mut held_stages)?;
         Ok(Self {
             snapshot,
             reasons,
+            held_stages,
             connected: ctx.aether.is_connected(),
         })
     }
@@ -61,6 +71,11 @@ impl WaitingView {
                 }
             }
             QueueState::Blocked { .. } => blocked_code(store, item)?,
+            _ if item.state.is_active() => match self.held_stages.get(&item.id) {
+                Some((ModelHoldKind::CatalogUnavailable, _)) => Code::ModelCatalogUnavailable,
+                Some(_) => Code::Blocked,
+                None => return Ok(None),
+            },
             _ => return Ok(None),
         };
         let (message, next_action) = self.describe(store, item, code)?;
@@ -137,6 +152,18 @@ impl WaitingView {
             }
             Code::Capacity => self.capacity(store, item)?,
             Code::ProviderQuota => self.provider_quota(item),
+            Code::ModelCatalogUnavailable => {
+                let reason = self.catalog_hold(item);
+                let action = if reason.contains("configure a provider") {
+                    "configure a provider in Aether"
+                } else {
+                    "start or reconnect Aether"
+                };
+                (
+                    format!("Model catalog unavailable: {reason}"),
+                    action.into(),
+                )
+            }
             Code::AetherDisconnected => (
                 "Dispatch held: Aether disconnected".into(),
                 "archon doctor".into(),
@@ -145,15 +172,73 @@ impl WaitingView {
                 "Next in line for the next dispatch pass".into(),
                 format!("archon queue show {}", item.id),
             ),
-            Code::Blocked => (
-                "Dependencies recovered; inspect the recorded block before cancelling and retrying"
-                    .into(),
-                format!("archon queue show {} --full", item.id),
-            ),
+            Code::Blocked if item.state.is_active() => self.held_stage_model(item),
+            Code::Blocked => {
+                let model_reason = match &item.state {
+                    QueueState::Blocked { reason } if item.state.is_model_pin_block() => {
+                        Some(reason.as_str())
+                    }
+                    QueueState::Queued => self.reasons.get(&item.id).and_then(|(_, index)| {
+                        self.snapshot.queued[*index]
+                            .model_hold
+                            .as_ref()
+                            .map(|hold| hold.reason.as_str())
+                    }),
+                    _ => None,
+                };
+                // Retry takes a blocked item only; a queued one is re-planned in place.
+                let replan = match item.state {
+                    QueueState::Queued => {
+                        format!("Re-plan the stage's model for {} with update_item", item.id)
+                    }
+                    _ => format!("archon queue retry {} --model-plan-file <path>", item.id),
+                };
+                match model_reason {
+                    Some(reason) => (reason.to_owned(), replan),
+                    None => ("Dependencies recovered; inspect the recorded block before cancelling and retrying".into(), format!("archon queue show {} --full", item.id)),
+                }
+            }
             Code::OperatorGate => {
                 unreachable!("operator waits are handled before dispatch reasons")
             }
         })
+    }
+
+    /// Why the model catalog holds `item`: its queued admission or, once it
+    /// runs, the creation of its next stage.
+    fn catalog_hold(&self, item: &QueueItem) -> &str {
+        let held = self.held_stages.get(&item.id);
+        if let Some((kind, reason)) = held.filter(|_| item.state.is_active()) {
+            assert_eq!(*kind, ModelHoldKind::CatalogUnavailable, "a catalog hold");
+            assert!(!reason.is_empty(), "a catalog hold says why");
+            return reason;
+        }
+        let (_, index) = self.reasons[&item.id];
+        let candidate = &self.snapshot.queued[index];
+        assert_eq!(
+            candidate.item, item.id,
+            "the reason indexes the item's candidate"
+        );
+        candidate
+            .model_hold
+            .as_ref()
+            .map(|hold| hold.reason.as_str())
+            .expect("model hold has a reason")
+    }
+
+    /// Why a running item's next stage has no usable model, and how to re-plan it.
+    fn held_stage_model(&self, item: &QueueItem) -> (String, String) {
+        let (kind, reason) = &self.held_stages[&item.id];
+        assert_ne!(
+            *kind,
+            ModelHoldKind::CatalogUnavailable,
+            "a model, not a catalog, hold"
+        );
+        assert!(!reason.is_empty(), "a model hold says why");
+        (
+            format!("Next stage waits for a valid model: {reason}"),
+            format!("Re-plan the stage's model for {} with update_item", item.id),
+        )
     }
 
     /// The stage no provider has quota for, and the earliest reset.
@@ -249,6 +334,9 @@ fn shell_arg(value: &str) -> String {
 }
 
 fn blocked_code(store: &Store, item: &QueueItem) -> Result<Code, ArchonError> {
+    if item.state.is_model_pin_block() {
+        return Ok(Code::Blocked);
+    }
     let mut waiting = false;
     for id in &item.dependencies {
         match store.item(id)?.state {
@@ -297,6 +385,75 @@ fn dependency(
     ))
 }
 
+/// Each item whose pending stage spawn a model hold stops, with why.
+fn model_held_stages(
+    snapshot: &DispatchSnapshot,
+) -> BTreeMap<QueueItemId, (ModelHoldKind, String)> {
+    snapshot
+        .pending_spawns
+        .iter()
+        .filter_map(|spawn| {
+            let hold = spawn.model_hold.as_ref()?;
+            Some((spawn.item.clone(), (hold.kind, hold.reason.clone())))
+        })
+        .collect()
+}
+
+/// Reserved stage creations are checked like pending ones (`check_frozen_request`),
+/// though the run table no longer lists them: each is held by an outage or by
+/// a frozen model the ready catalog refuses.
+fn held_reserved(
+    store: &Store,
+    catalog: &ModelCatalog,
+    held: &mut BTreeMap<QueueItemId, (ModelHoldKind, String)>,
+) -> Result<(), ArchonError> {
+    for stage in store.live_stage_runs()? {
+        if stage.state != StageState::Spawning {
+            continue;
+        }
+        let run = store.run(&stage.run)?;
+        // A finished run's unsent creation is cancelled, not held.
+        if run.state.is_terminal() {
+            continue;
+        }
+        let item = store.item(&run.item)?;
+        let Some(hold) = reserved_hold(store, catalog, &item, &stage)? else {
+            continue;
+        };
+        assert!(!hold.1.is_empty(), "a model hold says why");
+        held.entry(item.id).or_insert(hold);
+    }
+    Ok(())
+}
+
+/// Why the catalog stops the reserved creation of `stage`, if it does: an
+/// unsettled pin the operator re-plans, or a choice with no replacement yet.
+fn reserved_hold(
+    store: &Store,
+    catalog: &ModelCatalog,
+    item: &QueueItem,
+    stage: &StageRun,
+) -> Result<Option<(ModelHoldKind, String)>, ArchonError> {
+    assert_eq!(stage.state, StageState::Spawning, "a reserved creation");
+    if let Some(reason) = catalog.not_ready_reason() {
+        return Ok(Some((ModelHoldKind::CatalogUnavailable, reason.to_owned())));
+    }
+    let models = match executor::reserved_models(store, &stage.id) {
+        Ok(models) => models,
+        Err(error) if error.is_store() => return Err(error),
+        // Its claim fails a stage whose request cannot be read; no model holds it.
+        Err(_) => return Ok(None),
+    };
+    let Some(refused) = models.iter().find_map(|m| catalog.check(m).err()) else {
+        return Ok(None);
+    };
+    let when = archon_core::plan_origin::TierMove::InRun;
+    Ok(Some(match dispatcher::invalid_pin(item, catalog, when) {
+        Some(pin) => (ModelHoldKind::InvalidPin, pin),
+        None => (ModelHoldKind::NoReplacement, refused.to_string()),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,6 +465,7 @@ mod tests {
         let view = WaitingView {
             snapshot: store.dispatch_snapshot(now).unwrap(),
             reasons: BTreeMap::new(),
+            held_stages: BTreeMap::new(),
             connected: true,
         };
         let item = QueueItem {

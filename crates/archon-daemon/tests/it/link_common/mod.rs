@@ -88,6 +88,7 @@ impl Harness {
         let fake = FakeAether::start(&dir.path().join("aetherd.sock"))
             .await
             .expect("fake aetherd binds");
+        crate::common::catalog::answer(&fake, &crate::common::catalog::default_models());
         fake.set_default("trigger", archon_aether::fake::Scripted::ok());
         let link = Arc::new(AetherLink::new());
         let backend = Arc::new(AetherBackend::new(link.clone(), config.models.policy()));
@@ -359,6 +360,113 @@ pub async fn sent_policy(
         .unwrap();
 }
 
+/// `stage`'s spawn as it was stored: its contract `instructions` and the
+/// effort contract recorded with it, absent as 1.6.3 stored none. One that
+/// records a mode records the reviewers the item plans now, as 1.6.4 does.
+pub async fn issued_spawn(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    instructions: &str,
+    mode: Option<&str>,
+) {
+    let mut store = ctx.store.lock().await;
+    let run = store.run(&stage.run).unwrap();
+    let mut request = spawn_request(stage, &run.workspace, None);
+    request.instructions = instructions.to_owned();
+    let mut spawn =
+        serde_json::json!({"request": request, "timeout_minutes": 30, "parent": "bound"});
+    if let Some(mode) = mode {
+        let plan = store.item(&run.item).unwrap().model_plan;
+        let named = plan.reviewer_choices().unwrap_or_default();
+        spawn["effort_contract"] = serde_json::json!(mode);
+        spawn["issued_reviewers"] = serde_json::json!(named);
+    }
+    store
+        .kv_set(&format!("spawn_request:{}", stage.id), &spawn.to_string())
+        .unwrap();
+}
+
+/// `stage`'s stored spawn with `field` set to `value`, as a later Archon wrote it.
+pub async fn amend_spawn(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    field: &str,
+    value: serde_json::Value,
+) {
+    let mut store = ctx.store.lock().await;
+    let key = format!("spawn_request:{}", stage.id);
+    let raw = store.kv_get(&key).unwrap().expect("a stored spawn");
+    let mut spawn: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(
+        spawn.get("request").is_some(),
+        "a stored spawn holds its request"
+    );
+    spawn[field] = value;
+    store.kv_set(&key, &spawn.to_string()).unwrap();
+}
+
+/// `stage`'s stored spawn with its request's `field` set to `value`.
+pub async fn amend_spawn_request(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    field: &str,
+    value: serde_json::Value,
+) {
+    let mut store = ctx.store.lock().await;
+    let key = format!("spawn_request:{}", stage.id);
+    let raw = store.kv_get(&key).unwrap().expect("a stored spawn");
+    let mut spawn: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let request = spawn
+        .get_mut("request")
+        .expect("a stored spawn holds its request");
+    assert!(request.is_object(), "a request is an object");
+    request[field] = value;
+    store.kv_set(&key, &spawn.to_string()).unwrap();
+}
+
+/// `earlier`'s agent kept for its next attempt: `earlier` failed, and the
+/// running attempt that resumes the agent stored a spawn whose `resume`
+/// holds it, rendered with `instructions` and recording no rule, as 1.6.3 did.
+pub async fn resumed_stage(
+    ctx: &DaemonContext,
+    earlier: &StageRun,
+    instructions: &str,
+) -> StageRun {
+    let agent = earlier
+        .aether_agent
+        .clone()
+        .expect("a running stage holds its agent");
+    let mut store = ctx.store.lock().await;
+    let mut failed = earlier.clone();
+    failed.state = StageState::Failed {
+        error: "review asked for changes".into(),
+    };
+    failed.finished_at = Some(earlier.started_at + chrono::Duration::milliseconds(500));
+    store.upsert_stage_run(&failed).unwrap();
+    let mut later = stage_run(&earlier.run, StageState::Running);
+    later.attempt = earlier.attempt + 1;
+    later.started_at = earlier.started_at + chrono::Duration::seconds(1);
+    later.aether_agent = Some(agent.clone());
+    later.aether_task = earlier.aether_task.clone();
+    store.upsert_stage_run(&later).unwrap();
+    let held = store
+        .stage_run_by_agent(&agent)
+        .unwrap()
+        .expect("handed over");
+    assert_eq!(held.id, later.id, "the later attempt holds the agent");
+    let run = store.run(&later.run).unwrap();
+    let mut request = spawn_request(&later, &run.workspace, None);
+    request.instructions = instructions.to_owned();
+    let resume = serde_json::json!({"agent": agent, "message": "fix it"});
+    let spawn = serde_json::json!({
+        "request": request, "timeout_minutes": 30, "parent": "bound", "resume": resume,
+    });
+    store
+        .kv_set(&format!("spawn_request:{}", later.id), &spawn.to_string())
+        .unwrap();
+    later
+}
+
 /// A queued item of the repository at `path`, registered unless it is.
 pub async fn queued_item(ctx: &DaemonContext, path: &Path) -> QueueItemId {
     let mut store = ctx.store.lock().await;
@@ -435,6 +543,7 @@ fn run_in_repo(store: &mut Store, repo: &Repo) -> PipelineRun {
 
 fn stage_run(run: &PipelineRunId, state: StageState) -> StageRun {
     StageRun {
+        only_reviews: None,
         id: StageRunId::new(),
         run: run.clone(),
         stage_id: "implement".into(),
@@ -443,12 +552,16 @@ fn stage_run(run: &PipelineRunId, state: StageState) -> StageRun {
         fan_index: 0,
         model_segments: Vec::new(),
         infrastructure_failure: false,
+        record_repair: None,
         host_context: Default::default(),
         choice: choice(),
         aether_agent: None,
         aether_task: None,
         state,
         verdict: None,
+        verdict_note: None,
+        sizing: Default::default(),
+        restatement: None,
         summary: None,
         structured: None,
         cost_usd: 0.0,
@@ -479,7 +592,7 @@ fn queue_item(repo: &Repo) -> QueueItem {
         priority: Priority::Normal,
         dependencies: vec![],
         tags: vec![],
-        model_plan: plan,
+        model_plan: archon_core::plan_origin::PlannedPlan::legacy(plan),
         model_reasons: None,
         budget_usd: None,
         autonomy: Default::default(),

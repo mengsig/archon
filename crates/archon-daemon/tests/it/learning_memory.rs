@@ -204,6 +204,7 @@ async fn a_forget_is_refused_before_anything_is_recorded_while_no_instance_is_kn
 #[tokio::test]
 async fn a_forget_made_while_aether_is_down_is_retried_only_in_the_last_known_instance() {
     let h = Harness::new().await;
+    h.ctx.aether.replace(None).unwrap();
     known_instance(&h, "fake-instance-1").await;
     let run = sample(&h, &model("cheap"), 0.2).await;
     let down = correct(&h, forgetting(&run, STALE)).await.unwrap();

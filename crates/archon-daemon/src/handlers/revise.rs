@@ -9,7 +9,8 @@ use archon_core::autonomy::{
 };
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::model::{ModelPlan, ModelReasons};
+use archon_core::model::ModelReasons;
+use archon_core::plan_origin::{PlanWriter, PlannedPlan};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_pipeline::PipelineSpec;
 use archon_pipeline::autonomy::augment;
@@ -37,8 +38,8 @@ pub(crate) enum Ceiling {
 /// The stages and plan an item that never ran gets from new knobs.
 pub(super) struct Restaged {
     /// The plan the revision was worked out against.
-    from: ModelPlan,
-    plan: ModelPlan,
+    from: PlannedPlan,
+    plan: PlannedPlan,
     reasons: Option<ModelReasons>,
 }
 
@@ -200,10 +201,15 @@ async fn restage(
         spec
     };
     let spec = executor::steer::shaped(ctx, &revised, spec).await?;
-    let mut plan = item.model_plan.clone();
-    plan.0.retain(|key, _| spec.is_plan_key(key));
+    crate::learned::request_catalog(ctx).await?;
+    let current = &item.model_plan;
+    let mut kept = PlanWriter::new(&item.id, archon_core::now());
+    let cap = crate::sizing::carried_cap(&ctx.config, &env.resolved_policy(ctx));
+    kept.carry(current, &item.id, cap, |key| {
+        spec.is_plan_key(key).then_some(usize::MAX)
+    });
     let route = crate::knobs::ItemRoute::new(item);
-    let plan = items::filled_plan(ctx, route, env, base, &spec, plan).await?;
+    let plan = items::filled_plan(ctx, route, env, base, &spec, kept, Some(current.plan())).await?;
     items::check_plan(ctx, env, &spec, &plan)?;
     let reasons = item.model_reasons.clone().map(|mut reasons| {
         reasons.retain(|key, _| spec.is_plan_key(key));

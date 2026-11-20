@@ -14,7 +14,7 @@ use archon_core::model::{Effort, ModelPlan};
 use archon_core::ports::{DescendantState, resumed_reply_outcome};
 use archon_core::protocol::Request;
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::run::{PipelineRun, StageOutcome, StageRun, StageState};
+use archon_core::run::{PipelineRun, RecordRepair, StageOutcome, StageRun, StageState};
 use archon_core::steer::Steer;
 use archon_daemon::executor;
 use common::delivery::{FakeGh, add_origin, change, origin_of, pushed, shipped_by};
@@ -458,6 +458,96 @@ async fn a_resumed_agent_that_leaves_out_its_record_is_asked_for_it_once() {
     running(&h, "review").await;
 }
 
+/// The review stages started for `item` so far.
+async fn reviews(h: &Harness, item: &archon_core::id::QueueItemId) -> usize {
+    let stages = h.stages(item).await;
+    stages.iter().filter(|s| s.stage_id == "review").count()
+}
+
+/// A kept agent whose record reply states a fail beside a valid record is
+/// refused on its merits: the review does not start on it.
+#[tokio::test]
+async fn a_record_reply_that_states_a_fail_is_not_reviewed() {
+    let h = harness().await;
+    let (item, _) = implemented(&h, "fails on asking").await;
+    let fix = sent_back(&h).await;
+    let reviewed = reviews(&h, &item.id).await;
+    ends_without_its_record(&h, &fix, "added the test").await;
+    answers(&h, &fix, "Here is the record.\nVERDICT: FAIL").await;
+    assert_eq!(reviews(&h, &item.id).await, reviewed, "no review of a fail");
+    let stages = h.stages(&item.id).await;
+    let done = stages.iter().find(|s| s.id == fix.id).expect("the fix");
+    let summary = done.summary.as_deref().unwrap_or_default();
+    assert!(
+        summary.contains("VERDICT: FAIL"),
+        "the reply as sent: {summary}"
+    );
+}
+
+/// A fail stated after the record block is part of the reply as sent: the
+/// record before it does not hide it, and the review does not start on it.
+#[tokio::test]
+async fn a_fail_stated_after_the_record_is_not_reviewed() {
+    let h = harness().await;
+    let (item, _) = implemented(&h, "fails after its record").await;
+    let fix = sent_back(&h).await;
+    let reviewed = reviews(&h, &item.id).await;
+    let run = h.ctx.store.lock().await.run(&fix.run).expect("run");
+    let record = change(&run.workspace);
+    let reply = format!("Here is the record.\n```json\n{record}\n```\nVERDICT: FAIL");
+    h.backend
+        .answer(&agent(&fix), resumed_reply_outcome(&reply));
+    let ended = executor::turn_ended(&h.ctx, &agent(&fix)).await;
+    ended.expect("turn end");
+    h.dispatch().await;
+    assert_eq!(reviews(&h, &item.id).await, reviewed, "no review of a fail");
+    let stages = h.stages(&item.id).await;
+    let done = stages.iter().find(|s| s.id == fix.id).expect("the fix");
+    let summary = done.summary.as_deref().unwrap_or_default();
+    assert!(summary.ends_with("VERDICT: FAIL"), "as sent: {summary}");
+    assert_eq!(done.structured.as_ref(), Some(&record), "beside its record");
+}
+
+/// A stage run started by an archond from before repair turns has no marker.
+/// Its outcome is recorded now, so it is marked then and gets its repair turn.
+#[tokio::test]
+async fn a_stage_run_started_before_the_upgrade_gets_its_repair_turn() {
+    let h = harness().await;
+    let item = h.enqueue_in(REVIEWED, "in flight", plan()).await;
+    let item = item.expect("enqueue");
+    h.dispatch().await;
+    let mut first = running(&h, "implement").await;
+    first.record_repair = None;
+    let saved = h.ctx.store.lock().await.upsert_stage_run(&first);
+    saved.expect("the row as the older archond wrote it");
+    h.settle_running(|_| common::completed("Built it.")).await;
+    h.dispatch().await;
+    let repair = running(&h, "implement").await;
+    assert_eq!(repair.run, first.run, "the same run");
+    assert_eq!(repair.record_repair, Some(RecordRepair::Spent));
+    let rows = h.stages(&item.id).await;
+    let broken = rows.iter().find(|s| s.id == first.id).expect("the build");
+    assert_eq!(broken.state, StageState::Completed);
+    assert_eq!(broken.record_repair, Some(RecordRepair::Open));
+}
+
+/// A kept agent that states a fail without its record is not asked for one.
+#[tokio::test]
+async fn a_resumed_reply_that_states_a_fail_is_not_asked_for_its_record() {
+    let h = harness().await;
+    let (item, _) = implemented(&h, "fails at once").await;
+    let fix = sent_back(&h).await;
+    let reviewed = reviews(&h, &item.id).await;
+    let before = h.backend.messages().len();
+    let outcome = resumed_reply_outcome("Could not fix it.\nVERDICT: FAIL");
+    h.backend.answer(&agent(&fix), outcome);
+    let ended = executor::turn_ended(&h.ctx, &agent(&fix)).await;
+    ended.expect("turn end");
+    h.dispatch().await;
+    assert_eq!(h.backend.messages().len(), before, "no record request");
+    assert_eq!(reviews(&h, &item.id).await, reviewed, "no review of a fail");
+}
+
 #[tokio::test]
 async fn a_resumed_agent_asked_for_its_record_in_vain_fails_its_stage() {
     let h = harness().await;
@@ -469,6 +559,30 @@ async fn a_resumed_agent_asked_for_its_record_in_vain_fails_its_stage() {
     let ended = executor::turn_ended(&h.ctx, &agent(&fix)).await;
     ended.expect("turn end");
     h.dispatch().await;
+    // The broken record gets one repair turn, which the kept agent takes.
+    let repair = running(&h, "implement").await;
+    assert_ne!(repair.id, fix.id, "a new attempt");
+    assert_eq!(agent(&repair), agent(&fix), "the kept agent repairs");
+    let told = h.backend.resumed_with(&repair);
+    assert!(told.contains("Archon record repair"), "{told}");
+    // The repair attempt's row carries the persisted marker of a spent turn.
+    let rows = h.stages(&item.id).await;
+    let mark = |id| {
+        rows.iter()
+            .find(|s| s.id == id)
+            .and_then(|s| s.record_repair)
+    };
+    assert_eq!(mark(fix.id.clone()), Some(RecordRepair::Open));
+    assert_eq!(mark(repair.id.clone()), Some(RecordRepair::Spent));
+    // Its repair reply without the record fails the run: it is not asked again.
+    let before = h.backend.messages().len();
+    h.backend
+        .answer(&agent(&repair), resumed_reply_outcome("added the test"));
+    let ended = executor::turn_ended(&h.ctx, &agent(&repair)).await;
+    ended.expect("turn end");
+    h.dispatch().await;
+    let messages = h.backend.messages();
+    assert_eq!(messages.len(), before, "no second request: {messages:?}");
     let state = h.state(&item.id).await;
     let QueueState::Failed { error, .. } = &state else {
         panic!("{state:?}");
@@ -845,7 +959,7 @@ async fn a_cost_stop_of_unknown_billing_is_labelled_notional_cost() {
         spawn["request"]["cost_billing"] = billing.into();
         let raw = spawn.to_string();
         h.ctx.store.lock().await.kv_set(&key, &raw).unwrap();
-        let stop = "cost budget of $10.00: $10.02 spent";
+        let stop = "cost budget of $10: $10.0200 spent";
         h.settle_running(|_| StageOutcome::Failed {
             error: stop.into(),
             infra: false,
@@ -863,4 +977,31 @@ async fn a_cost_stop_of_unknown_billing_is_labelled_notional_cost() {
             "{billing}: {error}"
         );
     }
+}
+
+/// An attempt 1.6.3 recorded names its model by the alias it was asked with.
+/// The alias may since name another model, so the kept agent is replaced.
+#[tokio::test]
+async fn a_kept_agent_recorded_by_an_alias_is_replaced_for_its_findings() {
+    let h = harness().await;
+    let alias: archon_core::model::ModelRef = "claude-code/sonnet".parse().unwrap();
+    let mut catalog = common::catalog::default_models();
+    catalog.add_alias(alias.clone(), MODEL.parse().unwrap());
+    h.set_catalog(catalog).await;
+    let (_item, first) = implemented(&h, "add a greeting").await;
+    let implementer = agent(&first);
+    let recorded = h.ctx.store.lock().await.stage_run(&first.id).unwrap();
+    assert!(recorded.model_segments.is_empty(), "never retuned");
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let changed = conn.execute(
+        "UPDATE stage_runs SET data = json_set(data, '$.choice.model', json(?1)) WHERE id = ?2",
+        [serde_json::to_string(&alias).unwrap(), first.id.to_string()],
+    );
+    assert_eq!(changed.unwrap(), 1, "the attempt as 1.6.3 recorded it");
+    let reread = h.ctx.store.lock().await.stage_run(&first.id).unwrap();
+    assert_eq!(reread.choice.model, alias);
+
+    let fix = sent_back(&h).await;
+    assert_ne!(agent(&fix), implementer, "a new agent fixes the work");
+    assert!(fix.aether_task.is_some(), "spawned, not resumed by message");
 }

@@ -1,9 +1,11 @@
 //! Durable run observations and corrections; all derived columns share the JSON write.
 
 mod capture;
+mod class;
 mod costs;
 mod distillation;
 mod feedback;
+pub(super) mod reclassify;
 mod reconcile;
 mod segments;
 pub(super) mod stats;
@@ -228,14 +230,15 @@ pub(super) fn correct(
 pub(super) fn write(conn: &Connection, o: &Outcome) -> Result<(), ArchonError> {
     o.check()?;
     conn.execute("INSERT INTO outcomes (run,item,repo,pipeline,size,result,failure_class,corrected,
-        merged,cost_usd,finished_at,updated_at,data) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+        merged,cost_usd,finished_at,updated_at,data,class_source) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
         ON CONFLICT(run) DO UPDATE SET corrected=excluded.corrected,merged=excluded.merged,
         size=excluded.size,result=excluded.result,failure_class=excluded.failure_class,
-        cost_usd=excluded.cost_usd,updated_at=excluded.updated_at,data=excluded.data",
+        cost_usd=excluded.cost_usd,updated_at=excluded.updated_at,data=excluded.data,
+        class_source=excluded.class_source",
         params![o.run.as_str(),o.item.as_str(),o.repo.as_ref().map(RepoId::as_str),o.pipeline,
             o.size().map(|s| s.as_str()),o.result.as_str(),o.failure.map(|f| f.as_str()),
             !o.corrections.is_empty(),o.merged,o.cost_usd,ts(&o.finished_at),ts(&archon_core::now()),
-            to_json(o,"outcome")?]).ctx("write outcome")?;
+            to_json(o,"outcome")?,o.failure_source.map(|s| s.as_str())]).ctx("write outcome")?;
     conn.execute("DELETE FROM outcome_stages WHERE run=?1", [o.run.as_str()])
         .ctx("replace outcome stages")?;
     let mut stmt = conn
@@ -406,10 +409,21 @@ impl Store {
 }
 
 impl Store {
+    pub fn fresh_model_catalog(&self) -> Option<ModelCatalog> {
+        let learned = self.learned();
+        (Self::catalog_fresh(learned.catalog_at) && learned.catalog.not_ready_reason().is_none())
+            .then(|| learned.catalog.clone())
+    }
+
+    fn catalog_fresh(read_at: Option<archon_core::Timestamp>) -> bool {
+        read_at.is_some_and(|at| {
+            (chrono::Duration::zero()..chrono::Duration::minutes(5))
+                .contains(&(archon_core::now() - at))
+        })
+    }
+
     pub fn learning_models_stale(&self) -> bool {
-        self.learned()
-            .catalog_at
-            .is_none_or(|at| archon_core::now() - at >= chrono::Duration::minutes(5))
+        !Self::catalog_fresh(self.learned().catalog_at)
     }
 
     /// Connected models Aether places in no tier.
@@ -426,6 +440,15 @@ impl Store {
     }
 
     pub fn set_model_catalog(&self, catalog: ModelCatalog) {
+        self.record_model_catalog(catalog, archon_core::now(), None);
+    }
+
+    pub fn record_model_catalog(
+        &self,
+        catalog: ModelCatalog,
+        read_at: archon_core::Timestamp,
+        generation: Option<u64>,
+    ) {
         assert!(
             catalog
                 .models()
@@ -434,7 +457,19 @@ impl Store {
         );
         let mut learned = self.learned();
         learned.catalog = catalog;
-        learned.catalog_at = Some(archon_core::now());
+        learned.catalog_at = Some(read_at);
+        learned.catalog_generation = generation;
+    }
+
+    pub fn catalog_generation(&self) -> Option<u64> {
+        self.learned().catalog_generation
+    }
+
+    pub fn invalidate_model_catalog(&self, reason: String) {
+        let mut learned = self.learned();
+        learned.catalog = ModelCatalog::unavailable(reason);
+        learned.catalog_at = None;
+        learned.catalog_generation = None;
     }
 
     /// The connected models, sorted; empty before the first refresh.

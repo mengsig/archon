@@ -38,6 +38,8 @@ const NODE_KEY_PREFIX: &str = "run_node:";
 /// until [`prune_retired_node_agents`].
 const NODE_AGENT_KEY_PREFIX: &str = "run_node_agent:";
 const MESSAGE_NODE_KEY_PREFIX: &str = "message_run_node:";
+/// The label that tells one generation's node from another's of its run.
+const GENERATION_LABEL: &str = "archon.node_generation";
 
 /// How long after its stage settled an agent may still be ending its turn
 /// before the node is cancelled. Retirement still waits for its subtree to end.
@@ -380,6 +382,14 @@ pub(super) async fn ensure(
             tracing::warn!(%run, generation, %error, "Aether refused the run node's key; trying the next generation");
             skip_generation(ctx, run, generation).await?
         }
+        Created::Unlisted { generation, frozen } => {
+            let skipped = skip_generation(ctx, run, generation).await?;
+            if frozen == *model {
+                return Err(unlisted(run, model));
+            }
+            // A request frozen under an earlier stage's model: this one has its own key.
+            skipped
+        }
     };
     match create_generation(ctx, run, &refused, model, network).await? {
         Created::Agent(node) => Ok(node),
@@ -388,7 +398,19 @@ pub(super) async fn ensure(
             skip_generation(ctx, run, generation).await?;
             Err(error)
         }
+        Created::Unlisted { generation, frozen } => {
+            skip_generation(ctx, run, generation).await?;
+            Err(unlisted(run, &frozen))
+        }
     }
+}
+
+/// A node create the catalog no longer allows: nothing was sent, and the
+/// stage's own model is checked again before any other create.
+fn unlisted(run: &PipelineRunId, model: &ModelRef) -> ArchonError {
+    ArchonError::Unavailable(format!(
+        "the model catalog no longer lists {model} for the node of run {run}; the stage is checked again"
+    ))
 }
 
 /// What this caller sends for the node, decided under the store lock.
@@ -408,6 +430,18 @@ enum Created {
         generation: u32,
         error: ArchonError,
     },
+    /// The catalog lists the generation's `frozen` model no longer: never sent.
+    Unlisted {
+        generation: u32,
+        frozen: ModelRef,
+    },
+}
+
+/// A node create after its catalog check.
+enum CheckedNode {
+    Created(CreatedNode),
+    /// The catalog lists the request's model no longer and no create landed.
+    Unlisted(ArchonError),
 }
 
 /// A new generation's request records `network`; a stored request keeps
@@ -462,8 +496,9 @@ async fn send_generation(
     let network = request.network;
     let repository = RepositoryIdentity::from_request(&request);
     repository.check_checkout()?;
-    match ctx.backend.create_run_node(request).await {
-        Ok(created) => {
+    let frozen = request.model.clone();
+    match create_checked_node(ctx, run, request).await {
+        Ok(CheckedNode::Created(created)) => {
             record_agent(&mut *ctx.store.lock().await, run, generation, &created)?;
             Ok(Created::Agent(RunNode {
                 agent: created.agent,
@@ -471,11 +506,72 @@ async fn send_generation(
                 repository,
             }))
         }
+        Ok(CheckedNode::Unlisted(error)) => {
+            tracing::warn!(%run, generation, %error, "run node not created: its model left the catalog");
+            Ok(Created::Unlisted { generation, frozen })
+        }
         Err(error @ (ArchonError::Invalid(_) | ArchonError::NotFound(_))) => {
             Ok(Created::Refused { generation, error })
         }
         Err(error) => Err(error),
     }
+}
+
+/// Send `request` only under a model the catalog lists; one it lists no
+/// longer is not sent, and a create that landed earlier is still found.
+async fn create_checked_node(
+    ctx: &DaemonContext,
+    run: &PipelineRunId,
+    request: RunNodeRequest,
+) -> Result<CheckedNode, ArchonError> {
+    let catalog = crate::learned::catalog(ctx).await?;
+    let unlisted = match catalog.check(&request.model) {
+        Ok(_) => {
+            let created = ctx.backend.create_run_node(request).await?;
+            return Ok(CheckedNode::Created(created));
+        }
+        Err(error @ ArchonError::Invalid(_)) => error,
+        Err(error) => return Err(error),
+    };
+    let earlier = earlier_nodes(&*ctx.store.lock().await, run, &request)?;
+    Ok(match ctx.backend.find_run_node(&request, &earlier).await? {
+        Some(landed) => CheckedNode::Created(landed),
+        None => CheckedNode::Unlisted(unlisted),
+    })
+}
+
+/// The nodes `run` recorded before `request`'s pending generation, when the
+/// request was frozen before generations were labelled: its labels match theirs.
+fn earlier_nodes(
+    store: &Store,
+    run: &PipelineRunId,
+    request: &RunNodeRequest,
+) -> Result<Vec<AetherAgentId>, ArchonError> {
+    assert!(
+        request.idempotency_key.starts_with(run.as_str()),
+        "a node request is keyed by its run"
+    );
+    let labelled = request.labels.get("archon.run");
+    assert!(
+        labelled.is_none_or(|owner| owner == run.as_str()),
+        "a node request is labelled with its own run"
+    );
+    if request.labels.contains_key(GENERATION_LABEL) {
+        return Ok(Vec::new());
+    }
+    let mut earlier = Vec::new();
+    for (key, owner) in store.kv_prefix(NODE_AGENT_KEY_PREFIX)? {
+        if owner != run.as_str() {
+            continue;
+        }
+        let agent = key
+            .strip_prefix(NODE_AGENT_KEY_PREFIX)
+            .expect("prefix scan");
+        let agent = AetherAgentId::parse(agent)
+            .map_err(|e| ArchonError::Corrupt(format!("kv key {key}: {e}")))?;
+        earlier.push(agent);
+    }
+    Ok(earlier)
 }
 
 async fn prepare_replay(
@@ -619,8 +715,8 @@ fn record_aether_run(
     }
 }
 
-/// Leave `generation` behind after Aether refused its key; the next one
-/// starts without a request. A node recorded or moved meanwhile stands.
+/// Leave `generation` behind after Aether refused its key or the catalog its
+/// model: the next one starts without a request. A recorded or moved node stands.
 async fn skip_generation(
     ctx: &DaemonContext,
     run: &PipelineRunId,
@@ -669,6 +765,7 @@ fn request(
         ("archon.item", item.id.to_string()),
         ("archon.run", run.id.to_string()),
         ("archon.pipeline", run.pipeline.clone()),
+        (GENERATION_LABEL, generation.to_string()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_owned(), v))
@@ -853,10 +950,14 @@ async fn find_agent(
         idempotency_key(run, node.generation)
     );
     let key = request.idempotency_key.clone();
-    match ctx.backend.create_run_node(request).await {
-        Ok(created) => {
+    match create_checked_node(ctx, run, request).await {
+        Ok(CheckedNode::Created(created)) => {
             index_node_agent(&mut *ctx.store.lock().await, run, &created.agent)?;
             Ok(Found::Agent(created.agent))
+        }
+        Ok(CheckedNode::Unlisted(why)) => {
+            tracing::warn!(%run, key, %why, "pending node replay not sent: its model left the catalog");
+            Ok(Found::Nothing)
         }
         Err(ArchonError::Invalid(why)) => {
             tracing::warn!(%run, key, %why, "Aether refused the pending node replay; abandoning its key");
@@ -1043,6 +1144,7 @@ mod tests {
 
     fn settled_stage(stage: &str, agent: &str, finished: Timestamp) -> StageRun {
         StageRun {
+            only_reviews: None,
             id: archon_core::id::StageRunId::new(),
             run: PipelineRunId::new(),
             stage_id: stage.to_owned(),
@@ -1051,6 +1153,7 @@ mod tests {
             fan_index: 0,
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: None,
             host_context: Default::default(),
             choice: archon_core::model::ModelChoice {
                 model: "claude-code/claude-sonnet-5".parse().unwrap(),
@@ -1061,6 +1164,9 @@ mod tests {
             aether_task: None,
             state: archon_core::run::StageState::Completed,
             verdict: None,
+            verdict_note: None,
+            sizing: Default::default(),
+            restatement: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,

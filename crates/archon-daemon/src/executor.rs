@@ -14,6 +14,7 @@ mod dependencies;
 mod descendants;
 mod discard;
 pub(crate) mod engine_wait;
+mod failure_class;
 pub(crate) mod fast_check;
 mod finish;
 mod forewarn;
@@ -30,8 +31,10 @@ mod intent_html;
 mod intent_images;
 mod landed;
 mod lanes;
+mod late_child;
 pub(crate) mod local_base;
 mod local_merge;
+pub(crate) mod model_catalog;
 mod naming;
 mod notional;
 pub(crate) mod onto;
@@ -40,12 +43,14 @@ mod pages;
 pub(crate) mod plan_view;
 mod proposal;
 pub mod pull_requests;
+pub mod quota_wait;
 mod reap;
 mod recover;
 pub(crate) mod refresh;
 mod repair;
 pub(crate) mod repo_identity;
 pub(crate) mod restack;
+pub(crate) mod restatement;
 mod resume;
 mod review;
 mod revive;
@@ -79,13 +84,17 @@ use crate::worktree::users::LiveWorkspaces;
 
 pub(crate) use discard::item_stopped;
 pub(crate) use finish::notify;
+pub(crate) use late_child::lift_new_child;
 pub(crate) use recover::{prune_finished_run_vars, set_run_auto_merge};
 pub(crate) use revive::revived;
 pub(crate) use roster::prune_settled_rosters;
 pub(crate) use run_node::recover_message_node;
 pub(crate) use run_node::{is_node_agent, node_run, prune_retired_node_agents};
 pub(crate) use ship::{prune_finished_ships, shipped_commit, withdraw_owed_merge};
-pub(crate) use spawn::{load_spawn, prune_settled_requests, runs_awaiting_spawn};
+pub(crate) use spawn::reserved_models;
+pub(crate) use spawn::{
+    StoredSpawn, issuing_spawn, load_spawn, prune_settled_requests, runs_awaiting_spawn,
+};
 pub use stall::Activity;
 pub(crate) use start::held_by_stack;
 pub(crate) use sweep::sweep_live_stages;
@@ -352,9 +361,10 @@ pub async fn spawn_admitted(
     run: &PipelineRunId,
     slots: u32,
 ) -> Result<(), ArchonError> {
+    let catalog = crate::learned::catalog(ctx).await?;
     let follow = {
         let mut table = ctx.runs.lock().await;
-        spawn::reserve(ctx, &mut table, run, slots).await?
+        spawn::reserve(ctx, &mut table, run, slots, &catalog).await?
     };
     run_follow_up(ctx, follow).await
 }
@@ -366,8 +376,9 @@ pub(crate) async fn reserve(
     table: &mut RunTable,
     run: &PipelineRunId,
     slots: u32,
+    catalog: &archon_core::model_tier::ModelCatalog,
 ) -> Result<FollowUp, ArchonError> {
-    spawn::reserve(ctx, table, run, slots).await
+    spawn::reserve(ctx, table, run, slots, catalog).await
 }
 
 /// Called by the event pump when a stage agent's task settles. Idempotent:
@@ -489,16 +500,18 @@ pub(crate) async fn check_item_budget(
             return Ok(());
         };
         let error = if unaccounted_usage {
-            "BLOCKED: cannot enforce the item's dollar budget: Aether reported usage \
+            let error = "BLOCKED: cannot enforce the item's dollar budget: Aether reported usage \
              without complete dollar cost or a usable subscription estimate; configure \
-             model pricing in Aether or choose a cost-reporting model"
-                .to_owned()
+             model pricing in Aether or choose a cost-reporting model";
+            assert!(error.starts_with(archon_core::cost::BUDGET_UNENFORCEABLE));
+            error.to_owned()
         } else if budget.left() <= 0.0 {
             budget.used_up(&run.item)
         } else {
             return Ok(());
         };
-        finish::fail_run(ctx, &mut table, run, "budget".into(), error, true).await?
+        let stage = archon_core::run::BUDGET_STAGE.to_owned();
+        finish::fail_run(ctx, &mut table, run, stage, error, true).await?
     };
     run_follow_up(ctx, follow).await
 }

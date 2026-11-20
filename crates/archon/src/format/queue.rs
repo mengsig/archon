@@ -198,7 +198,12 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
     if let Some(switch) = &item.provider_switch {
         let _ = writeln!(out, "provider switch: {}", sanitize_line(switch));
     }
+    if let Some(check) = &item.model_plan.catalog_check {
+        let _ = writeln!(out, "{}", sanitize_line(&check.to_string()));
+    }
     plan_lines(&mut out, item);
+    origin_lines(&mut out, &detail.plan_origins);
+    sizing_lines(&mut out, item);
     worker_lines(&mut out, &detail.worker_policies);
     for run in &detail.runs {
         run_lines(&mut out, detail, run, full);
@@ -240,17 +245,74 @@ fn plan_lines(out: &mut String, item: &QueueItem) {
     }
 }
 
+/// `origin build: model explicit by operator ..., effort ...` per plan entry.
+fn origin_lines(
+    out: &mut String,
+    origins: &std::collections::BTreeMap<String, Vec<archon_core::plan_origin::EntryOrigin>>,
+) {
+    for (key, entries) in origins {
+        for (slot, origin) in entries.iter().enumerate() {
+            let slot = match entries.len() {
+                1 => String::new(),
+                _ => format!("[{slot}]"),
+            };
+            let tier = match &origin.tier {
+                Some(tier) => format!("; tier {}", sanitize_line(&tier.to_string())),
+                None => String::new(),
+            };
+            let _ = writeln!(
+                out,
+                "origin {}{slot}: model {}; effort {}{tier}",
+                sanitize_line(key),
+                sanitize_line(&origin.model.to_string()),
+                sanitize_line(&origin.effort.to_string())
+            );
+        }
+    }
+}
+
+/// `risk class: critical (...)`, then `sized build: sizer: critical -> x_high`
+/// per plan entry the sizer decided; nothing for an item it never sized.
+fn sizing_lines(out: &mut String, item: &QueueItem) {
+    let Some(sizing) = item.model_plan.sizing() else {
+        return;
+    };
+    let Some(class) = sizing.risk_class else {
+        return;
+    };
+    let signals = sanitize_line(&sizing.risk_signals.join(", "));
+    let _ = writeln!(out, "risk class: {class} ({signals})");
+    for (key, reasons) in item.model_plan.effort_reasons(&item.id) {
+        for (slot, reason) in reasons.iter().enumerate() {
+            let slot = match reasons.len() {
+                1 => String::new(),
+                _ => format!("[{slot}]"),
+            };
+            let (key, reason) = (sanitize_line(&key), sanitize_line(reason));
+            let _ = writeln!(out, "sized {key}{slot}: {reason}");
+        }
+    }
+}
+
 /// `workers build: each worker on ...` per stage whose lead may delegate.
 fn worker_lines(
     out: &mut String,
     policies: &std::collections::BTreeMap<String, archon_core::delegation::WorkerPolicy>,
 ) {
     for (stage, policy) in policies {
+        let exempt = match policy.exempt_roles.is_empty() {
+            true => String::new(),
+            false => format!(
+                "; {} exempt from this policy, bounded by the review models",
+                policy.exempt_roles.join(", ")
+            ),
+        };
         let _ = writeln!(
             out,
-            "workers {}: {}",
+            "workers {}: {}{}",
             sanitize_line(stage),
-            sanitize_line(&policy.describe())
+            sanitize_line(&policy.describe()),
+            sanitize_line(&exempt)
         );
     }
 }
@@ -486,7 +548,7 @@ mod tests {
     use archon_core::aether_ids::AetherAgentId;
     use archon_core::autonomy::Autonomy;
     use archon_core::id::{PipelineRunId, QuestionId, QueueItemId, RepoId, StageRunId};
-    use archon_core::model::{Effort, ModelChoice, ModelPlan};
+    use archon_core::model::{Effort, ModelChoice};
     use archon_core::queue::{Priority, QueueItem};
     use archon_core::run::{GateSubject, Verdict};
     use chrono::TimeZone as _;
@@ -512,7 +574,7 @@ mod tests {
             priority: Priority::Normal,
             dependencies: vec![],
             tags: vec![],
-            model_plan: ModelPlan::default(),
+            model_plan: Default::default(),
             model_reasons: None,
             budget_usd: None,
             risk: None,
@@ -562,6 +624,7 @@ mod tests {
 
     fn stage_run(run: &PipelineRun, stage_id: &str, summary: &str) -> StageRun {
         StageRun {
+            only_reviews: None,
             id: StageRunId::new(),
             run: run.id.clone(),
             stage_id: stage_id.into(),
@@ -570,6 +633,7 @@ mod tests {
             fan_index: 0,
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: None,
             host_context: Default::default(),
             choice: ModelChoice {
                 model: "claude-code/opus".parse().unwrap(),
@@ -580,12 +644,38 @@ mod tests {
             aether_task: None,
             state: StageState::Completed,
             verdict: None,
+            verdict_note: None,
+            sizing: Default::default(),
+            restatement: None,
             summary: Some(summary.into()),
             structured: None,
             cost_usd: 0.5,
             started_at: at(9, 0),
             finished_at: None,
         }
+    }
+
+    #[test]
+    fn worker_lines_print_the_reviewer_exemption() {
+        use archon_core::delegation::WorkerPolicy;
+        let policy = WorkerPolicy {
+            workers: Vec::new(),
+            default_tier: None,
+            max_effort: None,
+            max_parallel: None,
+            exempt_roles: vec!["reviewer".into()],
+            exempt_models: Vec::new(),
+        };
+        let mut out = String::new();
+        worker_lines(&mut out, &[("review".to_owned(), policy.clone())].into());
+        assert!(out.contains("reviewer exempt from this policy"), "{out}");
+        let plain = WorkerPolicy {
+            exempt_roles: Vec::new(),
+            ..policy
+        };
+        let mut out = String::new();
+        worker_lines(&mut out, &[("review".to_owned(), plain)].into());
+        assert!(!out.contains("exempt"), "{out}");
     }
 
     #[test]
@@ -730,6 +820,54 @@ mod tests {
         );
     }
 
+    /// Give `item` a plan the sizer finished: `build` pinned at medium, `plan`
+    /// named without an effort, for an item tagged critical.
+    fn size_critical(item: &mut QueueItem) {
+        use archon_core::catalog::StageKind;
+        use archon_core::effort_sizing::StageFacts;
+        use archon_core::plan_origin::{Authority, EffortSizer, PlanWriter, Sizing};
+        const MODEL: &str = "claude-code/claude-opus-5-5";
+        let asked = serde_json::json!({"build": [{"model": MODEL, "effort": "medium"}],
+            "plan": [{"model": MODEL}]});
+        let resolved = serde_json::json!({"build": [{"model": MODEL, "effort": "medium"}],
+            "plan": [{"model": MODEL, "effort": "high"}]});
+        let facts = |_: &str| Some(StageFacts::new(Effort::High, StageKind::Work, false));
+        let sizer = EffortSizer {
+            cap: Effort::XHigh,
+            raises: true,
+            size: None,
+            facts: &facts,
+        };
+        let mut writer = PlanWriter::new(&item.id, archon_core::now());
+        let asked = serde_json::from_value(asked).unwrap();
+        writer.request(
+            &asked,
+            serde_json::from_value(resolved).unwrap(),
+            Authority::Operator,
+        );
+        item.model_plan = writer.finish(Sizing::On(sizer));
+        item.tags = vec!["risk:critical".into()];
+        assert!(
+            item.settle_sizing(archon_core::now()),
+            "the item's own tags size it"
+        );
+    }
+
+    /// A11: the item's detail names its risk class and why each plan entry
+    /// has its effort; an item the sizer never sized shows neither line.
+    #[test]
+    fn a_sized_item_shows_its_risk_class_and_each_effort_s_reason() {
+        let mut detail = detail_with_stages();
+        let before = item_detail(&detail, &RepoNames::new(), false);
+        assert!(!before.contains("risk class:"), "{before}");
+        size_critical(&mut detail.item);
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        let shown = "risk class: critical (risk:critical)\n\
+                     sized build: sizer: critical -> x_high; the plan pins medium\n\
+                     sized plan: sizer: critical -> x_high\n";
+        assert!(text.contains(shown), "{text}");
+    }
+
     fn detail_with_stages() -> ItemDetail {
         let item = queue_item(None, "add a greeting", "direct");
         let run = pipeline_run(
@@ -747,6 +885,7 @@ mod tests {
         ship.structured = Some(serde_json::json!({"pr_url": "https://github.com/o/r/pull/12"}));
         ItemDetail {
             acceptance: Default::default(),
+            plan_origins: Default::default(),
             default_efforts: Default::default(),
             worker_policies: Default::default(),
             stage_notes: Default::default(),
@@ -986,12 +1125,57 @@ mod tests {
     }
 
     #[test]
+    fn item_detail_shows_each_entry_s_origin_with_its_slot_when_it_has_several() {
+        use archon_core::plan_origin::{Authority, EntryOrigin, FieldOrigin, PlanSource};
+        let mut detail = detail_with_stages();
+        let at = "2026-11-18T10:00:00Z".parse().unwrap();
+        let field = |source, by| FieldOrigin {
+            source,
+            by,
+            at: Some(at),
+            note: None,
+        };
+        let named = field(PlanSource::Explicit, Authority::Operator);
+        let filled = field(PlanSource::Fallback, Authority::Daemon);
+        let pinned = EntryOrigin {
+            model: named,
+            effort: filled.clone(),
+            tier: None,
+        };
+        let daemon = EntryOrigin {
+            model: filled.clone(),
+            effort: filled.clone(),
+            tier: Some(filled),
+        };
+        detail.plan_origins = [
+            ("build".to_owned(), vec![pinned]),
+            ("review".to_owned(), vec![daemon.clone(), daemon]),
+        ]
+        .into();
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        assert!(
+            text.contains(
+                "origin build: model explicit by operator at 2026-11-18 10:00; \
+                 effort fallback by daemon at 2026-11-18 10:00"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("origin review[1]: model fallback by daemon")
+                && text.contains("; tier fallback by daemon at 2026-11-18 10:00\n"),
+            "{text}"
+        );
+        assert!(!text.contains("origin review:"), "{text}");
+    }
+
+    #[test]
     fn item_detail_shows_reasons_only_beside_current_plan_choices() {
         let mut detail = detail_with_stages();
         let choice = detail.stages[0].choice.clone();
         detail
             .item
             .model_plan
+            .legacy_mut()
             .0
             .insert("review".into(), vec![choice]);
         detail.item.model_reasons = Some([("review".into(), "Check supplied fix".into())].into());
@@ -1068,6 +1252,7 @@ mod tests {
         let gate = rejected_with_escapes(&run);
         let detail = ItemDetail {
             acceptance: Default::default(),
+            plan_origins: Default::default(),
             default_efforts: Default::default(),
             worker_policies: Default::default(),
             stage_notes: Default::default(),

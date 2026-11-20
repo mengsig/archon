@@ -6,7 +6,6 @@ use std::path::Path;
 use archon_core::autonomy::{Autonomy, AutonomyPatch, MergeMode, ReviewLevel};
 use archon_core::error::ArchonError;
 use archon_core::id::{QueueItemId, RepoId};
-use archon_core::model::ModelPlan;
 use archon_core::queue::{Priority, QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
 use chrono::TimeZone;
@@ -55,7 +54,7 @@ fn item(repo: &Repo, pipeline: &str) -> QueueItem {
         priority: Priority::High,
         dependencies: vec![],
         tags: vec!["legacy".into()],
-        model_plan: ModelPlan::default(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: Some(1.5),
         autonomy: Autonomy::default(),
@@ -100,7 +99,7 @@ fn write_v1_item(conn: &Connection, item: &QueueItem, key: &str) {
         "repo": item.repo, "pipeline": item.pipeline, "title": item.title,
         "brief": item.brief, "priority": item.priority,
         "dependencies": item.dependencies, "tags": item.tags,
-        "model_plan": item.model_plan, "budget_usd": item.budget_usd,
+        "model_plan": item.model_plan.plan(), "budget_usd": item.budget_usd,
     });
     let created = super::ts(&item.created_at);
     conn.execute(

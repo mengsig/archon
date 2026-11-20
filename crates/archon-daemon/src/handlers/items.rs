@@ -9,6 +9,7 @@ use archon_core::id::QueueItemId;
 use archon_core::initiative::InitiativeState;
 use archon_core::model::{Effort, ModelPlan, ModelPlanDraft, ModelReasons, check_reason_lengths};
 use archon_core::notify::NotificationKind;
+use archon_core::plan_origin::{Authority, PlanSource, PlanWriter, PlannedPlan};
 use archon_core::protocol::{EnqueueRequest, ItemDetail, ItemPatch, ItemQuery, Reply};
 use archon_core::pull_request::{OntoPullRequest, OntoTarget};
 use archon_core::queue::{
@@ -26,15 +27,15 @@ use crate::executor::operator_merge;
 use crate::knobs::ItemRoute;
 use crate::resolve::{self, RepoEnv};
 use crate::worktree::WorktreeManager;
-use crate::{executor, knobs, learned};
+use crate::{executor, knobs, learned, sizing};
 use archon_core::autonomy::MergeMode;
 
 pub(super) async fn enqueue(
     ctx: &DaemonContext,
     mut req: EnqueueRequest,
+    by: Authority,
 ) -> Result<Reply, ArchonError> {
     req.intent = resolve_intent(ctx, req.intent.as_ref(), req.onto.as_ref()).await?;
-    let title = req.title.trim().to_owned();
     check_enqueue(&req.title, &req.brief, &req.tags, req.budget_usd)?;
     let (env, mut resolved) = enqueue_context(ctx, &req).await?;
     let key = req
@@ -53,45 +54,34 @@ pub(super) async fn enqueue(
         autonomy: req.autonomy,
         model_plan: req.model_plan.clone(),
     };
-    let id = QueueItemId::new();
-    crate::learned::prepare_routing(ctx, &id, &resolved, &req.tags).await?;
+    let mut item = unplanned_item(&req, (&env, &resolved), onto);
+    let mut legacy = None;
+    if let Some(key) = key {
+        let local = local_onto(&env, target.0);
+        let replay = ctx.store.lock().await;
+        if let Some(stored) = replay.replayed_enqueue(&item, key, (&asked, local))? {
+            drop(replay);
+            return Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await);
+        }
+        legacy = replay.legacy_replay_plan(key)?;
+    }
+    crate::learned::prepare_routing(ctx, &item.id, &resolved, &req.tags).await?;
     let unrouted = ItemRoute {
-        id: &id,
+        id: &item.id,
         held: None,
     };
-    let routed_provider = routed_provider(ctx, &env, unrouted).await?;
+    item.routed_provider = routed_provider(ctx, &env, unrouted).await?;
     let route = ItemRoute {
-        held: routed_provider.as_deref(),
+        held: item.routed_provider.as_deref(),
         ..unrouted
     };
-    let plan = enqueue_plan(ctx, &req, &env, &resolved, route).await?;
-    let now = archon_core::now();
-    let item = QueueItem {
-        intent: req.intent.clone().map(Box::new),
-        onto: onto.map(Box::new),
-        id,
-        repo: env.repo.as_ref().map(|r| r.id.clone()),
-        pipeline: resolved.pipeline,
-        title,
-        brief: req.brief,
-        priority: req.priority,
-        dependencies: req.depends_on,
-        tags: req.tags,
-        model_plan: plan,
-        model_reasons: req.model_reasons,
-        budget_usd: req.budget_usd,
-        stage_timeouts: req.stage_timeouts,
-        autonomy: resolved.autonomy,
-        origin: req.origin.clone(),
-        fresh_retries: 0,
-        routed_provider,
-        provider_switch: None,
-        initiative: None,
-        risk: None,
-        state: QueueState::Queued,
-        created_at: now,
-        updated_at: now,
-    };
+    let scope = (&env, &resolved);
+    let (plan, replays) = keyed_plan(ctx, &req, scope, (route, by), legacy.as_ref()).await?;
+    item.model_plan = plan;
+    if let (Some(key), true) = (key, replays) {
+        let stored = legacy_replay(ctx, (&env, target.0), &item, (key, &asked)).await?;
+        return Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await);
+    }
     let stored = store_enqueued(ctx, (&env, &resolved.spec), target, &item, (key, &asked)).await?;
     assert!(
         stored.id == item.id || key.is_some(),
@@ -101,23 +91,62 @@ pub(super) async fn enqueue(
     Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await)
 }
 
+/// The item `req` asks for, before routing and the model plan: what a
+/// replay of its idempotency key is compared by.
+fn unplanned_item(
+    req: &EnqueueRequest,
+    (env, resolved): (&RepoEnv, &knobs::Resolved),
+    onto: Option<OntoPullRequest>,
+) -> QueueItem {
+    assert!(
+        !req.title.trim().is_empty(),
+        "check_enqueue refused a blank title"
+    );
+    let now = archon_core::now();
+    QueueItem {
+        intent: req.intent.clone().map(Box::new),
+        onto: onto.map(Box::new),
+        id: QueueItemId::new(),
+        repo: env.repo.as_ref().map(|r| r.id.clone()),
+        pipeline: resolved.pipeline.clone(),
+        title: req.title.trim().to_owned(),
+        brief: req.brief.clone(),
+        priority: req.priority,
+        dependencies: req.depends_on.clone(),
+        tags: req.tags.clone(),
+        model_plan: PlannedPlan::default(),
+        model_reasons: req.model_reasons.clone(),
+        budget_usd: req.budget_usd,
+        stage_timeouts: req.stage_timeouts.clone(),
+        autonomy: resolved.autonomy,
+        origin: req.origin.clone(),
+        fresh_retries: 0,
+        routed_provider: None,
+        provider_switch: None,
+        initiative: None,
+        risk: None,
+        state: QueueState::Queued,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+/// The plan `req` asks for, filled and checked. A model `legacy`, the plan a
+/// fingerprint from before `asked_plan` keeps, holds at the same place is not
+/// checked against the catalog again: that plan is only replayed, never stored.
 async fn enqueue_plan(
     ctx: &DaemonContext,
     req: &EnqueueRequest,
-    env: &RepoEnv,
-    resolved: &knobs::Resolved,
-    route: ItemRoute<'_>,
-) -> Result<archon_core::model::ModelPlan, ArchonError> {
-    let given = resolve_draft(
-        ctx,
-        (env, route),
-        &resolved.spec,
-        req.model_plan.clone(),
-        req.model_reasons.as_ref(),
-    )
-    .await?;
+    (env, resolved): (&RepoEnv, &knobs::Resolved),
+    (route, by): (ItemRoute<'_>, Authority),
+    legacy: Option<&ModelPlan>,
+) -> Result<PlannedPlan, ArchonError> {
+    let draft = req.model_plan.clone();
+    let reasons = req.model_reasons.as_ref();
+    let spec = &resolved.spec;
+    let given = resolve_draft(ctx, (env, route), spec, (draft, reasons), (by, legacy)).await?;
     check_stage_timeouts(ctx, &resolved.spec, &req.stage_timeouts)?;
-    let plan = filled_plan(ctx, route, env, &resolved.base, &resolved.spec, given).await?;
+    let plan = filled_plan(ctx, route, env, &resolved.base, spec, given, legacy).await?;
     check_plan(ctx, env, &resolved.spec, &plan)?;
     let budgeted = Budgeted {
         budget_usd: req.budget_usd,
@@ -282,6 +311,78 @@ async fn store_enqueued(
     executor::onto::local::enqueue(ctx, repo, item, target, (key, asked)).await
 }
 
+/// The plan `req` gets, and whether it replays `legacy`, the plan a fingerprint
+/// from before `asked_plan` stored: its models skip the catalog check only when
+/// the whole filled plan is that one; any other plan is checked as any enqueue.
+async fn keyed_plan(
+    ctx: &DaemonContext,
+    req: &EnqueueRequest,
+    scope: (&RepoEnv, &knobs::Resolved),
+    (route, by): (ItemRoute<'_>, Authority),
+    legacy: Option<&ModelPlan>,
+) -> Result<(PlannedPlan, bool), ArchonError> {
+    let Some(stored) = legacy else {
+        return Ok((
+            enqueue_plan(ctx, req, scope, (route, by), None).await?,
+            false,
+        ));
+    };
+    let carried = enqueue_plan(ctx, req, scope, (route, by), Some(stored)).await?;
+    if same_plan(ctx, carried.plan(), stored).await? {
+        return Ok((carried, true));
+    }
+    let checked = enqueue_plan(ctx, req, scope, (route, by), None).await?;
+    Ok((checked, false))
+}
+
+/// Whether `filled` is the plan a fingerprint from before `asked_plan` stored,
+/// each model read as its canonical id on both sides.
+async fn same_plan(
+    ctx: &DaemonContext,
+    filled: &ModelPlan,
+    stored: &ModelPlan,
+) -> Result<bool, ArchonError> {
+    assert!(!filled.0.is_empty(), "compared once filled");
+    assert!(!stored.0.is_empty(), "a legacy fingerprint filled its plan");
+    let catalog = learned::catalog(ctx).await?;
+    let canonical = |plan: &ModelPlan| {
+        let mut plan = plan.clone();
+        for choice in plan.0.values_mut().flatten() {
+            choice.model = catalog.canonical_alias(&choice.model).clone();
+        }
+        plan
+    };
+    Ok(canonical(filled) == canonical(stored))
+}
+
+/// The item a fingerprint from before `asked_plan` keeps under `key`, matched by
+/// `item`'s filled plan. Never an insert: that plan skipped the catalog check
+/// for the models the fingerprint holds, so it is only compared.
+async fn legacy_replay(
+    ctx: &DaemonContext,
+    (env, target): (&RepoEnv, Option<&OntoTarget>),
+    item: &QueueItem,
+    (key, asked): (&str, &Asked),
+) -> Result<QueueItem, ArchonError> {
+    assert!(
+        !item.model_plan.plan().0.is_empty(),
+        "matched by its filled plan"
+    );
+    let local = local_onto(env, target);
+    let stored = ctx
+        .store
+        .lock()
+        .await
+        .replayed_enqueue(item, key, (asked, local))?;
+    let stored = stored.ok_or_else(|| {
+        ArchonError::Unavailable(format!(
+            "idempotency key {key:?} was released while its request was checked; send it again"
+        ))
+    })?;
+    assert_ne!(stored.id, item.id, "a replay returns the earlier item");
+    Ok(stored)
+}
+
 /// The `onto` record an earlier enqueue with idempotency `key` froze for
 /// `target`, so a replay returns that item even once the pull request moved on.
 async fn replayed_onto(
@@ -438,6 +539,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let stage_notes = executor::stage_note::read(&store, &stages)?;
     Ok(Reply::ItemDetail(Box::new(ItemDetail {
         acceptance,
+        plan_origins: item.model_plan.origins(&item.id),
         default_efforts,
         worker_policies,
         stage_notes,
@@ -483,7 +585,7 @@ async fn plan_defaults(ctx: &DaemonContext, id: &QueueItemId) -> Result<PlanDefa
         .collect();
     let yolo = item.autonomy.tools == archon_core::autonomy::ToolsMode::Yolo;
     // As a spawn now would send it: narrowed to the model policy in force.
-    let models = env.policy(&ctx.config);
+    let models = env.resolved_policy(ctx);
     let delegating = spec
         .file
         .stages
@@ -511,17 +613,61 @@ pub(super) async fn update(
     ctx: &DaemonContext,
     id: &QueueItemId,
     patch: ItemPatch,
+    by: Authority,
 ) -> Result<Reply, ArchonError> {
-    update_within(ctx, id, patch, Ceiling::Enforced).await
+    update_within(ctx, id, patch, (Ceiling::Enforced, by)).await
 }
 
 /// [`update`] with the ceiling `ceiling` says bounds the autonomy knobs.
 pub(super) async fn update_within(
     ctx: &DaemonContext,
     id: &QueueItemId,
-    mut patch: ItemPatch,
-    ceiling: Ceiling,
+    patch: ItemPatch,
+    (ceiling, by): (Ceiling, Authority),
 ) -> Result<Reply, ArchonError> {
+    check_patch_values(&patch)?;
+    let current = ctx.store.lock().await.item(id)?;
+    if matches!(current.state, QueueState::Succeeded { .. }) && patch.autonomy.is_some() {
+        return after_success(ctx, current, patch, ceiling).await;
+    }
+    let prepared = prepare_update(ctx, current, patch, (ceiling, by)).await?;
+    let stored = {
+        let mut table = ctx.runs.lock().await;
+        let storing: executor::steer::Erased<'_, _> =
+            Box::pin(store_prepared(ctx, &mut table, id, prepared));
+        storing.await?
+    };
+    Ok(finish_update(ctx, id, stored).await)
+}
+
+/// What became of an update made in the same hold of the run table as a steer.
+pub(super) enum SteeredUpdate {
+    Stored(Box<Stored>),
+    /// The steer ended the run (a skipped stage can leave the next one
+    /// nothing to run), so the patch is applied by [`update`] afterwards.
+    RunEnded(ItemPatch),
+}
+
+/// [`update`] of an item whose live run the caller just steered, with the
+/// run table it still holds: no stage of the run starts between the two.
+pub(super) async fn update_steered(
+    ctx: &DaemonContext,
+    table: &mut executor::RunTable,
+    id: &QueueItemId,
+    (patch, by): (ItemPatch, Authority),
+) -> Result<SteeredUpdate, ArchonError> {
+    check_patch_values(&patch)?;
+    let current = ctx.store.lock().await.item(id)?;
+    assert_eq!(&current.id, id, "the store returns the item asked for");
+    if !matches!(current.state, QueueState::Running { .. }) {
+        return Ok(SteeredUpdate::RunEnded(patch));
+    }
+    let prepared = prepare_update(ctx, current, patch, (Ceiling::Enforced, by)).await?;
+    let stored = Box::pin(store_prepared(ctx, table, id, prepared)).await?;
+    Ok(SteeredUpdate::Stored(Box::new(stored)))
+}
+
+fn check_patch_values(patch: &ItemPatch) -> Result<(), ArchonError> {
     check_item_budget(patch.budget_usd)?;
     if let Some(tags) = &patch.tags {
         check_tags(tags)?;
@@ -529,10 +675,26 @@ pub(super) async fn update_within(
     if let Some(title) = &patch.title {
         check_title(title)?;
     }
-    let current = ctx.store.lock().await.item(id)?;
-    if matches!(current.state, QueueState::Succeeded { .. }) && patch.autonomy.is_some() {
-        return after_success(ctx, current, patch, ceiling).await;
-    }
+    Ok(())
+}
+
+/// A checked update of an item, owning what it was checked with.
+struct Prepared {
+    patch: ItemPatch,
+    plan: Option<PlannedPlan>,
+    revision: Option<revise::Revision>,
+    resizing: Option<RepoEnv>,
+    replaces_plan: bool,
+    by: Authority,
+}
+
+/// Check `patch` of `current` and resolve what it changes; nothing is stored.
+async fn prepare_update(
+    ctx: &DaemonContext,
+    current: QueueItem,
+    mut patch: ItemPatch,
+    (ceiling, by): (Ceiling, Authority),
+) -> Result<Prepared, ArchonError> {
     let revision = match patch.autonomy.take() {
         Some(knobs) => Some(revise::prepare(ctx, &current, &knobs, ceiling).await?),
         None => None,
@@ -545,63 +707,285 @@ pub(super) async fn update_within(
         ));
     }
     let replaces_plan = patch.model_plan.is_some();
-    let mut plan = None;
     let review = revision
         .as_ref()
         .map_or(current.autonomy.review, |r| r.after.review);
+    let plan = check_update_plan(ctx, &current, &mut patch, (review, by)).await?;
+    assert!(
+        patch.model_plan.is_none(),
+        "the plan is taken out to be filled"
+    );
+    assert_eq!(plan.is_some(), replaces_plan, "a given plan is filled");
+    let resizing = resizing_env(ctx, &current, &patch, review).await?;
+    Ok(Prepared {
+        patch,
+        plan,
+        revision,
+        resizing,
+        replaces_plan,
+        by,
+    })
+}
+
+/// Fill and check the model plan `patch` gives `current`, and check its
+/// budget, reasons and stage timeouts against the plan it leaves.
+async fn check_update_plan(
+    ctx: &DaemonContext,
+    current: &QueueItem,
+    patch: &mut ItemPatch,
+    (review, by): (archon_core::autonomy::ReviewLevel, Authority),
+) -> Result<Option<PlannedPlan>, ArchonError> {
+    let replaces_plan = patch.model_plan.is_some();
     let budget_changes =
         patch.budget_usd.is_some() || replaces_plan || review != current.autonomy.review;
-    if budget_changes || patch.model_reasons.is_some() || !patch.stage_timeouts.is_empty() {
-        let (env, base, spec) = item_pipeline(ctx, &current).await?;
-        if let Some(draft) = patch.model_plan.take() {
-            let route = ItemRoute::new(&current);
-            let reasons = patch.model_reasons.as_ref();
-            let given = resolve_draft(ctx, (&env, route), &spec, draft, reasons).await?;
-            let filled = filled_plan(ctx, route, &env, &base, &spec, given).await?;
-            check_plan(ctx, &env, &spec, &filled)?;
-            plan = Some(filled);
-        }
-        if budget_changes {
-            let budgeted = Budgeted {
-                budget_usd: patch.budget_usd.or(current.budget_usd),
-                review,
-                repo: env.repo.as_ref(),
-            };
-            let checked = plan.as_ref().unwrap_or(&current.model_plan);
-            check_budget_models(ctx, &env, id, &spec, (checked, &budgeted))?;
-        }
-        check_reasons(&spec, patch.model_reasons.as_ref())?;
-        check_stage_timeouts(ctx, &spec, &patch.stage_timeouts)?;
+    if !budget_changes && patch.model_reasons.is_none() && patch.stage_timeouts.is_empty() {
+        return Ok(None);
     }
-    let amendment = patch.brief_append.clone();
-    let set_budget = patch.budget_usd.is_some();
-    let item = {
-        // Under the run table, so the dispatcher cannot start the item meanwhile.
-        let table = ctx.runs.lock().await;
-        let mut store = ctx.store.lock().await;
-        let mut item = store.item(id)?;
-        let ran = !store.runs_for_item(id)?.is_empty();
-        check_patchable(&item, &patch, (replaces_plan, ran))?;
-        if let Some(revision) = &revision {
-            revise::apply(&mut store, &table, &mut item, revision)?;
-        }
-        apply_patch(&mut item, patch, plan)?;
-        item.updated_at = archon_core::now().max(item.updated_at);
-        match &revision {
-            Some(revision) => revision.save(&mut store, &item)?,
-            None => store.update_item(&item)?,
-        }
-        item
+    let mut plan = None;
+    let (env, base, spec) = item_pipeline(ctx, current).await?;
+    if let Some(draft) = patch.model_plan.take() {
+        let route = ItemRoute::new(current);
+        let reasons = patch.model_reasons.as_ref();
+        let given = resolve_draft(ctx, (&env, route), &spec, (draft, reasons), (by, None)).await?;
+        let filled = filled_plan(ctx, route, &env, &base, &spec, given, None).await?;
+        check_plan(ctx, &env, &spec, &filled)?;
+        plan = Some(filled);
+    }
+    if budget_changes {
+        let budgeted = Budgeted {
+            budget_usd: patch.budget_usd.or(current.budget_usd),
+            review,
+            repo: env.repo.as_ref(),
+        };
+        let checked = plan.as_ref().unwrap_or(&current.model_plan);
+        check_budget_models(ctx, &env, &current.id, &spec, (checked, &budgeted))?;
+    }
+    check_reasons(&spec, patch.model_reasons.as_ref())?;
+    check_stage_timeouts(ctx, &spec, &patch.stage_timeouts)?;
+    Ok(plan)
+}
+
+/// An update as stored, with what is owed after the run table is let go.
+pub(super) struct Stored {
+    item: QueueItem,
+    follow: Option<executor::FollowUp>,
+    revision: Option<revise::Revision>,
+    amendment: Option<String>,
+    set_budget: bool,
+}
+
+async fn store_prepared(
+    ctx: &DaemonContext,
+    table: &mut executor::RunTable,
+    id: &QueueItemId,
+    prepared: Prepared,
+) -> Result<Stored, ArchonError> {
+    let amendment = prepared.patch.brief_append.clone();
+    let set_budget = prepared.patch.budget_usd.is_some();
+    let update = Update {
+        patch: prepared.patch,
+        plan: prepared.plan,
+        revision: prepared.revision.as_ref(),
+        resizing: prepared.resizing.as_ref(),
+        replaces_plan: prepared.replaces_plan,
+        by: steered_by(prepared.by),
     };
-    if let Some(text) = amendment {
+    let (item, follow) = store_update(ctx, table, id, update).await?;
+    assert_eq!(&item.id, id, "the item updated");
+    Ok(Stored {
+        item,
+        follow,
+        revision: prepared.revision,
+        amendment,
+        set_budget,
+    })
+}
+
+/// Tell what `stored` changed and do the Aether work it owes, with the run
+/// table let go; the reply to the update.
+pub(super) async fn finish_update(ctx: &DaemonContext, id: &QueueItemId, stored: Stored) -> Reply {
+    assert_eq!(&stored.item.id, id, "the item updated");
+    if let Some(text) = stored.amendment {
         note_amendment(ctx, id, &text, "update_item").await;
     }
-    if let Some(revision) = revision.filter(|r| r.changes()) {
+    if let Some(revision) = stored.revision.filter(|r| r.changes()) {
         let text = format!("Autonomy of {id} changed: {}.", revision.describe());
         post_note(ctx, id, &text).await;
     }
+    if let Some(follow) = stored.follow {
+        executor::steer::follow_resized(ctx, id, follow).await;
+    }
     ctx.dispatch.notify_one();
-    Ok(item_reply(ctx, item, set_budget).await)
+    item_reply(ctx, stored.item, stored.set_budget).await
+}
+
+/// A checked update of an item, ready to store.
+struct Update<'a> {
+    patch: ItemPatch,
+    /// The patch's `model_plan`, resolved and filled.
+    plan: Option<PlannedPlan>,
+    revision: Option<&'a revise::Revision>,
+    /// Set when the patch changes what the sizer reads of the item.
+    resizing: Option<&'a RepoEnv>,
+    replaces_plan: bool,
+    by: archon_core::steer::SteeredBy,
+}
+
+/// Store `update` of item `id` in one write, the efforts of the stages it
+/// has not started sized again with it, and rebuild the driver of its live
+/// run from that. All under the caller's run table: no stage starts in
+/// between, and a run merging its roles refuses a re-sizing before anything
+/// changes. A plan never sized is not sized by an update, so needs neither.
+async fn store_update(
+    ctx: &DaemonContext,
+    table: &mut executor::RunTable,
+    id: &QueueItemId,
+    update: Update<'_>,
+) -> Result<(QueueItem, Option<executor::FollowUp>), ArchonError> {
+    let sized = ctx
+        .store
+        .lock()
+        .await
+        .item(id)?
+        .model_plan
+        .sizing()
+        .is_some();
+    let live = match update.resizing.filter(|_| sized) {
+        Some(_) => executor::steer::resizable_run(ctx, table, id).await?,
+        None => None,
+    };
+    let by = update.by;
+    let (item, resized) = {
+        let mut store = ctx.store.lock().await;
+        let (item, resized) = write_update(ctx, (&mut store, table), id, update)?;
+        assert!(!resized || sized, "only a sized plan is sized again");
+        let live = live.as_ref().filter(|_| resized);
+        if let Some(run) = live {
+            executor::steer::record_resized(&mut store, run, by)?;
+        }
+        (item, resized)
+    };
+    let running = |run: &archon_core::run::PipelineRun| {
+        item.state
+            == QueueState::Running {
+                run: run.id.clone(),
+            }
+    };
+    let Some(run) = live.filter(|run| resized && running(run)) else {
+        return Ok((item, None));
+    };
+    let follow = executor::steer::rebuild_resized(ctx, table, run, by).await?;
+    Ok((item, Some(follow)))
+}
+
+/// Patch item `id` as `update` says and store it, with the caller's locks.
+/// `true` when the efforts of the stages it has not started were sized again.
+fn write_update(
+    ctx: &DaemonContext,
+    (store, table): (&mut archon_queue::Store, &executor::RunTable),
+    id: &QueueItemId,
+    update: Update<'_>,
+) -> Result<(QueueItem, bool), ArchonError> {
+    let mut item = store.item(id)?;
+    let ran = !store.runs_for_item(id)?.is_empty();
+    check_patchable(&item, &update.patch, (update.replaces_plan, ran))?;
+    let sizer = update.resizing.map(|env| env.resolved_policy(ctx));
+    if let Some(policy) = &sizer {
+        let tags = update.patch.tags.as_deref();
+        check_sized_while_starting((&ctx.config, policy), &item, tags)?;
+    }
+    let before = sizing::Inputs::of(&item);
+    if let Some(revision) = update.revision {
+        revise::apply(store, table, &mut item, revision)?;
+    }
+    apply_patch(&mut item, update.patch, update.plan)?;
+    item.settle_sizing(archon_core::now());
+    // The run starting a dispatching item has read its plan: it is sized as it stands.
+    let started = match &item.state {
+        QueueState::Running { run } => {
+            Some(executor::steer::started_stages(&store.stage_runs(run)?))
+        }
+        state if state.is_active() => None,
+        _ => Some(Default::default()),
+    };
+    let resized = match (&sizer, &started) {
+        (Some(policy), Some(started)) => {
+            sizing::resize((&ctx.config, policy), &mut item, started, &before)
+        }
+        _ => false,
+    };
+    item.updated_at = archon_core::now().max(item.updated_at);
+    match update.revision {
+        Some(revision) => revision.save(store, &item)?,
+        None => store.update_item(&item)?,
+    }
+    assert!(!item.model_plan.has_unsized(), "a stored plan is sized");
+    Ok((item, resized))
+}
+
+/// Who an item's history names for an update by `by`.
+fn steered_by(by: Authority) -> archon_core::steer::SteeredBy {
+    use archon_core::steer::SteeredBy;
+    assert!(
+        matches!(by, Authority::Operator | Authority::Orchestrator),
+        "only a request updates an item"
+    );
+    match by {
+        Authority::Orchestrator => SteeredBy::Orchestrator,
+        _ => SteeredBy::Operator,
+    }
+}
+
+/// The repository `current` is sized again under when `patch` changes what
+/// the sizer reads of it: its title, tags, brief or review level (`review`
+/// is the level the patch leaves it with). `None` when nothing does.
+async fn resizing_env(
+    ctx: &DaemonContext,
+    current: &QueueItem,
+    patch: &ItemPatch,
+    review: archon_core::autonomy::ReviewLevel,
+) -> Result<Option<RepoEnv>, ArchonError> {
+    let words = patch.title.is_some() || patch.tags.is_some() || patch.brief_append.is_some();
+    if !words && review == current.autonomy.review {
+        return Ok(None);
+    }
+    // Not on `current`'s plan: a plan sized meanwhile is re-read under the run table.
+    if !ctx.config.models.effort_sizing() {
+        return Ok(None);
+    }
+    let env = RepoEnv::load(ctx, current.repo.as_ref()).await?;
+    assert_eq!(
+        env.repo.as_ref().map(|repo| &repo.id),
+        current.repo.as_ref()
+    );
+    Ok(Some(env))
+}
+
+/// The run starting a dispatching item has read its plan already, so new
+/// `tags` that would size its efforts otherwise are refused until it runs.
+fn check_sized_while_starting(
+    sizer: (
+        &archon_core::config::Config,
+        &archon_core::policy::ModelPolicy,
+    ),
+    item: &QueueItem,
+    tags: Option<&[String]>,
+) -> Result<(), ArchonError> {
+    let Some(tags) = tags.filter(|_| item.state == QueueState::Dispatching) else {
+        return Ok(());
+    };
+    let mut probe = item.clone();
+    probe.tags = tags.to_vec();
+    let before = sizing::Inputs::of(item);
+    if !sizing::resize(sizer, &mut probe, &Default::default(), &before) {
+        return Ok(());
+    }
+    assert_ne!(probe.model_plan.sizing(), item.model_plan.sizing());
+    Err(ArchonError::InvalidTransition(format!(
+        "the run of item {} is just starting; send its new tags again in a moment, and the \
+         stages it has not started are sized for them",
+        item.id
+    )))
 }
 
 /// A succeeded item takes an autonomy-only patch. `merge = auto` turns on
@@ -692,7 +1076,7 @@ fn check_patchable(
 fn apply_patch(
     item: &mut QueueItem,
     patch: ItemPatch,
-    plan: Option<ModelPlan>,
+    plan: Option<PlannedPlan>,
 ) -> Result<(), ArchonError> {
     // First: an empty amendment is refused before anything changes.
     if item.onto.is_some() && !patch.add_depends_on.is_empty() {
@@ -742,8 +1126,9 @@ pub(super) async fn refresh(
     ctx: &DaemonContext,
     id: &QueueItemId,
     asked: executor::refresh::Asked,
+    by: Authority,
 ) -> Result<Reply, ArchonError> {
-    let refresh = executor::refresh::refresh_item(ctx, id, asked).await?;
+    let refresh = executor::refresh::refresh_item(ctx, id, asked, by).await?;
     Ok(Reply::Item(refresh))
 }
 
@@ -766,26 +1151,35 @@ pub(super) async fn retry(
     ctx: &DaemonContext,
     id: &QueueItemId,
     retry: Retry,
+    by: Authority,
 ) -> Result<Reply, ArchonError> {
+    let kept_catalog = match retry.model_plan {
+        None => Some(learned::request_catalog(ctx).await?),
+        Some(_) => None,
+    };
     let current = ctx.store.lock().await.item(id)?;
     let replaces_plan = retry.model_plan.is_some();
     let (env, base, spec) = item_pipeline(ctx, &current).await?;
-    // A 1.0 item names the ship agent its built-in no longer has; the retry stores the repair.
-    let mut kept_plan = current.model_plan.clone();
-    spec.drop_retired_ship(&mut kept_plan, None);
     let provider = routed_provider(ctx, &env, ItemRoute::new(&current)).await?;
     let route = ItemRoute {
         id,
         held: provider.as_deref(),
     };
-    let plan = match retry.model_plan {
+    let (plan, repaired) = match retry.model_plan {
         Some(draft) => {
             let reasons = retry.model_reasons.as_ref();
-            resolve_draft(ctx, (&env, route), &spec, draft, reasons).await?
+            let resolved =
+                resolve_draft(ctx, (&env, route), &spec, (draft, reasons), (by, None)).await?;
+            (resolved, Vec::new())
         }
-        None => kept_plan,
+        None => {
+            let catalog = kept_catalog
+                .as_ref()
+                .expect("read before loading the kept plan");
+            kept_plan_writer(ctx, &current, catalog, (&env, &spec)).await?
+        }
     };
-    let plan = filled_plan(ctx, route, &env, &base, &spec, plan).await?;
+    let plan = filled_plan(ctx, route, &env, &base, &spec, plan, None).await?;
     check_plan(ctx, &env, &spec, &plan)?;
     if replaces_plan {
         let budgeted = Budgeted {
@@ -804,8 +1198,17 @@ pub(super) async fn retry(
     };
     let (item, fresh_note) = {
         let _table = ctx.runs.lock().await;
-        let loaded = ctx.store.lock().await.item(id)?;
-        check_retryable(&*ctx.store.lock().await, &loaded)?;
+        let store = ctx.store.lock().await;
+        let loaded = store.item(id)?;
+        check_retryable(&store, &loaded)?;
+        if !replaces_plan {
+            let mut read = current.model_plan;
+            if let Some(catalog) = store.fresh_model_catalog() {
+                read.canonicalize_aliases(&catalog);
+            }
+            check_plan_unchanged(id, &read, &loaded.model_plan)?;
+        }
+        drop(store);
         let mut item = loaded.clone();
         item.model_plan = plan;
         item.routed_provider = provider;
@@ -825,10 +1228,11 @@ pub(super) async fn retry(
         };
         let kept = fresh.as_ref().and_then(|f| f.kept.as_deref());
         let mut store = ctx.store.lock().await;
-        let queued = queue_again(&mut store, &loaded, item).map_err(|error| match kept {
+        let mut queued = queue_again(&mut store, &loaded, item).map_err(|error| match kept {
             Some(kept) => error.with_detail(&format!("the retry was not queued, but: {kept}")),
             None => error,
         })?;
+        note_kept_repair(ctx, &mut store, &mut queued, &repaired)?;
         (queued, fresh.map(|f| f.note))
     };
     // Queued under the table: dispatch starts it once the mark goes.
@@ -843,15 +1247,65 @@ pub(super) async fn retry(
     Ok(Reply::Item(item))
 }
 
+/// The plan a retry of `current` keeps, repaired in `catalog` when it is
+/// ready, and the moves that repair made, read before new stages are filled.
+async fn kept_plan_writer(
+    ctx: &DaemonContext,
+    current: &QueueItem,
+    catalog: &archon_core::model_tier::ModelCatalog,
+    (env, spec): (&RepoEnv, &PipelineSpec),
+) -> Result<(PlanWriter, Vec<crate::quota::Moved>), ArchonError> {
+    let mut kept = current.clone();
+    // A 1.0 item names the ship agent its built-in no longer has; the retry stores the repair.
+    spec.drop_retired_ship(&mut kept.model_plan, None);
+    let mut moves = Vec::new();
+    let plan = if catalog.not_ready_reason().is_some() {
+        kept.model_plan.checked_request_catalog(catalog, None)?
+    } else {
+        let store = ctx.store.lock().await;
+        let repaired =
+            executor::model_catalog::repair_item(ctx, &store, &kept, catalog, env, spec)?;
+        assert_eq!(repaired.id, kept.id, "the kept item's own plan");
+        if repaired.model_plan != kept.model_plan {
+            let mut before = kept.model_plan.clone();
+            before.canonicalize_aliases(catalog);
+            let now = repaired.model_plan.plan();
+            let before = crate::quota::notice_baseline(Some(before.plan()), now);
+            moves = crate::quota::catalog_moves((before, now), now, catalog);
+        }
+        repaired.model_plan
+    };
+    let mut writer = PlanWriter::new(&kept.id, archon_core::now());
+    let cap = sizing::carried_cap(&ctx.config, &env.resolved_policy(ctx));
+    writer.carry(&plan, &kept.id, cap, |_| Some(usize::MAX));
+    Ok((writer, moves))
+}
+
+/// Note on the `queued` retry, and in its feed, the `moves` its kept plan's
+/// catalog repair made; dispatch reads the repaired plan and tells nothing.
+fn note_kept_repair(
+    ctx: &DaemonContext,
+    store: &mut archon_queue::Store,
+    queued: &mut QueueItem,
+    moves: &[crate::quota::Moved],
+) -> Result<(), ArchonError> {
+    if moves.is_empty() {
+        return Ok(());
+    }
+    assert_eq!(queued.state.kind(), "queued", "noted once queued again");
+    let now = queued.model_plan.plan().clone();
+    crate::quota::record_moves(ctx, store, queued, (moves, &now), None)?;
+    assert!(queued.provider_switch.is_some(), "a move is noted");
+    queued.updated_at = archon_core::now().max(queued.updated_at);
+    store.update_item(queued)
+}
+
 /// A finished item whose restack fix, which works on its branch, is not
 /// still to run.
 fn check_retryable(store: &archon_queue::Store, item: &QueueItem) -> Result<(), ArchonError> {
-    if !matches!(
-        item.state,
-        QueueState::Succeeded { .. } | QueueState::Failed { .. } | QueueState::Cancelled { .. }
-    ) {
+    if !item.state.is_terminal() && !item.state.is_model_pin_block() {
         return Err(ArchonError::InvalidTransition(format!(
-            "only finished items are retried; {} is {}",
+            "only finished or model-blocked items are retried; {} is {}",
             item.id,
             item.state.kind()
         )));
@@ -1058,7 +1512,7 @@ fn unblock_dependents(
     );
     for dependent in store.dependents(id)? {
         let item = store.item(&dependent)?;
-        if !matches!(item.state, QueueState::Blocked { .. }) {
+        if !matches!(item.state, QueueState::Blocked { .. }) || item.state.is_model_pin_block() {
             continue;
         }
         let mut broken = false;
@@ -1100,7 +1554,7 @@ pub(crate) async fn routed_provider(
     };
     let catalog = learned::catalog(ctx).await?;
     let quota = crate::quota::current(ctx, Some(&weights)).await;
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     Ok(knobs::item_provider(
         (Some(&weights), quota.as_ref()),
         &catalog,
@@ -1110,18 +1564,22 @@ pub(crate) async fn routed_provider(
 }
 
 /// `draft` as [`knobs::resolve_plan`] gives it, its tiers resolved from
-/// Aether's catalog within `env`'s model policy and routed for `item`.
+/// Aether's catalog within `env`'s model policy and routed for `item`, and
+/// what it names written as chosen `by` the request.
 pub(super) async fn resolve_draft(
     ctx: &DaemonContext,
     (env, item): (&RepoEnv, ItemRoute<'_>),
     spec: &PipelineSpec,
-    draft: ModelPlanDraft,
-    reasons: Option<&ModelReasons>,
-) -> Result<ModelPlan, ArchonError> {
-    let plan = resolve_tiers(ctx, (env, item), spec, draft).await?;
-    env.policy(&ctx.config).check_plan(&plan)?;
+    (draft, reasons): (ModelPlanDraft, Option<&ModelReasons>),
+    (by, carried): (Authority, Option<&ModelPlan>),
+) -> Result<PlanWriter, ArchonError> {
+    let plan = resolve_tiers(ctx, (env, item), spec, draft.clone(), carried).await?;
     knobs::check_plan_reasons(spec, &plan, reasons)?;
-    Ok(plan)
+    let mut writer = PlanWriter::new(item.id, archon_core::now());
+    if !draft.0.is_empty() {
+        writer.request(&draft, plan, by);
+    }
+    Ok(writer)
 }
 
 /// Resolve tiers without checking the plan cap or effort reasons, for a request
@@ -1131,14 +1589,23 @@ pub(super) async fn resolve_tiers(
     (env, item): (&RepoEnv, ItemRoute<'_>),
     spec: &PipelineSpec,
     draft: ModelPlanDraft,
+    carried: Option<&ModelPlan>,
 ) -> Result<ModelPlan, ArchonError> {
-    let catalog = learned::catalog(ctx).await?;
-    let policy = env.policy(&ctx.config);
+    let catalog = learned::request_catalog(ctx).await?;
+    let policy = env.resolved_policy(ctx);
     let weights = env.provider_weights(&ctx.config);
     let quota = crate::quota::current(ctx, weights.as_ref()).await;
     let route = item.by(weights.as_ref(), quota.as_ref());
     let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(route);
-    knobs::resolve_tiers(spec, draft, tiers)
+    let plan = knobs::resolve_tiers(spec, draft, tiers, carried)?;
+    if catalog.not_ready_reason().is_some() {
+        for choice in plan.0.values().flatten() {
+            policy.check_pending_model(choice)?;
+        }
+    } else {
+        policy.check_plan(&plan)?;
+    }
+    Ok(plan)
 }
 
 /// `plan` with what it leaves out filled for `env`'s repository and routed
@@ -1149,10 +1616,11 @@ pub(super) async fn filled_plan(
     env: &RepoEnv,
     base: &PipelineSpec,
     spec: &PipelineSpec,
-    plan: ModelPlan,
-) -> Result<ModelPlan, ArchonError> {
+    mut writer: PlanWriter,
+    carried: Option<&ModelPlan>,
+) -> Result<PlannedPlan, ArchonError> {
     let id = item.id;
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let catalog = learned::catalog(ctx).await?;
     let weights = env.provider_weights(&ctx.config);
     let quota = crate::quota::current(ctx, weights.as_ref()).await;
@@ -1160,18 +1628,31 @@ pub(super) async fn filled_plan(
     let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(route);
     let max_tier = env.max_default_tier(&ctx.config);
     let fallback = knobs::default_choice(&ctx.config, tiers, max_tier, spec);
+    let fallback = (
+        fallback.as_ref(),
+        knobs::EffortFill::of(&ctx.config, &policy),
+    );
     let store = ctx.store.lock().await;
     store.configure_learning(&ctx.config.learning)?;
     let repo = env.repo.as_ref().map(|repo| &repo.id);
     // What an enqueue naming no model runs with nothing learned: savings are measured against it.
     let unnamed = knobs::fill_stage_tiers(tiers, max_tier, spec, ModelPlan::default());
-    let baseline = knobs::fill_static_stages(base, spec, unnamed, fallback.as_ref())?;
+    let baseline = knobs::fill_static_stages(base, spec, unnamed, fallback)?;
     store.record_static_plan(repo, spec.name(), &baseline)?;
-    let learned = learned::plan_for_item(&store, id, repo, spec, (&policy, max_tier), &plan)?;
-    let mut plan = plan;
+    let asked = writer.plan();
+    let advice = learned::advice_policy(&policy, ctx.config.models.effort_sizing());
+    let learned = learned::plan_for_item(&store, id, repo, spec, (&advice, max_tier), asked)?;
+    let learned = learned::held_to(learned, policy.max_effort);
+    let mut plan = asked.clone();
     plan.0.extend(learned.0);
-    let plan = knobs::fill_stage_tiers(tiers, max_tier, spec, plan);
-    knobs::fill_static_stages(base, spec, plan, fallback.as_ref())
+    writer.filled(plan, (PlanSource::Learned, PlanSource::Learned));
+    let tiered = knobs::fill_stage_tiers(tiers, max_tier, spec, writer.plan().clone());
+    writer.filled(tiered, (PlanSource::Tier, PlanSource::Fallback));
+    let fallen = knobs::fill_static_stages(base, spec, writer.plan().clone(), fallback)?;
+    writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
+    let measured = || learned::measured_size(&store, id);
+    sizing::finish((&ctx.config, &policy), spec, measured, writer)?
+        .checked_request_catalog(&catalog, carried)
 }
 
 /// Every stage has 1 to `choice_limit` choices, no unknown stage is named, and
@@ -1180,7 +1661,7 @@ pub(crate) fn check_plan(
     ctx: &DaemonContext,
     env: &RepoEnv,
     spec: &PipelineSpec,
-    plan: &ModelPlan,
+    plan: &PlannedPlan,
 ) -> Result<(), ArchonError> {
     for stage in &spec.file.stages {
         let choices = plan.choices_for(&stage.id).unwrap_or_default();
@@ -1195,7 +1676,7 @@ pub(crate) fn check_plan(
         }
     }
     spec.check_plan_keys(plan)?;
-    env.policy(&ctx.config).check_plan(plan)
+    plan.check_request_policy(&env.resolved_policy(ctx))
 }
 
 /// Each stage timeout names a stage of `spec` and stays within
@@ -1291,10 +1772,50 @@ pub(super) async fn check_runs_here(
     Ok(())
 }
 
+/// A retry that keeps the plan carried `read`, and `now` is the plan as it
+/// is stored. A steer between the two, even one that kept every value but
+/// pinned a field, refuses the retry rather than dropping that pin.
+fn check_plan_unchanged(
+    id: &QueueItemId,
+    read: &PlannedPlan,
+    now: &PlannedPlan,
+) -> Result<(), ArchonError> {
+    if read == now {
+        return Ok(());
+    }
+    Err(ArchonError::InvalidTransition(format!(
+        "{id}'s plan changed while it was being retried; retry it again"
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use archon_core::model::{Effort, ModelChoice, ModelPlan};
+    use archon_core::plan_origin::Sizing;
     use archon_pipeline::Catalog;
+
+    #[test]
+    fn a_retry_refuses_a_plan_pinned_meanwhile_even_with_the_same_values() {
+        let id = QueueItemId::new();
+        let mut writer = PlanWriter::new(&id, archon_core::now());
+        let choice = ModelChoice::pinned("a/opus".parse().unwrap(), Effort::Medium);
+        let plan = ModelPlan([("implement".to_owned(), vec![choice])].into());
+        writer.filled(plan, (PlanSource::Fallback, PlanSource::Fallback));
+        let read = writer.finish(Sizing::Off { policy_cap: None });
+        let mut steered = read.clone();
+        let named = (None, Some(Effort::Medium));
+        let by = (Authority::Operator, archon_core::now());
+        assert!(steered.steer(&id, "implement", named, by).is_some());
+        assert_eq!(steered.plan(), read.plan(), "same values");
+        assert!(check_plan_unchanged(&id, &read, &read.clone()).is_ok());
+        let refused = check_plan_unchanged(&id, &read, &steered).unwrap_err();
+        assert!(
+            refused
+                .to_string()
+                .contains("changed while it was being retried")
+        );
+    }
 
     fn reasons(key: &str) -> ModelReasons {
         [(key.to_owned(), "why".to_owned())].into()

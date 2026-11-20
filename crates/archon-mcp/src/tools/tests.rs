@@ -143,6 +143,10 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         ),
         ("promote", json!({"repo": "web"})),
         (
+            "watch_repo",
+            json!({"repo": "web", "interval_minutes": 10, "remove": false}),
+        ),
+        (
             "github_reply",
             json!({"repository": "Acme/Web", "number": 42, "body": "Queued as qi_1.", "idempotency_key": "reply-1"}),
         ),
@@ -191,6 +195,11 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
             "publish_artifact",
             json!({"path": "bench/out.json", "name": "evidence/out.json"}),
         ),
+        (
+            "submit_verdict",
+            json!({"summary": "Ran it.\nVERDICT: PASS", "restating": true,
+                "structured": {"verdict": "pass", "findings": []}}),
+        ),
         ("list_artifacts", json!({"item": qi()})),
         (
             "read_artifact",
@@ -204,6 +213,81 @@ fn refusal(tool: &str, arguments: Value) -> String {
         Err(ToolError(text)) => text,
         Ok(request) => panic!("{tool} accepted invalid arguments as {request:?}"),
     }
+}
+
+/// A stage agent hands over the result it is about to finish with, and is
+/// told in words whether to finish, restate, or that it is final.
+#[test]
+fn submit_verdict_carries_the_result_and_its_answer_says_what_to_do_next() {
+    use archon_core::run::{CheckDecision, Verdict, VerdictCheck, VerdictNote, VerdictReading};
+    let structured = json!({"verdict": "pass", "findings": [{"severity": "high"}]});
+    let args = json!({"summary": "Ran it.\nVERDICT: PASS", "structured": structured});
+    match to_request("submit_verdict", args.clone()).expect("valid arguments") {
+        Request::SubmitVerdict {
+            summary,
+            structured: Some(sent),
+            restating: false,
+            caller: None,
+        } => {
+            assert_eq!(summary, "Ran it.\nVERDICT: PASS");
+            assert_eq!(sent, structured);
+        }
+        other => panic!("mapped to {other:?}"),
+    }
+    let mut marked = args;
+    marked["restating"] = json!(true);
+    let restated = to_request("submit_verdict", marked).expect("valid arguments");
+    assert!(
+        matches!(
+            restated,
+            Request::SubmitVerdict {
+                restating: true,
+                ..
+            }
+        ),
+        "{restated:?}"
+    );
+    assert!(refusal("submit_verdict", json!({"structured": {}})).contains("summary"));
+    // `complete_task` takes an object, so nothing else is read as a result.
+    for not_an_object in [json!([{"verdict": "pass"}]), json!("pass"), json!(1)] {
+        let args = json!({"summary": "VERDICT: PASS", "structured": not_an_object});
+        let refused = refusal("submit_verdict", args);
+        assert!(refused.contains("`structured` is invalid"), "{refused}");
+    }
+    let definition = definition("submit_verdict").expect("defined");
+    assert!(!definition.read_only, "it records the one ask");
+    assert!(
+        definition
+            .description
+            .contains("the `restating` one is final")
+    );
+    assert!(
+        !definition.description.contains("complete_task"),
+        "a woken agent finishes without it"
+    );
+
+    let disputed = VerdictReading::new((Verdict::Unknown, Some(VerdictNote::DisputedPass)));
+    let answer = |decision, reading| {
+        render(
+            "submit_verdict",
+            &Reply::VerdictCheck(VerdictCheck { decision, reading }),
+        )
+    };
+    let asked = answer(CheckDecision::Restate, disputed);
+    assert!(
+        asked.contains("a pass beside a blocking finding"),
+        "{asked}"
+    );
+    assert!(asked.contains("`\"restating\": true`"), "{asked}");
+    let last = answer(CheckDecision::Final, disputed);
+    assert!(last.starts_with("Final: "), "{last}");
+    assert!(
+        last.contains("Finish now as your instructions say"),
+        "{last}"
+    );
+    let pass = VerdictReading::new((Verdict::Pass, None));
+    let accepted = answer(CheckDecision::Accepted, pass);
+    assert!(accepted.contains("reads this as a pass"), "{accepted}");
 }
 
 #[test]
@@ -820,6 +904,7 @@ fn provider_quota(
             resets_at: Some(reset),
             resets_in_seconds: None,
         }],
+        pace: vec![],
     }
 }
 
@@ -1068,10 +1153,12 @@ fn rendered_autonomy_names_defaults_ceiling_and_directives() {
 fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
     use archon_core::protocol::{ItemDetail, Reply};
     let mut item = item(QueueState::Queued);
-    item.model_plan = serde_json::from_value(plan()).unwrap();
+    let stored = serde_json::from_value(plan()).unwrap();
+    item.model_plan = archon_core::plan_origin::PlannedPlan::legacy(stored);
     item.model_reasons = Some([("implement".into(), "Apply supplied fix".into())].into());
     let mut detail = ItemDetail {
         acceptance: Default::default(),
+        plan_origins: Default::default(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),
@@ -1099,9 +1186,90 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
         text.contains("review = codex/gpt-6-sol x_high + claude-code/claude-sonnet-5 max"),
         "{text}"
     );
+    assert!(!text.contains("Plan origins:"), "{text}");
     detail.item.model_reasons = None;
+    detail.plan_origins = detail.item.model_plan.origins(&detail.item.id);
     let text = render("get_item", &Reply::ItemDetail(Box::new(detail)));
     assert!(!text.contains("Apply supplied fix"));
+    assert!(
+        text.contains(
+            "Plan origins:\n  implement[0]: model legacy_unknown by unknown; \
+             effort legacy_unknown by unknown"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n  review[1]: model legacy_unknown"),
+        "{text}"
+    );
+}
+
+/// Give `item` a plan the sizer finished: `build` pinned at medium, `plan`
+/// named without an effort, for an item tagged critical.
+fn size_critical(item: &mut QueueItem) {
+    use archon_core::effort_sizing::StageFacts;
+    use archon_core::plan_origin::{Authority, EffortSizer, PlanWriter, Sizing};
+    const MODEL: &str = "claude-code/claude-opus-5-5";
+    let asked = serde_json::json!({"build": [{"model": MODEL, "effort": "medium"}],
+        "plan": [{"model": MODEL}]});
+    let resolved = serde_json::json!({"build": [{"model": MODEL, "effort": "medium"}],
+        "plan": [{"model": MODEL, "effort": "high"}]});
+    let facts = |_: &str| Some(StageFacts::new(Effort::High, StageKind::Work, false));
+    let sizer = EffortSizer {
+        cap: Effort::XHigh,
+        raises: true,
+        size: None,
+        facts: &facts,
+    };
+    let mut writer = PlanWriter::new(&item.id, archon_core::now());
+    let asked = serde_json::from_value(asked).unwrap();
+    writer.request(
+        &asked,
+        serde_json::from_value(resolved).unwrap(),
+        Authority::Operator,
+    );
+    item.model_plan = writer.finish(Sizing::On(sizer));
+    item.tags = vec!["risk:critical".into()];
+    assert!(
+        item.settle_sizing(archon_core::now()),
+        "the item's own tags size it"
+    );
+}
+
+/// A11: `get_item` shows the class the sizer gave the item and why each plan
+/// entry has its effort, the pin included; an item never sized shows neither.
+#[test]
+fn get_item_shows_the_risk_class_and_the_reason_for_each_sized_effort() {
+    use archon_core::protocol::{ItemDetail, Reply};
+    let mut detail = ItemDetail {
+        acceptance: Default::default(),
+        plan_origins: Default::default(),
+        default_efforts: Default::default(),
+        worker_policies: Default::default(),
+        stage_notes: Default::default(),
+        steers: Vec::new(),
+        waiting_on: None,
+        waiting_reason: None,
+        item: item(QueueState::Queued),
+        runs: vec![],
+        stages: vec![],
+        spent_usd: 0.0,
+        gates: vec![],
+        delegations: Default::default(),
+        switched_to: None,
+        merges: Vec::new(),
+        stage_warnings: Vec::new(),
+        message_caps: Vec::new(),
+        clarifications: Vec::new(),
+    };
+    let unsized_text = render("get_item", &Reply::ItemDetail(Box::new(detail.clone())));
+    assert!(!unsized_text.contains("Effort sizing"), "{unsized_text}");
+    size_critical(&mut detail.item);
+    let text = render("get_item", &Reply::ItemDetail(Box::new(detail)));
+    let shown = "\nEffort sizing: risk class critical (scope:ci, risk:critical)\n  \
+                 build[0]: sizer: critical -> x_high; the plan pins medium\n  \
+                 plan[0]: sizer: critical -> x_high";
+    assert!(text.contains(shown), "{text}");
 }
 
 #[test]
@@ -1136,6 +1304,7 @@ fn get_item_lists_the_steers_made_to_the_item() {
     let at = archon_core::now();
     let mut detail = ItemDetail {
         acceptance: Default::default(),
+        plan_origins: Default::default(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),
@@ -1226,6 +1395,7 @@ fn list_queue_and_get_item_expose_stable_waiting_reasons_in_text_and_json() {
             "get_item",
             Reply::ItemDetail(Box::new(ItemDetail {
                 acceptance: Default::default(),
+                plan_origins: Default::default(),
                 default_efforts: Default::default(),
                 worker_policies: Default::default(),
                 stage_notes: Default::default(),
@@ -1291,6 +1461,7 @@ fn dependency_titles_are_escaped_in_waiting_text() {
             "get_item",
             Reply::ItemDetail(Box::new(ItemDetail {
                 acceptance: Default::default(),
+                plan_origins: Default::default(),
                 default_efforts: Default::default(),
                 worker_policies: Default::default(),
                 stage_notes: Default::default(),
@@ -1337,7 +1508,15 @@ fn the_tool_list_stays_within_its_budget() {
     const INTENT_BINDING_BYTES: usize = 2 * 1024;
     const INTENT_RECORD_BYTES: usize = 2 * 1024;
     const FROM_1_0_BUDGET_BYTES: usize = 20_000 + INTENT_BINDING_BYTES;
-    const BUDGET_BYTES: usize = 33 * 1024 + INTENT_BINDING_BYTES + INTENT_RECORD_BYTES;
+    // `submit_verdict`, which every verdict-holding stage calls before it completes.
+    const VERDICT_CHECK_BYTES: usize = 512;
+    // Each effort's note that `max` needs `[models] max_effort` (1.6.4).
+    const EFFORT_CAP_NOTE_BYTES: usize = 256;
+    const BUDGET_BYTES: usize = 33 * 1024
+        + INTENT_BINDING_BYTES
+        + INTENT_RECORD_BYTES
+        + VERDICT_CHECK_BYTES
+        + EFFORT_CAP_NOTE_BYTES;
     let definitions = definitions();
     assert_eq!(definitions[FROM_1_0 - 1].name, "message_orchestrator");
     let carried: usize = definitions[..FROM_1_0].iter().map(shown_bytes).sum();
@@ -1356,7 +1535,48 @@ fn the_tool_list_stays_within_its_budget() {
             definition.name
         );
     }
+    let verdict_check = definitions.iter().find(|d| d.name == "submit_verdict");
+    let verdict_check = shown_bytes(verdict_check.expect("defined"));
+    assert!(
+        verdict_check <= VERDICT_CHECK_BYTES,
+        "submit_verdict exceeds its allocation at {verdict_check} bytes"
+    );
     assert!(all <= BUDGET_BYTES, "the tool list grew to {all} bytes");
+}
+
+/// Every effort a tool takes says that `max` needs the operator's cap: the
+/// orchestrator otherwise learns it only from a refusal.
+#[test]
+fn every_effort_says_max_needs_the_operator_s_cap() {
+    fn efforts<'a>(schema: &'a Value, found: &mut Vec<&'a Value>) {
+        match schema {
+            Value::Object(map) => {
+                let is_effort = map.get("enum").and_then(Value::as_array).is_some_and(|e| {
+                    e.iter().any(|v| v == "x_high") && e.iter().any(|v| v == "max")
+                });
+                if is_effort {
+                    found.push(schema);
+                }
+                map.values().for_each(|v| efforts(v, found));
+            }
+            Value::Array(items) => items.iter().for_each(|v| efforts(v, found)),
+            _ => {}
+        }
+    }
+    let definitions = definitions();
+    let mut found = Vec::new();
+    for definition in &definitions {
+        efforts(&definition.input_schema, &mut found);
+    }
+    assert!(
+        found.len() >= 2,
+        "a plan's and steer_item's efforts: {}",
+        found.len()
+    );
+    for effort in found {
+        let said = effort["description"].as_str().unwrap_or_default();
+        assert!(said.contains("`[models] max_effort"), "{effort}");
+    }
 }
 
 /// What a tool's description must say, since the prompt leaves it to the tool.

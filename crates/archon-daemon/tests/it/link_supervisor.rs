@@ -1192,6 +1192,35 @@ async fn an_operator_message_is_keyed_by_its_feed_item() {
     assert_eq!(sent["to"], ORCH);
 }
 
+/// An orchestrator switch and an operator line never cross: the line waits
+/// out the switch and goes to the generation in charge after it.
+#[tokio::test]
+async fn an_operator_message_waits_out_a_switch_and_reaches_the_new_orchestrator() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    agent_table(&harness, &[(ORCH, "running"), (ORCH_2, "running")]);
+    harness
+        .fake
+        .set_default("send_message", Scripted::reply("message_sent", json!({})));
+    let switch = supervisor::hold_switch(&harness.ctx).await;
+    let ctx = harness.ctx.clone();
+    let say = tokio::spawn(async move {
+        supervisor::deliver_operator_message(&ctx, &FeedItemId::new(), "status?", &[]).await
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        harness.fake.received_named("send_message").is_empty(),
+        "held by the switch"
+    );
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH_2).await;
+    drop(switch);
+    say.await.unwrap().unwrap();
+    let sent = harness.fake.received_named("send_message");
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0]["to"], ORCH_2, "the generation in charge now");
+}
+
 #[tokio::test]
 async fn a_refused_operator_message_does_not_leave_the_chat_waiting() {
     let harness = Harness::new().await;
@@ -1673,4 +1702,351 @@ async fn mail_behind_a_hung_call_is_read_by_a_fresh_turn_within_minutes() {
         "nothing waits on the fresh turn"
     );
     assert_eq!(harness.fake.received_named("interrupt").len(), 1);
+}
+
+#[tokio::test]
+async fn orchestrator_creation_checks_the_configured_alias_against_the_live_catalog() {
+    let mut config = Config::default();
+    config.orchestrator.model = "claude-code/opus".parse().unwrap();
+    let h = Harness::with(config, None).await;
+    h.connect().await;
+    let error = supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
+    assert!(error.to_string().contains("nearest"), "{error}");
+    assert!(h.fake.received_named("create_agent").is_empty());
+    h.fake.set_default(
+        "list_models",
+        Scripted::reply(
+            "models",
+            json!([
+                {"model":"claude-code/canonical", "configured": true, "aliases": ["opus"]}
+            ]),
+        ),
+    );
+    create_key(&h).await;
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(
+        creates[0]["model"],
+        json!({"provider":"claude-code","model":"canonical"})
+    );
+}
+
+#[tokio::test]
+async fn orchestrator_host_context_follows_the_canonical_model_of_a_cross_provider_alias() {
+    let mut config = Config::default();
+    config.aether.host_context = archon_core::config::HostContext::Lean;
+    config.orchestrator.model = "codex/opus".parse().unwrap();
+    let h = Harness::with(config, None).await;
+    h.fake.set_features(vec!["host_context".into()]);
+    h.fake.set_default(
+        "list_models",
+        Scripted::reply(
+            "models",
+            json!([
+                {"model":"claude-code/canonical", "configured": true, "aliases": ["codex/opus"]}
+            ]),
+        ),
+    );
+    h.connect().await;
+    create_key(&h).await;
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(
+        creates[0]["model"],
+        json!({"provider":"claude-code","model":"canonical"})
+    );
+    assert_eq!(creates[0]["config"]["host_context"], "lean");
+}
+
+/// A generation an earlier build may have sent with nothing frozen sent full:
+/// its replay keeps full, though the canonical model now asks for lean.
+#[tokio::test]
+async fn a_possibly_sent_generation_with_nothing_frozen_replays_full() {
+    let mut config = Config::default();
+    config.aether.host_context = archon_core::config::HostContext::Lean;
+    config.orchestrator.model = "codex/opus".parse().unwrap();
+    let h = Harness::with(config, None).await;
+    h.set_kv("orchestrator_generation", "3").await;
+    assert!(h.kv("orchestrator_unsent_generation").await.is_none());
+    assert!(h.kv("orchestrator_host_context").await.is_none());
+    h.fake.set_features(vec!["host_context".into()]);
+    h.fake.set_default(
+        "list_models",
+        Scripted::reply(
+            "models",
+            json!([
+                {"model":"claude-code/canonical", "configured": true, "aliases": ["codex/opus"]}
+            ]),
+        ),
+    );
+    h.connect().await;
+    let key = create_key(&h).await;
+    assert!(key.ends_with("-3"), "{key}");
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    assert!(
+        creates[0]["config"].get("host_context").is_none(),
+        "{}",
+        creates[0]
+    );
+}
+
+fn catalog_of(canonical: &str, alias: &str) -> Scripted {
+    Scripted::reply(
+        "models",
+        json!([{"model": canonical, "configured": true, "aliases": [alias]}]),
+    )
+}
+
+async fn aliased_harness(alias: &str, canonical: &str) -> Harness {
+    let mut config = Config::default();
+    config.orchestrator.model = alias.parse().unwrap();
+    let h = Harness::with(config, None).await;
+    h.fake.set_default(
+        "list_models",
+        catalog_of(canonical, alias.split('/').next_back().unwrap()),
+    );
+    h.connect().await;
+    h
+}
+
+/// A lost reply replays the key with the model it froze, though the alias
+/// now names another model: Aether refuses a frame that differs per key.
+#[tokio::test]
+async fn a_replayed_creation_sends_the_model_frozen_for_its_key() {
+    let h = aliased_harness("claude-code/opus", "claude-code/first").await;
+    h.fake
+        .script("create_agent", Scripted::refuse("internal", "reply lost"));
+    supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
+    let frozen = h.kv("orchestrator_model").await.expect("a frozen model");
+    assert!(frozen.contains("first"), "{frozen}");
+    h.fake
+        .set_default("list_models", catalog_of("claude-code/second", "opus"));
+    create_key(&h).await;
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 2);
+    let first = json!({"provider":"claude-code","model":"first"});
+    assert_eq!(creates[0]["model"], first);
+    assert_eq!(creates[1]["model"], first);
+    assert_eq!(creates[0]["idempotency_key"], creates[1]["idempotency_key"]);
+}
+
+/// A key an older build may have sent carried the configured model raw.
+#[tokio::test]
+async fn a_possibly_sent_generation_with_no_frozen_model_replays_the_raw_model() {
+    let h = aliased_harness("claude-code/opus", "claude-code/canonical").await;
+    h.set_kv("orchestrator_generation", "3").await;
+    assert!(h.kv("orchestrator_unsent_generation").await.is_none());
+    create_key(&h).await;
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(
+        creates[0]["model"],
+        json!({"provider":"claude-code","model":"opus"})
+    );
+    let frozen = h.kv("orchestrator_model").await.expect("frozen now");
+    assert!(frozen.contains("opus"), "{frozen}");
+}
+
+/// The configured alias may have been retired since the key was sent: the
+/// replay must still reach Aether so an agent it created is returned.
+#[tokio::test]
+async fn a_possibly_sent_generation_replays_though_its_alias_is_retired() {
+    let h = aliased_harness("claude-code/opus", "claude-code/canonical").await;
+    h.fake
+        .set_default("list_models", Scripted::reply("models", json!([])));
+    h.set_kv("orchestrator_generation", "3").await;
+    create_key(&h).await;
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(
+        creates[0]["model"],
+        json!({"provider":"claude-code","model":"opus"})
+    );
+}
+
+/// A key an older build may have sent froze no model, and `[orchestrator]`
+/// now names one `[models]` does not allow: nothing is replayed on it.
+#[tokio::test]
+async fn a_possibly_sent_generation_is_not_replayed_on_a_disallowed_model() {
+    let mut config = Config::default();
+    config.models.allow = vec!["codex/allowed".parse().unwrap()];
+    config.orchestrator.model = "codex/denied".parse().unwrap();
+    config.validate().expect("its provider is allowed");
+    let h = Harness::with(config, None).await;
+    let listed = json!([
+        {"model": "codex/allowed", "configured": true},
+        {"model": "codex/denied", "configured": true},
+    ]);
+    h.fake
+        .set_default("list_models", Scripted::reply("models", listed));
+    h.connect().await;
+    h.set_kv("orchestrator_generation", "3").await;
+    assert!(h.kv("orchestrator_unsent_generation").await.is_none());
+    let refused = supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
+    assert!(matches!(refused, ArchonError::Policy(_)), "{refused:?}");
+    assert!(
+        h.fake.received_named("create_agent").is_empty(),
+        "no create on a model outside [models]"
+    );
+    assert!(h.kv("orchestrator_model").await.is_none(), "nothing frozen");
+}
+
+/// A possibly sent key that froze `model`, as after a restart on a changed
+/// config: `[models]` allows `codex/allowed`, configured, and `codex/gone`;
+/// the catalog lists `codex/allowed` and `codex/denied`.
+async fn frozen_on(model: &str, labelled: bool) -> (Harness, String) {
+    let mut config = Config::default();
+    let allowed = ["codex/allowed", "codex/gone"];
+    config.models.allow = allowed.iter().map(|m| m.parse().unwrap()).collect();
+    config.orchestrator.model = "codex/allowed".parse().unwrap();
+    let h = Harness::with(config, None).await;
+    let listed = json!([
+        {"model": "codex/allowed", "configured": true},
+        {"model": "codex/denied", "configured": true},
+    ]);
+    h.fake
+        .set_default("list_models", Scripted::reply("models", listed));
+    h.connect().await;
+    h.fake
+        .script("create_agent", Scripted::refuse("internal", "reply lost"));
+    supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
+    let sent = h.fake.received_named("create_agent");
+    let key = sent[0]["idempotency_key"].as_str().unwrap().to_owned();
+    let label = &sent[0]["scope"]["labels"]["archon.creation"];
+    assert_eq!(label, &json!(key), "a first send names its key");
+    let (provider, name) = model.split_once('/').unwrap();
+    let model = json!({"provider": provider, "model": name});
+    let frozen = json!({"key": key, "model": model, "labelled": labelled});
+    h.set_kv("orchestrator_model", &frozen.to_string()).await;
+    (h, key)
+}
+
+/// An orchestrator the creation `key` left, on `codex/denied`, in `state`.
+fn left_by(id: &str, key: &str, state: &str) -> Value {
+    let mut agent = agent_in(id, state);
+    agent["model"] = json!({"provider": "codex", "model": "denied"});
+    let labels = json!({"archon": "orchestrator", "archon.creation": key});
+    agent["scope"] = json!({ "labels": labels });
+    agent
+}
+
+/// A creation that never landed froze a model the policy allows no longer:
+/// nothing is sent on it again, and a fresh generation is created on the
+/// configured model under its own key.
+#[tokio::test]
+async fn a_frozen_model_outside_the_policy_is_not_sent_again() {
+    let (h, key) = frozen_on("codex/denied", true).await;
+    h.fake
+        .set_default("list_agents", Scripted::reply("agents", json!([])));
+    let fresh = create_key(&h).await;
+    assert_ne!(fresh, key, "the unsendable key is left behind");
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 2, "{creates:?}");
+    let allowed = json!({"provider": "codex", "model": "allowed"});
+    assert_eq!(creates[1]["model"], allowed, "the configured model");
+    let frozen = h.kv("orchestrator_model").await.expect("frozen again");
+    assert!(
+        frozen.contains("allowed") && frozen.contains(&fresh),
+        "{frozen}"
+    );
+}
+
+/// A labelled creation froze a model the catalog lists no longer: it is not
+/// replayed into a refusal, and a fresh generation follows on the configured one.
+#[tokio::test]
+async fn a_frozen_model_the_catalog_lists_no_longer_is_not_sent_again() {
+    let (h, key) = frozen_on("codex/gone", true).await;
+    h.fake
+        .set_default("list_agents", Scripted::reply("agents", json!([])));
+    let fresh = create_key(&h).await;
+    assert_ne!(fresh, key, "the unsendable key is left behind");
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 2, "{creates:?}");
+    let allowed = json!({"provider": "codex", "model": "allowed"});
+    assert_eq!(creates[1]["model"], allowed, "the configured model");
+}
+
+/// The same key had landed before its reply was lost: the orchestrator it
+/// left is taken as it is, and no create is sent on the denied model.
+#[tokio::test]
+async fn an_orchestrator_a_frozen_creation_left_is_taken_without_a_create() {
+    let (h, key) = frozen_on("codex/denied", true).await;
+    let landed = left_by(ORCH_2, &key, "ready");
+    let other = left_by(ORCH_3, &key, "cancelled");
+    let agents = json!([landed, other]);
+    h.fake
+        .set_default("list_agents", Scripted::reply("agents", agents));
+    let taken = supervisor::ensure_orchestrator(&h.ctx).await.unwrap();
+    assert_eq!(taken.as_str(), ORCH_2, "the live agent the key left");
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1, "nothing sent again: {creates:?}");
+    let frozen = h.kv("orchestrator_model").await.expect("still frozen");
+    assert!(frozen.contains(&key), "its key is kept: {frozen}");
+    let stored = h.kv(keys::ORCHESTRATOR_AGENT).await;
+    assert_eq!(stored.as_deref(), Some(ORCH_2));
+}
+
+/// A live orchestrator on the same model that another creation left, as
+/// another store's, is never taken for the one this key left.
+#[tokio::test]
+async fn an_orchestrator_another_creation_left_is_never_taken() {
+    let (h, key) = frozen_on("codex/denied", true).await;
+    let foreign = left_by(ORCH_2, "archon-orchestrator-another-store-1", "ready");
+    h.fake
+        .set_default("list_agents", Scripted::reply("agents", json!([foreign])));
+    let fresh = create_key(&h).await;
+    assert_ne!(fresh, key, "a fresh generation, not the foreign agent");
+    let stored = h.kv(keys::ORCHESTRATOR_AGENT).await;
+    assert_eq!(stored.as_deref(), Some(ORCH), "the created agent");
+}
+
+/// Without a catalog an alias the policy denies would pass unread: a replay
+/// waits for the catalog, sending and advancing nothing.
+#[tokio::test]
+async fn a_frozen_replay_waits_for_the_model_catalog() {
+    let (h, key) = frozen_on("codex/denied", true).await;
+    let down = Scripted::refuse("internal", "catalog down");
+    h.fake.set_default("list_models", down);
+    let reason = "catalog changed".to_owned();
+    h.ctx.store.lock().await.invalidate_model_catalog(reason);
+    let held = supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
+    assert!(matches!(held, ArchonError::Unavailable(_)), "{held:?}");
+    assert_eq!(h.fake.received_named("create_agent").len(), 1, "no send");
+    let frozen = h.kv("orchestrator_model").await.expect("still frozen");
+    assert!(frozen.contains(&key), "its key is kept: {frozen}");
+}
+
+/// A key an older build may have sent carries no label to find its agent by:
+/// a model the policy denies is refused with a blocker, never resent.
+#[tokio::test]
+async fn an_unlabelled_creation_on_a_denied_model_is_refused() {
+    let (h, key) = frozen_on("codex/denied", false).await;
+    let refused = supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
+    assert!(matches!(refused, ArchonError::Policy(_)), "{refused:?}");
+    assert_eq!(h.fake.received_named("create_agent").len(), 1, "no send");
+    let frozen = h.kv("orchestrator_model").await.expect("still frozen");
+    assert!(frozen.contains(&key), "its key is kept: {frozen}");
+}
+
+/// A request that fails before the freeze leaves the key unsent: the retry
+/// checks the model again rather than replaying one Aether never received.
+#[tokio::test]
+async fn a_creation_failing_before_its_freeze_checks_the_model_again() {
+    let h = aliased_harness("claude-code/opus", "claude-code/first").await;
+    h.fake
+        .script("status", Scripted::refuse("internal", "status unavailable"));
+    supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
+    assert!(
+        h.fake.received_named("create_agent").is_empty(),
+        "no create sent"
+    );
+    assert!(h.kv("orchestrator_model").await.is_none(), "nothing frozen");
+    h.fake
+        .set_default("list_models", catalog_of("claude-code/second", "opus"));
+    create_key(&h).await;
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    let second = json!({"provider":"claude-code","model":"second"});
+    assert_eq!(creates[0]["model"], second, "the first send is checked");
 }

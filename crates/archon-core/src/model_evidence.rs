@@ -8,9 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::ArchonError;
 use crate::cost::{CostQuery, DayBound, DayRange};
+use crate::effort_sizing::RiskClass;
 use crate::id::RepoId;
 use crate::model::{Effort, ModelChoice};
 use crate::model_tier::Tier;
+use crate::plan_origin::PlanSource;
 use crate::protocol::RepoRef;
 
 pub const DEFAULT_DAYS: u32 = 30;
@@ -49,6 +51,10 @@ pub struct ModelEvidenceRow {
     /// Completed review/test attempts with a recorded verdict; Unknown does not pass.
     pub verdicts: usize,
     pub passed: usize,
+    /// Completed attempts whose pass their own findings dispute: a format clash
+    /// kept out of `verdicts`, so it is no fail of the model.
+    #[serde(default)]
+    pub disputed: usize,
 }
 
 /// The same observations pooled by the tier of the model that ran, so they
@@ -65,6 +71,25 @@ pub struct TierEvidenceRow {
     pub median_minutes: Option<f64>,
     pub verdicts: usize,
     pub passed: usize,
+    #[serde(default)]
+    pub disputed: usize,
+}
+
+/// The attempts whose effort the sizer decided or advised, pooled by the
+/// item's risk class and where the effort came from. For display only:
+/// no route and no later sizing reads it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SizingEvidenceRow {
+    pub risk_class: RiskClass,
+    pub effort_source: PlanSource,
+    pub attempts: usize,
+    pub completed: usize,
+    pub median_cost_usd: Option<f64>,
+    pub p90_cost_usd: Option<f64>,
+    pub median_minutes: Option<f64>,
+    pub verdicts: usize,
+    pub passed: usize,
+    pub disputed: usize,
 }
 
 /// One provider's attempts and completed cost: the split provider weights
@@ -89,6 +114,10 @@ pub struct ModelEvidenceReport {
     /// By provider, most attempts first.
     #[serde(default)]
     pub providers: Vec<ProviderEvidenceRow>,
+    /// By (risk class, effort source), lowest class first; attempts with no
+    /// sizing record are left out. Advisory display only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sizing: Vec<SizingEvidenceRow>,
     #[serde(default)]
     pub pipelines: Vec<crate::lesson::PipelineEvidence>,
     /// Names of the repositories `pipelines` cite, as `cost` names them.
@@ -96,12 +125,12 @@ pub struct ModelEvidenceReport {
     pub repo_names: BTreeMap<RepoId, String>,
 }
 
-/// `completed=… median=… p90=… median_min=…`, then any pass share and a
-/// small-sample warning.
+/// `completed=… median=… p90=… median_min=…`, then any pass share, any
+/// disputed passes and a small-sample warning.
 fn measures(
     completed: usize,
     (median, p90, minutes): (Option<f64>, Option<f64>, Option<f64>),
-    (passed, verdicts): (usize, usize),
+    (passed, verdicts, disputed): (usize, usize, usize),
 ) -> String {
     let cost = |value: Option<f64>| value.map_or("-".into(), |v| format!("${v:.4}"));
     let minutes = minutes.map_or("-".into(), |v| format!("{v:.2}"));
@@ -113,13 +142,17 @@ fn measures(
             100.0 * passed as f64 / verdicts as f64
         )
     };
+    let disputed = match disputed {
+        0 => String::new(),
+        n => format!(" disputed={n}"),
+    };
     let small = if completed < 5 {
         " [small sample: completed n < 5]"
     } else {
         ""
     };
     format!(
-        "completed={completed} median={} p90={} median_min={minutes}{pass}{small}",
+        "completed={completed} median={} p90={} median_min={minutes}{pass}{disputed}{small}",
         cost(median),
         cost(p90)
     )
@@ -142,7 +175,7 @@ impl ModelEvidenceReport {
             let measures = measures(
                 row.completed,
                 (row.median_cost_usd, row.p90_cost_usd, row.median_minutes),
-                (row.passed, row.verdicts),
+                (row.passed, row.verdicts, row.disputed),
             );
             let _ = writeln!(
                 text,
@@ -164,7 +197,7 @@ impl ModelEvidenceReport {
             let measures = measures(
                 row.completed,
                 (row.median_cost_usd, row.p90_cost_usd, row.median_minutes),
-                (row.passed, row.verdicts),
+                (row.passed, row.verdicts, row.disputed),
             );
             let _ = writeln!(
                 text,
@@ -173,6 +206,7 @@ impl ModelEvidenceReport {
             );
         }
         self.provider_text(&mut text);
+        self.sizing_text(&mut text);
         self.pipeline_text(&mut text);
         text.trim_end().to_owned()
     }
@@ -197,6 +231,21 @@ impl ModelEvidenceReport {
             );
         }
     }
+    fn sizing_text(&self, text: &mut String) {
+        for row in &self.sizing {
+            let measures = measures(
+                row.completed,
+                (row.median_cost_usd, row.p90_cost_usd, row.median_minutes),
+                (row.passed, row.verdicts, row.disputed),
+            );
+            let _ = writeln!(
+                text,
+                "Sized {} by {} n={} {measures}",
+                row.risk_class, row.effort_source, row.attempts,
+            );
+        }
+    }
+
     fn pipeline_text(&self, text: &mut String) {
         for p in &self.pipelines {
             let repo = p.repo.as_ref().map_or("global", |repo| {
@@ -204,14 +253,25 @@ impl ModelEvidenceReport {
                     .get(repo)
                     .map_or(repo.as_str(), String::as_str)
             });
+            let prs = p.review_prs.as_ref().map_or(String::new(), |prs| {
+                let rounds = prs
+                    .median_rounds_to_pass
+                    .map_or("-".to_owned(), |r| format!("{r:.1}"));
+                format!(
+                    " prs_passed={}/{} median_rounds_to_pass={rounds}",
+                    prs.passed, prs.reviewed
+                )
+            });
             let _ = writeln!(
                 text,
-                "Pipeline {} / {} n={} scored={} pass={:.0}% median=${:.3} wall={:.0}s corrected={:.0}%",
+                "Pipeline {} / {} n={} scored={} pass={:.0}% blocked={} escalated={} median=${:.3} wall={:.0}s corrected={:.0}%{prs}",
                 repo,
                 p.pipeline,
                 p.runs,
                 p.scored,
                 p.pass_rate * 100.0,
+                p.blocked,
+                p.escalated,
                 p.median_cost_usd,
                 p.median_wall_secs,
                 p.correction_rate * 100.0
@@ -235,6 +295,9 @@ mod tests {
             runs: 4,
             scored: 4,
             pass_rate: 0.5,
+            blocked: 0,
+            escalated: 0,
+            review_prs: None,
             median_cost_usd: 1.0,
             median_wall_secs: 60.0,
             correction_rate: 0.0,

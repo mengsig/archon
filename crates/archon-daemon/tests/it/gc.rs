@@ -585,7 +585,7 @@ version = 1
 workspace = "{workspace}"
 requires_repo = true
 [[stage]]
-id = "ship"
+id = "publish"
 kind = "report"
 prompt = "implement.md"
 "#
@@ -596,7 +596,7 @@ prompt = "implement.md"
                 "report-only",
                 "report",
                 archon_core::model::ModelPlan(std::collections::BTreeMap::from([(
-                    "ship".into(),
+                    "publish".into(),
                     common::plan().0["ship"].clone(),
                 )])),
             )
@@ -970,6 +970,7 @@ async fn connected_aether(h: &Harness, features: &[&str]) -> FakeAether {
     let fake = FakeAether::start(&h.dir.path().join("aetherd.sock"))
         .await
         .expect("fake aetherd binds");
+    common::catalog::answer(&fake, &common::catalog::default_models());
     fake.set_features(features.iter().map(|f| (*f).to_owned()).collect());
     let client = AetherClient::connect(&fake.endpoint())
         .await

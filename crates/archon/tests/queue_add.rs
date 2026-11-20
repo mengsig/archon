@@ -41,7 +41,7 @@ fn plan(env: &Env, value: Value) {
 #[test]
 fn enqueue_files_policy_idempotency_and_dependencies() {
     let env = Env::with_config(
-        "[aether]\nmode = 'shared'\n[orchestrator]\nmodel = 'codex/test'\n[models]\nallow = ['codex/test']\n",
+        "[aether]\nmode = 'shared'\n[orchestrator]\nmodel = 'codex/test'\n[models]\nallow = ['codex/test']\ndeny = ['codex/denied']\n",
     );
     let daemon = start_daemon(&env);
     env.run(&["pause"]);
@@ -80,6 +80,7 @@ fn enqueue_files_policy_idempotency_and_dependencies() {
     assert!(first.status.success(), "{first:?}");
     let item = parsed(&first);
     assert_eq!(item["brief"], "Read the cache design.");
+    assert_eq!(item["catalog_check"]["status"], "deferred");
     assert_eq!(item["priority"], "high");
     assert_eq!(item["tags"], json!(["cache", "script"]));
     assert_eq!(item["budget_usd"], 2.5);
@@ -101,6 +102,28 @@ fn enqueue_files_policy_idempotency_and_dependencies() {
     );
     assert!(dependent.status.success(), "{dependent:?}");
     assert_eq!(parsed(&dependent)["dependencies"], json!([id]));
+
+    env.run(&["queue", "cancel", id]);
+    plan(
+        &env,
+        json!({"answer":[{"model":"codex/test","effort":"low"}]}),
+    );
+    let retried = env
+        .command(&[
+            "--json",
+            "queue",
+            "retry",
+            id,
+            "--model-plan-file",
+            env.path("plan.json").to_str().unwrap(),
+            "--model-reasons-file",
+            reasons.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(retried.status.success(), "{retried:?}");
+    assert_eq!(parsed(&retried)["model_plan"]["answer"][0]["effort"], "low");
+    assert_eq!(parsed(&retried)["catalog_check"]["status"], "deferred");
 
     for (bad, code) in [
         (

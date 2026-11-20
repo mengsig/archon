@@ -669,6 +669,26 @@ async fn model_denied_after_enqueue_is_refused_at_spawn() {
 }
 
 #[tokio::test]
+async fn an_infrastructure_retry_waits_for_a_catalog_before_reserving_its_attempt() {
+    let h = Harness::new().await;
+    let item = h.enqueue("retry after catalog recovery").await;
+    h.dispatch().await;
+    let link = h.ctx.aether.client().unwrap();
+    h.ctx.aether.replace(None).unwrap();
+    let infra = || StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    };
+    h.settle_running(|_| infra()).await;
+    assert_eq!(h.stages(&item.id).await.len(), 1);
+    assert_eq!(h.backend.requests().len(), 1);
+    h.ctx.aether.replace(Some(link)).unwrap();
+    h.settle_running(|_| infra()).await;
+    assert_eq!(h.stages(&item.id).await.len(), 2);
+    assert_eq!(h.backend.requests().len(), 2);
+}
+
+#[tokio::test]
 async fn infra_failure_respawns_the_slot_once() {
     let h = Harness::new().await;
     let item = h.enqueue("flaky engine").await;
@@ -1708,15 +1728,12 @@ fn worktree_of(h: &Harness, item: &archon_core::queue::QueueItem) -> std::path::
     h.ctx.paths.worktrees.join(REPO_NAME).join(item.id.as_str())
 }
 
-/// The worktree is gone and git no longer lists it, but the start did
-/// add it: its branch, which removal keeps, exists.
+/// The worktree is absent from both disk and Git.
 fn assert_worktree_removed(h: &Harness, tree: &std::path::Path) {
     assert!(!tree.exists(), "{} is left behind", tree.display());
     let listed = git(&h.repo, &["worktree", "list", "--porcelain"]);
     let name = tree.file_name().unwrap().to_str().unwrap();
     assert!(!listed.contains(name), "git still lists it: {listed}");
-    let branches = git(&h.repo, &["branch", "--list", "archon/*"]);
-    assert!(!branches.is_empty(), "the start never added a worktree");
 }
 
 /// Edit the test pipeline after enqueue: its new `docs` stage is in no
@@ -1749,6 +1766,8 @@ async fn a_start_refused_after_its_worktree_was_added_removes_it() {
     };
     assert!(error.contains("docs"), "{error}");
     assert_worktree_removed(&h, &worktree_of(&h, &item));
+    let branches = git(&h.repo, &["branch", "--list", "archon/*"]);
+    assert!(!branches.is_empty(), "the start never added a worktree");
     let notes = h.notices(NotificationKind::Blocker).await;
     assert_eq!(notes.len(), 1, "{notes:?}");
 }
@@ -2578,11 +2597,7 @@ pub(crate) async fn seed_review_catalog(h: &Harness) {
             is_default: false,
         })
         .collect();
-    h.ctx
-        .store
-        .lock()
-        .await
-        .set_model_catalog(ModelCatalog::new(models));
+    h.set_catalog(ModelCatalog::new(models)).await;
 }
 
 /// The repository narrows its policy mid-run: the later lead is advised the
@@ -2604,7 +2619,7 @@ async fn a_policy_narrowed_mid_run_bounds_the_next_lead_s_reviewers() {
     h.dispatch().await;
     let build = h.backend.requests().last().unwrap().clone();
     assert_eq!(build.labels["archon.stage"], "build");
-    let own = format!("on {MODEL} at tier balanced and effort medium up to x_high");
+    let own = format!("on {MODEL} at tier balanced and effort medium. That effort is the default");
     assert!(build.instructions.contains(&own), "{}", build.instructions);
     let named = build.instructions.matches(REVIEW_MODEL).count();
     assert_eq!(named, 0, "{}", build.instructions);
@@ -2670,6 +2685,7 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     let mut config = Config::default();
     config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
     config.models.max_effort = Some(Effort::High);
+    config.models.effort_sizing = Some(false);
     let h = Harness::with_config(config).await;
     seed_review_catalog(&h).await;
     let gh = FakeGh::install(&h);
@@ -2680,6 +2696,9 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert_eq!(build.labels["archon.stage"], "build");
     assert!(!build.leaf);
     assert_eq!(build.hidden_tools, guarded_hidden());
+    let submit = "mcp__archon__submit_verdict".to_owned();
+    assert!(archon_core::mcp_tools::qualified_names().contains(&submit));
+    assert!(!build.hidden_tools.contains(&submit), "a stage can submit");
     let rules = &build.instructions[build.instructions.find("## Delegation").unwrap()..];
     let policy = format!("policy for this item: {MODEL}; effort at most high. Archon cancels");
     assert!(rules.contains(&policy), "{rules}");
@@ -2693,7 +2712,7 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert!(
         !build.instructions.contains("the rubric decides")
             && !build.instructions.contains("`x_high` for hard reasoning"),
-        "no effort sizing by default"
+        "no effort sizing when rolled back"
     );
 
     let (built, reviewer) = reviewed_by_one(&h, "Verified; one reviewer passed it").await;
@@ -2708,14 +2727,13 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert!(body.contains(&review), "{body}");
 }
 
-/// `[models] effort_sizing` reaches the lead's contract: its children and its
-/// reviewers are sized by the effort rubric, within the policy's cap.
+/// By default the lead's contract sizes its children and its reviewers by
+/// the effort rubric, within the policy's cap, and its spawn records that.
 #[tokio::test]
-async fn an_opted_in_lead_sizes_its_children_and_reviewers_by_the_rubric() {
+async fn a_lead_sizes_its_children_and_reviewers_by_the_rubric_by_default() {
     let mut config = Config::default();
     config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
     config.models.max_effort = Some(Effort::High);
-    config.models.effort_sizing = true;
     let h = Harness::with_config(config).await;
     seed_review_catalog(&h).await;
     h.repo_config(&format!("[models]\ndeny = [\"{REVIEW_MODEL}\"]\n"));
@@ -2730,11 +2748,14 @@ async fn an_opted_in_lead_sizes_its_children_and_reviewers_by_the_rubric() {
     assert!(rules.contains(&sizing), "{rules}");
     let own = format!(
         "on {MODEL} at tier balanced and effort medium. That effort is the default, for a diff \
-         the rubric leaves open; otherwise the rubric decides: `low` for a trivial diff, \
-         `medium` for a small or low-risk diff, `high` for a risky diff or shared code; never \
-         above high, the model policy's cap."
+         the rubric leaves open; otherwise the rubric decides: `low` for a trivial or small \
+         low-risk diff, `medium` for an ordinary diff, `high` for a risky diff or shared code; \
+         never above high, the model policy's cap."
     );
     assert!(build.instructions.contains(&own), "{}", build.instructions);
+    assert_eq!(h.issued_effort_contract(&build).await, "rubric");
+    let reviewers = &h.stored_spawn(&build).await["issued_reviewers"];
+    assert_eq!(*reviewers, serde_json::json!([]), "left to the policy");
 }
 
 /// A pass is the lead's word until Aether shows the reviewer: an agent it
@@ -3290,7 +3311,7 @@ async fn a_mistyped_reviewer_id_is_resolved_to_the_one_child_and_recorded() {
     adaptive_item(&h).await;
     let lead = lead_agent(&h.running().await[0]);
     let real = h.backend.delegate(&lead, REVIEW_MODEL);
-    let built = build_naming(&h, "agt_child0009", &[]).await;
+    let built = build_naming(&h, "agt_00000000000000000000000009", &[]).await;
     h.backend
         .complete_delegated(&real, verdict_on(&built, "pass"));
     let build = h.settle_running(|_| built.clone()).await;
@@ -3300,7 +3321,7 @@ async fn a_mistyped_reviewer_id_is_resolved_to_the_one_child_and_recorded() {
         review["reviewer_agents"],
         serde_json::json!([real.as_str()])
     );
-    let fixed = format!("agt_child0009 -> {real}");
+    let fixed = format!("agt_00000000000000000000000009 -> {real}");
     assert_eq!(
         review["reviewer_id_corrections"],
         serde_json::json!([fixed])
@@ -3323,7 +3344,7 @@ async fn an_ambiguous_reviewer_id_falls_back_to_the_completed_reviewers_with_a_v
         h.backend.delegate(&lead, REVIEW_MODEL),
         h.backend.delegate(&lead, REVIEW_MODEL),
     );
-    let built = build_naming(&h, "agt_child0099", &[]).await;
+    let built = build_naming(&h, "agt_00000000000000000000000099", &[]).await;
     h.backend
         .complete_delegated(&one, verdict_on(&built, "pass"));
     h.backend
@@ -3334,7 +3355,7 @@ async fn an_ambiguous_reviewer_id_falls_back_to_the_completed_reviewers_with_a_v
     assert_eq!(review["reviewer_agents"].as_array().unwrap().len(), 2);
     let note = review["reviewer_id_corrections"][0].as_str().unwrap();
     assert!(
-        note.contains("agt_child0099") && note.contains("completed reviewers"),
+        note.contains("agt_00000000000000000000000099") && note.contains("completed reviewers"),
         "{note}"
     );
     assert_eq!(review["reviewer_verdicts"].as_array().unwrap().len(), 2);
@@ -3367,7 +3388,12 @@ async fn a_corrected_reviewer_id_still_needs_a_read_of_the_head() {
     let lead = lead_agent(&h.running().await[0]);
     let real = h.backend.delegate(&lead, REVIEW_MODEL);
     let elsewhere = serde_json::json!({"verdict": "pass", "head": "deadbeefdeadbeef"});
-    let built = build_naming(&h, "agt_child0009", &[(&real, Some(elsewhere))]).await;
+    let built = build_naming(
+        &h,
+        "agt_00000000000000000000000009",
+        &[(&real, Some(elsewhere))],
+    )
+    .await;
     h.settle_running(|_| built.clone()).await;
     let error = refused_review(&h, &item).await;
     assert!(error.contains(real.as_str()), "{error}");
@@ -3439,8 +3465,19 @@ async fn adaptive_never_ships_a_build_that_completed_without_its_review() {
     let built = shipped_by(&h, &lead, "Verified; independent review passed", unreviewed).await;
     h.settle_running(|_| built.clone()).await;
     h.dispatch().await;
+    // A record that names no reviewer gets its one repair turn, missed again.
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
     let requests = h.backend.requests();
-    assert_eq!(requests.len(), 1, "only build ever ran: {requests:?}");
+    let stages: Vec<&str> = requests
+        .iter()
+        .map(|r| r.labels["archon.stage"].as_str())
+        .collect();
+    assert_eq!(
+        stages,
+        ["build", "build"],
+        "only build ever ran: {requests:?}"
+    );
     let QueueState::Failed { error, .. } = h.state(&item.id).await else {
         panic!("the item fails: {:?}", h.state(&item.id).await);
     };
@@ -3455,6 +3492,113 @@ async fn adaptive_never_ships_a_build_that_completed_without_its_review() {
         None,
         "nothing is delivered"
     );
+}
+
+/// A pass that names no reviewer but fills in the fields archond writes after
+/// checking is verified like any reply with `structured`: the forged fields
+/// are dropped, on the first attempt and on the repair, and nothing ships.
+#[tokio::test]
+async fn adaptive_never_ships_a_pass_that_forges_the_reviewers_archon_records() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let forged = serde_json::json!({"review": {"verdict": "pass",
+        "reviewer_agents": ["agt_forged"], "reviewer_models": ["a/forged"]}});
+    let built = shipped_by(&h, &lead, "Independent review passed", forged).await;
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
+    let repair = h.running().await.remove(0);
+    assert_eq!((repair.stage_id.as_str(), repair.attempt), ("build", 2));
+    let first = h.stages(&item.id).await.remove(0);
+    let kept = first.structured.as_ref().expect("its record");
+    assert_eq!(kept["review"].get("reviewer_agents"), None, "{kept}");
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("the item fails: {:?}", h.state(&item.id).await);
+    };
+    assert!(error.contains("is not on record"), "{error}");
+    let branch = h.run(&item.id).await.branch;
+    assert_eq!(pushed(&origin_of(&h), &branch), None, "nothing ships");
+}
+
+/// A build that owes its review and claims no change is held to its worktree
+/// as any such claim is: a commit beside the claim fails the stage.
+#[tokio::test]
+async fn adaptive_holds_a_no_change_claim_to_its_worktree() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let claim = serde_json::json!({"no_change": {"reason": "nothing to do"}});
+    let lead = h.running().await.remove(0);
+    let workspace = h.run(&item.id).await.workspace;
+    common::delivery::change(&workspace);
+    let outcome = StageOutcome::Completed {
+        summary: "Nothing to do.".into(),
+        structured: Some(claim),
+    };
+    h.settle_running(|_| outcome.clone()).await;
+    h.dispatch().await;
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("the item fails: {:?}", h.state(&item.id).await);
+    };
+    assert!(error.contains("reported no change needed"), "{error}");
+    let stages = h.stages(&item.id).await;
+    assert_eq!(stages.len(), 1, "no repair turn: {stages:?}");
+    assert_eq!(stages[0].id, lead.id);
+}
+
+/// A build whose result carries no `structured` object gets one repair turn
+/// in the same run; the repaired record, its reviewer checked against Aether,
+/// lets the run go on and deliver.
+#[tokio::test]
+async fn a_build_without_structured_gets_one_repair_turn_and_the_run_delivers() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    h.settle_running(|_| completed("Built and reviewed; all green."))
+        .await;
+    h.dispatch().await;
+    let repair = h.running().await.remove(0);
+    assert_eq!((repair.stage_id.as_str(), repair.attempt), ("build", 2));
+    let requests = h.backend.requests();
+    let objective = &requests.last().expect("the repair's request").objective;
+    assert!(
+        objective.contains("Archon record repair: attempt 1"),
+        "{objective}"
+    );
+    assert!(objective.contains("no `structured` object"), "{objective}");
+    let reviewer = h.backend.delegate(&lead_agent(&repair), REVIEW_MODEL);
+    let built = reviewed_by(&h, &repair, "Record handed in.", &[reviewer]).await;
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
+    assert!(delivered(&h, &item).await, "{:?}", h.state(&item.id).await);
+}
+
+/// The repair turn invents no reviewer: a repaired record naming an agent the
+/// repairing lead never delegated is refused, and the run fails.
+#[tokio::test]
+async fn a_repaired_record_naming_an_agent_that_never_reviewed_is_refused() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let first = h.running().await.remove(0);
+    let elsewhere = h.backend.delegate(&lead_agent(&first), REVIEW_MODEL);
+    let passed = serde_json::json!({"verdict": "pass", "findings": []});
+    h.backend.complete_delegated(&elsewhere, passed);
+    h.settle_running(|_| completed("Built and reviewed.")).await;
+    h.dispatch().await;
+    let repair = h.running().await.remove(0);
+    assert_eq!(repair.attempt, 2, "the one repair turn");
+    let invented = AetherAgentId::parse("agt_01M7QD00000000000000000000").expect("an id");
+    let named = shipped_by(&h, &repair, "Repaired.", pass_by(&[invented, elsewhere])).await;
+    h.settle_running(|_| named.clone()).await;
+    h.dispatch().await;
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("the item fails: {:?}", h.state(&item.id).await);
+    };
+    assert!(
+        error.contains("the review this pipeline declares is not on record"),
+        "{error}"
+    );
+    assert_eq!(h.backend.requests().len(), 2, "no further repair turn");
 }
 
 const READ_ONLY_DELEGATING: &str = r#"[pipeline]
@@ -3859,6 +4003,25 @@ async fn the_third_failing_review_round_stops_the_stage_and_escalates() {
         panic!("an escalation ends the run");
     };
     assert!(error.contains("failed 3 rounds"), "{error}");
+    let error = error.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "the last at head `0000003abcdef`",
+        "continue with `retry_item` (not `fresh`)",
+        "a `brief_append` that names this head and the open findings",
+        "delta-reviews only the commits after this head, since earlier reviews still count, \
+         adding only the whole-change reads they lack",
+        "accept this head with `retry_item` and a `brief_append` that moves the open findings \
+         to follow-ups, whose new lead has the head read whole again by as many reviewers as \
+         the review level needs",
+        "or stop by leaving the item failed",
+    ] {
+        assert!(error.contains(said), "missing {said:?} in {error}");
+    }
+    let choices = error.find("You decide").expect("the choices");
+    assert!(
+        choices < error.find("Open blocking findings").expect("the findings"),
+        "the choices lead, so a clipped summary keeps them: {error}"
+    );
 }
 
 /// An earlier archond read a `changes_requested` fail as no verdict and kept
@@ -4271,6 +4434,7 @@ fn lead_looks_stalled(h: &Harness, lead: &StageRun) {
         held_for_cause: false,
         inspection: false,
         running: true,
+        quota_blocked: false,
     };
     h.backend.set_pulse(&agent, dead);
 }

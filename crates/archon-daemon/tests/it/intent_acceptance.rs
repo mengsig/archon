@@ -19,12 +19,27 @@ async fn fixture(references: bool) -> (Harness, FakeAether, QueueItem) {
 
 /// A running ledger item under `config`, Aether listing `vision` models.
 pub(crate) async fn fixture_on(
+    config: archon_core::config::Config,
+    references: bool,
+    vision: &[&str],
+) -> (Harness, FakeAether, QueueItem) {
+    let pipeline = (common::PIPELINE, None, common::plan());
+    fixture_in(config, pipeline, references, vision).await
+}
+
+/// [`fixture_on`] in a pipeline given as its name, the TOML to add it to the
+/// repository from when the harness lacks it, and its stages' model plan.
+pub(crate) async fn fixture_in(
     mut config: archon_core::config::Config,
+    (pipeline, toml, mut plan): (&str, Option<&str>, archon_core::model::ModelPlan),
     references: bool,
     vision: &[&str],
 ) -> (Harness, FakeAether, QueueItem) {
     config.worktrees.keep_on_success = true;
     let h = Harness::with_config(config).await;
+    if let Some(toml) = toml {
+        h.add_pipeline(pipeline, toml);
+    }
     let fake = models_listed(&h, vision).await;
     if references {
         fake.set_features(vec!["references".into()]);
@@ -48,7 +63,6 @@ pub(crate) async fn fixture_on(
         .await
         .save_approved_intent(&intent)
         .unwrap();
-    let mut plan = common::plan();
     plan.0.insert(
         "intent-acceptance".into(),
         vec![common::choice(
@@ -56,7 +70,7 @@ pub(crate) async fn fixture_on(
             archon_core::model::Effort::High,
         )],
     );
-    let request = serde_json::from_value(json!({"repo":common::REPO_NAME,"pipeline":common::PIPELINE,"title":"preserve approved design","brief":"Use the approved ledger","intent":binding,"model_plan":plan})).unwrap();
+    let request = serde_json::from_value(json!({"repo":common::REPO_NAME,"pipeline":pipeline,"title":"preserve approved design","brief":"Use the approved ledger","intent":binding,"model_plan":plan})).unwrap();
     let Reply::Item(item) = h.cli(Request::Enqueue(request)).await.unwrap() else {
         panic!("item")
     };
@@ -69,9 +83,15 @@ pub(crate) async fn fixture_on(
 /// A connected fake Aether that lists each of `vision` as a vision model.
 pub(crate) async fn models_listed(h: &Harness, vision: &[&str]) -> FakeAether {
     let fake = common::connect_aether_for_delegations(h).await;
-    let models: Vec<_> = vision.iter().map(|model| {
+    let mut models: Vec<_> = vision.iter().map(|model| {
         json!({"model":model.parse::<archon_core::model::ModelRef>().unwrap(),"configured":true,"tier":"strong","capabilities":{"vision":true}})
     }).collect();
+    // The plan's other models stay listed, without vision, so the plan passes the catalog.
+    for model in [common::MODEL, common::REVIEW_MODEL] {
+        if !vision.contains(&model) {
+            models.push(json!({"model":model.parse::<archon_core::model::ModelRef>().unwrap(),"configured":true,"tier":"strong"}));
+        }
+    }
     fake.set_default("list_models", Scripted::reply("models", json!(models)));
     fake
 }
@@ -624,5 +644,168 @@ async fn a_stage_cannot_file_an_intent_even_with_the_operator_quote() {
             .approved_intent(&binding)
             .unwrap()
             .is_none()
+    );
+}
+
+/// The acceptance judge is chosen at reservation, apart from its plan: one
+/// superseded before its create is sent still judges, as the catalog lists it.
+#[tokio::test]
+async fn a_judge_superseded_before_its_create_is_sent_still_judges() {
+    const JUDGE: &str = "codex/sol";
+    let mut config = archon_core::config::Config::default();
+    config.review.auto_repair = false;
+    // The plan's placeholder judge, REVIEW_MODEL, lacks vision: JUDGE is chosen.
+    let vision = [common::MODEL, JUDGE];
+    let (h, fake, item) = fixture_on(config, false, &vision).await;
+    settle(&h, evidence(&h, &item, "implemented").await).await;
+    let busy = archon_core::error::ArchonError::Unavailable("aetherd busy".into());
+    h.backend.fail_next(busy);
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    let sent = |h: &Harness| {
+        h.backend
+            .requests()
+            .last()
+            .map(|r| r.choice.model.to_string())
+    };
+    assert_eq!(
+        sent(&h).as_deref(),
+        Some(JUDGE),
+        "the judge's create failed"
+    );
+    assert!(h.running().await.is_empty(), "its create is held");
+
+    let mut models: Vec<Value> = vision
+        .iter()
+        .map(|model| {
+            let superseded = (*model == JUDGE).then_some("sol-next");
+            json!({"model": model, "configured": true, "tier": "strong",
+               "capabilities": {"vision": true}, "superseded_by": superseded})
+        })
+        .collect();
+    for model in [common::REVIEW_MODEL, "codex/sol-next"] {
+        models.push(json!({"model": model, "configured": true, "tier": "strong"}));
+    }
+    fake.set_default("list_models", Scripted::reply("models", json!(models)));
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog changed".into());
+    drop(store);
+    h.dispatch().await;
+    h.dispatch().await;
+
+    assert_eq!(sent(&h).as_deref(), Some(JUDGE), "sent again on the judge");
+    let running = h.running().await;
+    let judging: Vec<_> = running
+        .iter()
+        .map(|s| (s.stage_id.as_str(), s.choice.model.to_string()))
+        .collect();
+    assert_eq!(judging, [("intent-acceptance", JUDGE.to_owned())]);
+}
+
+#[tokio::test]
+async fn a_retired_acceptance_placeholder_still_reaches_its_listed_judge() {
+    const JUDGE: &str = "codex/sol";
+    let mut config = archon_core::config::Config::default();
+    config.review.auto_repair = false;
+    let vision = [common::MODEL, JUDGE];
+    let (h, fake, item) = fixture_on(config, false, &vision).await;
+    settle(&h, evidence(&h, &item, "implemented").await).await;
+    assert!(
+        h.running().await.iter().all(|s| s.stage_id == "review"),
+        "the review runs on the plan's placeholder model"
+    );
+
+    // The placeholder, REVIEW_MODEL, leaves the catalog before acceptance is reserved.
+    let models: Vec<Value> = vision
+        .iter()
+        .map(|model| {
+            json!({"model": model, "configured": true, "tier": "strong",
+               "capabilities": {"vision": true}})
+        })
+        .collect();
+    fake.set_default("list_models", Scripted::reply("models", json!(models)));
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog changed".into());
+    drop(store);
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    h.dispatch().await;
+
+    let judging: Vec<_> = h
+        .running()
+        .await
+        .iter()
+        .map(|s| (s.stage_id.clone(), s.choice.model.to_string()))
+        .collect();
+    assert_eq!(
+        judging,
+        [("intent-acceptance".to_owned(), JUDGE.to_owned())]
+    );
+
+    // A lost judge is retried on a judge selected again, never the placeholder.
+    let (done, finished) = std::sync::mpsc::channel::<()>();
+    let watchdog = std::thread::spawn(move || {
+        if finished.recv_timeout(Duration::from_secs(20)).is_err() {
+            eprintln!("the placeholder is replaced without end");
+            std::process::exit(101);
+        }
+    });
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "aetherd lost the agent".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    done.send(()).unwrap();
+    watchdog.join().unwrap();
+    let rejudging: Vec<_> = h
+        .running()
+        .await
+        .iter()
+        .map(|s| (s.stage_id.clone(), s.choice.model.to_string()))
+        .collect();
+    assert_eq!(rejudging, judging, "the retry runs on the selected judge");
+}
+
+/// A judge lost to the machine keeps its wake, and so its model, while the
+/// catalog and policy still accept it, though a fresh selection would differ.
+#[tokio::test]
+async fn a_lost_judge_still_eligible_is_woken_not_replaced() {
+    const JUDGE: &str = "codex/sol";
+    const NEWER: &str = "codex/aurora";
+    let mut config = archon_core::config::Config::default();
+    config.review.auto_repair = false;
+    let (h, fake, item) = fixture_on(config, false, &[common::MODEL, JUDGE]).await;
+    settle(&h, evidence(&h, &item, "implemented").await).await;
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    h.dispatch().await;
+    let judging = h.running().await;
+    assert_eq!(judging.len(), 1, "{judging:?}");
+    assert_eq!(judging[0].choice.model.to_string(), JUDGE);
+
+    // A judge a fresh selection prefers is listed before the lost one.
+    let models: Vec<Value> = [NEWER, common::MODEL, JUDGE]
+        .iter()
+        .map(|model| {
+            json!({"model": model, "configured": true, "tier": "strong",
+               "capabilities": {"vision": true}})
+        })
+        .collect();
+    fake.set_default("list_models", Scripted::reply("models", json!(models)));
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog changed".into());
+    drop(store);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "aetherd lost the agent".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+
+    let rejudging = h.running().await;
+    assert_eq!(rejudging.len(), 1, "{rejudging:?}");
+    assert_ne!(rejudging[0].id, judging[0].id, "a replacement runs");
+    assert_eq!(
+        rejudging[0].choice.model.to_string(),
+        JUDGE,
+        "the wake keeps the lost judge"
     );
 }

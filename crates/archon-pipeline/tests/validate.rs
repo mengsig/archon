@@ -87,6 +87,23 @@ fn stage_ids_are_unique_and_well_formed() {
 }
 
 #[test]
+fn stage_ids_archond_fails_runs_under_are_reserved() {
+    for id in ["budget", "ship", "recovery"] {
+        let stages = stage(id, "work", "");
+        let error = validate(&stages, &[(&format!("{id}.md"), "Do it.")]).expect_err(id);
+        assert!(error.contains("is reserved"), "{error}");
+        assert!(error.contains("budget, ship, recovery"), "{error}");
+        assert!(error.contains(&format!("\"{id}-stage\"")), "{error}");
+    }
+}
+
+#[test]
+fn a_ship_agent_named_ship_is_not_reserved() {
+    let stages = stage("ship", "ship", "");
+    validate(&stages, &[("ship.md", "Ship it.")]).expect("the pipeline's own ship agent");
+}
+
+#[test]
 fn prompt_files_must_exist_and_stay_in_the_directory() {
     let mut spec = support::spec_from(&format!("{HEADER}{}", stage("a", "work", "")), &[]);
     spec.prompts.clear();
@@ -206,6 +223,29 @@ fn review_and_test_stages_need_a_gate() {
     ]
     .concat();
     validate(&crash_retry, &[]).expect("an ungated report may loop on a failed agent");
+}
+
+#[test]
+fn on_fail_when_needs_a_gated_stage_that_is_no_team() {
+    let when = "on_fail = { goto = \"build\", max_loops = 1, when = \"environment_finding\" }";
+    let after_build = |kind: &str, extra: &str| {
+        let extra = format!("{extra}\n{when}");
+        [stage("build", "work", ""), stage("check", kind, &extra)].concat()
+    };
+    validate(&after_build("test", "gate = \"all_pass\""), &[]).expect("a gated test stage");
+    let needle = "on_fail.when reads a failing verdict's findings";
+    assert_refused(&after_build("report", ""), &[], needle);
+    assert_refused(
+        &after_build("team", "roles = [\"api\", \"ui\"]"),
+        &[],
+        needle,
+    );
+    let unknown = when.replace("environment_finding", "always");
+    let text = format!("{HEADER}{}", stage("check", "test", &unknown));
+    let error = toml::from_str::<archon_pipeline::spec::PipelineFile>(&text)
+        .expect_err("an unknown `when` does not parse")
+        .to_string();
+    assert!(error.contains("environment_finding"), "{error}");
 }
 
 #[test]
@@ -737,6 +777,43 @@ fn review_holds_a_review_and_delivers_nothing() {
     }
 }
 
+/// The `review` lead records its verdict, a fail included, through
+/// `complete_task`; a lead that builds the change does not.
+#[test]
+fn only_the_review_lead_records_its_verdict_and_its_prompt_says_so() {
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("review").unwrap();
+    let duty = spec.review_duty(spec.stage("review").unwrap()).unwrap();
+    assert!(duty.records_verdict);
+    let mut unreviewed = spec.clone();
+    unreviewed.file.pipeline.review.as_mut().unwrap().level =
+        archon_core::autonomy::ReviewLevel::None;
+    let duty = unreviewed
+        .review_duty(unreviewed.stage("review").unwrap())
+        .unwrap();
+    assert!(!duty.records_verdict, "at level none nothing is reviewed");
+    for building in ["adaptive", "direct", "swarm"] {
+        let spec = catalog.get(building).unwrap();
+        let holder = spec
+            .file
+            .stages
+            .iter()
+            .find(|s| spec.holds_review(s))
+            .unwrap();
+        assert!(
+            !spec.review_duty(holder).unwrap().records_verdict,
+            "{building}"
+        );
+    }
+    let prompt = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pipelines/review/review.md"),
+    )
+    .unwrap();
+    let flat = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("With a blocking finding or a failed check it is `fail`"));
+    assert!(flat.contains("Call `fail_task` only when the review could not be done"));
+}
+
 /// What `adaptive` tells its lead decides what a run costs and what is
 /// delivered: the lead prices each child and records what archond ships.
 #[test]
@@ -793,8 +870,8 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
 /// The four levels a review may take, as every reviewer-delegating prompt
 /// and contract words them, and the one-line reason a move off the default owes.
 const REVIEW_LEVELS: [&str; 4] = [
-    "`low` for a trivial diff",
-    "`medium` for a small or low-risk",
+    "`low` for a trivial or small low-risk diff",
+    "`medium` for an ordinary diff",
     "`high` for a risky diff",
     "`x_high` for concurrency or security analysis",
 ];
@@ -815,7 +892,12 @@ fn profile_reviewers(
     effort_sizing: bool,
 ) -> String {
     let profile = archon_core::config::ReviewConfig::default();
-    let catalog = archon_core::model_tier::ModelCatalog::default();
+    let catalog =
+        archon_core::model_tier::ModelCatalog::new(vec![archon_core::model_tier::CatalogModel {
+            model: own.clone(),
+            tier: None,
+            is_default: true,
+        }]);
     let args = (&profile, &catalog);
     contract::governed_reviewer_rules(None, own, policy, args, false, effort_sizing)
 }
@@ -1134,4 +1216,22 @@ fn strict_scenarios_need_a_test_stage_with_one_agent() {
     validate(&strict, &[]).expect("a one-agent strict test stage is valid");
     let lenient = stage("build", "work", "scenarios = \"lenient\"");
     validate(&lenient, &[]).expect("lenient is the default anywhere");
+}
+
+#[test]
+fn direct_routes_risky_work_to_adaptive() {
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("direct").expect("direct loads");
+    let notes = spec.file.nudges.notes.as_deref().expect("direct has notes");
+    assert!(notes.contains("use adaptive"), "{notes}");
+    assert!(notes.contains("concurrency, locking, security or a migration"));
+    let nudge = spec.stage("implement").unwrap().nudge.as_deref().unwrap();
+    assert!(nudge.contains("re-queue that on adaptive"), "{nudge}");
+    let prompt = &spec.prompts["implement.md"];
+    for risk in ["concurrency", "locking", "security", "a migration"] {
+        assert!(nudge.contains(risk), "nudge lacks {risk}");
+        assert!(prompt.contains(risk), "prompt lacks {risk}");
+    }
+    let prompt = &spec.prompts["implement.md"];
+    assert!(prompt.contains("re-queue on adaptive"), "{prompt}");
 }

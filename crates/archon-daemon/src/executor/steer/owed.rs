@@ -43,11 +43,34 @@ pub(super) struct Delivery {
     pub interrupt: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead: Option<String>,
+    /// What the lead is told instead of `lead` when its model step is refused.
+    #[serde(default)]
+    pub note: RefusedNote,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub helpers: Option<String>,
 }
 
+/// What a refused model step tells the lead, since its model did not change.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum RefusedNote {
+    /// A step owed before notes were split from `lead`: `lead` is told as before.
+    #[default]
+    Lead,
+    /// The operator's note alone, or nothing.
+    Note(Option<String>),
+}
+
 impl Delivery {
+    /// The message the lead is told and whether its turn ends, with its model step
+    /// `refused` or not: a refused step keeps the lead's turn and claims no new model.
+    fn told_lead(&self, refused: bool) -> (Option<&str>, bool) {
+        match (&self.note, refused) {
+            (RefusedNote::Note(note), true) => (note.as_deref(), false),
+            _ => (self.lead.as_deref(), self.interrupt),
+        }
+    }
+
     fn patch(&self) -> AgentUpdate {
         AgentUpdate {
             choice: self.choice.clone(),
@@ -195,77 +218,194 @@ async fn make(
     }
     // A resumed attempt settles on its turn's last word, so the turn is left to end (§6.7).
     let resumed = stage.aether_task.is_none();
+    // A refused model is reported; the lead keeps its turn and model and hears the note alone.
     let told = async {
-        update_choice(ctx, stage, agent, delivery).await?;
-        if delivery.interrupt && !resumed {
+        let refused_model = update_choice(ctx, stage, agent, delivery).await?;
+        let (lead, interrupt) = delivery.told_lead(refused_model.is_some());
+        if interrupt && !resumed {
             ctx.backend.interrupt(agent).await?;
         }
-        match &delivery.lead {
-            Some(text) => ctx.backend.send_message(agent, text, &delivery.key).await,
-            None => Ok(()),
+        if let Some(text) = lead {
+            ctx.backend.send_message(agent, text, &delivery.key).await?;
         }
+        Ok((refused_model, lead))
     };
-    match told.await {
-        Ok(()) => {}
+    let (refused_model, lead) = match told.await {
+        Ok(told) => told,
         Err(error) if resume::unanswered(&error) => {
             tracing::info!(stage = %stage.id, %agent, %error, "steer not delivered; the next sweep retries");
             return Ok(false);
         }
         Err(error) if error.is_store() => return Err(error),
-        Err(refusal) => return refused(ctx, stage, &refusal).await.map(|()| true),
-    }
-    if let Some(text) = delivery.lead.as_deref().filter(|_| resumed) {
+        Err(refusal) => return refused(ctx, stage, &refusal, &[]).await.map(|()| true),
+    };
+    assert!(
+        refused_model.is_none() || delivery.choice.is_some(),
+        "only a model step has its model refused"
+    );
+    if let Some(text) = lead.filter(|_| resumed) {
         resume::told(&mut *ctx.store.lock().await, &stage.id, text)?;
+    }
+    if let Some(refusal) = refused_model {
+        let arrived = arrived(delivery, lead.is_some());
+        refused(ctx, stage, &refusal, &arrived).await?;
     }
     Ok(true)
 }
 
+/// Send `delivery`'s model and limits; the model's refusal when the catalog,
+/// policy or Aether refuses it for good, its limits then sent alone.
 async fn update_choice(
     ctx: &DaemonContext,
     stage: &StageRun,
     agent: &AetherAgentId,
     delivery: &Delivery,
-) -> Result<(), ArchonError> {
+) -> Result<Option<ArchonError>, ArchonError> {
     assert_eq!(stage.aether_agent.as_ref(), Some(agent));
     assert!(!stage.state.is_terminal());
-    let delivery = &no_earlier(&*ctx.store.lock().await, &stage.id, delivery)?;
-    let patch = delivery.patch();
-    if !patch.is_empty() {
-        patch_lead(ctx, agent, delivery).await?;
-        if let Some(choice) = &delivery.choice {
-            ctx.store.lock().await.record_model_segment(
-                &stage.id,
-                &delivery.key,
-                choice,
-                archon_core::now(),
-                archon_core::cost::API_EQUIVALENT,
-            )?;
+    let mut delivery = current_limits(&*ctx.store.lock().await, &stage.id, delivery)?;
+    if let Some(choice) = &mut delivery.choice
+        && let Err(error) = check_choice(ctx, stage, choice).await
+    {
+        // A deadline or budget never waits for the model check; the whole step stays owed.
+        if resume::unanswered(&error) {
+            send_limits(ctx, stage, agent, &delivery).await?;
         }
+        if resume::unanswered(&error) || error.is_store() {
+            return Err(error);
+        }
+        return limits_alone(ctx, agent, &delivery)
+            .await
+            .map(|()| Some(error));
     }
-    Ok(())
+    let delivery = &delivery;
+    if delivery.patch().is_empty() {
+        return Ok(None);
+    }
+    match patch_lead(ctx, agent, delivery).await {
+        Err(error) if delivery.choice.is_some() && is_refusal(&error) => {
+            return limits_alone(ctx, agent, delivery)
+                .await
+                .map(|()| Some(error));
+        }
+        sent => sent?,
+    }
+    if let Some(choice) = &delivery.choice {
+        ctx.store.lock().await.record_model_segment(
+            &stage.id,
+            &delivery.key,
+            choice,
+            archon_core::now(),
+            archon_core::cost::API_EQUIVALENT,
+        )?;
+    }
+    Ok(None)
 }
 
-/// `delivery` with a deadline no earlier than the one stored for `stage`,
-/// which a held stage's sweep may have moved past it since the steer (§6.3).
-fn no_earlier(
+/// An answer that refuses for good, neither unanswered nor the store's own failure.
+fn is_refusal(error: &ArchonError) -> bool {
+    !resume::unanswered(error) && !error.is_store()
+}
+
+/// Patch the lead with `delivery`'s deadline and budget, its refused model left out.
+async fn limits_alone(
+    ctx: &DaemonContext,
+    agent: &AetherAgentId,
+    delivery: &Delivery,
+) -> Result<(), ArchonError> {
+    assert!(delivery.choice.is_some(), "only a model step is split");
+    let limits = Delivery {
+        choice: None,
+        ..delivery.clone()
+    };
+    assert!(limits.patch().choice.is_none(), "the model is left out");
+    if limits.patch().is_empty() {
+        return Ok(());
+    }
+    patch_lead(ctx, agent, &limits).await
+}
+
+/// `delivery` carrying the deadline and budget stored for `stage` now: a later
+/// steer or a held stage's sweep may have moved them since it was owed (§6.3).
+fn current_limits(
     store: &Store,
     stage: &StageRunId,
     delivery: &Delivery,
 ) -> Result<Delivery, ArchonError> {
-    let Some(deadline) = delivery.deadline else {
+    if delivery.deadline.is_none() && delivery.cost_budget_usd.is_none() {
         return Ok(delivery.clone());
-    };
+    }
     let stored = match crate::executor::load_spawn(store, stage) {
-        Ok(spawn) => spawn.request.deadline,
-        Err(ArchonError::NotFound(_)) => None,
+        Ok(spawn) => spawn.request,
+        Err(ArchonError::NotFound(_)) => return Ok(delivery.clone()),
         Err(error) => return Err(error),
     };
-    let later = stored.map_or(deadline, |stored| stored.max(deadline));
-    assert!(later >= deadline, "a steer's deadline is only ever raised");
+    let deadline = delivery
+        .deadline
+        .map(|asked| stored.deadline.map_or(asked, |now| now.max(asked)));
+    let cost_budget_usd = delivery
+        .cost_budget_usd
+        .map(|asked| stored.cost_budget_usd.unwrap_or(asked));
+    assert!(
+        deadline >= delivery.deadline,
+        "a deadline is only ever raised"
+    );
+    assert_eq!(
+        cost_budget_usd.is_some(),
+        delivery.cost_budget_usd.is_some()
+    );
     Ok(Delivery {
-        deadline: Some(later),
+        deadline,
+        cost_budget_usd,
         ..delivery.clone()
     })
+}
+
+/// `choice` by its canonical id, once the catalog lists it and the policy permits it.
+async fn check_choice(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    choice: &mut ModelChoice,
+) -> Result<(), ArchonError> {
+    let catalog = crate::learned::catalog(ctx).await?;
+    if let Some(reason) = catalog.not_ready_reason() {
+        return Err(ArchonError::Unavailable(reason.to_owned()));
+    }
+    choice.model = catalog.check(&choice.model)?;
+    assert_eq!(&choice.model, catalog.canonical_alias(&choice.model));
+    let item = {
+        let store = ctx.store.lock().await;
+        store.item(&store.run(&stage.run)?.item)?
+    };
+    let env = crate::resolve::RepoEnv::load(ctx, item.repo.as_ref()).await?;
+    env.policy_in(&ctx.config, &catalog.aliases()).check(choice)
+}
+
+/// While model step `delivery` waits, send the stored deadline and budget
+/// any step `stage` is owed asks for; each step still goes on in order.
+async fn send_limits(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+    delivery: &Delivery,
+) -> Result<(), ArchonError> {
+    assert!(delivery.choice.is_some(), "only a model step is split");
+    let store = ctx.store.lock().await;
+    let owed = load(&store, &stage.id)?;
+    let for_lead: Vec<&Delivery> = owed.iter().filter(|s| s.helpers.is_none()).collect();
+    let asked = Delivery {
+        key: delivery.key.clone(),
+        deadline: for_lead.iter().filter_map(|s| s.deadline).max(),
+        cost_budget_usd: for_lead.iter().find_map(|s| s.cost_budget_usd),
+        ..Delivery::default()
+    };
+    if asked.patch().is_empty() {
+        return Ok(());
+    }
+    let limits = current_limits(&store, &stage.id, &asked)?;
+    drop(store);
+    assert!(limits.choice.is_none() && limits.lead.is_none());
+    patch_lead(ctx, lead, &limits).await
 }
 
 /// Patch the lead. A deadline or budget it sets also raises every live agent
@@ -310,7 +450,7 @@ async fn raise_helpers(
         if raise.is_empty() {
             continue;
         }
-        let key = format!("{}:{}", delivery.key, helper.agent);
+        let key = limit_key(&helper.agent, &raise);
         match ctx
             .backend
             .update_agent_keyed(&helper.agent, raise, &key)
@@ -326,27 +466,66 @@ async fn raise_helpers(
     Ok(())
 }
 
+/// Keys a helper's raise by the limits it applies: a repeat is made once, and
+/// a later raise is never taken for a repeat of an earlier one.
+fn limit_key(helper: &AetherAgentId, raise: &AgentUpdate) -> String {
+    assert!(raise.choice.is_none(), "a helper is only raised");
+    let deadline = raise
+        .deadline
+        .map_or_else(|| "-".to_owned(), |at| at.timestamp_millis().to_string());
+    let budget = raise
+        .cost_budget_usd
+        .map_or_else(|| "-".to_owned(), |usd| usd.to_string());
+    format!("limit:{helper}:{deadline}:{budget}")
+}
+
 /// `target` where it lifts `current`; a helper with no limit keeps none.
 fn raised<T: PartialOrd + Copy>(current: Option<T>, target: Option<T>) -> Option<T> {
     let (current, target) = (current?, target?);
     (target > current).then_some(target)
 }
 
-/// Say on the item that Aether refused a steer for a running agent; what the
-/// steer stored still applies to the stage's next agents.
+/// What of model step `delivery` reached the lead once its model was refused.
+fn arrived(delivery: &Delivery, told: bool) -> Vec<&'static str> {
+    assert!(
+        delivery.choice.is_some(),
+        "only a model step is refused alone"
+    );
+    let sent = [
+        (told, "note"),
+        (delivery.deadline.is_some(), "deadline extension"),
+        (delivery.cost_budget_usd.is_some(), "budget"),
+    ];
+    sent.into_iter()
+        .filter(|(sent, _)| *sent)
+        .map(|(_, part)| part)
+        .collect()
+}
+
+/// Say on the item that Aether refused a steer for a running agent, naming what
+/// of it `arrived` all the same; what it stored applies to the stage's next agents.
 async fn refused(
     ctx: &DaemonContext,
     stage: &StageRun,
     refusal: &ArchonError,
+    arrived: &[&str],
 ) -> Result<(), ArchonError> {
     tracing::warn!(stage = %stage.id, %refusal, "Aether refused a steer for a running agent");
     let run = ctx.store.lock().await.run(&stage.run)?;
     assert_eq!(run.id, stage.run, "the store returns the run asked for");
-    let text = format!(
-        "A steer did not reach the running agent of stage `{}` (attempt {}): {refusal}. What it \
-         stored applies to the stage's next agents.",
-        stage.stage_id, stage.attempt
-    );
+    let (stage_id, attempt) = (&stage.stage_id, stage.attempt);
+    let text = match arrived {
+        [] => format!(
+            "A steer did not reach the running agent of stage `{stage_id}` (attempt {attempt}): \
+             {refusal}. What it stored applies to the stage's next agents."
+        ),
+        parts => format!(
+            "A steer's model was refused for the running agent of stage `{stage_id}` (attempt \
+             {attempt}): {refusal}. Its {} reached the agent; the model it stored applies to \
+             the stage's next agents.",
+            parts.join(" and ")
+        ),
+    };
     notify(
         ctx,
         NotificationKind::Progress,

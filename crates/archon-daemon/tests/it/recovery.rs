@@ -494,7 +494,7 @@ async fn crash_mid_infra_retry_neither_respawns_nor_fails_the_slot() {
 
 /// What `infra_retry` persists first: a `spawning` stage run for the same
 /// slot with its own stored request.
-async fn reserve_replacement_by_hand(h: &Harness, failing: &StageRun) {
+pub(crate) async fn reserve_replacement_by_hand(h: &Harness, failing: &StageRun) {
     let mut replacement = failing.clone();
     replacement.id = StageRunId::new();
     replacement.state = StageState::Spawning;

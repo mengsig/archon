@@ -22,7 +22,7 @@ prompt = "journeys.md"
 gate = "all_pass"
 scenarios = "strict"
 timeout_minutes = 180
-on_fail = { goto = "setup", max_loops = 1 }
+on_fail = { goto = "setup", max_loops = 1, when = "environment_finding" }
 
 [[stage]]
 id = "report"

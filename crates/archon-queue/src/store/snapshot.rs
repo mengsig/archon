@@ -109,6 +109,7 @@ fn queued(conn: &Connection) -> Result<Vec<QueuedCandidate>, ArchonError> {
             first_stage_agents: 1,
             gang: false,
             quota_hold: None,
+            model_hold: None,
         });
     }
     Ok(out)

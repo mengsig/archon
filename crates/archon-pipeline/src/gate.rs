@@ -2,7 +2,9 @@
 //! gate pass, and if not, what feedback goes back to the looped-to stage.
 
 use archon_core::catalog::{Gate, StageKind};
-use archon_core::run::{StageRun, StageState, Verdict};
+use archon_core::run::{
+    CLIP_MARKER, RecordRepair, StageOutcome, StageRun, StageState, Verdict, VerdictNote,
+};
 
 use crate::review::Evidence;
 use crate::ship::ShipRecord;
@@ -12,8 +14,16 @@ use crate::spec::{Owed, Scenarios, StageSpec};
 /// cannot blow up the next agent's objective.
 pub const MAX_FEEDBACK_CHARS: usize = 32_000;
 
+/// How much of a final restatement is kept for the failure report.
+const MAX_RESTATED_CHARS: usize = 8_000;
+/// Introduces the result of a stage whose final restatement stands over it.
+const FINISHED_OTHERWISE: &str =
+    "It then finished with this result, which does not change that verdict:";
+
 const SHIP_REFUSAL: &str = "the ship record archond delivers is not on record";
-const REVIEW_REFUSAL: &str = "the review this pipeline declares is not on record";
+const REVIEW_REFUSAL: &str = archon_core::run::REVIEW_NOT_ON_RECORD;
+/// The headline a review-only lead's verdict other than pass fails its run with.
+const REVIEW_VERDICT_REFUSAL: &str = "the review's verdict is";
 /// Most characters of an unreadable verdict quoted in a gate's refusal.
 const MAX_QUOTED_VERDICT_CHARS: usize = 160;
 
@@ -43,13 +53,21 @@ pub(crate) enum GroupResult {
     Pass { summary: String },
     /// `headline` is one line; `report` details every failing member.
     Fail { headline: String, report: String },
+    /// A completed stage handed in a broken delivery record: no `structured`
+    /// object, or a review that names no reviewer. One repair turn may fix it.
+    Unrecorded { headline: String, report: String },
     /// A strict stage's scenario list fell short: a product defect, which no
     /// loop back to an earlier stage can fix, so the run fails.
     Defect { headline: String, report: String },
 }
 
 /// Evaluate a stage group whose every slot is terminal. `members` holds the
-/// latest stage run per slot, by fan index; `owed` as for `recorded`.
+/// latest stage run per slot, by fan index; `owed` as for `recorded`. The
+/// order is fixed: a stated failure fails on its merits, whatever its gate
+/// or record; then a broken record is `Unrecorded`, before the gate and
+/// scenarios that would read it; then the gate, scenarios and record. An
+/// outcome from before repair turns keeps the order that decided it then:
+/// gate, scenarios, record, with no stated failure read.
 pub(crate) fn evaluate(
     stage: &StageSpec,
     attempt: u32,
@@ -61,6 +79,13 @@ pub(crate) fn evaluate(
         members.iter().all(|m| m.state.is_terminal()),
         "only finished groups are evaluated"
     );
+    if owed != Owed::default()
+        && members.iter().all(|m| decided_since_repairs(m))
+        && repairable(stage, members, owed)
+        && let unrecorded @ GroupResult::Unrecorded { .. } = recorded(stage, attempt, members, owed)
+    {
+        return unrecorded;
+    }
     let total = members.len();
     let passes = members.iter().filter(|m| member_passes(stage, m)).count();
     let ok = match stage.gate {
@@ -128,24 +153,56 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     };
     assert_eq!(member.state, StageState::Completed, "it passed its gate");
     let summary = joined_summary(stage, members);
-    let unrecorded = |headline: String| {
+    let structured = member.structured.as_ref();
+    // A review-only lead's findings are its verdict's reasons: its fail reports them
+    // first, so a long summary cannot clip them away.
+    let findings = match owed.review.is_some_and(|duty| duty.records_verdict) {
+        true => findings_text(structured),
+        false => String::new(),
+    };
+    let failed = |headline: String| {
+        let opening = format!("**Stage `{}` attempt {attempt}: {headline}**", stage.id);
+        let result = format!("{findings}\n{summary}\n");
+        // A final restatement that stands is the verdict's reason: it comes first.
+        let report = match member.restated_said() {
+            Some(said) => format!(
+                "{opening}\n\n{}\n\n{FINISHED_OTHERWISE}\n{result}",
+                said.trim()
+            ),
+            None => format!("{opening}\n{result}"),
+        };
+        let report = clip(&report, MAX_FEEDBACK_CHARS);
+        GroupResult::Fail { headline, report }
+    };
+    // A stated failure is refused on its merits, whatever its gate or record.
+    if decided_since_repairs(member) && states_failure(member) {
+        return failed(archon_core::run::STATED_FAILURE.to_owned());
+    }
+    // A review-only lead's verdict is the run's: anything but pass never merges.
+    if let Some(note) = unpassed_review(member, owed) {
+        return failed(format!("{REVIEW_VERDICT_REFUSAL} {note}"));
+    }
+    let broken = repairable(stage, members, owed);
+    let refused = |headline: String, unrecorded: bool| {
         let report = format!(
             "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
             stage.id
         );
-        GroupResult::Fail {
-            headline,
-            report: clip(&report, MAX_FEEDBACK_CHARS),
+        let report = clip(&report, MAX_FEEDBACK_CHARS);
+        match unrecorded {
+            true => GroupResult::Unrecorded { headline, report },
+            false => GroupResult::Fail { headline, report },
         }
     };
-    let structured = member.structured.as_ref();
     if owed.ship_record && crate::ship::no_change_reason(structured).is_some() {
         return GroupResult::Pass { summary };
     }
     if owed.ship_record
         && let Err(why) = ShipRecord::read(structured)
     {
-        return unrecorded(format!("{SHIP_REFUSAL}: {why}"));
+        // A repair that still hands in no valid ship record has none to loop on.
+        let spent = member.record_repair == Some(RecordRepair::Spent);
+        return refused(format!("{SHIP_REFUSAL}: {why}"), broken || spent);
     }
     let Some(duty) = owed.review else {
         return GroupResult::Pass { summary };
@@ -154,8 +211,82 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
         Ok(evidence) => GroupResult::Pass {
             summary: format!("{summary}\n\n{}", evidence.line()),
         },
-        Err(why) => unrecorded(format!("{REVIEW_REFUSAL}: {why}")),
+        Err(why) => refused(format!("{REVIEW_REFUSAL}: {why}"), broken),
     }
+}
+
+/// Why a review-only lead's recorded verdict is not a pass, worded from its
+/// note; `None` for a pass, another stage, or a lead spawned before review-only plans.
+fn unpassed_review(member: &StageRun, owed: Owed) -> Option<&'static str> {
+    let records = owed.review.is_some_and(|duty| duty.records_verdict);
+    if !records || member.only_reviews != Some(true) {
+        return None;
+    }
+    let (verdict, note) = member.verdict_reading()?;
+    assert!(
+        note.is_none() || verdict == Verdict::Unknown,
+        "a note explains only an unknown verdict"
+    );
+    match (verdict, note) {
+        (Verdict::Pass, _) => None,
+        (Verdict::Fail, _) => Some("fail"),
+        (Verdict::Unknown, Some(VerdictNote::DisputedPass)) => {
+            Some("a pass beside a blocking finding (counts as fail)")
+        }
+        (Verdict::Unknown, Some(VerdictNote::MissingVerdictLine)) => {
+            Some("missing (counts as fail)")
+        }
+        (Verdict::Unknown, _) => Some("unreadable as pass or fail (counts as fail)"),
+    }
+}
+
+/// Whether the one agent holding a record completed with a broken record.
+/// [`recorded`] refuses a stated fail on its merits before any repair.
+fn repairable(stage: &StageSpec, members: &[&StageRun], owed: Owed) -> bool {
+    let [member] = members else {
+        return false;
+    };
+    assert_eq!(stage.fan_out, 1, "one agent holds a record");
+    member.state == StageState::Completed && broken_record(member.structured.as_ref(), owed)
+}
+
+/// Whether `member`'s outcome was recorded since stages have repair turns:
+/// one from before is replayed by the rules that decided it then.
+fn decided_since_repairs(member: &StageRun) -> bool {
+    assert!(member.state.is_terminal(), "only an outcome is decided");
+    member.record_repair.is_some()
+}
+
+/// Whether a reply of a stage that owes a record is decided as sent, unverified:
+/// it states a failure or has no `structured`, neither of which the gate passes.
+pub(crate) fn decided_as_sent(
+    owed: Owed,
+    summary: &str,
+    structured: Option<&serde_json::Value>,
+) -> bool {
+    if owed == Owed::default() {
+        return false;
+    }
+    structured.is_none() || StageOutcome::states_failure(summary, structured)
+}
+
+/// Whether `member` stated its failure anywhere, even beside a pass
+/// elsewhere: in the reply as its agent sent it, or its persisted verdict.
+fn states_failure(member: &StageRun) -> bool {
+    let summary = member.summary.as_deref().unwrap_or_default();
+    let stated = StageOutcome::states_failure(summary, member.structured.as_ref());
+    stated || member.verdict == Some(Verdict::Fail)
+}
+
+/// Whether a completed stage's record is broken rather than refused on its
+/// merits: it has no `structured` object, or its owed review names no reviewer.
+fn broken_record(structured: Option<&serde_json::Value>, owed: Owed) -> bool {
+    assert!(owed != Owed::default(), "only an owing stage has a record");
+    let Some(structured) = structured else {
+        return true;
+    };
+    let reviews = owed.review.is_some_and(|duty| duty.reviewers > 0);
+    reviews && crate::review::names_no_reviewer(structured)
 }
 
 /// Which roles of a team group did not complete, and how.
@@ -190,7 +321,7 @@ pub(crate) fn role_outcome(stage: &StageSpec, member: &StageRun) -> String {
 
 /// A slot passes when its agent completed and, for gated stages, its
 /// verdict is `pass`. `unknown` counts as fail.
-fn member_passes(stage: &StageSpec, member: &StageRun) -> bool {
+pub(crate) fn member_passes(stage: &StageSpec, member: &StageRun) -> bool {
     if member.state != StageState::Completed {
         return false;
     }
@@ -249,12 +380,20 @@ fn member_report(stage: &StageSpec, member: &StageRun) -> String {
     let summary = member.summary.as_deref().unwrap_or_default().trim();
     match &member.state {
         StageState::Completed => {
-            let verdict = match verdict_of(member) {
-                Verdict::Fail => "fail".to_owned(),
-                _ => unreadable_verdict(member),
+            let verdict = match (restated_over(member), verdict_of(member)) {
+                (Some(restated), _) => restated.to_owned(),
+                (None, Verdict::Fail) => "fail".to_owned(),
+                (None, _) => unreadable_verdict(member),
             };
             let findings = findings_text(member.structured.as_ref());
-            format!("{label}: verdict {verdict}**\n\n{summary}\n{findings}")
+            let result = format!("{summary}\n{findings}");
+            match member.restated_said() {
+                Some(said) => format!(
+                    "{label}: verdict {verdict}**\n\n{}\n\n{FINISHED_OTHERWISE}\n\n{result}",
+                    said.trim()
+                ),
+                None => format!("{label}: verdict {verdict}**\n\n{result}"),
+            }
         }
         StageState::Failed { error } => format!("{label}: failed**\n\n{}\n", error.trim()),
         StageState::TimedOut => format!("{label}: timed out after {}**\n", ran_for(member)),
@@ -266,6 +405,32 @@ fn member_report(stage: &StageSpec, member: &StageRun) -> String {
             unreachable!("evaluate() asserts every member is terminal")
         }
     }
+}
+
+/// The verdict of a member whose final restatement (`submit_verdict`) stands
+/// over a result that reads otherwise; `None` when its result reads as recorded.
+fn restated_over(member: &StageRun) -> Option<&'static str> {
+    let stands = member.restated_over()?;
+    assert_ne!(stands.verdict, Verdict::Pass, "only a non-pass stands");
+    Some(match stands.verdict {
+        Verdict::Fail => "fail, as it restated before completing (final)",
+        _ => "unreadable as pass or fail, as it restated before completing (final; counts as fail)",
+    })
+}
+
+/// A submission's summary and findings as a failure report shows them, each
+/// clipped: what `submit_verdict` keeps of a final restatement that is no pass.
+pub fn submission_text(summary: &str, structured: Option<&serde_json::Value>) -> String {
+    // Half each, less the line that joins them and the note a cut part ends with.
+    let share = (MAX_RESTATED_CHARS - 1) / 2 - CLIP_MARKER.chars().count();
+    let summary = clip(summary.trim(), share);
+    let findings = clip(&findings_text(structured), share);
+    let text = format!("{summary}\n{findings}").trim_end().to_owned();
+    assert!(
+        text.chars().count() <= MAX_RESTATED_CHARS,
+        "the kept text is bounded"
+    );
+    text
 }
 
 /// Why a completed member's verdict counts as fail, quoting what it said:
@@ -336,13 +501,7 @@ fn or_dash(text: &str) -> &str {
     if text.is_empty() { "-" } else { text }
 }
 
-/// At most `max` characters, cut on a char boundary with a visible marker.
-pub(crate) fn clip(text: &str, max: usize) -> String {
-    match text.char_indices().nth(max) {
-        None => text.to_owned(),
-        Some((cut, _)) => format!("{}\n\n[… truncated by Archon]", &text[..cut]),
-    }
-}
+pub(crate) use archon_core::run::clip;
 
 #[cfg(test)]
 mod tests {
@@ -375,6 +534,28 @@ mod tests {
         let cut = clip("ééé", 2);
         assert!(cut.starts_with("éé\n"), "{cut}");
         assert!(cut.ends_with("[… truncated by Archon]"));
+    }
+
+    /// Neither part can push the other out, and the notes of both cuts fit.
+    #[test]
+    fn a_kept_submission_stays_within_its_bound_with_both_parts_cut() {
+        let long = "s".repeat(MAX_RESTATED_CHARS);
+        let structured = serde_json::json!({"findings": [
+            {"severity": "high", "title": "no display", "detail": "d".repeat(MAX_RESTATED_CHARS)}
+        ]});
+        let kept = submission_text(&format!("  {long}"), Some(&structured));
+        assert_eq!(kept.chars().count(), MAX_RESTATED_CHARS - 1, "the bound");
+        let (summary, findings) = kept
+            .split_once(&format!("{CLIP_MARKER}\n"))
+            .expect("a cut summary, then the findings");
+        assert!(long.starts_with(summary) && !summary.is_empty());
+        assert!(
+            findings.contains("- [high] no display\n  ddd"),
+            "the finding"
+        );
+        assert!(findings.ends_with(CLIP_MARKER), "the findings are cut too");
+        assert_eq!(findings.chars().count(), summary.chars().count() + 25);
+        assert_eq!(submission_text(" Ran it.\n", None), "Ran it.");
     }
 
     #[test]

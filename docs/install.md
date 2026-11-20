@@ -86,8 +86,9 @@ and reference attachment support. The installer selects Aether `v1.4.2`
 when no `aether` is installed; it preserves an existing installation.
 Upgrade an older existing Aether with `aether update --version v1.4.2`
 and restart aetherd before using Archon 1.6.4.
-A confirmed `archon update` pins Aether to `v1.4.2` only when the installed
-Aether is older. At 1.4.2 or later it runs `aether update --yes`, allowing
+A confirmed `archon update` run by Archon 1.6.4 or later pins Aether to
+`v1.4.2` only when the installed Aether is older. The update from 1.6.3 runs
+1.6.3's own Aether step, so upgrade Aether first as above. At 1.4.2 or later it runs `aether update --yes`, allowing
 future releases without forcing a downgrade;
 `--check`, `--requirements`, `--no-restart` and a declined question leave
 Aether as it is. Check the installed release with `aether --version`.

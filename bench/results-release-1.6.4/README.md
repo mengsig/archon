@@ -9,12 +9,14 @@ on both arms. This is a small smoke, not a statistical pass.
 
 **The candidate was slower in 3 of 4 pairs.** Luna's Archon time was +34%
 and +14% in the two rounds run (pre-rebase and final head), and Haiku's was
--25% and +31% (+46% on the three tasks both graded). Most candidate stages
-in the final round carry `verdict_note = missing_verdict_line`: their first
-finish had no verdict line, so 1.6.4's one restatement turn (#450) ran. That
-turn is intended, but on the `direct` pipeline it now fires on most stages,
-which costs time on every item. It is reported here as a finding, not
-tuned. Costs are incomplete or lower bounds, so their direction is unknown.
+-25% and +31% (+46% on the three tasks both graded). Most candidate
+`direct` stages in the final round record `verdict_note =
+missing_verdict_line`: their result had no verdict line. That note is only
+a record. The `direct` implement stage is ungated, so #450's restatement
+turn does not apply to it, and none of those stage records has a
+restatement. This evidence does not show what caused the slowdown. It is
+reported here as a finding, not tuned. Costs are incomplete or lower
+bounds, so their direction is unknown.
 
 ## Final head runs
 
@@ -61,8 +63,9 @@ this task, v1.6.3 passed 2 of 3 and the candidate 1 of 2.
 
 ## Pre-rebase round
 
-The first round ran on `ddaeb13e`, a candidate built before #455 was in the
-branch. Archon passed 4/4 on every run. Haiku was 470.7 s (old) against
+The first round ran on checkout `73dd6d31`, a candidate built before #455
+was in the branch. It differs from `ddaeb13e`, which `make ci` checked, only
+in CHANGELOG.md. Archon passed 4/4 on every run. Haiku was 470.7 s (old) against
 350.7 s (new); Luna was 530.9 s against 711.1 s. One Luna direct-Aether
 control missed `review-seeded-bug`, and 2 more runs per arm of that task
 passed all 8 trials. Its results are kept in the artifact under
@@ -71,8 +74,7 @@ passed all 8 trials. Its results are kept in the artifact under
 ## Method
 
 - The candidate is `archon` 1.6.4 built with `cargo build --release --locked
-  -p archon -p archon-bench` at `bb7722dc`. The only later commit adds this
-  file.
+  -p archon -p archon-bench` at `bb7722dc`. Later commits change only documentation.
 - The old arm is the published `archon` v1.6.3 (`x86_64-unknown-linux-musl`
   archive, passing its release's `SHA256SUMS`).
 - Both arms use the published Aether v1.4.2 (`x86_64-unknown-linux-musl`,

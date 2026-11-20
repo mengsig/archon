@@ -7,8 +7,10 @@
 Released 2026-11-20.
 
 Archon 1.6.4 requires **Aether 1.4.2**. The installer selects Aether
-`v1.4.2` when no Aether is installed and keeps an existing one; a confirmed
-`archon update` selects `v1.4.2` for an older installation. Features
+`v1.4.2` when no Aether is installed and keeps an existing one. A confirmed
+`archon update` run by 1.6.4 selects `v1.4.2` for an older installation.
+The update from 1.6.3 runs 1.6.3's own Aether step, so upgrade Aether first
+with `aether update --version v1.4.2` and restart aetherd. Features
 that need nothing new from Aether still work with Aether 1.4.1, as their
 entries say.
 
@@ -201,10 +203,13 @@ entries say.
   takes its own effort. The MCP effort enum says `max` needs `[models]
   max_effort`. Each spawn records the effort rule and reviewers it was
   issued. The watchdog, recovery and replay read that record: a resumed
-  lead is held only to the policy its agent was created with, and a 1.6.3
-  spawn is read from its own rule lines (permissive when they tell nothing).
-  Rollback: set `effort_sizing = false` and restart; new spawns then get
-  what 1.6.3 issued, byte for byte, and in-flight spawns keep their rule.
+  lead keeps the effort rule and reviewers its agent was issued, while the
+  current model policy (`max_effort`, allow and deny lists) still applies.
+  A 1.6.3 spawn is read from its own rule lines (permissive when they tell
+  nothing). Rollback: set `effort_sizing = false` and restart; new spawns
+  then get 1.6.3's effort rules, byte for byte, and in-flight spawns keep
+  their rule. Other contract text, such as the `submit_verdict` and review
+  coverage rules, stays as 1.6.4 writes it.
 - A failed run's failure class now comes from its stage records, not from
   words in its error ([#446](https://github.com/mengsig/archon/pull/446)):
   `timeout` when the stage that ended the run timed out, `infrastructure`
@@ -252,10 +257,10 @@ entries say.
   plans, the watchdog and a catalog outage, and a superseded model still
   counts for learned routing and errand pricing
   ([#456](https://github.com/mengsig/archon/pull/456)).
-- A retry after a stage reached its review-round limit continues on its
-  branch ([#455](https://github.com/mengsig/archon/pull/455)). Unless the
-  retry is `fresh`, earlier runs' reviews still count while the branch holds
-  their commits. The new commits then need a delta review, plus any
+- A retry that is not `fresh`, after a stage reached its review-round
+  limit, continues on its branch
+  ([#455](https://github.com/mengsig/archon/pull/455)). Earlier runs'
+  reviews still count while the branch holds their commits. The new commits then need a delta review, plus any
   whole-change reads the review level still lacks. A delta review fails only
   on its own commits or an earlier finding left unfixed. Nothing carries
   when the reviewed head was rewritten or an earlier recorded fail can no

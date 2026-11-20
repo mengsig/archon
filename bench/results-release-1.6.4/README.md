@@ -122,8 +122,9 @@ touched.
 `CARGO_BUILD_JOBS=3 make ci` passed on `14899dfd` (tree `959e636b`) inside
 the host CI slot, started at load5 1.01: 5,149 tests passed, 0 failed, 10
 ignored. Formatting, shell checks, clippy and rustdoc with warnings denied
-passed. No test needed a rerun. The two commits after it change only
-`CHANGELOG.md` and this file.
+passed. No test needed a rerun. The commits after it change only
+documentation: `CHANGELOG.md`, `docs/install.md`, `docs/upgrading.md` and
+this file.
 
 The artifact `release-1.6.4-evidence` of item `qi_01M7V498MT3J6GRE8EA7ZHAHZW`
 keeps the results, item histories, private daemon logs, checksums, wrapper

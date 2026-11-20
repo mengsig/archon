@@ -117,9 +117,10 @@ entries say.
     retuned to match. A pin over the policy cap is still refused.
   - `[models] effort_sizing = false` restores 1.6.3 behaviour. New fields
     are optional, and it works with Aether 1.4.1.
-- A failed stage reports its failure class and a suggested next step to the
-  orchestrator ([#453](https://github.com/mengsig/archon/pull/453)). Archon
-  never raises effort or changes models on its own after a failure.
+- When an item fails or is cancelled, the orchestrator's notice names the
+  failure class of the stage that ended it and a suggested next step
+  ([#453](https://github.com/mengsig/archon/pull/453)). Archon never raises
+  effort or changes models on its own after a failure.
 - Archon shows each provider's quota pace and warns once when a window is
   projected to run out before it resets
   ([#454](https://github.com/mengsig/archon/pull/454)).

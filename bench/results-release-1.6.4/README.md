@@ -22,7 +22,8 @@ difference sits inside the stage agents, which include the reviewers they
 delegate. Waits between stages and orchestrator turns account for little of
 it. In the final round, stage time was 233 s on old against 368 s on new
 for Haiku, and 477 s against 516 s for Luna. Time outside the item
-(orchestrator turns before the enqueue and after the result) was 46 s against
+(the trial's wall time less the item's lifetime: orchestrator turns before
+the enqueue and after the result, plus harness polling) was 46 s against
 49 s and 119 s against 145 s. Leads delegated as many reviewers on Haiku (5
 each) and one more on Luna (4 against 3). The only 1.6.4 change visible in a
 timeline is #440: on Luna `quality-ledger-transfer`, the candidate's

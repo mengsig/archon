@@ -19,9 +19,11 @@ a step stops. The reference, with the threat model, is
 ## Before you start
 
 - archon set up (`archon setup`); the wizard runs it for you if it was not.
-- Aether 1.4.2 or later: the Aether that Archon uses (your own in shared
-  mode, Archon's in dedicated mode) mounts archond. An older one is refused
-  with the version it needs; nothing falls back to a separate Archon app.
+- Aether 1.4.2 or later, the release Archon requires: the Aether that
+  Archon uses (your own in shared mode, Archon's in dedicated mode) mounts
+  archond. Setup checks that this Aether can mount it; one that cannot is
+  refused with the version it needs. Nothing falls back to a separate Archon
+  app.
 - [Tailscale](https://tailscale.com/download) on this computer and on your
   phone, both signed in to the same tailnet, with MagicDNS and HTTPS
   certificates turned on in the

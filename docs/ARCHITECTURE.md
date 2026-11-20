@@ -2259,7 +2259,10 @@ request, naming the tiers there are. The tier is resolved at enqueue and again
 when the run starts, from Aether's catalog as it is then; the resolved model,
 the tier asked for and any fallback are stored on the plan and on every attempt
 (`ModelChoice.tier`), and `get_item` shows both. The daemon caches the catalog
-for five minutes; with none read yet, a stored resolution stands.
+for five minutes. While Aether lists no configured model, a tier cannot be
+resolved: an enqueue asking for one is refused with the outage named, an
+exact pin is stored with its catalog check deferred, and dispatch holds the
+item with `model_catalog_unavailable` until a read succeeds.
 
 **Provider weights.** With `[models] provider_weights` set (a repository's
 entries and default override the global ones), each item is routed to one provider

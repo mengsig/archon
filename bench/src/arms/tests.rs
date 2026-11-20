@@ -662,16 +662,22 @@ fn a_transcript_applies_only_its_orchestrators_new_events() {
 }
 
 #[test]
-fn a_helper_the_orchestrator_creates_is_skipped_but_its_other_events_are_refused() {
+fn a_helper_the_orchestrator_creates_is_skipped_and_another_agents_refused() {
     let created = EventKind::AgentCreated {
         model: "claude-code/claude-haiku-5-5".parse().unwrap(),
         name: "reviewer".to_owned(),
     };
-    let mut helper = event(102, 1, created.clone());
-    helper.agent = Some(agent("agt_helper"));
-    helper.parent = Some(agent(ORCHESTRATOR));
+    let helper = |kind| {
+        let mut e = event(0, 1, kind);
+        e.agent = Some(agent("agt_helper"));
+        e.parent = Some(agent(ORCHESTRATOR));
+        e
+    };
     let mut events = transcript_shape();
-    events.insert(2, helper.clone());
+    events.insert(2, helper(created.clone()));
+    // The helper's own words and turn are not the orchestrator's answer.
+    events.insert(3, helper(wrote("Not the orchestrator.")));
+    events.insert(4, helper(turn_ended("ready")));
     for (i, e) in events.iter_mut().enumerate() {
         e.seq = 101 + i as u64;
     }
@@ -686,10 +692,9 @@ fn a_helper_the_orchestrator_creates_is_skipped_but_its_other_events_are_refused
     stranger.agent = Some(agent("agt_helper"));
     stranger.parent = Some(agent("agt_other"));
     assert!(log.apply(&[stranger]).is_err(), "another agent's helper");
-    let mut helper_spoke = event(501, 1, wrote("Not the orchestrator."));
-    helper_spoke.agent = Some(agent("agt_helper"));
-    helper_spoke.parent = Some(agent(ORCHESTRATOR));
-    assert!(log.apply(&[helper_spoke]).is_err(), "a helper's own words");
+    let mut orphan = event(501, 1, wrote("No parent."));
+    orphan.agent = Some(agent("agt_helper"));
+    assert!(log.apply(&[orphan]).is_err(), "an event with no parent");
 }
 
 /// The wire form of `transcript_shape`, as aetherd serves `get_events`.

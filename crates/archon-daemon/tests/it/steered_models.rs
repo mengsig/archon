@@ -555,3 +555,47 @@ async fn a_legacy_keyed_alias_replay_passes_a_canonical_allowlist() {
     let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
     assert_eq!(items.len(), 1, "no second item");
 }
+
+/// The next action a waiting item names for `item`.
+async fn next_action(h: &Harness, item: &QueueItemId) -> String {
+    let request = Request::GetItem { item: item.clone() };
+    let Ok(Reply::ItemDetail(detail)) = h.cli(request).await else {
+        panic!("expected item detail");
+    };
+    detail
+        .waiting_reason
+        .expect("a waiting item says why")
+        .next_action
+}
+
+/// A queued item whose pin left the catalog is re-planned in place, as retry
+/// refuses a queued item; once dispatch blocks it, retry takes its new plan.
+#[tokio::test]
+async fn a_pin_that_left_the_catalog_names_the_command_its_state_takes() {
+    let h = harness().await;
+    let pin = serde_json::from_value(serde_json::json!({"implement": [{"model": FAST}]}));
+    let Ok(Reply::Item(item)) = h
+        .cli(Request::Enqueue(request(
+            "direct",
+            pin.unwrap(),
+            "review=none",
+        )))
+        .await
+    else {
+        panic!("the enqueue is stored");
+    };
+    let retired = common::catalog::untiered(["codex/sol".parse().unwrap()]);
+    common::catalog::answer(&h.catalog_server, &retired);
+    let generation = h.ctx.aether.generation().unwrap();
+    let store = h.ctx.store.lock().await;
+    store.record_model_catalog(retired, archon_core::now(), Some(generation));
+    drop(store);
+    assert_eq!(h.state(&item.id).await, QueueState::Queued);
+    let queued = next_action(&h, &item.id).await;
+    assert!(queued.contains("update_item"), "{queued}");
+
+    h.dispatch().await;
+    assert!(h.state(&item.id).await.is_model_pin_block());
+    let blocked = next_action(&h, &item.id).await;
+    assert!(blocked.contains("archon queue retry"), "{blocked}");
+}

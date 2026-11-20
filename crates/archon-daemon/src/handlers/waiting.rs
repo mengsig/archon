@@ -186,8 +186,15 @@ impl WaitingView {
                     }),
                     _ => None,
                 };
+                // Retry takes a blocked item only; a queued one is re-planned in place.
+                let replan = match item.state {
+                    QueueState::Queued => {
+                        format!("Re-plan the stage's model for {} with update_item", item.id)
+                    }
+                    _ => format!("archon queue retry {} --model-plan-file <path>", item.id),
+                };
                 match model_reason {
-                    Some(reason) => (reason.to_owned(), format!("archon queue retry {} --model-plan-file <path>", item.id)),
+                    Some(reason) => (reason.to_owned(), replan),
                     None => ("Dependencies recovered; inspect the recorded block before cancelling and retrying".into(), format!("archon queue show {} --full", item.id)),
                 }
             }

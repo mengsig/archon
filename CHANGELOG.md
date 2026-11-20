@@ -242,7 +242,10 @@ entries say.
   pins and fallbacks keep the model named. A kept agent resumed or woken
   after a quota move keeps the model it ran, and fresh stages and cold
   retries follow quota routing; a daemon pick the catalog supersedes, with
-  no eligible successor, still runs.
+  no eligible successor, still runs. Model catalog checks also cover legacy
+  plans, the watchdog and a catalog outage, and a superseded model still
+  counts for learned routing and errand pricing
+  ([#456](https://github.com/mengsig/archon/pull/456)).
 - A retry after a stage reached its review-round limit continues on its
   branch ([#455](https://github.com/mengsig/archon/pull/455)): earlier runs'
   reviews still count while the branch holds their commits, so only the new
@@ -283,15 +286,6 @@ entries say.
   steer ([#440](https://github.com/mengsig/archon/pull/440)). A review that
   names another head than the one checked out fails the stage and says to
   queue a new review item at that head.
-- Model catalog follow-ups
-  ([#456](https://github.com/mengsig/archon/pull/456)). A replayed legacy
-  request that names a model by an alias passes a canonical allowlist; it
-  was refused. The watchdog checks a delegated child under the aliases of a
-  fresh catalog read, so a child created before archond's first catalog
-  read is no longer cancelled for its allowed canonical id. A catalog answer
-  that lists no model keeps the last aliases instead of clearing them.
-  Learning evidence and errand pricing keep a superseded model that is still
-  listed. The waiting view names `update_item` for a queued item.
 
 ### Upgrading
 

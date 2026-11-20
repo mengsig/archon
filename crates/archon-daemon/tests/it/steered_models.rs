@@ -515,8 +515,8 @@ async fn a_legacy_key_with_another_plan_gets_no_catalog_exemption() {
     assert_eq!(items.len(), 1, "no second item");
 }
 
-/// A fingerprint 1.6.3 stored holds the alias it was asked with; its replay
-/// judges that alias as its canonical id, as the allowlist names it.
+/// A fingerprint kept from before `asked_plan` holds the alias it was asked with;
+/// and its replay judges that alias as its canonical id, as the allowlist names it.
 #[tokio::test]
 async fn a_legacy_keyed_alias_replay_passes_a_canonical_allowlist() {
     use archon_aether::fake::Scripted;

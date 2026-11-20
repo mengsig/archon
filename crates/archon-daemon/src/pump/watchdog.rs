@@ -128,11 +128,11 @@ pub(super) async fn agent_created(
 pub(super) type Aliases = std::collections::BTreeMap<ModelRef, ModelRef>;
 
 /// The aliases of a catalog read in the last few minutes: the link has none
-/// before a start's first read. While Aether gives no catalog, the link's last ones.
+/// before a start's first read. While Aether gives no usable catalog, the link's last ones.
 async fn current_aliases(ctx: &DaemonContext) -> Result<std::sync::Arc<Aliases>, ArchonError> {
     let catalog = crate::learned::catalog(ctx).await?;
-    if catalog.unavailable_reason().is_some() {
-        tracing::debug!(reason = ?catalog.unavailable_reason(), "child checked with the link's aliases");
+    if let Some(reason) = catalog.not_ready_reason() {
+        tracing::debug!(reason, "child checked with the link's aliases");
         return Ok(ctx.aether.aliases());
     }
     let aliases = catalog.aliases();

@@ -2660,3 +2660,34 @@ async fn a_child_checked_before_any_catalog_read_meets_the_policy_by_canonical_i
         "the read installed the aliases"
     );
 }
+
+/// A read that lists no configured model is an outage, not a catalog without
+/// aliases: the child is checked under the last ones and they stay installed.
+#[tokio::test]
+async fn a_catalog_with_no_configured_model_keeps_the_last_aliases_for_a_child() {
+    let mut config = Config::default();
+    config.models.allow = vec![ModelRef::new(ALIAS.0, ALIAS.1)];
+    let harness = Harness::with(config, None).await;
+    let repo = tempfile::tempdir().unwrap();
+    running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    let (agents, pump) = running_pump(&harness).await;
+    alias_allowed(&harness);
+    harness
+        .fake
+        .set_default("list_models", Scripted::reply("models", json!([])));
+    harness.fake.set_default("cancel", Scripted::ok());
+    let mut agent = agents.set(CHILD, "running");
+    agent["role"] = json!("worker");
+    agent["config"] = json!({"effort": "medium"});
+    agents.0.lock().unwrap().insert(CHILD.to_owned(), agent);
+    push(&harness, created(CHILD, STAGE, ALLOWED), keys::CURSOR_FLEET).await;
+    pump.abort();
+
+    assert!(
+        !harness.fake.received_named("list_models").is_empty(),
+        "the watchdog read the catalog"
+    );
+    assert_eq!(cancelled(&harness), [], "the allowed child runs");
+    let alias = ModelRef::new(ALIAS.0, ALIAS.1);
+    assert!(harness.ctx.aether.aliases().contains_key(&alias));
+}

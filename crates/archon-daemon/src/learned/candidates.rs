@@ -86,7 +86,10 @@ async fn read_catalog(ctx: &DaemonContext, generation: u64) -> Result<ModelCatal
     }
     store.kv_set("acceptance_vision_models", &serde_json::to_string(&vision)?)?;
     let recovered = store.model_catalog().is_empty() && !catalog.is_empty();
-    ctx.aether.install_aliases(generation, catalog.aliases())?;
+    // A catalog with no configured model is an outage: it keeps the last aliases.
+    if !catalog.is_empty() {
+        ctx.aether.install_aliases(generation, catalog.aliases())?;
+    }
     store.record_model_catalog(catalog.clone(), archon_core::now(), Some(generation));
     drop(store);
     if recovered {

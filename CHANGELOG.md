@@ -18,8 +18,11 @@
 ### Fixed
 
 - The bench's archon arm no longer voids a trial when the orchestrator
-  delegates a helper: Aether lists the helper's `agent.created` event among
-  the orchestrator's events, and the harness now skips it.
+  delegates a helper: Aether lists the helper's events (its creation, task
+  and turns) among the orchestrator's, and the harness now skips every event
+  of an agent the orchestrator created. Any other agent's event still stops
+  the trial. Stage turns and time on the smoke tasks are back within 10% of
+  v1.6.3 (`bench/results-trim-1.6.5`).
 
 ## 1.6.4
 

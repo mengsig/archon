@@ -6,8 +6,9 @@
 
 Released 2026-11-20.
 
-Archon 1.6.4 requires **Aether 1.4.2**. The installer and a confirmed
-`archon update` select Aether `v1.4.2` for an older installation. Features
+Archon 1.6.4 requires **Aether 1.4.2**. The installer selects Aether
+`v1.4.2` when no Aether is installed and keeps an existing one; a confirmed
+`archon update` selects `v1.4.2` for an older installation. Features
 that need nothing new from Aether still work with Aether 1.4.1, as their
 entries say.
 
@@ -16,8 +17,9 @@ entries say.
 - Every item records where each field of its model plan came from, beside
   the plan as `model_origins`: for each stage entry, separately for the model
   and the effort, the source (`explicit`, `learned`, `tier`, `fallback`,
-  `sizer` for the effort sizer, `migrated` for a retired model moved to its
-  successor, and `escalation`, which nothing sets yet), who
+  `sizer` for the effort sizer, `migrated` for a model the catalog no
+  longer serves that archond replaced, and `escalation`, which nothing sets
+  yet), who
   chose it (operator, orchestrator or daemon) and when; a
   tiered entry also records who asked for its tier.
   Enqueue, initiative members, update, retry, steers, pipeline switches,
@@ -28,8 +30,9 @@ entries say.
   accounted for (`unattributed`, which should be zero) and the fields stored
   before origins were recorded (`legacy_unknown`).
 - The daemon moves a model or effort again only when it filled that field
-  itself. A field a caller named, a migrated one, a legacy one and an
-  unattributed one are pins for dispatch, reroutes, quota holds and recovery.
+  itself, including a `migrated` one. A field a caller named, a legacy one
+  and an unattributed one are pins for dispatch, reroutes, quota holds and
+  recovery.
   A pinned tier is still resolved to a model when dispatch starts a run, and
   moves only within that tier afterwards.
 
@@ -59,11 +62,11 @@ entries say.
   GitHub requests cannot set or remove a watch; removing the repository
   drops it, whoever removes it. The orchestrator prompt now forbids polling
   GitHub from a schedule.
-- Work that names concurrency, locking, security or a migration is routed to
-  `adaptive` ([#440](https://github.com/mengsig/archon/pull/440)): the
-  `direct` pipeline's notes and nudge and the orchestrator prompt say so,
-  and an `implement` ESCALATE for such risk carries a "re-queue on adaptive"
-  hint.
+- The orchestrator prompt and the `direct` pipeline's notes and nudge now
+  send work that names concurrency, locking, security or a migration to
+  `adaptive` ([#440](https://github.com/mengsig/archon/pull/440)). This is
+  guidance: nothing re-routes an enqueue by its words. An `implement`
+  ESCALATE for such risk carries a "re-queue on adaptive" hint.
 - `queue show` prints that a reviewer is exempt from a stage's worker policy
   ([#440](https://github.com/mengsig/archon/pull/440)).
 - Review verdicts are recorded
@@ -87,7 +90,8 @@ entries say.
   archond restarts and stage-run replacements. e2e-testing, e2e-strict and
   release-journey re-run `setup` only for a FAIL with a finding whose
   `fault` is `environment` (`on_fail.when = "environment_finding"`), so a
-  disputed pass costs one extra turn and never a setup re-run. It needs no
+  disputed pass costs one extra turn, and re-runs setup only when its
+  restatement is such a FAIL. It needs no
   Aether change and works with Aether 1.4.1.
 - A deterministic effort sizer for unpinned efforts
   ([#451](https://github.com/mengsig/archon/pull/451),
@@ -101,7 +105,8 @@ entries say.
     stages of elevated and critical items up to that effort. The policy's
     `max_effort` caps everything. `x_high` is planned only on Claude Code
     and Codex.
-  - A learned route's effort is advice only. Each attempt records
+  - The sizer never changes an effort a learned route supplies; that effort
+    is still held to the policy and engine caps. Each attempt records
     `risk_class`, `effort_source` and `effort_reasons`.
   - The decision is frozen in the stored plan. A retry keeps it. A revise or
     reshape clips carried values to the current caps with a reason. A steer
@@ -236,8 +241,9 @@ entries say.
   resolve to canonical ids, and unlisted or retired ids are refused, naming
   the nearest ids or the successor. Dispatch fails closed: with no ready
   catalog an item waits as `model_catalog_unavailable`, and a retired pin
-  blocks with a re-plan hint while a daemon-chosen model moves to a listed
-  successor. A superseded model is replaced by its same-provider successor
+  blocks with a re-plan hint. A daemon-chosen model moves to a listed
+  successor, or else to a permitted tier pick, learned choice or fallback,
+  and the item stays held when none is eligible. A superseded model is replaced by its same-provider successor
   in Archon's own tier picks wherever that successor can serve the request;
   pins and fallbacks keep the model named. A kept agent resumed or woken
   after a quota move keeps the model it ran, and fresh stages and cold

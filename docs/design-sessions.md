@@ -146,7 +146,8 @@ from. The commit message carries a trailer, `Archon-Note: D3`, so
 ## Compare, Undo and Revise
 
 **Compare.** Open a done note for a before/after slider (side by side on wide
-screens). Each picture is captioned like "captured from the preview at commit
+screens). A note drawn on a sketch (New screen) shows your sketch and the
+result next to each other instead. Each picture is captioned like "captured from the preview at commit
 3f9c2a1, 14:32". These are evidence for you, not proof of the build: the dev
 server may serve edits that are not yet committed. They are never sent to a
 model.
@@ -167,7 +168,12 @@ already undone or in an approved intent.
 **Revise.** If you ask for changes at approval, the same agent resumes in a new
 session that starts live. Notes from earlier sessions are read-only: you cannot
 edit, cancel, reply to or drop them. Their changes stay in the code, and you can
-undo any of them from the new session. Ids continue where they stopped.
+undo any of them from the new session. Ids continue where they stopped. A
+design screen left open follows you into the new session and shows its preview
+as soon as the app is up. At **Finish** only the new session's notes are
+pictured and confirmed again; earlier notes keep the picture you confirmed for
+them before and still count toward what you approve, unless a later note
+supersedes them or you undo them.
 
 ## Finishing and approving
 
@@ -253,7 +259,9 @@ once only.
 | "Finish after D3 is done" / "D4 needs your answer" | Finish waits for these. |
 | "Finishing: press Back to editing to change anything" | The session is frozen. |
 | "Waiting for your answer on D3" | A question holds the queue. |
-| "This design session ended (approved / revised / cancelled)" | The session is over; every request for it is refused as `gone`. |
+| "Design approved" / "Changes requested" / "Design rejected" / "Session cancelled" | The session is over and says how it ended, also when you reopen it later. Every request for it is refused as `gone`. After "Changes requested" the screen switches to the next session by itself when it opens. |
+| "The agent is wrapping up. Approve, Ask for changes and Reject appear here in a moment." | You confirmed; the approval question opens once the agent has stopped the app. |
+| "Reviewed in an earlier session; kept as it was" | A note from before an "Ask for changes". Its picture was confirmed then and goes into the approval as it is; it is not captured or confirmed again. |
 | "A design session is running. Only the operator's devices see the live preview." | You are on an observer device. |
 | "File pickers aren't available in the preview yet" | The app opened a file picker. Downloads are denied; pop-ups are closed with an offer to open a loopback one in the preview. |
 | "worktree moved after Finish: expected 3f9c2a1; restore it and complete again" | A commit was made after you confirmed. The agent must reset to the finish commit and complete again. |

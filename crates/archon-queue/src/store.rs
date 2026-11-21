@@ -14,6 +14,7 @@ pub use changes::{KEEP_DAYS as CHANGES_KEEP_DAYS, KEEP_ROWS as CHANGES_KEEP_ROWS
 mod codec;
 mod cost;
 mod delegated;
+mod design;
 mod directives;
 mod feed;
 mod gates;
@@ -77,6 +78,7 @@ use archon_core::steer::RunEdit;
 use crate::data_lock::DataLock;
 use crate::dispatch::DispatchSnapshot;
 
+pub use design::{FinishRecord, NewDesignNote, NewDesignSession, NoteChange, SessionPatch};
 pub use model_evidence::ModelEvidenceSnapshot;
 pub use model_evidence::{CohortEvidence, RouteEvidence, RouteQuery, preferred_route};
 pub use operator_feedback::CorrectionFacts;
@@ -85,6 +87,7 @@ pub use run_edits::RecordedEdit;
 
 /// Well-known `kv` keys.
 pub mod keys {
+    pub use super::design::keys::{design_owed, design_seq};
     pub const ORCHESTRATOR_AGENT: &str = "orchestrator_agent";
     pub const ORCHESTRATOR_GENERATION: &str = "orchestrator_generation";
     pub const CURSOR_ORCHESTRATOR: &str = "aether_cursor_orchestrator";

@@ -665,3 +665,107 @@ async fn a_no_change_review_reaches_the_gate_and_is_approved() {
     assert!(intent.requirements[0].text.contains("no change"));
     assert!(intent.images.is_empty());
 }
+
+/// Item 7: a session of only "no change" notes is approvable with an empty delta.
+#[tokio::test]
+async fn a_no_change_review_with_a_change_gone_from_history_is_approved() {
+    let h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let (note, _) = store
+            .design_note_add(NewDesignNote {
+                item: session.item.clone(),
+                session: session.id.clone(),
+                kind: NoteKind::Change,
+                text: "looks fine".into(),
+                details_text: None,
+                send_picture: false,
+                target: None,
+                viewport: Viewport {
+                    w: 1440,
+                    h: 900,
+                    preset: ViewportPreset::Desktop,
+                },
+                client_key: "key-fine".into(),
+                reverts: None,
+                resent_from: None,
+                before_asset: None,
+                created_by_device: None,
+            })
+            .unwrap();
+        let base = common::git(&run.workspace, &["rev-parse", "HEAD"]);
+        for change in [
+            NoteChange::Sent {
+                base_commit: base,
+                delivery: 1,
+            },
+            NoteChange::Status {
+                to: NoteStatus::Done,
+                fail_reason: None,
+                commit: None,
+                no_change: true,
+            },
+        ] {
+            store
+                .design_note_change(&session.item, &note.id, change)
+                .unwrap();
+        }
+        // A change whose commit is no longer in the code: done, not "no
+        // change", and not active. Finish accepts this session (a done "no
+        // change" note and nothing active), so the gate must too.
+        let gone = common::git(
+            &run.workspace,
+            &["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "gone"],
+        );
+        let (note, _) = store
+            .design_note_add(NewDesignNote {
+                item: session.item.clone(),
+                session: session.id.clone(),
+                kind: NoteKind::Change,
+                text: "make the title red".into(),
+                details_text: None,
+                send_picture: false,
+                target: None,
+                viewport: Viewport {
+                    w: 1440,
+                    h: 900,
+                    preset: ViewportPreset::Desktop,
+                },
+                client_key: "key-gone".into(),
+                reverts: None,
+                resent_from: None,
+                before_asset: None,
+                created_by_device: None,
+            })
+            .unwrap();
+        let base = common::git(&run.workspace, &["rev-parse", "HEAD"]);
+        for change in [
+            NoteChange::Sent {
+                base_commit: base,
+                delivery: 2,
+            },
+            NoteChange::Status {
+                to: NoteStatus::Done,
+                fail_reason: None,
+                commit: Some(gone),
+                no_change: false,
+            },
+        ] {
+            store
+                .design_note_change(&session.item, &note.id, change)
+                .unwrap();
+        }
+    }
+    let head = common::git(&run.workspace, &["rev-parse", "HEAD"]);
+    confirm(&h, &session, &head, &[], &[]).await;
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    let gate = open_proposal(&h, &item.id).await;
+    approve(&h, &gate).await;
+    let intent = intent_of(&h, &item.id).await;
+    assert_eq!(intent.requirements.len(), 1);
+    assert!(intent.requirements[0].text.contains("no change"));
+    assert!(intent.images.is_empty());
+}

@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use archon_core::design::{
-    DesignNote, DesignSession, FinishChoices, IMAGE_CAP_WARN_MARGIN, NoteStatus, SessionState,
-    Viewport,
+    DesignNote, DesignSession, FinishChoices, IMAGE_CAP_WARN_MARGIN, NoteKind, NoteStatus,
+    SessionState, Viewport,
 };
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
@@ -328,12 +328,15 @@ pub(super) fn approvable_notes(
     if !active.is_empty() {
         return Ok(active);
     }
-    let done: Vec<DesignNote> = store
-        .design_notes(item)?
-        .into_iter()
-        .filter(|n| n.session == session.id && n.status == NoteStatus::Done)
-        .collect();
-    if done.is_empty() || !done.iter().all(|n| n.no_change) {
+    // The rule Finish applies (`DesignService::finish_confirm`): with nothing
+    // active, a done "no change" note makes the session approvable.
+    let no_change = store.design_notes(item)?.into_iter().any(|n| {
+        n.session == session.id
+            && n.kind != NoteKind::Revert
+            && n.status == NoteStatus::Done
+            && n.no_change
+    });
+    if !no_change {
         return Err(ArchonError::Invalid(
             "nothing to approve: the design session has no active note".into(),
         ));

@@ -183,9 +183,12 @@ impl DesignService {
             self.active_notes(&store, &wt, &row.item, &head, None)?
         };
         let no_change_only = active.is_empty()
-            && notes
-                .iter()
-                .any(|n| n.kind != NoteKind::Revert && n.status == NoteStatus::Done && n.no_change);
+            && notes.iter().any(|n| {
+                n.session == row.id
+                    && n.kind != NoteKind::Revert
+                    && n.status == NoteStatus::Done
+                    && n.no_change
+            });
         if active.is_empty() && !no_change_only {
             return Err(ArchonError::Invalid(
                 "nothing to approve; add a note or cancel".into(),
@@ -417,9 +420,12 @@ impl DesignService {
             }
         }
         let no_change_only = all_active.is_empty()
-            && notes
-                .iter()
-                .any(|n| n.kind != NoteKind::Revert && n.status == NoteStatus::Done && n.no_change);
+            && notes.iter().any(|n| {
+                n.session == row.id
+                    && n.kind != NoteKind::Revert
+                    && n.status == NoteStatus::Done
+                    && n.no_change
+            });
         Ok(DesignFinishView {
             capture,
             head,
@@ -549,9 +555,12 @@ impl DesignService {
             )
         };
         let no_change_only = active.is_empty()
-            && notes
-                .iter()
-                .any(|n| n.kind != NoteKind::Revert && n.status == NoteStatus::Done && n.no_change);
+            && notes.iter().any(|n| {
+                n.session == row.id
+                    && n.kind != NoteKind::Revert
+                    && n.status == NoteStatus::Done
+                    && n.no_change
+            });
         if active.is_empty() && !no_change_only {
             return Err(ArchonError::Invalid(
                 "nothing to approve; add a note or cancel".into(),

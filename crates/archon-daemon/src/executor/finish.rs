@@ -47,6 +47,9 @@ pub(super) async fn finish_run(
     blocker: bool,
 ) -> Result<FollowUp, ArchonError> {
     assert!(state.is_terminal(), "finish_run needs a terminal state");
+    // Every way a run ends (failure, budget, cancel, success) ends its open
+    // design sessions, so no Confirmed session keeps its browser and slot.
+    super::settle::end_designs(ctx, &run.id).await;
     if matches!(state, RunState::Succeeded { .. }) {
         match super::acceptance::require_current(ctx, &run).await {
             Ok(_) => {}

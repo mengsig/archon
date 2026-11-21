@@ -1,0 +1,132 @@
+// A stand-in host for the design screen: serves the shipped web app, answers the
+// session API, and plays the daemon over a routed WebSocket. Its "agent" restyles
+// the fixture app (fixtures/design-app) and its "browser" is a second Playwright
+// page whose screenshots are the frames. No archond is needed.
+import { createServer } from 'node:http';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join, resolve, dirname, extname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { startFixtureApp } from '../fixtures/design-app/server.js';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
+const PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+export const ITEM = 'qi_FIXTURE';
+const CSS_BASE = readFileSync(join(ROOT, 'tests/fixtures/design-app/style.css'), 'utf8');
+
+export async function startHarness(browser, { role = 'operator' } = {}) {
+  const fixtureApp = await startFixtureApp();
+  const appPage = await (await browser.newContext({ viewport: { width: 800, height: 500 } })).newPage();
+  await appPage.goto(fixtureApp.url);
+  const server = createServer((req, res) => {
+    const path = req.url.split('?')[0];
+    if (path === '/api/session') return json(res, { device: { id: 'dev1', name: 'Test', role }, protocol_version: 25, daemon_version: 'test' });
+    if (path === '/api/health') return json(res, { ok: true });
+    const file = join(ROOT, path === '/' ? 'index.html' : path.slice(1));
+    if (!file.startsWith(ROOT) || /\/(tests|dev|node_modules)\//.test(file) || !existsSync(file)) { res.writeHead(404).end(); return; }
+    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' }).end(readFileSync(file));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const daemon = createDaemon({ appPage, fixtureApp, role });
+  return {
+    baseURL: `http://127.0.0.1:${server.address().port}`,
+    daemon,
+    appPage,
+    install: (page) => page.routeWebSocket(/\/ws$/, (ws) => daemon.connect(ws)),
+    stop: async () => { daemon.stop(); await appPage.context().close(); await fixtureApp.stop(); server.close(); writeFileSync(fixtureApp.css, CSS_BASE); },
+  };
+}
+
+const json = (res, body) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(body));
+
+function createDaemon({ appPage, fixtureApp, role }) {
+  const state = { notes: [], seq: 0, ended: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false };
+  const now = () => new Date().toISOString();
+  const session = () => ({ id: 'ds_FIXTURE', item: ITEM, state: state.sessionState, degraded: false, note_version: state.version, viewport_preset: 'desktop', preview_url: 'http://127.0.0.1:5173/', sandbox_off: false });
+  const view = (n) => ({ ...n, undone_by: state.notes.find((x) => x.reverts === n.id && x.status === 'done')?.id ?? null, read_only: false, active: true });
+  const push = (ws, event) => ws.send(JSON.stringify({ frame: 'design', sub: 1, event }));
+  const broadcast = (event) => state.connections.forEach((c) => c.subscribed && push(c.ws, event));
+  const reply = (ws, id, reply, data) => ws.send(JSON.stringify({ frame: 'reply', id, result: { Ok: { reply, data } } }));
+  const refuse = (ws, id, code, message) => ws.send(JSON.stringify({ frame: 'reply', id, result: { Err: { code, message } } }));
+
+  async function sendFrame(conn) {
+    if (state.ended || !conn.subscribed) return;
+    const jpeg = await appPage.screenshot({ type: 'jpeg', quality: 60 });
+    const { width, height } = appPage.viewportSize();
+    push(conn.ws, { event: 'frame', seq: ++state.seq, jpeg_b64: jpeg.toString('base64'), w: width, h: height, at: now() });
+  }
+  async function target() {
+    const box = await appPage.locator('#cta').boundingBox();
+    return { path: '/', selector: 'main > button#cta.primary', role_name: 'button "Buy now"', component: null, box, viewport: { w: 800, h: 500, preset: 'desktop' }, styles: { color: 'rgb(255, 255, 255)', display: 'block' }, region: false };
+  }
+  const note = (fields) => ({ item: ITEM, id: `D${fields.number}`, session: 'ds_FIXTURE', kind: 'change', text: '', details_text: null, send_picture: true, target: null, viewport: { w: 800, h: 500, preset: 'desktop' },
+    status: 'queued', fail_reason: null, base_commit: 'base0001', commit: null, no_change: false, reverts: null, resent_from: null, superseded_by: null, thread: [], delivery: 0,
+    before_asset: null, after_asset: null, created_at: now(), updated_at: now(), ...fields });
+  const setNote = (n, patch) => { Object.assign(n, patch, { updated_at: now() }); state.version += 1; broadcast({ event: 'note', ...view(n) }); };
+  const recolor = async (color) => { writeFileSync(fixtureApp.css, `${CSS_BASE}\n.primary { background: ${color}; }\n`); await appPage.waitForFunction((c) => getComputedStyle(document.querySelector('#cta')).backgroundColor === c, color === '#1f8a3b' ? 'rgb(31, 138, 59)' : 'rgb(40, 93, 206)'); };
+
+  async function handle(conn, msg) {
+    const { ws } = conn;
+    const { req, cmd } = msg;
+    state.requests.push(msg);
+    if (cmd === 'hello') return reply(ws, req, 'welcome', { protocol_version: 25, features: ['design_sessions'], device: { id: 'dev1', name: 'Test', role } });
+    if (cmd === 'feed_history') return reply(ws, req, 'feed', []);
+    if (cmd === 'list_item_summaries') return reply(ws, req, 'item_summaries', []);
+    if (cmd === 'list_questions') return reply(ws, req, 'questions', []);
+    if (cmd?.startsWith('subscribe_') && cmd !== 'subscribe_design') return reply(ws, req, 'subscribed', { sub: 9 });
+    if (!cmd?.startsWith('design_') && cmd !== 'subscribe_design') return refuse(ws, req, 'unsupported', `${cmd} is not part of this stand-in`);
+    if (cmd === 'design_get') {
+      if (role !== 'operator') return reply(ws, req, 'design_summary', { state: 'live', note_count: state.notes.length });
+      return reply(ws, req, 'design_state', { item: ITEM, session: session(), notes: state.notes.map(view), browser: { status: 'running' }, finish_blocker: null, images_used: 1, images_max: 128, stage_deadline: null });
+    }
+    if (state.ended) return refuse(ws, req, 'gone', 'This design session has ended.');
+    switch (cmd) {
+      case 'subscribe_design': conn.subscribed = true; reply(ws, req, 'subscribed', { sub: 1 }); return void setTimeout(() => sendFrame(conn), 50);
+      case 'design_frame_ack': reply(ws, req, 'design_done', null); return void setTimeout(() => sendFrame(conn), 120);
+      case 'design_resolve': return reply(ws, req, 'design_resolved', { target: await target(), label: 'button "Buy now"', asset: 'da_pending', data_url: PIXEL });
+      case 'design_note_add': {
+        if (state.sessionState === 'finishing') return refuse(ws, req, 'finishing', 'finishing');
+        const known = state.notes.find((n) => n.client_key === msg.client_key);
+        if (known) return reply(ws, req, 'design_note', view(known));
+        const n = note({ number: state.notes.length + 1, client_key: msg.client_key, text: msg.text, details_text: msg.details_text, send_picture: msg.send_picture, target: await target() });
+        state.notes.unshift(n);
+        reply(ws, req, 'design_note', view(n));
+        setTimeout(async () => {
+          setNote(n, { status: 'working' });
+          await recolor('#1f8a3b');
+          setNote(n, { status: 'done', commit: 'abc1234def', before_asset: 'da_b', after_asset: 'da_a', thread: [{ at: now(), from: 'agent', text: 'Made the button green.' }] });
+        }, 200);
+        return;
+      }
+      case 'design_asset': return reply(ws, req, 'design_asset', { id: msg.id, data_url: PIXEL, width: 1, height: 1, caption: 'captured from the preview at commit abc1234, 14:32' });
+      case 'design_note_undo': {
+        const original = state.notes.find((n) => n.id === msg.id);
+        const revert = note({ number: state.notes.length + 1, kind: 'revert', reverts: original.id, status: 'working', client_key: 'rev', text: '' });
+        state.notes.unshift(revert);
+        reply(ws, req, 'design_note', view(revert));
+        setTimeout(async () => { await recolor('#285dce'); setNote(revert, { status: 'done', commit: 'rev00001' }); setNote(original, {}); }, 100);
+        return;
+      }
+      case 'design_finish_capture':
+        state.sessionState = 'finishing'; state.version += 1;
+        broadcast({ event: 'session', state: 'finishing', degraded: false, preview_path: '/', commit: 'abc1234def', browser: { status: 'running' }, note_version: state.version });
+        return reply(ws, req, 'design_finish', { capture: 'cap1', head: 'abc1234def', note_version: state.version, no_change_only: false,
+          cards: state.notes.filter((n) => n.status === 'done' && n.kind !== 'revert' && !view(n).undone_by).map((n) => ({ note: n.id, text: n.text, asset: 'da_f', data_url: PIXEL, caption: 'captured from the preview at commit abc1234', include: true, superseded_by: null, not_found: false, left_history: false })) });
+      case 'design_finish_cancel': state.sessionState = 'live'; return reply(ws, req, 'design_done', null);
+      case 'design_finish_confirm': state.confirmed = msg; return reply(ws, req, 'design_done', null);
+      default: return reply(ws, req, 'design_done', null);
+    }
+  }
+  return {
+    state,
+    connect(ws) {
+      const conn = { ws, subscribed: false };
+      state.connections.add(conn);
+      ws.onMessage((raw) => handle(conn, JSON.parse(String(raw))).catch((e) => console.error('stand-in daemon', e)));
+      ws.onClose(() => state.connections.delete(conn));
+    },
+    // A new session replaced this one: every request now answers `gone`.
+    endSession() { state.ended = true; broadcast({ event: 'ended', reason: 'revised' }); },
+    stop() { state.ended = true; },
+  };
+}

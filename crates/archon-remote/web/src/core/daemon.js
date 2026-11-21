@@ -64,6 +64,6 @@ function enqueueFields(draft) {
     budget_usd: null,
     idempotency_key: draft.idempotencyKey ?? null,
   };
-  if (draft.review) fields.autonomy = { review: draft.review };
+  if (draft.review || draft.designLive) fields.autonomy = { ...(draft.review ? { review: draft.review } : {}), ...(draft.designLive ? { proposal: 'live' } : {}) };
   return fields;
 }

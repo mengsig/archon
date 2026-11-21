@@ -11,10 +11,11 @@ import { mountInbox } from './features/inbox/inbox.js';
 import { mountChat } from './features/chat/chat.js';
 import { mountOverview } from './features/overview/overview.js';
 import { mountSettings } from './features/settings/settings.js';
+import { mountDesign } from './features/design/screen.js';
 import { mountGraph } from './features/graph/graph.js';
 import { APP_VERSION } from './version.js';
 
-const SCREENS = { queue: mountQueue, graph: mountGraph, item: mountItem, inbox: mountInbox, chat: mountChat, overview: mountOverview, settings: mountSettings };
+const SCREENS = { queue: mountQueue, graph: mountGraph, item: mountItem, design: mountDesign, inbox: mountInbox, chat: mountChat, overview: mountOverview, settings: mountSettings };
 const TABS = [
   { id: 'overview', label: 'Overview', icon: 'overview' },
   { id: 'queue', label: 'Queue', icon: 'queue' },

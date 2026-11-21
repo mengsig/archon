@@ -520,8 +520,13 @@ at-least-once, so every handler is idempotent.
 
 | Subscription | Query | Handles |
 | --- | --- | --- |
-| `orchestrator` | `{agent: <orchestrator>, types:["agent.message","agent.turn_completed","agent.started","question.asked","agent.failed","agent.cancelled","agent.completed","agent.restarted","agent.usage_updated","inbox.delivered","inbox.consumed","compaction.completed"]}` | Waking conversation reads (§12), questions, supervisor, adopting an Aether restart (§16), orchestrator spend, restating the directives after a compaction (§18.5). |
+| `orchestrator` | `{agent: <orchestrator>, types:["agent.message","agent.turn_completed","custom","agent.started","question.asked","agent.failed","agent.cancelled","agent.completed","agent.restarted","agent.usage_updated","inbox.delivered","inbox.consumed","compaction.completed","compaction.native"]}` | Waking conversation reads (§12), questions, supervisor, adopting an Aether restart (§16), orchestrator spend, restating the directives after a compaction (§18.5). |
 | `fleet` | `{types:["agent.created","task.completed","task.failed","task.cancelled","agent.failed","agent.cancelled","agent.completed","agent.usage_updated","question.asked","inbox.delivered","inbox.consumed"]}` | Stage completion, spend ledger, stage questions, model-policy watchdog, run-node inbox forwarding, authenticated relay provenance and unread-inbox health. An agent's end (`agent.completed`, `agent.failed`, `agent.cancelled`) also wakes the dispatcher, which stops what a settled stage agent delegated (§6.3). |
+
+When Aether records `turn_ended_after_tool_error` for the current orchestrator,
+Archon sends one keyed trigger with the failed tool and error. A second
+consecutive failing turn posts a blocker to the operator. A gap in failing
+turns or a different orchestrator starts a fresh chain.
 
 The `fleet` subscription also forwards message inbox entries addressed to
 run nodes (§5.5). It also keeps, per agent that works for an item, the
@@ -739,27 +744,66 @@ starts it again.
 
 **Shared mode.** `[aether] mode = "shared"` keeps the earlier behaviour.
 Archon uses the operator's `aetherd` (`[aether] socket`/`address`, else
-Aether's own resolution, §4.1). `archon setup` appends the block below to
+Aether's own resolution, §4.1). `archon setup` appends a server registration to
 the operator's `$AETHER_CONFIG_DIR|~/.config/aether/config.toml` if no server
 named `archon` exists yet, then asks the operator to restart `aetherd`. The
 bench's private `archond` uses shared mode, pointed at the Aether under test.
 Shared mode refuses the operator's `/answer` chat command (§5.2).
 
+`archon setup` writes caller metadata and the tool classes from Archon's
+tool registry. Aether can replay a dropped call to a tool marked `read_only`.
+
 ```toml
-# Added by `archon setup`. Remove this block to unregister Archon.
 [[mcp.servers]]
 name = "archon"
 command = "/abs/path/to/archon"
 args = ["mcp"]
-classes = { list_pipelines = "read_only", list_repos = "read_only", model_policy = "read_only",
-            list_queue = "read_only", get_item = "read_only", get_stage = "read_only",
-            queue_status = "read_only", cost_report = "read_only",
-            model_evidence = "read_only",
-            enqueue = "mutation", update_item = "mutation", cancel_item = "mutation",
-            retry_item = "mutation", pause = "mutation", resume = "mutation",
-            notify = "mutation", ask_operator = "mutation", publish_report = "mutation",
-            register_repo = "mutation", autonomy_policy = "read_only",
-            set_directive = "mutation", clear_directive = "mutation" }
+send_caller_meta = true
+
+[mcp.servers.classes]
+list_pipelines = "read_only"
+list_repos = "read_only"
+model_policy = "read_only"
+list_queue = "read_only"
+get_item = "read_only"
+get_stage = "read_only"
+queue_status = "read_only"
+cost_report = "read_only"
+model_evidence = "read_only"
+autonomy_policy = "read_only"
+list_artifacts = "read_only"
+read_artifact = "read_only"
+guide = "read_only"
+settings = "read_only"
+request_status = "read_only"
+register_repo = "mutation"
+enqueue = "mutation"
+update_item = "mutation"
+cancel_item = "mutation"
+retry_item = "mutation"
+pause = "mutation"
+resume = "mutation"
+notify = "mutation"
+ask_operator = "mutation"
+record_chat_answer = "mutation"
+publish_report = "mutation"
+set_directive = "mutation"
+clear_directive = "mutation"
+message_orchestrator = "mutation"
+enqueue_initiative = "mutation"
+update_initiative = "mutation"
+steer_item = "mutation"
+record_lesson = "mutation"
+refresh_item = "mutation"
+publish_artifact = "mutation"
+submit_verdict = "mutation"
+request_merge = "mutation"
+promote = "mutation"
+request_authority = "mutation"
+clear_notifications = "mutation"
+approve_intent = "mutation"
+watch_repo = "mutation"
+github_reply = "external"
 ```
 
 Within one daemon, MCP servers are global, so every agent of the daemon that

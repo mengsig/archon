@@ -569,3 +569,99 @@ async fn revise_resumes_the_design_agent_in_a_new_session_with_its_notes() {
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].status, NoteStatus::Done);
 }
+
+/// Item 6: cancelling while the proposal gate is open ends the confirmed session.
+#[tokio::test]
+async fn cancelling_with_the_gate_open_ends_the_confirmed_session() {
+    let h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    let (_, head) = done_note(&h, &session, &run, "make it green", b"green").await;
+    confirm(&h, &session, &head, &["D1"], &[]).await;
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    open_proposal(&h, &item.id).await;
+    let now = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .design_session(&session.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(now.state, SessionState::Confirmed, "kept for the gate");
+    h.cli(Request::CancelItem {
+        item: item.id.clone(),
+        reason: Some("no".into()),
+    })
+    .await
+    .expect("cancel");
+    let now = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .design_session(&session.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(now.state, SessionState::Ended);
+}
+
+/// Item 7: a session of only "no change" notes is approvable with an empty delta.
+#[tokio::test]
+async fn a_no_change_review_reaches_the_gate_and_is_approved() {
+    let h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let (note, _) = store
+            .design_note_add(NewDesignNote {
+                item: session.item.clone(),
+                session: session.id.clone(),
+                kind: NoteKind::Change,
+                text: "looks fine".into(),
+                details_text: None,
+                send_picture: false,
+                target: None,
+                viewport: Viewport {
+                    w: 1440,
+                    h: 900,
+                    preset: ViewportPreset::Desktop,
+                },
+                client_key: "key-fine".into(),
+                reverts: None,
+                resent_from: None,
+                before_asset: None,
+                created_by_device: None,
+            })
+            .unwrap();
+        let base = common::git(&run.workspace, &["rev-parse", "HEAD"]);
+        for change in [
+            NoteChange::Sent {
+                base_commit: base,
+                delivery: 1,
+            },
+            NoteChange::Status {
+                to: NoteStatus::Done,
+                fail_reason: None,
+                commit: None,
+                no_change: true,
+            },
+        ] {
+            store
+                .design_note_change(&session.item, &note.id, change)
+                .unwrap();
+        }
+    }
+    let head = common::git(&run.workspace, &["rev-parse", "HEAD"]);
+    confirm(&h, &session, &head, &[], &[]).await;
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    let gate = open_proposal(&h, &item.id).await;
+    approve(&h, &gate).await;
+    let intent = intent_of(&h, &item.id).await;
+    assert_eq!(intent.requirements.len(), 1);
+    assert!(intent.requirements[0].text.contains("no change"));
+    assert!(intent.images.is_empty());
+}

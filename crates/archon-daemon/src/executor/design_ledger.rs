@@ -7,7 +7,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use archon_core::design::{
-    DesignNote, DesignSession, FinishChoices, IMAGE_CAP_WARN_MARGIN, SessionState, Viewport,
+    DesignNote, DesignSession, FinishChoices, IMAGE_CAP_WARN_MARGIN, NoteStatus, SessionState,
+    Viewport,
 };
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
@@ -309,6 +310,37 @@ fn ledger_notes(
     Ok(out)
 }
 
+/// The active notes the confirmed `session` puts in the ledger. A session whose
+/// done notes are all "no change" (no commit, so never active) is approvable
+/// with none: the ledger then adds nothing. Anything else without an active
+/// note is refused.
+pub(super) fn approvable_notes(
+    ctx: &DaemonContext,
+    store: &Store,
+    worktree: &WorktreeRef,
+    item: &QueueItemId,
+    session: &DesignSession,
+    head: &str,
+) -> Result<Vec<DesignNote>, ArchonError> {
+    let active =
+        ctx.design
+            .active_notes(store, worktree, item, head, session.finish_choices.as_ref())?;
+    if !active.is_empty() {
+        return Ok(active);
+    }
+    let done: Vec<DesignNote> = store
+        .design_notes(item)?
+        .into_iter()
+        .filter(|n| n.session == session.id && n.status == NoteStatus::Done)
+        .collect();
+    if done.is_empty() || !done.iter().all(|n| n.no_change) {
+        return Err(ArchonError::Invalid(
+            "nothing to approve: the design session has no active note".into(),
+        ));
+    }
+    Ok(Vec::new())
+}
+
 /// Build, preserve and freeze the ledger of a design gate: the design twin of
 /// `intent::prepare`. Returns the rendered page.
 pub(super) fn prepare(
@@ -349,18 +381,7 @@ pub(super) fn prepare(
         .clone()
         .ok_or_else(|| ArchonError::Corrupt("a confirmed session has no finish head".into()))?;
     let worktree = worktree_ref(store, run)?;
-    let active = ctx.design.active_notes(
-        store,
-        &worktree,
-        &item.id,
-        &head,
-        session.finish_choices.as_ref(),
-    )?;
-    if active.is_empty() {
-        return Err(ArchonError::Invalid(
-            "nothing to approve: the design session has no active note".into(),
-        ));
-    }
+    let active = approvable_notes(ctx, store, &worktree, &item.id, &session, &head)?;
     let notes = ledger_notes(ctx, store, &item.id, &session, &active)?;
     let no_change = format!("D{}", active.iter().map(|n| n.number).max().unwrap_or(1));
     let mut record = build_draft(base.as_ref(), &item.brief, &notes, Some(&no_change))?;

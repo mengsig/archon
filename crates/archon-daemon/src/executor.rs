@@ -512,6 +512,7 @@ pub(crate) async fn check_item_budget(
             return Ok(());
         };
         let stage = archon_core::run::BUDGET_STAGE.to_owned();
+        settle::end_designs(ctx, &run.id).await;
         finish::fail_run(ctx, &mut table, run, stage, error, true).await?
     };
     run_follow_up(ctx, follow).await
@@ -524,6 +525,16 @@ pub async fn cancel_item(
     id: &QueueItemId,
     reason: &str,
 ) -> Result<QueueItem, ArchonError> {
+    let live_run = {
+        let store = ctx.store.lock().await;
+        match store.item(id)?.state {
+            archon_core::queue::QueueState::Running { run } => Some(run),
+            _ => None,
+        }
+    };
+    if let Some(run) = &live_run {
+        settle::end_designs(ctx, run).await;
+    }
     let (follow, item) = {
         let mut table = ctx.runs.lock().await;
         let follow = finish::cancel_item(ctx, &mut table, id, reason).await?;

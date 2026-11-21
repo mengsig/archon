@@ -469,6 +469,38 @@ fn recorded(outcome: StageOutcome, flagged: bool) -> StageOutcome {
     }
 }
 
+/// End every design session of `run` still open: a run that finishes or is
+/// cancelled while its proposal gate is open leaves a Confirmed session whose
+/// browser would otherwise keep running and hold a `max_sessions` slot.
+pub(crate) async fn end_designs(ctx: &DaemonContext, run: &archon_core::id::PipelineRunId) {
+    let sessions = {
+        let store = ctx.store.lock().await;
+        let Ok(run) = store.run(run) else { return };
+        match store.design_sessions(&run.item) {
+            Ok(all) => all
+                .into_iter()
+                .filter(|s| s.run == run.id && s.state != archon_core::design::SessionState::Ended)
+                .collect::<Vec<_>>(),
+            Err(_) => return,
+        }
+    };
+    for session in sessions {
+        if let Err(error) = ctx
+            .design
+            .stage_settled(
+                &ctx.arc(),
+                &session.run,
+                &session.stage_id,
+                session.attempt,
+                crate::design::StageEnd::Cancelled,
+            )
+            .await
+        {
+            tracing::warn!(%error, session = %session.id, "design session did not end");
+        }
+    }
+}
+
 /// Record a final outcome and apply the driver's resulting decision.
 async fn persist(
     ctx: &DaemonContext,
@@ -1408,6 +1440,7 @@ async fn apply_decision(
     }
     if let Some(state) = finish_state {
         assert!(spawns.is_empty(), "a finishing driver spawns nothing");
+        end_designs(ctx, &run.id).await;
         return finish::finish_run(ctx, table, run, state, false).await;
     }
     if !spawns.is_empty() {
@@ -1496,6 +1529,7 @@ async fn open_gate(
                 stage_id,
                 error: format!("approved proposal cannot be frozen: {error}"),
             };
+            end_designs(ctx, &run.id).await;
             finish::finish_run(ctx, table, run, state, false).await
         }
         result => result,

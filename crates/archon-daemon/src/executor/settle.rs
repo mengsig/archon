@@ -501,7 +501,18 @@ async fn persist(
         (settled, owes_stop, kept)
     };
     table.spawn_errors.remove(&settled.id);
-    if let Some(end) = design_end
+    // A confirmed session outlives its completed stage: the gate builds the
+    // ledger from it, and ends it when the operator decides (proposal.rs).
+    let awaiting_gate = match design_end {
+        Some(crate::design::StageEnd::Completed) => {
+            let store = ctx.store.lock().await;
+            ctx.design
+                .session_of(&store, &run.id, &settled.stage_id, settled.attempt)?
+                .is_some_and(|s| s.state == archon_core::design::SessionState::Confirmed)
+        }
+        _ => false,
+    };
+    if let Some(end) = design_end.filter(|_| !awaiting_gate)
         && let Err(error) = ctx
             .design
             .stage_settled(&ctx.arc(), &run.id, &settled.stage_id, settled.attempt, end)

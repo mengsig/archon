@@ -156,7 +156,7 @@ async fn done_note(
             .unwrap();
     }
     let mut bytes = PNG.to_vec();
-    bytes.extend_from_slice(text.as_bytes());
+    bytes.extend_from_slice(picture);
     let sha256 = Sha256::digest(&bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -178,11 +178,7 @@ async fn done_note(
     };
     let path = h.ctx.design.asset_path(&asset);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(
-        &path,
-        picture.iter().chain(&bytes).copied().collect::<Vec<_>>(),
-    )
-    .unwrap();
+    std::fs::write(&path, &bytes).unwrap();
     asset.path = path.display().to_string();
     let asset = store.design_asset_put(asset).unwrap();
     store
@@ -368,6 +364,8 @@ async fn a_live_item_requires_the_intent_path_without_the_model_plan_entry() {
             .as_object_mut()
             .expect("the item has a model plan")
             .remove("intent-acceptance");
+        // Its origins name the dropped key: leave the plan unattributed.
+        wire.as_object_mut().unwrap().remove("model_origins");
         let stored: QueueItem = serde_json::from_value(wire).unwrap();
         assert!(!stored.model_plan.0.contains_key("intent-acceptance"));
         store.update_item(&stored).unwrap();
@@ -475,4 +473,51 @@ async fn a_live_item_with_an_earlier_intent_appends_to_it() {
     assert_eq!(ids, ["D1", "D2"]);
     assert!(intent.requirements.contains(&earlier.requirements[0]));
     assert!(intent.images.contains(&earlier.images[0]));
+}
+
+/// Revise on a design gate resumes the kept agent in a new session that still
+/// carries the item's notes; the old session ends.
+#[tokio::test]
+async fn revise_resumes_the_design_agent_in_a_new_session_with_its_notes() {
+    let h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    let agent = h.running().await[0].aether_agent.clone();
+    let (_, head) = done_note(&h, &session, &run, "make it green", b"green").await;
+    confirm(&h, &session, &head, &["D1"], &[]).await;
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    let gate = open_proposal(&h, &item.id).await;
+    let asked = gate.question.clone().expect("asked");
+    h.cli(Request::Answer {
+        chat: false,
+        question: asked,
+        text: "a darker green please".into(),
+    })
+    .await
+    .expect("answer");
+    h.dispatch().await;
+    let running = h.running().await;
+    assert_eq!(
+        (running[0].stage_id.as_str(), running[0].attempt),
+        ("design", 2)
+    );
+    assert_eq!(running[0].aether_agent, agent, "the kept agent resumes");
+    let store = h.ctx.store.lock().await;
+    let old = store.design_session(&session.id).unwrap().unwrap();
+    assert_eq!(old.state, SessionState::Ended);
+    let next = h
+        .ctx
+        .design
+        .session_of(&store, &run.id, "design", 2)
+        .unwrap()
+        .expect("a new session");
+    assert_ne!(next.id, session.id);
+    assert!(matches!(
+        next.state,
+        SessionState::Starting | SessionState::Live
+    ));
+    let notes = store.design_notes(&item.id).unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].status, NoteStatus::Done);
 }

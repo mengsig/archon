@@ -253,18 +253,16 @@ async fn verify_design(
             "worktree moved after Finish: expected {short}; restore it and complete again"
         ));
     }
-    let active = {
+    let approvable = {
         let store = ctx.store.lock().await;
-        ctx.design.active_notes(
-            &store,
-            &worktree,
-            &item.id,
-            &head,
-            session.finish_choices.as_ref(),
-        )?
+        super::design_ledger::approvable_notes(ctx, &store, &worktree, &item.id, &session, &head)
     };
-    if active.is_empty() {
-        return refuse("the design session has no active note; add a note and finish again".into());
+    match approvable {
+        Ok(_) => {}
+        Err(ArchonError::Invalid(why)) => {
+            return refuse(format!("{why}; add a note and finish again"));
+        }
+        Err(error) => return Err(error),
     }
     Ok(outcome)
 }

@@ -1053,6 +1053,25 @@ impl Store {
         Ok(())
     }
 
+    /// Whether a picture record of `item` still holds the bytes `sha256`:
+    /// records of different sources share one file, which goes only with
+    /// the last of them.
+    pub fn design_asset_sha_held(
+        &self,
+        item: &QueueItemId,
+        sha256: &str,
+    ) -> Result<bool, ArchonError> {
+        let held: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM design_assets WHERE item = ?1 AND sha256 = ?2",
+                params![item.as_str(), sha256],
+                |r| r.get(0),
+            )
+            .ctx("count design assets of a hash")?;
+        Ok(held > 0)
+    }
+
     /// Remove everything the item holds; the pictures come back so their files can go.
     pub fn design_item_delete(
         &mut self,

@@ -389,7 +389,9 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
             }
         };
         stop_stacks(ctx, &item).await?;
-        if ctx.design.enabled() {
+        // Whatever `[design] enabled` says now: data kept while it was on
+        // goes with its item.
+        {
             let item_id = item.item.clone();
             let mut store = ctx.store.lock().await;
             if let Err(error) = ctx.design.gc_item(&mut store, &item_id) {

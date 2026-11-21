@@ -548,7 +548,11 @@ async fn an_approved_note_is_not_active_for_a_later_ledger() {
             .map(|n| n.id)
             .collect::<Vec<_>>()
     };
-    assert_eq!(active(&h), [id.clone()], "active until approved");
+    assert_eq!(
+        active(&h),
+        std::slice::from_ref(&id),
+        "active until approved"
+    );
     confirm(&h, &session, &head, &[id.as_str()], &[]).await;
     h.settle_running(forged).await;
     h.dispatch().await;

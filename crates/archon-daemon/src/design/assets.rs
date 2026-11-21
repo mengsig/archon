@@ -279,7 +279,10 @@ impl DesignService {
         let count = old.len();
         for asset in old {
             store.design_asset_delete(&asset.item, &asset.id)?;
-            let _ = std::fs::remove_file(self.asset_path(&asset));
+            // Records of different sources share one file per hash.
+            if !store.design_asset_sha_held(&asset.item, &asset.sha256)? {
+                let _ = std::fs::remove_file(self.asset_path(&asset));
+            }
         }
         Ok(count)
     }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   initialState, reduce, stagePhase, dotLook, endInfo, followsNewSession, noteActions, sessionLabel, earlierText,
-  confirmedPreset, presetMismatch, pointerBlockedText, notesHeading, PRESET_SIZE,
+  confirmedPreset, presetMismatch, pointerBlockedText, notesHeading, PRESET_SIZE, ledgerLede,
 } from '../../src/features/design/state.js';
 import { designErrorText } from '../../src/core/design.js';
 
@@ -123,4 +123,23 @@ test('F5: a preset is confirmed only by the frame size', () => {
 test('F8: the notes heading counts the notes listed', () => {
   const notes = [1, 2, 3, 4, 5, 6].map((n) => ({ id: `D${n}`, kind: n === 4 ? 'revert' : 'change' }));
   assert.equal(notesHeading(notes), 'Notes (6)');
+});
+
+test('GATE: a session shown as it ended keeps its decision, and its own notes are not called earlier', () => {
+  // The daemon answers design_get with the item's last session once none is open.
+  const approved = ended('approved');
+  assert.equal(stagePhase(approved).title, 'Design approved');
+  assert.equal(dotLook(approved).label, 'Approved');
+  assert.equal(stagePhase(ended('rejected')).title, 'Design rejected');
+  const own = { id: 'D1', session: 'ds_1', status: 'done', commit: 'abc', read_only: true };
+  assert.equal(sessionLabel(own, 'ds_1'), '', 'its own note');
+  assert.match(earlierText(own, 'ds_1'), /has ended/);
+  assert.equal(sessionLabel({ ...own, session: 'ds_0' }, 'ds_1'), 'Earlier session');
+  assert.equal(noteActions(own, { live: false }).undo, false, 'nothing to do on an ended session');
+});
+
+test('GATE: while the approval question is on its way the ledger never says none is open', () => {
+  assert.doesNotMatch(ledgerLede(null), /No question/);
+  assert.match(ledgerLede(null), /wrapping up/);
+  assert.match(ledgerLede({ id: 'q1' }), /Approve it/);
 });

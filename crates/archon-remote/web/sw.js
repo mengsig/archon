@@ -1,6 +1,6 @@
 // Caches the app shell so Archon opens without a network. Never caches
 // the API or the live socket: those are always fresh or fail visibly.
-const CACHE = 'archon-shell-v8';
+const CACHE = 'archon-shell-v9';
 // CacheStorage is shared by the whole origin, so only caches with this prefix are ours.
 const CACHE_PREFIX = 'archon-shell-';
 // The worker sits at the app's root, "" or the mount prefix.
@@ -49,6 +49,7 @@ const SHELL = [
   `${BASE}/src/features/design/overlay.js`,
   `${BASE}/src/features/design/scale.js`,
   `${BASE}/src/features/design/screen.js`,
+  `${BASE}/src/features/design/sheet-state.js`,
   `${BASE}/src/features/design/sketch-model.js`,
   `${BASE}/src/features/design/sketch.js`,
   `${BASE}/src/features/design/state.js`,

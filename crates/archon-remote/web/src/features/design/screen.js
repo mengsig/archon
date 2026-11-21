@@ -16,6 +16,7 @@ import { createNoteOutbox } from './outbox.js';
 import { noteFields } from './details.js';
 import { startFinish, resumeFinish, ledgerPanel } from './finish.js';
 import { openSketch } from './sketch.js';
+import { sheetAfterCancel, readScroll, restoreScroll } from './sheet-state.js';
 import { buildTopBar, buildModeBar, buildBottomBar, buildPhasePanel, buildStatusBar, openShortcuts } from './chrome.js';
 
 const PHONE_PX = 640;
@@ -36,6 +37,7 @@ export function mountDesign(view, ctx) {
   let continued = false;
   let layout = 'desktop';
   let sheetHeight = 'peek';
+  let scrollBeforeComposer = null; // page scroll when the composer opened, put back on Cancel
   let pick = null; // where the open selection came from, for Wider / Narrower
   let depth = 0; // how many parents above the picked element; the one counter for keys and buttons
   let tickets = 0;
@@ -116,11 +118,18 @@ export function mountDesign(view, ctx) {
 
   const composer = createComposer({
     onSend: sendNote,
-    onCancel: () => { composer.hide(); stage.setSelection(null); dispatch({ type: 'selection', selection: null }); },
+    onCancel: () => { composer.hide(); stage.setSelection(null); dispatch({ type: 'selection', selection: null }); collapseSheet(); },
     onDepth: (by) => widen(by),
   });
   const notes = createNotesPanel({ ctx, getState: () => state, onFocusNote: () => {}, onAddPage: () => { pick = null; depth = 0; stage.setSelection(null); dispatch({ type: 'selection', selection: null }); composer.show(null, { keepText: true }); } });
-  const ledger = ledgerPanel(ctx, item, () => state);
+  // The decision ends the session at once; ask for it now and once more
+  // shortly after, rather than waiting for the follower's next tick.
+  let answeredTimer = null;
+  const ledger = ledgerPanel(ctx, item, () => state, () => {
+    stream.refresh();
+    clearTimeout(answeredTimer);
+    answeredTimer = setTimeout(() => stream.refresh(), 1500);
+  });
   const sheetToggle = h('button', { class: 'design-sheet-grab', type: 'button', 'aria-label': 'Resize the notes sheet', onclick: () => { sheetHeight = SHEET_HEIGHTS[(SHEET_HEIGHTS.indexOf(sheetHeight) + 1) % 3]; render(); } });
   const side = h('aside', { class: 'design-side', 'aria-label': 'Notes' }, sheetToggle, notes.element, composer.element);
   const stageWrap = h('div', { class: 'design-stagewrap' }, stage.element, phase.element, ledger.element, capture);
@@ -183,8 +192,18 @@ export function mountDesign(view, ctx) {
   }
   function show(resolved, opts) {
     dispatch({ type: 'selection', selection: { box: resolved.target.box, label: resolved.label } });
+    rememberScroll();
     composer.show(resolved, opts);
     if (layout !== 'desktop') { sheetHeight = 'half'; render(); }
+  }
+  function rememberScroll() { if (layout !== 'desktop' && !composer.open) scrollBeforeComposer = readScroll(); }
+  // Cancel and Escape: lower the sheet and put the page back so the stage is where it was.
+  function collapseSheet() {
+    if (layout === 'desktop') return;
+    sheetHeight = sheetAfterCancel(layout, sheetHeight);
+    render();
+    restoreScroll(scrollBeforeComposer ?? { x: 0, y: 0 });
+    scrollBeforeComposer = null;
   }
   function newScreen() {
     const size = state.frame ? { w: state.frame.w, h: state.frame.h } : (PRESET_SIZE[state.preset] ?? PRESET_SIZE.desktop);
@@ -202,6 +221,7 @@ export function mountDesign(view, ctx) {
     pick = null;
     depth = 0;
     const label = blank ? 'New screen sketch' : 'Sketch over the preview';
+    rememberScroll();
     composer.show({ target: out.target ?? null, label, details: `${label}, drawn by the operator.`, asset: out.asset ?? out.id ?? null, data_url: out.data_url ?? null }, { keepText: true });
     if (layout !== 'desktop') { sheetHeight = 'half'; render(); }
   }
@@ -361,7 +381,7 @@ export function mountDesign(view, ctx) {
     if (!operator) return;
     e.preventDefault();
     switch (action.action) {
-      case 'escape': composer.hide(); stage.clearRegion(); stage.setHover(null); dispatch({ type: 'selection', selection: null }); break;
+      case 'escape': composer.hide(); stage.clearRegion(); stage.setHover(null); dispatch({ type: 'selection', selection: null }); collapseSheet(); break;
       case 'mode': setMode(action.value); break;
       case 'wider': widen(1); break;
       case 'narrower': widen(-1); break;
@@ -388,6 +408,6 @@ export function mountDesign(view, ctx) {
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', fit);
     vv?.removeEventListener('resize', onViewport);
-    clearInterval(clock); clearTimeout(follower); follower = null; offFeatures(); offConn();
+    clearInterval(clock); clearTimeout(follower); clearTimeout(answeredTimer); follower = null; offFeatures(); offConn();
   };
 }

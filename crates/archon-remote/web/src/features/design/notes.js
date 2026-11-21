@@ -38,11 +38,11 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage }) {
     const look = noteLook(note);
     const li = h('li', { class: ['note', `status-${look.label.toLowerCase().replace(/ /g, '-')}`, note.read_only && 'is-readonly', selected === note.id && 'is-selected'], id: `note-${note.id}`, tabindex: '-1' });
     li.append(h('div', { class: 'note-head' }, h('strong', { class: 'note-id', text: note.id }), statusChip(note),
-      note.read_only ? h('span', { class: 'chip tone-neutral note-chip note-earlier' }, h('span', { class: 'chip-text', text: sessionLabel(note) })) : null,
+      sessionLabel(note, state.session?.id) ? h('span', { class: 'chip tone-neutral note-chip note-earlier' }, h('span', { class: 'chip-text', text: sessionLabel(note, state.session?.id) })) : null,
       note.kind === 'revert' ? h('span', { class: 'note-tag', text: `Undo of ${note.reverts ?? ''}`.trim() }) : null,
       note.resent_from ? h('span', { class: 'note-tag', text: `Re-sent from ${note.resent_from}` }) : null));
     li.append(h('p', { class: 'note-text', text: note.text || (note.kind === 'revert' ? 'Reverse this change' : '') }));
-    if (note.read_only) li.append(h('p', { class: 'note-hint', text: earlierText(note) }));
+    if (note.read_only) li.append(h('p', { class: 'note-hint', text: earlierText(note, state.session?.id) }));
     if (note.undone_by) li.append(h('p', { class: 'note-hint', text: `Undone by ${note.undone_by}. It no longer counts.` }));
     if (note.no_change) li.append(h('p', { class: 'note-hint', text: 'Done, nothing to change.' }));
     if (note.status === 'done' && note.commit) li.append(h('p', { class: 'note-hint', text: `Commit ${shortSha(note.commit)}` }));

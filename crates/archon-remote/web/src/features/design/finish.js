@@ -3,7 +3,7 @@
 import { h } from '../../ui/dom.js';
 import { openSheet, confirmSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
-import { queuedNotes, imageCapWarning } from './state.js';
+import { queuedNotes, imageCapWarning, ledgerLede } from './state.js';
 import { reconcile } from '../../ui/list.js';
 import { statusChip } from './notes.js';
 import { IMAGE_CAP_WARN_MARGIN, designErrorText } from '../../core/design.js';
@@ -118,14 +118,14 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
     const list = h('datalist', { id: `sup-${card.note}` }, options);
     const sup = h('input', { class: 'input input-inline', type: 'text', list: `sup-${card.note}`, value: superseded.get(card.note) ?? '', placeholder: 'e.g. D5', 'aria-label': `${card.note} superseded by`, autocomplete: 'off' });
     sup.addEventListener('input', () => superseded.set(card.note, sup.value));
-    const inc = h('input', { class: 'switch-input', type: 'checkbox', role: 'switch', checked: include.get(card.note) !== false, 'aria-label': `Include picture for ${card.note}`, disabled: !card.data_url });
+    const inc = h('input', { class: 'switch-input', type: 'checkbox', role: 'switch', checked: include.get(card.note) !== false, 'aria-label': `Include picture for ${card.note}`, disabled: !card.data_url || card.earlier });
     inc.addEventListener('change', () => { include.set(card.note, inc.checked); draw(); });
     return h('li', { class: 'finish-card' },
-      h('div', { class: 'finish-card-head' }, h('strong', { text: card.note }), card.superseded_by ? h('span', { class: 'note-tag', text: `Superseded by ${card.superseded_by}` }) : null),
+      h('div', { class: 'finish-card-head' }, h('strong', { text: card.note }), card.earlier ? h('span', { class: 'note-tag', text: 'Earlier session' }) : null, card.superseded_by ? h('span', { class: 'note-tag', text: `Superseded by ${card.superseded_by}` }) : null),
       h('p', { class: 'note-text', text: card.text }),
       card.data_url ? h('img', { class: 'finish-img', src: card.data_url, alt: `Final picture for ${card.note}` }) : null,
       card.caption ? h('p', { class: 'cmp-caption', text: card.caption }) : null,
-      card.not_found ? h('div', { class: 'callout callout-amber', role: 'note' },
+      card.not_found && !card.earlier ? h('div', { class: 'callout callout-amber', role: 'note' },
         h('p', { class: 'callout-text', text: 'Not found on a fresh load: open it in the preview and press Capture.' }),
         h('button', { class: 'button button-plain button-small', type: 'button', onclick: () => run(() => capture(card)) }, 'Capture')) : null,
       card.left_history ? h('p', { class: 'note-hint', text: 'This note’s change is no longer in the code history, so there is no picture to include.' }) : null,
@@ -172,7 +172,9 @@ export function ledgerNotes(notes) {
   return notes.filter((n) => !n.read_only && n.kind !== 'revert').sort((a, b) => a.number - b.number);
 }
 
-export function ledgerPanel(ctx, item, getState = () => null) {
+// `onAnswered` runs when the gate's question is answered here or elsewhere,
+// so the screen asks for the session's end (and its decision) at once.
+export function ledgerPanel(ctx, item, getState = () => null, onAnswered = () => {}) {
   const box = h('section', { class: 'design-ledger', 'aria-label': 'Ledger and approval', hidden: true });
   const title = h('h2', { class: 'ledger-title' });
   const lede = h('p', { class: 'ledger-lede' });
@@ -186,6 +188,7 @@ export function ledgerPanel(ctx, item, getState = () => null) {
   const pictures = new Map();
   let busy = false;
   let shownGate = null;
+  let seenQuestion = null; // the open question last seen, to notice it being answered
 
   const picture = (id, label) => {
     const fig = h('figure', { class: 'ledger-pic' }, h('div', { class: 'ledger-pic-img' }, h('span', { class: 'muted', text: 'Loading…' })), h('figcaption', { class: 'cmp-caption', text: label }));
@@ -206,7 +209,7 @@ export function ledgerPanel(ctx, item, getState = () => null) {
     if (choice.needsText && !text.value.trim()) { error.textContent = 'Say what should change first.'; text.focus(); return; }
     busy = true; error.textContent = '';
     for (const b of buttons.children) b.disabled = true;
-    try { await ctx.cmds.answer(q.id, choice.send(text.value.trim())); text.value = ''; ctx.refresh.one('questions'); toast('Answer sent', { tone: 'green' }); }
+    try { await ctx.cmds.answer(q.id, choice.send(text.value.trim())); text.value = ''; ctx.refresh.one('questions'); toast('Answer sent', { tone: 'green' }); onAnswered(); }
     catch (err) { error.textContent = designErrorText(err); }
     finally { busy = false; for (const b of buttons.children) b.disabled = false; }
   };
@@ -225,8 +228,11 @@ export function ledgerPanel(ctx, item, getState = () => null) {
     box.hidden = !show;
     if (!show) return;
     const q = ctx.canOperate && confirmed ? gateQuestionFor(ctx.store.get(), item) : null;
+    // Answered from the inbox, chat or another device: the session ends with the decision.
+    if (seenQuestion && !q) onAnswered();
+    seenQuestion = q ? q.id : null;
     title.textContent = 'Waiting for your approval';
-    lede.textContent = q ? 'Here is what changed. Approve it, ask for changes, or reject it.' : 'No question is open for this item. If you just answered, this screen shows the result as soon as the session ends.';
+    lede.textContent = ledgerLede(q);
     drawGate(q);
     gate.hidden = !q;
     link.hidden = false;

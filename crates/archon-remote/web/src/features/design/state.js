@@ -169,6 +169,14 @@ export function endInfo(reason) {
   return { end: 'ended', title: 'This design session ended', text: 'Open the item to see where it stands.', dot: 'Ended', tone: 'muted' };
 }
 
+// The ledger's lede after Confirm. The approval question opens once the agent
+// has wrapped up (and arrives a moment after each load), so its absence is no
+// sign that nothing is open.
+export function ledgerLede(question) {
+  return question ? 'Here is what changed. Approve it, ask for changes, or reject it.'
+    : 'The agent is wrapping up. Approve, Ask for changes and Reject appear here in a moment.';
+}
+
 // While the gate waits for an answer, or after "Ask for changes", the item's next session is on its way: poll until it opens.
 export function followsNewSession(state) {
   const s = state.session?.state;
@@ -315,12 +323,16 @@ export function captionFor(commit, at) {
   return `captured from the preview at commit ${shortSha(commit) || 'unknown'}${time ? `, ${time}` : ''}`;
 }
 
-export function sessionLabel(note) {
-  return note.read_only ? 'Earlier session' : '';
+// `shown` is the session on screen: an ended one is shown as it ended, and its
+// own notes are read-only because it ended, not because they are earlier.
+export function sessionLabel(note, shown = null) {
+  if (!note.read_only) return '';
+  return shown && note.session === shown ? '' : 'Earlier session';
 }
 
-export function earlierText(note) {
+export function earlierText(note, shown = null) {
   if (!note.read_only) return '';
+  if (shown && note.session === shown) return 'This session has ended: its notes can’t change.';
   return note.approved ? 'From an earlier session and approved: it can’t be edited or undone.' : 'From an earlier session: it can’t be edited. A done change can still be undone.';
 }
 

@@ -209,4 +209,96 @@ mod tests {
         assert_eq!(fingerprint("a"), "af63dc4c8601ec8c");
         assert_ne!(fingerprint("brief"), fingerprint("brief\n\n## Amendment"));
     }
+
+    /// A store holding one item with one run that started with `brief`.
+    fn run_started_with(brief: &str) -> (Store, archon_core::id::QueueItemId, PipelineRunId) {
+        use archon_core::queue::QueueState;
+        let mut store = Store::open_in_memory().unwrap();
+        let now = archon_core::now();
+        let item = store
+            .insert_item(
+                &QueueItem {
+                    intent: None,
+                    onto: None,
+                    id: archon_core::id::QueueItemId::new(),
+                    repo: None,
+                    pipeline: "direct".into(),
+                    title: "t".into(),
+                    brief: brief.into(),
+                    priority: archon_core::queue::Priority::Normal,
+                    dependencies: vec![],
+                    tags: vec![],
+                    model_plan: Default::default(),
+                    model_reasons: None,
+                    budget_usd: None,
+                    autonomy: archon_core::autonomy::Autonomy::default(),
+                    origin: None,
+                    stage_timeouts: Default::default(),
+                    fresh_retries: 0,
+                    routed_provider: None,
+                    provider_switch: None,
+                    initiative: None,
+                    risk: None,
+                    state: QueueState::Queued,
+                    created_at: now,
+                    updated_at: now,
+                },
+                None,
+            )
+            .unwrap();
+        store
+            .transition_item(&item.id, QueueState::Dispatching, now)
+            .unwrap();
+        let run = archon_core::run::PipelineRun {
+            id: PipelineRunId::new(),
+            item: item.id.clone(),
+            pipeline: "direct".into(),
+            shipped: false,
+            aether_run: None,
+            workspace: "/tmp/carry-brief".into(),
+            team_root: None,
+            branch: "archon/carry".into(),
+            state: archon_core::run::RunState::Running {
+                stage_id: "build".into(),
+                attempt: 1,
+            },
+            cost_usd: 0.0,
+            started_at: now,
+            finished_at: None,
+        };
+        store.insert_run(&run).unwrap();
+        store
+            .kv_set(&brief_key(&run.id), &fingerprint(brief))
+            .unwrap();
+        (store, item.id, run.id)
+    }
+
+    #[test]
+    fn a_repair_amendment_carries_the_runs_brief_fingerprint() {
+        let (mut store, item, run) = run_started_with("restyle");
+        carry_brief(&mut store, &item, "restyle", "restyle\n\n## Repair").unwrap();
+        let held = store.kv_get(&brief_key(&run)).unwrap();
+        assert_eq!(
+            held.as_deref(),
+            Some(fingerprint("restyle\n\n## Repair").as_str())
+        );
+        assert_ne!(held.as_deref(), Some(fingerprint("restyle").as_str()));
+    }
+
+    /// The operator amended the brief after the run started: the brief the
+    /// repair amends is no longer the one the run started with, so the run's
+    /// fingerprint stays and the retried run proposes again.
+    #[test]
+    fn an_operator_amendment_in_between_is_not_carried() {
+        let (mut store, item, run) = run_started_with("restyle");
+        let theirs = "restyle\n\n## Amendment\nalso the footer";
+        carry_brief(&mut store, &item, theirs, &format!("{theirs}\n\n## Repair")).unwrap();
+        let held = store.kv_get(&brief_key(&run)).unwrap();
+        assert_eq!(
+            held.as_deref(),
+            Some(fingerprint("restyle").as_str()),
+            "unchanged"
+        );
+        assert_ne!(held.as_deref(), Some(fingerprint(theirs).as_str()));
+    }
 }

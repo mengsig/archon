@@ -93,30 +93,34 @@ export function buildBottomBar({ onMode, onNotes }) {
 export function buildPhasePanel(actions) {
   const title = h('h2', { class: 'phase-title' });
   const text = h('p', { class: 'phase-text' });
+  const detail = h('pre', { class: 'phase-detail', hidden: true });
   const buttons = h('div', { class: 'phase-actions' });
   const skeleton = h('div', { class: 'phase-skeleton', 'aria-hidden': 'true' }, h('span', { class: 'skeleton-bar' }), h('span', { class: 'skeleton-bar short' }), h('span', { class: 'skeleton-block' }));
-  const el = h('div', { class: 'design-phase', role: 'status' }, skeleton, title, text, buttons);
+  const el = h('div', { class: 'design-phase', role: 'status' }, skeleton, title, text, detail, buttons);
   const btn = (label, fn, primary = false) => h('button', { class: ['button', primary ? 'button-primary' : 'button-plain'], type: 'button', onclick: fn }, label);
   let last = '';
   return {
     element: el,
     update(state, { operator, features, continued }) {
       const phase = stagePhase(state, { operator, features });
-      const overlay = !(phase.kind === 'live' || phase.kind === 'finishing') && !(continued && (phase.kind === 'no_browser' || phase.kind === 'sandbox'));
+      const overlay = !(phase.kind === 'live' || phase.kind === 'finishing' || phase.kind === 'confirmed');
+      const without = continued && (phase.kind === 'no_browser' || phase.kind === 'sandbox');
       el.hidden = !overlay;
       el.dataset.kind = phase.kind;
       el.className = `design-phase tone-${phase.tone}`;
       skeleton.hidden = !(phase.kind === 'starting' || phase.kind === 'loading');
-      title.textContent = phase.title;
-      text.textContent = phase.text;
-      const sig = `${phase.kind}|${state.item}`;
+      title.textContent = without ? 'Working without a preview' : phase.title;
+      text.textContent = without ? 'There is no picture to point at, so Comment and Region are off. You can still add a note on the whole page from the Notes panel, and the agent keeps working.' : phase.text;
+      detail.textContent = without ? '' : (phase.detail ?? '');
+      detail.hidden = !detail.textContent;
+      const sig = `${phase.kind}|${state.item}|${phase.title}|${phase.text}|${without}`;
       if (sig === last) return phase;
       last = sig;
       const list = [];
       if (phase.kind === 'starting') list.push(btn('Cancel session', actions.cancelSession));
-      if (phase.kind === 'preview_down') list.push(btn('Reload', actions.reload, true), btn('Tell agent again', actions.tellAgent));
-      if (phase.kind === 'no_browser' || phase.kind === 'sandbox') list.push(btn('Continue without preview', actions.continueWithout, true));
-      if (phase.kind === 'ended') list.push(h('a', { class: 'button button-plain', href: `#/item/${state.item}` }, 'View the ledger'));
+      if (phase.kind === 'preview_down') list.push(btn(phase.retry ? 'Retry' : 'Reload', actions.reload, true), btn('Tell agent again', actions.tellAgent));
+      if (!without && (phase.kind === 'no_browser' || phase.kind === 'sandbox')) list.push(btn('Continue without preview', actions.continueWithout, true));
+      if (phase.kind === 'ended') list.push(h('a', { class: 'button button-plain', href: `#/item/${state.item}` }, 'Open the item'));
       if (phase.kind === 'none' || phase.kind === 'observer' || phase.kind === 'unavailable') list.push(h('a', { class: 'button button-plain', href: `#/item/${state.item}` }, 'Open the item'));
       buttons.replaceChildren(...list);
       return phase;

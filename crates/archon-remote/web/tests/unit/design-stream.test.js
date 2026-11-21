@@ -58,3 +58,19 @@ test('subscribe reads the sub number from data.id', async () => {
   const old = async () => ({ reply: 'subscribed', data: { sub: 7 } });
   await assert.rejects(designCommands(old).subscribe('ds_1'));
 });
+
+test('a refresh while a subscribe is in flight joins it: one subscription, stored once', async () => {
+  const { ctx, calls } = fake();
+  let release;
+  ctx.design.subscribe = (id) => { calls.push(`subscribe:${id}`); return new Promise((r) => { release = () => r(5); }); };
+  const stream = make(ctx);
+  const first = stream.start();
+  await new Promise((r) => setTimeout(r, 5));
+  const second = stream.refresh();
+  await new Promise((r) => setTimeout(r, 5));
+  release();
+  await Promise.all([first, second]);
+  assert.equal(calls.filter((c) => c.startsWith('subscribe')).length, 1);
+  assert.equal(stream.sub, 5);
+  stream.stop();
+});

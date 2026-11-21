@@ -7,11 +7,21 @@ export function initialState(item) {
     item, loaded: false, observer: null, view: null, session: null, notes: [], browser: { status: 'idle' },
     degraded: false, noteVersion: 0, frame: null, selection: null, blocked: [], progress: '',
     dialog: null, toasts: [], ended: null, connection: 'open', mode: 'interact', preset: 'desktop', refresh: false, error: null,
-    previewCommit: null, finishBlocker: null, imagesUsed: 0, imagesMax: 0, deadline: null,
+    previewCommit: null, path: null, finishBlocker: null, imagesUsed: 0, imagesMax: 0, deadline: null,
   };
 }
 
 const byNumber = (a, b) => b.number - a.number;
+
+export function pathOf(url) {
+  if (!url) return null;
+  try { return new URL(url, 'http://x.invalid').pathname || '/'; } catch { return null; }
+}
+
+// The page the preview shows now: the last path the daemon reported, else the session's URL.
+export function currentPath(state) {
+  return state.path ?? pathOf(state.session?.preview_url) ?? '';
+}
 
 export function upsertNote(notes, note) {
   if (!note?.id) return notes;
@@ -25,7 +35,7 @@ export function reduce(state, action) {
       const v = action.view;
       return {
         ...state, loaded: true, observer: null, view: v, session: v.session ?? null, notes: [...(v.notes ?? [])].sort(byNumber),
-        browser: v.browser ?? state.browser, degraded: Boolean(v.session?.degraded), noteVersion: v.session?.note_version ?? 0,
+        browser: v.browser ?? state.browser, degraded: Boolean(v.session?.degraded), noteVersion: v.session?.note_version ?? 0, path: pathOf(v.session?.preview_url) ?? state.path,
         preset: v.session?.viewport_preset ?? state.preset, finishBlocker: v.finish_blocker ?? null,
         imagesUsed: v.images_used ?? 0, imagesMax: v.images_max ?? 0, deadline: v.stage_deadline ?? null, refresh: false, error: null,
         ended: v.session && v.session.state === 'ended' ? (v.session.end_reason ?? 'ended') : null,
@@ -57,13 +67,13 @@ export function reduce(state, action) {
 function reduceEvent(state, e) {
   switch (e.event) {
     case 'frame':
-      return { ...state, frame: { seq: e.seq, w: e.w, h: e.h, at: e.at }, degraded: false };
+      return { ...state, frame: { seq: e.seq, w: e.w, h: e.h, at: e.at } };
     case 'selection':
       return { ...state, selection: { box: e.box, label: e.label } };
     case 'session': {
       const session = state.session ? { ...state.session, state: e.state, degraded: e.degraded, note_version: e.note_version } : state.session;
       const stale = e.note_version !== state.noteVersion && state.noteVersion !== 0;
-      return { ...state, session, previewCommit: e.commit ?? state.previewCommit, browser: e.browser ?? state.browser, degraded: e.degraded, noteVersion: e.note_version, refresh: state.refresh || stale || !state.session,
+      return { ...state, session, previewCommit: e.commit ?? state.previewCommit, path: e.preview_path ?? state.path, browser: e.browser ?? state.browser, degraded: e.degraded, noteVersion: e.note_version, refresh: state.refresh || stale || !state.session,
         ended: e.state === 'ended' ? (state.ended ?? 'ended') : state.ended };
     }
     case 'note':
@@ -110,26 +120,32 @@ export function stagePhase(state, { operator = true, features = true } = {}) {
   }
   if (!state.session) return { kind: 'none', title: 'No design session', text: 'This item has no live design session yet. It opens when the agent has the app running.', tone: 'muted' };
   const s = state.session.state;
-  if (state.ended || s === 'ended' || s === 'confirmed') {
-    return { kind: 'ended', title: 'This design session ended', text: endedText(state.ended ?? state.session.end_reason, s), tone: 'muted' };
+  if (s === 'confirmed' && !state.ended) {
+    return { kind: 'confirmed', title: 'Waiting for your approval', text: 'You confirmed the design. Approve it, ask for changes, or reject it.', tone: 'accent' };
+  }
+  if (state.ended || s === 'ended') {
+    return { kind: 'ended', title: 'This design session ended', text: endedText(state.ended ?? state.session.end_reason), tone: 'muted' };
   }
   const b = state.browser?.status;
-  if (b === 'missing') return { kind: 'no_browser', title: 'No browser on this machine', text: `Archon needs Chrome or Chromium on this machine to show the preview. ${state.browser.hint ?? ''}`.trim(), tone: 'amber' };
-  if (b === 'sandbox_unavailable') return { kind: 'sandbox', title: 'Sandbox unavailable', text: `Chromium’s sandbox is unavailable on this host. ${state.browser.hint ?? ''}`.trim(), tone: 'amber' };
+  if (b === 'missing') return { kind: 'no_browser', title: 'No browser on this machine', text: 'Archon needs Chrome or Chromium on this machine to show the preview.', detail: state.browser.hint ?? '', tone: 'amber' };
+  if (b === 'sandbox_unavailable') return { kind: 'sandbox', title: 'Sandbox unavailable', text: 'Chromium’s sandbox is unavailable on this host.', detail: state.browser.hint ?? '', tone: 'amber' };
   if (b === 'crashed_too_often') return { kind: 'preview_down', title: 'The preview browser keeps stopping', text: 'The browser crashed too often. Reload, or tell the agent again.', tone: 'red' };
   if (b === 'queued_for_slot') return { kind: 'queued_slot', title: 'Queued for a preview slot', text: 'Another design session is using the host’s preview slots. Yours starts as soon as one is free.', tone: 'amber' };
   if (state.connection === 'reconnecting') return { kind: 'reconnecting', title: 'Reconnecting…', text: 'Notes you type meanwhile are kept on this device and sent when the connection is back.', tone: 'amber' };
   if (s === 'starting' || b === 'starting' || !state.frame) {
     return { kind: 'starting', title: 'Starting your app…', text: state.progress || (s === 'starting' ? 'Waiting for the agent to run the app.' : 'Waiting for the first picture…'), tone: 'muted' };
   }
-  if (state.degraded) return { kind: 'preview_down', title: 'The app stopped responding', text: 'The agent has been told and is restarting it.', tone: 'red' };
+  if (state.degraded) {
+    const url = state.session?.preview_url;
+    return { kind: 'preview_down', retry: true, title: 'Preview down', text: `${url ? `${url} is` : 'The app is'} not responding. The agent has been told and is restarting it. The picture behind this is the last one received.`, tone: 'red' };
+  }
   if (s === 'finishing') return { kind: 'finishing', title: 'Finishing', text: 'Finishing: choose Review to continue, or Back to editing to change anything.', tone: 'accent' };
   return { kind: 'live', title: 'Live', text: '', tone: 'green' };
 }
 
-function endedText(reason, state) {
+function endedText(reason) {
   const r = String(reason ?? '');
-  if (/approv/i.test(r) || state === 'confirmed') return 'This design session ended (approved).';
+  if (/approv/i.test(r)) return 'This design session ended (approved).';
   if (/revis/i.test(r)) return 'This design session ended (revised).';
   if (/cancel/i.test(r)) return 'This design session ended (cancelled).';
   return r && r !== 'ended' ? `This design session ended (${r}).` : 'This design session ended.';
@@ -140,6 +156,7 @@ export function dotLook(state) {
   const phase = stagePhase(state).kind;
   if (phase === 'finishing') return { label: 'Finishing', tone: 'accent' };
   if (phase === 'live') return { label: 'Live', tone: 'green' };
+  if (phase === 'confirmed') return { label: 'Awaiting approval', tone: 'accent' };
   if (phase === 'preview_down') return { label: 'Preview down', tone: 'red' };
   if (phase === 'reconnecting') return { label: 'Reconnecting', tone: 'amber' };
   if (phase === 'starting') return { label: 'Starting', tone: 'muted' };

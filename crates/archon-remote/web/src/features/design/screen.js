@@ -5,7 +5,7 @@ import { emptyState } from '../../ui/components.js';
 import { confirmSheet, openSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
 import { designErrorText } from '../../core/design.js';
-import { initialState, reduce, isLive } from './state.js';
+import { initialState, reduce, isLive, currentPath } from './state.js';
 import { createDesignStream } from './stream.js';
 import { createStage } from './overlay.js';
 import { createComposer } from './composer.js';
@@ -37,6 +37,7 @@ export function mountDesign(view, ctx) {
   let pick = null; // where the open selection came from, for Wider / Narrower
   let depth = 0; // how many parents above the picked element; the one counter for keys and buttons
   let tickets = 0;
+  let autoPreset = false;
   const outbox = createNoteOutbox({ item });
 
   const title = ctx.store.get().summaries?.find((s) => s.id === item)?.title ?? 'Design';
@@ -73,7 +74,7 @@ export function mountDesign(view, ctx) {
   // ---- parts ----
   const top = buildTopBar({
     title, onBack: back,
-    onPreset: async (preset) => { dispatch({ type: 'preset', preset }); try { await ctx.design.viewport(session(), preset); } catch (e) { refuse(e); } },
+    onPreset: (preset) => setPreset(preset),
     onReload: () => reload(),
     onFinish: () => reviewing((hooks) => startFinish(ctx, state, hooks)),
     onReview: () => reviewing((hooks) => resumeFinish(ctx, state, hooks)),
@@ -113,11 +114,11 @@ export function mountDesign(view, ctx) {
     onCancel: () => { composer.hide(); stage.setSelection(null); dispatch({ type: 'selection', selection: null }); },
     onDepth: (by) => widen(by),
   });
-  const notes = createNotesPanel({ ctx, getState: () => state, onFocusNote: () => {}, onAddPage: () => composer.show(null, { keepText: true }) });
-  const ledger = ledgerPanel(ctx, item);
+  const notes = createNotesPanel({ ctx, getState: () => state, onFocusNote: () => {}, onAddPage: () => { pick = null; depth = 0; stage.setSelection(null); dispatch({ type: 'selection', selection: null }); composer.show(null, { keepText: true }); } });
+  const ledger = ledgerPanel(ctx, item, () => state);
   const sheetToggle = h('button', { class: 'design-sheet-grab', type: 'button', 'aria-label': 'Resize the notes sheet', onclick: () => { sheetHeight = SHEET_HEIGHTS[(SHEET_HEIGHTS.indexOf(sheetHeight) + 1) % 3]; render(); } });
-  const side = h('aside', { class: 'design-side', 'aria-label': 'Notes' }, sheetToggle, notes.element, composer.element, ledger.element);
-  const stageWrap = h('div', { class: 'design-stagewrap' }, stage.element, phase.element, capture);
+  const side = h('aside', { class: 'design-side', 'aria-label': 'Notes' }, sheetToggle, notes.element, composer.element);
+  const stageWrap = h('div', { class: 'design-stagewrap' }, stage.element, phase.element, ledger.element, capture);
   const main = h('div', { class: 'design-main' }, h('div', { class: 'design-stagecol' }, modes.element, stageWrap, typeForm, status.element), side);
   const root = h('div', { class: 'design', dataset: { layout, notes: sheetHeight } }, top.element, main, bottom.element);
   view.append(root);
@@ -133,6 +134,12 @@ export function mountDesign(view, ctx) {
     if (mode === 'region') stage.startKeyboardRegion();
     root.dataset.mode = mode;
   }
+  async function setPreset(preset) {
+    dispatch({ type: 'preset', preset });
+    try { await ctx.design.viewport(session(), preset); } catch (e) { refuse(e); }
+  }
+  // Pixel size of each preset, for a New screen sketch when no frame has arrived.
+  const PRESET_SIZE = { desktop: { w: 1280, h: 800 }, tablet: { w: 820, h: 1180 }, phone: { w: 390, h: 844 } };
   function reload() { ctx.design.reload(session()).catch(refuse); }
 
   async function hoverAt(p) {
@@ -150,7 +157,7 @@ export function mountDesign(view, ctx) {
   }
   // Wider is +1 (the parent element), Narrower is -1, never below the picked element.
   async function widen(by) {
-    if (!pick || !composer.open) return;
+    if (!pick || !composer.open || !composer.resolved?.target || composer.resolved.target.region) return;
     const next = stepDepth(depth, by);
     if (next === depth) return;
     depth = next;
@@ -166,7 +173,10 @@ export function mountDesign(view, ctx) {
     composer.show(resolved, opts);
     if (layout !== 'desktop') { sheetHeight = 'half'; render(); }
   }
-  function newScreen() { openSketch(ctx, { session: session(), source: null, size: { w: 390, h: 844 }, onResult: fromUpload }); }
+  function newScreen() {
+    const size = state.frame ? { w: state.frame.w, h: state.frame.h } : (PRESET_SIZE[state.preset] ?? PRESET_SIZE.desktop);
+    openSketch(ctx, { session: session(), source: null, size, onResult: fromUpload });
+  }
   function openFrozenSketch() {
     if (!operator || !session()) return;
     if (!state.frame) return newScreen();
@@ -175,13 +185,16 @@ export function mountDesign(view, ctx) {
     copy.getContext('2d').drawImage(stage.canvas, 0, 0);
     openSketch(ctx, { session: session(), source: copy, size: { w: copy.width, h: copy.height }, onResult: fromUpload });
   }
-  function fromUpload(out) {
+  function fromUpload(out, { blank = false } = {}) {
     pick = null;
     depth = 0;
-    composer.show({ target: out.target ?? null, label: 'Your picture', asset: out.asset ?? out.id ?? null, data_url: out.data_url ?? null }, { keepText: true });
+    const label = blank ? 'New screen sketch' : 'Sketch over the preview';
+    composer.show({ target: out.target ?? null, label, details: `${label}, drawn by the operator.`, asset: out.asset ?? out.id ?? null, data_url: out.data_url ?? null }, { keepText: true });
+    if (layout !== 'desktop') { sheetHeight = 'half'; render(); }
   }
 
   async function sendNote({ text, asset, sendPicture, sendDetails, details }) {
+    if (composer.busy) return;
     const fields = noteFields({ session: session(), clientKey: undefined, text, asset, sendPicture, sendDetails, details });
     const entry = outbox.add({ ...fields, client_key: undefined, session: undefined });
     composer.setBusy(true);
@@ -191,12 +204,14 @@ export function mountDesign(view, ctx) {
       dispatch({ type: 'event', event: { event: 'note', ...note } });
       composer.reset();
       stage.setSelection(null);
+      dispatch({ type: 'selection', selection: null });
+      if (layout !== 'desktop') sheetHeight = 'peek';
       notes.select(note.id);
     } catch (err) {
       if (err.code === 'disconnected' || err.code === 'timeout') {
         composer.reset();
         toast('Saved on this device. It will be sent when the connection is back.', { tone: 'amber' });
-      } else { outbox.remove(entry.client_key); composer.setError(designErrorText(err)); refuse(err); }
+      } else { outbox.remove(entry.client_key); composer.setError(designErrorText(err)); if (err?.code === 'gone') refuse(err); }
     } finally { composer.setBusy(false); notes.setPending(outbox.pending()); }
   }
   let lastFlushAt = 0, lastFlushSession = null, lastFlushKind = null;
@@ -235,9 +250,7 @@ export function mountDesign(view, ctx) {
   }
 
   // ---- render ----
-  function previewPath() {
-    try { return state.session?.preview_url ? new URL(state.session.preview_url).pathname : ''; } catch { return ''; }
-  }
+  const previewPath = () => currentPath(state);
   function render() {
     const features = ctx.store.get().designEnabled || ctx.store.get().connection.state !== 'open';
     const p = phase.update(state, { operator, features, continued });
@@ -254,10 +267,10 @@ export function mountDesign(view, ctx) {
     typeForm.hidden = !(showStage && state.mode === 'interact');
     side.hidden = !operator || !state.session;
     notes.element.hidden = false;
-    ledger.element.hidden = !(state.session && (state.session.state === 'confirmed' || state.session.state === 'ended' || state.ended));
+    ledger.update();
     composer.setDisabled(finishing, finishing ? 'Finishing: press Back to editing to change anything' : '');
     stage.setSelection(state.selection?.box ?? null, state.selection?.label ?? '');
-    stage.setPins(state.notes.filter((n) => !n.read_only && n.target && n.kind !== 'revert' && n.status !== 'cancelled' && !n.undone_by)
+    stage.setPins(state.notes.filter((n) => !n.read_only && n.target && (n.target.path ?? '/') === (previewPath() || '/') && n.kind !== 'revert' && n.status !== 'cancelled' && !n.undone_by)
       .map((n) => ({ id: n.id, number: n.number, box: n.target.box, label: n.text.slice(0, 60), tone: n.status === 'done' ? 'green' : n.status === 'needs_reply' ? 'amber' : n.status === 'failed' ? 'red' : 'accent' })));
     notes.render();
     root.dataset.layout = layout;
@@ -266,6 +279,11 @@ export function mountDesign(view, ctx) {
     root.dataset.preset = state.preset;
     root.dataset.mode = state.mode;
     if (state.loaded && ctx.canOperate && state.session?.state === 'live') flushOutbox(p.kind);
+    // A phone starts on the Phone preset, once.
+    if (!autoPreset && layout === 'phone' && operator && state.session?.state === 'live') {
+      autoPreset = true;
+      if (state.preset !== 'phone') setPreset('phone');
+    }
   }
 
   // ---- wiring ----

@@ -52,10 +52,22 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
   }
 
   function renderBoxes() {
-    if (selectedBox) place(selected, selectedBox);
+    if (selectedBox) {
+      place(selected, selectedBox);
+      // The label chip flips below or to the right edge instead of leaving the canvas.
+      const s = boxToScreen(selectedBox, scale());
+      selected.classList.toggle('label-below', s.y < 30);
+      selected.classList.toggle('label-end', s.x + 160 > canvas.getBoundingClientRect().width);
+    }
+    const edge = canvas.getBoundingClientRect();
     for (const pin of pins.children) {
       const box = pinList[Number(pin.dataset.index)]?.box;
-      if (box) place(pin, { x: box.x + box.w, y: box.y, w: 0, h: 0 });
+      if (!box) continue;
+      const s = boxToScreen({ x: box.x + box.w, y: box.y, w: 0, h: 0 }, scale());
+      const half = 12; // the dot is 24 px: keep it inside the canvas
+      const x = Math.min(Math.max(s.x, half), Math.max(half, edge.width - half));
+      const y = Math.min(Math.max(s.y, half), Math.max(half, edge.height - half));
+      pin.style.setProperty('--x', `${x}px`); pin.style.setProperty('--y', `${y}px`);
     }
     if (kbRegion) place(regionBox, kbRegion);
   }

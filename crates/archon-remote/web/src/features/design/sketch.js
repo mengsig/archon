@@ -94,7 +94,7 @@ export function openSketch(ctx, { session, source, size, onResult }) {
   const file = h('input', { type: 'file', accept: UPLOAD_TYPES.join(','), class: 'sr-only', 'aria-label': 'Upload image' });
   const done = h('button', { class: 'button button-primary', type: 'button' }, 'Use this picture');
   const body = h('div', { class: 'sketch' },
-    h('p', { class: 'sketch-lede', text: blank ? 'New screen: draw what you want.' : 'Draw on a frozen copy of the preview.' }),
+    h('p', { class: 'sketch-lede', text: blank ? `New screen sketch (${w} × ${hgt}): draw what you want.` : 'Draw on a frozen copy of the preview.' }),
     tools,
     h('div', { class: 'sketch-actions' },
       h('button', { class: 'button button-plain button-small', type: 'button', onclick: () => { sk.undo(); redraw(); } }, icon('undo', { size: 16 }), ' Undo'),
@@ -106,7 +106,7 @@ export function openSketch(ctx, { session, source, size, onResult }) {
   async function send(blob, extra) {
     const out = await ctx.design.upload({ session, media_type: blob.type, data: await blobToBase64(blob), ...extra });
     sheet.close();
-    onResult(out);
+    onResult(out, { blank });
   }
   done.addEventListener('click', async () => {
     done.disabled = true; error.textContent = '';

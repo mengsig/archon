@@ -22,14 +22,15 @@ export function createDesignStream({
   let latest = null;
   let lastAck = 0;
   let started = false;
+  let pending = null; // the one subscribe in flight: {session, promise}
 
   // start: a fresh subscription (first load, reconnect). refresh: design_get only; the
   // subscription is kept unless the session id changed or there is none yet. The daemon
-  // caps subscriptions per connection and has no unsubscribe, so never resubscribe needlessly.
+  // caps subscriptions per connection and has no unsubscribe request, so never resubscribe needlessly.
   async function load(fresh) {
     started = true;
     const mine = ++generation;
-    if (fresh) sub = null;
+    if (fresh) { sub = null; pending = null; }
     try {
       const { kind, data } = await ctx.design.get(item);
       if (!alive || mine !== generation) return;
@@ -37,12 +38,17 @@ export function createDesignStream({
       const session = kind === 'design_state' ? data.session : null;
       const changed = (session?.id ?? null) !== sessionId;
       sessionId = session?.id ?? null;
-      if (changed) sub = null;
+      if (changed) { sub = null; pending = null; }
       if (!session || session.state === 'ended' || session.state === 'confirmed' || !ctx.canOperate) return;
       if (sub !== null) return;
-      const next = await ctx.design.subscribe(session.id);
-      if (!alive || mine !== generation) return;
-      sub = next;
+      // A refresh while a subscribe is in flight joins it: one live subscription at a time.
+      if (!pending || pending.session !== session.id) {
+        const p = { session: session.id, promise: ctx.design.subscribe(session.id) };
+        pending = p;
+        p.promise.then((id) => { if (pending === p && alive && sessionId === p.session) sub = id; }, () => {})
+          .finally(() => { if (pending === p) pending = null; });
+      }
+      await pending.promise;
     } catch (err) {
       if (alive && mine === generation) onError(err);
     }

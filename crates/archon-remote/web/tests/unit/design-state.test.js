@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initialState, reduce, stagePhase, noteLook, noteActions, statusLine, imageCapWarning, failText, captionFor } from '../../src/features/design/state.js';
+import { initialState, reduce, stagePhase, noteLook, noteActions, statusLine, imageCapWarning, failText, captionFor, currentPath } from '../../src/features/design/state.js';
 
 const session = (over = {}) => ({ id: 'ds_1', state: 'live', degraded: false, note_version: 3, viewport_preset: 'desktop', ...over });
 const note = (n, over = {}) => ({ id: `D${n}`, number: n, status: 'queued', kind: 'change', read_only: false, updated_at: new Date().toISOString(), ...over });
@@ -45,7 +45,9 @@ test('every sec 7.3 state shows its text', () => {
   const at = (v, extra = {}) => ({ ...reduce(initialState('i'), { type: 'view', view: v }), frame: { seq: 1 }, ...extra });
   assert.equal(stagePhase(at(view({ session: session({ state: 'starting' }) }), { frame: null })).title, 'Starting your app…');
   assert.equal(stagePhase(at(view())).kind, 'live');
-  assert.match(stagePhase(at(view({ browser: { status: 'missing', hint: 'Install chromium.' } }))).text, /Chrome or Chromium on this machine.*Install chromium\./);
+  const missing = stagePhase(at(view({ browser: { status: 'missing', hint: 'Install chromium.' } })));
+  assert.match(missing.text, /Chrome or Chromium on this machine/);
+  assert.equal(missing.detail, 'Install chromium.', 'the doctor detail is kept apart from the sentence');
   assert.match(stagePhase(at(view({ browser: { status: 'sandbox_unavailable', hint: '' } }))).text, /sandbox is unavailable/);
   assert.equal(stagePhase(at(view({ browser: { status: 'queued_for_slot' } }))).title, 'Queued for a preview slot');
   assert.equal(stagePhase(at(view(), { connection: 'reconnecting' })).title, 'Reconnecting…');
@@ -93,4 +95,30 @@ test('failure text is plain; the image cap warns before it blocks', () => {
   assert.match(imageCapWarning(120, 128, 4), /only 4 more fit/);
   assert.match(imageCapWarning(126, 128, 5), /Switch some pictures off/);
   assert.match(captionFor('3f9c2a1deadbeef', '2026-01-01T14:32:00Z'), /^captured from the preview at commit 3f9c2a1, /);
+});
+
+test('confirmed is waiting for approval, never ended or approved', () => {
+  const s = reduce(initialState('i'), { type: 'view', view: { session: session({ state: 'confirmed' }), notes: [] } });
+  const phase = stagePhase(s);
+  assert.equal(phase.kind, 'confirmed');
+  assert.equal(phase.title, 'Waiting for your approval');
+  assert.doesNotMatch(phase.text, /approved\)|ended/);
+});
+
+test('a degraded session shows Preview down with its URL, and clears when degraded goes false', () => {
+  let s = reduce(initialState('i'), { type: 'view', view: { session: session({ degraded: true, preview_url: 'http://127.0.0.1:5173/' }), notes: [] } });
+  s = reduce(s, { type: 'event', event: { event: 'frame', seq: 1, w: 800, h: 500, at: 'x' } });
+  const phase = stagePhase(s);
+  assert.equal(phase.kind, 'preview_down');
+  assert.match(phase.text, /127\.0\.0\.1:5173/);
+  assert.equal(s.degraded, true, 'a stale frame does not clear it');
+  s = reduce(s, { type: 'event', event: { event: 'session', state: 'live', degraded: false, preview_path: '/', commit: null, browser: { status: 'running' }, note_version: 3 } });
+  assert.equal(stagePhase(s).kind, 'live');
+});
+
+test('the current page follows the session events', () => {
+  let s = reduce(initialState('i'), { type: 'view', view: { session: session({ preview_url: 'http://x.test/' }), notes: [] } });
+  assert.equal(currentPath(s), '/');
+  s = reduce(s, { type: 'event', event: { event: 'session', state: 'live', degraded: false, preview_path: '/about', commit: null, browser: { status: 'running' }, note_version: 3 } });
+  assert.equal(currentPath(s), '/about');
 });

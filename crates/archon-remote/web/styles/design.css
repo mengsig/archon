@@ -41,6 +41,8 @@
 .design-sel, .design-region { position: absolute; left: var(--x, 0); top: var(--y, 0); width: var(--w, 0); height: var(--h, 0); border: 2px solid var(--frame-accent); box-shadow: 0 0 0 1px var(--frame-halo), inset 0 0 0 1px var(--frame-halo); pointer-events: none; border-radius: 2px; }
 .design-sel.is-hover { border-style: dashed; }
 .design-region { background: rgba(40, 93, 206, .12); }
+.design-sel.label-below .design-sel-label { bottom: auto; top: 100%; margin: 4px 0 0; }
+.design-sel.label-end .design-sel-label { left: auto; right: -2px; }
 .design-sel-label { position: absolute; left: -2px; bottom: 100%; margin-bottom: 4px; max-width: 28em; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--frame-accent); color: var(--frame-halo); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 0 0 1px var(--frame-halo); }
 .design-pins { position: absolute; inset: 0; pointer-events: none; }
 .design-pin { position: absolute; left: var(--x, 0); top: var(--y, 0); width: var(--tap); height: var(--tap); margin: calc(var(--tap) / -2) 0 0 calc(var(--tap) / -2); display: grid; place-items: center; padding: 0; border: 0; background: transparent; pointer-events: auto; cursor: pointer; }
@@ -72,7 +74,7 @@
 /* notes */
 .design-side { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; overflow: auto; padding: var(--space-3) var(--space-4); border-left: 1px solid var(--separator); background: var(--surface); }
 .design-sheet-grab { display: none; }
-.notes-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.notes-head { position: sticky; top: calc(-1 * var(--space-3)); z-index: 1; margin-top: calc(-1 * var(--space-3)); padding: var(--space-3) 0 var(--space-2); background: var(--surface); display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
 .notes-title { margin: 0; font-size: 16px; }
 .note-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
 .note { padding: var(--space-3); border-radius: var(--radius-s); background: var(--surface-2); border: 1px solid var(--separator); display: grid; gap: var(--space-2); }
@@ -103,7 +105,7 @@
 /* composer */
 .dcomposer { display: grid; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--accent); border-radius: var(--radius-m); background: var(--surface); position: sticky; bottom: 0; }
 .dcomposer-heading { margin: 0; font-size: 15px; }
-.dcomposer-crop { max-width: 100%; max-height: 160px; object-fit: contain; border-radius: var(--radius-s); border: 1px solid var(--separator); background: var(--surface-2); }
+.dcomposer-crop { width: 100%; max-height: 240px; min-height: 96px; object-fit: contain; border-radius: var(--radius-s); border: 1px solid var(--separator); background: var(--surface-2); }
 .dcomposer-crop.is-off { opacity: .35; }
 .dcomposer-target { margin: 0; font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; }
 .dcomposer-details { font-family: var(--font-mono); font-size: 12px; }
@@ -132,17 +134,29 @@
 .finish-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
 .finish-card { display: grid; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-s); background: var(--surface-2); }
 .finish-card-head { display: flex; gap: var(--space-2); align-items: center; }
-.finish-img { max-width: 100%; border-radius: var(--radius-s); border: 1px solid var(--separator); }
+.finish-img { display: block; width: 100%; max-height: 60vh; object-fit: contain; background: var(--surface-2); border-radius: var(--radius-s); border: 1px solid var(--separator); }
 .design-ledger { display: grid; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-m); background: var(--accent-soft); }
+/* approval: the ledger fills the stage once the operator confirmed */
+.design-ledger { position: absolute; inset: 0 var(--space-4); overflow: auto; align-content: start; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--separator); background: var(--surface-2); }
+.ledger-title { margin: 0; font-size: 20px; }
+.ledger-lede { margin: 0; color: var(--text-2); }
+.ledger-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
+.ledger-row { display: grid; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-s); background: var(--surface); border: 1px solid var(--separator); }
+.ledger-pics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-3); }
+.ledger-pic { margin: 0; display: grid; gap: var(--space-1); }
+.ledger-pic-img { display: grid; place-items: center; min-height: 80px; background: var(--surface-2); border: 1px solid var(--separator); border-radius: var(--radius-s); }
+.ledger-img { display: block; width: 100%; max-height: 50vh; object-fit: contain; }
+.ledger-gate { display: grid; gap: var(--space-2); position: sticky; bottom: calc(-1 * var(--space-4)); padding: var(--space-3) 0; background: var(--surface-2); }
 .ledger-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.phase-detail { margin: 0; max-width: 40em; padding: var(--space-3); border-radius: var(--radius-s); background: var(--surface); border: 1px solid var(--separator); font-family: var(--font-mono); font-size: 12px; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* sketch and shortcuts */
 .sketch { display: grid; gap: var(--space-3); }
 .sketch-tools, .sketch-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .sketch-tools [aria-checked="true"] { background: var(--accent); color: var(--on-accent); }
-.sketch-stage { position: relative; max-width: 100%; overflow: auto; border: 1px solid var(--separator); border-radius: var(--radius-s); }
-.sketch-base, .sketch-ink { display: block; max-width: 100%; height: auto; }
-.sketch-ink { position: absolute; inset: 0; width: 100%; touch-action: none; cursor: crosshair; }
+.sketch-stage { position: relative; width: fit-content; max-width: 100%; margin-inline: auto; overflow: hidden; border: 1px solid var(--separator); border-radius: var(--radius-s); }
+.sketch-base { display: block; width: auto; height: auto; max-width: 100%; max-height: 55vh; }
+.sketch-ink { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
 .shortcuts { width: 100%; border-collapse: collapse; }
 .shortcuts th, .shortcuts td { text-align: left; padding: var(--space-2); border-bottom: 1px solid var(--separator); }
 .shortcuts kbd { font-family: var(--font-mono); background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
@@ -170,6 +184,9 @@
   .design-sheet-grab { display: block; flex: none; width: 56px; min-height: var(--tap); margin: 0 auto; border: 0; background: transparent; position: relative; }
   .design-sheet-grab::after { content: ""; position: absolute; left: 8px; right: 8px; top: 20px; height: 4px; border-radius: var(--radius-pill); background: var(--separator); }
   .dcomposer { bottom: var(--keyboard, 0px); }
+  /* the Type text bar and the notes sheet share the bottom: only one at a time */
+  .design:not([data-notes="peek"]) .design-type { display: none; }
+  .design-ledger { inset: 0; border-radius: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .design *, .design *::before, .design *::after { animation: none !important; transition: none !important; }

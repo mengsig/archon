@@ -47,8 +47,10 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage }) {
     if (note.status === 'done' && note.commit) li.append(h('p', { class: 'note-hint', text: `Commit ${shortSha(note.commit)}` }));
     const fail = failText(note);
     if (note.status === 'failed' && fail) li.append(h('p', { class: 'note-fail', role: 'note', text: fail }));
-    if (note.thread?.length) {
-      li.append(h('ol', { class: 'note-thread', 'aria-label': `Thread on ${note.id}` }, note.thread.map((t) => h('li', { class: ['thread-entry', `from-${t.from}`] },
+    // A failed note says why once, in the red box; Archon's own failure reply would repeat it.
+    const thread = (note.thread ?? []).filter((t) => !(note.status === 'failed' && fail && t.from === 'archon'));
+    if (thread.length) {
+      li.append(h('ol', { class: 'note-thread', 'aria-label': `Thread on ${note.id}` }, thread.map((t) => h('li', { class: ['thread-entry', `from-${t.from}`] },
         h('span', { class: 'thread-from', text: { operator: 'You', agent: 'Agent', archon: 'Archon' }[t.from] ?? t.from }), h('span', { text: t.text })))));
     }
     const actions = h('div', { class: 'note-actions' });
@@ -95,7 +97,7 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage }) {
     const notes = state.notes;
     reconcile(list, notes, {
       key: (n) => n.id,
-      signature: (n) => JSON.stringify([n.status, n.text, n.thread, n.undone_by, n.fail_reason, n.read_only, n.after_asset, n.commit, state.session?.state, selected === n.id, Math.floor(Date.now() / 60000)]),
+      signature: (n) => { const acts = noteActions(n, { finishing: state.session?.state === 'finishing' }); return JSON.stringify([n.status, n.text, n.thread, n.undone_by, n.fail_reason, n.read_only, n.after_asset, n.commit, state.session?.state, selected === n.id, acts.drop, acts.undo]); },
       render: card,
     });
     empty.hidden = notes.length > 0 || pending.children.length > 0;

@@ -4,6 +4,8 @@ import { h } from '../../ui/dom.js';
 import { openSheet, confirmSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
 import { queuedNotes, imageCapWarning } from './state.js';
+import { reconcile } from '../../ui/list.js';
+import { statusChip } from './notes.js';
 import { IMAGE_CAP_WARN_MARGIN, designErrorText } from '../../core/design.js';
 
 export const NO_CHANGE_QUESTION = 'No note changed the code. Approve the design as it is?';
@@ -135,7 +137,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
     const included = [...include].filter(([k, v]) => v && finish.cards.find((c) => c.note === k)?.data_url).length;
     const warn = imageCapWarning(state.imagesUsed, state.imagesMax, included, IMAGE_CAP_WARN_MARGIN);
     const noChange = finish.no_change_only;
-    body.replaceChildren(
+    body.replaceChildren(...[
       message ? h('p', { class: 'callout callout-amber', role: 'status', text: message }) : null,
       noChange ? h('p', { class: 'finish-question', text: NO_CHANGE_QUESTION })
         : h('p', { class: 'finish-lede', text: 'Review what the agent will keep. Each picture is checked against the final code.' }),
@@ -143,7 +145,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
       h('ul', { class: 'finish-cards' }, finish.cards.map(cardEl)),
       h('div', { class: 'sheet-actions' },
         h('button', { class: 'button button-plain', type: 'button', disabled: busy, onclick: () => run(back) }, 'Back to editing'),
-        h('button', { class: 'button button-primary', type: 'button', disabled: busy, onclick: () => run(confirm) }, noChange ? 'Approve as it is' : 'Confirm')));
+        h('button', { class: 'button button-primary', type: 'button', disabled: busy, onclick: () => run(confirm) }, noChange ? 'Approve as it is' : 'Confirm'))].filter(Boolean));
   }
   draw();
   onOpen?.();
@@ -165,22 +167,74 @@ export function gateQuestionFor(state, item) {
   return (state.questions ?? []).find((q) => q.item === item && !q.answer) ?? null;
 }
 
-export function ledgerPanel(ctx, item) {
-  const box = h('section', { class: 'design-ledger', 'aria-label': 'Approve the design' });
+// The session's notes with their pictures, and the gate's three answers once the operator confirmed.
+export function ledgerNotes(notes) {
+  return notes.filter((n) => !n.read_only && n.kind !== 'revert').sort((a, b) => a.number - b.number);
+}
+
+export function ledgerPanel(ctx, item, getState = () => null) {
+  const box = h('section', { class: 'design-ledger', 'aria-label': 'Ledger and approval', hidden: true });
+  const title = h('h2', { class: 'ledger-title' });
+  const lede = h('p', { class: 'ledger-lede' });
+  const rows = h('ul', { class: 'ledger-list', 'aria-label': 'Design ledger' });
   const error = h('p', { class: 'form-error', role: 'alert' });
   const text = h('input', { class: 'input input-inline', type: 'text', placeholder: 'What should change?', 'aria-label': 'What to change', autocomplete: 'off' });
-  const render = () => {
-    const q = gateQuestionFor(ctx.store.get(), item);
-    box.replaceChildren(h('a', { class: 'link-button', href: `#/item/${item}`, text: 'View the ledger' }));
-    if (!q || !ctx.canOperate) return;
-    const answer = async (choice) => {
-      if (choice.needsText && !text.value.trim()) { error.textContent = 'Say what should change first.'; text.focus(); return; }
-      try { await ctx.cmds.answer(q.id, choice.send(text.value.trim())); ctx.refresh.one('questions'); toast('Answer sent', { tone: 'green' }); }
-      catch (err) { error.textContent = designErrorText(err); }
-    };
-    box.append(h('div', { class: 'ledger-actions' }, gateChoices(q).map((c) => h('button', { class: ['button', c.id === 'approve' ? 'button-primary' : 'button-plain'], type: 'button', onclick: () => answer(c) }, c.label))), text, error);
+  const buttons = h('div', { class: 'ledger-actions' });
+  const gate = h('div', { class: 'ledger-gate' }, buttons, text, error);
+  const link = h('a', { class: 'link-button', href: `#/item/${item}`, text: 'Open the item' });
+  box.append(title, lede, rows, gate, link);
+  const pictures = new Map();
+  let busy = false;
+  let shownGate = null;
+
+  const picture = (id, label) => {
+    const fig = h('figure', { class: 'ledger-pic' }, h('div', { class: 'ledger-pic-img' }, h('span', { class: 'muted', text: 'Loading…' })), h('figcaption', { class: 'cmp-caption', text: label }));
+    if (!pictures.has(id)) pictures.set(id, ctx.design.asset(item, id));
+    pictures.get(id).then((asset) => fig.querySelector('.ledger-pic-img').replaceChildren(h('img', { class: 'ledger-img', src: asset.data_url, alt: `${label} picture` })))
+      .catch((err) => { pictures.delete(id); fig.querySelector('.ledger-pic-img').replaceChildren(h('span', { class: 'form-error', text: designErrorText(err) })); });
+    return fig;
+  };
+  const row = (note) => h('li', { class: 'ledger-row' },
+    h('div', { class: 'note-head' }, h('strong', { class: 'note-id', text: note.id }), statusChip(note)),
+    h('p', { class: 'note-text', text: note.text }),
+    note.before_asset || note.final_asset ? h('div', { class: 'ledger-pics' },
+      note.before_asset ? picture(note.before_asset, 'Before') : null,
+      note.final_asset && note.final_included !== false ? picture(note.final_asset, 'Final') : null) : null);
+
+  const answer = async (choice, q) => {
+    if (busy) return;
+    if (choice.needsText && !text.value.trim()) { error.textContent = 'Say what should change first.'; text.focus(); return; }
+    busy = true; error.textContent = '';
+    for (const b of buttons.children) b.disabled = true;
+    try { await ctx.cmds.answer(q.id, choice.send(text.value.trim())); text.value = ''; ctx.refresh.one('questions'); toast('Answer sent', { tone: 'green' }); }
+    catch (err) { error.textContent = designErrorText(err); }
+    finally { busy = false; for (const b of buttons.children) b.disabled = false; }
+  };
+  const drawGate = (q) => {
+    const key = q ? q.id : null;
+    if (key === shownGate) return;
+    shownGate = key;
+    buttons.replaceChildren(...(q ? gateChoices(q).map((c) => h('button', { class: ['button', c.id === 'approve' ? 'button-primary' : 'button-plain'], type: 'button', 'data-choice': c.id, onclick: () => answer(c, q) }, c.label)) : []));
+  };
+
+  const update = () => {
+    const state = getState();
+    const s = state?.session?.state;
+    const confirmed = s === 'confirmed' && !state.ended;
+    const show = Boolean(state?.session) && confirmed;
+    box.hidden = !show;
+    if (!show) return;
+    const q = ctx.canOperate && confirmed ? gateQuestionFor(ctx.store.get(), item) : null;
+    title.textContent = 'Waiting for your approval';
+    lede.textContent = q ? 'Here is what changed. Approve it, ask for changes, or reject it.' : 'Waiting for the approval to open, or for your answer to be recorded.';
+    drawGate(q);
+    gate.hidden = !q;
+    link.hidden = false;
+    reconcile(rows, ledgerNotes(state.notes), { key: (n) => n.id, signature: (n) => JSON.stringify([n.status, n.text, n.undone_by, n.before_asset, n.final_asset, n.final_included]), render: row });
+    if (!rows.children.length) rows.replaceChildren(h('li', { class: 'ledger-empty muted', text: 'No notes were made in this session.' }));
+    else rows.querySelector('.ledger-empty')?.remove();
   };
   ctx.refresh.one('questions');
-  const off = ctx.store.watch((s) => s.questions, render);
-  return { element: box, destroy: off };
+  const off = ctx.store.watch((s) => s.questions, update);
+  return { element: box, update, destroy: off };
 }

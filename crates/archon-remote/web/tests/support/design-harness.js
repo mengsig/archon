@@ -14,7 +14,7 @@ const PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS
 export const ITEM = 'qi_FIXTURE';
 const CSS_BASE = readFileSync(join(ROOT, 'tests/fixtures/design-app/style.css'), 'utf8');
 
-export async function startHarness(browser, { role = 'operator' } = {}) {
+export async function startHarness(browser, { role = 'operator', questions = [], summaries = [] } = {}) {
   const fixtureApp = await startFixtureApp();
   const appPage = await (await browser.newContext({ viewport: { width: 800, height: 500 } })).newPage();
   await appPage.goto(fixtureApp.url);
@@ -28,6 +28,8 @@ export async function startHarness(browser, { role = 'operator' } = {}) {
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const daemon = createDaemon({ appPage, fixtureApp, role });
+  daemon.state.questions.push(...questions);
+  daemon.state.summaries.push(...summaries);
   return {
     baseURL: `http://127.0.0.1:${server.address().port}`,
     daemon,
@@ -40,9 +42,9 @@ export async function startHarness(browser, { role = 'operator' } = {}) {
 const json = (res, body) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(body));
 
 function createDaemon({ appPage, fixtureApp, role }) {
-  const state = { notes: [], seq: 0, ended: false, paused: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false };
+  const state = { notes: [], seq: 0, ended: false, paused: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false, questions: [], summaries: [], sessionPatch: {} };
   const now = () => new Date().toISOString();
-  const session = () => ({ id: 'ds_FIXTURE', item: ITEM, state: state.sessionState, degraded: false, note_version: state.version, viewport_preset: 'desktop', preview_url: 'http://127.0.0.1:5173/', sandbox_off: false });
+  const session = () => ({ id: 'ds_FIXTURE', item: ITEM, state: state.sessionState, degraded: false, note_version: state.version, viewport_preset: 'desktop', preview_url: 'http://127.0.0.1:5173/', sandbox_off: false, ...state.sessionPatch });
   const view = (n) => ({ ...n, undone_by: state.notes.find((x) => x.reverts === n.id && x.status === 'done')?.id ?? null, read_only: false, active: true });
   const push = (ws, event) => ws.send(JSON.stringify({ frame: 'design', sub: 1, event }));
   const broadcast = (event) => state.connections.forEach((c) => c.subscribed && push(c.ws, event));
@@ -51,7 +53,8 @@ function createDaemon({ appPage, fixtureApp, role }) {
 
   async function sendFrame(conn) {
     if (state.ended || state.paused || !conn.subscribed) return;
-    const jpeg = await appPage.screenshot({ type: 'jpeg', quality: 60 });
+    const jpeg = await appPage.screenshot({ type: 'jpeg', quality: 60 }).catch(() => null);
+    if (!jpeg || state.ended) return;
     const { width, height } = appPage.viewportSize();
     push(conn.ws, { event: 'frame', seq: ++state.seq, jpeg_b64: jpeg.toString('base64'), w: width, h: height, at: now() });
   }
@@ -72,8 +75,17 @@ function createDaemon({ appPage, fixtureApp, role }) {
     state.requests.push(msg);
     if (cmd === 'hello') return reply(ws, req, 'welcome', { protocol_version: 25, features: ['design_sessions'], device: { id: 'dev1', name: 'Test', role } });
     if (cmd === 'feed_history') return reply(ws, req, 'feed', []);
-    if (cmd === 'list_item_summaries') return reply(ws, req, 'item_summaries', []);
-    if (cmd === 'list_questions') return reply(ws, req, 'questions', []);
+    if (cmd === 'list_item_summaries') return reply(ws, req, 'item_summaries', state.summaries);
+    if (cmd === 'list_questions') return reply(ws, req, 'questions', state.questions);
+    if (cmd === 'answer') {
+      const q = state.questions.find((x) => x.id === msg.question);
+      if (!q) return refuse(ws, req, 'not_found', 'no such question');
+      q.answer = msg.text; q.answered_at = now();
+      return reply(ws, req, 'question', q);
+    }
+    if (cmd === 'repo_list') return reply(ws, req, 'repos', []);
+    if (cmd === 'list_pipelines') return reply(ws, req, 'catalog', { pipelines: [] });
+    if (cmd === 'enqueue') return reply(ws, req, 'item', { id: 'qi_NEW', title: msg.title });
     if (cmd?.startsWith('subscribe_') && cmd !== 'subscribe_design') return reply(ws, req, 'subscribed', { id: 9, last_seq: 0 });
     if (!cmd?.startsWith('design_') && cmd !== 'subscribe_design') return refuse(ws, req, 'unsupported', `${cmd} is not part of this stand-in`);
     if (cmd === 'design_get') {
@@ -103,6 +115,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
         }, 200);
         return;
       }
+      case 'design_upload': return reply(ws, req, 'design_resolved', { target: null, label: 'Your picture', asset: 'da_up', data_url: PIXEL });
       case 'design_asset': return reply(ws, req, 'design_asset', { id: msg.id, data_url: PIXEL, width: 1, height: 1, caption: 'captured from the preview at commit abc1234, 14:32' });
       case 'design_note_undo': {
         const original = state.notes.find((n) => n.id === msg.id);
@@ -118,7 +131,10 @@ function createDaemon({ appPage, fixtureApp, role }) {
         return reply(ws, req, 'design_finish', { capture: 'cap1', head: 'abc1234def', note_version: state.version, no_change_only: false,
           cards: state.notes.filter((n) => n.status === 'done' && n.kind !== 'revert' && !view(n).undone_by).map((n) => ({ note: n.id, text: n.text, asset: 'da_f', data_url: PIXEL, caption: 'captured from the preview at commit abc1234', include: true, superseded_by: null, not_found: false, left_history: false })) });
       case 'design_finish_cancel': state.sessionState = 'live'; return reply(ws, req, 'design_done', null);
-      case 'design_finish_confirm': state.confirmed = msg; return reply(ws, req, 'design_done', null);
+      case 'design_finish_confirm':
+        state.confirmed = msg; state.sessionPatch = { ...state.sessionPatch }; state.sessionState = 'confirmed'; state.version += 1;
+        broadcast({ event: 'session', state: 'confirmed', degraded: false, preview_path: '/', commit: null, browser: { status: 'running' }, note_version: state.version });
+        return reply(ws, req, 'design_done', null);
       default: return reply(ws, req, 'design_done', null);
     }
   }
@@ -131,8 +147,13 @@ function createDaemon({ appPage, fixtureApp, role }) {
       ws.onClose(() => state.connections.delete(conn));
     },
     // A session event as archond pushes it, at the current note version.
-    pushSession(fields) { broadcast({ event: 'session', state: state.sessionState, degraded: false, preview_path: '/', commit: null, browser: { status: 'running' }, note_version: state.version, ...fields }); },
+    pushSession(fields) {
+      if ('degraded' in fields) state.sessionPatch.degraded = fields.degraded;
+      broadcast({ event: 'session', state: state.sessionState, degraded: false, preview_path: '/', commit: null, browser: { status: 'running' }, note_version: state.version, ...fields });
+    },
     // The app stopped answering: no frames until resumed.
+    // Fields of the session as design_get reports it (degraded, preview_url, ...).
+    patchSession(patch) { Object.assign(state.sessionPatch, patch); },
     pauseFrames() { state.paused = true; },
     resumeFrames() { state.paused = false; state.connections.forEach((c) => sendFrame(c)); },
     // The network dropped every open socket; the web app reconnects on its own.

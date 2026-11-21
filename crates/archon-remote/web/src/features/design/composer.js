@@ -23,6 +23,7 @@ export function sendsOnEnter(event, text) {
 // resolved: DesignResolvedView {target, label, asset, data_url} or null for a note on the whole page.
 export function createComposer({ onSend, onCancel, onDepth, canWiden = true }) {
   let resolved = null;
+  let busy = false;
   const view = { sendPicture: true, sendDetails: true };
   const crop = h('img', { class: 'dcomposer-crop', alt: 'The picture the agent will receive' });
   const label = h('p', { class: 'dcomposer-target' });
@@ -44,6 +45,7 @@ export function createComposer({ onSend, onCancel, onDepth, canWiden = true }) {
     onDepth(by);
   }
   const submit = () => {
+    if (busy) return;
     const words = text.value.trim();
     if (!words) { error.textContent = 'Write what should change first.'; text.focus(); return; }
     error.textContent = '';
@@ -68,16 +70,19 @@ export function createComposer({ onSend, onCancel, onDepth, canWiden = true }) {
         crop.hidden = !next.data_url;
         if (next.data_url) crop.src = next.data_url;
         label.textContent = next.label ?? '';
-        details.value = buildDetails(next.target);
+        details.value = next.details ?? buildDetails(next.target);
         wider.hidden = narrower.hidden = Boolean(next.target?.region) || !next.target;
         picture.row.hidden = !next.asset;
+        detailsSwitch.row.hidden = details.hidden = false;
       }
       if (!keepText) text.value = '';
       error.textContent = '';
       text.focus({ preventScroll: true });
     },
     hide() { el.hidden = true; resolved = null; },
-    setBusy(busy) { send.disabled = busy; },
+    setBusy(on) { busy = on; send.disabled = on; send.setAttribute('aria-busy', String(on)); },
+    get busy() { return busy; },
+    get resolved() { return resolved; },
     setError(message) { error.textContent = message; },
     reset() { text.value = ''; this.hide(); },
     get text() { return text.value; },

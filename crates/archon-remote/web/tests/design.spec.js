@@ -3,6 +3,7 @@
 // fixtures/design-app, with a scripted daemon. A real archond run of the same
 // flows belongs to the daemon tasks' own e2e.
 import { test as base, expect } from '@playwright/test';
+import { mkdirSync } from 'node:fs';
 import { startHarness, ITEM } from './support/design-harness.js';
 import { guardConsole } from './support/console-guard.js';
 
@@ -14,6 +15,8 @@ const test = base.extend({
   },
 });
 test.describe.configure({ mode: 'serial' });
+const EVIDENCE = new URL('../../../../.archon/evidence/web', import.meta.url).pathname;
+mkdirSync(EVIDENCE, { recursive: true });
 
 async function open(browser, page, options) {
   const harness = await startHarness(browser, options);
@@ -33,7 +36,8 @@ test.describe('desktop', () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
   test('T-E1: comment, send, watch it turn green, compare, undo, finish', async ({ browser, page }) => {
-    const harness = await open(browser, page);
+    const gate = { id: 'q_GATE', item: ITEM, number: 1, text: 'Approve the design?', options: ['approve', 'revise', 'reject'], asked_at: new Date().toISOString(), answer: null };
+    const harness = await open(browser, page, { questions: [gate] });
     try {
       const canvas = page.locator('.design-canvas');
       await expect(canvas).toBeVisible();
@@ -76,6 +80,22 @@ test.describe('desktop', () => {
       await expect(page.getByLabel('Include picture for D2')).toHaveCount(0);
       await page.getByRole('button', { name: 'Confirm' }).click();
       await expect.poll(() => harness.daemon.state.confirmed?.include).toEqual({ D1: true });
+
+      // Confirmed is not ended: the screen waits for the operator's approval.
+      await expect(page.getByRole('heading', { name: 'Waiting for your approval' }).first()).toBeVisible();
+      await expect(page.getByText('This design session ended')).toHaveCount(0);
+      const ledger = page.getByRole('region', { name: 'Ledger and approval' });
+      await expect(ledger.locator('.ledger-row')).toHaveCount(2);
+      await expect(ledger.locator('.ledger-row').first()).toContainText('make this green');
+      await expect(ledger.locator('.ledger-img')).toHaveCount(2);
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: `${EVIDENCE}/confirmed-approval.png` });
+      await ledger.getByRole('button', { name: 'Ask for changes' }).click();
+      await expect(ledger.getByRole('alert')).toContainText('Say what should change');
+      await ledger.getByLabel('What to change').fill('make it bigger');
+      await ledger.getByRole('button', { name: 'Ask for changes' }).click();
+      await expect.poll(() => harness.daemon.state.requests.find((r) => r.cmd === 'answer')).toMatchObject({ question: 'q_GATE', text: 'revise: make it bigger' });
     } finally { await harness.stop(); }
   });
 
@@ -128,10 +148,17 @@ test.describe('robustness and accessibility', () => {
 
       harness.daemon.pauseFrames();
       harness.daemon.pushSession({ degraded: true });
-      await expect(page.getByRole('heading', { name: 'The app stopped responding' })).toBeVisible();
-      await expect(page.getByText('Preview down', { exact: true }).first()).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Preview down' })).toBeVisible();
+      await expect(page.locator('.design-phase')).toContainText('127.0.0.1:5173');
+      await expect(page.getByText('Live', { exact: true })).toHaveCount(0);
+      await page.screenshot({ path: `${EVIDENCE}/preview-down.png` });
+      const reloads = () => harness.daemon.state.requests.filter((r) => r.cmd === 'design_reload').length;
+      await page.locator('.design-phase').getByRole('button', { name: 'Retry' }).click();
+      await expect.poll(reloads).toBe(1);
       harness.daemon.resumeFrames();
-      await expect(page.getByRole('heading', { name: 'The app stopped responding' })).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: 'Preview down' })).toBeVisible(); // a frame alone does not clear it
+      harness.daemon.pushSession({ degraded: false });
+      await expect(page.getByRole('heading', { name: 'Preview down' })).toHaveCount(0);
       await expect(page.getByText('Live', { exact: true }).first()).toBeVisible();
 
       harness.daemon.pushSession({ browser: { status: 'crashed_too_often' } });
@@ -237,4 +264,121 @@ test('T-E3: an observer sees the status line only and sends no design request', 
     const cmds = harness.daemon.state.requests.map((r) => r.cmd).filter((c) => c?.includes('design'));
     expect(cmds).toEqual(['design_get']);
   } finally { await harness.stop(); }
+});
+
+test.describe('hardening', () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+  const sent = (harness, cmd) => harness.daemon.state.requests.filter((r) => r.cmd === cmd);
+
+  test('a note is sent once however often send is pressed', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      await page.getByRole('button', { name: 'Note on the whole page' }).click();
+      await page.getByLabel('What should change').fill('only once');
+      await page.evaluate(() => { const f = document.querySelector('form.dcomposer'); f.requestSubmit(); f.requestSubmit(); f.requestSubmit(); });
+      await expect(page.locator('#note-D1').getByText('Done', { exact: true })).toBeVisible();
+      expect(sent(harness, 'design_note_add')).toHaveLength(1);
+      expect(harness.daemon.state.notes).toHaveLength(1);
+    } finally { await harness.stop(); }
+  });
+
+  test('[ and ] leave a note on the whole page alone', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      const canvas = page.locator('.design-canvas');
+      await expect(canvas).toBeVisible();
+      await page.getByRole('radio', { name: 'Comment' }).click();
+      const rect = await canvas.boundingBox();
+      await page.mouse.click(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      await expect(page.getByText('What the agent will receive')).toBeVisible();
+      await page.getByRole('button', { name: 'Note on the whole page' }).click();
+      await expect(page.getByText('What the agent will receive')).toBeHidden();
+      await page.evaluate(() => document.activeElement?.blur());
+      const before = sent(harness, 'design_resolve').length;
+      await page.keyboard.press('[');
+      await page.keyboard.press(']');
+      await page.waitForTimeout(300);
+      expect(sent(harness, 'design_resolve')).toHaveLength(before);
+      await expect(page.getByText('What the agent will receive')).toBeHidden();
+    } finally { await harness.stop(); }
+  });
+
+  test('a live item shows the Design chip on its queue card', async ({ browser, page }) => {
+    const mk = (id, proposal) => ({ id, title: `Item ${id}`, state: { state: 'running' }, repo: null, pipeline: 'standard', priority: 'normal', updated_at: new Date().toISOString(), created_at: new Date().toISOString(), stage: 'design', spent_usd: 0, dependencies: [], autonomy: { review: 'standard', proposal } });
+    const harness = await startHarness(browser, { summaries: [mk('qi_A', 'live'), mk('qi_B', 'off')] });
+    try {
+      await harness.install(page);
+      await page.goto(`${harness.baseURL}/#/queue`);
+      await expect(page.getByRole('link', { name: /Item qi_A/ }).getByText('Design', { exact: true })).toBeVisible();
+      await expect(page.getByRole('link', { name: /Item qi_B/ }).getByText('Design', { exact: true })).toHaveCount(0);
+    } finally { await harness.stop(); }
+  });
+
+  test('the Design it live switch puts proposal live on the add request, and off leaves it out', async ({ browser, page }) => {
+    const harness = await startHarness(browser);
+    try {
+      await harness.install(page);
+      await page.goto(`${harness.baseURL}/#/queue`);
+      const queue = async (live) => {
+        await page.getByRole('button', { name: 'New item', exact: true }).click();
+        const sheet = page.getByRole('dialog', { name: 'New item' });
+        await sheet.getByLabel('Title').fill(`Design ${live}`);
+        await sheet.getByLabel('Brief').fill('Try the live design flow.');
+        const toggle = sheet.getByRole('switch', { name: 'Design it live' });
+        if (live) { await sheet.getByText('Design it live', { exact: true }).click(); await expect(toggle).toBeChecked(); }
+        await sheet.getByRole('button', { name: 'Queue item' }).click();
+        await expect(sheet).toHaveCount(0);
+      };
+      await queue(true);
+      await queue(false);
+      const adds = sent(harness, 'enqueue');
+      expect(adds).toHaveLength(2);
+      expect(adds[0].autonomy).toEqual({ proposal: 'live' });
+      expect(adds[1].autonomy).toBeUndefined();
+    } finally { await harness.stop(); }
+  });
+});
+
+test.describe('phone S3 and touch', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test('a New screen sketch fits the phone, and a tap sends the touched point', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      const canvas = page.locator('.design-canvas');
+      await expect(canvas).toBeVisible();
+      // Tap: the point sent is the touched one, in app pixels.
+      await page.getByRole('navigation', { name: 'Design modes' }).getByRole('button', { name: 'Comment' }).click();
+      const box = await harness.appPage.locator('#cta').boundingBox();
+      const rect = await canvas.boundingBox();
+      const scale = rect.width / 800;
+      await page.touchscreen.tap(rect.x + (box.x + box.width / 2) * scale, rect.y + (box.y + box.height / 2) * scale);
+      await expect(page.getByText('What the agent will receive')).toBeVisible();
+      await page.screenshot({ path: `${EVIDENCE}/phone-comment.png` });
+      const picked = harness.daemon.state.requests.filter((r) => r.cmd === 'design_resolve' && r.select).at(-1);
+      expect(Math.abs(picked.x - (box.x + box.width / 2))).toBeLessThan(6);
+      expect(Math.abs(picked.y - (box.y + box.height / 2))).toBeLessThan(6);
+      await page.getByRole('button', { name: 'Cancel' }).first().click();
+
+      await page.getByRole('button', { name: 'New screen' }).click();
+      const dialog = page.getByRole('dialog', { name: 'New screen' });
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toContainText('New screen sketch');
+      await expect.poll(async () => (await dialog.boundingBox()).y).toBeLessThan(300); // the sheet has slid in
+      const ink = dialog.locator('.sketch-ink');
+      const ib = await ink.boundingBox();
+      const db = await dialog.boundingBox();
+      expect(ib.width).toBeLessThanOrEqual(db.width);
+      expect(ib.y + ib.height).toBeLessThanOrEqual(844);
+      await page.mouse.move(ib.x + 20, ib.y + 20);
+      await page.mouse.down();
+      await page.mouse.move(ib.x + 80, ib.y + 90, { steps: 4 });
+      await page.mouse.up();
+      await dialog.getByRole('button', { name: 'Use this picture' }).click();
+      await expect.poll(() => harness.daemon.state.requests.find((r) => r.cmd === 'design_upload')?.blank).toBe(true);
+      await expect(page.getByLabel('Details the agent will receive')).toHaveValue(/New screen sketch/);
+      await expect(page.getByLabel('Details the agent will receive')).not.toHaveValue(/Region the operator drew/);
+    } finally { await harness.stop(); }
+  });
 });

@@ -663,6 +663,39 @@ mod stream {
     }
 }
 
+/// The agent's first preview report makes the session live and posts the
+/// "Design session ready" notice for the item, once.
+#[tokio::test]
+async fn the_first_preview_report_posts_a_ready_notice_once() {
+    let f = Fixture::new().await;
+    f.as_agent(Request::DesignPreview {
+        url: crate::common::design::PREVIEW.into(),
+        caller: Some(f.agent.clone()),
+    })
+    .await
+    .expect("a second report");
+    let feed =
+        f.h.ctx
+            .store
+            .lock()
+            .await
+            .feed_after(0, 10_000)
+            .expect("feed");
+    let ready: Vec<_> = feed
+        .into_iter()
+        .filter_map(|item| match item.entry {
+            archon_core::notify::FeedEntry::Notification(n)
+                if n.text.starts_with("Design session ready") =>
+            {
+                Some(n)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ready.len(), 1, "{ready:?}");
+    assert_eq!(ready[0].item.as_ref(), Some(&f.item));
+}
+
 /// Startup recovery ends a live session whose run is already over, so no
 /// browser or slot is kept for a dead item.
 #[tokio::test]

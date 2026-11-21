@@ -87,8 +87,9 @@ refuses it. Choose it when you create the item: changing `proposal` to or from
 `live` on an existing item is refused ("choose live when creating the item").
 
 The item card shows a **Design** chip. When the preview is ready, an inbox
-entry "Design session ready" appears with an **Open** button (and a push
-notification where your device has them). Until then the design screen shows
+entry "Design session ready" appears with an **Open** button that opens the
+design screen. (Archon sends no push notifications yet; the inbox entry is the
+signal.) Until then the design screen shows
 "Starting your app…" and the agent's latest progress line.
 
 ## Using the design screen

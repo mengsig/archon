@@ -47,7 +47,7 @@ impl DesignService {
     ) -> Result<Reply, ArchonError> {
         let session = self.agent_session(ctx, caller).await?;
         let url = validate_preview_url(url)?;
-        {
+        let became_live = {
             let mut store = ctx.store.lock().await;
             let patch = archon_queue::store::SessionPatch {
                 preview_url: Some(Some(url.clone())),
@@ -63,6 +63,26 @@ impl DesignService {
                     None,
                     false,
                 )?;
+                Some(store.item(&session.item)?.title)
+            } else {
+                None
+            }
+        };
+        // The first report makes the session live: tell the operator, whose
+        // inbox shows the entry with an Open button for the design screen.
+        if let Some(title) = became_live {
+            let text =
+                format!("Design session ready: {title}. Open it to show the agent what to change.");
+            if let Err(error) = crate::feed::notify(
+                ctx,
+                archon_core::notify::NotificationKind::Decision,
+                text,
+                Some(session.item.clone()),
+                Some(session.run.clone()),
+            )
+            .await
+            {
+                tracing::warn!(%error, session = %session.id, "design: the ready notice was not posted");
             }
         }
         let rt = self.runtime(&session.id);

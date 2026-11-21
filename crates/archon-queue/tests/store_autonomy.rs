@@ -412,3 +412,36 @@ fn proposal_approval_freezes_record_binding_and_decision_together() {
         decision.decision
     );
 }
+
+/// E2E: a question an agent asked about an item stays open in the inbox
+/// after the item is cancelled unless the settle pass closes it; a gate's
+/// question and other items' questions are left alone.
+#[test]
+fn a_cancelled_items_questions_are_closed() {
+    let mut store = store();
+    let cancelled = store.insert_item(&item(None, "dropped"), None).unwrap();
+    let kept = store.insert_item(&item(None, "kept"), None).unwrap();
+    let ask = |item: &archon_core::id::QueueItemId, at: i64| Question {
+        id: QuestionId::new(),
+        number: 0,
+        text: "Which green?".into(),
+        options: Vec::new(),
+        item: Some(item.clone()),
+        aether: None,
+        asked_by: None,
+        asked_at: t(at),
+        answer: None,
+        answered_at: None,
+    };
+    let stale = store.insert_question(&ask(&cancelled.id, 10)).unwrap();
+    let other = store.insert_question(&ask(&kept.id, 11)).unwrap();
+    assert!(store.close_cancelled_item_questions(t(20)).unwrap().is_empty());
+    store
+        .transition_item(&cancelled.id, QueueState::Cancelled { reason: None }, t(30))
+        .unwrap();
+    let answers = store.close_cancelled_item_questions(t(40)).unwrap();
+    assert_eq!(answers.len(), 1);
+    assert!(!store.question(&stale.id).unwrap().is_open());
+    assert!(store.question(&other.id).unwrap().is_open());
+    assert!(store.close_cancelled_item_questions(t(50)).unwrap().is_empty(), "once");
+}

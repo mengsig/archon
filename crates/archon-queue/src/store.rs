@@ -740,6 +740,36 @@ impl Store {
     ) -> Result<Vec<FeedItem>, ArchonError> {
         gates::close_withdrawn_questions(&mut self.conn, at)
     }
+    /// Close the questions still open about a cancelled item, each with a
+    /// feed answer, which is returned for broadcasting: nobody acts on
+    /// their answers any more. Gate questions close with their gates.
+    pub fn close_cancelled_item_questions(
+        &mut self,
+        at: Timestamp,
+    ) -> Result<Vec<FeedItem>, ArchonError> {
+        let mut stale = Vec::new();
+        for question in feed::list(&self.conn, true)? {
+            let Some(item) = &question.item else { continue };
+            let cancelled = match self.item(item) {
+                Ok(found) => matches!(found.state, archon_core::queue::QueueState::Cancelled { .. }),
+                Err(_) => false,
+            };
+            if cancelled && gates::by_question(&self.conn, &question.id)?.is_none() {
+                stale.push(question.id);
+            }
+        }
+        if stale.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tx = codec::write_tx(&mut self.conn)?;
+        let mut answers = Vec::new();
+        for id in &stale {
+            answers.extend(feed::close_withdrawn(&tx, id, "the item was cancelled", at)?);
+        }
+        use codec::SqlContext;
+        tx.commit().ctx("commit cancelled items' questions")?;
+        Ok(answers)
+    }
     /// Close the questions still open on decided gates, each with a feed
     /// answer, which is returned for broadcasting.
     pub fn close_decided_questions(&mut self, at: Timestamp) -> Result<Vec<FeedItem>, ArchonError> {

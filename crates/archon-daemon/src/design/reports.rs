@@ -107,11 +107,16 @@ impl DesignService {
         // The first report makes the session live: tell the operator, whose
         // inbox shows the entry with an Open button for the design screen.
         if let Some(title) = became_live {
+            // The title is the operator's own words: clipped, so the inbox
+            // entry and a push stay one short line.
+            let title = crate::executor::clip(title.trim(), 80);
             let text =
                 format!("Design session ready: {title}. Open it to show the agent what to change.");
+            // The session waits on the operator: a Blocker is the kind that
+            // asks for their action (Decision is a choice already made).
             if let Err(error) = crate::feed::notify(
                 ctx,
-                archon_core::notify::NotificationKind::Decision,
+                archon_core::notify::NotificationKind::Blocker,
                 text,
                 Some(session.item.clone()),
                 Some(session.run.clone()),

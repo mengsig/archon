@@ -694,6 +694,12 @@ async fn the_first_preview_report_posts_a_ready_notice_once() {
         .collect();
     assert_eq!(ready.len(), 1, "{ready:?}");
     assert_eq!(ready[0].item.as_ref(), Some(&f.item));
+    assert_eq!(
+        ready[0].kind,
+        archon_core::notify::NotificationKind::Blocker,
+        "the operator's action is asked for; it is no decision"
+    );
+    assert!(ready[0].text.chars().count() < 160, "{}", ready[0].text);
 }
 
 /// Startup recovery ends a live session whose run is already over, so no

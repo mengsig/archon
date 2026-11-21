@@ -682,6 +682,44 @@ async fn a_revised_design_retried_after_a_refusal_still_gets_its_preview() {
     assert_eq!(now.state, SessionState::Live);
 }
 
+/// A cancel while a Finish (or a note, or an undo) holds the item lock
+/// settles at once: the run table never waits on the item lock, and the
+/// session ends as soon as the holder lets go.
+#[tokio::test]
+async fn a_cancel_during_finish_does_not_stall_the_executor() {
+    let h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (_run, session) = designing(&h, &item).await;
+    let lock = h.ctx.design.item_lock_for_tests(&item.id);
+    let held = lock.clone().lock_owned().await;
+    let cancel = h.cli(Request::CancelItem {
+        item: item.id.clone(),
+        reason: Some("changed my mind".into()),
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(10), cancel)
+        .await
+        .expect("the cancel returns while the item lock is held")
+        .expect("cancel");
+    drop(held);
+    let mut ended = false;
+    for _ in 0..250 {
+        let now = h
+            .ctx
+            .store
+            .lock()
+            .await
+            .design_session(&session.id)
+            .unwrap()
+            .unwrap();
+        if now.state == SessionState::Ended {
+            ended = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(ended, "the session ends once the lock is free");
+}
+
 /// Item 6: cancelling while the proposal gate is open ends the confirmed session.
 #[tokio::test]
 async fn cancelling_with_the_gate_open_ends_the_confirmed_session() {

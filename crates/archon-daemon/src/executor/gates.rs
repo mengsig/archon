@@ -349,6 +349,7 @@ pub(crate) async fn close_settled_questions(ctx: &DaemonContext) -> Result<(), A
         let mut store = ctx.store.lock().await;
         let mut answers = store.close_withdrawn_questions(now)?;
         answers.extend(store.close_decided_questions(now)?);
+        answers.extend(store.close_cancelled_item_questions(now)?);
         answers
     };
     if answers.is_empty() {

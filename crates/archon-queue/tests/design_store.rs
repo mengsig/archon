@@ -595,3 +595,17 @@ fn the_migration_applies_to_an_existing_database() {
     let session = live(&mut store, &item.id);
     assert_eq!(add(&mut store, &item.id, &session, "k"), "D1");
 }
+
+/// A design finished with no change names its requirement after the item's
+/// note counter: past every note made, never D1 again.
+#[test]
+fn the_next_note_id_follows_the_counter() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "design"), None).unwrap().id;
+    assert_eq!(store.design_next_note_id(&item).unwrap(), "D1");
+    let session = live(&mut store, &item);
+    add(&mut store, &item, &session, "a");
+    add(&mut store, &item, &session, "b");
+    assert_eq!(store.design_next_note_id(&item).unwrap(), "D3");
+    assert_eq!(store.design_next_note_id(&item).unwrap(), "D3", "nothing reserved");
+}

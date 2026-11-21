@@ -402,6 +402,54 @@ async fn a_superseded_note_survives_only_as_words_in_the_one_that_replaced_it() 
     assert_eq!(intent.images[0].id, "D2-final");
     let record = serde_json::to_string(&intent).unwrap();
     assert!(!record.contains("D1-final"));
+    // The stage spawned after approval carries the real approved-intent prompt
+    // (executor/acceptance/spawn.rs): one requirement, D2, citing D1 as earlier,
+    // and only D2's final picture, as text and as an attachment.
+    let request = h
+        .backend
+        .requests()
+        .pop()
+        .expect("a stage spawned after approval");
+    let prompt = &request.instructions;
+    assert!(
+        prompt.contains("## Approved intent (binding acceptance)"),
+        "{prompt}"
+    );
+    let (_, ledger) = prompt.split_once("Ledger: ").unwrap();
+    let (ledger, _) = ledger.split_once("\nReference images").unwrap();
+    let ledger: Vec<serde_json::Value> = serde_json::from_str(ledger).unwrap();
+    assert_eq!(ledger.len(), 1, "{ledger:?}");
+    assert_eq!(ledger[0]["id"], "D2");
+    assert_eq!(ledger[0]["images"], json!(["D2-final"]));
+    assert!(ledger[0]["text"].as_str().unwrap().contains("Earlier: D1"));
+    assert!(!prompt.contains("D1-final"));
+    let green = green_picture_sha();
+    assert!(!prompt.contains(&green));
+    // The harness's backend lacks reference support, so the images reach the
+    // stage as the prompt's path list: exactly D2's red final picture.
+    let (_, listed) = prompt
+        .split_once("Reference images (open every image): ")
+        .unwrap();
+    let (listed, _) = listed.split_once("\n\nApproved artifacts").unwrap();
+    let listed: Vec<archon_core::intent::ReferenceImage> = serde_json::from_str(listed).unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].id, "D2-final");
+    let attached = std::fs::read(&listed[0].path).unwrap();
+    assert_eq!(attached, [PNG, b"red".as_slice()].concat());
+    assert!(
+        request
+            .references
+            .iter()
+            .all(|r| r.label.as_deref() != Some("D1-final"))
+    );
+}
+
+/// The sha256 of the stored final picture `done_note` writes for "green".
+fn green_picture_sha() -> String {
+    Sha256::digest([PNG, b"green".as_slice()].concat())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// T-I11: the agent commits after the operator confirmed.

@@ -201,6 +201,11 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
                 "structured": {"verdict": "pass", "findings": []}}),
         ),
         ("list_artifacts", json!({"item": qi()})),
+        ("design_preview", json!({"url": "http://127.0.0.1:5173/"})),
+        (
+            "design_note",
+            json!({"id": "D2", "status": "done", "reply": "Done.", "commit": "b".repeat(40), "no_change": false}),
+        ),
         (
             "read_artifact",
             json!({"item": qi(), "name": "evidence/out.json", "offset": 10, "limit": 100}),
@@ -1512,7 +1517,10 @@ fn the_tool_list_stays_within_its_budget() {
     const VERDICT_CHECK_BYTES: usize = 512;
     // Each effort's note that `max` needs `[models] max_effort` (1.6.4).
     const EFFORT_CAP_NOTE_BYTES: usize = 256;
+    // `design_preview` and `design_note` (live design sessions).
+    const DESIGN_TOOLS_BYTES: usize = 2 * 1024;
     const BUDGET_BYTES: usize = 33 * 1024
+        + DESIGN_TOOLS_BYTES
         + INTENT_BINDING_BYTES
         + INTENT_RECORD_BYTES
         + VERDICT_CHECK_BYTES
@@ -1670,4 +1678,80 @@ fn model_policy_reports_the_default_effort_cap() {
     );
     let text = render("model_policy", &Reply::ModelPolicy(raised));
     assert!(text.contains("Max effort: max"), "{text}");
+}
+
+#[test]
+fn design_preview_maps_to_its_request() {
+    let request = to_request("design_preview", json!({"url": "http://localhost:3000/x"})).unwrap();
+    assert_eq!(
+        request,
+        Request::DesignPreview {
+            url: "http://localhost:3000/x".into(),
+            caller: None
+        }
+    );
+    assert!(to_request("design_preview", json!({})).is_err());
+    assert!(to_request("design_preview", json!({"url": "x", "caller": "agt_1"})).is_err());
+}
+
+#[test]
+fn design_note_checks_its_status_and_commit() {
+    use archon_core::protocol::AgentNoteStatus;
+    let sha1 = "a".repeat(40);
+    let sha256 = "0123456789abcdef".repeat(4);
+    for (status, expected) in [
+        ("working", AgentNoteStatus::Working),
+        ("done", AgentNoteStatus::Done),
+        ("needs_reply", AgentNoteStatus::NeedsReply),
+        ("failed", AgentNoteStatus::Failed),
+        ("cancelled", AgentNoteStatus::Cancelled),
+    ] {
+        let request = to_request("design_note", json!({"id": "D12", "status": status})).unwrap();
+        assert_eq!(
+            request,
+            Request::DesignNoteReport {
+                id: "D12".into(),
+                status: expected,
+                reply: None,
+                commit: None,
+                no_change: false,
+                caller: None
+            }
+        );
+    }
+    for commit in [&sha1, &sha256] {
+        let args = json!({"id": "D1", "status": "done", "commit": commit, "no_change": true, "reply": "ok"});
+        let Request::DesignNoteReport {
+            commit: got,
+            no_change,
+            reply,
+            ..
+        } = to_request("design_note", args).unwrap()
+        else {
+            panic!("a note report");
+        };
+        assert_eq!(got.as_deref(), Some(commit.as_str()));
+        assert!(no_change);
+        assert_eq!(reply.as_deref(), Some("ok"));
+    }
+    let bad = [
+        json!({"id": "D1", "status": "undone"}),
+        json!({"id": "D1", "status": "done", "commit": "abc123"}),
+        json!({"id": "D1", "status": "done", "commit": "A".repeat(40)}),
+        json!({"id": "D1", "status": "done", "commit": "a".repeat(41)}),
+        json!({"id": "1", "status": "done"}),
+        json!({"id": "D1-final", "status": "done"}),
+        json!({"status": "done"}),
+    ];
+    for args in bad {
+        assert!(to_request("design_note", args.clone()).is_err(), "{args}");
+    }
+}
+
+#[test]
+fn a_design_agent_reply_renders_as_its_message() {
+    let reply = Reply::DesignAgent {
+        message: "D3 recorded".into(),
+    };
+    assert_eq!(render("design_note", &reply), "D3 recorded");
 }

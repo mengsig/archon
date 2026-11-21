@@ -28,6 +28,38 @@ pub struct RepoTiers {
     pub release_branch: Option<String>,
     #[serde(skip_serializing_if = "Checks::is_empty")]
     pub checks: Checks,
+    /// `[design]`: what the live design preview may load.
+    #[serde(skip_serializing_if = "RepoDesign::is_empty")]
+    pub design: RepoDesign,
+}
+
+/// `[design]` of `.archon/repo.toml`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct RepoDesign {
+    /// Extra hosts (`host` or `host:port`) the preview may load.
+    pub allow_hosts: Vec<String>,
+}
+
+impl RepoDesign {
+    /// Whether nothing is set.
+    pub fn is_empty(&self) -> bool {
+        self.allow_hosts.is_empty()
+    }
+}
+
+/// Whether `h` is a host the preview may be allowed to load: letters,
+/// digits, dots and hyphens, with an optional `:port`.
+pub fn valid_allow_host(h: &str) -> bool {
+    let (host, port) = match h.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (h, None),
+    };
+    !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+        && port.is_none_or(|p| !p.is_empty() && p.parse::<u16>().is_ok())
 }
 
 /// The check tiers: `fast` runs in every item before it commits, for the
@@ -67,6 +99,11 @@ impl RepoTiers {
                 full: self.checks.full.or(below.checks.full),
                 release: self.checks.release.or(below.checks.release),
             },
+            design: if self.design.is_empty() {
+                below.design
+            } else {
+                self.design
+            },
         }
     }
 
@@ -101,6 +138,16 @@ impl RepoTiers {
                     "{key} {name:?} is not a plain branch name"
                 )));
             }
+        }
+        if let Some(host) = self
+            .design
+            .allow_hosts
+            .iter()
+            .find(|h| !valid_allow_host(h))
+        {
+            return Err(ArchonError::Invalid(format!(
+                "design.allow_hosts {host:?} is not a host name (letters, digits, dots, hyphens, optional :port)"
+            )));
         }
         let commands = [
             ("checks.fast", &self.checks.fast),
@@ -178,7 +225,29 @@ mod tests {
                 full: None,
                 release: None,
             },
+            design: RepoDesign::default(),
         }
+    }
+
+    #[test]
+    fn design_allow_hosts_are_checked_and_an_invalid_one_is_named() {
+        let ok = RepoTiers::parse(
+            "[design]\nallow_hosts = [\"fonts.googleapis.com\", \"cdn.local:8080\"]",
+            "repo.toml",
+        )
+        .unwrap();
+        assert_eq!(ok.design.allow_hosts.len(), 2);
+        for bad in ["evil.com/x", "a b", "", "x:y", "http://x", "a@b"] {
+            let text = format!("[design]\nallow_hosts = [{bad:?}]");
+            let err = RepoTiers::parse(&text, "repo.toml")
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("allow_hosts") && err.contains(&format!("{bad:?}")),
+                "{err}"
+            );
+        }
+        assert!(valid_allow_host("a-b.c") && !valid_allow_host("a_b"));
     }
 
     #[test]

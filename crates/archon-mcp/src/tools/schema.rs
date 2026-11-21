@@ -63,7 +63,47 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         request_status(),
         approve_intent(),
         watch_repo(),
+        design_preview(),
+        design_note(),
     ]
+}
+
+fn design_preview() -> ToolDefinition {
+    define(
+        "design_preview",
+        "Design preview",
+        "Stage agent of a live design stage: point the operator's preview at your dev server. \
+         `url` is an http:// URL whose host is 127.0.0.1, localhost or [::1], with any port; \
+         anything else is refused. Call it again after a server restart.",
+        object(
+            json!({"url": {"type": "string", "minLength": 1, "description": "For example http://127.0.0.1:5173/."}}),
+            &["url"],
+        ),
+        false,
+    )
+}
+
+fn design_note() -> ToolDefinition {
+    define(
+        "design_note",
+        "Design note status",
+        "Stage agent of a live design stage: report the status of the operator's note `id` \
+         (D<n>) that was sent to you. For `done`, commit the change first with the trailer \
+         `Archon-Note: <id>` and pass `commit`; pass `no_change: true` when nothing needed \
+         changing. `needs_reply` asks the operator a question in `reply`; `failed` and \
+         `cancelled` leave the tree at the commit the note started from.",
+        object(
+            json!({
+                "id": {"type": "string", "description": "The note's id, e.g. D3."},
+                "status": {"enum": ["working", "done", "needs_reply", "failed", "cancelled"]},
+                "reply": {"type": "string", "minLength": 1, "description": "A question for the operator, or a short explanation."},
+                "commit": {"type": "string", "description": "The full commit id, for `done`."},
+                "no_change": {"type": "boolean"}
+            }),
+            &["id", "status"],
+        ),
+        false,
+    )
 }
 
 fn approve_intent() -> ToolDefinition {

@@ -145,6 +145,20 @@ pub(super) async fn design_decided(
     {
         tracing::warn!(%error, gate = %gate.stage_id, "design session did not hear the decision");
     }
+    // The decision ends the session a completed stage left confirmed.
+    if let Err(error) = ctx
+        .design
+        .stage_settled(
+            &ctx.arc(),
+            &gate.run,
+            &gate.stage_id,
+            gate.attempt,
+            crate::design::StageEnd::Completed,
+        )
+        .await
+    {
+        tracing::warn!(%error, gate = %gate.stage_id, "design session did not end");
+    }
 }
 
 /// `driver` started past `approved` while it still gates that proposal: a

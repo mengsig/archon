@@ -5860,9 +5860,9 @@ state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup` shows:
   from `refs/pull/<n>/head`) holds, whose tree is either `git merge-tree`'s
   clean merge of its parents or, for a squash or rebase landing of a stack
   parent merged over (§8.8), its first parent's own tree when the merged
-  commit has exactly the tree of a commit in the ancestry of a recorded stack
-  parent head (`parent_sha`) the reviewed commit holds, or of the commit merged
-  by an earlier merge in the chain, which is also checked. A tree that merely matches another
+  commit has exactly the tree of a commit in the recorded stack parent's
+  ancestry outside the base, or of its own ancestor merged by an earlier
+  merge in the chain, which is also checked. A tree that merely matches another
   commit is no proof. Any other commit, a resolved conflict or an added
   change keeps the refusal, naming why. The request records the reviewed commit and why as
   `carried`, its question and result say so, and the merge is pinned to the

@@ -257,6 +257,60 @@ fn a_base_merge_kept_as_the_branch_over_a_matching_tree_is_not_carried_over() {
     assert!(why.contains("resolves a conflict"), "{why}");
 }
 
+#[test]
+fn a_base_revert_matching_pre_fork_history_is_not_a_stack_landing() {
+    let f = fixture();
+    f.commit("base.txt", "base change\n");
+    git(&f.repo, &["branch", "-f", "item", "main"]);
+    f.on("item");
+    let dep = f.commit("dep.txt", "parent\n");
+    let reviewed = f.commit("item.txt", "reviewed\n");
+    f.on("main");
+    git(&f.repo, &["rm", "--quiet", "base.txt"]);
+    git(&f.repo, &["commit", "--quiet", "-m", "revert base change"]);
+    let base = f.head();
+    assert_eq!(f.tree(&base), f.tree(&f.fork));
+    let head = f.merge_commit(&f.tree(&reviewed), &reviewed, &base);
+    let why = f
+        .check_stacked(&reviewed, &head, &base, &[&dep])
+        .expect_err("an unread base revert must be refused");
+    assert!(why.contains("resolves a conflict"), "{why}");
+}
+
+#[test]
+fn an_unrelated_commit_matching_an_earlier_merge_is_not_a_landing() {
+    let f = fixture();
+    f.on("item");
+    let dep = f.commit("dep.txt", "parent\n");
+    let reviewed = f.commit("dep.txt", "edited by item\n");
+    f.on("main");
+    let main = f.commit("base.txt", "base\n");
+    let parent_tree = stack::merge_tree(&f.shadow, None, &dep, &main)
+        .unwrap()
+        .expect("parent merge is clean");
+    let first_landing = f.merge_commit(&parent_tree, &dep, &main);
+    let first_tree = stack::merge_tree(&f.shadow, None, &reviewed, &first_landing)
+        .unwrap()
+        .expect("first merge is clean");
+    let first_merge = f.merge_commit(&first_tree, &reviewed, &first_landing);
+    let unrelated = git(
+        &f.repo,
+        &["commit-tree", &parent_tree, "-p", &main, "-m", "unrelated"],
+    );
+    let base = f.merge_commit(&parent_tree, &first_landing, &unrelated);
+    assert!(!contains(&f.repo, &first_landing, &unrelated).unwrap());
+    assert!(
+        stack::merge_tree(&f.shadow, None, &first_merge, &unrelated)
+            .unwrap()
+            .is_err()
+    );
+    let head = f.merge_commit(&first_tree, &first_merge, &unrelated);
+    let why = f
+        .check_stacked(&reviewed, &head, &base, &[&dep])
+        .expect_err("unrelated matching tree is refused");
+    assert!(why.contains("resolves a conflict"), "{why}");
+}
+
 /// A recreated base branch, a new commit of the same content over the old,
 /// merged in as git does.
 #[test]

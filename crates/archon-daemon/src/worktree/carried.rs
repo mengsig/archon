@@ -3,8 +3,8 @@
 //! parents, of a commit its base holds, whose content is either git's own
 //! clean merge of it or, for a stacked parent's squash landing (§8.8), the
 //! branch's own tree over a landing of recorded stack ancestry or a commit
-//! merged earlier in the checked chain. A resolved conflict, an added change, a tree
-//! that merely matches or any other commit is not covered.
+//! merged earlier in the checked chain. A resolved conflict, an added change,
+//! a tree that merely matches or any other commit is not covered.
 
 use std::path::Path;
 
@@ -150,8 +150,8 @@ fn parents(shadow: &Shadow, commit: &str) -> Result<Option<(String, String)>, Ar
     })
 }
 
-/// Whether `theirs` has the content of recorded stack ancestry or a commit
-/// merged earlier in the chain, which the caller also checks before accepting it.
+/// Whether `theirs` has the content of stack commits outside the base, or of
+/// an ancestor merged earlier in the chain, which the caller also checks.
 fn lands_parent(
     shadow: &Shadow,
     repo: &Path,
@@ -160,7 +160,7 @@ fn lands_parent(
     review: &Review,
 ) -> Result<bool, ArchonError> {
     let wanted = tree_of(shadow, theirs)?;
-    if earlier_landing_has_tree(shadow, &wanted, ours, review.reviewed)? {
+    if earlier_landing_has_tree(shadow, repo, theirs, &wanted, ours, review.reviewed)? {
         return Ok(true);
     }
     for parent in review.stacked_on {
@@ -169,8 +169,9 @@ fn lands_parent(
         if parent == review.reviewed || !has_commit(repo, parent)? {
             continue;
         }
+        let exclude = format!("^{}", review.base);
         if contains(repo, parent, review.reviewed)?
-            && has_tree_in_history(shadow, &wanted, &[parent])?
+            && has_tree_in_history(shadow, &wanted, &[parent, &exclude])?
         {
             return Ok(true);
         }
@@ -180,6 +181,8 @@ fn lands_parent(
 
 fn earlier_landing_has_tree(
     shadow: &Shadow,
+    repo: &Path,
+    theirs: &str,
     tree: &str,
     ours: &str,
     reviewed: &str,
@@ -194,7 +197,7 @@ fn earlier_landing_has_tree(
         let Some((first, second)) = parents(shadow, &at)? else {
             break;
         };
-        if tree_of(shadow, &second)? == tree {
+        if tree_of(shadow, &second)? == tree && contains(repo, &second, theirs)? {
             return Ok(true);
         }
         at = first;

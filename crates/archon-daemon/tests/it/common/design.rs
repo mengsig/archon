@@ -282,6 +282,9 @@ pub struct Fixture {
     pub attempt: u32,
 }
 
+/// The preview URL every fixture session reports.
+pub const PREVIEW: &str = "http://127.0.0.1:5173/";
+
 impl Fixture {
     pub async fn new() -> Self {
         Self::with(design_config()).await
@@ -316,7 +319,7 @@ impl Fixture {
             )
             .await
             .expect("session starts");
-        Self {
+        let fixture = Self {
             h,
             factory,
             item: item.id,
@@ -326,7 +329,17 @@ impl Fixture {
             run: run.id,
             stage_id,
             attempt: stage.attempt,
-        }
+        };
+        // The agent's first preview report makes the session live, as the
+        // design stage's agent does once its dev server answers.
+        fixture
+            .as_agent(Request::DesignPreview {
+                url: PREVIEW.into(),
+                caller: Some(fixture.agent.clone()),
+            })
+            .await
+            .expect("preview reported");
+        fixture
     }
 
     /// A request as the operator's own client sends it.

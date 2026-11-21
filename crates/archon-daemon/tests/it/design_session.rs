@@ -92,12 +92,6 @@ pub fn key(f: &Fixture, id: &str, delivery: u32) -> String {
 #[tokio::test]
 async fn a_note_reaches_the_agent_once_and_settles_with_its_commit() {
     let f = Fixture::new().await;
-    f.as_agent(Request::DesignPreview {
-        url: "http://127.0.0.1:5173/".into(),
-        caller: Some(f.agent.clone()),
-    })
-    .await
-    .expect("preview");
     assert_eq!(f.factory.launched(), 1, "the browser starts lazily, once");
     assert_eq!(
         f.factory.browser(0).calls(|c| c.navigated.clone()),
@@ -218,12 +212,6 @@ async fn a_question_holds_the_queue_until_it_is_answered() {
 #[tokio::test]
 async fn ending_the_stage_ends_the_session_and_closes_the_browser() {
     let f = Fixture::new().await;
-    f.as_agent(Request::DesignPreview {
-        url: "http://127.0.0.1:5173/".into(),
-        caller: Some(f.agent.clone()),
-    })
-    .await
-    .unwrap();
     add(&f, "k1", "first").await;
     add(&f, "k2", "second").await;
     f.end(StageEnd::Completed).await;
@@ -283,12 +271,6 @@ async fn a_withheld_secret_is_in_no_message() {
 #[tokio::test]
 async fn a_crashed_browser_is_relaunched() {
     let f = Fixture::new().await;
-    f.as_agent(Request::DesignPreview {
-        url: "http://127.0.0.1:5173/".into(),
-        caller: Some(f.agent.clone()),
-    })
-    .await
-    .unwrap();
     f.factory.browser(0).crash();
     for _ in 0..100 {
         if f.factory.launched() > 1 {

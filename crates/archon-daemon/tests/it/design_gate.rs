@@ -79,6 +79,20 @@ async fn designing(h: &Harness, item: &QueueItem) -> (PipelineRun, DesignSession
             })
             .unwrap(),
     };
+    // The agent's first preview report makes a session live; notes need one.
+    let session = if session.state == SessionState::Starting {
+        store
+            .design_session_transition(
+                &session.id,
+                SessionState::Starting,
+                SessionState::Live,
+                None,
+                false,
+            )
+            .unwrap()
+    } else {
+        session
+    };
     (run, session)
 }
 

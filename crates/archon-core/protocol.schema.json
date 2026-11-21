@@ -12370,9 +12370,10 @@
       "type": "object"
     },
     "ProposalMode": {
-      "description": "Whether a proposal is written and approved before implementing.",
+      "description": "Whether a proposal is written and approved before implementing:\n`lavish` as a page, `live` as a live design session with the operator.\n`live` is no more autonomous than `lavish`, so it ranks as it.",
       "enum": [
         "lavish",
+        "live",
         "off"
       ],
       "type": "string"
@@ -18814,6 +18815,11 @@
         {
           "const": "propose",
           "description": "Writes a proposal page and changes nothing; at most one, first.",
+          "type": "string"
+        },
+        {
+          "const": "design",
+          "description": "A live design session: the agent stays up, edits one note at a time and\ncommits each; replaces `propose` when `proposal = live`. At most one,\nfirst, and no fan-out of its own.",
           "type": "string"
         },
         {

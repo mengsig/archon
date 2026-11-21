@@ -47,7 +47,7 @@ impl super::DesignService {
     }
 }
 
-pub(crate) async fn stream(
+pub async fn stream(
     ctx: Arc<DaemonContext>,
     sub: DesignSubscription,
     frames: mpsc::Sender<ServerFrame>,
@@ -77,12 +77,14 @@ pub(crate) async fn stream(
         return;
     }
     let (ack_tx, mut ack_rx) = watch::channel(0u64);
-    let key = (sub.device.id.clone(), sub.id);
-    service
-        .acks
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(key.clone(), Arc::new(AckState { acked: ack_tx }));
+    // Counted before any await; dropped, even when the task is aborted,
+    // it gives the subscriber back and removes the ack entry.
+    let _guard = Subscribed::new(
+        service.clone(),
+        session.id.clone(),
+        (sub.device.id.clone(), sub.id),
+        ack_tx,
+    );
     if let Err(error) = service.subscriber_joined(&ctx, &session.id).await {
         tracing::warn!(%error, session = %session.id, "design: the preview did not start for a subscriber");
         let _ = send(
@@ -95,12 +97,45 @@ pub(crate) async fn stream(
         .await;
     }
     run(&ctx, &sub, &session.id, &frames, &mut ack_rx).await;
-    service.subscriber_left(&session.id);
-    service
-        .acks
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&key);
+}
+
+/// One attached subscriber: its count and its ack entry live as long as it.
+struct Subscribed {
+    service: Arc<super::DesignService>,
+    session: archon_core::design::DesignSessionId,
+    key: (String, u64),
+}
+
+impl Subscribed {
+    fn new(
+        service: Arc<super::DesignService>,
+        session: archon_core::design::DesignSessionId,
+        key: (String, u64),
+        ack: watch::Sender<u64>,
+    ) -> Self {
+        service
+            .acks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key.clone(), Arc::new(AckState { acked: ack }));
+        service.subscriber_counted(&session);
+        Self {
+            service,
+            session,
+            key,
+        }
+    }
+}
+
+impl Drop for Subscribed {
+    fn drop(&mut self) {
+        self.service.subscriber_left(&self.session);
+        self.service
+            .acks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.key);
+    }
 }
 
 async fn send(frames: &mpsc::Sender<ServerFrame>, sub: u64, event: DesignEvent) -> Result<(), ()> {
@@ -121,6 +156,8 @@ async fn run(
     let rt = service.runtime(session);
     let mut events = rt.events.subscribe();
     let mut live = rt.frames.subscribe();
+    // Subscribing marks the current frame seen; a late joiner still gets it.
+    live.mark_changed();
     service.emit_session(ctx, session).await;
     let mut last_seq = 0u64;
     let mut last_sent = Instant::now() - FRAME_GAP;

@@ -53,6 +53,20 @@ pub async fn recover(ctx: &DaemonContext) -> Result<(), ArchonError> {
             }
         }
     }
+    // A session whose run already finished or was cancelled has nothing left
+    // to wait for, including a Confirmed one a cancel left behind.
+    for session in &sessions {
+        let terminal = {
+            let store = ctx.store.lock().await;
+            match store.run(&session.run) {
+                Ok(run) => run.state.is_terminal(),
+                Err(_) => true,
+            }
+        };
+        if terminal && let Err(error) = service.end_session(ctx, session, "run ended").await {
+            tracing::warn!(%error, session = %session.id, "design: a session of a finished run was not ended");
+        }
+    }
     Ok(())
 }
 

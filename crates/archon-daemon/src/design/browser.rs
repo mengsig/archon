@@ -508,7 +508,6 @@ impl DesignService {
         let rt = self.runtime(session);
         let start = {
             let mut st = rt.st();
-            st.subscribers += 1;
             st.last_sub_gone = None;
             !st.screencast && browser.is_some()
         };
@@ -530,6 +529,20 @@ impl DesignService {
             }
         }
         Ok(())
+    }
+
+    /// Count a subscriber; its guard calls `subscriber_left`.
+    pub(crate) fn subscriber_counted(&self, session: &DesignSessionId) {
+        let rt = self.runtime(session);
+        let mut st = rt.st();
+        st.subscribers += 1;
+        st.last_sub_gone = None;
+    }
+
+    /// Subscribers attached to a session's stream.
+    pub fn subscriber_count(&self, session: &DesignSessionId) -> u32 {
+        self.existing_runtime(session)
+            .map_or(0, |rt| rt.st().subscribers)
     }
 
     pub(crate) fn subscriber_left(&self, session: &DesignSessionId) {

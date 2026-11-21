@@ -6,7 +6,7 @@ use std::sync::{Arc, Weak};
 
 use archon_core::error::ArchonError;
 use archon_core::protocol::{Reply, Request, ServerFrame, WelcomeDevice, feature};
-use archon_remote::{Backend, ChangeSubscription, FeedSubscription};
+use archon_remote::{Backend, ChangeSubscription, DesignSubscription, FeedSubscription};
 use tokio::sync::mpsc;
 
 use crate::context::DaemonContext;
@@ -43,7 +43,20 @@ impl Backend for DaemonBackend {
     }
 
     fn features(&self) -> Vec<&'static str> {
-        crate::handlers::features()
+        let mut features = crate::handlers::features();
+        // Advertised only once every request it covers is served.
+        if self.context().is_ok_and(|ctx| ctx.design.enabled()) {
+            features.push(feature::DESIGN_SESSIONS);
+        }
+        features
+    }
+
+    async fn design(&self, subscription: DesignSubscription, frames: mpsc::Sender<ServerFrame>) {
+        let Ok(ctx) = self.context() else {
+            return;
+        };
+        tracing::info!(device = %subscription.device.id, name = %subscription.device.name, role = ?subscription.device.role, session = %subscription.session, "design: stream opened");
+        crate::design::stream(ctx, subscription, frames).await;
     }
 
     async fn feed(&self, subscription: FeedSubscription, frames: mpsc::Sender<ServerFrame>) {

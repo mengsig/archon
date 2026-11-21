@@ -191,6 +191,10 @@ fn prefixed(error: ArchonError, prefix: &str) -> ArchonError {
             message: with(message),
             kept,
         },
+        ArchonError::Design { code, message } => ArchonError::Design {
+            code,
+            message: with(message),
+        },
     }
 }
 

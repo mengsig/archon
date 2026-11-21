@@ -3,7 +3,7 @@
 //! gates, the operator chat, directives, settings and the GitHub watcher. An
 //! observer only reads. Host administration stays with the CLI on the host.
 
-use archon_core::protocol::{DeviceRole, Request};
+use archon_core::protocol::{DeviceRole, Request, RequestClass};
 
 /// Why a device may not send a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +42,9 @@ pub fn check(role: DeviceRole, request: &Request) -> Result<(), Refusal> {
     }
     match role {
         DeviceRole::Operator => Ok(()),
-        DeviceRole::Observer if request.is_read_only() => Ok(()),
+        // `OperatorRead` requests (a design stream, a design picture) are the
+        // operator's: an observer reads only what any client may.
+        DeviceRole::Observer if request.class() == RequestClass::Read => Ok(()),
         DeviceRole::Observer => Err(Refusal::Observer),
     }
 }
@@ -97,6 +99,7 @@ fn reads(request: &Request) -> bool {
             | R::ItemLinks { .. }
             | R::IssueItems { .. }
             | R::ListGithubObjects { .. }
+            | R::DesignGet { .. }
     )
 }
 
@@ -126,6 +129,28 @@ fn operator_changes(request: &Request) -> bool {
             | R::UnlinkIssue { .. }
             | R::ImportIssue { .. }
             | R::WatchRepo { .. }
+            | R::SubscribeDesign { .. }
+            | R::DesignAsset { .. }
+            | R::DesignFrameAck { .. }
+            | R::DesignInput { .. }
+            | R::DesignResolve { .. }
+            | R::DesignRegion { .. }
+            | R::DesignUpload { .. }
+            | R::DesignViewport { .. }
+            | R::DesignReload { .. }
+            | R::DesignTellAgent { .. }
+            | R::DesignDialogAnswer { .. }
+            | R::DesignNoteAdd { .. }
+            | R::DesignNoteEdit { .. }
+            | R::DesignNoteCancel { .. }
+            | R::DesignNoteReply { .. }
+            | R::DesignNoteDrop { .. }
+            | R::DesignNoteUndo { .. }
+            | R::DesignNoteResend { .. }
+            | R::DesignFinishCapture { .. }
+            | R::DesignFinalCapture { .. }
+            | R::DesignFinishConfirm { .. }
+            | R::DesignFinishCancel { .. }
     )
 }
 
@@ -243,6 +268,60 @@ mod tests {
             assert_eq!(request.class(), RequestClass::Read, "{json}");
             assert!(allowed(DeviceRole::Operator, &request), "{json}");
             assert!(allowed(DeviceRole::Observer, &request), "{json}");
+        }
+    }
+
+    /// T-U6: every design request is classed; observers read only `design_get`;
+    /// the agent's two requests never reach a device.
+    #[test]
+    fn design_requests_are_classed_and_observers_only_read_the_summary() {
+        let session = "ds_01M621D9ZBJPTMDTV26KKQNBE1";
+        let asset = "da_01M621D9ZBJPTMDTV26KKQNBE1";
+        let rect = serde_json::json!({"x": 0, "y": 0, "w": 1, "h": 1});
+        let operator = [
+            serde_json::json!({"cmd": "subscribe_design", "session": session}),
+            serde_json::json!({"cmd": "design_asset", "item": ITEM, "id": asset}),
+            serde_json::json!({"cmd": "design_frame_ack", "sub": 1, "seq": 2}),
+            serde_json::json!({"cmd": "design_input", "session": session, "events": []}),
+            serde_json::json!({"cmd": "design_resolve", "session": session, "x": 1.0, "y": 2.0, "depth": 0, "select": false}),
+            serde_json::json!({"cmd": "design_region", "session": session, "box": rect}),
+            serde_json::json!({"cmd": "design_upload", "session": session, "media_type": "image/png", "data": "", "name": null, "sketch": null, "base": null}),
+            serde_json::json!({"cmd": "design_viewport", "session": session, "preset": "phone"}),
+            serde_json::json!({"cmd": "design_reload", "session": session}),
+            serde_json::json!({"cmd": "design_tell_agent", "session": session}),
+            serde_json::json!({"cmd": "design_dialog_answer", "session": session, "accept": true, "text": null}),
+            serde_json::json!({"cmd": "design_note_add", "session": session, "client_key": "k", "text": "t", "asset": null, "send_picture": false, "details_text": null}),
+            serde_json::json!({"cmd": "design_note_edit", "item": ITEM, "id": "D1", "text": "t"}),
+            serde_json::json!({"cmd": "design_note_cancel", "item": ITEM, "id": "D1"}),
+            serde_json::json!({"cmd": "design_note_reply", "item": ITEM, "id": "D1", "text": "t"}),
+            serde_json::json!({"cmd": "design_note_drop", "item": ITEM, "id": "D1"}),
+            serde_json::json!({"cmd": "design_note_undo", "item": ITEM, "id": "D1"}),
+            serde_json::json!({"cmd": "design_note_resend", "item": ITEM, "id": "D1"}),
+            serde_json::json!({"cmd": "design_finish_capture", "session": session}),
+            serde_json::json!({"cmd": "design_final_capture", "session": session, "capture": "c", "note": "D1"}),
+            serde_json::json!({"cmd": "design_finish_confirm", "session": session, "capture": "c", "include": {}, "superseded": {}}),
+            serde_json::json!({"cmd": "design_finish_cancel", "session": session}),
+        ];
+        for json in operator {
+            let request = parse(json.clone());
+            assert!(allowed(DeviceRole::Operator, &request), "{json}");
+            assert_eq!(
+                check(DeviceRole::Observer, &request),
+                Err(Refusal::Observer),
+                "{json}"
+            );
+        }
+        let get = parse(serde_json::json!({"cmd": "design_get", "item": ITEM}));
+        assert_eq!(get.class(), RequestClass::Read);
+        assert!(allowed(DeviceRole::Observer, &get) && allowed(DeviceRole::Operator, &get));
+        for json in [
+            serde_json::json!({"cmd": "design_preview", "url": "http://127.0.0.1:1/", "caller": null}),
+            serde_json::json!({"cmd": "design_note_report", "id": "D1", "status": "done", "reply": null, "commit": null, "caller": null}),
+        ] {
+            let request = parse(json.clone());
+            for role in [DeviceRole::Operator, DeviceRole::Observer] {
+                assert_eq!(check(role, &request), Err(Refusal::HostOnly), "{json}");
+            }
         }
     }
 

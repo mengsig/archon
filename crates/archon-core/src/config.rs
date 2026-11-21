@@ -79,6 +79,54 @@ pub struct Config {
     pub notify: crate::push::NotifyConfig,
     pub update: UpdateConfig,
     pub remote: crate::remote::RemoteConfig,
+    pub design: DesignConfig,
+}
+
+/// Whether the preview browser must run in Chromium's sandbox.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserSandbox {
+    /// Refuse to start without the sandbox.
+    #[default]
+    Required,
+    /// Allow `--no-sandbox`; the UI shows a badge.
+    Off,
+}
+
+/// `[design]`: live design sessions (design §8.7).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DesignConfig {
+    /// Whether design stages may start a preview.
+    pub enabled: bool,
+    /// The browser executable; unset detects one.
+    pub browser: Option<PathBuf>,
+    /// Whether the browser's sandbox is required.
+    pub browser_sandbox: BrowserSandbox,
+    /// Live headless browsers on this host, 1 to 16.
+    pub max_sessions: u32,
+}
+
+impl Default for DesignConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            browser: None,
+            browser_sandbox: BrowserSandbox::Required,
+            max_sessions: 2,
+        }
+    }
+}
+
+impl DesignConfig {
+    fn validate(&self) -> Result<(), ArchonError> {
+        if !(1..=16).contains(&self.max_sessions) {
+            return Err(ArchonError::Config(
+                "design.max_sessions must be 1 to 16".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// How archond verifies each repository's integration branch off the items'
@@ -1303,6 +1351,7 @@ impl Config {
         self.artifacts.validate()?;
         self.storage.validate()?;
         self.integration.validate()?;
+        self.design.validate()?;
         self.notify.validate()?;
         self.remote.validate()?;
         self.models.check_weights()?;
@@ -1408,6 +1457,29 @@ fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn design_defaults_and_parse() {
+        let default: Config = toml::from_str("").unwrap();
+        assert_eq!(default.design, DesignConfig::default());
+        assert!(!default.design.enabled);
+        assert_eq!(default.design.browser_sandbox, BrowserSandbox::Required);
+        assert_eq!(default.design.max_sessions, 2);
+        let set: Config = toml::from_str(
+            "[design]\nenabled = true\nbrowser = '/usr/bin/chromium'\nbrowser_sandbox = 'off'\nmax_sessions = 4",
+        )
+        .unwrap();
+        assert!(set.design.enabled);
+        assert_eq!(set.design.browser, Some(PathBuf::from("/usr/bin/chromium")));
+        assert_eq!(set.design.browser_sandbox, BrowserSandbox::Off);
+        assert_eq!(set.design.max_sessions, 4);
+        set.validate().unwrap();
+        for bad in [0, 17] {
+            let config: Config =
+                toml::from_str(&format!("[design]\nmax_sessions = {bad}")).unwrap();
+            assert!(config.validate().is_err());
+        }
+    }
 
     #[test]
     fn repository_effort_cap_only_narrows_global_policy() {

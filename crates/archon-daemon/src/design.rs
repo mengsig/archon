@@ -428,8 +428,9 @@ impl DesignService {
     }
 
     /// The notes of `item` that are active at commit `at`: done change and
-    /// page notes not undone, still in the history, and not superseded
-    /// (automatically, or by the operator's `choices`).
+    /// page notes not undone, still in the history, not already requirements
+    /// of the item's approved intent, and not superseded (automatically, or
+    /// by the operator's `choices`).
     pub fn active_notes(
         &self,
         store: &Store,
@@ -440,6 +441,14 @@ impl DesignService {
     ) -> Result<Vec<DesignNote>, ArchonError> {
         let notes = store.design_notes(item)?;
         let undone = undone_by(&notes);
+        // Notes an earlier approval made requirements stay bound through the
+        // approved intent the ledger starts from: never added again, and
+        // never superseded by a later note (Q3).
+        let approved = store
+            .item(item)?
+            .intent
+            .map(|binding| binding.requirements)
+            .unwrap_or_default();
         let shadow = self.shadow(wt)?;
         let g = NoteGit {
             shadow: &shadow,
@@ -452,6 +461,7 @@ impl DesignService {
             if note.kind == NoteKind::Revert
                 || note.status != NoteStatus::Done
                 || undone.contains_key(&note.id)
+                || approved.contains(&note.id)
             {
                 continue;
             }

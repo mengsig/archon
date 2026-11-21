@@ -523,6 +523,54 @@ async fn a_live_item_with_an_earlier_intent_appends_to_it() {
     assert!(intent.images.contains(&earlier.images[0]));
 }
 
+/// A note an approval made a requirement stays bound through the approved
+/// intent: it is no longer active, so a later session's ledger, which starts
+/// from that intent, never adds it again ("requirement D1 already exists")
+/// and no later note on the same element supersedes it.
+#[tokio::test]
+async fn an_approved_note_is_not_active_for_a_later_ledger() {
+    let h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    let (id, head) = done_note(&h, &session, &run, "make it green", b"green").await;
+    let worktree = archon_daemon::design::WorktreeRef {
+        repo: h.repo.clone(),
+        worktree: run.workspace.clone(),
+        branch: run.branch.clone(),
+    };
+    let active = |h: &Harness| {
+        let store = h.ctx.store.try_lock().expect("store");
+        h.ctx
+            .design
+            .active_notes(&store, &worktree, &item.id, &head, None)
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(active(&h), [id.clone()], "active until approved");
+    confirm(&h, &session, &head, &[id.as_str()], &[]).await;
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    let gate = open_proposal(&h, &item.id).await;
+    approve(&h, &gate).await;
+    let bound = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .item(&item.id)
+        .unwrap()
+        .intent
+        .expect("approved")
+        .requirements;
+    assert!(bound.contains(&id), "{bound:?}");
+    assert!(
+        active(&h).is_empty(),
+        "an approved note is not active again"
+    );
+}
+
 /// Revise on a design gate resumes the kept agent in a new session that still
 /// carries the item's notes; the old session ends.
 #[tokio::test]

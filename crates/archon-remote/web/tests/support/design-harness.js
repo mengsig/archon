@@ -56,8 +56,9 @@ function createDaemon({ appPage, fixtureApp, role }) {
     push(conn.ws, { event: 'frame', seq: ++state.seq, jpeg_b64: jpeg.toString('base64'), w: width, h: height, at: now() });
   }
   async function target() {
-    const box = await appPage.locator('#cta').boundingBox();
-    return { path: '/', selector: 'main > button#cta.primary', role_name: 'button "Buy now"', component: null, box, viewport: { w: 800, h: 500, preset: 'desktop' }, styles: { color: 'rgb(255, 255, 255)', display: 'block' }, region: false };
+    // The protocol's Rect names its size w and h, not Playwright's width and height.
+    const { x, y, width: w, height: h } = await appPage.locator('#cta').boundingBox();
+    return { path: '/', selector: 'main > button#cta.primary', role_name: 'button "Buy now"', component: null, box: { x, y, w, h }, viewport: { w: 800, h: 500, preset: 'desktop' }, styles: { color: 'rgb(255, 255, 255)', display: 'block' }, region: false };
   }
   const note = (fields) => ({ item: ITEM, id: `D${fields.number}`, session: 'ds_FIXTURE', kind: 'change', text: '', details_text: null, send_picture: true, target: null, viewport: { w: 800, h: 500, preset: 'desktop' },
     status: 'queued', fail_reason: null, base_commit: 'base0001', commit: null, no_change: false, reverts: null, resent_from: null, superseded_by: null, thread: [], delivery: 0,

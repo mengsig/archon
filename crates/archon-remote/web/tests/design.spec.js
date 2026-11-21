@@ -48,6 +48,7 @@ test.describe('desktop', () => {
       await page.mouse.click(rect.x + (box.x + box.width / 2) * scale, rect.y + (box.y + box.height / 2) * scale);
       await expect(page.getByText('What the agent will receive')).toBeVisible();
       await expect(page.getByLabel('Details the agent will receive')).toHaveValue(/Selector: main > button#cta.primary/);
+      await expect(page.getByLabel('Details the agent will receive')).toHaveValue(/Box: x \d+, y \d+, \d+ × \d+/);
       await page.getByLabel('What should change').fill('make this green');
       await page.getByLabel('What should change').press('Enter');
 

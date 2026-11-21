@@ -40,7 +40,7 @@ browser_sandbox = "required" # "required" or "off"
 max_sessions = 2             # live headless browsers on this host
 ```
 
-The [configuration page](configuration.md#design) lists each key.
+The [configuration page](configuration.md) lists each key under `[design]`.
 
 **A browser is required.** Archon does not bundle one. It uses `[design]
 browser`, else the first of `google-chrome`, `chromium` or `chromium-browser`

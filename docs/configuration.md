@@ -357,7 +357,7 @@ max_sessions = 2               # live headless browsers on this host
 binary = "gh"                  # the command `github_reply` posts with
 ```
 
-<a id="design"></a>`[design]` turns on [live design
+`[design]` turns on [live design
 sessions](design-sessions.md). `enabled` is `false` until you set it. With it
 off, `proposal = live` is refused with a clear message and a running live
 stage fails with "design sessions turned off". A repository's

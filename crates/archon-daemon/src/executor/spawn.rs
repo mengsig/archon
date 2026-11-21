@@ -1129,7 +1129,7 @@ fn build_request(
         repository: target.repo.map(|repo| repo.name.clone()),
         repository_root: None,
         labels: labels(target, plan, id),
-        hidden_tools: hidden_tools(item.autonomy.tools, plan.workspace),
+        hidden_tools: hidden_tools(item.autonomy.tools, plan.workspace, plan.kind),
         leaf: !target.delegates(plan),
         cost_budget_usd: budget,
         aether_cost_budget: None,
@@ -1224,8 +1224,14 @@ const HIDDEN_NATIVE_TOOLS: [&str; 5] = [
 const INTEGRATE_TOOL: &str = "integrate_workspace";
 
 /// What a stage agent does not see: Archon's tools that act for the
-/// orchestrator (but for [`STAGE_TOOLS`](archon_core::mcp_tools::STAGE_TOOLS)), and the Aether tools above. A child inherits the list.
-fn hidden_tools(tools: ToolsMode, workspace: WorkspaceMode) -> Vec<String> {
+/// orchestrator (but for [`STAGE_TOOLS`](archon_core::mcp_tools::STAGE_TOOLS),
+/// and on a design stage [`DESIGN_STAGE_TOOLS`](archon_core::mcp_tools::DESIGN_STAGE_TOOLS)),
+/// and the Aether tools above. A child inherits the list.
+fn hidden_tools(
+    tools: ToolsMode,
+    workspace: WorkspaceMode,
+    kind: archon_core::catalog::StageKind,
+) -> Vec<String> {
     let hidden = match tools {
         ToolsMode::Guarded => archon_core::mcp_tools::qualified_names(),
         ToolsMode::Yolo => archon_core::mcp_tools::mutating_names(),
@@ -1238,11 +1244,18 @@ fn hidden_tools(tools: ToolsMode, workspace: WorkspaceMode) -> Vec<String> {
     let native = HIDDEN_NATIVE_TOOLS
         .into_iter()
         .chain(read_only.then_some(INTEGRATE_TOOL));
+    let design = match kind {
+        archon_core::catalog::StageKind::Design => {
+            archon_core::mcp_tools::DESIGN_STAGE_TOOLS.as_slice()
+        }
+        _ => &[],
+    };
     hidden
         .into_iter()
         .filter(|name| {
             !archon_core::mcp_tools::STAGE_TOOLS
                 .iter()
+                .chain(design)
                 .any(|tool| name == &archon_core::mcp_tools::qualified(tool))
         })
         .chain(native.map(str::to_owned))
@@ -2238,6 +2251,25 @@ mod tests {
 
     const HAIKU: &str = "claude-code/claude-haiku-5-5";
     const OTHER: &str = "claude-code/claude-sonnet-5-5";
+
+    /// Only a design stage's agent sees the design tools; the stage tools stay
+    /// visible to every agent, whatever its tools mode.
+    #[test]
+    fn design_tools_are_visible_only_to_a_design_stage() {
+        use archon_core::catalog::StageKind;
+        use archon_core::mcp_tools::{DESIGN_STAGE_TOOLS, STAGE_TOOLS, qualified};
+        for tools in [ToolsMode::Guarded, ToolsMode::Yolo] {
+            let design = hidden_tools(tools, WorkspaceMode::Worktree, StageKind::Design);
+            let work = hidden_tools(tools, WorkspaceMode::Worktree, StageKind::Work);
+            for tool in DESIGN_STAGE_TOOLS {
+                assert!(!design.contains(&qualified(tool)), "{tool} on design");
+                assert!(work.contains(&qualified(tool)), "{tool} hidden from work");
+            }
+            for tool in STAGE_TOOLS {
+                assert!(!design.contains(&qualified(tool)) && !work.contains(&qualified(tool)));
+            }
+        }
+    }
 
     fn model(id: &str) -> ModelRef {
         id.parse().expect("a model id")

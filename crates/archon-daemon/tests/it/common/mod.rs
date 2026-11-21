@@ -578,10 +578,15 @@ pub fn without_host_docker(mut config: Config) -> Config {
     config
 }
 
-/// The context in an `Arc`, with the design service bound to it.
+/// The context in an `Arc`, with the design service bound to it when design
+/// sessions are on. Unbound, the context has no weak reference, so tests that
+/// edit it in place through `Arc::get_mut` keep working; only design stages
+/// reach `DaemonContext::arc`.
 pub fn bound(ctx: DaemonContext) -> Arc<DaemonContext> {
     let ctx = Arc::new(ctx);
-    ctx.design.bind(&ctx);
+    if ctx.design.enabled() {
+        ctx.design.bind(&ctx);
+    }
     ctx
 }
 

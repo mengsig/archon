@@ -97,6 +97,11 @@ pub const STAGE_TOOLS: [&str; 6] = [
     "request_status",
 ];
 
+/// The tools a live design stage's agent also keeps: it reports its preview
+/// and each note's outcome through them. Every other agent has them hidden,
+/// and archond refuses them from any caller but a live session's agent.
+pub const DESIGN_STAGE_TOOLS: [&str; 2] = ["design_preview", "design_note"];
+
 const fn tool(name: &'static str, class: ToolClass) -> ToolName {
     ToolName { name, class }
 }
@@ -147,7 +152,7 @@ mod tests {
                 "{keyed} is a listed change"
             );
         }
-        for kept in STAGE_TOOLS {
+        for kept in STAGE_TOOLS.into_iter().chain(DESIGN_STAGE_TOOLS) {
             assert!(TOOLS.iter().any(|t| t.name == kept), "{kept} is listed");
         }
         assert!(!mutating_names().contains(&qualified("request_status")));

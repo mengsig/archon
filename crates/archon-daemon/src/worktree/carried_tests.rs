@@ -172,6 +172,54 @@ fn a_stack_parents_squash_merged_with_the_branchs_tree_carries_it_over() {
     );
 }
 
+#[test]
+fn chained_squash_landings_with_the_reviewed_tree_carry_it_over() {
+    let f = fixture();
+    let (dep, reviewed, second_landing, _, head) = chained_landings(&f);
+    assert_eq!(f.tree(&head), f.tree(&reviewed));
+
+    f.check_stacked(&reviewed, &head, &second_landing, &[&dep])
+        .expect("chained landings carry over");
+}
+
+#[test]
+fn a_chained_landing_that_changes_a_file_is_not_carried_over() {
+    let f = fixture();
+    let (dep, reviewed, second_landing, first_merge, _) = chained_landings(&f);
+    let changed = f.commit("unreviewed.txt", "unreviewed\n");
+    let head = f.merge_commit(&f.tree(&changed), &first_merge, &second_landing);
+    assert_ne!(f.tree(&head), f.tree(&reviewed));
+    let why = f
+        .check_stacked(&reviewed, &head, &second_landing, &[&dep])
+        .expect_err("changed landing is refused");
+    assert!(
+        why.contains("resolves a conflict or adds a change"),
+        "{why}"
+    );
+}
+
+fn chained_landings(f: &Fixture) -> (String, String, String, String, String) {
+    f.on("item");
+    let grandparent = f.commit("dep.txt", "grandparent\n");
+    let dep = f.commit("parent.txt", "parent\n");
+    let reviewed = f.commit("dep.txt", "edited by item\n");
+    f.on("main");
+    git(
+        &f.repo,
+        &["checkout", "--quiet", &grandparent, "--", "dep.txt"],
+    );
+    git(&f.repo, &["commit", "--quiet", "-m", "first squash"]);
+    let first_landing = f.head();
+    git(&f.repo, &["checkout", "--quiet", &dep, "--", "parent.txt"]);
+    git(&f.repo, &["commit", "--quiet", "-m", "second squash"]);
+    let second_landing = f.head();
+    assert_eq!(f.tree(&first_landing), f.tree(&grandparent));
+    assert_eq!(f.tree(&second_landing), f.tree(&dep));
+    let first_merge = f.merge_commit(&f.tree(&reviewed), &reviewed, &first_landing);
+    let head = f.merge_commit(&f.tree(&reviewed), &first_merge, &second_landing);
+    (dep, reviewed, second_landing, first_merge, head)
+}
+
 /// The same shape where no stack parent is recorded at that content.
 #[test]
 fn a_squash_of_no_recorded_stack_parent_is_not_carried_over() {

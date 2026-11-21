@@ -21,8 +21,8 @@ export function shortcutFor(event, { capturing = false, textFocus = false } = {}
   if (key === 'R' && event.shiftKey) return { action: 'reload' };
   if (event.shiftKey && key.length === 1 && key !== '?') return null;
   if (MODES[key.toLowerCase()] && key.length === 1) return { action: 'mode', value: MODES[key.toLowerCase()] };
-  if (key === '[') return { action: 'narrower' };
-  if (key === ']') return { action: 'wider' };
+  if (key === '[') return { action: 'wider' };
+  if (key === ']') return { action: 'narrower' };
   if (key === 'j' || key === 'J') return { action: 'next_note' };
   if (key === 'k' || key === 'K') return { action: 'prev_note' };
   if (PRESETS[key]) return { action: 'preset', value: PRESETS[key] };
@@ -33,7 +33,7 @@ export function shortcutFor(event, { capturing = false, textFocus = false } = {}
 export const SHORTCUTS = [
   ['I / C / R / S', 'Interact / Comment / Region / Sketch'],
   ['Esc', 'Cancel the selection or composer; stop typing into the app'],
-  ['[ / ]', 'Narrower / wider selection'],
+  ['[ / ]', 'Wider / narrower selection'],
   ['Enter', 'Send a one-line note'],
   ['Ctrl+Enter', 'Send a multi-line note'],
   ['J / K', 'Next / previous note'],
@@ -47,10 +47,15 @@ export const SHORTCUTS = [
 export function keyEvent(action, event) {
   if (event.key === 'Escape') return null;
   const printable = event.key.length === 1 && !event.ctrlKey && !event.metaKey;
-  return { type: 'Key', action, key: event.key, code: event.code ?? '', text: printable && action === 'down' ? event.key : null, modifiers: modifiersOf(event) };
+  return { type: 'key', action, key: event.key, code: event.code ?? '', text: printable && action === 'down' ? event.key : null, modifiers: modifiersOf(event) };
 }
 
 // The explicit "Send Esc to app" button.
 export function escapeKeyEvents() {
-  return ['down', 'up'].map((action) => ({ type: 'Key', action, key: 'Escape', code: 'Escape', text: null, modifiers: 0 }));
+  return ['down', 'up'].map((action) => ({ type: 'key', action, key: 'Escape', code: 'Escape', text: null, modifiers: 0 }));
+}
+
+// Wider is +1 (the parent element), Narrower is -1, never below the picked element (0).
+export function stepDepth(depth, by) {
+  return Math.max(0, depth + by);
 }

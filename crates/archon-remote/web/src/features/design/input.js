@@ -17,15 +17,15 @@ export function createInputBatcher({
 
   function merge(event) {
     const last = queue[queue.length - 1];
-    if (last && event.type === 'Mouse' && last.type === 'Mouse' && event.action === 'move' && last.action === 'move' && last.button === event.button) {
+    if (last && event.type === 'mouse' && last.type === 'mouse' && event.action === 'move' && last.action === 'move' && last.button === event.button) {
       queue[queue.length - 1] = event;
       return true;
     }
-    if (last && event.type === 'Wheel' && last.type === 'Wheel' && last.x === event.x && last.y === event.y && last.modifiers === event.modifiers) {
+    if (last && event.type === 'wheel' && last.type === 'wheel' && last.x === event.x && last.y === event.y && last.modifiers === event.modifiers) {
       queue[queue.length - 1] = { ...last, dx: last.dx + event.dx, dy: last.dy + event.dy };
       return true;
     }
-    if (last && event.type === 'Touch' && last.type === 'Touch' && event.action === 'move' && last.action === 'move') {
+    if (last && event.type === 'touch' && last.type === 'touch' && event.action === 'move' && last.action === 'move') {
       queue[queue.length - 1] = event;
       return true;
     }
@@ -54,7 +54,7 @@ export function createInputBatcher({
         queue.push(event);
         // Past the bound, the oldest pure moves go first; clicks and keys are never dropped.
         if (queue.length > MAX_QUEUED) {
-          const at = queue.findIndex((e) => (e.type === 'Mouse' && e.action === 'move') || e.type === 'Wheel');
+          const at = queue.findIndex((e) => (e.type === 'mouse' && e.action === 'move') || e.type === 'wheel');
           queue.splice(at >= 0 ? at : 0, 1);
         }
       }
@@ -77,17 +77,17 @@ export function modifiersOf(event) {
 
 const BUTTONS = ['left', 'middle', 'right'];
 export function mouseEvent(action, point, { button = 0, clickCount = 0, modifiers = 0 } = {}) {
-  return { type: 'Mouse', action, x: point.x, y: point.y, button: action === 'move' && button === null ? 'none' : (BUTTONS[button] ?? 'none'), click_count: clickCount, modifiers };
+  return { type: 'mouse', action, x: point.x, y: point.y, button: action === 'move' && button === null ? 'none' : (BUTTONS[button] ?? 'none'), click_count: clickCount, modifiers };
 }
 
 export function wheelEvent(point, dx, dy, modifiers = 0) {
-  return { type: 'Wheel', x: point.x, y: point.y, dx, dy, modifiers };
+  return { type: 'wheel', x: point.x, y: point.y, dx, dy, modifiers };
 }
 
 export function touchEvent(action, points) {
-  return { type: 'Touch', action, points: points.map((p, i) => ({ x: p.x, y: p.y, id: p.id ?? i })) };
+  return { type: 'touch', action, points: points.map((p, i) => ({ x: p.x, y: p.y, id: p.id ?? i })) };
 }
 
 export function textEvent(text) {
-  return { type: 'Text', text };
+  return { type: 'text', text };
 }

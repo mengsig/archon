@@ -74,7 +74,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
     if (cmd === 'feed_history') return reply(ws, req, 'feed', []);
     if (cmd === 'list_item_summaries') return reply(ws, req, 'item_summaries', []);
     if (cmd === 'list_questions') return reply(ws, req, 'questions', []);
-    if (cmd?.startsWith('subscribe_') && cmd !== 'subscribe_design') return reply(ws, req, 'subscribed', { sub: 9 });
+    if (cmd?.startsWith('subscribe_') && cmd !== 'subscribe_design') return reply(ws, req, 'subscribed', { id: 9, last_seq: 0 });
     if (!cmd?.startsWith('design_') && cmd !== 'subscribe_design') return refuse(ws, req, 'unsupported', `${cmd} is not part of this stand-in`);
     if (cmd === 'design_get') {
       if (role !== 'operator') return reply(ws, req, 'design_summary', { state: 'live', note_count: state.notes.length });
@@ -82,7 +82,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
     }
     if (state.ended) return refuse(ws, req, 'gone', 'This design session has ended.');
     switch (cmd) {
-      case 'subscribe_design': conn.subscribed = true; reply(ws, req, 'subscribed', { sub: 1 }); return void setTimeout(() => sendFrame(conn), 50);
+      case 'subscribe_design': conn.subscribed = true; reply(ws, req, 'subscribed', { id: 1, last_seq: 0 }); return void setTimeout(() => sendFrame(conn), 50);
       case 'design_frame_ack': reply(ws, req, 'design_done', null); return void setTimeout(() => sendFrame(conn), 120);
       case 'design_resolve': return reply(ws, req, 'design_resolved', { target: await target(), label: 'button "Buy now"', asset: 'da_pending', data_url: PIXEL });
       case 'design_region': return reply(ws, req, 'design_resolved', { target: { ...(await target()), selector: null, role_name: null, box: msg.box, region: true }, label: 'Region', asset: 'da_region', data_url: PIXEL });

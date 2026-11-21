@@ -21,7 +21,7 @@ export function deadlineText(deadline, now = Date.now()) {
   return mins >= 60 ? `Stage ends in ${Math.floor(mins / 60)} h ${mins % 60} min` : `Stage ends in ${mins} min`;
 }
 
-export function buildTopBar({ title, onBack, onPreset, onReload, onFinish }) {
+export function buildTopBar({ title, onBack, onPreset, onReload, onFinish, onReview, onBackToEditing }) {
   const name = h('h1', { class: 'design-title', tabindex: '-1', text: title });
   const dot = h('span', { class: 'design-dot' });
   const dotText = h('span', { class: 'design-dot-text' });
@@ -30,13 +30,15 @@ export function buildTopBar({ title, onBack, onPreset, onReload, onFinish }) {
   const reload = h('button', { class: 'icon-button', type: 'button', 'aria-label': 'Reload preview (Shift+R)', onclick: onReload }, icon('reload', { size: 20 }));
   const deadline = h('span', { class: 'design-deadline' });
   const finish = h('button', { class: 'button button-primary button-small', type: 'button', onclick: onFinish }, icon('flag', { size: 16 }), ' Finish');
+  const review = h('button', { class: 'button button-primary button-small', type: 'button', hidden: true, onclick: () => onReview() }, icon('flag', { size: 16 }), ' Review');
+  const backToEditing = h('button', { class: 'button button-plain button-small', type: 'button', hidden: true, onclick: () => onBackToEditing() }, 'Back to editing');
   const blocked = h('p', { class: 'design-blocked', role: 'status' });
   const el = h('header', { class: 'design-top' },
     h('button', { class: 'nav-back', type: 'button', 'aria-label': 'Back', onclick: onBack }, icon('back', { size: 22 }), h('span', { text: 'Back' })),
-    name, h('span', { class: 'design-state' }, dot, dotText), badge, presets, reload, deadline, finish, blocked);
+    name, h('span', { class: 'design-state' }, dot, dotText), badge, presets, reload, deadline, finish, review, backToEditing, blocked);
   return {
     element: el, title: name,
-    update(state, { operator }) {
+    update(state, { operator, reviewOpen = false }) {
       const look = dotLook(state);
       dot.className = `design-dot tone-${look.tone}`;
       dotText.textContent = look.label;
@@ -56,7 +58,7 @@ export function buildTopBar({ title, onBack, onPreset, onReload, onFinish }) {
       finish.title = why ?? '';
       blocked.textContent = !finish.hidden && why ? why : '';
       blocked.hidden = !blocked.textContent;
-      void finishing;
+      review.hidden = backToEditing.hidden = !(operator && finishing && !reviewOpen);
     },
   };
 }

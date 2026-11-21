@@ -79,6 +79,30 @@ test.describe('desktop', () => {
     } finally { await harness.stop(); }
   });
 
+  test('finishing: closing the review sheet leaves Review and Back to editing on the top bar', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      await page.getByRole('button', { name: 'Finish' }).click();
+      await expect(page.getByRole('dialog', { name: 'Review before finishing' })).toBeVisible();
+      await expect(page.locator('.sheet-layer :focus')).toHaveCount(1);
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('dialog', { name: 'Review before finishing' })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Review', exact: true })).toBeVisible();
+      await page.getByRole('button', { name: 'Review', exact: true }).click();
+      await expect(page.getByRole('dialog', { name: 'Review before finishing' })).toBeVisible();
+      expect(harness.daemon.state.requests.filter((r) => r.cmd === 'design_finish_capture').at(-1).recapture).toBe(false);
+      await expect(page.locator('.sheet-layer :focus')).toHaveCount(1);
+      await page.keyboard.press('Escape');
+      await page.getByRole('button', { name: 'Back to editing' }).click();
+      await expect(page.getByRole('button', { name: 'Finish' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Back to editing' })).toHaveCount(0);
+      expect(harness.daemon.state.requests.some((r) => r.cmd === 'design_finish_cancel')).toBe(true);
+      // One subscription for the whole run, however many session events came.
+      expect(harness.daemon.state.requests.filter((r) => r.cmd === 'subscribe_design')).toHaveLength(1);
+    } finally { await harness.stop(); }
+  });
+
   test('T-E4: a frozen old tab learns its session ended and sends nothing more', async ({ browser, page }) => {
     const harness = await open(browser, page);
     try {

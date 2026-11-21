@@ -11,10 +11,10 @@ import { createStage } from './overlay.js';
 import { createComposer } from './composer.js';
 import { createNotesPanel } from './notes.js';
 import { createInputBatcher, textEvent } from './input.js';
-import { escapeKeyEvents, shortcutFor, isTextTarget } from './keymap.js';
+import { escapeKeyEvents, shortcutFor, isTextTarget, stepDepth } from './keymap.js';
 import { createNoteOutbox } from './outbox.js';
 import { noteFields } from './details.js';
-import { startFinish, ledgerPanel } from './finish.js';
+import { startFinish, resumeFinish, ledgerPanel } from './finish.js';
 import { openSketch } from './sketch.js';
 import { buildTopBar, buildModeBar, buildBottomBar, buildPhasePanel, buildStatusBar, openShortcuts } from './chrome.js';
 
@@ -35,6 +35,7 @@ export function mountDesign(view, ctx) {
   let layout = 'desktop';
   let sheetHeight = 'peek';
   let pick = null; // where the open selection came from, for Wider / Narrower
+  let depth = 0; // how many parents above the picked element; the one counter for keys and buttons
   let tickets = 0;
   const outbox = createNoteOutbox({ item });
 
@@ -42,11 +43,28 @@ export function mountDesign(view, ctx) {
   const dispatch = (action) => {
     state = reduce(state, action);
     if (state.toasts.length) { for (const t of state.toasts) toast(t); state = reduce(state, { type: 'toasts_taken' }); }
-    if (state.refresh) { state = { ...state, refresh: false }; stream.restart(); }
+    if (state.refresh) { state = { ...state, refresh: false }; stream.refresh(); }
     if (state.dialog) showDialog();
     render();
   };
   const session = () => state.session?.id;
+  // True from the click that opens the review sheet until the sheet is gone, so the top
+  // bar offers Review / Back to editing only while the sheet is closed.
+  let reviewOpen = false;
+  async function reviewing(run) {
+    let opened = false;
+    reviewOpen = true;
+    render();
+    try {
+      await run({
+        onDone: ({ reload: r }) => r && stream.refresh(),
+        onOpen: () => { opened = true; },
+        onClose: () => { reviewOpen = false; render(); },
+      });
+    } finally {
+      if (!opened) { reviewOpen = false; render(); }
+    }
+  }
   const refuse = (err) => {
     if (err?.code === 'gone') dispatch({ type: 'event', event: { event: 'ended', reason: 'ended' } });
     else if (err?.code !== 'disconnected' && err?.code !== 'timeout') toast(designErrorText(err), { tone: 'red' });
@@ -57,7 +75,12 @@ export function mountDesign(view, ctx) {
     title, onBack: back,
     onPreset: async (preset) => { dispatch({ type: 'preset', preset }); try { await ctx.design.viewport(session(), preset); } catch (e) { refuse(e); } },
     onReload: () => reload(),
-    onFinish: () => startFinish(ctx, state, { onDone: ({ reload: r }) => r && stream.restart() }),
+    onFinish: () => reviewing((hooks) => startFinish(ctx, state, hooks)),
+    onReview: () => reviewing((hooks) => resumeFinish(ctx, state, hooks)),
+    onBackToEditing: async () => {
+      try { await ctx.design.finishCancel(session()); } catch (e) { refuse(e); }
+      stream.refresh();
+    },
   });
   const modes = buildModeBar({ onMode: (m) => setMode(m), onNewScreen: () => newScreen() });
   const bottom = buildBottomBar({ onMode: (m) => setMode(m), onNotes: () => { sheetHeight = sheetHeight === 'peek' ? 'half' : 'peek'; render(); } });
@@ -88,7 +111,7 @@ export function mountDesign(view, ctx) {
   const composer = createComposer({
     onSend: sendNote,
     onCancel: () => { composer.hide(); stage.setSelection(null); dispatch({ type: 'selection', selection: null }); },
-    onDepth: (depth) => reselect(depth),
+    onDepth: (by) => widen(by),
   });
   const notes = createNotesPanel({ ctx, getState: () => state, onFocusNote: () => {}, onAddPage: () => composer.show(null, { keepText: true }) });
   const ledger = ledgerPanel(ctx, item);
@@ -121,15 +144,21 @@ export function mountDesign(view, ctx) {
   }
   async function pickAt(p) {
     pick = { ...p };
+    depth = 0;
     stage.setHover(null);
     try { show(await ctx.design.resolve(session(), p.x, p.y, 0, true)); } catch (e) { refuse(e); }
   }
-  async function reselect(depth) {
-    if (!pick) return;
-    try { show(await ctx.design.resolve(session(), pick.x, pick.y, depth, true), { keepDepth: true }); } catch (e) { refuse(e); }
+  // Wider is +1 (the parent element), Narrower is -1, never below the picked element.
+  async function widen(by) {
+    if (!pick || !composer.open) return;
+    const next = stepDepth(depth, by);
+    if (next === depth) return;
+    depth = next;
+    try { show(await ctx.design.resolve(session(), pick.x, pick.y, depth, true)); } catch (e) { refuse(e); }
   }
   async function regionAt(box) {
     pick = null;
+    depth = 0;
     try { show(await ctx.design.region(session(), box)); } catch (e) { refuse(e); }
   }
   function show(resolved, opts) {
@@ -147,6 +176,8 @@ export function mountDesign(view, ctx) {
     openSketch(ctx, { session: session(), source: copy, size: { w: copy.width, h: copy.height }, onResult: fromUpload });
   }
   function fromUpload(out) {
+    pick = null;
+    depth = 0;
     composer.show({ target: out.target ?? null, label: 'Your picture', asset: out.asset ?? out.id ?? null, data_url: out.data_url ?? null }, { keepText: true });
   }
 
@@ -212,7 +243,7 @@ export function mountDesign(view, ctx) {
     const p = phase.update(state, { operator, features, continued });
     const live = isLive(state) && operator;
     const finishing = state.session?.state === 'finishing';
-    top.update(state, { operator });
+    top.update(state, { operator, reviewOpen });
     modes.update(state.mode, Boolean(live));
     bottom.update(state.mode);
     status.update(state, { path: previewPath() });
@@ -272,8 +303,8 @@ export function mountDesign(view, ctx) {
     switch (action.action) {
       case 'escape': composer.hide(); stage.clearRegion(); stage.setHover(null); dispatch({ type: 'selection', selection: null }); break;
       case 'mode': setMode(action.value); break;
-      case 'wider': reselect(1); break;
-      case 'narrower': reselect(-1); break;
+      case 'wider': widen(1); break;
+      case 'narrower': widen(-1); break;
       case 'preset': top.element.querySelector(`[data-value="${action.value}"]`)?.click(); break;
       case 'fit_toggle': stage.toggleActual(); break;
       case 'reload': reload(); break;

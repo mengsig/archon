@@ -123,7 +123,7 @@ export function stagePhase(state, { operator = true, features = true } = {}) {
     return { kind: 'starting', title: 'Starting your app…', text: state.progress || (s === 'starting' ? 'Waiting for the agent to run the app.' : 'Waiting for the first picture…'), tone: 'muted' };
   }
   if (state.degraded) return { kind: 'preview_down', title: 'The app stopped responding', text: 'The agent has been told and is restarting it.', tone: 'red' };
-  if (s === 'finishing') return { kind: 'finishing', title: 'Finishing', text: 'Finishing: press Back to editing to change anything.', tone: 'accent' };
+  if (s === 'finishing') return { kind: 'finishing', title: 'Finishing', text: 'Finishing: choose Review to continue, or Back to editing to change anything.', tone: 'accent' };
   return { kind: 'live', title: 'Live', text: '', tone: 'green' };
 }
 

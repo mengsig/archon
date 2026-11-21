@@ -23,17 +23,23 @@ export function createDesignStream({
   let lastAck = 0;
   let started = false;
 
-  async function start() {
+  // start: a fresh subscription (first load, reconnect). refresh: design_get only; the
+  // subscription is kept unless the session id changed or there is none yet. The daemon
+  // caps subscriptions per connection and has no unsubscribe, so never resubscribe needlessly.
+  async function load(fresh) {
     started = true;
     const mine = ++generation;
-    sub = null;
+    if (fresh) sub = null;
     try {
       const { kind, data } = await ctx.design.get(item);
       if (!alive || mine !== generation) return;
       onView(kind, data);
       const session = kind === 'design_state' ? data.session : null;
+      const changed = (session?.id ?? null) !== sessionId;
       sessionId = session?.id ?? null;
+      if (changed) sub = null;
       if (!session || session.state === 'ended' || session.state === 'confirmed' || !ctx.canOperate) return;
+      if (sub !== null) return;
       const next = await ctx.design.subscribe(session.id);
       if (!alive || mine !== generation) return;
       sub = next;
@@ -41,6 +47,9 @@ export function createDesignStream({
       if (alive && mine === generation) onError(err);
     }
   }
+
+  const start = () => load(true);
+  const refresh = () => load(false);
 
   const offHub = ctx.designHub.subscribe((frameSub, event) => {
     if (frameSub !== sub) return;
@@ -97,7 +106,7 @@ export function createDesignStream({
 
   return {
     start,
-    restart: start,
+    refresh,
     get session() { return sessionId; },
     get sub() { return sub; },
     stop() {

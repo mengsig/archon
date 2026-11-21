@@ -23,7 +23,6 @@ export function sendsOnEnter(event, text) {
 // resolved: DesignResolvedView {target, label, asset, data_url} or null for a note on the whole page.
 export function createComposer({ onSend, onCancel, onDepth, canWiden = true }) {
   let resolved = null;
-  let depth = 0;
   const view = { sendPicture: true, sendDetails: true };
   const crop = h('img', { class: 'dcomposer-crop', alt: 'The picture the agent will receive' });
   const label = h('p', { class: 'dcomposer-target' });
@@ -32,8 +31,8 @@ export function createComposer({ onSend, onCancel, onDepth, canWiden = true }) {
   const detailsSwitch = switchRow('Send details', true, (v) => { view.sendDetails = v; details.disabled = !v; });
   const text = h('textarea', { class: 'input textarea dcomposer-text', rows: '2', 'aria-label': 'What should change', placeholder: 'What should change? Say it in plain words.', maxlength: String(MAX_NOTE_CHARS), enterkeyhint: 'send' });
   const error = h('p', { class: 'form-error', role: 'alert' });
-  const wider = h('button', { class: 'button button-plain', type: 'button', 'aria-label': 'Wider selection (])', onclick: () => step(1) }, icon('region', { size: 18 }), ' Wider');
-  const narrower = h('button', { class: 'button button-plain', type: 'button', 'aria-label': 'Narrower selection ([)', onclick: () => step(-1) }, icon('pointer', { size: 18 }), ' Narrower');
+  const wider = h('button', { class: 'button button-plain', type: 'button', 'aria-label': 'Wider selection ([)', onclick: () => step(1) }, icon('region', { size: 18 }), ' Wider');
+  const narrower = h('button', { class: 'button button-plain', type: 'button', 'aria-label': 'Narrower selection (])', onclick: () => step(-1) }, icon('pointer', { size: 18 }), ' Narrower');
   const send = h('button', { class: 'button button-primary', type: 'submit' }, icon('send', { size: 18 }), ' Send');
   const cancel = h('button', { class: 'button button-plain', type: 'button', onclick: () => onCancel() }, 'Cancel');
   const targetBlock = h('div', { class: 'dcomposer-target-block' }, h('h3', { class: 'dcomposer-heading', text: 'What the agent will receive' }),
@@ -42,8 +41,7 @@ export function createComposer({ onSend, onCancel, onDepth, canWiden = true }) {
 
   function step(by) {
     if (!resolved || resolved.target?.region) return;
-    depth += by;
-    onDepth(depth, by);
+    onDepth(by);
   }
   const submit = () => {
     const words = text.value.trim();
@@ -62,9 +60,8 @@ export function createComposer({ onSend, onCancel, onDepth, canWiden = true }) {
     element: el,
     get open() { return !el.hidden; },
     // Show a resolved element, region or sketch; null opens a note on the whole page.
-    show(next, { keepText = true, keepDepth = false } = {}) {
+    show(next, { keepText = true } = {}) {
       resolved = next;
-      if (!keepDepth) depth = 0;
       el.hidden = false;
       targetBlock.hidden = !next;
       if (next) {

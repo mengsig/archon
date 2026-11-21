@@ -33,7 +33,7 @@ test('moves merge and a batch never exceeds 64 events', () => {
   assert.equal(sent.length, 1);
   assert.equal(sent[0].length, 1, 'consecutive moves merged into the last one');
   assert.equal(sent[0][0].x, 99);
-  for (let i = 0; i < 150; i += 1) b.push({ type: 'Key', action: i % 2 ? 'up' : 'down', key: 'a', code: 'KeyA', text: null, modifiers: 0 });
+  for (let i = 0; i < 150; i += 1) b.push({ type: 'key', action: i % 2 ? 'up' : 'down', key: 'a', code: 'KeyA', text: null, modifiers: 0 });
   c.advance(1000);
   assert.ok(sent.every((s) => s.length <= 64));
   assert.equal(sent.flat().length, 151);
@@ -44,7 +44,7 @@ test('no more than 60 requests per second', () => {
   const sent = [];
   const b = createInputBatcher({ send: (e) => sent.push(c.now()), ...c });
   for (let i = 0; i < 500; i += 1) {
-    b.push({ type: 'Text', text: String(i) });
+    b.push({ type: 'text', text: String(i) });
     c.advance(1);
   }
   c.advance(1000);
@@ -63,10 +63,31 @@ test('wheel ticks at one point add up; clicks are never merged away', () => {
   b.push(mouseEvent('down', { x: 1, y: 1 }, { button: 0, clickCount: 1 }));
   b.push(mouseEvent('up', { x: 1, y: 1 }, { button: 0, clickCount: 1 }));
   c.advance(5);
-  assert.deepEqual(sent[0].map((e) => e.type + (e.dy ?? e.action)), ['Wheel25', 'Mousedown', 'Mouseup']);
+  assert.deepEqual(sent[0].map((e) => e.type + (e.dy ?? e.action)), ['wheel25', 'mousedown', 'mouseup']);
 });
 
 test('modifier bits follow CDP', () => {
   assert.equal(modifiersOf({ altKey: true, ctrlKey: true, metaKey: true, shiftKey: true }), 15);
   assert.equal(modifiersOf({ shiftKey: true }), 8);
+});
+
+// The exact JSON of crates/archon-core/src/protocol/v25_tests.rs (design_input events).
+test('every event kind serializes to the Rust InputEvent shape', async () => {
+  const { textEvent, touchEvent } = await import('../../src/features/design/input.js');
+  const { keyEvent } = await import('../../src/features/design/keymap.js');
+  const rust = [
+    { type: 'mouse', action: 'down', x: 1.0, y: 2.0, button: 'left', click_count: 1, modifiers: 0 },
+    { type: 'wheel', x: 1.0, y: 2.0, dx: 0.0, dy: 5.0, modifiers: 2 },
+    { type: 'key', action: 'up', key: 'a', code: 'KeyA', text: null, modifiers: 0 },
+    { type: 'text', text: 'hi' },
+    { type: 'touch', action: 'cancel', points: [{ x: 1.0, y: 2.0, id: 3 }] },
+  ];
+  const web = [
+    mouseEvent('down', { x: 1, y: 2 }, { button: 0, clickCount: 1 }),
+    wheelEvent({ x: 1, y: 2 }, 0, 5, 2),
+    keyEvent('up', { key: 'a', code: 'KeyA', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false }),
+    textEvent('hi'),
+    touchEvent('cancel', [{ x: 1, y: 2, id: 3 }]),
+  ];
+  assert.equal(JSON.stringify(web), JSON.stringify(rust));
 });

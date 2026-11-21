@@ -30,8 +30,8 @@ export function designCommands(request) {
     get: (item) => request('design_get', { item }).then((reply) => ({ kind: reply?.reply, data: expect('design_state', 'design_summary')(reply) })),
     subscribe: (session) => request('subscribe_design', { session }).then((reply) => {
       const data = expect('subscribed')(reply);
-      if (!Number.isInteger(data?.sub)) throw new DaemonError('internal', 'subscribe_design answered without a sub');
-      return data.sub;
+      if (!Number.isInteger(data?.id)) throw new DaemonError('internal', 'subscribe_design answered without a sub id');
+      return data.id;
     }),
     asset: (item, id) => request('design_asset', { item, id }).then(expect('design_asset')),
     ack: (sub, seq) => request('design_frame_ack', { sub, seq }).then(expect('design_done')),

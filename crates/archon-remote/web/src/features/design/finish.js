@@ -14,7 +14,7 @@ export function finishBlockedText(state) {
 }
 
 // "Cancel 2 queued notes and finish?" when notes are still waiting.
-export async function startFinish(ctx, state, { onDone }) {
+export async function startFinish(ctx, state, { onDone, onOpen, onClose }) {
   const queued = queuedNotes(state.notes);
   let cancelQueued = false;
   if (queued.length) {
@@ -25,14 +25,26 @@ export async function startFinish(ctx, state, { onDone }) {
   }
   try {
     const finish = await ctx.design.finishCapture(state.session.id, { cancelQueued });
-    openReview(ctx, state, finish, { onDone });
+    openReview(ctx, state, finish, { onDone, onOpen, onClose });
   } catch (err) {
     toast(designErrorText(err), { tone: 'red' });
     onDone({ reload: true });
   }
 }
 
-export function openReview(ctx, state, initial, { onDone }) {
+// A session already finishing: design_finish_capture without recapture hands back
+// the existing finish view, so the review sheet can be reopened after it was closed.
+export async function resumeFinish(ctx, state, { onDone, onOpen, onClose }) {
+  try {
+    const finish = await ctx.design.finishCapture(state.session.id, { recapture: false });
+    openReview(ctx, state, finish, { onDone, onOpen, onClose });
+  } catch (err) {
+    toast(designErrorText(err), { tone: 'red' });
+    onDone({ reload: true });
+  }
+}
+
+export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   let finish = initial;
   let message = '';
   const session = state.session.id;
@@ -134,7 +146,8 @@ export function openReview(ctx, state, initial, { onDone }) {
         h('button', { class: 'button button-primary', type: 'button', disabled: busy, onclick: () => run(confirm) }, noChange ? 'Approve as it is' : 'Confirm')));
   }
   draw();
-  sheet = openSheet({ title: 'Review before finishing', content: body, size: 'tall' });
+  onOpen?.();
+  sheet = openSheet({ title: 'Review before finishing', content: body, size: 'tall', onClose: () => onClose?.() });
 }
 
 // After Confirm: the ledger link and the gate's three answers, through the same `answer` request the inbox uses.

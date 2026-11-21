@@ -595,8 +595,12 @@ impl DesignService {
         };
         let _ = ctx;
         let rt = self.runtime(&session);
+        // Subscribe now, so an event right after the launch is not missed.
+        let Some(events) = rt.browser().map(|b| b.events()) else {
+            return;
+        };
         let task = tokio::spawn(async move {
-            monitor(arc, session).await;
+            monitor(arc, session, events).await;
         });
         rt.st().tasks.push(task);
     }
@@ -676,13 +680,13 @@ impl DesignService {
 
 /// Watches one session's browser: crashes, dialogs, blocked hosts, memory,
 /// idle screencast and whether the app still answers.
-async fn monitor(ctx: Arc<DaemonContext>, session: DesignSessionId) {
+async fn monitor(
+    ctx: Arc<DaemonContext>,
+    session: DesignSessionId,
+    mut events: tokio::sync::broadcast::Receiver<adb::BrowserEvent>,
+) {
     let service = ctx.design.clone();
     let rt = service.runtime(&session);
-    let Some(browser) = rt.browser() else {
-        return;
-    };
-    let mut events = browser.events();
     let mut tick = tokio::time::interval(Duration::from_secs(5));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {

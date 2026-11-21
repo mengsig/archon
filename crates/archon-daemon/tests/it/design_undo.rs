@@ -162,3 +162,138 @@ async fn only_a_done_note_with_a_commit_can_be_undone() {
     .expect("done with no change");
     assert!(undo(&f, &queued.id).await.is_err(), "nothing to undo");
 }
+
+/// A revert note left in `Working` with a recorded `pre` and `new`, as a
+/// crash after the store write leaves it.
+async fn left_working(f: &Fixture, original: &str, pre: &str, new: &str) -> String {
+    use archon_core::design::NoteKind;
+    use archon_queue::store::{NewDesignNote, NoteChange};
+    let mut store = f.h.ctx.store.lock().await;
+    let viewport = archon_core::design::Viewport {
+        w: 1440,
+        h: 900,
+        preset: archon_core::design::ViewportPreset::Desktop,
+    };
+    let (n, _) = store
+        .design_note_add(NewDesignNote {
+            item: f.item.clone(),
+            session: f.session.clone(),
+            kind: NoteKind::Revert,
+            text: format!("Undo {original}"),
+            details_text: None,
+            send_picture: false,
+            target: None,
+            viewport,
+            client_key: format!("crash-{pre}-{new}"),
+            reverts: Some(original.to_owned()),
+            resent_from: None,
+            before_asset: None,
+            created_by_device: None,
+        })
+        .unwrap();
+    store
+        .design_note_change(
+            &f.item,
+            &n.id,
+            NoteChange::RevertPrepared {
+                base_commit: pre.to_owned(),
+                commit: new.to_owned(),
+            },
+        )
+        .unwrap();
+    n.id
+}
+
+/// An undone note, for its revert commit: (original id, original commit,
+/// revert commit). HEAD is at the revert.
+async fn undone(f: &Fixture) -> (String, String, String) {
+    let (id, commit) = done_note(f, "k1", "a.txt", "one\n").await;
+    undo(f, &id).await.expect("undo queued");
+    for _ in 0..100 {
+        if f.head() != commit {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let revert = f.head();
+    assert_ne!(revert, commit, "the undo ran");
+    // Wait for the note to settle so the next one may run.
+    for _ in 0..100 {
+        let all = state(f).await.notes;
+        if all
+            .iter()
+            .all(|n| !archon_core::design::is_in_flight(n.note.status))
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    (id, commit, revert)
+}
+
+async fn recovered(f: &Fixture, id: &str) -> archon_core::design::DesignNote {
+    archon_daemon::design::recover(&f.h.ctx)
+        .await
+        .expect("recovery");
+    note(f, id).await
+}
+
+/// The crash window of an undo, at the service: every state the worktree can
+/// be left in settles to one consistent state at the next start.
+#[tokio::test]
+async fn a_crashed_undo_settles_at_startup() {
+    // Branch at the revert: the note is done with that commit.
+    let f = Fixture::new().await;
+    let (id, commit, revert) = undone(&f).await;
+    let n = left_working(&f, &id, &commit, &revert).await;
+    let settled = recovered(&f, &n).await;
+    assert_eq!(settled.status, NoteStatus::Done);
+    assert_eq!(settled.commit.as_deref(), Some(revert.as_str()));
+    assert_eq!(f.head(), revert);
+
+    // The checkout is done, the branch ref is not updated: recovery finishes
+    // the move and the note is done.
+    let f = Fixture::new().await;
+    let (id, commit, revert) = undone(&f).await;
+    crate::common::git(
+        &f.worktree.worktree,
+        &[
+            "update-ref",
+            &format!("refs/heads/{}", f.worktree.branch),
+            &commit,
+        ],
+    );
+    let n = left_working(&f, &id, &commit, &revert).await;
+    let settled = recovered(&f, &n).await;
+    assert_eq!(settled.status, NoteStatus::Done, "{settled:?}");
+    assert_eq!(f.head(), revert, "the branch is at the revert");
+
+    // Nothing was applied: the note fails, the worktree is unchanged.
+    let f = Fixture::new().await;
+    let (id, commit, revert) = undone(&f).await;
+    crate::common::git(
+        &f.worktree.worktree,
+        &["reset", "--hard", "--quiet", &commit],
+    );
+    let n = left_working(&f, &id, &commit, &revert).await;
+    let settled = recovered(&f, &n).await;
+    assert_eq!(settled.status, NoteStatus::Failed);
+    assert_eq!(settled.fail_reason, Some(FailReason::UndoInterrupted));
+    assert_eq!(f.head(), commit, "the worktree is unchanged");
+    assert!(
+        settled
+            .thread
+            .iter()
+            .any(|t| t.text.contains("nothing changed. Press Undo again.")),
+    );
+
+    // The branch moved to something else meanwhile: history changed.
+    let f = Fixture::new().await;
+    let (id, commit, revert) = undone(&f).await;
+    let other = f.commit("b.txt", "b\n", "unrelated");
+    let n = left_working(&f, &id, &commit, &revert).await;
+    let settled = recovered(&f, &n).await;
+    assert_eq!(settled.status, NoteStatus::Failed);
+    assert_eq!(settled.fail_reason, Some(FailReason::HistoryChanged));
+    assert_eq!(f.head(), other, "nothing moved");
+}

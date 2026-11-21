@@ -216,15 +216,14 @@ async fn ending_the_stage_ends_the_session_and_closes_the_browser() {
     add(&f, "k2", "second").await;
     f.end(StageEnd::Completed).await;
 
-    let ended = f
-        .h
-        .ctx
-        .store
-        .lock()
-        .await
-        .design_session(&f.session)
-        .unwrap()
-        .expect("the session row stays");
+    let ended =
+        f.h.ctx
+            .store
+            .lock()
+            .await
+            .design_session(&f.session)
+            .unwrap()
+            .expect("the session row stays");
     assert_eq!(ended.state, SessionState::Ended);
     assert_eq!(note(&f, "D2").await.status, NoteStatus::Cancelled);
     assert_eq!(

@@ -356,14 +356,16 @@ impl DesignService {
 
     /// Stop a confirmed session's browser and delete its profile while the
     /// session itself stays on record for its gate: nothing is previewed
-    /// after Confirm. Off the caller's path, which may hold the run table.
+    /// after Confirm. Its runtime stays, so open streams still get the
+    /// session's later events and its end. Off the caller's path, which may
+    /// hold the run table.
     pub(crate) fn park_browser(&self, session: &DesignSessionId, reason: &'static str) {
         let Some(arc) = self.arc() else {
             return;
         };
         let session = session.clone();
         tokio::spawn(async move {
-            arc.design.close_session_browser(&session, reason).await;
+            arc.design.stop_browser(&session, reason, false).await;
             arc.design.start_queued(&arc).await;
         });
     }

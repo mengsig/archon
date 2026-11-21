@@ -661,6 +661,135 @@ mod stream {
         until("the queued session's browser", || factory.launched() == 2).await;
         task.abort();
     }
+
+    /// Confirming a design parks its browser: the session stays Confirmed for
+    /// its gate, the browser closes, its slot goes to a queued session, and
+    /// a later look does not start it again.
+    #[tokio::test]
+    async fn a_confirmed_design_parks_its_browser_and_hands_on_its_slot() {
+        use archon_core::protocol::Reply;
+        let mut config = design_config();
+        config.design.max_sessions = 1;
+        let f = Fixture::with(config).await;
+        let (id, _) = crate::design_undo::done_note(&f, "k1", "a.txt", "one\n").await;
+        // The operator watches the design they will confirm.
+        let (mut first_rx, first_task) = subscribe(&f, 9);
+
+        let item = f.h.enqueue("design the cancel button").await;
+        f.h.dispatch().await;
+        let run = f.h.run(&item.id).await;
+        let stage =
+            f.h.running()
+                .await
+                .into_iter()
+                .find(|s| s.run == run.id)
+                .expect("the second item's stage runs");
+        let agent = stage.aether_agent.clone().expect("an agent");
+        let worktree = crate::common::design::add_worktree(&f.h.repo, f.h.dir.path(), "design-2");
+        let second =
+            f.h.ctx
+                .design
+                .stage_started(
+                    &f.h.ctx,
+                    &item.id,
+                    &run.id,
+                    &stage.stage_id,
+                    stage.attempt,
+                    &agent,
+                    worktree,
+                )
+                .await
+                .expect("second session starts");
+        f.as_agent(Request::DesignPreview {
+            url: crate::common::design::PREVIEW.into(),
+            caller: Some(agent.clone()),
+        })
+        .await
+        .expect("preview reported");
+        let (tx, _rx) = mpsc::channel(64);
+        let sub = DesignSubscription {
+            id: 8,
+            request: 8,
+            session: second.clone(),
+            device: WelcomeDevice {
+                id: "device-1".into(),
+                name: "phone".into(),
+                role: archon_core::protocol::DeviceRole::Operator,
+            },
+        };
+        let task = tokio::spawn(archon_daemon::design::stream(f.h.ctx.clone(), sub, tx));
+        let service = f.h.ctx.design.clone();
+        until("the second subscriber", || {
+            service.subscriber_count(&second) == 1
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(f.factory.launched(), 1, "no slot: the second session waits");
+
+        let view = match f
+            .operator(Request::DesignFinishCapture {
+                session: f.session.clone(),
+                cancel_queued: false,
+                recapture: false,
+            })
+            .await
+            .expect("capture")
+        {
+            Reply::DesignFinish(view) => view,
+            other => panic!("{other:?}"),
+        };
+        f.operator(Request::DesignFinishConfirm {
+            session: f.session.clone(),
+            capture: view.capture.clone(),
+            include: [(id, true)].into(),
+            superseded: Default::default(),
+            confirm_no_change: false,
+        })
+        .await
+        .expect("confirmed");
+
+        let factory = f.factory.clone();
+        until("the queued session's browser", || factory.launched() == 2).await;
+        assert!(
+            f.factory.browser(0).calls(|c| c.closed),
+            "the confirmed design's browser is closed"
+        );
+        assert_eq!(
+            state(&f).await.session.unwrap().state,
+            SessionState::Confirmed,
+            "the session waits for its gate"
+        );
+        // A later look at the confirmed design does not start its browser.
+        let _ = f
+            .operator(Request::DesignReload {
+                session: f.session.clone(),
+            })
+            .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(f.factory.launched(), 2, "no browser for a confirmed design");
+
+        // The confirmed design's stream still hears its state and its end.
+        loop {
+            if let DesignEvent::Session {
+                state: SessionState::Confirmed,
+                ..
+            } = event(&mut first_rx).await
+            {
+                break;
+            }
+        }
+        f.end(StageEnd::Cancelled).await;
+        loop {
+            if matches!(event(&mut first_rx).await, DesignEvent::Ended { .. }) {
+                break;
+            }
+        }
+        tokio::time::timeout(Duration::from_secs(5), first_task)
+            .await
+            .expect("the confirmed design's stream ends")
+            .expect("no panic");
+        task.abort();
+    }
 }
 
 /// The agent's first preview report makes the session live and posts the

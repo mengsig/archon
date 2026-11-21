@@ -7,7 +7,7 @@ use archon_core::design::{FailReason, NoteStatus};
 use archon_core::protocol::{AgentNoteStatus, Request};
 
 /// A note done with a real commit.
-async fn done_note(f: &Fixture, key: &str, file: &str, body: &str) -> (String, String) {
+pub(crate) async fn done_note(f: &Fixture, key: &str, file: &str, body: &str) -> (String, String) {
     let added = add(f, key, &format!("change {file}")).await;
     let commit = f.commit(
         file,
@@ -120,6 +120,56 @@ async fn an_undo_that_conflicts_changes_nothing() {
         text.contains("Can't undo automatically") || revert.status == NoteStatus::Failed,
         "{text}"
     );
+}
+
+/// The branch cannot move (its ref is locked): `apply_revert` puts the files
+/// back and errors, so the undo fails visibly, nothing changes and the
+/// session stays editable instead of hanging on "Working".
+#[tokio::test]
+async fn an_undo_that_cannot_move_the_branch_fails_and_changes_nothing() {
+    use archon_core::design::SessionState;
+    let f = Fixture::new().await;
+    let (id, _) = done_note(&f, "k1", "a.txt", "one\n").await;
+    let before = f.head();
+    let common = crate::common::git(&f.worktree.worktree, &["rev-parse", "--git-common-dir"]);
+    let common = f.worktree.worktree.join(common.trim());
+    let lock = common.join(format!("refs/heads/{}.lock", f.worktree.branch));
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(&lock, b"").unwrap();
+
+    undo(&f, &id).await.expect("undo queued");
+    let mut revert = None;
+    for _ in 0..150 {
+        revert = state(&f)
+            .await
+            .notes
+            .into_iter()
+            .find(|n| n.note.reverts.as_deref() == Some(id.as_str()))
+            .map(|n| n.note);
+        if revert
+            .as_ref()
+            .is_some_and(|n| n.status == NoteStatus::Failed)
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    std::fs::remove_file(&lock).unwrap();
+    let revert = revert.expect("a revert note");
+    assert_eq!(revert.status, NoteStatus::Failed, "not left working");
+    assert_eq!(revert.fail_reason, Some(FailReason::UndoRefused));
+    assert_eq!(f.head(), before, "the branch did not move");
+    assert!(
+        f.worktree.worktree.join("a.txt").exists(),
+        "the files were put back"
+    );
+    let view = state(&f).await;
+    let original = view.notes.iter().find(|n| n.note.id == id).unwrap();
+    assert_eq!(original.note.status, NoteStatus::Done);
+    assert!(original.undone_by.is_none(), "the original is not undone");
+    assert_eq!(view.session.unwrap().state, SessionState::Live);
+    // With the lock gone the same note can be undone after all.
+    undo(&f, &id).await.expect("a second undo is queued");
 }
 
 /// T-U13 f: a note already undone, or an undo of a revert, is refused.

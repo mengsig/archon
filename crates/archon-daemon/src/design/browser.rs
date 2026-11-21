@@ -295,6 +295,8 @@ pub(crate) struct RtState {
     pub tasks: Vec<tokio::task::JoinHandle<()>>,
     /// A launch holds this session's slot before its browser exists.
     pub launching: bool,
+    /// Health probes missed in a row; one slow answer is not "down".
+    pub probe_misses: u32,
 }
 
 impl Default for RtState {
@@ -315,6 +317,7 @@ impl Default for RtState {
             resolve_window: (now, 0),
             tasks: Vec::new(),
             launching: false,
+            probe_misses: 0,
         }
     }
 }
@@ -465,7 +468,15 @@ impl DesignService {
             return Ok(None);
         };
         self.set_status(&rt, session, BrowserStatus::Starting);
-        let wt = self.worktree_of(ctx, &row).await?;
+        let wt = match self.worktree_of(ctx, &row).await {
+            Ok(wt) => wt,
+            Err(error) => {
+                drop(slot);
+                self.spawn_start_queued();
+                self.set_status(&rt, session, BrowserStatus::Idle);
+                return Err(error);
+            }
+        };
         let allow_hosts = super::repo_hosts::allow_hosts(ctx, &wt, &self.data_dir).await;
         let launched = self.launch_into(ctx, &rt, &row, &url, allow_hosts).await;
         // The browser is stored by now, or the launch failed: either way the
@@ -642,8 +653,16 @@ impl DesignService {
         }
     }
 
-    /// Close the session's browser, delete its profile and log its counters.
+    /// Close the session's browser, delete its profile, log its counters and
+    /// forget its runtime: for a session that has ended.
     pub(crate) async fn close_session_browser(&self, session: &DesignSessionId, reason: &str) {
+        self.stop_browser(session, reason, true).await;
+    }
+
+    /// Close the session's browser and delete its profile. Unless `forget`,
+    /// the runtime stays: open streams of a confirmed session hold its event
+    /// sender, and must still get its later state and its end.
+    pub(crate) async fn stop_browser(&self, session: &DesignSessionId, reason: &str, forget: bool) {
         let Some(rt) = self.existing_runtime(session) else {
             let _ = std::fs::remove_dir_all(self.profile_dir(session));
             return;
@@ -683,10 +702,12 @@ impl DesignService {
             blocked_hosts = counters.blocked.len(),
             "design: session counters"
         );
-        self.rt
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(session);
+        if forget {
+            self.rt
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(session);
+        }
     }
 
     fn spawn_monitor(&self, ctx: &DaemonContext, session: DesignSessionId) {
@@ -887,12 +908,23 @@ impl DesignService {
         let url = rt.st().last_url.clone();
         if let Some(url) = url {
             let reachable = probe(&url).await;
-            self.mark_degraded(ctx, session, !reachable, Some(&url))
-                .await;
+            // A dev server compiling a route can miss one probe; two misses
+            // in a row (about 3 s apart) mean the preview is down.
+            let down = {
+                let mut st = rt.st();
+                st.probe_misses = if reachable { 0 } else { st.probe_misses + 1 };
+                st.probe_misses >= PROBE_MISSES_DOWN
+            };
+            if reachable || down {
+                self.mark_degraded(ctx, session, down, Some(&url)).await;
+            }
         }
         true
     }
 }
+
+/// Consecutive failed health probes before a preview is marked down.
+const PROBE_MISSES_DOWN: u32 = 2;
 
 /// Whether the preview's dev server answers HTTP: a status line (any status)
 /// within two seconds. A server that is stopped or hung still accepts TCP

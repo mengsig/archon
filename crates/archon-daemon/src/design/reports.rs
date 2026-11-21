@@ -33,6 +33,8 @@ impl DesignService {
         // A Design stage whose agent runs without a session: a retry or a
         // resume whose start did not open one (or opened it for an earlier
         // attempt). Open it now, so the agent's first `design_preview` works.
+        // A run or item that is ending had its sessions ended already: its
+        // agent's late call opens nothing.
         let stage = {
             let store = ctx.store.lock().await;
             store
@@ -44,6 +46,14 @@ impl DesignService {
                         && s.state == archon_core::run::StageState::Running
                 })
                 .max_by_key(|s| s.attempt)
+                .filter(|s| {
+                    store.run(&s.run).is_ok_and(|run| {
+                        !run.state.is_terminal()
+                            && store
+                                .item(&run.item)
+                                .is_ok_and(|item| !item.state.is_terminal())
+                    })
+                })
         };
         if let Some(stage) = stage {
             tracing::info!(stage = %stage.id, attempt = stage.attempt, "design: opening the session of a running stage on its agent's call");

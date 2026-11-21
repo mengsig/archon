@@ -382,6 +382,10 @@ impl DesignService {
                 Some(id) => ctx.store.lock().await.design_asset(&row.item, id)?,
                 None => None,
             };
+            // A note another one supersedes takes no final picture, so its
+            // missing picture is no sign its element is gone.
+            let not_found =
+                asset.is_none() && note.final_asset.is_none() && superseded_by.is_none();
             cards.push(FinishCard {
                 note: note.id.clone(),
                 text: note.text.clone(),
@@ -390,7 +394,7 @@ impl DesignService {
                 caption: asset.as_ref().and_then(caption_of),
                 include: note.final_included.unwrap_or(true) && asset.is_some(),
                 superseded_by,
-                not_found: asset.is_none() && note.final_asset.is_none(),
+                not_found,
                 left_history: false,
             });
         }
@@ -459,6 +463,16 @@ impl DesignService {
         note_id: &str,
     ) -> Result<Reply, ArchonError> {
         let row = self.current(ctx, session_id).await?;
+        // Under the item lock, as Finish and Confirm: the picture kept here
+        // and the capture re-stamped below are one change of the review.
+        let lock = self.item_lock(&row.item);
+        let _held = lock.lock().await;
+        let row = ctx
+            .store
+            .lock()
+            .await
+            .design_session(&row.id)?
+            .ok_or_else(super::gone)?;
         if row.state != SessionState::Finishing {
             return Err(conflict());
         }
@@ -489,9 +503,52 @@ impl DesignService {
                 .map_err(|e| ArchonError::Unavailable(format!("the capture failed: {e}")))?;
             self.keep_final(ctx, &note, &picture, &head).await?;
         }
+        let row = self.restamp_capture(ctx, &row.id, &head).await?;
         self.finish_view(ctx, &row, &wt)
             .await
             .map(Reply::DesignFinish)
+    }
+
+    /// The review with a capture id at the notes' version now. A picture the
+    /// operator took during the review changes the notes' version; without a
+    /// new id Confirm would read that as the code changing under the review.
+    /// The head stays: only the operator's own picture changed.
+    async fn restamp_capture(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSessionId,
+        head: &str,
+    ) -> Result<DesignSession, ArchonError> {
+        let mut store = ctx.store.lock().await;
+        let current = store.design_session(session)?.ok_or_else(super::gone)?;
+        if current.finish_capture.as_deref().and_then(capture_version) == Some(current.note_version)
+        {
+            return Ok(current);
+        }
+        store
+            .design_session_transition(
+                session,
+                SessionState::Finishing,
+                SessionState::Live,
+                None,
+                false,
+            )
+            .map_err(|_| conflict())?;
+        let live = store.design_session(session)?.ok_or_else(super::gone)?;
+        store
+            .design_session_transition(
+                session,
+                SessionState::Live,
+                SessionState::Finishing,
+                Some(FinishRecord {
+                    capture: capture_id(live.note_version),
+                    head: head.to_owned(),
+                    note_version: live.note_version,
+                    choices: None,
+                }),
+                false,
+            )
+            .map_err(|_| conflict())
     }
 
     pub(crate) async fn finish_confirm(

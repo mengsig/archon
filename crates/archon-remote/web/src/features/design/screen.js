@@ -258,6 +258,8 @@ export function mountDesign(view, ctx) {
     const finishing = state.session?.state === 'finishing';
     top.update(state, { operator, reviewOpen });
     modes.update(state.mode, Boolean(live));
+    // Once confirmed, nothing is edited: the ledger and its answer fill the screen.
+    modes.element.hidden = p.kind === 'confirmed' || p.kind === 'ended';
     bottom.update(state.mode);
     status.update(state, { path: previewPath() });
     const showStage = live && (p.kind === 'live' || p.kind === 'finishing' || p.kind === 'preview_down' || p.kind === 'reconnecting');

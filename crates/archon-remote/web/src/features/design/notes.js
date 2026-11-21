@@ -93,6 +93,8 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage }) {
   }
 
   function render() {
+    const sessionState = getState().session?.state;
+    add.hidden = sessionState === 'confirmed' || sessionState === 'ended';
     const state = getState();
     const notes = state.notes;
     reconcile(list, notes, {

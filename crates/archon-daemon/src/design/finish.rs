@@ -75,11 +75,12 @@ impl DesignService {
         ctx: &DaemonContext,
         item: &archon_core::id::QueueItemId,
     ) -> Result<Reply, ArchonError> {
-        let (session, notes) = {
+        let (session, notes, approved) = {
             let store = ctx.store.lock().await;
             (
                 store.design_current_session(item)?,
                 store.design_notes(item)?,
+                super::approved_ids(&store, item)?,
             )
         };
         let owed = match &session {
@@ -103,7 +104,7 @@ impl DesignService {
         };
         let views = notes
             .iter()
-            .map(|n| note_view(n, &notes, session.as_ref()))
+            .map(|n| note_view(n, &notes, session.as_ref(), &approved))
             .collect::<Vec<_>>();
         let used = views.iter().filter(|v| v.active).count() as u32;
         let stage_deadline = session

@@ -5608,6 +5608,11 @@
           ],
           "description": "The picture after the change; operator only."
         },
+        "approved": {
+          "default": false,
+          "description": "Bound by an approved intent: no Undo or supersession touches it.",
+          "type": "boolean"
+        },
         "base_commit": {
           "description": "HEAD when it was sent.",
           "type": [

@@ -453,6 +453,60 @@ async fn disabled_sessions_refuse_requests() {
     off.restart();
 }
 
+/// F6: a picture the operator takes during the review changes the notes'
+/// version, and Confirm read that as the code changing ("refresh the
+/// review"). The capture comes back with a new id that Confirm accepts.
+#[tokio::test]
+async fn a_picture_taken_during_the_review_does_not_refuse_confirm() {
+    let f = Fixture::new().await;
+    let (id, _) = crate::design_undo::done_note(&f, "k1", "a.txt", "one\n").await;
+    let review = |reply| match reply {
+        Reply::DesignFinish(view) => view,
+        other => panic!("{other:?}"),
+    };
+    let first = review(
+        f.operator(Request::DesignFinishCapture {
+            session: f.session.clone(),
+            cancel_queued: false,
+            recapture: false,
+        })
+        .await
+        .expect("finish"),
+    );
+    let after = review(
+        f.operator(Request::DesignFinalCapture {
+            session: f.session.clone(),
+            capture: first.capture.clone(),
+            note: id.clone(),
+        })
+        .await
+        .expect("picture kept"),
+    );
+    assert_ne!(
+        after.capture, first.capture,
+        "re-stamped at the new version"
+    );
+    let stale = f
+        .operator(Request::DesignFinishConfirm {
+            session: f.session.clone(),
+            capture: first.capture.clone(),
+            include: [(id.clone(), true)].into(),
+            superseded: Default::default(),
+            confirm_no_change: false,
+        })
+        .await;
+    assert!(stale.is_err(), "the old id is stale");
+    f.operator(Request::DesignFinishConfirm {
+        session: f.session.clone(),
+        capture: after.capture,
+        include: [(id, true)].into(),
+        superseded: Default::default(),
+        confirm_no_change: false,
+    })
+    .await
+    .expect("confirmed after the picture");
+}
+
 mod stream {
     use super::*;
     use archon_core::protocol::{DesignEvent, ServerFrame, WelcomeDevice};

@@ -177,7 +177,29 @@ impl Shared {
         b64(r["data"].as_str().unwrap_or_default())
     }
 
+    /// Put the page back at scale 1. Under touch emulation Chrome zooms the
+    /// visual viewport onto a screenshot's clip, and a double tap zooms too;
+    /// the zoom survives a reload, so the stream stayed fixed on one element
+    /// and later boxes and crops were mapped against the zoomed page. Best
+    /// effort: an older browser without the method keeps working.
+    async fn reset_zoom(&self) {
+        let _ = self.call("Emulation.resetPageScaleFactor", json!({})).await;
+    }
+
     async fn capture(&self, clip: Option<ClipRect>, dpr: f64) -> Result<Picture, BrowserError> {
+        // Crops are in page CSS pixels: take them on the unzoomed page the
+        // operator saw, and leave it unzoomed for the stream.
+        self.reset_zoom().await;
+        let picture = self.capture_at_scale_one(clip, dpr).await;
+        self.reset_zoom().await;
+        picture
+    }
+
+    async fn capture_at_scale_one(
+        &self,
+        clip: Option<ClipRect>,
+        dpr: f64,
+    ) -> Result<Picture, BrowserError> {
         let vp = self.viewport();
         let clip = clip.unwrap_or(ClipRect {
             x: 0.0,
@@ -651,6 +673,7 @@ impl Browser {
 
     /// Reload the page.
     pub async fn reload(&self) -> Result<(), BrowserError> {
+        self.sh.reset_zoom().await;
         self.sh.call("Page.reload", json!({})).await.map(|_| ())
     }
 
@@ -668,6 +691,7 @@ impl Browser {
                 json!({"enabled": v.touch}),
             )
             .await?;
+        self.sh.reset_zoom().await;
         self.sh.st.lock().unwrap().viewport = v;
         Ok(())
     }
@@ -924,6 +948,60 @@ mod capture_tests {
     }
 
     // T-U10
+    /// F3: a clipped capture under touch emulation left the phone preview
+    /// zoomed onto the clip. Every capture, preset change and reload puts the
+    /// page back at scale 1, before the shot and after it.
+    #[tokio::test]
+    async fn captures_presets_and_reloads_reset_the_page_zoom() {
+        let (b, log) = fake_browser(|m, _| {
+            (m == "Page.captureScreenshot").then(|| json!({"data": jpeg_of(64)}))
+        })
+        .await;
+        let clip = ClipRect {
+            x: 10.0,
+            y: 20.0,
+            w: 100.0,
+            h: 50.0,
+        };
+        b.capture(Some(clip), 2.0).await.unwrap();
+        let methods = |log: &std::sync::Mutex<Vec<(String, Value)>>| -> Vec<String> {
+            log.lock()
+                .unwrap()
+                .iter()
+                .map(|(m, _)| m.clone())
+                .filter(|m| {
+                    m == "Page.captureScreenshot"
+                        || m == "Emulation.resetPageScaleFactor"
+                        || m == "Page.reload"
+                })
+                .collect()
+        };
+        assert_eq!(
+            methods(&log),
+            [
+                "Emulation.resetPageScaleFactor",
+                "Page.captureScreenshot",
+                "Emulation.resetPageScaleFactor"
+            ]
+        );
+        log.lock().unwrap().clear();
+        b.reload().await.unwrap();
+        assert_eq!(
+            methods(&log),
+            ["Emulation.resetPageScaleFactor", "Page.reload"]
+        );
+        log.lock().unwrap().clear();
+        b.set_viewport(Viewport {
+            width: 390,
+            height: 844,
+            dpr: 2.0,
+            touch: true,
+        })
+        .await
+        .unwrap();
+        assert_eq!(methods(&log), ["Emulation.resetPageScaleFactor"]);
+    }
+
     #[tokio::test]
     async fn oversize_capture_is_retried_until_it_fits() {
         // Size shrinks with quality and scale: 3 MiB at q70/1.0, still big at q40, fits at 0.5.

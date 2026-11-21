@@ -145,13 +145,30 @@ impl DesignService {
                 {
                     return Err(error);
                 }
-                tracing::warn!(note = %original_id, %error, "design: undo failed; nothing changed");
+                // "Nothing changed" only when the files really are back at
+                // the commit the undo started from; a restore that failed
+                // too is said plainly, so the operator checks the preview.
+                if matches!(self.worktree_at(&wt, &pre), Ok(Ok(()))) {
+                    tracing::warn!(note = %original_id, %error, "design: undo failed; nothing changed");
+                    return self
+                        .fail_revert(
+                            ctx,
+                            revert,
+                            FailReason::UndoRefused,
+                            format!("Undo did not finish, so nothing changed: {error}"),
+                        )
+                        .await;
+                }
+                tracing::warn!(note = %original_id, %error, "design: undo failed and its files were not all restored");
                 return self
                     .fail_revert(
                         ctx,
                         revert,
-                        FailReason::UndoRefused,
-                        format!("Undo did not finish, so nothing changed: {error}"),
+                        FailReason::UndoInterrupted,
+                        format!(
+                            "Undo did not finish and its files could not all be put back; check \
+                             the preview and add a note if something looks wrong: {error}"
+                        ),
                     )
                     .await;
             }

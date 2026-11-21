@@ -314,13 +314,18 @@ impl DesignService {
             // still lets go of what this daemon holds for it.
             match store.design_session(&session.id)? {
                 Some(row) if row.state != SessionState::Ended => {}
-                _ => {
+                found => {
                     drop(store);
+                    // Streams hear the reason the session really ended with
+                    // (an approval, say), never a later caller's.
+                    let reason = found
+                        .and_then(|row| row.end_reason)
+                        .unwrap_or_else(|| reason.to_owned());
                     if let Some(rt) = self.existing_runtime(&session.id) {
                         let _ = rt.events.send(DesignEvent::Ended {
-                            reason: reason.to_owned(),
+                            reason: reason.clone(),
                         });
-                        self.close_session_browser(&session.id, reason).await;
+                        self.close_session_browser(&session.id, &reason).await;
                         self.spawn_start_queued();
                     }
                     self.wts
@@ -399,16 +404,28 @@ impl DesignService {
         });
     }
 
+    /// The gate on a confirmed session was answered: the session ends with
+    /// the answer (`approved`, `revised`, `rejected`) as its reason, so every
+    /// open design screen shows what happened and what comes next.
     pub async fn gate_decided(
         &self,
-        _ctx: &Arc<DaemonContext>,
+        ctx: &Arc<DaemonContext>,
         run: &RunId,
         stage_id: &str,
         attempt: u32,
         decision: &str,
     ) -> Result<(), ArchonError> {
         tracing::info!(%run, stage_id, attempt, decision, device = ?current_device_label(), "design: gate answered");
-        Ok(())
+        let session = {
+            let store = ctx.store.lock().await;
+            self.session_of(&store, run, stage_id, attempt)?
+        };
+        match session {
+            Some(session) if session.state != SessionState::Ended => {
+                self.end_session(ctx, &session, decision).await
+            }
+            _ => Ok(()),
+        }
     }
 
     pub fn session_of(
@@ -682,17 +699,18 @@ impl DesignService {
     }
 
     pub(crate) async fn emit_note(&self, ctx: &DaemonContext, item: &QueueItemId, id: &str) {
-        let (note, session, all) = {
+        let (note, session, all, approved) = {
             let store = ctx.store.lock().await;
             let note = store.design_note(item, id).ok().flatten();
             let session = store.design_current_session(item).ok().flatten();
             let all = store.design_notes(item).unwrap_or_default();
-            (note, session, all)
+            let approved = approved_ids(&store, item).unwrap_or_default();
+            (note, session, all, approved)
         };
         let (Some(note), Some(session)) = (note, session) else {
             return;
         };
-        let view = note_view(&note, &all, Some(&session));
+        let view = note_view(&note, &all, Some(&session), &approved);
         self.emit(&note.session, DesignEvent::Note(view));
         self.emit_session(ctx, &session.id).await;
     }
@@ -767,11 +785,26 @@ pub(crate) fn path_of(url: &str) -> String {
     path.split(['?', '#']).next().unwrap_or("/").to_owned()
 }
 
+/// The requirement ids of the item's approved intent: notes an approval
+/// bound, which no Undo or supersession may touch.
+pub fn approved_ids(store: &Store, item: &QueueItemId) -> Result<Vec<String>, ArchonError> {
+    match store.item(item) {
+        Ok(found) => Ok(found
+            .intent
+            .map(|binding| binding.requirements)
+            .unwrap_or_default()),
+        // No item binds nothing: a reconnecting client's read still answers.
+        Err(ArchonError::NotFound(_)) => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
+}
+
 /// A note as the web app sees it.
-pub(crate) fn note_view(
+pub fn note_view(
     note: &DesignNote,
     all: &[DesignNote],
     current: Option<&DesignSession>,
+    approved: &[String],
 ) -> DesignNoteView {
     let undone = undone_by(all);
     let read_only = current.is_none_or(|c| c.id != note.session);
@@ -784,5 +817,6 @@ pub(crate) fn note_view(
         undone_by: undone.get(&note.id).cloned(),
         read_only,
         active,
+        approved: approved.contains(&note.id),
     }
 }

@@ -107,7 +107,13 @@ impl DesignService {
             .ok_or_else(|| ArchonError::NotFound(format!("note {id}")))?;
         let all = store.design_notes(item)?;
         let current = store.design_current_session(item)?;
-        Ok(Reply::DesignNote(note_view(&note, &all, current.as_ref())))
+        let approved = super::approved_ids(&store, item)?;
+        Ok(Reply::DesignNote(note_view(
+            &note,
+            &all,
+            current.as_ref(),
+            &approved,
+        )))
     }
 
     /// A note of the item's current session, for a change request.

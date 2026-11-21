@@ -186,6 +186,9 @@ pub struct DesignNoteView {
     pub read_only: bool,
     /// In the item's current approved set.
     pub active: bool,
+    /// Bound by an approved intent: no Undo or supersession touches it.
+    #[serde(default)]
+    pub approved: bool,
 }
 
 /// An item's session and notes.

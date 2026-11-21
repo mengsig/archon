@@ -573,6 +573,24 @@ async fn an_approved_note_is_not_active_for_a_later_ledger() {
         active(&h).is_empty(),
         "an approved note is not active again"
     );
+    // F4: the session ends with the answer, so an open screen says
+    // "Approved" and what comes next rather than waiting on the gate.
+    let ended = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .design_session(&session.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(ended.state, SessionState::Ended);
+    assert_eq!(ended.end_reason.as_deref(), Some("approved"));
+    // F2: an approved note offers no Undo in any later session.
+    let store = h.ctx.store.lock().await;
+    let notes = store.design_notes(&item.id).unwrap();
+    let approved = archon_daemon::design::approved_ids(&store, &item.id).unwrap();
+    let note = notes.iter().find(|n| n.id == id).unwrap();
+    assert!(archon_daemon::design::note_view(note, &notes, None, &approved).approved);
 }
 
 /// Revise on a design gate resumes the kept agent in a new session that still
@@ -606,6 +624,11 @@ async fn revise_resumes_the_design_agent_in_a_new_session_with_its_notes() {
     let store = h.ctx.store.lock().await;
     let old = store.design_session(&session.id).unwrap().unwrap();
     assert_eq!(old.state, SessionState::Ended);
+    assert_eq!(
+        old.end_reason.as_deref(),
+        Some("revised"),
+        "F2: the old screen hears it was revised, not left waiting"
+    );
     let next = h
         .ctx
         .design

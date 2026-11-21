@@ -676,6 +676,9 @@ impl DesignService {
             st.screencast = false;
             let counters = std::mem::take(&mut st.counters);
             st.status = BrowserStatus::Idle;
+            // A relaunched browser starts its preview probe afresh: misses
+            // the stopped one counted must not mark the new one down.
+            st.probe_misses = 0;
             (st.browser.take(), Vec::<()>::new(), counters)
         };
         let _ = tasks;

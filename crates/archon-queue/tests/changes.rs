@@ -533,6 +533,7 @@ fn the_migration_gives_older_items_one_change_each() {
         "DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster; ALTER TABLE lessons DROP COLUMN cluster;
          DROP TABLE github_outbox; DROP TABLE github_objects; DROP TABLE github_links; DROP TABLE item_transitions; DROP TABLE changes;
          ALTER TABLE outcomes DROP COLUMN class_source; ALTER TABLE outcomes DROP COLUMN failure_class_163;
+         DROP TABLE design_sessions; DROP TABLE design_notes; DROP TABLE design_assets;
          DELETE FROM schema_migrations WHERE version >= 19;",
     )
     .unwrap();

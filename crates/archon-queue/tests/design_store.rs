@@ -128,8 +128,13 @@ fn intent(id: &str, version: u32, ids: &[&str], images: &[&str]) -> ApprovedInte
             .map(|r| Requirement {
                 id: (*r).into(),
                 text: "t".into(),
-                kind: RequirementKind::Visual,
-                images: vec![],
+                // A visual requirement must name a picture; without one it is behaviour.
+                kind: if images.is_empty() {
+                    RequirementKind::Behaviour
+                } else {
+                    RequirementKind::Visual
+                },
+                images: images.iter().map(|i| (*i).into()).collect(),
                 owner: "app".into(),
             })
             .collect(),

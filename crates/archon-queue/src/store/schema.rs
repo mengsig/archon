@@ -1537,6 +1537,7 @@ mod tests {
              DROP TABLE github_links; DROP TABLE github_objects; DROP TABLE github_outbox;
              DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster;
              ALTER TABLE lessons DROP COLUMN cluster;
+             DROP TABLE design_sessions; DROP TABLE design_notes; DROP TABLE design_assets;
              DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();

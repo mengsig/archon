@@ -787,14 +787,99 @@ ALTER TABLE outcomes ADD COLUMN class_source TEXT
 ALTER TABLE outcomes ADD COLUMN failure_class_163 TEXT;
 "#;
 
+/// Version 25 (Live Design Sessions): sessions, their notes and pictures. Additive;
+/// the counter `design_seq:<item>` lives in `kv`. No foreign key to `items`, so
+/// retention never waits on them: `design_item_delete` removes an item's rows.
+const V25: &str = r#"
+CREATE TABLE design_sessions (
+    id                  TEXT PRIMARY KEY,
+    item                TEXT NOT NULL,
+    run                 TEXT NOT NULL,
+    stage_id            TEXT NOT NULL,
+    attempt             INTEGER NOT NULL,
+    state               TEXT NOT NULL
+        CHECK (state IN ('starting', 'live', 'finishing', 'confirmed', 'ended')),
+    degraded            INTEGER NOT NULL DEFAULT 0 CHECK (degraded IN (0, 1)),
+    note_version        INTEGER NOT NULL DEFAULT 0,
+    finish_capture      TEXT,
+    finish_head         TEXT,
+    finish_choices_json TEXT,
+    preview_url         TEXT,
+    browser_pid         INTEGER,
+    browser_started_at  INTEGER,
+    viewport_preset     TEXT NOT NULL,
+    sandbox_off         INTEGER NOT NULL DEFAULT 0 CHECK (sandbox_off IN (0, 1)),
+    agent               TEXT,
+    created_at          TEXT NOT NULL,
+    ended_at            TEXT,
+    end_reason          TEXT
+);
+CREATE INDEX design_sessions_by_item ON design_sessions (item);
+CREATE INDEX design_sessions_by_state ON design_sessions (state);
+
+CREATE TABLE design_notes (
+    item              TEXT NOT NULL,
+    id                TEXT NOT NULL,
+    number            INTEGER NOT NULL,
+    session           TEXT NOT NULL,
+    kind              TEXT NOT NULL CHECK (kind IN ('change', 'revert', 'page')),
+    text              TEXT NOT NULL,
+    details_text      TEXT,
+    send_picture      INTEGER NOT NULL CHECK (send_picture IN (0, 1)),
+    target_json       TEXT,
+    viewport_json     TEXT NOT NULL,
+    status            TEXT NOT NULL CHECK (status IN
+        ('queued', 'sent', 'working', 'needs_reply', 'done', 'failed', 'cancelled')),
+    fail_reason       TEXT,
+    base_commit       TEXT,
+    commit_sha        TEXT,
+    no_change         INTEGER NOT NULL DEFAULT 0 CHECK (no_change IN (0, 1)),
+    reverts           TEXT,
+    resent_from       TEXT,
+    superseded_by     TEXT,
+    reply_thread_json TEXT NOT NULL,
+    client_key        TEXT NOT NULL,
+    delivery          INTEGER NOT NULL DEFAULT 0,
+    before_asset      TEXT,
+    after_asset       TEXT,
+    final_asset       TEXT,
+    final_included    INTEGER CHECK (final_included IN (0, 1)),
+    captured_commit   TEXT,
+    created_by_device TEXT,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    PRIMARY KEY (item, id),
+    UNIQUE (item, client_key)
+) WITHOUT ROWID;
+CREATE INDEX design_notes_by_session ON design_notes (item, session);
+
+CREATE TABLE design_assets (
+    id         TEXT PRIMARY KEY,
+    item       TEXT NOT NULL,
+    sha256     TEXT NOT NULL,
+    mime       TEXT NOT NULL,
+    bytes      INTEGER NOT NULL,
+    width      INTEGER NOT NULL,
+    height     INTEGER NOT NULL,
+    path       TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    target_json TEXT,
+    note       TEXT,
+    commit_sha TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (item, sha256, source)
+);
+CREATE INDEX design_assets_by_item ON design_assets (item);
+"#;
+
 /// The migration after whose SQL stored failure classes are recomputed.
 const RECLASSIFY_VERSION: usize = 24;
 
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24,
+    V22, V23, V24, V25,
 ];
-const _: () = assert!(RECLASSIFY_VERSION == MIGRATIONS.len());
+const _: () = assert!(RECLASSIFY_VERSION <= MIGRATIONS.len());
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
 /// WAL mode; in-memory databases report `memory` and stay that way.

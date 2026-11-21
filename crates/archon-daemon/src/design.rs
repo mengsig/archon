@@ -36,7 +36,7 @@ use archon_queue::Store;
 pub use self::browser::{BrowserFactory, FrameFeed, PreviewBrowser, RealFactory};
 pub(crate) use self::delivery::sweep;
 pub use self::recovery::recover;
-pub(crate) use self::relay::stream;
+pub use self::relay::stream;
 pub(crate) use self::requests::handle;
 
 use crate::context::DaemonContext;
@@ -169,6 +169,10 @@ impl DesignService {
 
     pub fn enabled(&self) -> bool {
         self.cfg.enabled
+    }
+
+    pub fn item_lock_for_tests(&self, item: &QueueItemId) -> Arc<tokio::sync::Mutex<()>> {
+        self.item_lock(item)
     }
 
     pub(crate) fn item_lock(&self, item: &QueueItemId) -> Arc<tokio::sync::Mutex<()>> {

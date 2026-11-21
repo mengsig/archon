@@ -140,6 +140,10 @@ impl DesignService {
         id: &str,
         text: String,
     ) -> Result<Reply, ArchonError> {
+        // The delivery pump holds this lock from copying a queued note to
+        // marking it sent, so an edit cannot land in between.
+        let lock = self.item_lock(item);
+        let _held = lock.lock().await;
         let (_, note) = self.own_note(ctx, item, id).await?;
         if note.status != NoteStatus::Queued || note.kind == NoteKind::Revert {
             return Err(ArchonError::Invalid(

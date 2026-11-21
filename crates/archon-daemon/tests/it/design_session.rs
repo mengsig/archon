@@ -452,3 +452,193 @@ async fn disabled_sessions_refuse_requests() {
     assert!(read.is_ok());
     off.restart();
 }
+
+mod stream {
+    use super::*;
+    use archon_core::protocol::{DesignEvent, ServerFrame, WelcomeDevice};
+    use archon_remote::DesignSubscription;
+    use std::time::{Duration, Instant};
+    use tokio::sync::mpsc;
+
+    fn subscribe(
+        f: &Fixture,
+        id: u64,
+    ) -> (mpsc::Receiver<ServerFrame>, tokio::task::JoinHandle<()>) {
+        let (tx, rx) = mpsc::channel(64);
+        let sub = DesignSubscription {
+            id,
+            request: id,
+            session: f.session.clone(),
+            device: WelcomeDevice {
+                id: "device-1".into(),
+                name: "phone".into(),
+                role: archon_core::protocol::DeviceRole::Operator,
+            },
+        };
+        let task = tokio::spawn(archon_daemon::design::stream(f.h.ctx.clone(), sub, tx));
+        (rx, task)
+    }
+
+    async fn event(rx: &mut mpsc::Receiver<ServerFrame>) -> DesignEvent {
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(8), rx.recv())
+                .await
+                .expect("an event in time")
+                .expect("the stream is open");
+            if let ServerFrame::Design { event, .. } = frame {
+                return event;
+            }
+        }
+    }
+
+    async fn frame_seq(rx: &mut mpsc::Receiver<ServerFrame>) -> u64 {
+        loop {
+            if let DesignEvent::Frame { seq, .. } = event(rx).await {
+                return seq;
+            }
+        }
+    }
+
+    async fn until(what: &str, mut ok: impl FnMut() -> bool) {
+        for _ in 0..200 {
+            if ok() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("timed out waiting for {what}");
+    }
+
+    #[tokio::test]
+    async fn late_subscribers_get_the_current_frame_and_cleanup_survives_an_abort() {
+        let f = Fixture::new().await;
+        let service = f.h.ctx.design.clone();
+        let (mut first, first_task) = subscribe(&f, 1);
+        until("the screencast", || {
+            f.factory.browser(0).calls(|c| c.screencasts_started) >= 1
+        })
+        .await;
+        until("a counted subscriber", || {
+            service.subscriber_count(&f.session) == 1
+        })
+        .await;
+        f.factory.browser(0).frame(1);
+        assert_eq!(frame_seq(&mut first).await, 1);
+
+        // A second tab on a static page gets the frame at once.
+        let (mut second, second_task) = subscribe(&f, 2);
+        let started = Instant::now();
+        assert_eq!(frame_seq(&mut second).await, 1);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        until("two subscribers", || {
+            service.subscriber_count(&f.session) == 2
+        })
+        .await;
+
+        // The device socket ends: the stream task is aborted, and the
+        // guard still gives both subscribers back.
+        first_task.abort();
+        second_task.abort();
+        let _ = first_task.await;
+        let _ = second_task.await;
+        until("no subscribers", || {
+            service.subscriber_count(&f.session) == 0
+        })
+        .await;
+
+        // A reconnect gets the frame again.
+        let (mut third, third_task) = subscribe(&f, 3);
+        assert_eq!(frame_seq(&mut third).await, 1);
+        assert_eq!(service.subscriber_count(&f.session), 1);
+        third_task.abort();
+        let _ = third_task.await;
+        until("no subscribers after the reconnect", || {
+            service.subscriber_count(&f.session) == 0
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn without_an_ack_the_latest_frame_wins_after_the_wait() {
+        let f = Fixture::new().await;
+        let (mut rx, task) = subscribe(&f, 1);
+        until("the screencast", || {
+            f.factory.browser(0).calls(|c| c.screencasts_started) >= 1
+        })
+        .await;
+        f.factory.browser(0).frame(1);
+        assert_eq!(frame_seq(&mut rx).await, 1);
+        let sent = Instant::now();
+        f.factory.browser(0).frame(2);
+        f.factory.browser(0).frame(3);
+        // Frame 1 was never acked: the next one waits, then the latest goes.
+        assert_eq!(frame_seq(&mut rx).await, 3);
+        assert!(sent.elapsed() >= Duration::from_millis(1500));
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn an_ended_event_ends_the_stream() {
+        let f = Fixture::new().await;
+        let (mut rx, task) = subscribe(&f, 1);
+        let _ = event(&mut rx).await;
+        f.end(StageEnd::Cancelled).await;
+        loop {
+            if matches!(event(&mut rx).await, DesignEvent::Ended { .. }) {
+                break;
+            }
+        }
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the stream task ends")
+            .expect("no panic");
+        assert_eq!(f.h.ctx.design.subscriber_count(&f.session), 0);
+    }
+}
+
+/// Startup recovery ends a live session whose run is already over, so no
+/// browser or slot is kept for a dead item.
+#[tokio::test]
+async fn recovery_ends_sessions_of_finished_runs() {
+    let f = Fixture::new().await;
+    f.operator(Request::CancelItem {
+        item: f.item.clone(),
+        reason: None,
+    })
+    .await
+    .expect("cancel");
+    archon_daemon::design::recover(&f.h.ctx)
+        .await
+        .expect("recovery");
+    let row =
+        f.h.ctx
+            .store
+            .lock()
+            .await
+            .design_session(&f.session)
+            .expect("read")
+            .expect("row");
+    assert_eq!(row.state, SessionState::Ended);
+    assert!(f.factory.browser(0).calls(|c| c.closed));
+}
+
+/// An edit waits for the delivery pump's lock, so the agent and the store
+/// never disagree about a note's words.
+#[tokio::test]
+async fn a_queued_note_edit_takes_the_item_lock() {
+    let f = Fixture::new().await;
+    let n = add(&f, "k-edit", "make it blue").await;
+    let held = f.h.ctx.design.item_lock_for_tests(&f.item);
+    let _guard = held.lock().await;
+    let edit = f.operator(Request::DesignNoteEdit {
+        item: f.item.clone(),
+        id: n.id.clone(),
+        text: "make it green".into(),
+    });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), edit)
+            .await
+            .is_err(),
+        "the edit ran while the item lock was held"
+    );
+}

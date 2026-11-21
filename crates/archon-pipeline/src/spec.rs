@@ -721,6 +721,14 @@ impl PipelineSpec {
                     .into(),
             );
         }
+        if stage.kind == StageKind::Design
+            && self.file.pipeline.workspace != WorkspaceMode::Worktree
+        {
+            return Err(
+                "a design stage edits and commits code, so it needs workspace = \"worktree\""
+                    .into(),
+            );
+        }
         let writes_reports = matches!(stage.kind, StageKind::Propose | StageKind::Report);
         if writes_reports && self.file.pipeline.workspace == WorkspaceMode::RepoReadonly {
             return Err(
@@ -1000,7 +1008,7 @@ fn validate_propose_placement(stages: &[StageSpec]) -> Result<(), ArchonError> {
     let proposes: Vec<usize> = stages
         .iter()
         .enumerate()
-        .filter(|(_, s)| s.kind == StageKind::Propose)
+        .filter(|(_, s)| matches!(s.kind, StageKind::Propose | StageKind::Design))
         .map(|(i, _)| i)
         .collect();
     match proposes.as_slice() {
@@ -1009,7 +1017,7 @@ fn validate_propose_placement(stages: &[StageSpec]) -> Result<(), ArchonError> {
             "propose stage {:?} must be the first stage",
             stages[*only].id
         ))),
-        _ => Err(invalid("at most one propose stage is allowed")),
+        _ => Err(invalid("at most one propose or design stage is allowed")),
     }
 }
 

@@ -181,7 +181,7 @@ pub fn switch_edit(
     // A proposal is approved before any work; a run under way is past it.
     let rest = rest
         .iter()
-        .filter(|s| prefix == 0 || s.kind != StageKind::Propose);
+        .filter(|s| prefix == 0 || !matches!(s.kind, StageKind::Propose | StageKind::Design));
     let mut stages: Vec<Entry> = done.iter().map(|s| kept(&s.id)).collect();
     stages.extend(rest.map(|s| Entry::Carried(Box::new(carried(spec, done, target, s)))));
     if stages.len() == prefix {

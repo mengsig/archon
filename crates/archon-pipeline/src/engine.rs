@@ -301,15 +301,16 @@ impl RunDriver {
             self.emitted.is_empty() && !self.finished,
             "gates are set before the driver acts"
         );
-        let named = [
-            (&gates.proposal, StageKind::Propose),
-            (&gates.report, StageKind::Report),
+        let named: [(&Option<String>, &[StageKind]); 2] = [
+            (&gates.proposal, &[StageKind::Propose, StageKind::Design]),
+            (&gates.report, &[StageKind::Report]),
         ];
-        for (id, kind) in named {
+        for (id, kinds) in named {
             let Some(id) = id else { continue };
-            if self.spec.stage(id).is_none_or(|s| s.kind != kind) {
+            if self.spec.stage(id).is_none_or(|s| !kinds.contains(&s.kind)) {
                 return Err(ArchonError::Pipeline(format!(
-                    "operator gate {id:?} names no {kind:?} stage of pipeline {:?}",
+                    "operator gate {id:?} names no {:?} stage of pipeline {:?}",
+                    kinds[0],
                     self.spec.name()
                 )));
             }
@@ -669,6 +670,10 @@ impl RunDriver {
             .iter()
             .filter_map(|s| s.on_fail.as_ref())
             .any(|on_fail| on_fail.goto == stage.id);
+        if stage.kind == StageKind::Design {
+            // The design agent waits for notes between requests.
+            return true;
+        }
         let single_worker = stage.kind == StageKind::Work && stage.fan_out == 1;
         single_worker && looped_to && !self.spec.holds_review(stage)
     }

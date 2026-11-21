@@ -181,7 +181,7 @@ fn handed_off<'a>(spec: &'a PipelineSpec, stage: &StageSpec) -> Vec<&'a StageSpe
     let reported = autonomy::change_report_stage(spec).filter(|_| stage.kind == StageKind::Ship);
     spec.file.stages[..=index]
         .iter()
-        .filter(|s| s.kind != StageKind::Propose && !lists_all)
+        .filter(|s| !matches!(s.kind, StageKind::Propose | StageKind::Design) && !lists_all)
         .filter(|s| reported.is_none_or(|report| report.id != s.id))
         .filter(|s| !shown.contains(&template::previous_variable(&s.id)))
         .collect()
@@ -271,7 +271,7 @@ fn earlier_summaries(
     let index = spec.stage_index(&stage.id).expect("stage of this pipeline");
     let mut out = String::from("\n\n## Earlier stages\n");
     for earlier in &spec.file.stages[..index] {
-        if earlier.kind == StageKind::Propose {
+        if matches!(earlier.kind, StageKind::Propose | StageKind::Design) {
             continue;
         }
         if let Some(summary) = previous.get(&template::previous_variable(&earlier.id)) {

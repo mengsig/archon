@@ -198,7 +198,7 @@ impl DesignService {
                 });
             }
         }
-        let trailer = done_commit.as_ref().map(|_| format!("Archon-Note: {id}"));
+        let trailer = done_commit.as_ref().map(|_| id.to_owned());
         if let Tidy::Untidy(why) = design_git::check_tidy(&g, trailer.as_deref())? {
             return Err(ArchonError::Invalid(why));
         }

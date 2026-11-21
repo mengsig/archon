@@ -159,13 +159,8 @@ impl DesignService {
             _ => {}
         }
         // Preconditions.
-        let (notes, owed) = {
-            let store = ctx.store.lock().await;
-            (
-                store.design_notes(&row.item)?,
-                self.has_owed(ctx, &row.id).await?,
-            )
-        };
+        let notes = ctx.store.lock().await.design_notes(&row.item)?;
+        let owed = self.has_owed(ctx, &row.id).await?;
         if let Some(why) = Self::blocker(&row, &notes, owed) {
             return Err(ArchonError::Invalid(why));
         }
@@ -212,6 +207,18 @@ impl DesignService {
             }
             row = store.design_session(&row.id)?.ok_or_else(super::gone)?;
         }
+        // Every stored picture counts as a change of the notes, so they are
+        // taken first and the capture names the version they leave.
+        for note in &active {
+            self.capture_final(ctx, &row, note, &head, &wt).await;
+        }
+        self.restore_viewport(ctx, &row).await;
+        row = ctx
+            .store
+            .lock()
+            .await
+            .design_session(&row.id)?
+            .ok_or_else(super::gone)?;
         let capture = capture_id(row.note_version);
         let moved = ctx.store.lock().await.design_session_transition(
             &row.id,
@@ -228,10 +235,6 @@ impl DesignService {
         let row = moved.map_err(|_| conflict())?;
         tracing::info!(session = %row.id, device = ?super::current_device_label(), "design: finish capture");
         self.emit_session(ctx, &row.id).await;
-        for note in &active {
-            self.capture_final(ctx, &row, note, &head, &wt).await;
-        }
-        self.restore_viewport(ctx, &row).await;
         self.finish_view(ctx, &row, &wt)
             .await
             .map(Reply::DesignFinish)

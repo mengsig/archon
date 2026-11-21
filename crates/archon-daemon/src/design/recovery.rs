@@ -11,7 +11,7 @@ use archon_queue::store::{NoteChange, SessionPatch};
 use crate::context::DaemonContext;
 use crate::worktree::design_git::{self, NoteGit, Reconciled};
 
-pub(crate) async fn recover(ctx: &DaemonContext) -> Result<(), ArchonError> {
+pub async fn recover(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let service = &ctx.design;
     let sessions = {
         let store = ctx.store.lock().await;

@@ -216,8 +216,15 @@ async fn ending_the_stage_ends_the_session_and_closes_the_browser() {
     add(&f, "k2", "second").await;
     f.end(StageEnd::Completed).await;
 
-    let view = state(&f).await;
-    assert_eq!(view.session.unwrap().state, SessionState::Ended);
+    let ended =
+        f.h.ctx
+            .store
+            .lock()
+            .await
+            .design_session(&f.session)
+            .unwrap()
+            .expect("the session row stays");
+    assert_eq!(ended.state, SessionState::Ended);
     assert_eq!(note(&f, "D2").await.status, NoteStatus::Cancelled);
     assert_eq!(
         note(&f, "D1").await.status,
@@ -359,7 +366,7 @@ async fn only_the_stage_agent_may_report() {
     let operator = f
         .operator(Request::DesignPreview {
             url: "http://127.0.0.1:1/".into(),
-            caller: Some(f.agent.clone()),
+            caller: None,
         })
         .await;
     assert!(operator.is_err(), "design_preview is for stage agents");
@@ -424,17 +431,24 @@ async fn an_upload_must_be_an_image() {
     assert!(f.operator(upload(jpeg(32, 32))).await.is_ok());
 }
 
-/// With design sessions off, every design request is refused.
+/// With design sessions off, every design request but the read is refused;
+/// the read tells a reconnecting client there is nothing.
 #[tokio::test]
 async fn disabled_sessions_refuse_requests() {
     let f = Fixture::with(design_config()).await;
     let mut off = crate::common::Harness::new().await;
     assert!(!off.ctx.design.enabled());
     let refused = off
+        .cli(Request::DesignReload {
+            session: f.session.clone(),
+        })
+        .await;
+    assert!(refused.is_err());
+    let read = off
         .cli(Request::DesignGet {
             item: f.item.clone(),
         })
         .await;
-    assert!(refused.is_err());
+    assert!(read.is_ok());
     off.restart();
 }

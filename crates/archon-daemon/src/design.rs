@@ -35,7 +35,7 @@ use archon_queue::Store;
 
 pub use self::browser::{BrowserFactory, FrameFeed, PreviewBrowser, RealFactory};
 pub(crate) use self::delivery::sweep;
-pub(crate) use self::recovery::recover;
+pub use self::recovery::recover;
 pub(crate) use self::relay::stream;
 pub(crate) use self::requests::handle;
 

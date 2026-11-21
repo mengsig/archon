@@ -339,6 +339,14 @@ impl Fixture {
             })
             .await
             .expect("preview reported");
+        // The browser starts lazily, when the operator first looks (a
+        // subscribe or a capture); a reload is the same first look.
+        fixture
+            .operator(Request::DesignReload {
+                session: fixture.session.clone(),
+            })
+            .await
+            .expect("the operator's first look");
         fixture
     }
 

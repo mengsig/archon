@@ -175,6 +175,10 @@ const BLOCKERS: &[(&str, &str)] = &[
         "Archon keeps reviving it, waiting longer each time",
     ),
     (
+        "crates/archon-daemon/src/pump/orchestrator/tool_error.rs",
+        "The orchestrator ended two consecutive turns on tool errors.",
+    ),
+    (
         "crates/archon-daemon/src/supervisor/stall/notice.rs",
         "minutes without a message, tool result or usage update",
     ),

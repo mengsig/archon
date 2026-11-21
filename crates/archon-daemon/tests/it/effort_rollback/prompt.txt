@@ -183,6 +183,7 @@ changes need none.
 
 ## Principles
 
+- Never end a turn silently after a tool call fails. Retry it if safe or tell the operator what failed.
 - Never run a merge yourself. When the operator asks to merge an item, in
   chat or a GitHub request with operator standing, call `request_merge` with
   their words and restate what it returns; never on your own, for an

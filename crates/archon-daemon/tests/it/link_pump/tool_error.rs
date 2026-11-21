@@ -17,10 +17,15 @@ fn tool_error(agent: &str, turn: u32, tool: &str) -> Value {
     })
 }
 
-async fn end_turn(harness: &Harness, turn: u32) {
-    orch(
+async fn end_turn(harness: &Harness, agent: &str, turn: u32) {
+    push(
         harness,
-        json!({"type": "agent.turn_completed", "turn": turn, "next": "waiting"}),
+        fake::event(
+            Some(agent),
+            None,
+            json!({"type": "agent.turn_completed", "turn": turn, "next": "waiting"}),
+        ),
+        keys::CURSOR_ORCHESTRATOR,
     )
     .await;
 }
@@ -30,7 +35,7 @@ async fn the_first_tool_error_wakes_the_orchestrator_once_and_ignores_replay() {
     let harness = Harness::new().await;
     let (_agents, pump) = running_pump(&harness).await;
 
-    end_turn(&harness, 1).await;
+    end_turn(&harness, ORCH, 1).await;
     orch(&harness, tool_error(ORCH, 1, TOOL)).await;
     let sent = harness.fake.received_named("trigger");
     assert_eq!(sent.len(), 1, "{sent:?}");
@@ -62,7 +67,7 @@ async fn a_lost_wake_reply_replays_with_the_same_trigger_key() {
     harness
         .fake
         .script("trigger", Scripted::Hangup { notice: None });
-    end_turn(&harness, 1).await;
+    end_turn(&harness, ORCH, 1).await;
     orch(&harness, tool_error(ORCH, 1, TOOL)).await;
 
     let attempts = harness.fake.received_named("trigger");
@@ -84,11 +89,11 @@ async fn a_lost_wake_reply_replays_with_the_same_trigger_key() {
 async fn consecutive_tool_errors_post_one_blocker_then_stop_until_a_turn_succeeds() {
     let harness = Harness::new().await;
     let (_agents, pump) = running_pump(&harness).await;
-    end_turn(&harness, 1).await;
+    end_turn(&harness, ORCH, 1).await;
     orch(&harness, tool_error(ORCH, 1, TOOL)).await;
 
     let second_tool = "mcp__archon__settings";
-    end_turn(&harness, 2).await;
+    end_turn(&harness, ORCH, 2).await;
     orch(&harness, tool_error(ORCH, 2, second_tool)).await;
     let blockers = harness.notifications(NotificationKind::Blocker).await;
     assert_eq!(blockers.len(), 1, "{blockers:?}");
@@ -96,7 +101,7 @@ async fn consecutive_tool_errors_post_one_blocker_then_stop_until_a_turn_succeed
     assert_eq!(harness.fake.received_named("trigger").len(), 1);
 
     hangup_and_replay(&harness, keys::CURSOR_ORCHESTRATOR).await;
-    end_turn(&harness, 3).await;
+    end_turn(&harness, ORCH, 3).await;
     orch(&harness, tool_error(ORCH, 3, TOOL)).await;
     assert_eq!(
         harness.notifications(NotificationKind::Blocker).await,
@@ -104,13 +109,60 @@ async fn consecutive_tool_errors_post_one_blocker_then_stop_until_a_turn_succeed
     );
     assert_eq!(harness.fake.received_named("trigger").len(), 1);
 
-    end_turn(&harness, 4).await;
-    end_turn(&harness, 5).await;
+    end_turn(&harness, ORCH, 4).await;
+    end_turn(&harness, ORCH, 5).await;
     orch(&harness, tool_error(ORCH, 5, TOOL)).await;
     assert_eq!(harness.fake.received_named("trigger").len(), 2);
     assert_eq!(
         harness.notifications(NotificationKind::Blocker).await,
         blockers
+    );
+    pump.abort();
+}
+
+#[tokio::test]
+async fn a_replacement_orchestrator_starts_its_own_tool_error_chain() {
+    let harness = Harness::new().await;
+    let (agents, pump) = running_pump(&harness).await;
+    end_turn(&harness, ORCH, 3).await;
+    orch(&harness, tool_error(ORCH, 3, TOOL)).await;
+    let sent = harness.fake.received_named("trigger");
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0]["agent"], ORCH);
+
+    agents.set(ORCH, "cancelled");
+    agents.restart(ORCH, ORCH_2);
+    harness.fake.set_default("cancel", Scripted::ok());
+    orch(
+        &harness,
+        json!({"type": "agent.restarted", "from": ORCH, "to": ORCH_2, "transcript_tail": 0}),
+    )
+    .await;
+    harness
+        .eventually("the pump follows the replacement", || async {
+            harness
+                .fake
+                .received_named("subscribe")
+                .iter()
+                .any(|sub| sub["query"]["agent"] == ORCH_2)
+        })
+        .await;
+    end_turn(&harness, ORCH_2, 1).await;
+    push(
+        &harness,
+        fake::event(Some(ORCH_2), None, tool_error(ORCH_2, 1, TOOL)),
+        keys::CURSOR_ORCHESTRATOR,
+    )
+    .await;
+    let recovered = harness.fake.received_named("trigger");
+    assert_eq!(recovered.len(), 2, "{recovered:?}");
+    assert_eq!(recovered[1]["agent"], ORCH_2);
+    assert_eq!(recovered[1]["payload"]["events"][0]["turn"], 1);
+    assert!(
+        harness
+            .notifications(NotificationKind::Blocker)
+            .await
+            .is_empty()
     );
     pump.abort();
 }

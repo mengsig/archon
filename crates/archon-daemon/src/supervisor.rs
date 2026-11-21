@@ -2631,8 +2631,9 @@ mod tests {
     /// The prompt is paid for on every turn; the tools describe themselves.
     /// Includes 1 KiB for approved-intent and clarification guidance, 128 B
     /// for routing risky work to `adaptive`, 64 B for the rule against
-    /// polling GitHub from a schedule, and 64 B for the review-cap exception.
-    const BUDGET_BYTES: usize = 14 * 1024 + 768 + 128 + 64 + 64;
+    /// polling GitHub from a schedule, 64 B for the review-cap exception,
+    /// and 104 B for the retry-or-report rule.
+    const BUDGET_BYTES: usize = 14 * 1024 + 768 + 128 + 64 + 64 + 104;
 
     #[test]
     fn builtin_prompt_stays_within_its_budget() {

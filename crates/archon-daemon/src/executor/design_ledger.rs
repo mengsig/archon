@@ -145,12 +145,17 @@ pub(crate) fn build_draft(
                     id: image_id.clone(),
                     path: picture.path.clone(),
                     sha256: sha_hex(&bytes),
+                    // The viewport the picture was taken at is what the
+                    // build must match. The session knows no theme or app
+                    // state, so it records none: the caption ("captured
+                    // from the preview at commit …") is where the picture
+                    // came from, never a state a built image could show.
                     viewport: Some(ImageViewport {
                         width: picture.viewport.w,
                         height: picture.viewport.h,
                     }),
                     theme: None,
-                    state: Some(picture.caption.clone()),
+                    state: None,
                 });
                 requirement.kind = RequirementKind::Visual;
                 requirement.images = vec![image_id];
@@ -184,10 +189,32 @@ fn mime_of(bytes: &[u8]) -> &'static str {
     }
 }
 
+/// Each new reference image's caption (where the picture came from), by id.
+pub(crate) fn captions(notes: &[LedgerNote]) -> BTreeMap<String, String> {
+    notes
+        .iter()
+        .filter_map(|n| {
+            let picture = n.picture.as_ref()?;
+            Some((
+                format!("{}-final", n.id),
+                format!(
+                    "{}, {}x{}",
+                    picture.caption, picture.viewport.w, picture.viewport.h
+                ),
+            ))
+        })
+        .collect()
+}
+
 /// The ledger page: self-contained HTML with the included final pictures as
 /// `data:` images. `pictures` maps a reference image id to its bytes; any
-/// other picture of the session is never shown.
-pub(crate) fn render_page(draft: &ApprovedIntent, pictures: &BTreeMap<String, Vec<u8>>) -> String {
+/// other picture of the session is never shown. `captions` names where each
+/// picture came from.
+pub(crate) fn render_page(
+    draft: &ApprovedIntent,
+    pictures: &BTreeMap<String, Vec<u8>>,
+    captions: &BTreeMap<String, String>,
+) -> String {
     let mut html = String::from(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>Design ledger</title>\
          <style>body{font:16px/1.5 system-ui,sans-serif;max-width:60rem;margin:2rem auto;\
@@ -217,7 +244,13 @@ pub(crate) fn render_page(draft: &ApprovedIntent, pictures: &BTreeMap<String, Ve
             let Some(image) = draft.images.iter().find(|i| &i.id == id) else {
                 continue;
             };
-            let caption = escape(image.state.as_deref().unwrap_or(""));
+            let caption = escape(
+                captions
+                    .get(id)
+                    .map(String::as_str)
+                    .or(image.state.as_deref())
+                    .unwrap_or(""),
+            );
             match pictures.get(id) {
                 Some(bytes) => html.push_str(&format!(
                     "<figure><img alt=\"{}\" src=\"data:{};base64,{}\"><figcaption>{}</figcaption></figure>",
@@ -251,6 +284,12 @@ pub(super) fn worktree_ref(store: &Store, run: &PipelineRun) -> Result<WorktreeR
         worktree: run.workspace.clone(),
         branch: run.branch.clone(),
     })
+}
+
+/// The CSS viewport of `preset`, as the preview browser sets it.
+fn preset_viewport(preset: archon_core::design::ViewportPreset) -> Viewport {
+    let (w, h) = preset.size();
+    Viewport { w, h, preset }
 }
 
 /// The notes the confirmed `session` puts in the ledger, each with the words
@@ -287,7 +326,13 @@ fn ledger_notes(
                 let commit = note.captured_commit.as_deref().unwrap_or(&head);
                 LedgerPicture {
                     path: ctx.design.asset_path(&asset),
-                    viewport: note.viewport,
+                    // The viewport Finish took the picture at: its
+                    // target's preset, else the note's (`capture_final`).
+                    viewport: preset_viewport(
+                        note.target
+                            .as_ref()
+                            .map_or(note.viewport.preset, |t| t.viewport.preset),
+                    ),
                     caption: format!(
                         "captured from the preview at commit {} {}",
                         &commit[..commit.len().min(7)],
@@ -413,7 +458,7 @@ pub(super) fn prepare(
         pictures.insert(image.id.clone(), bytes);
     }
     record.validate()?;
-    let html = render_page(&record, &pictures);
+    let html = render_page(&record, &pictures, &captions(&notes));
     let directory = ctx.paths.data_dir.join("design").join("ledger");
     std::fs::create_dir_all(&directory)
         .map_err(|e| ArchonError::io("create the design ledger directory", e))?;
@@ -519,12 +564,19 @@ mod tests {
         assert_eq!(draft.operator_words, "Fix the button\n\nmake it red");
         assert_eq!(draft.images.len(), 1);
         assert_eq!(draft.images[0].id, "D2-final");
-        assert!(
-            draft.images[0]
-                .state
-                .as_deref()
-                .unwrap()
-                .contains("3f9c2a1")
+        // The picture records the viewport it was taken at and nothing a
+        // built image could never show: its caption is no app state.
+        let image = &draft.images[0];
+        assert_eq!(
+            image.viewport,
+            Some(ImageViewport {
+                width: 1440,
+                height: 900
+            })
+        );
+        assert_eq!(
+            (image.theme.as_deref(), image.state.as_deref()),
+            (None, None)
         );
         let requirement = &draft.requirements[0];
         assert_eq!(requirement.kind, RequirementKind::Visual);
@@ -636,7 +688,7 @@ mod tests {
         let draft = build_draft(None, "Button", &notes, None).unwrap();
         let bytes = std::fs::read(&draft.images[0].path).unwrap();
         let pictures = BTreeMap::from([("D1-final".to_owned(), bytes.clone())]);
-        let page = render_page(&draft, &pictures);
+        let page = render_page(&draft, &pictures, &captions(&notes));
         assert!(page.contains(&format!(
             "data:image/png;base64,{}",
             STANDARD.encode(&bytes)
@@ -660,8 +712,10 @@ mod tests {
                 state: None,
             });
         }
-        assert!(render_page(&draft, &BTreeMap::new()).contains("120 of 128"));
+        assert!(render_page(&draft, &BTreeMap::new(), &BTreeMap::new()).contains("120 of 128"));
         draft.images.pop();
-        assert!(!render_page(&draft, &BTreeMap::new()).contains("class=\"warn\""));
+        assert!(
+            !render_page(&draft, &BTreeMap::new(), &BTreeMap::new()).contains("class=\"warn\"")
+        );
     }
 }

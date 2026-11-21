@@ -18,8 +18,21 @@ pub struct VisualPair {
     pub reference: String,
     pub built: String,
     pub viewport: Viewport,
+    /// The theme the built image shows. May be empty (or `null`) when the
+    /// reference records none: a live-design picture names no theme.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    #[schemars(with = "Option<String>")]
     pub theme: String,
+    /// The state the built image shows; empty (or `null`) as `theme` is.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    #[schemars(with = "Option<String>")]
     pub state: String,
+}
+
+/// A JSON `null` read as the empty string, which the gate then judges
+/// against what the reference records, rather than a type error.
+fn null_as_empty<'de, D: serde::Deserializer<'de>>(de: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(de)?.unwrap_or_default())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

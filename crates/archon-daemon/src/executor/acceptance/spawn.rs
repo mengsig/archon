@@ -70,7 +70,7 @@ pub(in crate::executor) fn attach(
     };
     if reports {
         let binding = item.intent.as_deref().expect("intent found");
-        let owed = results_owed(&record.selected_requirements(binding)?)?;
+        let owed = results_owed(&record.selected_requirements(binding)?, &record.images)?;
         request.instructions.push_str(&owed);
     }
     let record = materialize(&request.workspace, record)?;
@@ -357,8 +357,14 @@ needs acceptance again, even when its tree is unchanged.
 
 /// The section telling the stage that finishes the build exactly which
 /// `requirement_results` its result must carry, one skeleton entry per id.
+/// The skeleton names each reference's recorded viewport, theme and state
+/// exactly, which the gate compares with the built image's: the builder
+/// takes its picture in those conditions and copies them. Where a reference
+/// records none, the skeleton keeps a placeholder (`null` for a theme or
+/// state, which the gate then accepts).
 pub(in crate::executor) fn results_owed(
     selected: &[&archon_core::intent::Requirement],
+    images: &[archon_core::intent::ReferenceImage],
 ) -> Result<String, ArchonError> {
     assert!(
         !selected.is_empty(),
@@ -370,11 +376,22 @@ pub(in crate::executor) fn results_owed(
             let pairs: Vec<_> = r
                 .images
                 .iter()
-                .map(|image| {
+                .map(|id| {
+                    let image = images.iter().find(|i| &i.id == id);
+                    let viewport = match image.and_then(|i| i.viewport.as_ref()) {
+                        Some(v) => serde_json::json!({"width": v.width, "height": v.height}),
+                        None => serde_json::json!({"width": "<px>", "height": "<px>"}),
+                    };
+                    let recorded = |value: Option<&String>| match (image, value) {
+                        (_, Some(value)) => serde_json::json!(value),
+                        (Some(_), None) => serde_json::Value::Null,
+                        (None, None) => serde_json::json!("<as the reference>"),
+                    };
                     serde_json::json!({
-                        "reference": image, "built": "<workspace path of the built image>",
-                        "viewport": {"width": "<px>", "height": "<px>"},
-                        "theme": "<theme>", "state": "<state>"
+                        "reference": id, "built": "<workspace path of the built image>",
+                        "viewport": viewport,
+                        "theme": recorded(image.and_then(|i| i.theme.as_ref())),
+                        "state": recorded(image.and_then(|i| i.state.as_ref())),
                     })
                 })
                 .collect();
@@ -391,7 +408,10 @@ pub(in crate::executor) fn results_owed(
          `deviation` (give the reason in `evidence`) or `blocked` (fails the build), never \
          `pass` or `fail`. `evidence` is never empty. A \
          visual requirement keeps one `visual_pairs` entry per reference image; every other \
-         keeps `[]`.\n\n```json\n{shape}\n```\n"
+         keeps `[]`. Take each built image at the `viewport`, `theme` and `state` shown \
+         (its reference's) and keep those values as they are: the gate refuses a pair taken \
+         in other conditions. A `null` theme or state means the reference records none.\n\n\
+         ```json\n{shape}\n```\n"
     );
     assert!(selected.iter().all(|r| text.contains(&r.id)));
     assert!(text.contains("\"requirement_results\""));

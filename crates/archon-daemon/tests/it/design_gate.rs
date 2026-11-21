@@ -963,3 +963,74 @@ async fn a_no_change_review_with_a_change_gone_from_history_is_approved() {
     assert!(intent.requirements[0].text.contains("no change"));
     assert!(intent.images.is_empty());
 }
+
+/// The build after an approved live design owes `requirement_results` whose
+/// pairs match each picture's recorded viewport. Its refusal is repaired at
+/// the build, past the approved design: the repair's brief amendment once
+/// sent the retried run back to the design stage, which refused every
+/// attempt because no one would finish a new session.
+#[tokio::test]
+async fn a_refused_build_after_an_approved_design_is_repaired_past_the_design() {
+    let mut config = live_config();
+    config.review.auto_repair = true;
+    let h = Harness::with_config(config).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    let (_, head) = done_note(&h, &session, &run, "make it green", b"green").await;
+    confirm(&h, &session, &head, &["D1"], &[]).await;
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    let gate = open_proposal(&h, &item.id).await;
+    approve(&h, &gate).await;
+    // The reference records the viewport its picture was taken at, and no
+    // theme or state a built image could not show.
+    let intent = intent_of(&h, &item.id).await;
+    let image = &intent.images[0];
+    assert_eq!(
+        image.viewport,
+        Some(archon_core::intent::Viewport {
+            width: 1440,
+            height: 900
+        })
+    );
+    assert_eq!(
+        (image.theme.as_deref(), image.state.as_deref()),
+        (None, None)
+    );
+    let build = h.running().await.remove(0);
+    assert_ne!(build.stage_id, "design", "the build runs after approval");
+    let prompt = h.backend.requests().pop().unwrap().instructions;
+    assert!(
+        prompt.contains("\"width\": 1440") && prompt.contains("\"height\": 900"),
+        "the owed results name the picture's viewport: {prompt}"
+    );
+    // A pair at another viewport is refused, naming both sizes.
+    let pair = |width: u32| {
+        json!({"requirement_results": [{"id": "D1", "status": "implemented", "evidence": "green",
+            "visual_pairs": [{"reference": "D1-final", "built": "built.png",
+                "viewport": {"width": width, "height": 900}, "theme": null, "state": null}]}]})
+    };
+    std::fs::write(run.workspace.join("built.png"), PNG).unwrap();
+    let wrong = pair(1280);
+    h.settle_running(move |_| StageOutcome::Completed {
+        summary: "built".into(),
+        structured: Some(wrong.clone()),
+    })
+    .await;
+    h.dispatch().await;
+    let repaired = h.item(&item.id).await;
+    assert!(
+        repaired
+            .brief
+            .contains("the reference is 1440x900, the built image 1280x900"),
+        "{}",
+        repaired.brief
+    );
+    let running = h.running().await;
+    assert_eq!(running.len(), 1, "{running:?}");
+    assert_eq!(
+        running[0].stage_id, build.stage_id,
+        "the repair retries the build, not the approved design"
+    );
+    assert_ne!(running[0].run, build.run, "in a new run");
+}

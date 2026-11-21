@@ -53,6 +53,30 @@ pub(super) fn save_start(
     store.kv_set(&proposal_key(run), &serde_json::to_string(proposal)?)
 }
 
+/// A repair's amendment (`repair.rs`) asks the build again for what a gate
+/// refused; it changes nothing the operator approved. So the latest run's
+/// brief fingerprint follows the amended brief, and the repaired run starts
+/// past that run's approved proposal (or its approved live design) as a plain
+/// retry does, instead of proposing again or opening a design session no one
+/// will finish. Only a fingerprint of `before` is moved: an operator's own
+/// amendment in between still proposes again.
+pub(super) fn carry_brief(
+    store: &mut Store,
+    item: &archon_core::id::QueueItemId,
+    before: &str,
+    after: &str,
+) -> Result<(), ArchonError> {
+    let runs = store.runs_for_item(item)?;
+    let Some(latest) = runs.last() else {
+        return Ok(());
+    };
+    let key = brief_key(&latest.id);
+    if store.kv_get(&key)?.as_deref() != Some(fingerprint(before).as_str()) {
+        return Ok(());
+    }
+    store.kv_set(&key, &fingerprint(after))
+}
+
 /// The approved proposal `run` started past, if it did.
 pub(super) fn started_past(
     store: &Store,

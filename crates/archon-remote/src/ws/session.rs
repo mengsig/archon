@@ -7,8 +7,8 @@ use std::time::Duration;
 use archon_core::design::DesignSessionId;
 use archon_core::error::ArchonError;
 use archon_core::protocol::{
-    ClientFeatures, ClientFrame, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request,
-    ServerFrame, WelcomeDevice, negotiate,
+    ClientFeatures, ClientFrame, ErrorCode, ErrorReply, Reply, Request, ServerFrame, WelcomeDevice,
+    negotiate,
 };
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncWrite};

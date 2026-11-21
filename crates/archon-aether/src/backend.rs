@@ -941,6 +941,19 @@ impl AgentBackend for AetherBackend {
             .await
     }
 
+    async fn send_message_with_attachments(
+        &self,
+        to: &AetherAgentId,
+        content: &str,
+        idempotency_key: &str,
+        attachments: &[archon_core::attachment::ImageAttachment],
+    ) -> Result<(), ArchonError> {
+        self.link
+            .client()?
+            .send_message(to, content, attachments, idempotency_key)
+            .await
+    }
+
     async fn resumed_outcome(
         &self,
         agent: &AetherAgentId,

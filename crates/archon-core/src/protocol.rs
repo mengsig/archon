@@ -245,10 +245,6 @@ pub struct ClientFrame {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "frame", rename_all = "snake_case")]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "most frames are replies; boxing them would allocate once per reply"
-)]
 pub enum ServerFrame {
     /// `id: 0` is the daemon explaining why it is closing the connection.
     Reply {

@@ -30,6 +30,19 @@ use crate::worktree::WorktreeManager;
 use crate::{executor, knobs, learned, sizing};
 use archon_core::autonomy::MergeMode;
 
+/// `proposal=live` needs design sessions turned on.
+pub(super) fn check_live_enabled(
+    ctx: &DaemonContext,
+    proposal: archon_core::autonomy::ProposalMode,
+) -> Result<(), ArchonError> {
+    if proposal == archon_core::autonomy::ProposalMode::Live && !ctx.design.enabled() {
+        return Err(ArchonError::Invalid(
+            "design sessions are turned off; set [design] enabled = true".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub(super) async fn enqueue(
     ctx: &DaemonContext,
     mut req: EnqueueRequest,
@@ -45,8 +58,12 @@ pub(super) async fn enqueue(
     let target = (req.onto.as_ref(), !req.depends_on.is_empty());
     let onto = enqueue_onto(ctx, &env, &resolved.spec, target, key).await?;
     req.intent = resolve_pull_request_intent(ctx, req.intent.as_ref(), onto.as_ref()).await?;
+    check_live_enabled(ctx, resolved.autonomy.proposal)?;
     if req.intent.is_some()
-        || resolved.autonomy.proposal == archon_core::autonomy::ProposalMode::Lavish
+        || matches!(
+            resolved.autonomy.proposal,
+            archon_core::autonomy::ProposalMode::Lavish | archon_core::autonomy::ProposalMode::Live
+        )
     {
         resolved.spec = archon_pipeline::acceptance::augment(&resolved.spec)?;
     }

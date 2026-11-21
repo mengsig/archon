@@ -26,7 +26,7 @@ pub(super) struct Pending {
     pub page_sha256: String,
 }
 
-fn key(gate: &OperatorGate) -> String {
+pub(super) fn key(gate: &OperatorGate) -> String {
     format!(
         "proposal_intent:{}:{}:{}",
         gate.run, gate.stage_id, gate.attempt
@@ -182,8 +182,12 @@ pub(super) async fn verify(
         return Ok(outcome);
     }
     let item = ctx.store.lock().await.item(&run.item)?;
-    if item.intent.is_none() && !item.model_plan.0.contains_key("intent-acceptance") {
+    let live = item.autonomy.proposal == archon_core::autonomy::ProposalMode::Live;
+    if item.intent.is_none() && !item.model_plan.0.contains_key("intent-acceptance") && !live {
         return Ok(outcome);
+    }
+    if stage.kind == Some(archon_core::catalog::StageKind::Design) {
+        return verify_design(ctx, run, stage, outcome).await;
     }
     let mut completed = stage.clone();
     completed.structured = structured.clone();
@@ -207,6 +211,62 @@ pub(super) async fn verify(
             infra: false,
         }),
     }
+}
+
+/// A design stage's result is archond's own record of the session, never the
+/// agent's `structured.approved_intent`: the session must be confirmed with an
+/// active note, and the worktree must still be what the operator approved.
+async fn verify_design(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    stage: &StageRun,
+    outcome: StageOutcome,
+) -> Result<StageOutcome, ArchonError> {
+    let refuse = |why: String| {
+        Ok(StageOutcome::Failed {
+            error: format!("{REFUSAL}{why}"),
+            infra: false,
+        })
+    };
+    let (session, worktree, item) = {
+        let store = ctx.store.lock().await;
+        let session = ctx
+            .design
+            .session_of(&store, &run.id, &stage.stage_id, stage.attempt)?;
+        let worktree = super::design_ledger::worktree_ref(&store, run)?;
+        (session, worktree, store.item(&run.item)?)
+    };
+    let Some(session) = session.filter(|s| s.state == archon_core::design::SessionState::Confirmed)
+    else {
+        return refuse(
+            "the design session was not finished and confirmed. Choose Finish in the preview, \
+             confirm it, then complete again"
+                .into(),
+        );
+    };
+    let Some(head) = session.finish_head.clone() else {
+        return refuse("the design session has no recorded finish; finish it again".into());
+    };
+    if ctx.design.worktree_at(&worktree, &head)?.is_err() {
+        let short = &head[..head.len().min(7)];
+        return refuse(format!(
+            "worktree moved after Finish: expected {short}; restore it and complete again"
+        ));
+    }
+    let active = {
+        let store = ctx.store.lock().await;
+        ctx.design.active_notes(
+            &store,
+            &worktree,
+            &item.id,
+            &head,
+            session.finish_choices.as_ref(),
+        )?
+    };
+    if active.is_empty() {
+        return refuse("the design session has no active note; add a note and finish again".into());
+    }
+    Ok(outcome)
 }
 
 fn preserve_files(

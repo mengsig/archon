@@ -1955,11 +1955,16 @@ async fn record(
         Ok(Issued::Spawned(spawned)) => {
             table.spawn_errors.remove(&stage.id);
             ctx.disk.agent_created();
-            return spawned_ok(ctx, stage, spawned).await;
+            let agent = spawned.agent.clone();
+            let follow = spawned_ok(ctx, stage, spawned).await?;
+            design_started(ctx, stage, &agent).await;
+            return Ok(follow);
         }
         Ok(Issued::Resumed(agent)) => {
             table.spawn_errors.remove(&stage.id);
-            return resume::resumed_ok(ctx, stage, agent).await;
+            let follow = resume::resumed_ok(ctx, stage, agent.clone()).await?;
+            design_started(ctx, stage, &agent).await;
+            return Ok(follow);
         }
         Ok(Issued::CatalogRefused(reason)) => {
             return settle::replace_refused_model(ctx, table, stage, reason).await;
@@ -1991,6 +1996,53 @@ async fn record(
         error if wire::is_internal(&error) => retry_or_fail(ctx, table, stage, error).await,
         ArchonError::Policy(_) => policy_refusal(ctx, table, stage, error).await,
         other => refuse(ctx, table, stage, format!("cannot create agent: {other}")).await,
+    }
+}
+
+/// A Design stage attempt's agent is running: open its live design session
+/// over the run's worktree. A session that cannot start is logged; the stage
+/// then ends at its own deadline or the operator's cancel.
+async fn design_started(ctx: &DaemonContext, stage: &StageRun, agent: &AetherAgentId) {
+    if stage.kind != Some(StageKind::Design) {
+        return;
+    }
+    let found = {
+        let store = ctx.store.lock().await;
+        let current = store.stage_run(&stage.id);
+        let run = store.run(&stage.run);
+        let repo = run.as_ref().ok().and_then(|run| {
+            let item = store.item(&run.item).ok()?;
+            let id = item.repo?;
+            store.repo(&resolve::repo_ref(&id)).ok().map(|r| r.path)
+        });
+        (current, run, repo)
+    };
+    let (Ok(current), Ok(run), Some(repo)) = found else {
+        tracing::warn!(stage = %stage.id, "design stage without a run or repository; no session");
+        return;
+    };
+    if current.state != StageState::Running {
+        return;
+    }
+    let worktree = crate::design::WorktreeRef {
+        repo,
+        worktree: run.workspace.clone(),
+        branch: run.branch.clone(),
+    };
+    if let Err(error) = ctx
+        .design
+        .stage_started(
+            &ctx.arc(),
+            &run.item,
+            &run.id,
+            &stage.stage_id,
+            stage.attempt,
+            agent,
+            worktree,
+        )
+        .await
+    {
+        tracing::warn!(%error, stage = %stage.id, "design session did not start");
     }
 }
 

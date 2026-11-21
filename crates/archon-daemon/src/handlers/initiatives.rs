@@ -80,7 +80,12 @@ async fn prepare_member(
     )
     .await?;
     let intent = items::resolve_pull_request_intent(ctx, intent.as_ref(), onto.as_ref()).await?;
-    if intent.is_some() || resolved.autonomy.proposal == archon_core::autonomy::ProposalMode::Lavish
+    items::check_live_enabled(ctx, resolved.autonomy.proposal)?;
+    if intent.is_some()
+        || matches!(
+            resolved.autonomy.proposal,
+            archon_core::autonomy::ProposalMode::Lavish | archon_core::autonomy::ProposalMode::Live
+        )
     {
         resolved.spec = archon_pipeline::acceptance::augment(&resolved.spec)?;
     }

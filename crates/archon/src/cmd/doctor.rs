@@ -115,6 +115,9 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
     checks.push(registry::check_repos(&registry).await);
     checks.push(check_release().await);
     checks.push(check_lavish(&config));
+    if config.design.enabled {
+        checks.push(check_design(&config));
+    }
     let paths = DaemonPaths::resolve(&config, archon_bin()?);
     checks.push(leftovers::check_compose(&config, &paths.worktrees, &archond).await);
     checks.push(leftovers::check_lavish_polls(&paths.data_dir, &archond).await);
@@ -635,6 +638,20 @@ fn mcp_verdict(health: &McpHealth) -> Check {
         ),
         McpHealth::Unreachable { error } => check(NAME, Level::Fail, error.clone()),
     }
+}
+
+/// The headless browser a design session previews in, when design sessions are on.
+fn check_design(config: &Config) -> Check {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    let path = std::env::var("PATH").unwrap_or_default();
+    let line = archon_design_browser::doctor_line(config.design.browser.as_deref(), &path, &home);
+    let missing = ["not found", "install", "missing", "unavailable"]
+        .iter()
+        .any(|word| line.to_lowercase().contains(word));
+    let level = if missing { Level::Warn } else { Level::Ok };
+    check("design preview", level, line)
 }
 
 /// The last panic or fatal stop of archond, which survives a reboot.

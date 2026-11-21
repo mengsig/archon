@@ -478,6 +478,13 @@ async fn persist(
     all: &[StageRun],
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
+    let design_end =
+        (stage.kind == Some(archon_core::catalog::StageKind::Design)).then(|| match &outcome {
+            StageOutcome::Completed { .. } => crate::design::StageEnd::Completed,
+            StageOutcome::Failed { .. } => crate::design::StageEnd::Failed,
+            StageOutcome::Cancelled { .. } => crate::design::StageEnd::Cancelled,
+            StageOutcome::TimedOut => crate::design::StageEnd::TimedOut,
+        });
     let mut settled = settled_stage(stage, outcome, archon_core::now());
     if let Some(driver) = table.drivers.get(&run.id) {
         let holds = driver.holds_verdict(&settled.stage_id);
@@ -494,6 +501,14 @@ async fn persist(
         (settled, owes_stop, kept)
     };
     table.spawn_errors.remove(&settled.id);
+    if let Some(end) = design_end
+        && let Err(error) = ctx
+            .design
+            .stage_settled(&ctx.arc(), &run.id, &settled.stage_id, settled.attempt, end)
+            .await
+    {
+        tracing::warn!(%error, stage = %settled.id, "design session did not settle");
+    }
     let mut follow = decide(ctx, table, run, &settled, all).await?;
     follow.kept.extend(kept);
     follow.reap.push(settled.id.clone());

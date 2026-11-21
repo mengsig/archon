@@ -226,7 +226,7 @@ export function ledgerPanel(ctx, item, getState = () => null) {
     if (!show) return;
     const q = ctx.canOperate && confirmed ? gateQuestionFor(ctx.store.get(), item) : null;
     title.textContent = 'Waiting for your approval';
-    lede.textContent = q ? 'Here is what changed. Approve it, ask for changes, or reject it.' : 'Waiting for the approval to open, or for your answer to be recorded.';
+    lede.textContent = q ? 'Here is what changed. Approve it, ask for changes, or reject it.' : 'No question is open for this item. If you just answered, this screen shows the result as soon as the session ends.';
     drawGate(q);
     gate.hidden = !q;
     link.hidden = false;

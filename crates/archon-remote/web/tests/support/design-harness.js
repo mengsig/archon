@@ -16,7 +16,7 @@ const CSS_BASE = readFileSync(join(ROOT, 'tests/fixtures/design-app/style.css'),
 
 export async function startHarness(browser, { role = 'operator', questions = [], summaries = [] } = {}) {
   const fixtureApp = await startFixtureApp();
-  const appPage = await (await browser.newContext({ viewport: { width: 800, height: 500 } })).newPage();
+  const appPage = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
   await appPage.goto(fixtureApp.url);
   const server = createServer((req, res) => {
     const path = req.url.split('?')[0];
@@ -39,13 +39,14 @@ export async function startHarness(browser, { role = 'operator', questions = [],
   };
 }
 
+const PRESETS = { desktop: { width: 1440, height: 900 }, tablet: { width: 834, height: 1112 }, phone: { width: 390, height: 844 } };
 const json = (res, body) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(body));
 
 function createDaemon({ appPage, fixtureApp, role }) {
-  const state = { notes: [], seq: 0, ended: false, paused: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false, questions: [], summaries: [], sessionPatch: {} };
+  const state = { notes: [], seq: 0, ended: false, paused: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false, questions: [], summaries: [], sessionPatch: {}, sessionId: 'ds_FIXTURE', endReason: null };
   const now = () => new Date().toISOString();
-  const session = () => ({ id: 'ds_FIXTURE', item: ITEM, state: state.sessionState, degraded: false, note_version: state.version, viewport_preset: 'desktop', preview_url: 'http://127.0.0.1:5173/', sandbox_off: false, ...state.sessionPatch });
-  const view = (n) => ({ ...n, undone_by: state.notes.find((x) => x.reverts === n.id && x.status === 'done')?.id ?? null, read_only: false, active: true });
+  const session = () => ({ id: state.sessionId, item: ITEM, state: state.sessionState, end_reason: state.endReason, degraded: false, note_version: state.version, viewport_preset: 'desktop', preview_url: 'http://127.0.0.1:5173/', sandbox_off: false, ...state.sessionPatch });
+  const view = (n) => ({ ...n, undone_by: state.notes.find((x) => x.reverts === n.id && x.status === 'done')?.id ?? null, read_only: false, approved: false, active: true });
   const push = (ws, event) => ws.send(JSON.stringify({ frame: 'design', sub: 1, event }));
   const broadcast = (event) => state.connections.forEach((c) => c.subscribed && push(c.ws, event));
   const reply = (ws, id, reply, data) => ws.send(JSON.stringify({ frame: 'reply', id, result: { Ok: { reply, data } } }));
@@ -94,6 +95,12 @@ function createDaemon({ appPage, fixtureApp, role }) {
     }
     if (state.ended) return refuse(ws, req, 'gone', 'This design session has ended.');
     switch (cmd) {
+      case 'design_viewport': {
+        const size = PRESETS[msg.preset];
+        state.sessionPatch.viewport_preset = msg.preset;
+        if (size) await appPage.setViewportSize(size);
+        return reply(ws, req, 'design_done', null);
+      }
       case 'subscribe_design': conn.subscribed = true; reply(ws, req, 'subscribed', { id: 1, last_seq: 0 }); return void setTimeout(() => sendFrame(conn), 50);
       case 'design_frame_ack': reply(ws, req, 'design_done', null); return void setTimeout(() => sendFrame(conn), 120);
       case 'design_resolve': return reply(ws, req, 'design_resolved', { target: await target(), label: 'button "Buy now"', asset: 'da_pending', data_url: PIXEL });
@@ -159,7 +166,9 @@ function createDaemon({ appPage, fixtureApp, role }) {
     // The network dropped every open socket; the web app reconnects on its own.
     dropSockets() { state.connections.forEach((c) => c.ws.close()); state.connections.clear(); },
     // A new session replaced this one: every request now answers `gone`.
-    endSession() { state.ended = true; broadcast({ event: 'ended', reason: 'revised' }); },
+    endSession(reason = 'revised') { state.ended = true; state.sessionState = 'ended'; state.endReason = reason; broadcast({ event: 'ended', reason }); },
+    // The agent reran after a revision: design_get now answers with a new live session.
+    startNewSession(id = 'ds_SECOND') { state.ended = false; state.sessionId = id; state.sessionState = 'live'; state.endReason = null; state.seq = 0; },
     stop() { state.ended = true; },
   };
 }

@@ -33,12 +33,20 @@ export function reduce(state, action) {
   switch (action.type) {
     case 'view': {
       const v = action.view;
+      // The daemon may answer with no session once the old one is gone; the screen keeps showing the one it had, as ended.
+      if (!v.session && state.session) {
+        return { ...state, loaded: true, observer: null, view: v, notes: [...(v.notes ?? [])].sort(byNumber), refresh: false, error: null,
+          session: { ...state.session, state: 'ended' }, ended: state.ended ?? 'ended' };
+      }
+      // A different session id is a new session: nothing of the old picture or selection carries over.
+      const fresh = Boolean(state.session && v.session && v.session.id !== state.session.id);
       return {
         ...state, loaded: true, observer: null, view: v, session: v.session ?? null, notes: [...(v.notes ?? [])].sort(byNumber),
         browser: v.browser ?? state.browser, degraded: Boolean(v.session?.degraded), noteVersion: v.session?.note_version ?? 0, path: pathOf(v.session?.preview_url) ?? state.path,
         preset: v.session?.viewport_preset ?? state.preset, finishBlocker: v.finish_blocker ?? null,
         imagesUsed: v.images_used ?? 0, imagesMax: v.images_max ?? 0, deadline: v.stage_deadline ?? null, refresh: false, error: null,
         ended: v.session && v.session.state === 'ended' ? (v.session.end_reason ?? 'ended') : null,
+        ...(fresh ? { frame: null, selection: null, progress: '', previewCommit: null, blocked: [], mode: 'interact', toasts: [...state.toasts, 'A new design session started'] } : {}),
       };
     }
     case 'summary':
@@ -64,6 +72,8 @@ export function reduce(state, action) {
   }
 }
 
+const specific = (reason) => (reason && reason !== 'ended' ? reason : null);
+
 function reduceEvent(state, e) {
   switch (e.event) {
     case 'frame':
@@ -73,8 +83,8 @@ function reduceEvent(state, e) {
     case 'session': {
       const session = state.session ? { ...state.session, state: e.state, degraded: e.degraded, note_version: e.note_version } : state.session;
       const stale = e.note_version !== state.noteVersion && state.noteVersion !== 0;
-      return { ...state, session, previewCommit: e.commit ?? state.previewCommit, path: e.preview_path ?? state.path, browser: e.browser ?? state.browser, degraded: e.degraded, noteVersion: e.note_version, refresh: state.refresh || stale || !state.session,
-        ended: e.state === 'ended' ? (state.ended ?? 'ended') : state.ended };
+      return { ...state, session, previewCommit: e.commit ?? state.previewCommit, path: e.preview_path ?? state.path, browser: e.browser ?? state.browser, degraded: e.degraded, noteVersion: e.note_version, refresh: state.refresh || stale || !state.session || (e.state === 'ended' && !(e.end_reason ?? e.reason) && !state.ended),
+        ended: e.state === 'ended' ? (e.end_reason ?? e.reason ?? state.ended ?? 'ended') : state.ended };
     }
     case 'note':
       return { ...state, notes: upsertNote(state.notes, flat(e)) };
@@ -87,7 +97,8 @@ function reduceEvent(state, e) {
     case 'toast':
       return { ...state, toasts: [...state.toasts, e.message] };
     case 'ended':
-      return { ...state, ended: e.reason || 'ended', session: state.session ? { ...state.session, state: 'ended' } : state.session };
+      // A bare "ended" (a gone refusal) must not wipe a reason already known; ask the daemon for the real one.
+      return { ...state, ended: specific(e.reason) ?? state.ended ?? 'ended', refresh: state.refresh || (!specific(e.reason) && !state.ended), session: state.session ? { ...state.session, state: 'ended' } : state.session };
     default:
       return state;
   }
@@ -124,7 +135,8 @@ export function stagePhase(state, { operator = true, features = true } = {}) {
     return { kind: 'confirmed', title: 'Waiting for your approval', text: 'You confirmed the design. Approve it, ask for changes, or reject it.', tone: 'accent' };
   }
   if (state.ended || s === 'ended') {
-    return { kind: 'ended', title: 'This design session ended', text: endedText(state.ended ?? state.session.end_reason), tone: 'muted' };
+    const end = endInfo(state.ended ?? state.session.end_reason);
+    return { kind: 'ended', end: end.end, title: end.title, text: end.text, tone: end.tone };
   }
   const b = state.browser?.status;
   if (b === 'missing') return { kind: 'no_browser', title: 'No browser on this machine', text: 'Archon needs Chrome or Chromium on this machine to show the preview.', detail: state.browser.hint ?? '', tone: 'amber' };
@@ -143,24 +155,73 @@ export function stagePhase(state, { operator = true, features = true } = {}) {
   return { kind: 'live', title: 'Live', text: '', tone: 'green' };
 }
 
-function endedText(reason) {
-  const r = String(reason ?? '');
-  if (/approv/i.test(r)) return 'This design session ended (approved).';
-  if (/revis/i.test(r)) return 'This design session ended (revised).';
-  if (/cancel/i.test(r)) return 'This design session ended (cancelled).';
-  return r && r !== 'ended' ? `This design session ended (${r}).` : 'This design session ended.';
+// What each way a session ends means for the operator, from the daemon's end_reason
+// (the gate's answers are approved / revised / rejected).
+export function endInfo(reason) {
+  const r = String(reason ?? '').toLowerCase();
+  if (/approv/.test(r)) return { end: 'approved', title: 'Design approved', text: 'The agent is building it now. Follow its progress on the item.', dot: 'Approved', tone: 'green' };
+  if (/revis|change/.test(r)) return { end: 'revised', title: 'Changes requested', text: 'A new design session starts with your changes. This screen switches to it when it opens.', dot: 'Changes requested', tone: 'accent' };
+  if (/reject/.test(r)) return { end: 'rejected', title: 'Design rejected', text: 'The item stops here.', dot: 'Rejected', tone: 'red' };
+  if (/cancel/.test(r)) return { end: 'cancelled', title: 'Session cancelled', text: 'The design session was cancelled. Open the item to see where it stands.', dot: 'Cancelled', tone: 'muted' };
+  if (/fail/.test(r)) return { end: 'failed', title: 'Session failed', text: 'The design session failed. Open the item to see what happened.', dot: 'Failed', tone: 'red' };
+  if (/time/.test(r)) return { end: 'timed_out', title: 'Session timed out', text: 'The design session ran out of time. Open the item to continue.', dot: 'Timed out', tone: 'amber' };
+  if (/complet/.test(r)) return { end: 'completed', title: 'Session completed', text: 'The design session is complete. Open the item to see the result.', dot: 'Completed', tone: 'muted' };
+  return { end: 'ended', title: 'This design session ended', text: 'Open the item to see where it stands.', dot: 'Ended', tone: 'muted' };
 }
 
-// The top bar's dot: Live (green) or Finishing (blue); nothing for other phases.
+// While the gate waits for an answer, or after "Ask for changes", the item's next session is on its way: poll until it opens.
+export function followsNewSession(state) {
+  const s = state.session?.state;
+  if (!state.session) return false;
+  if (s === 'confirmed' && !state.ended) return true;
+  return (state.ended != null || s === 'ended') && endInfo(state.ended ?? state.session.end_reason).end === 'revised';
+}
+
+// The top bar's dot: what the phase is, or how the session ended.
 export function dotLook(state) {
-  const phase = stagePhase(state).kind;
-  if (phase === 'finishing') return { label: 'Finishing', tone: 'accent' };
-  if (phase === 'live') return { label: 'Live', tone: 'green' };
-  if (phase === 'confirmed') return { label: 'Awaiting approval', tone: 'accent' };
-  if (phase === 'preview_down') return { label: 'Preview down', tone: 'red' };
-  if (phase === 'reconnecting') return { label: 'Reconnecting', tone: 'amber' };
-  if (phase === 'starting') return { label: 'Starting', tone: 'muted' };
-  return { label: phase === 'ended' ? 'Ended' : 'Offline', tone: 'muted' };
+  const phase = stagePhase(state);
+  if (phase.kind === 'ended') { const e = endInfo(state.ended ?? state.session?.end_reason); return { label: e.dot, tone: e.tone }; }
+  const kind = phase.kind;
+  if (kind === 'finishing') return { label: 'Finishing', tone: 'accent' };
+  if (kind === 'live') return { label: 'Live', tone: 'green' };
+  if (kind === 'confirmed') return { label: 'Awaiting approval', tone: 'accent' };
+  if (kind === 'preview_down') return { label: 'Preview down', tone: 'red' };
+  if (kind === 'reconnecting') return { label: 'Reconnecting', tone: 'amber' };
+  if (kind === 'starting') return { label: 'Starting', tone: 'muted' };
+  return { label: 'Offline', tone: 'muted' };
+}
+
+// ---- viewport presets, confirmed by the stream ----
+
+// The daemon's CSS-pixel sizes; a frame carries the size it was streamed at.
+export const PRESET_SIZE = { desktop: { w: 1440, h: 900 }, tablet: { w: 834, h: 1112 }, phone: { w: 390, h: 844 } };
+const PRESET_NAME = { desktop: 'Desktop', tablet: 'Tablet', phone: 'Phone' };
+export const presetName = (p) => PRESET_NAME[p] ?? p;
+
+// The preset the latest frame proves, or null before a frame or for an unknown shape.
+// By shape, not exact size: on a slow link the daemon streams frames scaled down
+// (half, quarter…), and those still prove the preset. The three shapes are far apart.
+export function confirmedPreset(frame) {
+  if (!frame || !(frame.w > 0) || !(frame.h > 0)) return null;
+  const ratio = frame.w / frame.h;
+  return Object.keys(PRESET_SIZE).find((k) => {
+    const p = PRESET_SIZE[k];
+    return frame.w <= p.w + 1 && Math.abs(ratio - p.w / p.h) < 0.02;
+  }) ?? null;
+}
+
+// True while a frame has arrived at a size other than the requested preset's.
+export function presetMismatch(state) {
+  return Boolean(state.frame) && confirmedPreset(state.frame) !== state.preset;
+}
+
+// Taps resolve against the streamed size, so they wait until it matches.
+export function pointerBlockedText(state) {
+  return presetMismatch(state) ? `Switching to ${presetName(state.preset)}…` : '';
+}
+
+export function notesHeading(notes) {
+  return `Notes (${notes.length})`;
 }
 
 export function activeNote(notes) {
@@ -223,9 +284,10 @@ export function minutesSince(iso, now = Date.now()) {
 }
 
 // What the operator may do with a note, as booleans; the daemon still decides.
-export function noteActions(note, { finishing = false, now = Date.now() } = {}) {
+export function noteActions(note, { finishing = false, live = false, now = Date.now() } = {}) {
   const none = { edit: false, cancel: false, reply: false, drop: false, undo: false, compare: false, resend: false };
-  if (note.read_only) return { ...none, compare: hasPictures(note), resend: false };
+  // An earlier session's note may be undone while the current session is live (the daemon decides), unless approved.
+  if (note.read_only) return { ...none, compare: hasPictures(note), undo: live && !finishing && canUndo(note) && !note.approved };
   const compare = hasPictures(note);
   if (finishing) return { ...none, compare };
   const out = { ...none, compare };
@@ -233,10 +295,12 @@ export function noteActions(note, { finishing = false, now = Date.now() } = {}) 
   if (note.status === 'queued') { out.edit = true; out.cancel = true; }
   if (note.status === 'needs_reply') { out.reply = true; out.drop = true; }
   if ((note.status === 'working' || note.status === 'sent') && minutesSince(note.updated_at, now) >= DROP_OFFERED_AFTER_MINUTES) out.drop = true;
-  if (note.status === 'done' && note.commit && !note.undone_by && !note.no_change) out.undo = true;
+  if (canUndo(note)) out.undo = true;
   if (note.status === 'failed' && note.fail_reason === 'not_delivered') out.resend = true;
   return out;
 }
+
+const canUndo = (note) => note.status === 'done' && Boolean(note.commit) && !note.undone_by && !note.no_change;
 
 export function hasPictures(note) {
   return Boolean(note.before_asset && note.after_asset);
@@ -253,6 +317,11 @@ export function captionFor(commit, at) {
 
 export function sessionLabel(note) {
   return note.read_only ? 'Earlier session' : '';
+}
+
+export function earlierText(note) {
+  if (!note.read_only) return '';
+  return note.approved ? 'From an earlier session and approved: it can’t be edited or undone.' : 'From an earlier session: it can’t be edited. A done change can still be undone.';
 }
 
 export function imageCapWarning(used, max, included, margin = 8) {

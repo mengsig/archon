@@ -53,7 +53,7 @@ test('every sec 7.3 state shows its text', () => {
   assert.equal(stagePhase(at(view(), { connection: 'reconnecting' })).title, 'Reconnecting…');
   assert.equal(stagePhase(at(view({ session: session({ degraded: true }) }), { degraded: true })).kind, 'preview_down');
   assert.equal(stagePhase(at(view({ session: session({ state: 'finishing' }) }))).kind, 'finishing');
-  assert.match(stagePhase(at(view({ session: session({ state: 'ended', end_reason: 'approved' }) }))).text, /approved/);
+  assert.equal(stagePhase(at(view({ session: session({ state: 'ended', end_reason: 'approved' }) }))).title, 'Design approved');
   assert.match(stagePhase({ ...initialState('i'), loaded: true, observer: { state: 'live', noteCount: 1 } }).text, /Only the operator’s devices/);
   assert.equal(stagePhase(initialState('i'), { features: false }).kind, 'unavailable');
 });

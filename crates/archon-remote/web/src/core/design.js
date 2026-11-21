@@ -81,7 +81,7 @@ const REFUSALS = {
   read_only: 'That note belongs to an earlier session and can no longer be changed.',
   finishing: 'Finishing: press Back to editing to change anything.',
   stale: 'The code changed since the pictures were captured.',
-  conflict: 'Another device finished or cancelled this session first.',
+  conflict: 'This session already moved on (finished, cancelled or ended); the screen now shows where it is.',
 };
 
 export function designErrorText(err) {

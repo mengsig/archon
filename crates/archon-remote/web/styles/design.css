@@ -10,6 +10,8 @@
 .design-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-2) var(--space-4); padding-top: max(var(--space-2), var(--safe-top)); background: var(--surface); border-bottom: 1px solid var(--separator); }
 .design-title { font-size: 17px; font-weight: 600; margin: 0; flex: 1 1 8rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .design-state { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 14px; color: var(--text-2); }
+.design-top .nav-back { flex: none; margin-left: 0; }
+.design-switching { font-size: 13px; color: var(--text-2); }
 .design-dot { width: 10px; height: 10px; border-radius: var(--radius-pill); background: var(--text-3); }
 .design-dot.tone-green { background: var(--green); }
 .design-dot.tone-accent { background: var(--accent); }
@@ -52,6 +54,10 @@
 
 /* phase panel: every state that is not a plain live frame */
 .design-phase { position: absolute; inset: 0 var(--space-4); margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); padding: var(--space-6); text-align: center; background: var(--surface-2); border-radius: var(--radius-m); border: 1px solid var(--separator); }
+/* preview down / reconnecting: a compact banner over the dimmed last picture, never a cover */
+.design-phase[data-kind="preview_down"], .design-phase[data-kind="reconnecting"] { inset: var(--space-3) var(--space-6) auto; padding: var(--space-3) var(--space-4); gap: var(--space-1); z-index: 1; box-shadow: var(--shadow); text-align: left; align-items: flex-start; }
+.design-phase[data-kind="preview_down"] .phase-title, .design-phase[data-kind="reconnecting"] .phase-title { font-size: 16px; }
+.design-phase[data-kind="preview_down"] .phase-actions, .design-phase[data-kind="reconnecting"] .phase-actions { justify-content: flex-start; }
 .design-phase.tone-amber { background: var(--amber-soft); }
 .design-phase.tone-red { background: var(--red-soft); }
 .phase-title { margin: 0; font-size: 20px; }
@@ -114,17 +120,20 @@
 
 /* compare */
 .cmp { display: grid; gap: var(--space-3); }
-.cmp-stage { position: relative; display: block; border: 1px solid var(--separator); border-radius: var(--radius-s); overflow: hidden; background: var(--surface-2); }
-.cmp-pane { margin: 0; }
-.cmp-img { display: block; width: 100%; height: auto; }
-.cmp-caption { font-size: 12px; color: var(--text-2); padding: var(--space-1) var(--space-2); }
-.cmp-after { position: absolute; inset: 0; clip-path: inset(0 0 0 var(--split, 50%)); background: var(--surface-2); }
+.cmp-stage { position: relative; display: block; width: 100%; max-width: 100%; aspect-ratio: var(--ar, 4 / 3); border: 1px solid var(--separator); border-radius: var(--radius-s); overflow: hidden; background: var(--surface-2); }
+.cmp { min-width: 0; max-width: 100%; }
+.cmp-pane { margin: 0; position: absolute; inset: 0; min-width: 0; display: flex; flex-direction: column; }
+.cmp-img { display: block; max-width: 100%; width: 100%; flex: 1; min-height: 0; height: auto; object-fit: contain; }
+.cmp-caption { font-size: 12px; color: var(--text-2); padding: var(--space-1) var(--space-2); background: var(--surface-2); }
+.cmp-after { clip-path: inset(0 0 0 var(--split, 50%)); background: var(--surface-2); }
 .cmp-controls { display: flex; align-items: center; gap: var(--space-3); }
 .cmp-range { flex: 1; min-height: var(--tap); accent-color: var(--accent); }
 .cmp-end { font-size: 13px; color: var(--text-2); }
 @media (min-width: 1024px) {
-  .cmp-stage { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); border: 0; background: transparent; overflow: visible; }
-  .cmp-after { position: static; clip-path: none; }
+  .cmp-stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-3); border: 0; background: transparent; overflow: visible; aspect-ratio: auto; }
+  .cmp-pane { position: static; }
+  .cmp-img { flex: none; height: auto; max-height: 70vh; }
+  .cmp-after { clip-path: none; }
   .cmp-controls { display: none; }
 }
 
@@ -155,7 +164,7 @@
 .sketch-tools, .sketch-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .sketch-tools [aria-checked="true"] { background: var(--accent); color: var(--on-accent); }
 .sketch-stage { position: relative; width: fit-content; max-width: 100%; margin-inline: auto; overflow: hidden; border: 1px solid var(--separator); border-radius: var(--radius-s); }
-.sketch-base { display: block; width: auto; height: auto; max-width: 100%; max-height: 55vh; }
+.sketch-base { display: block; width: auto; height: auto; max-width: 100%; max-height: 45vh; }
 .sketch-ink { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
 .shortcuts { width: 100%; border-collapse: collapse; }
 .shortcuts th, .shortcuts td { text-align: left; padding: var(--space-2); border-bottom: 1px solid var(--separator); }

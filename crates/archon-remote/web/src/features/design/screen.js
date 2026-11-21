@@ -5,7 +5,7 @@ import { emptyState } from '../../ui/components.js';
 import { confirmSheet, openSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
 import { designErrorText } from '../../core/design.js';
-import { initialState, reduce, isLive, currentPath } from './state.js';
+import { initialState, reduce, isLive, currentPath, followsNewSession, presetMismatch, pointerBlockedText, PRESET_SIZE } from './state.js';
 import { createDesignStream } from './stream.js';
 import { createStage } from './overlay.js';
 import { createComposer } from './composer.js';
@@ -21,6 +21,7 @@ import { buildTopBar, buildModeBar, buildBottomBar, buildPhasePanel, buildStatus
 const PHONE_PX = 640;
 const WIDE_PX = 1024;
 const SHEET_HEIGHTS = ['peek', 'half', 'full'];
+const FOLLOW_EVERY_MS = 3000;
 
 export function mountDesign(view, ctx) {
   const item = ctx.route.param;
@@ -38,6 +39,8 @@ export function mountDesign(view, ctx) {
   let depth = 0; // how many parents above the picked element; the one counter for keys and buttons
   let tickets = 0;
   let autoPreset = false;
+  let presetSent = null; // `${session}|${preset}` of the last preset request, so a mismatch re-sends once
+  let follower = null; // the poll that waits for the item's next session
   const outbox = createNoteOutbox({ item });
 
   const title = ctx.store.get().summaries?.find((s) => s.id === item)?.title ?? 'Design';
@@ -68,6 +71,7 @@ export function mountDesign(view, ctx) {
   }
   const refuse = (err) => {
     if (err?.code === 'gone') dispatch({ type: 'event', event: { event: 'ended', reason: 'ended' } });
+    else if (err?.code === 'conflict') { toast(designErrorText(err), { tone: 'red' }); stream.refresh(); }
     else if (err?.code !== 'disconnected' && err?.code !== 'timeout') toast(designErrorText(err), { tone: 'red' });
   };
 
@@ -86,7 +90,7 @@ export function mountDesign(view, ctx) {
   const modes = buildModeBar({ onMode: (m) => setMode(m), onNewScreen: () => newScreen() });
   const bottom = buildBottomBar({ onMode: (m) => setMode(m), onNotes: () => { sheetHeight = sheetHeight === 'peek' ? 'half' : 'peek'; render(); } });
   const phase = buildPhasePanel({
-    cancelSession: async () => { if (await confirmSheet({ title: 'Cancel this session?', message: 'The item stops and the design session ends.', confirmLabel: 'Cancel session', cancelLabel: 'Keep waiting' })) { try { await ctx.cmds.cancel(item); } catch (e) { toast(designErrorText(e), { tone: 'red' }); } } },
+    cancelSession: async () => { if (await confirmSheet({ title: 'Cancel this session?', message: 'The item stops and the design session ends.', confirmLabel: 'Cancel session', cancelLabel: 'Keep waiting' })) { try { await ctx.cmds.cancel(item); dispatch({ type: 'event', event: { event: 'ended', reason: 'cancelled' } }); stream.refresh(); } catch (e) { refuse(e); } } },
     reload: () => reload(),
     tellAgent: async () => { try { const r = await ctx.design.tellAgent(session()); toast(r?.message ?? 'The agent was told again.'); } catch (e) { refuse(e); } },
     continueWithout: () => { continued = true; render(); },
@@ -136,13 +140,19 @@ export function mountDesign(view, ctx) {
   }
   async function setPreset(preset) {
     dispatch({ type: 'preset', preset });
+    presetSent = `${session()}|${preset}`;
     try { await ctx.design.viewport(session(), preset); } catch (e) { refuse(e); }
   }
-  // Pixel size of each preset, for a New screen sketch when no frame has arrived.
-  const PRESET_SIZE = { desktop: { w: 1280, h: 800 }, tablet: { w: 820, h: 1180 }, phone: { w: 390, h: 844 } };
   function reload() { ctx.design.reload(session()).catch(refuse); }
 
+  // Taps resolve against the streamed size; until it matches the preset, say so instead of the daemon's "outside the preview".
+  function waitingForSize() {
+    const text = pointerBlockedText(state);
+    if (text) toast(text);
+    return Boolean(text);
+  }
   async function hoverAt(p) {
+    if (pointerBlockedText(state)) return;
     const ticket = ++tickets;
     try {
       const r = await ctx.design.resolve(session(), p.x, p.y, 0, false);
@@ -150,6 +160,7 @@ export function mountDesign(view, ctx) {
     } catch (e) { if (e.code === 'gone') refuse(e); }
   }
   async function pickAt(p) {
+    if (waitingForSize()) return;
     pick = { ...p };
     depth = 0;
     stage.setHover(null);
@@ -164,6 +175,7 @@ export function mountDesign(view, ctx) {
     try { show(await ctx.design.resolve(session(), pick.x, pick.y, depth, true)); } catch (e) { refuse(e); }
   }
   async function regionAt(box) {
+    if (waitingForSize()) return;
     pick = null;
     depth = 0;
     try { show(await ctx.design.region(session(), box)); } catch (e) { refuse(e); }
@@ -217,7 +229,8 @@ export function mountDesign(view, ctx) {
   let lastFlushAt = 0, lastFlushSession = null, lastFlushKind = null;
   const FLUSH_EVERY_MS = 5000;
   const flushOutbox = (kind) => {
-    if (!session() || !isLive(state) || state.session.state === 'finishing') return;
+    // A note being sent right now sits in the outbox too; flushing then would send it twice.
+    if (!session() || !isLive(state) || state.session.state === 'finishing' || composer.busy) return;
     if (!outbox.pending().length) { lastFlushKind = kind; return; }
     // On reconnect or session change at once; otherwise at most once per few seconds.
     const fresh = session() !== lastFlushSession || (lastFlushKind === 'reconnecting' && kind !== 'reconnecting');
@@ -259,7 +272,9 @@ export function mountDesign(view, ctx) {
     top.update(state, { operator, reviewOpen });
     modes.update(state.mode, Boolean(live));
     // Once confirmed, nothing is edited: the ledger and its answer fill the screen.
-    modes.element.hidden = p.kind === 'confirmed' || p.kind === 'ended';
+    const atEnd = p.kind === 'confirmed' || p.kind === 'ended';
+    modes.element.hidden = atEnd;
+    bottom.element.hidden = atEnd;
     bottom.update(state.mode);
     status.update(state, { path: previewPath() });
     const showStage = live && (p.kind === 'live' || p.kind === 'finishing' || p.kind === 'preview_down' || p.kind === 'reconnecting');
@@ -281,11 +296,24 @@ export function mountDesign(view, ctx) {
     root.dataset.preset = state.preset;
     root.dataset.mode = state.mode;
     if (state.loaded && ctx.canOperate && state.session?.state === 'live') flushOutbox(p.kind);
+    // The daemon may not have applied the preset the session says it has: a frame at another size re-sends it, once.
+    if (operator && state.session?.state === 'live' && presetMismatch(state) && presetSent !== `${session()}|${state.preset}`) {
+      presetSent = `${session()}|${state.preset}`;
+      ctx.design.viewport(session(), state.preset).catch(refuse);
+    }
+    syncFollower();
     // A phone starts on the Phone preset, once.
     if (!autoPreset && layout === 'phone' && operator && state.session?.state === 'live') {
       autoPreset = true;
       if (state.preset !== 'phone') setPreset('phone');
     }
+  }
+
+  // While the gate waits or changes were requested, the next session is only found by asking.
+  function syncFollower() {
+    const want = operator && followsNewSession(state);
+    if (want && !follower) follower = setInterval(() => stream.refresh(), FOLLOW_EVERY_MS);
+    else if (!want && follower) { clearInterval(follower); follower = null; }
   }
 
   // ---- wiring ----
@@ -348,6 +376,6 @@ export function mountDesign(view, ctx) {
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', fit);
     vv?.removeEventListener('resize', onViewport);
-    clearInterval(clock); offFeatures(); offConn();
+    clearInterval(clock); clearInterval(follower); follower = null; offFeatures(); offConn();
   };
 }

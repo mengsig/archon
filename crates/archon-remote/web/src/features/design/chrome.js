@@ -2,7 +2,7 @@
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { segmented } from '../../ui/components.js';
-import { dotLook, stagePhase, statusLine } from './state.js';
+import { dotLook, stagePhase, statusLine, confirmedPreset, presetName } from './state.js';
 import { finishBlockedText } from './finish.js';
 import { SHORTCUTS } from './keymap.js';
 import { openSheet } from '../../ui/sheet.js';
@@ -33,9 +33,10 @@ export function buildTopBar({ title, onBack, onPreset, onReload, onFinish, onRev
   const review = h('button', { class: 'button button-primary button-small', type: 'button', hidden: true, onclick: () => onReview() }, icon('flag', { size: 16 }), ' Review');
   const backToEditing = h('button', { class: 'button button-plain button-small', type: 'button', hidden: true, onclick: () => onBackToEditing() }, 'Back to editing');
   const blocked = h('p', { class: 'design-blocked', role: 'status' });
+  const switching = h('span', { class: 'design-switching', role: 'status', hidden: true });
   const el = h('header', { class: 'design-top' },
     h('button', { class: 'nav-back', type: 'button', 'aria-label': 'Back', onclick: onBack }, icon('back', { size: 22 }), h('span', { text: 'Back' })),
-    name, h('span', { class: 'design-state' }, dot, dotText), badge, presets, reload, deadline, finish, review, backToEditing, blocked);
+    name, h('span', { class: 'design-state' }, dot, dotText), badge, presets, switching, reload, deadline, finish, review, backToEditing, blocked);
   return {
     element: el, title: name,
     update(state, { operator, reviewOpen = false }) {
@@ -43,11 +44,17 @@ export function buildTopBar({ title, onBack, onPreset, onReload, onFinish, onRev
       dot.className = `design-dot tone-${look.tone}`;
       dotText.textContent = look.label;
       badge.hidden = !(state.browser?.status === 'unsandboxed' || state.session?.sandbox_off);
+      // A preset shows as selected only once the stream's frame size proves it; until then it is pending.
+      const confirmed = confirmedPreset(state.frame);
+      const pending = confirmed !== state.preset;
       for (const b of presets.children) {
-        const on = b.dataset.value === state.preset;
-        b.setAttribute('aria-checked', String(on));
-        b.tabIndex = on ? 0 : -1;
+        const asked = b.dataset.value === state.preset;
+        b.setAttribute('aria-checked', String(asked && !pending));
+        b.setAttribute('aria-busy', String(asked && pending));
+        b.tabIndex = asked ? 0 : -1;
       }
+      switching.textContent = pending && state.frame ? `Switching to ${presetName(state.preset)}…` : '';
+      switching.hidden = !switching.textContent;
       const live = operator && state.session && (state.session.state === 'live' || state.session.state === 'finishing');
       presets.hidden = reload.hidden = !live;
       deadline.textContent = live ? deadlineText(state.deadline) : '';
@@ -120,7 +127,7 @@ export function buildPhasePanel(actions) {
       if (phase.kind === 'starting') list.push(btn('Cancel session', actions.cancelSession));
       if (phase.kind === 'preview_down') list.push(btn(phase.retry ? 'Retry' : 'Reload', actions.reload, true), btn('Tell agent again', actions.tellAgent));
       if (!without && (phase.kind === 'no_browser' || phase.kind === 'sandbox')) list.push(btn('Continue without preview', actions.continueWithout, true));
-      if (phase.kind === 'ended') list.push(h('a', { class: 'button button-plain', href: `#/item/${state.item}` }, 'Open the item'));
+      if (phase.kind === 'ended') list.push(h('a', { class: ['button', phase.end === 'approved' ? 'button-primary' : 'button-plain'], href: `#/item/${state.item}` }, 'Open the item'));
       if (phase.kind === 'none' || phase.kind === 'observer' || phase.kind === 'unavailable') list.push(h('a', { class: 'button button-plain', href: `#/item/${state.item}` }, 'Open the item'));
       buttons.replaceChildren(...list);
       return phase;

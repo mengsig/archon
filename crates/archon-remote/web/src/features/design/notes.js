@@ -5,7 +5,7 @@ import { icon } from '../../ui/icons.js';
 import { reconcile } from '../../ui/list.js';
 import { confirmSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
-import { noteLook, noteActions, failText, shortSha } from './state.js';
+import { noteLook, noteActions, failText, shortSha, sessionLabel, earlierText, notesHeading } from './state.js';
 import { openCompare } from './compare.js';
 import { designErrorText, MAX_REPLY_CHARS, MAX_NOTE_CHARS } from '../../core/design.js';
 
@@ -34,14 +34,15 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage }) {
 
   function card(note) {
     const state = getState();
-    const acts = noteActions(note, { finishing: state.session?.state === 'finishing' });
+    const acts = noteActions(note, { finishing: state.session?.state === 'finishing', live: state.session?.state === 'live' });
     const look = noteLook(note);
     const li = h('li', { class: ['note', `status-${look.label.toLowerCase().replace(/ /g, '-')}`, note.read_only && 'is-readonly', selected === note.id && 'is-selected'], id: `note-${note.id}`, tabindex: '-1' });
     li.append(h('div', { class: 'note-head' }, h('strong', { class: 'note-id', text: note.id }), statusChip(note),
-      note.read_only ? h('span', { class: 'note-tag', text: 'Earlier session' }) : null,
+      note.read_only ? h('span', { class: 'chip tone-neutral note-chip note-earlier' }, h('span', { class: 'chip-text', text: sessionLabel(note) })) : null,
       note.kind === 'revert' ? h('span', { class: 'note-tag', text: `Undo of ${note.reverts ?? ''}`.trim() }) : null,
       note.resent_from ? h('span', { class: 'note-tag', text: `Re-sent from ${note.resent_from}` }) : null));
     li.append(h('p', { class: 'note-text', text: note.text || (note.kind === 'revert' ? 'Reverse this change' : '') }));
+    if (note.read_only) li.append(h('p', { class: 'note-hint', text: earlierText(note) }));
     if (note.undone_by) li.append(h('p', { class: 'note-hint', text: `Undone by ${note.undone_by}. It no longer counts.` }));
     if (note.no_change) li.append(h('p', { class: 'note-hint', text: 'Done, nothing to change.' }));
     if (note.status === 'done' && note.commit) li.append(h('p', { class: 'note-hint', text: `Commit ${shortSha(note.commit)}` }));
@@ -99,11 +100,11 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage }) {
     const notes = state.notes;
     reconcile(list, notes, {
       key: (n) => n.id,
-      signature: (n) => { const acts = noteActions(n, { finishing: state.session?.state === 'finishing' }); return JSON.stringify([n.status, n.text, n.thread, n.undone_by, n.fail_reason, n.read_only, n.after_asset, n.commit, state.session?.state, selected === n.id, acts.drop, acts.undo]); },
+      signature: (n) => { const acts = noteActions(n, { finishing: state.session?.state === 'finishing', live: state.session?.state === 'live' }); return JSON.stringify([n.approved, n.status, n.text, n.thread, n.undone_by, n.fail_reason, n.read_only, n.after_asset, n.commit, state.session?.state, selected === n.id, acts.drop, acts.undo]); },
       render: card,
     });
     empty.hidden = notes.length > 0 || pending.children.length > 0;
-    title.textContent = `Notes (${notes.filter((n) => n.kind !== 'revert').length})`;
+    title.textContent = notesHeading(notes);
     add.disabled = state.session?.state !== 'live';
   }
 

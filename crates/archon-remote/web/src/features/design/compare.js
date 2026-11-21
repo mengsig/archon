@@ -18,6 +18,8 @@ export function openCompare(ctx, note) {
   const fill = async (figure, id, commit, word) => {
     try {
       const asset = await ctx.design.asset(note.item, id);
+      // The slider's stage takes the Before picture's proportions; both pictures then scale to fit it.
+      if (word === 'Before' && asset.width && asset.height) stage.style.setProperty('--ar', `${asset.width} / ${asset.height}`);
       figure.replaceChildren(
         h('img', { class: 'cmp-img', src: asset.data_url, alt: `${word} picture of ${note.id}`, width: String(asset.width), height: String(asset.height) }),
         h('figcaption', { class: 'cmp-caption', text: `${word}: ${asset.caption ?? captionFor(commit, null)}` }));

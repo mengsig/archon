@@ -48,7 +48,7 @@ test.describe('desktop', () => {
       await page.getByRole('radio', { name: 'Comment' }).click();
       const box = await harness.appPage.locator('#cta').boundingBox();
       const rect = await canvas.boundingBox();
-      const scale = rect.width / 800;
+      const scale = rect.width / 390;
       await page.mouse.click(rect.x + (box.x + box.width / 2) * scale, rect.y + (box.y + box.height / 2) * scale);
       await expect(page.getByText('What the agent will receive')).toBeVisible();
       await expect(page.getByLabel('Details the agent will receive')).toHaveValue(/Selector: main > button#cta.primary/);
@@ -127,12 +127,40 @@ test.describe('desktop', () => {
     const harness = await open(browser, page);
     try {
       await expect(page.locator('.design-canvas')).toBeVisible();
-      harness.daemon.endSession();
-      await expect(page.getByRole('heading', { name: 'This design session ended' })).toBeVisible();
+      harness.daemon.endSession('cancelled');
+      await expect(page.getByRole('heading', { name: 'Session cancelled' })).toBeVisible();
       const before = harness.daemon.state.requests.length;
       await page.keyboard.press('c');
       await page.waitForTimeout(300);
       expect(harness.daemon.state.requests.slice(before).filter((r) => r.cmd === 'design_note_add')).toEqual([]);
+    } finally { await harness.stop(); }
+  });
+});
+
+test.describe('end states', () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test('an approved design shows its own state and a way to the item', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      harness.daemon.endSession('approved');
+      await expect(page.getByRole('heading', { name: 'Design approved' })).toBeVisible();
+      await expect(page.locator('.design-state')).toContainText('Approved');
+      await expect(page.getByRole('link', { name: 'Open the item' }).first()).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Back' })).toBeVisible();
+    } finally { await harness.stop(); }
+  });
+
+  test('after Ask for changes the screen switches to the new session', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      harness.daemon.endSession('revised');
+      await expect(page.getByRole('heading', { name: 'Changes requested' })).toBeVisible();
+      harness.daemon.startNewSession();
+      await expect(page.locator('.design-state')).toContainText('Live', { timeout: 10_000 });
+      await expect(page.locator('.design-canvas')).toBeVisible();
     } finally { await harness.stop(); }
   });
 });
@@ -244,7 +272,7 @@ test.describe('phone', () => {
       await bar.getByRole('button', { name: 'Comment' }).click();
       const box = await harness.appPage.locator('#cta').boundingBox();
       const rect = await page.locator('.design-canvas').boundingBox();
-      const scale = rect.width / 800;
+      const scale = rect.width / 390;
       await page.touchscreen.tap(rect.x + (box.x + box.width / 2) * scale, rect.y + (box.y + box.height / 2) * scale);
       await expect(page.getByText('What the agent will receive')).toBeVisible();
       await page.getByRole('button', { name: /Wider selection/ }).click();
@@ -348,11 +376,13 @@ test.describe('phone S3 and touch', () => {
     try {
       const canvas = page.locator('.design-canvas');
       await expect(canvas).toBeVisible();
+      // The phone asks for the Phone preset; taps wait until a 390-wide frame confirms it.
+      await expect(page.getByRole('radio', { name: 'Phone' })).toHaveAttribute('aria-checked', 'true');
       // Tap: the point sent is the touched one, in app pixels.
       await page.getByRole('navigation', { name: 'Design modes' }).getByRole('button', { name: 'Comment' }).click();
       const box = await harness.appPage.locator('#cta').boundingBox();
       const rect = await canvas.boundingBox();
-      const scale = rect.width / 800;
+      const scale = rect.width / 390;
       await page.touchscreen.tap(rect.x + (box.x + box.width / 2) * scale, rect.y + (box.y + box.height / 2) * scale);
       await expect(page.getByText('What the agent will receive')).toBeVisible();
       await page.screenshot({ path: `${EVIDENCE}/phone-comment.png` });

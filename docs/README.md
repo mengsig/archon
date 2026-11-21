@@ -12,6 +12,7 @@ Every page under `docs/`, by what you are doing. The project overview is the
 | [User guide](guide.md) | The detailed operating instructions. |
 | [Configuration](configuration.md) | Every `config.toml` key. |
 | [Quota pace](quota-pacing.md) | Each provider's quota pace and the once-per-window warning. |
+| [Live design sessions](design-sessions.md) | Pointing at the running app and watching the agent change it. |
 | [Queue scripting](queue-scripting.md) | Enqueueing from files and bounded waits. |
 | [GitHub watcher](github-watcher.md) | Items from issues and comments, and who may command it. |
 | [Operator authority](operator-authority.md) | What only the operator may do, and how archond verifies it. |

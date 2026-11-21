@@ -66,7 +66,8 @@ earlier holds the plan archond filled then, so its repeat is refused as a
 different request if archond now fills the plan otherwise.
 
 The autonomy flags are `--review strict|standard|none`,
-`--proposal lavish|off`, `--report before-pr|with-pr|off`,
+`--proposal lavish|live|off` (`live` starts a [live design
+session](design-sessions.md); choose it when you create the item), `--report before-pr|with-pr|off`,
 `--merge manual|auto`, and `--tools guarded|yolo`. Omitted knobs use daemon
 defaults; values above the effective ceiling are refused. Text output is
 just the item id; `--json` outputs the complete item. Daemon failures retain

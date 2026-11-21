@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- Live design sessions. `proposal = live` (also `archon queue add --proposal
+  live`, the New item switch and chat) inserts a first `design` stage in place
+  of `propose`. The agent runs the app's dev server and archond shows it in a
+  sandboxed headless Chromium streamed as pictures to the web app, where you
+  point at elements, comment, compare before and after, undo, and approve a
+  ledger Archon builds from its own records. Needs `[design] enabled = true`
+  and Chrome or Chromium (`archon doctor` checks). Protocol 25 adds the design
+  requests, events and the `design_sessions` feature. See
+  [docs/design-sessions.md](docs/design-sessions.md).
+
 ### Changed
 
 - Stage leads take fewer turns on a small, passing change. The stage

@@ -29,10 +29,7 @@ pub(crate) async fn allow_hosts(
     let worktree = wt.worktree.clone();
     let repo = wt.repo.clone();
     let result = tokio::task::spawn_blocking(move || read(&repo, &worktree, base_branch)).await;
-    match result {
-        Ok(hosts) => hosts,
-        Err(_) => Vec::new(),
-    }
+    result.unwrap_or_default()
 }
 
 fn read(repo: &Path, worktree: &Path, base_branch: Option<String>) -> Vec<String> {

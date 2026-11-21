@@ -795,9 +795,13 @@ pub(crate) async fn probe(url: &str) -> bool {
         return false;
     };
     let authority = rest.split('/').next().unwrap_or_default();
-    let target = if authority.contains(':') && !authority.starts_with('[') {
-        authority.to_owned()
-    } else if authority.starts_with('[') && authority.contains("]:") {
+    // `host:port` or `[v6]:port` as given; a bare host or `[v6]` gets port 80.
+    let has_port = if authority.starts_with('[') {
+        authority.contains("]:")
+    } else {
+        authority.contains(':')
+    };
+    let target = if has_port {
         authority.to_owned()
     } else {
         format!("{authority}:80")

@@ -274,17 +274,17 @@ impl DesignService {
                             ),
                         )?;
                     }
-                    NoteStatus::Sent | NoteStatus::Working | NoteStatus::NeedsReply => {
-                        if note.kind != NoteKind::Revert {
-                            store.design_note_change(
-                                &session.item,
-                                &note.id,
-                                status_change(
-                                    NoteStatus::Failed,
-                                    Some(archon_core::design::FailReason::NotDelivered),
-                                ),
-                            )?;
-                        }
+                    NoteStatus::Sent | NoteStatus::Working | NoteStatus::NeedsReply
+                        if note.kind != NoteKind::Revert =>
+                    {
+                        store.design_note_change(
+                            &session.item,
+                            &note.id,
+                            status_change(
+                                NoteStatus::Failed,
+                                Some(archon_core::design::FailReason::NotDelivered),
+                            ),
+                        )?;
                     }
                     _ => {}
                 }

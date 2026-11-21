@@ -286,7 +286,7 @@ fn ledger_notes(
                 let commit = note.captured_commit.as_deref().unwrap_or(&head);
                 LedgerPicture {
                     path: ctx.design.asset_path(&asset),
-                    viewport: note.viewport.clone(),
+                    viewport: note.viewport,
                     caption: format!(
                         "captured from the preview at commit {} {}",
                         &commit[..commit.len().min(7)],

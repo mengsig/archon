@@ -344,14 +344,14 @@ impl DesignService {
                 w: found.w,
                 h: found.h,
             },
-            viewport: viewport.clone(),
+            viewport,
             styles: found.styles.clone(),
             region: false,
         };
         self.emit(
             &row.id,
             archon_core::protocol::DesignEvent::Selection {
-                rect: target.rect.clone(),
+                rect: target.rect,
                 label: found.label.clone(),
             },
         );

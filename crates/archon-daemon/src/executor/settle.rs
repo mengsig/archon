@@ -479,7 +479,7 @@ async fn persist(
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
     let design_end =
-        (stage.kind == Some(archon_core::catalog::StageKind::Design)).then(|| match &outcome {
+        (stage.kind == Some(archon_core::catalog::StageKind::Design)).then_some(match &outcome {
             StageOutcome::Completed { .. } => crate::design::StageEnd::Completed,
             StageOutcome::Failed { .. } => crate::design::StageEnd::Failed,
             StageOutcome::Cancelled { .. } => crate::design::StageEnd::Cancelled,

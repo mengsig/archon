@@ -63,17 +63,14 @@ impl DesignService {
             } else {
                 NoteKind::Page
             };
-            let viewport = target
-                .as_ref()
-                .map(|t| t.viewport.clone())
-                .unwrap_or_else(|| {
-                    let (w, h) = row.viewport_preset.size();
-                    Viewport {
-                        w,
-                        h,
-                        preset: row.viewport_preset,
-                    }
-                });
+            let viewport = target.as_ref().map(|t| t.viewport).unwrap_or_else(|| {
+                let (w, h) = row.viewport_preset.size();
+                Viewport {
+                    w,
+                    h,
+                    preset: row.viewport_preset,
+                }
+            });
             store.design_note_add(NewDesignNote {
                 item: row.item.clone(),
                 session: row.id.clone(),
@@ -322,7 +319,7 @@ impl DesignService {
                 details_text: None,
                 send_picture: false,
                 target: None,
-                viewport: note.viewport.clone(),
+                viewport: note.viewport,
                 client_key: format!("undo:{id}:{}", notes.len()),
                 reverts: Some(id.to_owned()),
                 resent_from: None,
@@ -371,7 +368,7 @@ impl DesignService {
                 details_text: note.details_text.clone(),
                 send_picture: note.send_picture,
                 target: note.target.clone(),
-                viewport: note.viewport.clone(),
+                viewport: note.viewport,
                 client_key: format!("resend:{id}:{}", session.id),
                 reverts: None,
                 resent_from: Some(id.to_owned()),

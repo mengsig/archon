@@ -12,6 +12,7 @@ description = "archond: socket server, dispatcher, pipeline executor, Aether eve
 [dependencies]
 archon-aether = { workspace = true }
 archon-client = { workspace = true }
+archon-design-browser = { workspace = true }
 archon-core = { workspace = true }
 base64 = { workspace = true }
 archon-lavish = { workspace = true }

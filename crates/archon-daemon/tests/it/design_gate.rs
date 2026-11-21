@@ -682,6 +682,50 @@ async fn a_revised_design_retried_after_a_refusal_still_gets_its_preview() {
     assert_eq!(now.state, SessionState::Live);
 }
 
+/// A first attempt whose agent completes before Confirm is refused and its
+/// slot retried with a fresh agent at the same attempt: the attempt's open
+/// session follows the new agent, whose design tools work at once.
+#[tokio::test]
+async fn a_refused_first_attempt_hands_its_session_to_the_new_agent() {
+    let h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    let first = session.agent.clone().expect("the first agent");
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    let retry = h
+        .running()
+        .await
+        .into_iter()
+        .find(|s| s.stage_id == "design")
+        .expect("the design slot is retried");
+    let agent = retry.aether_agent.clone().expect("an agent");
+    assert_ne!(agent, first, "a fresh agent runs the retry");
+    let reply = Box::pin(archon_daemon::handlers::handle(
+        &h.ctx,
+        archon_core::protocol::ClientKind::ArchonMcp,
+        Request::DesignPreview {
+            url: "http://127.0.0.1:5173/".into(),
+            caller: Some(agent.clone()),
+        },
+    ))
+    .await;
+    assert!(reply.is_ok(), "{reply:?}");
+    let store = h.ctx.store.lock().await;
+    let now = h
+        .ctx
+        .design
+        .session_of(&store, &run.id, "design", retry.attempt)
+        .unwrap()
+        .expect("the attempt's session");
+    assert_eq!(
+        now.agent.as_ref(),
+        Some(&agent),
+        "the session follows the new agent"
+    );
+    assert_ne!(now.state, SessionState::Ended);
+}
+
 /// A cancel while a Finish (or a note, or an undo) holds the item lock
 /// settles at once: the run table never waits on the item lock, and the
 /// session ends as soon as the holder lets go.

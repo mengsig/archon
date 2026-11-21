@@ -111,6 +111,8 @@ pub struct SessionPatch {
     pub browser: Option<Option<(u32, u64)>>,
     pub viewport_preset: Option<ViewportPreset>,
     pub degraded: Option<bool>,
+    /// The stage attempt's agent, when a fresh agent replaced it.
+    pub agent: Option<AetherAgentId>,
 }
 
 #[derive(Debug, Clone)]
@@ -532,9 +534,13 @@ impl Store {
         if let Some(degraded) = patch.degraded {
             session.degraded = degraded;
         }
+        if let Some(agent) = patch.agent {
+            session.agent = Some(agent);
+        }
         tx.execute(
             "UPDATE design_sessions SET preview_url = ?2, browser_pid = ?3,
-                 browser_started_at = ?4, viewport_preset = ?5, degraded = ?6 WHERE id = ?1",
+                 browser_started_at = ?4, viewport_preset = ?5, degraded = ?6,
+                 agent = ?7 WHERE id = ?1",
             params![
                 id.0,
                 session.preview_url,
@@ -545,6 +551,7 @@ impl Store {
                     .transpose()?,
                 enc(&session.viewport_preset),
                 session.degraded,
+                session.agent.as_ref().map(|a| a.as_str().to_owned()),
             ],
         )
         .ctx("patch design session")?;

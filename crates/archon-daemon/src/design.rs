@@ -207,6 +207,19 @@ impl DesignService {
         if let Some(found) = self.session_of(&store, run, stage_id, attempt)?
             && found.state != SessionState::Ended
         {
+            // A fresh agent replaced the attempt's (a refused or lost agent
+            // at the same attempt): the session, its tools and its owed
+            // notes follow the agent now running.
+            if found.agent.as_ref() != Some(agent) {
+                store.design_session_patch(
+                    &found.id,
+                    archon_queue::store::SessionPatch {
+                        agent: Some(agent.clone()),
+                        ..Default::default()
+                    },
+                )?;
+                tracing::info!(session = %found.id, %agent, "design: session follows the attempt's new agent");
+            }
             self.wts
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -296,10 +309,26 @@ impl DesignService {
     ) -> Result<(), ArchonError> {
         {
             let mut store = ctx.store.lock().await;
-            // Re-read under the lock: another end may have won the race.
+            // Re-read under the lock: another end may have won the race. A
+            // row ended in the store alone (a newer session superseded it)
+            // still lets go of what this daemon holds for it.
             match store.design_session(&session.id)? {
                 Some(row) if row.state != SessionState::Ended => {}
-                _ => return Ok(()),
+                _ => {
+                    drop(store);
+                    if let Some(rt) = self.existing_runtime(&session.id) {
+                        let _ = rt.events.send(DesignEvent::Ended {
+                            reason: reason.to_owned(),
+                        });
+                        self.close_session_browser(&session.id, reason).await;
+                        self.spawn_start_queued();
+                    }
+                    self.wts
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(&session.id);
+                    return Ok(());
+                }
             }
             // Notes the agent never settled stay on record as not delivered.
             for note in store.design_notes(&session.item)? {

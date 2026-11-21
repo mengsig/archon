@@ -471,6 +471,7 @@ fn sessions_patch_and_list() {
                 browser: Some(Some((42, 7))),
                 viewport_preset: Some(ViewportPreset::Phone),
                 degraded: Some(true),
+                agent: None,
             },
         )
         .unwrap();

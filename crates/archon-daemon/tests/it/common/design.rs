@@ -153,6 +153,7 @@ impl PreviewBrowser for FakeBrowser {
     async fn resolve_selector(
         &self,
         _selector: &str,
+        _near: Option<adb::ClipRect>,
     ) -> Result<Option<adb::ClipRect>, adb::BrowserError> {
         Ok(Some(adb::ClipRect {
             x: 10.0,

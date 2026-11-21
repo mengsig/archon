@@ -37,6 +37,8 @@ const part=function(e){
  let s=e.tagName.toLowerCase();
  const cls=(e.classList?Array.from(e.classList):[]).slice(0,2);
  for(const c of cls)s+='.'+esc(c);
+ const up=e.parentElement;
+ if(up){const same=Array.from(up.children).filter(function(c){return c.tagName===e.tagName;});if(same.length>1)s+=':nth-of-type('+(same.indexOf(e)+1)+')';}
  return{s:s,stop:false};};
  const parts=[];let e=el;
  for(let i=0;e&&e.nodeType===1&&i<5;i++){const p=part(e);parts.unshift(p.s);if(p.stop||e===document.body)break;e=e.parentElement;}
@@ -230,14 +232,21 @@ impl Browser {
         (!m.is_empty()).then_some(m)
     }
 
-    /// Box of the first element matching `selector`, in CSS px; `None` when nothing matches.
-    pub async fn resolve_selector(&self, selector: &str) -> Result<Option<ClipRect>, BrowserError> {
+    /// Box of the element `selector` matches, in CSS px; `None` when nothing
+    /// matches. A selector may match several elements (a nav's links share
+    /// one); then the match nearest `near`, the box recorded with it, wins,
+    /// and without `near` the first.
+    pub async fn resolve_selector(
+        &self,
+        selector: &str,
+        near: Option<ClipRect>,
+    ) -> Result<Option<ClipRect>, BrowserError> {
         let sh = &self.sh;
         let doc = sh.call("DOM.getDocument", json!({"depth": 0})).await?;
         let root = doc["root"]["nodeId"].as_i64().unwrap_or(1);
         let q = match sh
             .call(
-                "DOM.querySelector",
+                "DOM.querySelectorAll",
                 json!({"nodeId": root, "selector": selector}),
             )
             .await
@@ -246,21 +255,83 @@ impl Browser {
             Err(BrowserError::Protocol(_)) => return Ok(None),
             Err(e) => return Err(e),
         };
-        let nid = q["nodeId"].as_i64().unwrap_or(0);
-        if nid == 0 {
-            return Ok(None);
+        let ids: Vec<i64> = q["nodeIds"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_i64)
+                    .filter(|n| *n != 0)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let wanted = if near.is_some() { MAX_MATCHES } else { 1 };
+        let mut boxes = Vec::new();
+        for nid in ids.into_iter().take(wanted) {
+            match sh.call("DOM.getBoxModel", json!({"nodeId": nid})).await {
+                Ok(bm) => boxes.extend(quad_rect(&bm["model"]["border"])),
+                // An element with no box (display: none) is not the one meant.
+                Err(BrowserError::Protocol(_)) => {}
+                Err(e) => return Err(e),
+            }
         }
-        match sh.call("DOM.getBoxModel", json!({"nodeId": nid})).await {
-            Ok(bm) => Ok(quad_rect(&bm["model"]["border"])),
-            Err(BrowserError::Protocol(_)) => Ok(None),
-            Err(e) => Err(e),
-        }
+        Ok(nearest(&boxes, near))
     }
+}
+
+/// The most matches of one selector measured to find the one meant.
+const MAX_MATCHES: usize = 64;
+
+/// The box among `boxes` nearest `near` (centres first, then size), else the
+/// first.
+pub(crate) fn nearest(boxes: &[ClipRect], near: Option<ClipRect>) -> Option<ClipRect> {
+    let Some(near) = near else {
+        return boxes.first().copied();
+    };
+    let centre = |r: &ClipRect| (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    let (nx, ny) = centre(&near);
+    let distance = |r: &ClipRect| {
+        let (x, y) = centre(r);
+        (x - nx).hypot(y - ny) + (r.w - near.w).abs() + (r.h - near.h).abs()
+    };
+    boxes
+        .iter()
+        .copied()
+        .min_by(|a, b| distance(a).total_cmp(&distance(b)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> ClipRect {
+        ClipRect { x, y, w, h }
+    }
+
+    /// LOW-crop: `nav > a` matches every link; the final picture of the
+    /// "New task" link must not be taken of the first one, "Tasks".
+    #[test]
+    fn a_selector_matching_several_takes_the_one_recorded() {
+        let tasks = rect(230.0, 21.0, 40.0, 22.0);
+        let new_task = rect(297.0, 21.0, 69.0, 22.0);
+        let both = [tasks, new_task];
+        assert_eq!(nearest(&both, Some(new_task)), Some(new_task));
+        // The page moved a little since the note: still the nearest.
+        assert_eq!(
+            nearest(&both, Some(rect(290.0, 25.0, 72.0, 22.0))),
+            Some(new_task)
+        );
+        assert_eq!(nearest(&both, None), Some(tasks), "no record: the first");
+        assert_eq!(nearest(&[], Some(new_task)), None);
+    }
+
+    #[test]
+    fn selectors_tell_same_tag_siblings_apart() {
+        assert!(INFO_JS.contains(":nth-of-type("));
+        assert!(
+            INFO_JS.contains("same.length>1"),
+            "only when a sibling shares the tag"
+        );
+    }
 
     // T-U8
     #[test]

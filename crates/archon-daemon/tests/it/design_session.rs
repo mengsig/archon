@@ -530,6 +530,140 @@ async fn a_picture_taken_during_the_review_does_not_refuse_confirm() {
     .expect("confirmed after the picture");
 }
 
+fn finish_view(reply: Reply) -> archon_core::protocol::DesignFinishView {
+    match reply {
+        Reply::DesignFinish(view) => view,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Finish and confirm the fixture's current session with every card included.
+async fn finish_and_confirm(f: &Fixture) -> archon_core::protocol::DesignFinishView {
+    let view = finish_view(
+        f.operator(Request::DesignFinishCapture {
+            session: f.session.clone(),
+            cancel_queued: false,
+            recapture: false,
+        })
+        .await
+        .expect("finish"),
+    );
+    f.operator(Request::DesignFinishConfirm {
+        session: f.session.clone(),
+        capture: view.capture.clone(),
+        include: view.cards.iter().map(|c| (c.note.clone(), true)).collect(),
+        superseded: Default::default(),
+        confirm_no_change: false,
+    })
+    .await
+    .expect("confirmed");
+    view
+}
+
+/// GATE: after Approve the screen said "This design session ended", and a
+/// reopen "No design session yet". The design state keeps the item's last
+/// session, ended with the gate's decision, and its notes read-only.
+#[tokio::test]
+async fn an_answered_gate_leaves_its_decision_on_the_design_screen() {
+    let f = Fixture::new().await;
+    crate::design_undo::done_note(&f, "k1", "a.txt", "one\n").await;
+    finish_and_confirm(&f).await;
+    f.h.ctx
+        .design
+        .gate_decided(&f.h.ctx, &f.run, &f.stage_id, f.attempt, "approved")
+        .await
+        .expect("decided");
+    let view = state(&f).await;
+    let session = view.session.expect("the ended session is still shown");
+    assert_eq!(session.id, f.session);
+    assert_eq!(session.state, SessionState::Ended);
+    assert_eq!(session.end_reason.as_deref(), Some("approved"));
+    assert!(
+        view.notes.iter().all(|n| n.read_only),
+        "nothing changes after the end"
+    );
+    assert!(view.stage_deadline.is_none());
+}
+
+/// S5: after "Ask for changes" Confirm of the revised session was refused,
+/// "D1 belongs to an earlier design session", because Finish wrote final
+/// pictures onto the earlier session's rows, and the item stuck at "Waiting
+/// for your approval". The revised session pictures and confirms only its
+/// own notes; the earlier ones are carried as they were confirmed.
+#[tokio::test]
+async fn a_revised_session_confirms_with_only_its_own_notes() {
+    let mut f = Fixture::new().await;
+    let (d1, _) = crate::design_undo::done_note(&f, "k1", "a.txt", "one\n").await;
+    finish_and_confirm(&f).await;
+    let earlier = note(&f, &d1).await;
+    assert!(
+        earlier.final_asset.is_some(),
+        "D1 was pictured and confirmed"
+    );
+    f.h.ctx
+        .design
+        .gate_decided(&f.h.ctx, &f.run, &f.stage_id, f.attempt, "revised")
+        .await
+        .expect("decided");
+    // The kept agent resumes in attempt 2's new session.
+    let next =
+        f.h.ctx
+            .design
+            .stage_started(
+                &f.h.ctx,
+                &f.item,
+                &f.run,
+                &f.stage_id,
+                f.attempt + 1,
+                &f.agent,
+                f.worktree.clone(),
+            )
+            .await
+            .expect("the revised session starts");
+    f.session = next;
+    f.attempt += 1;
+    f.as_agent(Request::DesignPreview {
+        url: crate::common::design::PREVIEW.into(),
+        caller: Some(f.agent.clone()),
+    })
+    .await
+    .expect("preview reported");
+    let (d2, _) = crate::design_undo::done_note(&f, "k2", "b.txt", "two\n").await;
+    let shots = f.factory.launched();
+    let view = finish_and_confirm(&f).await;
+    let card = |id: &str| view.cards.iter().find(|c| c.note == id).expect("a card");
+    assert!(
+        card(&d1).earlier && !card(&d1).not_found,
+        "D1 is carried, not missing"
+    );
+    assert!(
+        card(&d1).data_url.is_some(),
+        "with the picture confirmed before"
+    );
+    assert!(!card(&d2).earlier);
+    assert!(shots >= 1);
+    assert_eq!(
+        note(&f, &d1).await,
+        earlier,
+        "the earlier session's row is never written again"
+    );
+    assert!(note(&f, &d2).await.final_included.is_some(), "D2 confirmed");
+    assert_eq!(
+        state(&f).await.session.unwrap().state,
+        SessionState::Confirmed,
+        "the revised session reaches its gate"
+    );
+    // A picture of the earlier note is refused in plain words, not as a write.
+    let refused_capture = f
+        .operator(Request::DesignFinalCapture {
+            session: f.session.clone(),
+            capture: view.capture.clone(),
+            note: d1.clone(),
+        })
+        .await;
+    assert!(refused_capture.is_err());
+}
+
 mod stream {
     use super::*;
     use archon_core::protocol::{DesignEvent, ServerFrame, WelcomeDevice};
@@ -736,6 +870,79 @@ mod stream {
         f.end(StageEnd::Cancelled).await;
         let factory = f.factory.clone();
         until("the queued session's browser", || factory.launched() == 2).await;
+        task.abort();
+    }
+
+    /// S5: after "Ask for changes" the open screen subscribed to the next
+    /// session while its app was still starting; the preview report then
+    /// started no browser, and the screen waited on "Waiting for the first
+    /// picture" until it was reopened. The report starts it for a watcher.
+    #[tokio::test]
+    async fn a_session_watched_before_its_app_is_up_starts_its_preview_on_the_report() {
+        let f = Fixture::new().await;
+        let item = f.h.enqueue("design the cancel button").await;
+        f.h.dispatch().await;
+        let run = f.h.run(&item.id).await;
+        let stage =
+            f.h.running()
+                .await
+                .into_iter()
+                .find(|s| s.run == run.id)
+                .expect("the second item's stage runs");
+        let agent = stage.aether_agent.clone().expect("an agent");
+        let worktree = crate::common::design::add_worktree(&f.h.repo, f.h.dir.path(), "design-2");
+        let second =
+            f.h.ctx
+                .design
+                .stage_started(
+                    &f.h.ctx,
+                    &item.id,
+                    &run.id,
+                    &stage.stage_id,
+                    stage.attempt,
+                    &agent,
+                    worktree,
+                )
+                .await
+                .expect("second session starts");
+        let (tx, mut rx) = mpsc::channel(64);
+        let sub = DesignSubscription {
+            id: 7,
+            request: 7,
+            session: second.clone(),
+            device: WelcomeDevice {
+                id: "device-1".into(),
+                name: "phone".into(),
+                role: archon_core::protocol::DeviceRole::Operator,
+            },
+        };
+        let task = tokio::spawn(archon_daemon::design::stream(f.h.ctx.clone(), sub, tx));
+        let service = f.h.ctx.design.clone();
+        until("the watcher", || service.subscriber_count(&second) == 1).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            f.factory.launched(),
+            1,
+            "nothing to show before the app is up"
+        );
+        f.as_agent(Request::DesignPreview {
+            url: crate::common::design::PREVIEW.into(),
+            caller: Some(agent.clone()),
+        })
+        .await
+        .expect("preview reported");
+        let factory = f.factory.clone();
+        until("the watched preview's browser", || factory.launched() == 2).await;
+        until("its frames", || {
+            factory.browser(1).calls(|c| c.screencasts_started) >= 1
+        })
+        .await;
+        f.factory.browser(1).frame(1);
+        assert_eq!(
+            frame_seq(&mut rx).await,
+            1,
+            "the open screen gets the picture"
+        );
         task.abort();
     }
 

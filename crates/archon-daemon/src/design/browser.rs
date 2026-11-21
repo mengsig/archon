@@ -51,9 +51,12 @@ pub trait PreviewBrowser: Send + Sync {
     ) -> Result<adb::Picture, adb::BrowserError>;
     async fn resolve(&self, x: f64, y: f64, depth: i32)
     -> Result<adb::Resolved, adb::BrowserError>;
+    /// The box of the element `selector` names; of several matches, the one
+    /// nearest `near` (the box the note recorded), else the first.
     async fn resolve_selector(
         &self,
         selector: &str,
+        near: Option<adb::ClipRect>,
     ) -> Result<Option<adb::ClipRect>, adb::BrowserError>;
     async fn current_path(&self) -> Result<String, adb::BrowserError>;
     async fn wait_network_idle(
@@ -185,8 +188,9 @@ impl PreviewBrowser for Real {
     async fn resolve_selector(
         &self,
         selector: &str,
+        near: Option<adb::ClipRect>,
     ) -> Result<Option<adb::ClipRect>, adb::BrowserError> {
-        self.get()?.resolve_selector(selector).await
+        self.get()?.resolve_selector(selector, near).await
     }
     async fn current_path(&self) -> Result<String, adb::BrowserError> {
         self.get()?.current_path().await

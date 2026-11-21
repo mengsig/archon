@@ -75,10 +75,20 @@ impl DesignService {
         ctx: &DaemonContext,
         item: &archon_core::id::QueueItemId,
     ) -> Result<Reply, ArchonError> {
-        let (session, notes, approved) = {
+        // With no session open, the item's last one is shown as it ended
+        // (approved, revised, rejected...), so a screen opened after the
+        // gate's answer says what happened instead of "no session yet".
+        // Its notes are all read-only: only an open session's rows change.
+        let (current, session, notes, approved) = {
             let store = ctx.store.lock().await;
+            let current = store.design_current_session(item)?;
+            let session = match &current {
+                Some(open) => Some(open.clone()),
+                None => store.design_sessions(item)?.pop(),
+            };
             (
-                store.design_current_session(item)?,
+                current,
+                session,
                 store.design_notes(item)?,
                 super::approved_ids(&store, item)?,
             )
@@ -104,7 +114,7 @@ impl DesignService {
         };
         let views = notes
             .iter()
-            .map(|n| note_view(n, &notes, session.as_ref(), &approved))
+            .map(|n| note_view(n, &notes, current.as_ref(), &approved))
             .collect::<Vec<_>>();
         let used = views.iter().filter(|v| v.active).count() as u32;
         let stage_deadline = session
@@ -212,8 +222,10 @@ impl DesignService {
             row = store.design_session(&row.id)?.ok_or_else(super::gone)?;
         }
         // Every stored picture counts as a change of the notes, so they are
-        // taken first and the capture names the version they leave.
-        for note in &active {
+        // taken first and the capture names the version they leave. An
+        // earlier session's note keeps the picture its own review confirmed:
+        // its row is never written again (design.md §8.6, Revise).
+        for note in active.iter().filter(|n| n.session == row.id) {
             self.capture_final(ctx, &row, note, &head, &wt).await;
         }
         self.restore_viewport(ctx, &row).await;
@@ -283,7 +295,12 @@ impl DesignService {
         let clip = match note.target.as_ref() {
             Some(target) if target.region => Some(clip_of(target, 0.0)),
             Some(target) => match target.selector.as_deref() {
-                Some(selector) => match browser.resolve_selector(selector).await.ok().flatten() {
+                Some(selector) => match browser
+                    .resolve_selector(selector, Some(recorded_box(target)))
+                    .await
+                    .ok()
+                    .flatten()
+                {
                     Some(rect) => Some(grow(rect, MARGIN)),
                     None => return,
                 },
@@ -383,20 +400,30 @@ impl DesignService {
                 Some(id) => ctx.store.lock().await.design_asset(&row.item, id)?,
                 None => None,
             };
+            let earlier = note.session != row.id;
             // A note another one supersedes takes no final picture, so its
-            // missing picture is no sign its element is gone.
-            let not_found =
-                asset.is_none() && note.final_asset.is_none() && superseded_by.is_none();
+            // missing picture is no sign its element is gone. An earlier
+            // session's note is never captured again, so nothing is missing.
+            let not_found = !earlier
+                && asset.is_none()
+                && note.final_asset.is_none()
+                && superseded_by.is_none();
+            let caption = match (earlier, asset.as_ref()) {
+                (true, Some(_)) => Some("Reviewed in an earlier session; kept as it was".into()),
+                (true, None) => Some("From an earlier session, with no picture".into()),
+                (false, asset) => asset.and_then(caption_of),
+            };
             cards.push(FinishCard {
                 note: note.id.clone(),
                 text: note.text.clone(),
                 asset: asset.as_ref().map(|a| a.id.clone()),
                 data_url: asset.as_ref().and_then(|a| self.data_url(a).ok()),
-                caption: asset.as_ref().and_then(caption_of),
+                caption,
                 include: note.final_included.unwrap_or(true) && asset.is_some(),
                 superseded_by,
                 not_found,
                 left_history: false,
+                earlier,
             });
         }
         // Done notes whose change left the history.
@@ -421,6 +448,7 @@ impl DesignService {
                     superseded_by: None,
                     not_found: false,
                     left_history: true,
+                    earlier: note.session != row.id,
                 });
             }
         }
@@ -487,6 +515,12 @@ impl DesignService {
             .await
             .design_note(&row.item, note_id)?
             .ok_or_else(|| ArchonError::NotFound(format!("note {note_id}")))?;
+        if note.session != row.id {
+            return Err(refuse(
+                DesignRefusal::ReadOnly,
+                format!("{note_id} is from an earlier session; its picture was reviewed then"),
+            ));
+        }
         // The approved reference records the note's preset size, so the
         // picture is taken at that preset whatever the preview shows now.
         // A metrics change keeps the page as the operator left it.
@@ -506,7 +540,7 @@ impl DesignService {
             }
             let clip = match note.target.as_ref().and_then(|t| t.selector.as_deref()) {
                 Some(selector) => browser
-                    .resolve_selector(selector)
+                    .resolve_selector(selector, note.target.as_ref().map(recorded_box))
                     .await
                     .ok()
                     .flatten()
@@ -612,6 +646,13 @@ impl DesignService {
                 )));
             }
         }
+        // Only this session's pictures are chosen here: an earlier session's
+        // note keeps the inclusion its own review recorded.
+        let notes_now = ctx.store.lock().await.design_notes(&row.item)?;
+        let include: BTreeMap<String, bool> = include
+            .into_iter()
+            .filter(|(id, _)| notes_now.iter().any(|n| &n.id == id && n.session == row.id))
+            .collect();
         let choices = FinishChoices {
             include: include.clone(),
             superseded,
@@ -655,7 +696,7 @@ impl DesignService {
         let row = moved.map_err(|_| conflict())?;
         {
             let mut store = ctx.store.lock().await;
-            for note in &active {
+            for note in active.iter().filter(|n| n.session == row.id) {
                 let included =
                     include.get(&note.id).copied().unwrap_or(true) && note.final_asset.is_some();
                 store.design_note_change(
@@ -739,6 +780,12 @@ fn origin_of(url: &str) -> String {
     let rest = url.strip_prefix("http://").unwrap_or(url);
     let authority = rest.split('/').next().unwrap_or_default();
     format!("http://{authority}")
+}
+
+/// The element's box as the note recorded it, in page CSS pixels at the
+/// note's preset: how a selector matching several elements finds the one meant.
+pub(crate) fn recorded_box(target: &Target) -> adb::ClipRect {
+    clip_of(target, 0.0)
 }
 
 fn clip_of(target: &Target, margin: f64) -> adb::ClipRect {

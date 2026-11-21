@@ -246,6 +246,11 @@ pub struct FinishCard {
     pub not_found: bool,
     /// The note's commit is no longer in the history.
     pub left_history: bool,
+    /// The note belongs to an earlier session of the item (before a
+    /// Revise): its picture was reviewed then and is carried as it stands,
+    /// never captured or confirmed again.
+    #[serde(default)]
+    pub earlier: bool,
 }
 
 /// The final capture the operator reviews.

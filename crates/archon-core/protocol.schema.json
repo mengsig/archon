@@ -6979,6 +6979,11 @@
             "null"
           ]
         },
+        "earlier": {
+          "default": false,
+          "description": "The note belongs to an earlier session of the item (before a\nRevise): its picture was reviewed then and is carried as it stands,\nnever captured or confirmed again.",
+          "type": "boolean"
+        },
         "include": {
           "description": "Whether the picture is included.",
           "type": "boolean"

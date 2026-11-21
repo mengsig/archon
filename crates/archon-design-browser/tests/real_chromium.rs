@@ -136,3 +136,91 @@ async fn real_browser_is_confined() {
     b.close().await.unwrap();
     assert!(!profile.exists(), "profile still there");
 }
+
+/// LOW-crop: a selector shared by a nav's links (`nav > a`) resolved to the
+/// first link, so the final picture of "New task" showed "Tasks"; and a crop
+/// with its margin reached past the page's edge.
+#[tokio::test]
+async fn a_shared_selector_finds_the_recorded_element_and_crops_stay_on_the_page() {
+    if std::env::var("ARCHON_DESIGN_REAL_BROWSER").as_deref() != Ok("1") {
+        eprintln!("skipped: ARCHON_DESIGN_REAL_BROWSER=1 not set");
+        return;
+    }
+    let path = std::env::var("PATH").unwrap_or_default();
+    let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let Ok(binary) = find_browser(None, &path, &home) else {
+        eprintln!("skipped: no browser found");
+        return;
+    };
+    let root = tempfile::tempdir().unwrap();
+    let phone = Viewport {
+        width: 390,
+        height: 844,
+        touch: true,
+        dpr: 1.0,
+    };
+    let spec = LaunchSpec {
+        binary,
+        profile_dir: root.path().join("ds_zoom"),
+        sandbox: std::env::var("ARCHON_DESIGN_SANDBOX_OFF").as_deref() != Ok("1"),
+        allow_hosts: vec![],
+        viewport: phone,
+        path_env: path,
+        lang: "C.UTF-8".into(),
+        tz: "UTC".into(),
+    };
+    let b = match Browser::launch(spec).await {
+        Ok(b) => b,
+        Err(BrowserError::SandboxUnavailable { hint }) => {
+            eprintln!("skipped: sandbox unavailable: {hint}");
+            return;
+        }
+        Err(e) => panic!("launch: {e}"),
+    };
+    b.set_viewport(phone).await.unwrap();
+    let page = serve(
+        "<html><head><meta name=viewport content=\"width=device-width\"></head>\
+         <body style=\"margin:0\"><nav style=\"position:relative;height:60px\">\
+         <a href=\"#\" style=\"position:absolute;left:200px;top:20px;width:50px;height:20px\">Tasks</a>\
+         <a href=\"#\" style=\"position:absolute;left:300px;top:20px;width:80px;height:20px\">New task</a>\
+         </nav></body></html>",
+    );
+    b.navigate(&format!("http://127.0.0.1:{page}/"))
+        .await
+        .unwrap();
+    let _ = b
+        .wait_network_idle(Duration::from_millis(300), Duration::from_secs(10))
+        .await;
+    let recorded = archon_design_browser::ClipRect {
+        x: 300.0,
+        y: 20.0,
+        w: 80.0,
+        h: 20.0,
+    };
+    let rect = b
+        .resolve_selector("nav > a", Some(recorded))
+        .await
+        .unwrap()
+        .expect("the link is found");
+    let near = |a: f64, b: f64| (a - b).abs() < 1.0;
+    assert!(near(rect.x, 300.0) && near(rect.w, 80.0), "{rect:?}");
+    let first = b.resolve_selector("nav > a", None).await.unwrap().unwrap();
+    assert!(
+        near(first.x, 200.0),
+        "without a record, the first: {first:?}"
+    );
+    // A 24 px margin around the link reaches past the 390 px page: cut there.
+    let grown = archon_design_browser::ClipRect {
+        x: rect.x - 24.0,
+        y: rect.y - 20.0,
+        w: rect.w + 48.0,
+        h: rect.h + 40.0,
+    };
+    let pic = b.capture(Some(grown), 2.0).await.unwrap();
+    assert_eq!(
+        pic.width,
+        ((390.0 - grown.x) * 2.0) as u32,
+        "cut at the page's edge"
+    );
+    b.close().await.unwrap();
+}

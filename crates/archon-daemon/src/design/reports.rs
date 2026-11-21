@@ -138,14 +138,36 @@ impl DesignService {
         }
         let rt = self.runtime(&session.id);
         rt.st().last_url = Some(url.clone());
-        if let Some(browser) = rt.browser()
-            && let Err(error) = browser.navigate(&url).await
-        {
-            tracing::info!(%error, "design: navigating the preview failed");
+        let watched = rt.st().subscribers > 0;
+        match rt.browser() {
+            Some(browser) => {
+                if let Err(error) = browser.navigate(&url).await {
+                    tracing::info!(%error, "design: navigating the preview failed");
+                }
+            }
+            // A screen opened before the app was up (a Revise's next session,
+            // followed from the old one) subscribed while there was nothing
+            // to show: start its preview now, not on its next reopen.
+            None if watched => self.spawn_first_look(&session.id),
+            None => {}
         }
         tracing::info!(session = %session.id, url, "design: preview reported");
         self.emit_session(ctx, &session.id).await;
         Ok(Reply::DesignDone)
+    }
+
+    /// Start the browser and frames of a session someone already watches,
+    /// off the agent's request: a launch takes seconds.
+    fn spawn_first_look(&self, session: &archon_core::design::DesignSessionId) {
+        let Some(arc) = self.arc() else {
+            return;
+        };
+        let session = session.clone();
+        tokio::spawn(async move {
+            if let Err(error) = arc.design.subscriber_joined(&arc, &session).await {
+                tracing::warn!(%error, %session, "design: the watched preview did not start");
+            }
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -340,7 +362,14 @@ impl DesignService {
                 .await;
         }
         let clip = match note.target.as_ref().and_then(|t| t.selector.as_deref()) {
-            Some(selector) => browser.resolve_selector(selector).await.ok().flatten(),
+            Some(selector) => browser
+                .resolve_selector(
+                    selector,
+                    note.target.as_ref().map(super::finish::recorded_box),
+                )
+                .await
+                .ok()
+                .flatten(),
             None => None,
         };
         let picture = match browser.capture(clip, 2.0).await {

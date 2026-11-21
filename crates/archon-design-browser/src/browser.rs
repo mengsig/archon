@@ -194,9 +194,22 @@ impl Shared {
             return self.capture_at_scale_one(None, dpr).await;
         }
         self.reset_zoom().await;
+        let clip = match (clip, self.page_size().await) {
+            (Some(clip), Some((w, h))) => Some(clamp_to_page(clip, w, h)),
+            (clip, _) => clip,
+        };
         let picture = self.capture_at_scale_one(clip, dpr).await;
         self.reset_zoom().await;
         picture
+    }
+
+    /// The page's full size in CSS px, for clamping crops; `None` when the
+    /// browser does not say.
+    async fn page_size(&self) -> Option<(f64, f64)> {
+        let m = self.call("Page.getLayoutMetrics", json!({})).await.ok()?;
+        let size = &m["cssContentSize"];
+        let (w, h) = (size["width"].as_f64()?, size["height"].as_f64()?);
+        (w >= 1.0 && h >= 1.0).then_some((w, h))
     }
 
     async fn capture_at_scale_one(
@@ -923,9 +936,58 @@ impl Browser {
     }
 }
 
+/// `clip` cut to the page (`width` × `height` CSS px): a margin around an
+/// element at the page's edge must not add an empty strip beyond it.
+pub(crate) fn clamp_to_page(clip: ClipRect, width: f64, height: f64) -> ClipRect {
+    let x = clip.x.clamp(0.0, width);
+    let y = clip.y.clamp(0.0, height);
+    ClipRect {
+        x,
+        y,
+        w: ((clip.x + clip.w).min(width) - x).max(0.0),
+        h: ((clip.y + clip.h).min(height) - y).max(0.0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// LOW-crop: a full-width header with a 24 px margin was 2928 px wide
+    /// at 2x on a 1440 px page; cut to the page it is 2880.
+    #[test]
+    fn a_crop_never_reaches_past_the_page() {
+        let header = ClipRect {
+            x: 0.0,
+            y: 0.0,
+            w: 1464.0,
+            h: 88.0,
+        };
+        let cut = clamp_to_page(header, 1440.0, 3000.0);
+        assert_eq!((cut.x, cut.w, cut.h), (0.0, 1440.0, 88.0));
+        let inside = ClipRect {
+            x: 10.0,
+            y: 20.0,
+            w: 100.0,
+            h: 50.0,
+        };
+        assert_eq!(
+            clamp_to_page(inside, 1440.0, 900.0),
+            inside,
+            "inside: unchanged"
+        );
+        let low = clamp_to_page(
+            ClipRect {
+                x: 1400.0,
+                y: 880.0,
+                w: 100.0,
+                h: 100.0,
+            },
+            1440.0,
+            900.0,
+        );
+        assert_eq!((low.w, low.h), (40.0, 20.0));
+    }
 
     #[test]
     fn url_pieces() {

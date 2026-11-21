@@ -118,7 +118,8 @@ pub async fn handle_device(
         DeviceRole::Operator => (ClientKind::ArchonCli, as_tui_command(request)),
         DeviceRole::Observer => (ClientKind::ArchonWeb, request),
     };
-    let request = handle_unattributed(ctx, client, request);
+    let request =
+        crate::design::with_device(device.clone(), handle_unattributed(ctx, client, request));
     changes::attributed_as(TransitionActor::Web, request).await
 }
 
@@ -364,6 +365,8 @@ fn orchestrators_alone(
         Request::MessageOrchestrator { .. }
             | Request::PublishArtifact { .. }
             | Request::SubmitVerdict { .. }
+            | Request::DesignPreview { .. }
+            | Request::DesignNoteReport { .. }
     );
     for_an_agent(client, caller) && !request.is_read_only() && !stage_message
 }
@@ -382,6 +385,8 @@ fn check_named_caller(
     let named = match request {
         Request::MessageOrchestrator { caller, .. }
         | Request::PublishArtifact { caller, .. }
+        | Request::DesignPreview { caller, .. }
+        | Request::DesignNoteReport { caller, .. }
         | Request::SubmitVerdict { caller, .. }
         | Request::AskOperator { caller, .. }
         | Request::RecordChatAnswer { caller, .. }
@@ -428,6 +433,31 @@ pub(crate) async fn route(
             };
             crate::executor::restatement::submit(ctx, caller.as_ref(), sent).await
         }
+        request @ (Request::DesignGet { .. }
+        | Request::SubscribeDesign { .. }
+        | Request::DesignAsset { .. }
+        | Request::DesignFrameAck { .. }
+        | Request::DesignInput { .. }
+        | Request::DesignResolve { .. }
+        | Request::DesignRegion { .. }
+        | Request::DesignUpload { .. }
+        | Request::DesignViewport { .. }
+        | Request::DesignReload { .. }
+        | Request::DesignTellAgent { .. }
+        | Request::DesignDialogAnswer { .. }
+        | Request::DesignNoteAdd { .. }
+        | Request::DesignNoteEdit { .. }
+        | Request::DesignNoteCancel { .. }
+        | Request::DesignNoteReply { .. }
+        | Request::DesignNoteDrop { .. }
+        | Request::DesignNoteUndo { .. }
+        | Request::DesignNoteResend { .. }
+        | Request::DesignFinishCapture { .. }
+        | Request::DesignFinalCapture { .. }
+        | Request::DesignFinishConfirm { .. }
+        | Request::DesignFinishCancel { .. }
+        | Request::DesignPreview { .. }
+        | Request::DesignNoteReport { .. }) => crate::design::handle(ctx, client, request).await,
         Request::ListArtifacts { item } => crate::artifacts::list_for(ctx, &item).await,
         Request::ReadArtifact {
             item,

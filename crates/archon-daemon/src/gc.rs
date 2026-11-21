@@ -389,6 +389,13 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
             }
         };
         stop_stacks(ctx, &item).await?;
+        if ctx.design.enabled() {
+            let item_id = item.item.clone();
+            let mut store = ctx.store.lock().await;
+            if let Err(error) = ctx.design.gc_item(&mut store, &item_id) {
+                tracing::warn!(%error, item = %item_id, "design data of a collected item was not deleted");
+            }
+        }
         let (r, p) = (roots.clone(), policy.clone());
         let swept = blocking(move || {
             let _marks = marks;

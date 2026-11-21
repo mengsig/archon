@@ -138,7 +138,9 @@ impl DesignService {
                 // branch moved: nothing changed, so the undo fails visibly
                 // and the session is editable again. A branch that did move
                 // is left for startup's reconcile, as before.
-                if crate::worktree::stack::sha(&wt.repo, &wt.branch).ok().as_deref()
+                if crate::worktree::stack::sha(&wt.repo, &wt.branch)
+                    .ok()
+                    .as_deref()
                     != Some(pre.as_str())
                 {
                     return Err(error);

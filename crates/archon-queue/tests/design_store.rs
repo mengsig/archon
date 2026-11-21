@@ -607,5 +607,9 @@ fn the_next_note_id_follows_the_counter() {
     add(&mut store, &item, &session, "a");
     add(&mut store, &item, &session, "b");
     assert_eq!(store.design_next_note_id(&item).unwrap(), "D3");
-    assert_eq!(store.design_next_note_id(&item).unwrap(), "D3", "nothing reserved");
+    assert_eq!(
+        store.design_next_note_id(&item).unwrap(),
+        "D3",
+        "nothing reserved"
+    );
 }

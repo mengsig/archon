@@ -272,7 +272,9 @@ impl DesignService {
                     tracing::info!(session = %session.id, "design: the item is busy; the session ends when it is free");
                     tokio::spawn(async move {
                         let held = lock.lock_owned().await;
-                        if let Err(error) = arc.design.end_locked(&arc, &session, &reason, held).await {
+                        if let Err(error) =
+                            arc.design.end_locked(&arc, &session, &reason, held).await
+                        {
                             tracing::warn!(%error, session = %session.id, "design: the session did not end");
                         }
                     });

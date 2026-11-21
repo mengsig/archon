@@ -435,7 +435,12 @@ fn a_cancelled_items_questions_are_closed() {
     };
     let stale = store.insert_question(&ask(&cancelled.id, 10)).unwrap();
     let other = store.insert_question(&ask(&kept.id, 11)).unwrap();
-    assert!(store.close_cancelled_item_questions(t(20)).unwrap().is_empty());
+    assert!(
+        store
+            .close_cancelled_item_questions(t(20))
+            .unwrap()
+            .is_empty()
+    );
     store
         .transition_item(&cancelled.id, QueueState::Cancelled { reason: None }, t(30))
         .unwrap();
@@ -443,5 +448,11 @@ fn a_cancelled_items_questions_are_closed() {
     assert_eq!(answers.len(), 1);
     assert!(!store.question(&stale.id).unwrap().is_open());
     assert!(store.question(&other.id).unwrap().is_open());
-    assert!(store.close_cancelled_item_questions(t(50)).unwrap().is_empty(), "once");
+    assert!(
+        store
+            .close_cancelled_item_questions(t(50))
+            .unwrap()
+            .is_empty(),
+        "once"
+    );
 }

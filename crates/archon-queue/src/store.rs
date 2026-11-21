@@ -751,7 +751,10 @@ impl Store {
         for question in feed::list(&self.conn, true)? {
             let Some(item) = &question.item else { continue };
             let cancelled = match self.item(item) {
-                Ok(found) => matches!(found.state, archon_core::queue::QueueState::Cancelled { .. }),
+                Ok(found) => matches!(
+                    found.state,
+                    archon_core::queue::QueueState::Cancelled { .. }
+                ),
                 Err(_) => false,
             };
             if cancelled && gates::by_question(&self.conn, &question.id)?.is_none() {
@@ -764,7 +767,12 @@ impl Store {
         let tx = codec::write_tx(&mut self.conn)?;
         let mut answers = Vec::new();
         for id in &stale {
-            answers.extend(feed::close_withdrawn(&tx, id, "the item was cancelled", at)?);
+            answers.extend(feed::close_withdrawn(
+                &tx,
+                id,
+                "the item was cancelled",
+                at,
+            )?);
         }
         use codec::SqlContext;
         tx.commit().ctx("commit cancelled items' questions")?;

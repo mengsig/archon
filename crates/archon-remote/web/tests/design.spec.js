@@ -1,4 +1,4 @@
-// T-E1..T-E4 of the live design sessions plan, against a stand-in host
+// T-E1..T-E6 of the live design sessions plan, against a stand-in host
 // (support/design-harness.js): the real web app and the fixture app in
 // fixtures/design-app, with a scripted daemon. A real archond run of the same
 // flows belongs to the daemon tasks' own e2e.
@@ -89,6 +89,90 @@ test.describe('desktop', () => {
       await page.keyboard.press('c');
       await page.waitForTimeout(300);
       expect(harness.daemon.state.requests.slice(before).filter((r) => r.cmd === 'design_note_add')).toEqual([]);
+    } finally { await harness.stop(); }
+  });
+});
+
+test.describe('robustness and accessibility', () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test('T-E5: preview down and back, a browser that keeps crashing, a dropped socket sends a note once', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      await expect(page.getByText('Live', { exact: true }).first()).toBeVisible();
+
+      harness.daemon.pauseFrames();
+      harness.daemon.pushSession({ degraded: true });
+      await expect(page.getByRole('heading', { name: 'The app stopped responding' })).toBeVisible();
+      await expect(page.getByText('Preview down', { exact: true }).first()).toBeVisible();
+      harness.daemon.resumeFrames();
+      await expect(page.getByRole('heading', { name: 'The app stopped responding' })).toHaveCount(0);
+      await expect(page.getByText('Live', { exact: true }).first()).toBeVisible();
+
+      harness.daemon.pushSession({ browser: { status: 'crashed_too_often' } });
+      await expect(page.getByRole('heading', { name: 'The preview browser keeps stopping' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Reload' }).first()).toBeVisible();
+      harness.daemon.pushSession({ browser: { status: 'running' } });
+      await expect(page.getByRole('heading', { name: 'The preview browser keeps stopping' })).toHaveCount(0);
+
+      await page.getByRole('button', { name: 'Note on the whole page' }).click();
+      await page.getByLabel('What should change').fill('tighter spacing');
+      harness.daemon.dropSockets();
+      await page.getByLabel('What should change').press('Enter');
+      await expect(page.locator('#note-D1').getByText('Done', { exact: true })).toBeVisible({ timeout: 20_000 });
+      const adds = harness.daemon.state.requests.filter((r) => r.cmd === 'design_note_add');
+      expect(new Set(adds.map((r) => r.client_key)).size).toBe(1);
+      expect(harness.daemon.state.notes.map((n) => n.id)).toEqual(['D1']);
+    } finally { await harness.stop(); }
+  });
+
+  test('T-E6: named controls, visible focus, a keyboard-only region note, polite announcements', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      const unnamed = await page.locator('.design').evaluate((root) => [...root.querySelectorAll('button, [role="radio"], textarea, input, select, [tabindex="0"]')]
+        .filter((el) => el.getClientRects().length > 0)
+        .filter((el) => {
+          const by = el.getAttribute('aria-labelledby');
+          const name = el.getAttribute('aria-label') || (by && document.getElementById(by)?.textContent) || el.textContent || el.title || [...(el.labels ?? [])].map((l) => l.textContent).join('');
+          return !name.trim();
+        })
+        .map((el) => el.outerHTML.slice(0, 120)));
+      expect(unnamed).toEqual([]);
+
+      // Tab through the first stops: each shows a focus ring.
+      for (let i = 0; i < 8; i += 1) {
+        await page.keyboard.press('Tab');
+        const ring = await page.evaluate(() => {
+          const el = document.activeElement;
+          const s = getComputedStyle(el);
+          return { tag: el.tagName, outline: s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) > 0, shadow: s.boxShadow !== 'none' };
+        });
+        if (ring.tag === 'BODY') continue;
+        expect(ring.outline || ring.shadow, `focus ring on stop ${i} (${ring.tag})`).toBe(true);
+      }
+
+      await page.evaluate(() => {
+        window.__said = [];
+        const live = document.querySelector('.design-status [aria-live="polite"]');
+        new MutationObserver(() => window.__said.push(live.textContent)).observe(live, { childList: true, characterData: true, subtree: true });
+      });
+      await page.locator('body').click({ position: { x: 5, y: 5 } });
+      await page.keyboard.press('c');
+      await expect(page.getByRole('radio', { name: 'Comment' })).toBeChecked();
+      await page.keyboard.press('r');
+      await expect(page.getByRole('radio', { name: 'Region' })).toBeChecked();
+      await page.locator('.design-layer').focus();
+      for (const key of ['ArrowRight', 'ArrowRight', 'ArrowDown', 'Shift+ArrowRight', 'Shift+ArrowDown']) await page.keyboard.press(key);
+      await expect(page.locator('.design-region')).toBeVisible();
+      await page.keyboard.press('Enter');
+      await expect(page.getByText('What the agent will receive')).toBeVisible();
+      await page.getByLabel('What should change').focus();
+      await page.keyboard.type('more room here');
+      await page.keyboard.press('Enter');
+      await expect(page.locator('#note-D1').getByText('Done', { exact: true })).toBeVisible();
+      await expect.poll(() => page.evaluate(() => window.__said.some((t) => /D1/.test(t)))).toBe(true);
     } finally { await harness.stop(); }
   });
 });

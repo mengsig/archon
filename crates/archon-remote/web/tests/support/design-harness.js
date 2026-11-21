@@ -40,7 +40,7 @@ export async function startHarness(browser, { role = 'operator' } = {}) {
 const json = (res, body) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(body));
 
 function createDaemon({ appPage, fixtureApp, role }) {
-  const state = { notes: [], seq: 0, ended: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false };
+  const state = { notes: [], seq: 0, ended: false, paused: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false };
   const now = () => new Date().toISOString();
   const session = () => ({ id: 'ds_FIXTURE', item: ITEM, state: state.sessionState, degraded: false, note_version: state.version, viewport_preset: 'desktop', preview_url: 'http://127.0.0.1:5173/', sandbox_off: false });
   const view = (n) => ({ ...n, undone_by: state.notes.find((x) => x.reverts === n.id && x.status === 'done')?.id ?? null, read_only: false, active: true });
@@ -50,7 +50,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
   const refuse = (ws, id, code, message) => ws.send(JSON.stringify({ frame: 'reply', id, result: { Err: { code, message } } }));
 
   async function sendFrame(conn) {
-    if (state.ended || !conn.subscribed) return;
+    if (state.ended || state.paused || !conn.subscribed) return;
     const jpeg = await appPage.screenshot({ type: 'jpeg', quality: 60 });
     const { width, height } = appPage.viewportSize();
     push(conn.ws, { event: 'frame', seq: ++state.seq, jpeg_b64: jpeg.toString('base64'), w: width, h: height, at: now() });
@@ -85,11 +85,15 @@ function createDaemon({ appPage, fixtureApp, role }) {
       case 'subscribe_design': conn.subscribed = true; reply(ws, req, 'subscribed', { sub: 1 }); return void setTimeout(() => sendFrame(conn), 50);
       case 'design_frame_ack': reply(ws, req, 'design_done', null); return void setTimeout(() => sendFrame(conn), 120);
       case 'design_resolve': return reply(ws, req, 'design_resolved', { target: await target(), label: 'button "Buy now"', asset: 'da_pending', data_url: PIXEL });
+      case 'design_region': return reply(ws, req, 'design_resolved', { target: { ...(await target()), selector: null, role_name: null, box: msg.box, region: true }, label: 'Region', asset: 'da_region', data_url: PIXEL });
       case 'design_note_add': {
         if (state.sessionState === 'finishing') return refuse(ws, req, 'finishing', 'finishing');
+        // Resolve first, then look up and insert with no await between, as
+        // archond's one transaction does: a resent client_key finds its note.
+        const resolved = await target();
         const known = state.notes.find((n) => n.client_key === msg.client_key);
         if (known) return reply(ws, req, 'design_note', view(known));
-        const n = note({ number: state.notes.length + 1, client_key: msg.client_key, text: msg.text, details_text: msg.details_text, send_picture: msg.send_picture, target: await target() });
+        const n = note({ number: state.notes.length + 1, client_key: msg.client_key, text: msg.text, details_text: msg.details_text, send_picture: msg.send_picture, target: resolved });
         state.notes.unshift(n);
         reply(ws, req, 'design_note', view(n));
         setTimeout(async () => {
@@ -126,6 +130,13 @@ function createDaemon({ appPage, fixtureApp, role }) {
       ws.onMessage((raw) => handle(conn, JSON.parse(String(raw))).catch((e) => console.error('stand-in daemon', e)));
       ws.onClose(() => state.connections.delete(conn));
     },
+    // A session event as archond pushes it, at the current note version.
+    pushSession(fields) { broadcast({ event: 'session', state: state.sessionState, degraded: false, preview_path: '/', commit: null, browser: { status: 'running' }, note_version: state.version, ...fields }); },
+    // The app stopped answering: no frames until resumed.
+    pauseFrames() { state.paused = true; },
+    resumeFrames() { state.paused = false; state.connections.forEach((c) => sendFrame(c)); },
+    // The network dropped every open socket; the web app reconnects on its own.
+    dropSockets() { state.connections.forEach((c) => c.ws.close()); state.connections.clear(); },
     // A new session replaced this one: every request now answers `gone`.
     endSession() { state.ended = true; broadcast({ event: 'ended', reason: 'revised' }); },
     stop() { state.ended = true; },

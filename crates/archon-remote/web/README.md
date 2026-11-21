@@ -123,7 +123,7 @@ Modules: `state.js` (reducer, `stagePhase`), `stream.js`, `input.js`,
 `finish.js`, `sketch.js`, `outbox.js`, `chrome.js`, `screen.js`; the wire
 commands and the stream hub are in `src/core/design.js`.
 
-Tests: `tests/unit/design-*.test.js`, and `tests/design.spec.js` (T-E1..T-E4),
+Tests: `tests/unit/design-*.test.js`, and `tests/design.spec.js` (T-E1..T-E6),
 which runs against a stand-in host and a scripted WebSocket daemon
 (`tests/support/design-harness.js`) with the fixture app in
 `tests/fixtures/design-app/`. Playwright needs Node 20+.

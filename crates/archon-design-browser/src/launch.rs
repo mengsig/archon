@@ -132,6 +132,7 @@ pub fn find_browser(
     path_env: &str,
     home: &Path,
 ) -> Result<PathBuf, BrowserError> {
+    let configured = configured.filter(|c| !c.as_os_str().to_string_lossy().trim().is_empty());
     if let Some(c) = configured {
         return if is_executable(c) {
             Ok(c.to_path_buf())
@@ -267,6 +268,17 @@ pub(crate) fn classify_stderr(stderr: &str) -> Option<BrowserError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn blank_configured_browser_means_unset() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = find_browser(Some(Path::new("")), "", dir.path());
+        let msg = match r {
+            Err(BrowserError::NotFound { hint }) => hint,
+            other => format!("{other:?}"),
+        };
+        assert!(!msg.contains("configured browser"), "{msg}");
+    }
+
     use super::*;
 
     fn spec(sandbox: bool, hosts: &[&str]) -> LaunchSpec {

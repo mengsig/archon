@@ -223,6 +223,8 @@ pub struct FakeFactory {
     pub fail: Mutex<Option<adb::BrowserError>>,
     /// No Chromium on the host.
     pub missing: Mutex<bool>,
+    /// Every launch takes this long.
+    pub delay: Mutex<std::time::Duration>,
 }
 
 impl FakeFactory {
@@ -250,6 +252,10 @@ impl BrowserFactory for FakeFactory {
         &self,
         spec: adb::LaunchSpec,
     ) -> Result<Arc<dyn PreviewBrowser>, adb::BrowserError> {
+        let delay = *self.delay.lock().unwrap();
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         if let Some(error) = self.fail.lock().unwrap().take() {
             return Err(error);
         }

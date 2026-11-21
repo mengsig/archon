@@ -16,6 +16,7 @@ mod crash_marker;
 mod deadline;
 mod delivery_safety;
 mod dependencies;
+mod design_assets;
 mod design_gate;
 mod design_session;
 mod design_undo;

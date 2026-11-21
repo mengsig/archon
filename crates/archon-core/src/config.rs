@@ -93,13 +93,22 @@ pub enum BrowserSandbox {
     Off,
 }
 
+/// An empty or blank path means "not set".
+fn empty_path_is_unset<'de, D: serde::Deserializer<'de>>(
+    de: D,
+) -> Result<Option<PathBuf>, D::Error> {
+    let value = Option::<PathBuf>::deserialize(de)?;
+    Ok(value.filter(|p| !p.as_os_str().to_string_lossy().trim().is_empty()))
+}
+
 /// `[design]`: live design sessions (design §8.7).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DesignConfig {
     /// Whether design stages may start a preview.
     pub enabled: bool,
-    /// The browser executable; unset detects one.
+    /// The browser executable; unset (or empty) detects one.
+    #[serde(deserialize_with = "empty_path_is_unset")]
     pub browser: Option<PathBuf>,
     /// Whether the browser's sandbox is required.
     pub browser_sandbox: BrowserSandbox,
@@ -1470,6 +1479,10 @@ mod tests {
         )
         .unwrap();
         assert!(set.design.enabled);
+        for blank in ["''", "'  '"] {
+            let c: Config = toml::from_str(&format!("[design]\nbrowser = {blank}")).unwrap();
+            assert_eq!(c.design.browser, None);
+        }
         assert_eq!(set.design.browser, Some(PathBuf::from("/usr/bin/chromium")));
         assert_eq!(set.design.browser_sandbox, BrowserSandbox::Off);
         assert_eq!(set.design.max_sessions, 4);

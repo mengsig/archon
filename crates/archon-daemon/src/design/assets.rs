@@ -274,8 +274,19 @@ impl DesignService {
 
     /// Delete pending assets no note uses, after an hour.
     pub(crate) async fn sweep_assets(&self, ctx: &DaemonContext) -> Result<usize, ArchonError> {
+        self.sweep_assets_before(ctx, archon_core::now() - UNUSED_AFTER)
+            .await
+    }
+
+    /// Delete the pending assets no note uses that were made before `cutoff`;
+    /// how many. The delivery sweep's pass, with the cutoff given.
+    pub async fn sweep_assets_before(
+        &self,
+        ctx: &DaemonContext,
+        cutoff: chrono::DateTime<chrono::Utc>,
+    ) -> Result<usize, ArchonError> {
         let mut store = ctx.store.lock().await;
-        let old = store.design_unused_assets(archon_core::now() - UNUSED_AFTER)?;
+        let old = store.design_unused_assets(cutoff)?;
         let count = old.len();
         for asset in old {
             store.design_asset_delete(&asset.item, &asset.id)?;

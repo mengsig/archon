@@ -260,32 +260,48 @@ the feature and shows `proposal = live` as plain text.
 
 Requests. `design_get` is a read, so observers may send it (they get only
 `{state, note_count}`); everything else is an operator change and is logged
-like other device changes, except `design_input`, `design_resolve` and
-`design_frame_ack`, which are counted per session in the end-of-session log.
+like other device changes at the info level, except the high-rate
+`design_frame_ack`, `design_input`, `design_resolve` and `design_region`,
+which are logged at debug and counted per session in the end-of-session log.
 
 | Request | Effect |
 | --- | --- |
-| `design_get {item}` | Session and notes. |
+| `design_get {item}` | Replies `design_state {item, session, notes, …}`; an observer gets `design_summary {state, note_count}` only. |
 | `subscribe_design {session}` | Replies `subscribed {id}` and streams `design` frames carrying `sub: id`; counts toward the 4 subscriptions. |
 | `design_frame_ack {sub, seq}` | Flow control; the next frame is sent only after it. |
-| `design_input {session, events}` | Pointer, wheel, key and text events in CSS pixels; at most 64 per request, 60 requests a second. |
+| `design_input {session, events}` | `mouse`, `wheel`, `key`, `text` and `touch` events in CSS pixels; at most 64 per request, 60 requests a second. |
 | `design_resolve {session, x, y, depth, select}` / `design_region {session, box}` | The element under a point, or a region; with `select` also captures the crop as a pending picture. |
 | `design_viewport {session, preset}` / `design_reload {session}` | Viewport preset, reload. |
+| `design_upload {session, media_type, data, name?, sketch?, base?, blank}` | Stores a picture (base64 `data`) as a pending asset. |
+| `design_tell_agent {session}` / `design_dialog_answer {session, accept, text?}` | Tell the agent again that the preview is down; answer the page's JavaScript dialog. |
 | `design_note_add {session, client_key, text, asset?, send_picture, details_text?}` | Adds a note; a repeated `client_key` returns the same note. Text up to 4,000 characters. |
 | `design_note_edit`, `design_note_cancel {item, id}` | Queued notes of the current session. |
 | `design_note_reply {item, id, text}` | Answers a note that needs a reply; up to 2,000 characters. |
+| `design_note_drop {item, id}` / `design_note_resend {item, id}` | Drop a note that failed, or send it again. |
 | `design_note_undo {item, id}` | Queues Archon's own revert of a done note. |
-| `design_finish_capture {session, cancel_queued}` / `design_final_capture {session, capture, note}` | Freeze the session and take final pictures; capture one note's. |
-| `design_finish_confirm {session, capture, include, superseded}` | Confirm the choices; the agent then wraps up. |
+| `design_finish_capture {session, cancel_queued, recapture}` / `design_final_capture {session, capture, note}` | Freeze the session and take final pictures; capture one note's. |
+| `design_finish_confirm {session, capture, include, superseded, confirm_no_change}` | Confirm the choices; the agent then wraps up. |
 | `design_finish_cancel {session}` | Back to editing. |
 | `design_asset {item, id}` | One stored picture as a `data:` URL. |
 
 Approval uses the existing `answer` request.
 
-Events on a `design` subscription: `frame {seq, jpeg_b64, w, h, at}`,
-`selection {box, label}`, `session {state, preview_url_path, commit}`,
-`note {…}`, `blocked_hosts`, and `agent_progress {line}`. Every frame or reply
-is at most 768 KiB as JSON, which stays under the 1 MiB message limit.
+Events on a `design` subscription, each a frame with `event` naming its kind:
+`frame {seq, jpeg_b64, w, h, at}`, `selection {box, label}`,
+`session {state, degraded, preview_path, commit, browser, note_version}`,
+`note {…}` (a note view), `blocked_hosts {hosts}`, `agent_progress {line}`,
+`dialog {kind, message, default_prompt}`, `toast {message}` and
+`ended {reason}`. Every frame or reply is at most 768 KiB as JSON, which stays
+under the 1 MiB message limit.
+
+Session `state` is one of `starting`, `live`, `finishing`, `confirmed` or
+`ended`. `degraded: true` means the preview's app does not answer (the screen
+shows "Preview down"); Archon checks every few seconds and clears it when the
+page loads or answers again. `browser` is an object tagged by `status`: `idle`,
+`starting`, `running`, `queued_for_slot`, `missing {hint}`,
+`sandbox_unavailable {hint}`, `crashed_too_often` or `unsandboxed`. The browser
+is closed when the operator confirms Finish, while the session stays
+`confirmed` until the gate is answered.
 
 Error codes specific to these requests:
 

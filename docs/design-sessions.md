@@ -43,7 +43,7 @@ max_sessions = 2             # live headless browsers on this host
 The [configuration page](configuration.md) lists each key under `[design]`.
 
 **A browser is required.** Archon does not bundle one. It uses `[design]
-browser`, else the first of `google-chrome`, `chromium` or `chromium-browser`
+browser` (an empty value means auto-detect, the same as leaving it out), else the first of `google-chrome`, `chromium` or `chromium-browser`
 on `PATH`, else the newest Playwright `chrome-headless-shell` it finds.
 `archon doctor` has one line for it:
 
@@ -242,7 +242,7 @@ once only.
 | --- | --- |
 | "Archon needs Chrome or Chromium on this machine to show the preview" | No browser found. Install one as the `archon doctor` hint says, or set `[design] browser`. **Continue without preview** still sends notes (pictures come from uploads). |
 | "Chromium's sandbox is unavailable on this host" | Fix as `archon doctor` says, or set `browser_sandbox = "off"` knowingly. |
-| "The app stopped responding. The agent has been told and is restarting it." | The dev server died. Wait, or use **Reload** and **Tell agent again**. |
+| "Preview down" / "The app stopped responding. The agent has been told and is restarting it." | The dev server died or hangs: it did not answer an HTTP request within about two seconds (checked every few seconds). Wait, or use **Reload** and **Tell agent again**. The label clears when the app answers again. |
 | "Reconnecting…" | The connection dropped; notes are kept and sent on reconnect. |
 | "Queued for a preview slot" | `max_sessions` browsers are running. Your notes still reach the agent. |
 | "The code history changed in a way Archon can't track; its edits may still show; add a note if something should change" (note **Failed: history changed**) | The agent made two commits, a merge, a reset below the base, or reported the wrong commit. Archon leaves the worktree as it is and moves on. |

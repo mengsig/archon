@@ -260,6 +260,15 @@ pub(crate) struct Runtime {
     pub gate: tokio::sync::Mutex<()>,
 }
 
+/// A reserved slot; releasing it on drop covers every error path.
+struct SlotGuard(Arc<Runtime>);
+
+impl Drop for SlotGuard {
+    fn drop(&mut self) {
+        self.0.st().launching = false;
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Counters {
     pub inputs: u64,
@@ -284,6 +293,8 @@ pub(crate) struct RtState {
     pub input_window: (Instant, u32),
     pub resolve_window: (Instant, u32),
     pub tasks: Vec<tokio::task::JoinHandle<()>>,
+    /// A launch holds this session's slot before its browser exists.
+    pub launching: bool,
 }
 
 impl Default for RtState {
@@ -303,6 +314,7 @@ impl Default for RtState {
             input_window: (now, 0),
             resolve_window: (now, 0),
             tasks: Vec::new(),
+            launching: false,
         }
     }
 }
@@ -372,7 +384,38 @@ impl DesignService {
 
     fn live_browsers(&self) -> usize {
         let all = self.rt.lock().unwrap_or_else(|e| e.into_inner());
-        all.values().filter(|rt| rt.st().browser.is_some()).count()
+        all.values()
+            .filter(|rt| {
+                let st = rt.st();
+                st.browser.is_some() || st.launching
+            })
+            .count()
+    }
+
+    /// Take a slot for `rt`'s launch, atomically with the count: the map lock
+    /// is held from the count to the mark, so two launches never both see a
+    /// free slot. `None` when all are taken.
+    fn reserve_slot(&self, rt: &Arc<Runtime>) -> Option<SlotGuard> {
+        let all = self.rt.lock().unwrap_or_else(|e| e.into_inner());
+        let taken = all
+            .values()
+            .filter(|other| {
+                let st = other.st();
+                st.browser.is_some() || st.launching
+            })
+            .count();
+        if taken >= self.cfg.max_sessions as usize {
+            return None;
+        }
+        rt.st().launching = true;
+        Some(SlotGuard(rt.clone()))
+    }
+
+    /// A slot was freed: start a queued session's browser, off this path.
+    pub(crate) fn spawn_start_queued(&self) {
+        if let Some(arc) = self.arc() {
+            tokio::spawn(async move { arc.design.start_queued(&arc).await });
+        }
     }
 
     pub(crate) fn profile_dir(&self, session: &DesignSessionId) -> PathBuf {
@@ -404,23 +447,34 @@ impl DesignService {
         };
         // A request that raced end_session must not start a browser nobody
         // would ever close.
-        if row.state == archon_core::design::SessionState::Ended {
+        // A Confirmed session's browser was closed at settle; it stays closed.
+        if matches!(
+            row.state,
+            archon_core::design::SessionState::Ended | archon_core::design::SessionState::Confirmed
+        ) {
             return Ok(None);
         }
         let Some(url) = rt.st().last_url.clone().or(row.preview_url.clone()) else {
             return Ok(None);
         };
-        if self.live_browsers() >= self.cfg.max_sessions as usize {
-            self.set_status(&rt, session, BrowserStatus::QueuedForSlot);
-            return Ok(None);
-        }
         if rt.st().status == BrowserStatus::CrashedTooOften {
             return Ok(None);
         }
+        let Some(slot) = self.reserve_slot(&rt) else {
+            self.set_status(&rt, session, BrowserStatus::QueuedForSlot);
+            return Ok(None);
+        };
         self.set_status(&rt, session, BrowserStatus::Starting);
         let wt = self.worktree_of(ctx, &row).await?;
         let allow_hosts = super::repo_hosts::allow_hosts(ctx, &wt, &self.data_dir).await;
-        match self.launch_into(ctx, &rt, &row, &url, allow_hosts).await {
+        let launched = self.launch_into(ctx, &rt, &row, &url, allow_hosts).await;
+        // The browser is stored by now, or the launch failed: either way the
+        // reservation ends, and a failed launch hands its slot on.
+        drop(slot);
+        if launched.is_err() {
+            self.spawn_start_queued();
+        }
+        match launched {
             Ok(browser) => Ok(Some(browser)),
             Err(adb::BrowserError::NotFound { hint }) => {
                 self.set_status(&rt, session, BrowserStatus::Missing { hint });
@@ -694,6 +748,7 @@ impl DesignService {
                     old.close().await;
                 }
                 self.emit_session(ctx, session).await;
+                self.spawn_start_queued();
                 return Ok(());
             }
             old
@@ -733,7 +788,7 @@ async fn monitor(
 ) {
     let service = ctx.design.clone();
     let rt = service.runtime(&session);
-    let mut tick = tokio::time::interval(Duration::from_secs(5));
+    let mut tick = tokio::time::interval(Duration::from_secs(3));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
@@ -839,12 +894,27 @@ impl DesignService {
     }
 }
 
-/// Whether something accepts connections at the preview's loopback address.
+/// Whether the preview's dev server answers HTTP: a status line (any status)
+/// within two seconds. A server that is stopped or hung still accepts TCP
+/// through the kernel backlog, so connecting alone proves nothing.
 pub(crate) async fn probe(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("http://") else {
         return false;
     };
-    let authority = rest.split('/').next().unwrap_or_default();
+    let (authority, path) = match rest.find(['/', '?', '#']) {
+        Some(at) => (&rest[..at], &rest[at..]),
+        None => (rest, "/"),
+    };
+    let path = match path.split('#').next().unwrap_or("/") {
+        "" => "/",
+        p if p.starts_with('/') => p,
+        p => return probe_with(authority, &format!("/{p}")).await,
+    };
+    probe_with(authority, path).await
+}
+
+async fn probe_with(authority: &str, path: &str) -> bool {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     // `host:port` or `[v6]:port` as given; a bare host or `[v6]` gets port 80.
     let has_port = if authority.starts_with('[') {
         authority.contains("]:")
@@ -856,12 +926,77 @@ pub(crate) async fn probe(url: &str) -> bool {
     } else {
         format!("{authority}:80")
     };
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\nAccept: */*\r\n\r\n"
+    );
+    let attempt = async {
+        let mut stream = tokio::net::TcpStream::connect(&target).await.ok()?;
+        stream.write_all(request.as_bytes()).await.ok()?;
+        let mut head = Vec::with_capacity(16);
+        let mut buf = [0u8; 16];
+        while head.len() < 12 {
+            let n = stream.read(&mut buf).await.ok()?;
+            if n == 0 {
+                break;
+            }
+            head.extend_from_slice(&buf[..n]);
+        }
+        Some(head.starts_with(b"HTTP/") && head.len() >= 12)
+    };
     matches!(
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            tokio::net::TcpStream::connect(&target)
-        )
-        .await,
-        Ok(Ok(_))
+        tokio::time::timeout(Duration::from_secs(2), attempt).await,
+        Ok(Some(true))
     )
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::probe;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn serve(status: &'static str) -> String {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut s, _)) = l.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    let mut b = [0u8; 512];
+                    let n = s.read(&mut b).await.unwrap_or(0);
+                    assert!(String::from_utf8_lossy(&b[..n]).starts_with("GET /x?q=1 HTTP/1.1"));
+                    let _ = s
+                        .write_all(
+                            format!("HTTP/1.1 {status}\r\ncontent-length: 0\r\n\r\n").as_bytes(),
+                        )
+                        .await;
+                });
+            }
+        });
+        format!("http://{addr}/x?q=1")
+    }
+
+    #[tokio::test]
+    async fn any_status_is_reachable() {
+        assert!(probe(&serve("200 OK").await).await);
+        assert!(probe(&serve("404 Not Found").await).await);
+    }
+
+    #[tokio::test]
+    async fn silent_listener_is_unreachable() {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", l.local_addr().unwrap());
+        let started = std::time::Instant::now();
+        assert!(!probe(&url).await);
+        assert!(started.elapsed() < std::time::Duration::from_secs(4));
+    }
+
+    #[tokio::test]
+    async fn closed_port_is_unreachable() {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", l.local_addr().unwrap());
+        drop(l);
+        assert!(!probe(&url).await);
+    }
 }

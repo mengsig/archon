@@ -646,11 +646,17 @@ fn check_design(config: &Config) -> Check {
         .map(PathBuf::from)
         .unwrap_or_default();
     let path = std::env::var("PATH").unwrap_or_default();
-    let line = archon_design_browser::doctor_line(config.design.browser.as_deref(), &path, &home);
-    let missing = ["not found", "install", "missing", "unavailable"]
-        .iter()
-        .any(|word| line.to_lowercase().contains(word));
-    let level = if missing { Level::Warn } else { Level::Ok };
+    design_check(config.design.browser.as_deref(), &path, &home)
+}
+
+/// The verdict is the lookup's outcome, never a word in the printed line: a
+/// browser installed under a path that says "install" is still found.
+fn design_check(configured: Option<&Path>, path: &str, home: &Path) -> Check {
+    let line = archon_design_browser::doctor_line(configured, path, home);
+    let level = match archon_design_browser::find_browser(configured, path, home) {
+        Ok(_) => Level::Ok,
+        Err(_) => Level::Warn,
+    };
     check("design preview", level, line)
 }
 
@@ -878,6 +884,21 @@ fn release_verdict(current: &Version, latest: anyhow::Result<Version>) -> Check 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_browser_under_an_install_path_is_found_not_missing() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("installs").join("unavailable-missing");
+        std::fs::create_dir_all(&bin).unwrap();
+        let chrome = bin.join("chrome");
+        std::fs::write(&chrome, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&chrome, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let found = design_check(Some(&chrome), "", dir.path());
+        assert!(matches!(found.level, Level::Ok), "{found:?}");
+        let gone = design_check(Some(&bin.join("nope")), "", dir.path());
+        assert!(matches!(gone.level, Level::Warn), "{gone:?}");
+    }
 
     #[test]
     fn a_user_pipeline_that_takes_a_reserved_stage_id_is_reported_with_its_rename() {

@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use archon_core::repo::RepoTiers;
-use archon_core::repo::tiers::valid_allow_host;
+use archon_core::repo::valid_allow_host;
 
 use super::WorktreeRef;
 use crate::context::DaemonContext;

@@ -6,10 +6,10 @@ use archon_core::design::{
     MAX_NOTES_PER_SESSION, MAX_REPLY_CHARS, NoteKind, NoteStatus, ReplyAuthor, ThreadEntry,
     Viewport, clean_text, is_in_flight, undone_by,
 };
-use archon_core::error::ArchonError;
+use archon_core::error::{ArchonError, DesignRefusal};
 use archon_core::id::QueueItemId;
-use archon_core::protocol::{DesignRefusal, Reply};
-use archon_queue::store::design::{NewDesignNote, NoteChange};
+use archon_core::protocol::Reply;
+use archon_queue::store::{NewDesignNote, NoteChange};
 
 use super::delivery::note_message;
 use super::{DesignService, note_view, refuse, status_change};

@@ -27,10 +27,10 @@ use archon_core::design::{
     DesignAsset, DesignNote, DesignSession, DesignSessionId, FinishChoices, NoteKind, NoteStatus,
     SessionState, auto_supersession, undone_by,
 };
-use archon_core::error::ArchonError;
+use archon_core::error::{ArchonError, DesignRefusal};
 use archon_core::id::PipelineRunId as RunId;
 use archon_core::id::QueueItemId;
-use archon_core::protocol::{DesignEvent, DesignNoteView, DesignRefusal, WelcomeDevice};
+use archon_core::protocol::{DesignEvent, DesignNoteView, WelcomeDevice};
 use archon_queue::Store;
 
 pub use self::browser::{BrowserFactory, FrameFeed, PreviewBrowser, RealFactory};
@@ -209,16 +209,15 @@ impl DesignService {
                 .insert(found.id.clone(), worktree);
             return Ok(found.id);
         }
-        let session =
-            store.design_session_create(archon_queue::store::design::NewDesignSession {
-                item: item.clone(),
-                run: run.clone(),
-                stage_id: stage_id.to_owned(),
-                attempt,
-                viewport_preset: archon_core::design::ViewportPreset::Desktop,
-                sandbox_off: self.cfg.browser_sandbox == archon_core::config::BrowserSandbox::Off,
-                agent: Some(agent.clone()),
-            })?;
+        let session = store.design_session_create(archon_queue::store::NewDesignSession {
+            item: item.clone(),
+            run: run.clone(),
+            stage_id: stage_id.to_owned(),
+            attempt,
+            viewport_preset: archon_core::design::ViewportPreset::Desktop,
+            sandbox_off: self.cfg.browser_sandbox == archon_core::config::BrowserSandbox::Off,
+            agent: Some(agent.clone()),
+        })?;
         drop(store);
         self.wts
             .lock()
@@ -291,7 +290,7 @@ impl DesignService {
                 }
             }
             store.design_session_end(&session.id, reason)?;
-            store.kv_delete(&archon_queue::store::design::keys::design_owed(&session.id))?;
+            store.kv_delete(&archon_queue::store::keys::design_owed(&session.id))?;
         }
         if let Some(rt) = self.existing_runtime(&session.id) {
             let _ = rt.events.send(DesignEvent::Ended {
@@ -609,7 +608,7 @@ impl DesignService {
         }
         {
             let mut store = ctx.store.lock().await;
-            let patch = archon_queue::store::design::SessionPatch {
+            let patch = archon_queue::store::SessionPatch {
                 degraded: Some(degraded),
                 ..Default::default()
             };
@@ -636,8 +635,8 @@ impl DesignService {
 pub(crate) fn status_change(
     to: NoteStatus,
     fail_reason: Option<archon_core::design::FailReason>,
-) -> archon_queue::store::design::NoteChange {
-    archon_queue::store::design::NoteChange::Status {
+) -> archon_queue::store::NoteChange {
+    archon_queue::store::NoteChange::Status {
         to,
         fail_reason,
         commit: None,

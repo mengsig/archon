@@ -14,7 +14,7 @@ use archon_core::intent::{ApprovedIntent, IntentBinding};
 use archon_core::protocol::{ItemPatch, Reply, Request};
 use archon_core::queue::QueueItem;
 use archon_core::run::{GateSubject, OperatorGate, PipelineRun, StageOutcome};
-use archon_queue::store::design::{FinishRecord, NewDesignNote, NewDesignSession, NoteChange};
+use archon_queue::store::{FinishRecord, NewDesignNote, NewDesignSession, NoteChange};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -41,8 +41,12 @@ async fn enqueue(
     autonomy: AutonomyPatch,
     intent: Option<IntentBinding>,
 ) -> Result<QueueItem, ArchonError> {
-    let mut request =
-        common::enqueue_request(common::REPO_NAME, common::PIPELINE, "restyle", common::plan());
+    let mut request = common::enqueue_request(
+        common::REPO_NAME,
+        common::PIPELINE,
+        "restyle",
+        common::plan(),
+    );
     request.autonomy = autonomy;
     request.intent = intent;
     match h.cli(Request::Enqueue(request)).await? {
@@ -55,7 +59,10 @@ async fn enqueue(
 async fn designing(h: &Harness, item: &QueueItem) -> (PipelineRun, DesignSession) {
     h.dispatch().await;
     let running = h.running().await;
-    assert_eq!(running[0].stage_id, "design", "the design stage comes first");
+    assert_eq!(
+        running[0].stage_id, "design",
+        "the design stage comes first"
+    );
     let run = h.run(&item.id).await;
     let mut store = h.ctx.store.lock().await;
     let session = match store.design_current_session(&item.id).unwrap() {
@@ -78,7 +85,10 @@ async fn designing(h: &Harness, item: &QueueItem) -> (PipelineRun, DesignSession
 fn commit(run: &PipelineRun, file: &str, body: &str) -> String {
     std::fs::write(run.workspace.join(file), body).unwrap();
     common::git(&run.workspace, &["add", "-A"]);
-    common::git(&run.workspace, &["commit", "-m", &format!("design: {file}")]);
+    common::git(
+        &run.workspace,
+        &["commit", "-m", &format!("design: {file}")],
+    );
     common::git(&run.workspace, &["rev-parse", "HEAD"])
 }
 
@@ -154,7 +164,11 @@ async fn done_note(
     };
     let path = h.ctx.design.asset_path(&asset);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, picture.iter().chain(&bytes).copied().collect::<Vec<_>>()).unwrap();
+    std::fs::write(
+        &path,
+        picture.iter().chain(&bytes).copied().collect::<Vec<_>>(),
+    )
+    .unwrap();
     asset.path = path.display().to_string();
     let asset = store.design_asset_put(asset).unwrap();
     store
@@ -255,7 +269,10 @@ async fn approve(h: &Harness, gate: &OperatorGate) {
 async fn intent_of(h: &Harness, item: &QueueItemId) -> ApprovedIntent {
     let store = h.ctx.store.lock().await;
     let binding = store.item(item).unwrap().intent.expect("an intent");
-    store.approved_intent(&binding).unwrap().expect("its record")
+    store
+        .approved_intent(&binding)
+        .unwrap()
+        .expect("its record")
 }
 
 #[tokio::test]
@@ -282,11 +299,19 @@ async fn live_cannot_be_chosen_or_dropped_on_an_existing_item() {
         },
     };
     let to = h.cli(update(&plain, "proposal=live")).await.unwrap_err();
-    assert!(to.to_string().contains("choose live when creating the item"), "{to}");
+    assert!(
+        to.to_string()
+            .contains("choose live when creating the item"),
+        "{to}"
+    );
     let item = enqueue(&h, live(), None).await.unwrap();
     assert_eq!(item.autonomy.proposal, ProposalMode::Live);
     let from = h.cli(update(&item, "proposal=off")).await.unwrap_err();
-    assert!(from.to_string().contains("choose live when creating the item"), "{from}");
+    assert!(
+        from.to_string()
+            .contains("choose live when creating the item"),
+        "{from}"
+    );
 }
 
 /// T-I9: a fresh live item through the real enqueue and answer handlers.
@@ -323,8 +348,14 @@ async fn a_live_item_requires_the_intent_path_without_the_model_plan_entry() {
     let item = enqueue(&h, live(), None).await.unwrap();
     {
         let mut store = h.ctx.store.lock().await;
-        let mut stored = store.item(&item.id).unwrap();
-        stored.model_plan.0.remove("intent-acceptance");
+        // The plan has no mutable accessor: drop the entry through its wire form.
+        let mut wire = serde_json::to_value(store.item(&item.id).unwrap()).unwrap();
+        wire["model_plan"]
+            .as_object_mut()
+            .expect("the item has a model plan")
+            .remove("intent-acceptance");
+        let stored: QueueItem = serde_json::from_value(wire).unwrap();
+        assert!(!stored.model_plan.0.contains_key("intent-acceptance"));
         store.update_item(&stored).unwrap();
     }
     let (run, session) = designing(&h, &item).await;
@@ -401,7 +432,12 @@ async fn a_live_item_with_an_earlier_intent_appends_to_it() {
         "requirements": [{"id": "D1", "text": "Match the mockup", "kind": "visual", "owner": "operator", "images": ["D1-final"]}]
     }))
     .unwrap();
-    h.ctx.store.lock().await.save_approved_intent(&earlier).unwrap();
+    h.ctx
+        .store
+        .lock()
+        .await
+        .save_approved_intent(&earlier)
+        .unwrap();
     let binding = IntentBinding {
         id: earlier.id.clone(),
         version: 1,
@@ -410,7 +446,10 @@ async fn a_live_item_with_an_earlier_intent_appends_to_it() {
     let item = enqueue(&h, live(), Some(binding)).await.unwrap();
     let (run, session) = designing(&h, &item).await;
     let (id, head) = done_note(&h, &session, &run, "make it red", b"red").await;
-    assert_eq!(id, "D2", "the first note of the item continues the numbering");
+    assert_eq!(
+        id, "D2",
+        "the first note of the item continues the numbering"
+    );
     confirm(&h, &session, &head, &["D2"], &[]).await;
     h.settle_running(forged).await;
     h.dispatch().await;

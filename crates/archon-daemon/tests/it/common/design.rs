@@ -9,7 +9,7 @@ use std::time::Duration;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::config::Config;
 use archon_core::design::DesignSessionId;
-use archon_core::ids::QueueItemId;
+use archon_core::id::QueueItemId;
 use archon_core::protocol::{ClientKind, Reply, Request};
 use archon_daemon::design::{BrowserFactory, FrameFeed, PreviewBrowser, StageEnd, WorktreeRef};
 use archon_design_browser as adb;
@@ -277,7 +277,7 @@ pub struct Fixture {
     pub session: DesignSessionId,
     pub agent: AetherAgentId,
     pub worktree: WorktreeRef,
-    pub run: archon_core::ids::PipelineRunId,
+    pub run: archon_core::id::PipelineRunId,
     pub stage_id: String,
     pub attempt: u32,
 }

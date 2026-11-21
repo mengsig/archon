@@ -2007,6 +2007,16 @@ impl AgentBackend for FakeBackend {
         to: &AetherAgentId,
         content: &str,
         idempotency_key: &str,
+    ) -> Result<(), ArchonError> {
+        self.send_message_with_attachments(to, content, idempotency_key, &[])
+            .await
+    }
+
+    async fn send_message_with_attachments(
+        &self,
+        to: &AetherAgentId,
+        content: &str,
+        idempotency_key: &str,
         attachments: &[archon_core::attachment::ImageAttachment],
     ) -> Result<(), ArchonError> {
         // A real call leaves the task, so deliveries to one stage interleave.

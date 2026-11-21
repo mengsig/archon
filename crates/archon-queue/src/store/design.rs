@@ -266,7 +266,9 @@ fn note_row(row: &Row<'_>) -> rusqlite::Result<Result<DesignNote, ArchonError>> 
     let created: String = row.get(27)?;
     let updated: String = row.get(28)?;
     let build = || -> Result<DesignNote, ArchonError> {
-        let ctx = |r: rusqlite::Result<_>| r.ctx("read design note");
+        fn ctx<T>(r: rusqlite::Result<T>) -> Result<T, ArchonError> {
+            r.ctx("read design note")
+        }
         Ok(DesignNote {
             item: QueueItemId::parse(&item)?,
             id: ctx(row.get(1))?,
@@ -1098,7 +1100,9 @@ fn read_assets(
             let target: Option<String> = row.get(9)?;
             let created: String = row.get(12)?;
             Ok((|| -> Result<DesignAsset, ArchonError> {
-                let ctx = |r: rusqlite::Result<_>| r.ctx("read design asset");
+                fn ctx<T>(r: rusqlite::Result<T>) -> Result<T, ArchonError> {
+                    r.ctx("read design asset")
+                }
                 Ok(DesignAsset {
                     id: DesignAssetId(ctx(row.get(0))?),
                     item: QueueItemId::parse(&item)?,

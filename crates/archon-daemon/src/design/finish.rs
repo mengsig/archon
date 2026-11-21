@@ -8,10 +8,10 @@ use archon_core::design::{
     AssetSource, DesignNote, DesignSession, DesignSessionId, FinishChoices, NoteKind, NoteStatus,
     SessionState, Target, ViewportPreset, is_in_flight, undone_by,
 };
-use archon_core::error::ArchonError;
-use archon_core::protocol::{DesignFinishView, DesignRefusal, DesignStateView, FinishCard, Reply};
+use archon_core::error::{ArchonError, DesignRefusal};
+use archon_core::protocol::{DesignFinishView, DesignStateView, FinishCard, Reply};
 use archon_design_browser as adb;
-use archon_queue::store::design::{FinishRecord, NoteChange};
+use archon_queue::store::{FinishRecord, NoteChange};
 
 use super::assets::{NewAsset, caption_of};
 use super::browser::to_adb_viewport;
@@ -39,7 +39,7 @@ fn stale() -> ArchonError {
 
 /// A capture id carries the note version it was taken at.
 fn capture_id(note_version: u64) -> String {
-    format!("{}.{note_version}", ulid::Ulid::new())
+    format!("{}.{note_version}", ulid::Ulid::generate())
 }
 
 fn capture_version(capture: &str) -> Option<u64> {
@@ -633,7 +633,7 @@ impl DesignService {
         let row = self.current(ctx, session_id).await?;
         ctx.store.lock().await.design_session_patch(
             &row.id,
-            archon_queue::store::design::SessionPatch {
+            archon_queue::store::SessionPatch {
                 viewport_preset: Some(preset),
                 ..Default::default()
             },

@@ -5,7 +5,7 @@ use archon_core::design::{
     DesignNote, DesignSession, FailReason, NoteStatus, ReplyAuthor, ThreadEntry,
 };
 use archon_core::error::ArchonError;
-use archon_queue::store::design::NoteChange;
+use archon_queue::store::NoteChange;
 
 use super::{DesignService, WorktreeRef};
 use crate::context::DaemonContext;

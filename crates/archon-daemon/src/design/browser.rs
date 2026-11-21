@@ -85,6 +85,7 @@ pub trait BrowserFactory: Send + Sync {
 }
 
 /// The real driver.
+#[derive(Debug)]
 pub struct RealFactory;
 
 #[async_trait::async_trait]
@@ -283,7 +284,6 @@ pub(crate) struct RtState {
     pub input_window: (Instant, u32),
     pub resolve_window: (Instant, u32),
     pub tasks: Vec<tokio::task::JoinHandle<()>>,
-    pub incident: Option<u64>,
 }
 
 impl Default for RtState {
@@ -303,7 +303,6 @@ impl Default for RtState {
             input_window: (now, 0),
             resolve_window: (now, 0),
             tasks: Vec::new(),
-            incident: None,
         }
     }
 }
@@ -480,7 +479,7 @@ impl DesignService {
         }
         {
             let mut store = ctx.store.lock().await;
-            let patch = archon_queue::store::design::SessionPatch {
+            let patch = archon_queue::store::SessionPatch {
                 browser: Some(pid.zip(started)),
                 ..Default::default()
             };
@@ -630,20 +629,24 @@ impl DesignService {
         }
         let old = {
             let _gate = rt.gate.lock().await;
-            let mut st = rt.st();
-            if st.status == BrowserStatus::CrashedTooOften {
-                let old = st.browser.take();
+            let (gave_up, old) = {
+                let mut st = rt.st();
                 st.screencast = false;
-                drop(st);
+                if st.status == BrowserStatus::CrashedTooOften {
+                    (true, st.browser.take())
+                } else {
+                    st.rss_over_since = None;
+                    (false, st.browser.take())
+                }
+            };
+            if gave_up {
                 if let Some(old) = old {
                     old.close().await;
                 }
                 self.emit_session(ctx, session).await;
                 return Ok(());
             }
-            st.screencast = false;
-            st.rss_over_since = None;
-            st.browser.take()
+            old
         };
         if let Some(old) = old {
             old.close().await;

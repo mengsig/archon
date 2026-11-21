@@ -7,10 +7,10 @@ use archon_core::design::{
     AssetSource, DesignNote, DesignSession, FailReason, NoteKind, NoteStatus, ReplyAuthor,
     SessionState, ThreadEntry, is_in_flight, validate_preview_url,
 };
-use archon_core::error::ArchonError;
-use archon_core::protocol::{AgentNoteStatus, DesignRefusal, Reply};
+use archon_core::error::{ArchonError, DesignRefusal};
+use archon_core::protocol::{AgentNoteStatus, Reply};
 use archon_design_browser as adb;
-use archon_queue::store::design::NoteChange;
+use archon_queue::store::NoteChange;
 
 use super::assets::NewAsset;
 use super::{DesignService, WorktreeRef, refuse};
@@ -49,7 +49,7 @@ impl DesignService {
         let url = validate_preview_url(url)?;
         {
             let mut store = ctx.store.lock().await;
-            let patch = archon_queue::store::design::SessionPatch {
+            let patch = archon_queue::store::SessionPatch {
                 preview_url: Some(Some(url.clone())),
                 degraded: Some(false),
                 ..Default::default()

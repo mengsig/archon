@@ -126,7 +126,10 @@ impl DesignService {
                 "this item's pictures are at the 200 MiB limit".into(),
             ));
         }
-        let sha256 = format!("{:x}", Sha256::digest(new.bytes));
+        let sha256 = Sha256::digest(new.bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         let mut asset = DesignAsset {
             id: DesignAssetId::new(),
             item: item.clone(),

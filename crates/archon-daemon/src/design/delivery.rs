@@ -11,8 +11,7 @@ use archon_core::design::{
 };
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::ports::AgentPort;
-use archon_queue::store::design::{NoteChange, keys};
+use archon_queue::store::{NoteChange, keys};
 use serde::{Deserialize, Serialize};
 
 use super::DesignService;
@@ -155,7 +154,7 @@ impl DesignService {
             let attachments = self.attachments_for(ctx, &owed).await;
             match ctx
                 .backend
-                .send_message(&agent, &owed.text, &owed.key, &attachments)
+                .send_message_with_attachments(&agent, &owed.text, &owed.key, &attachments)
                 .await
             {
                 Ok(()) => {

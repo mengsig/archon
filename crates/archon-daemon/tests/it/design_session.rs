@@ -119,7 +119,8 @@ async fn a_note_reaches_the_agent_once_and_settles_with_its_commit() {
         1,
         "one keyed delivery"
     );
-    let text = &f.h.backend.messages().last().unwrap().1;
+    let messages = f.h.backend.messages();
+    let text = &messages.last().unwrap().1;
     assert!(text.contains("D1") && text.contains("Make the save button green"));
 
     report(&f, "D1", AgentNoteStatus::Working, None, None)

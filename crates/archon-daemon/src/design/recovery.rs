@@ -6,7 +6,7 @@ use archon_core::design::{
 };
 use archon_core::error::ArchonError;
 use archon_design_browser as adb;
-use archon_queue::store::design::{NoteChange, SessionPatch};
+use archon_queue::store::{NoteChange, SessionPatch};
 
 use crate::context::DaemonContext;
 use crate::worktree::design_git::{self, NoteGit, Reconciled};

@@ -48,11 +48,11 @@ on `PATH`, else the newest Playwright `chrome-headless-shell` it finds.
 `archon doctor` has one line for it:
 
 ```text
-Design preview: Chrome 151 at /usr/bin/google-chrome, sandbox ok
+design preview browser: /usr/bin/google-chrome
 ```
 
-When no browser is found the line instead gives the install hint for your
-system.
+When no browser is found the line instead reads "design preview browser: not
+found" followed by the install hint for your system.
 
 **The sandbox.** Chromium's own sandbox is required. If it cannot start (for
 example the host restricts user namespaces), the session says so and points to
@@ -197,8 +197,11 @@ picture withheld by the operator)". Before, after and in-between pictures are
 never part of it and never sent to a later model. Review and acceptance then
 check the shipped UI against the final pictures and your words.
 
-If every note ended as "nothing to change", or none is active, there is nothing
-to approve: Finish is refused ("nothing to approve; add a note or cancel").
+If every note ended as "nothing to change", Finish does not open the gate by
+itself. Use **Confirm no change** (`confirm_no_change`) to say so explicitly.
+Archon then opens the proposal gate with an empty ledger delta, and you approve
+it as usual. With no active note and nothing confirmed there is nothing to
+approve: add a note or cancel.
 
 ## Keyboard shortcuts
 

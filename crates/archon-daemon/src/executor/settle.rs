@@ -538,9 +538,15 @@ async fn persist(
     let awaiting_gate = match design_end {
         Some(crate::design::StageEnd::Completed) => {
             let store = ctx.store.lock().await;
-            ctx.design
+            let confirmed = ctx
+                .design
                 .session_of(&store, &run.id, &settled.stage_id, settled.attempt)?
-                .is_some_and(|s| s.state == archon_core::design::SessionState::Confirmed)
+                .filter(|s| s.state == archon_core::design::SessionState::Confirmed);
+            if let Some(session) = &confirmed {
+                // Its browser is not needed while the gate waits.
+                ctx.design.park_browser(&session.id, "stage completed");
+            }
+            confirmed.is_some()
         }
         _ => false,
     };

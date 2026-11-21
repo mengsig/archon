@@ -27,6 +27,39 @@ impl DesignService {
         let caller = caller.ok_or_else(|| {
             ArchonError::Forbidden("design tools are for the stage's agent".into())
         })?;
+        if let Some(found) = Self::live_session_of(ctx, caller).await? {
+            return Ok(found);
+        }
+        // A Design stage whose agent runs without a session: a retry or a
+        // resume whose start did not open one (or opened it for an earlier
+        // attempt). Open it now, so the agent's first `design_preview` works.
+        let stage = {
+            let store = ctx.store.lock().await;
+            store
+                .live_stage_runs()?
+                .into_iter()
+                .filter(|s| {
+                    s.aether_agent.as_ref() == Some(caller)
+                        && s.kind == Some(archon_core::catalog::StageKind::Design)
+                        && s.state == archon_core::run::StageState::Running
+                })
+                .max_by_key(|s| s.attempt)
+        };
+        if let Some(stage) = stage {
+            tracing::info!(stage = %stage.id, attempt = stage.attempt, "design: opening the session of a running stage on its agent's call");
+            crate::executor::design_started(ctx, &stage, caller).await;
+            if let Some(found) = Self::live_session_of(ctx, caller).await? {
+                return Ok(found);
+            }
+        }
+        Err(ArchonError::Forbidden("stage attempt is not live".into()))
+    }
+
+    /// The newest open session whose agent is `caller`.
+    async fn live_session_of(
+        ctx: &DaemonContext,
+        caller: &AetherAgentId,
+    ) -> Result<Option<DesignSession>, ArchonError> {
         let store = ctx.store.lock().await;
         let live = store.design_sessions_in(&[
             SessionState::Starting,
@@ -34,9 +67,12 @@ impl DesignService {
             SessionState::Finishing,
             SessionState::Confirmed,
         ])?;
-        live.into_iter()
-            .find(|s| s.agent.as_ref() == Some(caller))
-            .ok_or_else(|| ArchonError::Forbidden("stage attempt is not live".into()))
+        // Oldest first: a resumed agent can hold an earlier attempt's
+        // confirmed session still waiting on its gate; the newest attempt wins.
+        Ok(live
+            .into_iter()
+            .filter(|s| s.agent.as_ref() == Some(caller))
+            .max_by_key(|s| s.attempt))
     }
 
     pub(crate) async fn design_preview(

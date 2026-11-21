@@ -102,10 +102,14 @@ async fn settle_working_revert(
                 NoteChange::Status {
                     to: NoteStatus::Done,
                     fail_reason: None,
-                    commit: Some(new),
+                    commit: Some(new.clone()),
                     no_change: false,
                 },
             )?;
+            // As a live undo does: the agent learns HEAD moved under it.
+            service
+                .tell_undone(ctx, session, &revert.id, &original, &new)
+                .await;
             Ok(())
         }
         Reconciled::NotApplied => {

@@ -20,6 +20,12 @@ Archon runs one and shows the operator pictures of the app.
 
 {{feedback}}
 
+On a later attempt this is a new live session, even if you ran the last one:
+start the app again if it is not running and call `design_preview` before you
+change anything. Do not apply the feedback on your own and complete. Wait for
+the operator's notes, which say what to change, and complete only on `finish`.
+Notes from earlier sessions are already in the code.
+
 ## How to work
 
 1. **Start the app.** Read the repository's contributor guidance, work out

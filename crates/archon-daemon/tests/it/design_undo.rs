@@ -246,10 +246,29 @@ async fn a_crashed_undo_settles_at_startup() {
     let f = Fixture::new().await;
     let (id, commit, revert) = undone(&f).await;
     let n = left_working(&f, &id, &commit, &revert).await;
+    let told = |f: &Fixture| {
+        f.h.backend
+            .messages()
+            .iter()
+            .filter(|(_, t)| t.contains(&format!("undid {id}")) && t.contains("no action needed"))
+            .count()
+    };
+    let before = told(&f);
     let settled = recovered(&f, &n).await;
     assert_eq!(settled.status, NoteStatus::Done);
     assert_eq!(settled.commit.as_deref(), Some(revert.as_str()));
     assert_eq!(f.head(), revert);
+    for _ in 0..100 {
+        if told(&f) > before {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        told(&f),
+        before + 1,
+        "recovery tells the agent of the undo it completed, as a live undo does"
+    );
 
     // The checkout is done, the branch ref is not updated: recovery finishes
     // the move and the note is done.

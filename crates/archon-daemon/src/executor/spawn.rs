@@ -2015,7 +2015,7 @@ async fn record(
 /// A Design stage attempt's agent is running: open its live design session
 /// over the run's worktree. A session that cannot start is logged; the stage
 /// then ends at its own deadline or the operator's cancel.
-async fn design_started(ctx: &DaemonContext, stage: &StageRun, agent: &AetherAgentId) {
+pub(crate) async fn design_started(ctx: &DaemonContext, stage: &StageRun, agent: &AetherAgentId) {
     if stage.kind != Some(StageKind::Design) {
         return;
     }

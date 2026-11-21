@@ -131,7 +131,30 @@ impl DesignService {
             },
         )?;
         self.emit_note(ctx, &revert.item, &revert.id).await;
-        match design_git::apply_revert(&g, &pre, &new)? {
+        let applied = match design_git::apply_revert(&g, &pre, &new) {
+            Ok(applied) => applied,
+            Err(error) => {
+                // `apply_revert` puts the files back when it fails before the
+                // branch moved: nothing changed, so the undo fails visibly
+                // and the session is editable again. A branch that did move
+                // is left for startup's reconcile, as before.
+                if crate::worktree::stack::sha(&wt.repo, &wt.branch).ok().as_deref()
+                    != Some(pre.as_str())
+                {
+                    return Err(error);
+                }
+                tracing::warn!(note = %original_id, %error, "design: undo failed; nothing changed");
+                return self
+                    .fail_revert(
+                        ctx,
+                        revert,
+                        FailReason::UndoRefused,
+                        format!("Undo did not finish, so nothing changed: {error}"),
+                    )
+                    .await;
+            }
+        };
+        match applied {
             RevertApplied::HistoryChanged(why) => {
                 tracing::info!(note = %original_id, why, "design: undo found the history changed");
                 self.fail_revert(
@@ -180,13 +203,27 @@ impl DesignService {
             .and_then(|n| n.target);
         self.after_picture(ctx, session, &for_picture, wt).await;
         self.emit_note(ctx, &revert.item, &revert.id).await;
-        let key = format!("design:{}:{}:told", session.id, revert.id);
+        self.tell_undone(ctx, session, &revert.id, original_id, new)
+            .await;
+        Ok(())
+    }
+
+    /// Tell the agent an undo is in the code, keyed by the revert note so a
+    /// live undo and startup's settling of the same one send it once.
+    pub(crate) async fn tell_undone(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSession,
+        revert_id: &str,
+        original_id: &str,
+        new: &str,
+    ) {
+        let key = format!("design:{}:{revert_id}:told", session.id);
         let text = format!(
             "Archon undid {original_id} with commit {new}; HEAD is now {new}; no action needed"
         );
         if let Err(error) = self.owe(ctx, session, key, text, None).await {
             tracing::warn!(%error, "the undo notice was not queued");
         }
-        Ok(())
     }
 }

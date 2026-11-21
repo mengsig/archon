@@ -259,9 +259,46 @@ impl DesignService {
             return Ok(());
         }
         let lock = self.item_lock(&session.item);
-        let _held = lock.lock().await;
+        // Callers hold the run table (a stage settling, a cancel), and a
+        // note, an undo or a Finish holds the item lock while it works: never
+        // wait for it here. When it is busy, the end runs on a task of its own
+        // as soon as the holder lets go.
+        let held = match lock.clone().try_lock_owned() {
+            Ok(held) => held,
+            Err(_) => match self.arc() {
+                Some(arc) => {
+                    let session = session.clone();
+                    let reason = reason.to_owned();
+                    tracing::info!(session = %session.id, "design: the item is busy; the session ends when it is free");
+                    tokio::spawn(async move {
+                        let held = lock.lock_owned().await;
+                        if let Err(error) = arc.design.end_locked(&arc, &session, &reason, held).await {
+                            tracing::warn!(%error, session = %session.id, "design: the session did not end");
+                        }
+                    });
+                    return Ok(());
+                }
+                None => lock.lock_owned().await,
+            },
+        };
+        self.end_locked(ctx, session, reason, held).await
+    }
+
+    /// End `session` under its item lock, `_held`.
+    async fn end_locked(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSession,
+        reason: &str,
+        _held: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<(), ArchonError> {
         {
             let mut store = ctx.store.lock().await;
+            // Re-read under the lock: another end may have won the race.
+            match store.design_session(&session.id)? {
+                Some(row) if row.state != SessionState::Ended => {}
+                _ => return Ok(()),
+            }
             // Notes the agent never settled stay on record as not delivered.
             for note in store.design_notes(&session.item)? {
                 if note.session != session.id {
@@ -315,6 +352,20 @@ impl DesignService {
         Ok(())
     }
 
+    /// Stop a confirmed session's browser and delete its profile while the
+    /// session itself stays on record for its gate: nothing is previewed
+    /// after Confirm. Off the caller's path, which may hold the run table.
+    pub(crate) fn park_browser(&self, session: &DesignSessionId, reason: &'static str) {
+        let Some(arc) = self.arc() else {
+            return;
+        };
+        let session = session.clone();
+        tokio::spawn(async move {
+            arc.design.close_session_browser(&session, reason).await;
+            arc.design.start_queued(&arc).await;
+        });
+    }
+
     pub async fn gate_decided(
         &self,
         _ctx: &Arc<DaemonContext>,
@@ -341,9 +392,17 @@ impl DesignService {
             SessionState::Confirmed,
             SessionState::Ended,
         ])?;
-        Ok(all
+        // A retried slot reuses its attempt number: the open session wins,
+        // else the newest (the store lists oldest first).
+        let mine = all
             .into_iter()
-            .find(|s| &s.run == run && s.stage_id == stage_id && s.attempt == attempt))
+            .filter(|s| &s.run == run && s.stage_id == stage_id && s.attempt == attempt)
+            .collect::<Vec<_>>();
+        let open = mine.iter().rposition(|s| s.state != SessionState::Ended);
+        Ok(match open {
+            Some(at) => mine.into_iter().nth(at),
+            None => mine.into_iter().last(),
+        })
     }
 
     // ---- worktree ----------------------------------------------------------

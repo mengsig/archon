@@ -386,7 +386,9 @@ pub(super) fn prepare(
     let worktree = worktree_ref(store, run)?;
     let active = approvable_notes(ctx, store, &worktree, &item.id, &session, &head)?;
     let notes = ledger_notes(ctx, store, &item.id, &session, &active)?;
-    let no_change = format!("D{}", active.iter().map(|n| n.number).max().unwrap_or(1));
+    // A finish with no change names its requirement after the item's
+    // counter, so it never takes an id an earlier note or session used.
+    let no_change = store.design_next_note_id(&item.id)?;
     let mut record = build_draft(base.as_ref(), &item.brief, &notes, Some(&no_change))?;
     let base_images: Vec<String> = base
         .iter()

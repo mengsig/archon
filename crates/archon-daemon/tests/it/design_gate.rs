@@ -622,6 +622,66 @@ async fn revise_resumes_the_design_agent_in_a_new_session_with_its_notes() {
     assert_eq!(notes[0].status, NoteStatus::Done);
 }
 
+/// E2E S5: after Revise the resumed agent completes without a preview; the
+/// result is refused and the slot retried. The retry's agent opens the
+/// attempt's session with its first `design_preview`, never "not live".
+#[tokio::test]
+async fn a_revised_design_retried_after_a_refusal_still_gets_its_preview() {
+    let h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    let (_, head) = done_note(&h, &session, &run, "make it green", b"green").await;
+    confirm(&h, &session, &head, &["D1"], &[]).await;
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    let gate = open_proposal(&h, &item.id).await;
+    h.cli(Request::Answer {
+        chat: false,
+        question: gate.question.clone().expect("asked"),
+        text: "a darker green please".into(),
+    })
+    .await
+    .expect("answer");
+    h.dispatch().await;
+    // The resumed agent completes on its own, with no session confirmed.
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    let running = h.running().await;
+    let retry = running
+        .iter()
+        .find(|s| s.stage_id == "design")
+        .expect("the design slot is retried");
+    let agent = retry.aether_agent.clone().expect("an agent");
+    // Whatever the retry's start did, its agent's first report works.
+    {
+        let mut store = h.ctx.store.lock().await;
+        for s in store.design_sessions(&item.id).unwrap() {
+            if s.state != SessionState::Ended {
+                store.design_session_end(&s.id, "test").unwrap();
+            }
+        }
+    }
+    let reply = Box::pin(archon_daemon::handlers::handle(
+        &h.ctx,
+        archon_core::protocol::ClientKind::ArchonMcp,
+        Request::DesignPreview {
+            url: "http://127.0.0.1:5173/".into(),
+            caller: Some(agent.clone()),
+        },
+    ))
+    .await;
+    assert!(reply.is_ok(), "{reply:?}");
+    let store = h.ctx.store.lock().await;
+    let now = h
+        .ctx
+        .design
+        .session_of(&store, &run.id, "design", retry.attempt)
+        .unwrap()
+        .expect("the retry's session");
+    assert_eq!(now.agent.as_ref(), Some(&agent));
+    assert_eq!(now.state, SessionState::Live);
+}
+
 /// Item 6: cancelling while the proposal gate is open ends the confirmed session.
 #[tokio::test]
 async fn cancelling_with_the_gate_open_ends_the_confirmed_session() {

@@ -780,6 +780,17 @@ impl Store {
         note_by_id(&self.conn, item, id)
     }
 
+    /// The id the item's next note would take, from its never-decremented
+    /// counter and every id its approved intent already uses; nothing is
+    /// reserved. A design finished with no change names its requirement so.
+    pub fn design_next_note_id(&self, item: &QueueItemId) -> Result<String, ArchonError> {
+        let seq = settings::kv_get(&self.conn, &keys::design_seq(item))?
+            .and_then(|s| s.parse::<u64>().ok());
+        let used = intent_ids(&self.conn, item)?;
+        let used: Vec<&str> = used.iter().map(String::as_str).collect();
+        Ok(note_id(next_note_number(seq, &used)))
+    }
+
     /// Every note of the item, all sessions, by number.
     pub fn design_notes(&self, item: &QueueItemId) -> Result<Vec<DesignNote>, ArchonError> {
         read_notes(

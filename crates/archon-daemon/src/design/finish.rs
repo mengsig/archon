@@ -503,6 +503,17 @@ impl DesignService {
         superseded: BTreeMap<String, Option<String>>,
         confirm_no_change: bool,
     ) -> Result<Reply, ArchonError> {
+        let item = {
+            let store = ctx.store.lock().await;
+            store
+                .design_session(session_id)?
+                .ok_or_else(super::gone)?
+                .item
+        };
+        let lock = self.item_lock(&item);
+        let _held = lock.lock().await;
+        // Read the session under the item lock: a Back to editing, a new
+        // capture or the session's end may have landed while this waited.
         let row = {
             let store = ctx.store.lock().await;
             let row = store.design_session(session_id)?.ok_or_else(super::gone)?;
@@ -514,8 +525,6 @@ impl DesignService {
         if row.state != SessionState::Finishing {
             return Err(conflict());
         }
-        let lock = self.item_lock(&row.item);
-        let _held = lock.lock().await;
         if row.finish_capture.as_deref() != Some(capture) {
             return Err(stale());
         }
@@ -601,6 +610,9 @@ impl DesignService {
             }
         }
         tracing::info!(session = %row.id, device = ?super::current_device_label(), "design: finish confirmed");
+        // The preview is done: the gate reads the recorded pictures, so the
+        // browser and its profile go now, not when the gate is answered.
+        self.park_browser(&row.id, "confirmed");
         self.emit_session(ctx, &row.id).await;
         self.owe(
             ctx,

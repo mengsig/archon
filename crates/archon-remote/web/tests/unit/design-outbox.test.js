@@ -45,3 +45,23 @@ test('a refusal that cannot change is dropped and reported', async () => {
 test('client keys are unique', () => {
   assert.notEqual(newClientKey(() => new Uint8Array([1, 2])), newClientKey(() => new Uint8Array([1, 3])));
 });
+
+test('wire refusals invalid_argument and not_found are dropped, not retried', async () => {
+  for (const code of ['invalid_argument', 'not_found', 'stale', 'conflict']) {
+    const box = createNoteOutbox({ storage: memory(), item: 'qi_1', newKey: () => 'k' });
+    box.add({ text: 'x' }); box.add({ text: 'y', client_key: 'k2' });
+    const refused = [];
+    await box.flush(async () => { throw err(code); }, 's', { onRefused: (e, e2) => refused.push(e2.code) });
+    assert.deepEqual(refused, [code, code]);
+    assert.equal(box.pending().length, 0, `${code} must not block the queue`);
+  }
+});
+
+test('transient codes keep the note', async () => {
+  for (const code of ['disconnected', 'timeout', 'unavailable', 'recovering', 'unauthorized']) {
+    const box = createNoteOutbox({ storage: memory(), item: 'qi_1', newKey: () => 'k' });
+    box.add({ text: 'x' });
+    await box.flush(async () => { throw err(code); }, 's');
+    assert.equal(box.pending().length, 1, code);
+  }
+});

@@ -594,6 +594,73 @@ mod stream {
             .expect("no panic");
         assert_eq!(f.h.ctx.design.subscriber_count(&f.session), 0);
     }
+
+    /// With one slot, a second watched session waits for it and starts once
+    /// the first session ends and frees it.
+    #[tokio::test]
+    async fn a_session_queued_for_a_slot_starts_when_one_frees() {
+        let mut config = design_config();
+        config.design.max_sessions = 1;
+        let f = Fixture::with(config).await;
+        assert_eq!(f.factory.launched(), 1, "the first session holds the slot");
+
+        let item = f.h.enqueue("design the cancel button").await;
+        f.h.dispatch().await;
+        let run = f.h.run(&item.id).await;
+        let stage =
+            f.h.running()
+                .await
+                .into_iter()
+                .find(|s| s.run == run.id)
+                .expect("the second item's stage runs");
+        let agent = stage.aether_agent.clone().expect("an agent");
+        let worktree = crate::common::design::add_worktree(&f.h.repo, f.h.dir.path(), "design-2");
+        let second =
+            f.h.ctx
+                .design
+                .stage_started(
+                    &f.h.ctx,
+                    &item.id,
+                    &run.id,
+                    &stage.stage_id,
+                    stage.attempt,
+                    &agent,
+                    worktree,
+                )
+                .await
+                .expect("second session starts");
+        f.as_agent(Request::DesignPreview {
+            url: crate::common::design::PREVIEW.into(),
+            caller: Some(agent.clone()),
+        })
+        .await
+        .expect("preview reported");
+
+        let (tx, _rx) = mpsc::channel(64);
+        let sub = DesignSubscription {
+            id: 7,
+            request: 7,
+            session: second.clone(),
+            device: WelcomeDevice {
+                id: "device-1".into(),
+                name: "phone".into(),
+                role: archon_core::protocol::DeviceRole::Operator,
+            },
+        };
+        let task = tokio::spawn(archon_daemon::design::stream(f.h.ctx.clone(), sub, tx));
+        let service = f.h.ctx.design.clone();
+        until("the second subscriber", || {
+            service.subscriber_count(&second) == 1
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(f.factory.launched(), 1, "no slot: the second session waits");
+
+        f.end(StageEnd::Cancelled).await;
+        let factory = f.factory.clone();
+        until("the queued session's browser", || factory.launched() == 2).await;
+        task.abort();
+    }
 }
 
 /// Startup recovery ends a live session whose run is already over, so no

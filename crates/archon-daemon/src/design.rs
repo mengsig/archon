@@ -302,6 +302,11 @@ impl DesignService {
             });
         }
         self.close_session_browser(&session.id, reason).await;
+        // A slot is free: start a queued session's browser, off this path,
+        // which may hold the run table.
+        if let Some(arc) = self.arc() {
+            tokio::spawn(async move { arc.design.start_queued(&arc).await });
+        }
         self.wts
             .lock()
             .unwrap_or_else(|e| e.into_inner())

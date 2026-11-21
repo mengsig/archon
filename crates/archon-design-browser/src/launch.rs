@@ -32,12 +32,22 @@ pub(crate) const SHELL_SCRIPT: &str = r#"exec 3<&0 4>&1 </dev/null >/dev/null; e
 
 const BASE_BYPASS: &str = "<-loopback>;localhost;127.0.0.1;[::1]";
 
+/// A host (optionally `*.`-prefixed) with an optional `:port`, the form the
+/// config's `allow_hosts` accepts (`archon_core::repo::valid_allow_host`) and
+/// Chromium's bypass list reads as "this host on this port only".
 fn valid_host(h: &str) -> bool {
+    let (h, port) = match h.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (h, None),
+    };
     let h = h.strip_prefix("*.").unwrap_or(h);
     !h.is_empty()
         && h.len() <= 253
         && h.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        && port.is_none_or(|p| {
+            p.parse::<u16>().is_ok_and(|n| n > 0) && p.bytes().all(|b| b.is_ascii_digit())
+        })
 }
 
 /// The `--proxy-bypass-list` value: loopback plus each valid allowed host.
@@ -314,10 +324,15 @@ mod tests {
             "bad;host".into(),
             "".into(),
             "a b".into(),
+            "cdn.local:8080".into(),
+            "bad.port:".into(),
+            "bad.port:0".into(),
+            "bad.port:70000".into(),
+            "bad.port:+80".into(),
         ]);
         assert_eq!(
             l,
-            "<-loopback>;localhost;127.0.0.1;[::1];dev.example.com;*.cdn.test"
+            "<-loopback>;localhost;127.0.0.1;[::1];dev.example.com;*.cdn.test;cdn.local:8080"
         );
     }
 

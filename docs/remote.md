@@ -266,7 +266,7 @@ like other device changes, except `design_input`, `design_resolve` and
 | Request | Effect |
 | --- | --- |
 | `design_get {item}` | Session and notes. |
-| `subscribe_design {session}` | Streams `design` frames; counts toward the 4 subscriptions. |
+| `subscribe_design {session}` | Replies `subscribed {id}` and streams `design` frames carrying `sub: id`; counts toward the 4 subscriptions. |
 | `design_frame_ack {sub, seq}` | Flow control; the next frame is sent only after it. |
 | `design_input {session, events}` | Pointer, wheel, key and text events in CSS pixels; at most 64 per request, 60 requests a second. |
 | `design_resolve {session, x, y, depth, select}` / `design_region {session, box}` | The element under a point, or a region; with `select` also captures the crop as a pending picture. |

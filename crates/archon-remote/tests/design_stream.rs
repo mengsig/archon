@@ -37,7 +37,10 @@ impl Backend for Fake {
         self.subscribed.lock().unwrap().push(subscription.clone());
         let reply = ServerFrame::Reply {
             id: subscription.request,
-            result: Ok(Reply::DesignDone),
+            result: Ok(Reply::Subscribed {
+                id: subscription.id,
+                last_seq: 0,
+            }),
         };
         let _ = frames.send(reply).await;
         let event = ServerFrame::Design {
@@ -177,7 +180,8 @@ async fn subscribe_design_reaches_the_backend_with_the_session() {
     let request = serde_json::json!({"req": 2, "cmd": "subscribe_design", "session": session});
     let reply = exchange(&mut socket, request).await;
     assert_eq!(reply["id"], 2, "{reply}");
-    assert_eq!(reply["result"]["Ok"]["reply"], "design_done", "{reply}");
+    assert_eq!(reply["result"]["Ok"]["reply"], "subscribed", "{reply}");
+    assert_eq!(reply["result"]["Ok"]["data"]["id"], 1, "{reply}");
     let event = next_frame(&mut socket).await;
     assert_eq!(event["frame"], "design", "{event}");
     assert_eq!(event["event"]["event"], "toast", "{event}");
@@ -199,7 +203,7 @@ async fn design_streams_count_toward_the_subscription_cap_and_observers_get_none
             "req": 10 + n, "cmd": "subscribe_design", "session": DesignSessionId::new(),
         });
         let reply = exchange(&mut socket, request).await;
-        assert_eq!(reply["result"]["Ok"]["reply"], "design_done", "{reply}");
+        assert_eq!(reply["result"]["Ok"]["reply"], "subscribed", "{reply}");
         let _toast = next_frame(&mut socket).await;
     }
     let fifth = serde_json::json!({

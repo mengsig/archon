@@ -402,6 +402,11 @@ impl DesignService {
         let Some(row) = row else {
             return Ok(None);
         };
+        // A request that raced end_session must not start a browser nobody
+        // would ever close.
+        if row.state == archon_core::design::SessionState::Ended {
+            return Ok(None);
+        }
         let Some(url) = rt.st().last_url.clone().or(row.preview_url.clone()) else {
             return Ok(None);
         };
@@ -529,6 +534,34 @@ impl DesignService {
             }
         }
         Ok(())
+    }
+
+    /// Start the browsers of sessions queued for a slot that someone still
+    /// watches, oldest request first, while slots are free: run after a
+    /// session's browser closed, so "starts as soon as one is free" holds.
+    pub(crate) async fn start_queued(&self, ctx: &DaemonContext) {
+        let queued: Vec<DesignSessionId> = {
+            let all = self.rt.lock().unwrap_or_else(|e| e.into_inner());
+            let mut queued: Vec<_> = all
+                .iter()
+                .filter(|(_, rt)| {
+                    let st = rt.st();
+                    st.status == BrowserStatus::QueuedForSlot && st.subscribers > 0
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+            // Session ids are ULIDs: their order is their age.
+            queued.sort();
+            queued
+        };
+        for session in queued {
+            if self.live_browsers() >= self.cfg.max_sessions as usize {
+                break;
+            }
+            if let Err(error) = self.subscriber_joined(ctx, &session).await {
+                tracing::warn!(%error, %session, "design: a queued preview did not start");
+            }
+        }
     }
 
     /// Count a subscriber; its guard calls `subscriber_left`.

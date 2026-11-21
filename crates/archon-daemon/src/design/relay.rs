@@ -73,7 +73,11 @@ pub async fn stream(
             return;
         }
     };
-    if frames.send(reply(Ok(Reply::DesignDone))).await.is_err() {
+    let subscribed = Reply::Subscribed {
+        id: sub.id,
+        last_seq: 0,
+    };
+    if frames.send(reply(Ok(subscribed))).await.is_err() {
         return;
     }
     let (ack_tx, mut ack_rx) = watch::channel(0u64);

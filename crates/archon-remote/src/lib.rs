@@ -52,7 +52,8 @@ pub trait Backend: Send + Sync + 'static {
         };
         let _gone = frames.send(frame).await;
     }
-    /// Send `subscribe_design`'s reply (`Ok(Reply::DesignDone)` to
+    /// Send `subscribe_design`'s reply (`Ok(Reply::Subscribed {id, ..})`, `id`
+    /// the subscription's, to
     /// `subscription.request`) and then its `design` frames to `frames`
     /// until the session ends or `frames` closes. A backend without design
     /// sessions refuses it.

@@ -106,3 +106,24 @@ both themes. Pipeline/agent captures use explicit Aether response fixtures; the
 queue and other controls use a private real daemon. `tests/screens.js` exports `captureScreens(page, fixture, outDir)`,
 which writes `<screen>-<light|dark>.png` for pairing, queue, item, inbox,
 chat, overview, new-item, settings, graph, work, agents and commands at the page's viewport.
+
+## Live design sessions
+
+Route `#/design/<item>` (`src/features/design/`), shown only when the daemon's
+welcome features include `design_sessions`. The screen sends `design_get`, then
+`subscribe_design`, draws the latest frame into a canvas, acks frames, and
+restarts the stream on reconnect. Modes: Interact, Comment, Region and Sketch;
+notes are queued offline with a stable `client_key`; Compare, Finish review and
+the gate answer live in the same screen. Entry points: the New item "Design it
+live" switch, the item Design chip / Open design, and the inbox "Design session
+ready" Open.
+
+Modules: `state.js` (reducer, `stagePhase`), `stream.js`, `input.js`,
+`scale.js`, `keymap.js`, `overlay.js`, `composer.js`, `notes.js`, `compare.js`,
+`finish.js`, `sketch.js`, `outbox.js`, `chrome.js`, `screen.js`; the wire
+commands and the stream hub are in `src/core/design.js`.
+
+Tests: `tests/unit/design-*.test.js`, and `tests/design.spec.js` (T-E1..T-E4),
+which runs against a stand-in host and a scripted WebSocket daemon
+(`tests/support/design-harness.js`) with the fixture app in
+`tests/fixtures/design-app/`. Playwright needs Node 20+.

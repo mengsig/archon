@@ -152,7 +152,7 @@
 /* tablet: the notes are a side drawer; phone: a bottom sheet and a bottom bar */
 .design-bottombar { display: none; }
 @media (max-width: 1023px) {
-  .design-main { grid-template-columns: minmax(0, 1fr); position: relative; }
+  .design-main { grid-template-columns: minmax(0, 1fr); position: relative; overflow: hidden; }
   .design-side { position: absolute; top: 0; right: 0; bottom: 0; width: min(360px, 90%); z-index: 2; border-left: 1px solid var(--separator); box-shadow: var(--shadow-lift); transform: translateX(100%); transition: transform var(--t-med) var(--ease-spring); }
   .design[data-notes="half"] .design-side, .design[data-notes="full"] .design-side { transform: none; }
   .design-bottombar { display: flex; justify-content: space-around; background: var(--surface); border-top: 1px solid var(--separator); padding-bottom: var(--safe-bottom); }
@@ -160,6 +160,7 @@
   .bottom-button[aria-pressed="true"] { color: var(--accent); font-weight: 600; }
 }
 @media (max-width: 639px) {
+  .design-modes .mode-button:not([data-mode="sketch"]) { display: none; }
   .design-desk { margin: 0; border-radius: 0; border-inline: 0; padding: 0; align-items: flex-start; }
   .design-phase { inset: 0; border-radius: 0; }
   .design-top { padding-inline: var(--space-3); }

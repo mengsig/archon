@@ -21,8 +21,10 @@ export function createDesignStream({
   let decoding = false;
   let latest = null;
   let lastAck = 0;
+  let started = false;
 
   async function start() {
+    started = true;
     const mine = ++generation;
     sub = null;
     try {
@@ -89,7 +91,7 @@ export function createDesignStream({
   const offConn = ctx.store.watch((s) => s.connection.state, (state) => {
     const open = state === 'open';
     onEvent({ type: 'connection', state });
-    if (open && !wasOpen) start();
+    if (open && !wasOpen && started) start();
     wasOpen = open;
   });
 

@@ -4,7 +4,7 @@
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
 use archon_core::queue::QueueItem;
-use archon_core::run::{GateDecision, GateSubject};
+use archon_core::run::{GateDecision, GateSubject, StageRun};
 use archon_pipeline::{ApprovedProposal, RunDriver};
 use archon_queue::Store;
 
@@ -113,6 +113,37 @@ pub(super) fn approved_before(
             note,
         })),
         _ => Ok(None),
+    }
+}
+
+/// Tell the design service a Design gate was decided, so the session ends
+/// (approved, rejected) or the next one starts at the revised attempt. A
+/// failure is logged: the decision is already recorded.
+pub(super) async fn design_decided(
+    ctx: &crate::context::DaemonContext,
+    gate: &archon_core::run::OperatorGate,
+    stages: &[StageRun],
+    decision: &GateDecision,
+) {
+    let designed = stages.iter().any(|s| {
+        s.stage_id == gate.stage_id
+            && s.attempt == gate.attempt
+            && s.kind == Some(archon_core::catalog::StageKind::Design)
+    });
+    if !designed {
+        return;
+    }
+    let word = match decision {
+        GateDecision::Approve { .. } => "approved",
+        GateDecision::Revise { .. } => "revised",
+        GateDecision::Reject { .. } => "rejected",
+    };
+    if let Err(error) = ctx
+        .design
+        .gate_decided(&ctx.arc(), &gate.run, &gate.stage_id, gate.attempt, word)
+        .await
+    {
+        tracing::warn!(%error, gate = %gate.stage_id, "design session did not hear the decision");
     }
 }
 

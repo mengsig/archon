@@ -179,6 +179,14 @@ pub(crate) fn revise(
         review,
         ..patch.over(current)
     };
+    // The design stage and the intent acceptance stage are added at enqueue.
+    if (current.proposal == ProposalMode::Live) != (revised.proposal == ProposalMode::Live) {
+        return Err(ArchonError::Invalid(
+            "proposal live cannot be changed on an existing item; choose live when creating \
+             the item"
+                .into(),
+        ));
+    }
     assert!(
         ships(base)
             || (revised.proposal, revised.report, revised.merge)

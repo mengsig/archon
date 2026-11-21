@@ -168,8 +168,17 @@ export function mountDesign(view, ctx) {
       } else { outbox.remove(entry.client_key); composer.setError(designErrorText(err)); refuse(err); }
     } finally { composer.setBusy(false); notes.setPending(outbox.pending()); }
   }
-  const flushOutbox = () => {
+  let lastFlushAt = 0, lastFlushSession = null, lastFlushKind = null;
+  const FLUSH_EVERY_MS = 5000;
+  const flushOutbox = (kind) => {
     if (!session() || !isLive(state) || state.session.state === 'finishing') return;
+    if (!outbox.pending().length) { lastFlushKind = kind; return; }
+    // On reconnect or session change at once; otherwise at most once per few seconds.
+    const fresh = session() !== lastFlushSession || (lastFlushKind === 'reconnecting' && kind !== 'reconnecting');
+    const now = Date.now();
+    lastFlushKind = kind;
+    if (!fresh && now - lastFlushAt < FLUSH_EVERY_MS) return;
+    lastFlushAt = now; lastFlushSession = session();
     outbox.flush((f) => ctx.design.noteAdd(f), session(), {
       onSent: (_e, note) => dispatch({ type: 'event', event: { event: 'note', ...note } }),
       onRefused: (_e, err) => toast(`A note typed offline was not sent: ${designErrorText(err)}`, { tone: 'red' }),
@@ -225,7 +234,7 @@ export function mountDesign(view, ctx) {
     root.dataset.phase = p.kind;
     root.dataset.preset = state.preset;
     root.dataset.mode = state.mode;
-    if (state.loaded && ctx.canOperate && state.session?.state === 'live') flushOutbox();
+    if (state.loaded && ctx.canOperate && state.session?.state === 'live') flushOutbox(p.kind);
   }
 
   // ---- wiring ----

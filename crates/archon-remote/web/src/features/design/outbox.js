@@ -1,8 +1,9 @@
 // Notes typed while offline stay in localStorage and are sent again, in order,
 // with the same client_key, so the daemon never records one twice.
 const PREFIX = 'archon.design.outbox.';
-// A refusal that will never succeed: the entry is dropped and the operator told.
-const FINAL = new Set(['gone', 'finishing', 'read_only', 'forbidden', 'invalid']);
+// Only these are worth retrying; every other refusal (gone, finishing, read_only,
+// forbidden, invalid_argument, not_found, ...) drops the entry and tells the operator.
+const TRANSIENT = new Set(['disconnected', 'timeout', 'unavailable', 'recovering', 'unauthorized']);
 
 export function newClientKey(random = () => crypto.getRandomValues(new Uint8Array(12))) {
   return `web-${Array.from(random(), (b) => b.toString(16).padStart(2, '0')).join('')}`;
@@ -47,7 +48,7 @@ export function createNoteOutbox({ storage = globalThis.localStorage, item, newK
             this.remove(entry.client_key);
             onSent(entry, note);
           } catch (err) {
-            if (FINAL.has(err?.code)) {
+            if (!TRANSIENT.has(err?.code)) {
               this.remove(entry.client_key);
               onRefused(entry, err);
               continue;

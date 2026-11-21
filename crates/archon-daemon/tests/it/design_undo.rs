@@ -297,3 +297,218 @@ async fn a_crashed_undo_settles_at_startup() {
     assert_eq!(settled.fail_reason, Some(FailReason::HistoryChanged));
     assert_eq!(f.head(), other, "nothing moved");
 }
+
+/// Q3: a note an earlier approval made a requirement is never undone.
+#[tokio::test]
+async fn an_approved_requirement_is_never_undone() {
+    let f = Fixture::new().await;
+    let (id, _) = done_note(&f, "k1", "a.txt", "one\n").await;
+    {
+        let mut store = f.h.ctx.store.lock().await;
+        let mut item = store.item(&f.item).unwrap();
+        item.intent = Some(Box::new(archon_core::intent::IntentBinding {
+            id: "earlier".into(),
+            version: 1,
+            requirements: vec![id.clone()],
+        }));
+        store.update_item(&item).unwrap();
+    }
+    let refused = undo(&f, &id).await.unwrap_err().to_string();
+    assert!(
+        refused.contains("was approved earlier; add a new note instead"),
+        "{refused}"
+    );
+    assert!(
+        state(&f)
+            .await
+            .notes
+            .iter()
+            .all(|n| n.note.reverts.is_none()),
+        "no revert note was queued"
+    );
+}
+
+/// Finish (§8.6): capture, the staleness checks, confirm, cancel.
+#[tokio::test]
+async fn finish_captures_confirms_and_goes_back() {
+    use archon_core::design::SessionState;
+    use archon_core::protocol::Reply;
+    let f = Fixture::new().await;
+    let (id, _) = done_note(&f, "k1", "a.txt", "one\n").await;
+    let capture = |cancel_queued: bool, recapture: bool| {
+        f.operator(Request::DesignFinishCapture {
+            session: f.session.clone(),
+            cancel_queued,
+            recapture,
+        })
+    };
+    let view = match capture(false, false).await.expect("capture") {
+        Reply::DesignFinish(view) => view,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(view.head, f.head());
+    assert_eq!(view.cards.len(), 1);
+    assert_eq!(view.cards[0].note, id);
+    assert!(!view.no_change_only);
+    assert_eq!(
+        state(&f).await.session.unwrap().state,
+        SessionState::Finishing
+    );
+    // While finishing nothing changes.
+    let added = f
+        .operator(Request::DesignNoteAdd {
+            session: f.session.clone(),
+            client_key: "late".into(),
+            text: "more".into(),
+            asset: None,
+            send_picture: false,
+            details_text: None,
+        })
+        .await;
+    crate::design_session::refused(&added, archon_core::error::DesignRefusal::Finishing);
+
+    let confirm = |capture: &str| {
+        f.operator(Request::DesignFinishConfirm {
+            session: f.session.clone(),
+            capture: capture.to_owned(),
+            include: [(id.clone(), true)].into(),
+            superseded: Default::default(),
+            confirm_no_change: false,
+        })
+    };
+    // A capture that is not the current one is stale.
+    let stale = confirm("not-the-capture").await;
+    crate::design_session::refused(&stale, archon_core::error::DesignRefusal::Stale);
+    // The branch moved after the capture: stale.
+    let moved = f.commit("b.txt", "b\n", "sneaky");
+    let stale = confirm(&view.capture).await;
+    crate::design_session::refused(&stale, archon_core::error::DesignRefusal::Stale);
+    crate::common::git(
+        &f.worktree.worktree,
+        &["reset", "--hard", "--quiet", &view.head],
+    );
+    assert_ne!(f.head(), moved);
+
+    // Back to editing, then capture again and confirm.
+    f.operator(Request::DesignFinishCancel {
+        session: f.session.clone(),
+    })
+    .await
+    .expect("cancel");
+    assert_eq!(state(&f).await.session.unwrap().state, SessionState::Live);
+    let view = match capture(false, false).await.expect("capture again") {
+        Reply::DesignFinish(view) => view,
+        other => panic!("{other:?}"),
+    };
+    confirm(&view.capture).await.expect("confirmed");
+    assert_eq!(
+        state(&f).await.session.unwrap().state,
+        SessionState::Confirmed
+    );
+    assert!(
+        f.h.backend
+            .messages()
+            .iter()
+            .any(|(_, t)| t.contains("finish") || t.contains("Finish") || t.contains("approved")),
+        "the agent is told"
+    );
+    // A second confirm finds the session no longer finishing.
+    let again = confirm(&view.capture).await;
+    crate::design_session::refused(&again, archon_core::error::DesignRefusal::Conflict);
+}
+
+/// A queued note blocks Finish until the operator agrees to cancel it.
+#[tokio::test]
+async fn finish_cancels_queued_notes_only_when_told_to() {
+    use archon_core::design::{NoteKind, Viewport, ViewportPreset};
+    use archon_queue::store::NewDesignNote;
+    let f = Fixture::new().await;
+    done_note(&f, "k1", "a.txt", "one\n").await;
+    let queued = {
+        let mut store = f.h.ctx.store.lock().await;
+        store
+            .design_note_add(NewDesignNote {
+                item: f.item.clone(),
+                session: f.session.clone(),
+                kind: NoteKind::Change,
+                text: "waiting".into(),
+                details_text: None,
+                send_picture: false,
+                target: None,
+                viewport: Viewport {
+                    w: 1440,
+                    h: 900,
+                    preset: ViewportPreset::Desktop,
+                },
+                client_key: "waiting".into(),
+                reverts: None,
+                resent_from: None,
+                before_asset: None,
+                created_by_device: None,
+            })
+            .unwrap()
+            .0
+    };
+    let refused = f
+        .operator(Request::DesignFinishCapture {
+            session: f.session.clone(),
+            cancel_queued: false,
+            recapture: false,
+        })
+        .await;
+    assert!(refused.is_err(), "a queued note would be cancelled");
+    assert_eq!(note(&f, &queued.id).await.status, NoteStatus::Queued);
+    f.operator(Request::DesignFinishCapture {
+        session: f.session.clone(),
+        cancel_queued: true,
+        recapture: false,
+    })
+    .await
+    .expect("capture with cancel");
+    assert_eq!(note(&f, &queued.id).await.status, NoteStatus::Cancelled);
+}
+
+/// Every note settled with no change: approving takes the explicit flag.
+#[tokio::test]
+async fn finish_with_only_no_change_notes_needs_the_flag() {
+    use archon_core::protocol::Reply;
+    let f = Fixture::new().await;
+    let added = add(&f, "k1", "is it already red?").await;
+    report(&f, &added.id, AgentNoteStatus::Working, None, None)
+        .await
+        .unwrap();
+    f.as_agent(Request::DesignNoteReport {
+        id: added.id.clone(),
+        status: AgentNoteStatus::Done,
+        reply: Some("it already is".into()),
+        commit: None,
+        no_change: true,
+        caller: Some(f.agent.clone()),
+    })
+    .await
+    .expect("done with no change");
+    let view = match f
+        .operator(Request::DesignFinishCapture {
+            session: f.session.clone(),
+            cancel_queued: false,
+            recapture: false,
+        })
+        .await
+        .expect("capture")
+    {
+        Reply::DesignFinish(view) => view,
+        other => panic!("{other:?}"),
+    };
+    assert!(view.no_change_only);
+    let confirm = |flag: bool| {
+        f.operator(Request::DesignFinishConfirm {
+            session: f.session.clone(),
+            capture: view.capture.clone(),
+            include: Default::default(),
+            superseded: Default::default(),
+            confirm_no_change: flag,
+        })
+    };
+    assert!(confirm(false).await.is_err(), "refused without the flag");
+    confirm(true).await.expect("approved with the flag");
+}

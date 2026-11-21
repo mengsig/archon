@@ -487,8 +487,23 @@ impl DesignService {
             .await
             .design_note(&row.item, note_id)?
             .ok_or_else(|| ArchonError::NotFound(format!("note {note_id}")))?;
+        // The approved reference records the note's preset size, so the
+        // picture is taken at that preset whatever the preview shows now.
+        // A metrics change keeps the page as the operator left it.
+        let preset = note
+            .target
+            .as_ref()
+            .map_or(note.viewport.preset, |t| t.viewport.preset);
         let head = row.finish_head.clone().unwrap_or_default();
         if let Some(browser) = self.ensure_browser(ctx, &row.id).await? {
+            let switched = row.viewport_preset != preset;
+            if switched {
+                let (_, viewport) = to_adb_viewport(preset);
+                if let Err(e) = browser.set_viewport(viewport).await {
+                    self.restore_viewport(ctx, &row).await;
+                    return Err(ArchonError::Unavailable(format!("the capture failed: {e}")));
+                }
+            }
             let clip = match note.target.as_ref().and_then(|t| t.selector.as_deref()) {
                 Some(selector) => browser
                     .resolve_selector(selector)
@@ -498,9 +513,11 @@ impl DesignService {
                     .map(|r| grow(r, MARGIN)),
                 None => None,
             };
-            let picture = browser
-                .capture(clip, 2.0)
-                .await
+            let picture = browser.capture(clip, 2.0).await;
+            if switched {
+                self.restore_viewport(ctx, &row).await;
+            }
+            let picture = picture
                 .map_err(|e| ArchonError::Unavailable(format!("the capture failed: {e}")))?;
             self.keep_final(ctx, &note, &picture, &head).await?;
         }
@@ -520,36 +537,21 @@ impl DesignService {
         session: &DesignSessionId,
         head: &str,
     ) -> Result<DesignSession, ArchonError> {
-        let mut store = ctx.store.lock().await;
-        let current = store.design_session(session)?.ok_or_else(super::gone)?;
-        if current.finish_capture.as_deref().and_then(capture_version) == Some(current.note_version)
-        {
-            return Ok(current);
-        }
-        store
-            .design_session_transition(
-                session,
-                SessionState::Finishing,
-                SessionState::Live,
-                None,
-                false,
-            )
-            .map_err(|_| conflict())?;
-        let live = store.design_session(session)?.ok_or_else(super::gone)?;
-        store
-            .design_session_transition(
-                session,
-                SessionState::Live,
-                SessionState::Finishing,
-                Some(FinishRecord {
-                    capture: capture_id(live.note_version),
-                    head: head.to_owned(),
-                    note_version: live.note_version,
-                    choices: None,
-                }),
-                false,
-            )
-            .map_err(|_| conflict())
+        let restamped = {
+            let mut store = ctx.store.lock().await;
+            let current = store.design_session(session)?.ok_or_else(super::gone)?;
+            if current.finish_capture.as_deref().and_then(capture_version)
+                == Some(current.note_version)
+            {
+                return Ok(current);
+            }
+            store
+                .design_finish_restamp(session, &capture_id(current.note_version), head)
+                .map_err(|_| conflict())?
+        };
+        // Other devices reviewing the same session take the new id too.
+        self.emit_session(ctx, session).await;
+        Ok(restamped)
     }
 
     pub(crate) async fn finish_confirm(

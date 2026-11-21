@@ -473,6 +473,16 @@ async fn a_picture_taken_during_the_review_does_not_refuse_confirm() {
         .await
         .expect("finish"),
     );
+    // The operator looks at the phone layout before pressing Capture: the
+    // picture is still taken at the note's preset, which its reference
+    // records, and the preview goes back to what they had.
+    f.operator(Request::DesignViewport {
+        session: f.session.clone(),
+        preset: archon_core::design::ViewportPreset::Phone,
+    })
+    .await
+    .expect("phone");
+    let shots = f.factory.browser(0).calls(|c| c.captures.len());
     let after = review(
         f.operator(Request::DesignFinalCapture {
             session: f.session.clone(),
@@ -486,6 +496,19 @@ async fn a_picture_taken_during_the_review_does_not_refuse_confirm() {
         after.capture, first.capture,
         "re-stamped at the new version"
     );
+    let (widths, taken) = f.factory.browser(0).calls(|c| {
+        (
+            c.viewports
+                .iter()
+                .rev()
+                .take(2)
+                .map(|v| v.width)
+                .collect::<Vec<_>>(),
+            c.captures.len(),
+        )
+    });
+    assert_eq!(taken, shots + 1, "one picture");
+    assert_eq!(widths, [390, 1440], "shot at Desktop, then back to Phone");
     let stale = f
         .operator(Request::DesignFinishConfirm {
             session: f.session.clone(),

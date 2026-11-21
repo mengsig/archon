@@ -22,6 +22,7 @@ const PHONE_PX = 640;
 const WIDE_PX = 1024;
 const SHEET_HEIGHTS = ['peek', 'half', 'full'];
 const FOLLOW_EVERY_MS = 3000;
+const FOLLOW_MAX_MS = 30_000;
 
 export function mountDesign(view, ctx) {
   const item = ctx.route.param;
@@ -312,8 +313,19 @@ export function mountDesign(view, ctx) {
   // While the gate waits or changes were requested, the next session is only found by asking.
   function syncFollower() {
     const want = operator && followsNewSession(state);
-    if (want && !follower) follower = setInterval(() => stream.refresh(), FOLLOW_EVERY_MS);
-    else if (!want && follower) { clearInterval(follower); follower = null; }
+    if (want && !follower) {
+      // Quick at first (the next session usually opens within seconds), then
+      // backing off, so a screen left open on a run that never designs again
+      // asks only every half minute.
+      let wait = FOLLOW_EVERY_MS;
+      const tick = () => {
+        stream.refresh();
+        if (follower === null) return; // stopped meanwhile
+        wait = Math.min(wait * 1.5, FOLLOW_MAX_MS);
+        follower = setTimeout(tick, wait);
+      };
+      follower = setTimeout(tick, wait);
+    } else if (!want && follower) { clearTimeout(follower); follower = null; }
   }
 
   // ---- wiring ----
@@ -376,6 +388,6 @@ export function mountDesign(view, ctx) {
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', fit);
     vv?.removeEventListener('resize', onViewport);
-    clearInterval(clock); clearInterval(follower); follower = null; offFeatures(); offConn();
+    clearInterval(clock); clearTimeout(follower); follower = null; offFeatures(); offConn();
   };
 }

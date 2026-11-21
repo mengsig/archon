@@ -665,6 +665,37 @@ impl Store {
         Ok(updated)
     }
 
+    /// Give a session under review a new capture id in place, in one write:
+    /// it stays Finishing, so no check that guards entering a review (an
+    /// owed message, say) can drop it back to Live halfway.
+    pub fn design_finish_restamp(
+        &mut self,
+        id: &DesignSessionId,
+        capture: &str,
+        head: &str,
+    ) -> Result<DesignSession, ArchonError> {
+        let tx = write_tx(&mut self.conn)?;
+        let session = session_by_id(&tx, id)?
+            .ok_or_else(|| ArchonError::NotFound(format!("design session {id}")))?;
+        if session.state != SessionState::Finishing {
+            return Err(refuse(
+                DesignRefusal::Conflict,
+                format!(
+                    "the design session is {}, not finishing",
+                    enc(&session.state)
+                ),
+            ));
+        }
+        tx.execute(
+            "UPDATE design_sessions SET finish_capture = ?2, finish_head = ?3 WHERE id = ?1",
+            params![id.0, capture, head],
+        )
+        .ctx("restamp design finish")?;
+        let updated = session_by_id(&tx, id)?.expect("the session exists");
+        tx.commit().ctx("commit design finish restamp")?;
+        Ok(updated)
+    }
+
     /// End the session; `None` when it is unknown or already ended.
     pub fn design_session_end(
         &mut self,

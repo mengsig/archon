@@ -188,7 +188,11 @@ impl Shared {
 
     async fn capture(&self, clip: Option<ClipRect>, dpr: f64) -> Result<Picture, BrowserError> {
         // Crops are in page CSS pixels: take them on the unzoomed page the
-        // operator saw, and leave it unzoomed for the stream.
+        // operator saw, and leave it unzoomed for the stream. A full-view
+        // shot (each polled stream frame) zooms nothing and pays nothing.
+        if clip.is_none() {
+            return self.capture_at_scale_one(None, dpr).await;
+        }
         self.reset_zoom().await;
         let picture = self.capture_at_scale_one(clip, dpr).await;
         self.reset_zoom().await;
@@ -983,6 +987,13 @@ mod capture_tests {
                 "Page.captureScreenshot",
                 "Emulation.resetPageScaleFactor"
             ]
+        );
+        log.lock().unwrap().clear();
+        b.capture(None, 1.0).await.unwrap();
+        assert_eq!(
+            methods(&log),
+            ["Page.captureScreenshot"],
+            "a full-view shot needs no reset"
         );
         log.lock().unwrap().clear();
         b.reload().await.unwrap();

@@ -5649,9 +5649,14 @@ proposal gate when the item's latest run approved its last proposal gate
 the brief the item has now; `archond` keeps a fingerprint of a gated run's
 brief for that. The later stages get the approved summary and note as
 before, and a restart rebuilds the driver past the same proposal. A fresh
-retry (its new branch lacks the proposal page), an amended brief, and a
-proposal that was revised, rejected, left undecided or never gated all
-propose again.
+retry (its new branch lacks the proposal page), a brief the operator
+amended, and a proposal that was revised, rejected, left undecided or never
+gated all propose again. An automatic repair (`auto_repair`) amends the brief with
+the refusal it repairs, and carries the run's brief fingerprint across that
+amendment only when the fingerprint still matched the brief before it: the
+repaired run starts past an approved proposal (an approved live design is
+not designed again), while an amendment the operator made in between still
+proposes again.
 
 ### 18.4 Tool exposure
 

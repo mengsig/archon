@@ -181,6 +181,7 @@ fn note_view_value() -> Value {
     object.insert("undone_by".into(), Value::Null);
     object.insert("read_only".into(), json!(false));
     object.insert("active".into(), json!(true));
+    object.insert("approved".into(), json!(false));
     view
 }
 

@@ -36,6 +36,7 @@ pub const BACKOFF_MAX: std::time::Duration = std::time::Duration::from_secs(30);
 pub const ORCHESTRATOR_EVENT_TYPES: &[&str] = &[
     "agent.message",
     "agent.turn_completed",
+    "custom",
     "agent.started",
     "question.asked",
     "agent.failed",

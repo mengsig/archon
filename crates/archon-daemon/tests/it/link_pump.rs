@@ -2,6 +2,8 @@
 //! the policy watchdog, orchestrator revival and restarts, attribution of
 //! stage events, settles racing a spawn, reconnects and replays.
 
+mod tool_error;
+
 use crate::link_common;
 
 use std::collections::HashMap;

@@ -97,9 +97,12 @@ pub fn migrate_archon_server(server: &mut Value) -> anyhow::Result<()> {
         .as_table_mut()
         .context("archon MCP server classes is not a table")?;
     for tool in TOOLS {
-        classes
-            .entry(tool.name)
-            .or_insert_with(|| Value::String(tool.class.aether_name().into()));
+        let class = || Value::String(tool.class.aether_name().into());
+        if tool.read_only() {
+            classes.insert(tool.name.into(), class());
+        } else {
+            classes.entry(tool.name).or_insert_with(class);
+        }
     }
     // The bridge tool must be classified as a mutation even in older entries.
     classes.insert(
@@ -189,7 +192,9 @@ mod tests {
             Some("mutation")
         );
         assert_eq!(server["classes"]["enqueue"].as_str(), Some("mutation"));
-        assert_eq!(server["classes"]["get_item"].as_str(), Some("read_only"));
+        for tool in TOOLS.iter().filter(|tool| tool.read_only()) {
+            assert_eq!(server["classes"][tool.name].as_str(), Some("read_only"));
+        }
         assert_eq!(server["classes"]["github_reply"].as_str(), Some("external"));
     }
 

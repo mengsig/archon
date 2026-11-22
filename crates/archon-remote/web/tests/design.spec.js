@@ -140,6 +140,26 @@ test.describe('desktop', () => {
     } finally { await harness.stop(); }
   });
 
+  test('switching size hides the old picture and shows the new shape until its first frame', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      await expect(page.locator('.design-desk')).not.toHaveClass(/is-switching/);
+      harness.daemon.pauseFrames();
+      await page.getByRole('radio', { name: 'Phone' }).click();
+      const desk = page.locator('.design-desk');
+      await expect(desk).toHaveClass(/is-switching/);
+      await expect(page.locator('.design-canvas')).toHaveCSS('visibility', 'hidden');
+      await expect(page.locator('.design-framebox')).toHaveAttribute('data-switching', 'Switching to Phone…');
+      const box = await page.locator('.design-framebox').boundingBox();
+      expect(Math.abs(box.width / box.height - 390 / 844)).toBeLessThan(0.02);
+      await page.screenshot({ path: `${EVIDENCE}/switching-to-phone.png` });
+      harness.daemon.resumeFrames();
+      await expect(desk).not.toHaveClass(/is-switching/);
+      await expect(page.locator('.design-canvas')).toHaveCSS('visibility', 'visible');
+    } finally { await harness.stop(); }
+  });
+
   test('T-E4: a frozen old tab learns its session ended and sends nothing more', async ({ browser, page }) => {
     const harness = await open(browser, page);
     try {

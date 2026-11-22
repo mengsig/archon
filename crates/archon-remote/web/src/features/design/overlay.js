@@ -21,6 +21,9 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
   const desk = h('div', { class: 'design-desk' }, framebox);
 
   let frame = { w: 390, h: 844 };
+  // The preset size being switched to: until its first frame, the box takes
+  // that size and the old picture is hidden.
+  let pending = null;
   let zoom = 1;
   let sizeMode = 'fit';
   let avail = { w: 0, h: 0 };
@@ -38,10 +41,11 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
   const point = (e) => toApp(e.clientX, e.clientY, canvas.getBoundingClientRect(), frame);
 
   function layout() {
-    const base = fitScale({ frame, avail, mode: phone && sizeMode === 'fit' ? 'width' : sizeMode });
+    const base = fitScale({ frame: pending ?? frame, avail, mode: phone && sizeMode === 'fit' ? 'width' : sizeMode });
+    const shown = pending ?? frame;
     const s = base * zoom;
-    framebox.style.setProperty('--fw', `${Math.round(frame.w * s)}px`);
-    framebox.style.setProperty('--fh', `${Math.round(frame.h * s)}px`);
+    framebox.style.setProperty('--fw', `${Math.round(shown.w * s)}px`);
+    framebox.style.setProperty('--fh', `${Math.round(shown.h * s)}px`);
     desk.classList.toggle('is-actual', sizeMode === 'actual');
     renderBoxes();
   }
@@ -244,6 +248,16 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
     releaseCapture() { if (capturing) { capturing = false; onCapture(false); } },
     resize: bounds,
     setPhone(value) { phone = value; layout(); },
+    // `size` is the preset being switched to (null once its frames arrive);
+    // `label` says so in the empty box.
+    setSwitching(size, label = '') {
+      const next = size ? { w: size.w, h: size.h } : null;
+      if (next?.w === pending?.w && next?.h === pending?.h) return;
+      pending = next;
+      desk.classList.toggle('is-switching', Boolean(pending));
+      framebox.dataset.switching = pending ? label : '';
+      layout();
+    },
     toggleActual() { sizeMode = sizeMode === 'actual' ? 'fit' : 'actual'; zoom = 1; layout(); return sizeMode; },
     get sizeMode() { return sizeMode; },
     setHover(box, label) {

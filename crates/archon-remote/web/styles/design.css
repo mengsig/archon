@@ -32,6 +32,12 @@
 .design-stagewrap { position: relative; flex: 1; min-height: 0; display: flex; }
 .design-desk { flex: 1; min-height: 0; overflow: auto; display: flex; align-items: flex-start; justify-content: center; padding: var(--space-4); margin: 0 var(--space-4); background: var(--surface-2); border: 1px solid var(--separator); border-radius: var(--radius-m); }
 .design-desk.is-dim { opacity: .5; filter: grayscale(1); }
+/* Switching size: the old picture is hidden and the box already has the new size. */
+.design-desk.is-switching .design-canvas, .design-desk.is-switching .design-layer { visibility: hidden; }
+.design-desk.is-switching .design-framebox { background: var(--surface-2); }
+.design-desk.is-switching .design-framebox::after { content: attr(data-switching); position: absolute; inset: 0; display: grid; place-items: center; padding: var(--space-4); text-align: center; color: var(--text-2); font-weight: 500; animation: design-switch 1.2s ease-in-out infinite alternate; }
+@keyframes design-switch { from { opacity: .45; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .design-desk.is-switching .design-framebox::after { animation: none; } }
 .design-framebox { position: relative; flex: none; width: var(--fw, 390px); height: var(--fh, 844px); background: var(--surface); box-shadow: var(--shadow); }
 .design[data-preset="phone"] .design-framebox { border-radius: 28px; outline: 10px solid var(--text); overflow: hidden; }
 .design-canvas { display: block; width: 100%; height: 100%; }

@@ -711,43 +711,71 @@ async fn revise_resumes_the_design_agent_in_a_new_session_with_its_notes() {
     assert_eq!(again.len(), 1, "{again:?}");
     assert_eq!(again[0].text, "a darker green please");
     assert_eq!(again[0].kind, archon_core::design::NoteKind::Page);
+    // A session that ends before the request was delivered cancels it as
+    // not delivered: that is no answer from the operator, so the next retry
+    // gets it again.
+    let retry_session = || {
+        Box::pin(h.ctx.design.stage_started(
+            &h.ctx,
+            &item.id,
+            &run.id,
+            "design",
+            2,
+            agent.as_ref().expect("an agent"),
+            archon_daemon::design::WorktreeRef {
+                repo: h.repo.clone(),
+                worktree: run.workspace.clone(),
+                branch: run.branch.clone(),
+            },
+        ))
+    };
+    let cancel = |store: &mut archon_queue::Store, id: &str, why| {
+        store
+            .design_note_change(
+                &item.id,
+                id,
+                NoteChange::Status {
+                    to: NoteStatus::Cancelled,
+                    fail_reason: why,
+                    commit: None,
+                    no_change: false,
+                },
+            )
+            .unwrap();
+    };
+    cancel(
+        &mut store,
+        &again[0].id,
+        Some(archon_core::design::FailReason::NotDelivered),
+    );
+    store.design_session_end(&retry, "test").unwrap();
+    drop(store);
+    let third = retry_session().await.expect("a third session starts");
+    preview().await.expect("the third session's preview");
+    let mut store = h.ctx.store.lock().await;
+    let mine: Vec<_> = store
+        .design_notes(&item.id)
+        .unwrap()
+        .into_iter()
+        .filter(|n| n.session == third)
+        .collect();
+    assert_eq!(
+        mine.len(),
+        1,
+        "an undelivered request is sent again: {mine:?}"
+    );
     // The operator withdrew it there (a Finish that cancelled what was still
     // queued, say), then that session was lost too: the next retry does not
     // bring back a request the operator cancelled.
-    store
-        .design_note_change(
-            &item.id,
-            &again[0].id,
-            NoteChange::Status {
-                to: NoteStatus::Cancelled,
-                fail_reason: None,
-                commit: None,
-                no_change: false,
-            },
-        )
-        .unwrap();
-    store.design_session_end(&retry, "test").unwrap();
+    cancel(&mut store, &mine[0].id, None);
+    store.design_session_end(&third, "test").unwrap();
     drop(store);
-    let third = Box::pin(h.ctx.design.stage_started(
-        &h.ctx,
-        &item.id,
-        &run.id,
-        "design",
-        2,
-        agent.as_ref().expect("an agent"),
-        archon_daemon::design::WorktreeRef {
-            repo: h.repo.clone(),
-            worktree: run.workspace.clone(),
-            branch: run.branch.clone(),
-        },
-    ))
-    .await
-    .expect("another retry's session starts");
-    preview().await.expect("that retry's preview");
+    let fourth = retry_session().await.expect("a fourth session starts");
+    preview().await.expect("the fourth session's preview");
     let store = h.ctx.store.lock().await;
     let notes = store.design_notes(&item.id).unwrap();
     assert!(
-        notes.iter().all(|n| n.session != third),
+        notes.iter().all(|n| n.session != fourth),
         "a cancelled request stays cancelled: {notes:?}"
     );
 }

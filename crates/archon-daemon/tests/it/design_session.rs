@@ -1383,6 +1383,41 @@ async fn a_queued_note_edit_takes_the_item_lock() {
     );
 }
 
+/// A page note with no page of its own, when nothing took the preview
+/// elsewhere, is pictured as the preview shows it, never reloaded at a bare
+/// path that would drop its query or fragment (`/orders?id=42`, `/#/settings`).
+#[tokio::test]
+async fn a_page_note_alone_is_pictured_as_shown_without_moving_the_preview() {
+    let f = Fixture::new().await;
+    add(&f, "k1", "Make the header bigger").await;
+    let commit = f.commit(
+        "header.css",
+        "h1 { font-size: 2rem }\n",
+        "Make the header bigger\n\nArchon-Note: D1\n",
+    );
+    f.as_agent(Request::DesignNoteReport {
+        id: "D1".into(),
+        status: AgentNoteStatus::Done,
+        reply: Some("Bigger header".into()),
+        commit: Some(commit),
+        no_change: false,
+        path: None,
+        caller: Some(f.agent.clone()),
+    })
+    .await
+    .expect("done");
+    let browser = f.factory.browser(0);
+    let before = browser.calls(|c| c.navigated.len());
+    let (view, _) = confirm_with(&f, &[], false).await;
+    let card = view.cards.iter().find(|c| c.note == "D1").unwrap();
+    assert!(card.data_url.is_some(), "a final picture: {card:?}");
+    let navigated = browser.calls(|c| c.navigated[before..].to_vec());
+    assert!(
+        navigated.is_empty(),
+        "the preview stays as shown: {navigated:?}"
+    );
+}
+
 /// Item A: a New screen note's change lives on a page of its own. Its final
 /// picture showed `/` (whatever the preview showed at Finish). The agent now
 /// names that page with `path` when it reports done: the preview goes there,

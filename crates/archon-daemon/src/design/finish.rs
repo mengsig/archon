@@ -220,19 +220,22 @@ impl DesignService {
         // taken first and the capture names the version they leave. An
         // earlier session's note keeps the picture its own review confirmed:
         // its row is never written again (design.md §8.6, Revise).
-        // The page the preview shows at Finish: a page note with no page of
-        // its own is pictured there, not on the page the note before it took
-        // the preview to, and the preview is taken back there afterwards.
+        // The page the preview shows at Finish. A page note with no page of
+        // its own is pictured as shown; once a note before it took the
+        // preview elsewhere, it is pictured back at this page, not that
+        // one, and the preview is taken back here afterwards.
         let start = match self.existing_runtime(&row.id).and_then(|rt| rt.browser()) {
             Some(browser) => browser.current_path().await.ok(),
             None => None,
         };
+        let mut moved = false;
         for note in active.iter().filter(|n| n.session == row.id) {
-            self.capture_final(ctx, &row, note, &head, start.as_deref())
+            self.capture_final(ctx, &row, note, &head, start.as_deref(), &mut moved)
                 .await;
         }
         self.restore_viewport(ctx, &row).await;
-        if let (Some(start), Some(url)) = (start.as_deref(), row.preview_url.as_deref())
+        if moved
+            && let (Some(start), Some(url)) = (start.as_deref(), row.preview_url.as_deref())
             && let Some(browser) = self.existing_runtime(&row.id).and_then(|rt| rt.browser())
         {
             let _ = browser
@@ -275,7 +278,8 @@ impl DesignService {
     }
 
     /// The final picture of one note on a fresh load at its page and viewport;
-    /// `start` is the page the preview showed at Finish.
+    /// `start` is the page the preview showed at Finish, and `moved` says an
+    /// earlier picture took the preview away from it.
     async fn capture_final(
         &self,
         ctx: &DaemonContext,
@@ -283,6 +287,7 @@ impl DesignService {
         note: &DesignNote,
         head: &str,
         start: Option<&str>,
+        moved: &mut bool,
     ) {
         let Ok(Some(browser)) = self.ensure_browser(ctx, &row.id).await else {
             return;
@@ -307,12 +312,20 @@ impl DesignService {
                 .and_then(|a| a.target),
             _ => None,
         };
-        let path = note
+        // A page note with no page of its own stays on the page as shown
+        // (its query and fragment too) unless an earlier picture moved it.
+        let page = note
             .target
             .as_ref()
             .or(shown.as_ref())
-            .map(|t| t.path.as_str())
-            .or(start);
+            .map(|t| t.path.as_str());
+        let path = match page {
+            Some(page) => {
+                *moved = true;
+                Some(page)
+            }
+            None => start.filter(|_| *moved),
+        };
         if let (Some(url), Some(path)) = (row.preview_url.as_deref(), path) {
             let origin = origin_of(url);
             let _ = browser.navigate(&format!("{origin}{path}")).await;

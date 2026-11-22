@@ -136,10 +136,13 @@ fn revise_note(
         &session.stage_id,
         gate.map_or(0, |g| g.attempt),
     );
-    // Made, or withdrawn by the operator, in an earlier session: settled.
+    // Made, or withdrawn by the operator, in an earlier session: settled. A
+    // request its session ended before it was delivered is not.
     let settled = store.design_notes(&session.item)?.iter().any(|n| {
         n.client_key.starts_with(&prefix)
-            && matches!(n.status, NoteStatus::Done | NoteStatus::Cancelled)
+            && (n.status == NoteStatus::Done
+                || (n.status == NoteStatus::Cancelled
+                    && n.fail_reason != Some(archon_core::design::FailReason::NotDelivered)))
     });
     if settled {
         return Ok(None);

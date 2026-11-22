@@ -183,7 +183,15 @@
 /* tablet: the notes are a side drawer; phone: a bottom sheet and a bottom bar */
 .design-bottombar { display: none; }
 @media (max-width: 1023px) {
-  .design-main { grid-template-columns: minmax(0, 1fr); position: relative; overflow: hidden; }
+  /* clip, not hidden: a hidden overflow is still a scroll container, and focusing
+     or tapping a control in the sheet scrolled it, lifting the sheet and the stage */
+  .design-main { grid-template-columns: minmax(0, 1fr); position: relative; overflow: hidden; overflow: clip; }
+  /* while a note is being written the sheet holds the composer alone, so no
+     sticky notes bar covers its picture */
+  .design-side:has(> .dcomposer:not([hidden])) > .notes { display: none; }
+  .design-side:has(> .dcomposer:not([hidden])) > .dcomposer { position: static; }
+  /* Cancel and Send stay in reach however long the composer is */
+  .design-side .dcomposer-actions { position: sticky; bottom: calc(-1 * var(--space-3)); z-index: 1; margin: 0 calc(-1 * var(--space-3)) calc(-1 * var(--space-3)); padding: var(--space-2) var(--space-3) var(--space-3); background: var(--surface); border-top: 1px solid var(--separator); border-radius: 0 0 var(--radius-m) var(--radius-m); }
   .design-side { position: absolute; top: 0; right: 0; bottom: 0; width: min(360px, 90%); z-index: 2; border-left: 1px solid var(--separator); box-shadow: var(--shadow-lift); transform: translateX(100%); transition: transform var(--t-med) var(--ease-spring); }
   .design[data-notes="half"] .design-side, .design[data-notes="full"] .design-side { transform: none; }
   .design-bottombar { display: flex; justify-content: space-around; background: var(--surface); border-top: 1px solid var(--separator); padding-bottom: var(--safe-bottom); }
@@ -195,9 +203,11 @@
   .design-desk { margin: 0; border-radius: 0; border-inline: 0; padding: 0; align-items: flex-start; }
   .design-phase { inset: 0; border-radius: 0; }
   .design-top { padding-inline: var(--space-3); }
-  .design-side { top: auto; left: 0; right: 0; width: auto; border-left: 0; border-top: 1px solid var(--separator); border-radius: var(--radius-l) var(--radius-l) 0 0; height: 70dvh; transform: translateY(calc(100% - 56px)); padding-bottom: max(var(--space-3), var(--keyboard, 0px)); }
-  .design[data-notes="half"] .design-side { transform: translateY(40%); }
-  .design[data-notes="full"] .design-side { transform: none; height: 92dvh; }
+  /* Heights, not offsets, so the whole sheet is always on screen: a sheet pushed
+     below the stage hid its own bottom, and the composer's buttons with it. */
+  .design-side { top: auto; left: 0; right: 0; width: auto; border-left: 0; border-top: 1px solid var(--separator); border-radius: var(--radius-l) var(--radius-l) 0 0; height: 100%; transform: translateY(calc(100% - 56px)); transition: transform var(--t-med) var(--ease-spring), height var(--t-med) var(--ease-spring); padding-bottom: max(var(--space-3), var(--keyboard, 0px)); }
+  .design[data-notes="half"] .design-side { transform: none; height: 58%; }
+  .design[data-notes="full"] .design-side { transform: none; height: 100%; }
   .design-sheet-grab { display: block; flex: none; width: 56px; min-height: var(--tap); margin: 0 auto; border: 0; background: transparent; position: relative; }
   .design-sheet-grab::after { content: ""; position: absolute; left: 8px; right: 8px; top: 20px; height: 4px; border-radius: var(--radius-pill); background: var(--separator); }
   .dcomposer { bottom: var(--keyboard, 0px); }

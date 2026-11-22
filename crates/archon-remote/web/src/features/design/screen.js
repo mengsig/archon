@@ -37,7 +37,7 @@ export function mountDesign(view, ctx) {
   let continued = false;
   let layout = 'desktop';
   let sheetHeight = 'peek';
-  let scrollBeforeComposer = null; // page scroll when the composer opened, put back on Cancel
+  let scrollBeforeComposer = null; // page, stage column and sheet scroll when the composer opened, put back when it closes
   let pick = null; // where the open selection came from, for Wider / Narrower
   let depth = 0; // how many parents above the picked element; the one counter for keys and buttons
   let tickets = 0;
@@ -121,7 +121,7 @@ export function mountDesign(view, ctx) {
     onCancel: () => { composer.hide(); stage.setSelection(null); dispatch({ type: 'selection', selection: null }); collapseSheet(true); },
     onDepth: (by) => widen(by),
   });
-  const notes = createNotesPanel({ ctx, getState: () => state, onFocusNote: () => {}, onAddPage: () => { pick = null; depth = 0; stage.setSelection(null); dispatch({ type: 'selection', selection: null }); rememberScroll(); composer.show(null, { keepText: true }); } });
+  const notes = createNotesPanel({ ctx, getState: () => state, onFocusNote: () => {}, onAddPage: () => { pick = null; depth = 0; stage.setSelection(null); dispatch({ type: 'selection', selection: null }); rememberScroll(); composer.show(null, { keepText: true }); raiseSheet(); } });
   // The decision ends the session at once; ask for it now and once more
   // shortly after, rather than waiting for the follower's next tick.
   let answeredTimer = null;
@@ -194,9 +194,16 @@ export function mountDesign(view, ctx) {
     dispatch({ type: 'selection', selection: { box: resolved.target.box, label: resolved.label } });
     rememberScroll();
     composer.show(resolved, opts);
-    if (layout !== 'desktop') { sheetHeight = 'half'; render(); }
+    raiseSheet();
   }
-  function rememberScroll() { if (layout !== 'desktop' && !composer.open) scrollBeforeComposer = readScroll(); }
+  // The composer opens at the top of a half-raised sheet.
+  function raiseSheet() {
+    if (layout === 'desktop') return;
+    sheetHeight = 'half';
+    render();
+    side.scrollTop = 0;
+  }
+  function rememberScroll() { if (layout !== 'desktop' && !composer.open) scrollBeforeComposer = readScroll([main, side]); }
   // Cancel and Escape: lower the sheet and put the page back so the stage is
   // where it was. With no composer open there is nothing to undo.
   function collapseSheet(composerWasOpen) {
@@ -224,7 +231,7 @@ export function mountDesign(view, ctx) {
     const label = blank ? 'New screen sketch' : 'Sketch over the preview';
     rememberScroll();
     composer.show({ target: out.target ?? null, label, details: `${label}, drawn by the operator.`, asset: out.asset ?? out.id ?? null, data_url: out.data_url ?? null }, { keepText: true });
-    if (layout !== 'desktop') { sheetHeight = 'half'; render(); }
+    raiseSheet();
   }
 
   async function sendNote({ text, asset, sendPicture, sendDetails, details }) {
@@ -239,7 +246,7 @@ export function mountDesign(view, ctx) {
       composer.reset();
       stage.setSelection(null);
       dispatch({ type: 'selection', selection: null });
-      if (layout !== 'desktop') sheetHeight = 'peek';
+      collapseSheet(true);
       notes.select(note.id);
     } catch (err) {
       if (err.code === 'disconnected' || err.code === 'timeout') {

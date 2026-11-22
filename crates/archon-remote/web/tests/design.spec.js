@@ -368,6 +368,52 @@ test.describe('hardening', () => {
   });
 });
 
+// The sheet and the page as a phone sees them: the notes sheet's top, and every
+// element scrolled away from its start (the stage column, the sheet, the page).
+const sheetAndScroll = (page) => page.evaluate(() => ({
+  sheetTop: Math.round(document.querySelector('aside.design-side').getBoundingClientRect().top),
+  scrolled: [...document.querySelectorAll('*')].filter((e) => e.scrollTop > 0).map((e) => `${e.tagName.toLowerCase()}.${String(e.className).split(' ')[0]}:${e.scrollTop}`),
+  canvasTop: Math.round(document.querySelector('.design-canvas').getBoundingClientRect().top),
+}));
+
+// S3-phone as the validation runs it: a real phone (touch, 2x pixels, mobile
+// viewport), Comment, tap a card, then Cancel in the composer.
+test.describe('phone Cancel', () => {
+  test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+
+  test('Cancel lowers the notes sheet to its handle and puts the page back', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      const canvas = page.locator('.design-canvas');
+      await expect(canvas).toBeVisible();
+      await expect(page.getByRole('radio', { name: 'Phone' })).toHaveAttribute('aria-checked', 'true');
+      await expect.poll(async () => (await canvas.boundingBox())?.width ?? 0).toBeGreaterThan(300);
+      const before = await sheetAndScroll(page);
+      expect(before.scrolled).toEqual([]);
+      await page.getByRole('navigation', { name: 'Design modes' }).getByRole('button', { name: 'Comment' }).click();
+      const rect = await canvas.boundingBox();
+      await page.touchscreen.tap(rect.x + rect.width * 0.3, rect.y + rect.height * 0.4);
+      await expect(page.getByText('What the agent will receive')).toBeVisible();
+      await expect.poll(async () => (await sheetAndScroll(page)).sheetTop).toBeLessThan(before.sheetTop - 200);
+      await page.waitForTimeout(600); // the sheet has finished sliding up
+      // The sheet shows the composer whole: its picture under no sticky bar, its buttons on screen.
+      const head = await page.locator('.notes-head').boundingBox();
+      const pic = await page.locator('.dcomposer-crop').boundingBox();
+      expect(head === null || head.y + head.height <= pic.y + 1, "no sticky bar over the picture").toBe(true);
+      const cancelBox = await page.getByRole("button", { name: "Cancel", exact: true }).boundingBox();
+      expect(cancelBox.y + cancelBox.height, "Cancel is on screen without scrolling").toBeLessThanOrEqual(844);
+      const cancel = page.getByRole('button', { name: 'Cancel', exact: true });
+      await page.screenshot({ path: `${EVIDENCE}/phone-cancel-composer.png` });
+      await cancel.tap();
+      await expect(page.locator('.dcomposer')).toBeHidden();
+      await expect.poll(() => sheetAndScroll(page)).toEqual(before);
+      await page.waitForTimeout(1500);
+      expect(await sheetAndScroll(page)).toEqual(before);
+      await page.screenshot({ path: `${EVIDENCE}/phone-cancel-after.png` });
+    } finally { await harness.stop(); }
+  });
+});
+
 test.describe('phone S3 and touch', () => {
   test.use({ viewport: { width: 390, height: 844 } });
 

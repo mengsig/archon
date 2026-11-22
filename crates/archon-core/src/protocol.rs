@@ -965,6 +965,12 @@ pub enum Request {
         commit: Option<String>,
         #[serde(default)]
         no_change: bool,
+        /// For a done page note (no element picked, such as a New screen
+        /// sketch): the app path that shows the change, e.g. `/settings`.
+        /// The preview goes there and the after and final pictures are taken
+        /// there.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
         /// Aether's out-of-band MCP caller identity, never a tool argument.
         caller: Option<AetherAgentId>,
     },

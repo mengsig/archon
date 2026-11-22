@@ -4437,6 +4437,13 @@
               "default": false,
               "type": "boolean"
             },
+            "path": {
+              "description": "For a done page note (no element picked, such as a New screen\nsketch): the app path that shows the change, e.g. `/settings`.\nThe preview goes there and the after and final pictures are taken\nthere.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "reply": {
               "type": [
                 "string",
@@ -17978,6 +17985,13 @@
             "no_change": {
               "default": false,
               "type": "boolean"
+            },
+            "path": {
+              "description": "For a done page note (no element picked, such as a New screen\nsketch): the app path that shows the change, e.g. `/settings`.\nThe preview goes there and the after and final pictures are taken\nthere.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "reply": {
               "type": [

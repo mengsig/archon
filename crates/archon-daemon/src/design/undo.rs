@@ -220,7 +220,8 @@ impl DesignService {
             .await
             .design_note(&revert.item, original_id)?
             .and_then(|n| n.target);
-        self.after_picture(ctx, session, &for_picture, wt).await;
+        self.after_picture(ctx, session, &for_picture, wt, None)
+            .await;
         self.emit_note(ctx, &revert.item, &revert.id).await;
         self.tell_undone(ctx, session, &revert.id, original_id, new)
             .await;

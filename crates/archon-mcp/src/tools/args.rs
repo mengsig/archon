@@ -709,12 +709,19 @@ fn design_note(args: &mut Args) -> Result<Request, ToolError> {
             ));
         }
     }
+    let path = args.optional_text("path")?;
+    if let Some(path) = &path
+        && let Err(why) = archon_core::design::check_app_path(path)
+    {
+        return Err(args.error("path", why));
+    }
     Ok(Request::DesignNoteReport {
         id,
         status,
         reply: args.optional_text("reply")?,
         commit,
         no_change: args.optional("no_change")?.unwrap_or(false),
+        path,
         caller: None,
     })
 }

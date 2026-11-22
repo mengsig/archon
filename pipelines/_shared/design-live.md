@@ -47,7 +47,11 @@ sessions are already in the code.
    uncommitted, no untracked files outside `.archon/`). Then call
    `design_note` with `id`, `status: "done"`, `commit` (the full sha) and
    `reply` (one line saying what you changed). If nothing needs to change,
-   call it with `status: "done", no_change: true` and say why.
+   call it with `status: "done", no_change: true` and say why. For a note on
+   the whole page (no element details), such as a New screen sketch, whose
+   change shows on a page of its own, also pass that page's `path`, for
+   example `path: "/settings"`. The operator's preview goes there, and the
+   note's pictures are taken there.
 5. **Do not rewrite history.** Never amend an earlier commit, rebase, reset
    below the note's base commit, or merge. Archon checks that HEAD is your
    commit and that its only parent is the base; anything else marks the note

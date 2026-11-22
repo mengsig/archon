@@ -206,6 +206,7 @@ async fn only_a_done_note_with_a_commit_can_be_undone() {
         reply: None,
         commit: None,
         no_change: true,
+        path: None,
         caller: Some(f.agent.clone()),
     })
     .await
@@ -552,6 +553,7 @@ async fn finish_with_only_no_change_notes_needs_the_flag() {
         reply: Some("it already is".into()),
         commit: None,
         no_change: true,
+        path: None,
         caller: Some(f.agent.clone()),
     })
     .await

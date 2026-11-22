@@ -166,7 +166,10 @@ Undo is refused while finishing, on a dirty worktree, and on a note that is
 already undone or in an approved intent.
 
 **Revise.** If you ask for changes at approval, the same agent resumes in a new
-session that starts live. Notes from earlier sessions are read-only: you cannot
+session that starts live. What you asked for becomes the new session's first
+note, a note on the whole page sent as soon as the app is up. The agent makes
+it like any other note, so it shows in the ledger and the approval. Notes from
+earlier sessions are read-only: you cannot
 edit, cancel, reply to or drop them. Their changes stay in the code, and you can
 undo any of them from the new session. Ids continue where they stopped. A
 design screen left open follows you into the new session and shows its preview
@@ -175,17 +178,22 @@ pictured and confirmed again; earlier notes keep the picture you confirmed for
 them before and still count toward what you approve, unless a later note
 supersedes them or you undo them. A "superseded by" you chose at an earlier
 review still holds, and its card shows it; clear it there to bring the note
-back.
+back. A replacement lapses when its replacing note is undone, so the
+replaced note counts again.
 
 ## Finishing and approving
 
 1. **Finish** is available when no note is in progress or waiting for an
-   answer, the worktree is clean, and at least one note is done. Otherwise it
+   answer, the worktree is clean, and there is something to approve: a done
+   note, or a design approved in an earlier session. Otherwise it
    says why ("Finish after D3 is done"). With notes still queued it asks
    "Cancel 2 queued notes and finish?".
 2. Finishing freezes the session: no new notes, edits, replies or undos until
    **Back to editing**. Interact still works. Archon takes a final picture of
-   each note's element at the final commit, on a fresh load. Where the element
+   each note's element at the final commit, on a fresh load. A note on the
+   whole page (a New screen sketch, say) is pictured on the page the agent
+   named when it reported the note done (`path`), and otherwise on the page
+   the preview shows. Where the element
    only appears after some clicks, the card says "Not found on a fresh load:
    open it in the preview and press Capture".
 3. Review the cards. Each shows your words and the final picture with an
@@ -206,8 +214,11 @@ picture withheld by the operator)". Before, after and in-between pictures are
 never part of it and never sent to a later model. Review and acceptance then
 check the shipped UI against the final pictures and your words.
 
-If every note ended as "nothing to change", Finish does not open the gate by
-itself. Use **Confirm no change** (`confirm_no_change`) to say so explicitly.
+If every note ended as "nothing to change", or nothing is left in force after
+your "superseded by" choices, the review asks "Approve the design as it is?"
+and its button reads **Approve as it is** (`confirm_no_change`). The same
+holds for a session reopened after its design was approved, even before
+you add a note.
 Archon then opens the proposal gate with an empty ledger delta, and you approve
 it as usual. With no active note and nothing confirmed there is nothing to
 approve: add a note or cancel.

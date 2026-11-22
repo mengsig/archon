@@ -1715,8 +1715,21 @@ fn design_note_checks_its_status_and_commit() {
                 reply: None,
                 commit: None,
                 no_change: false,
+                path: None,
                 caller: None
             }
+        );
+    }
+    let args = json!({"id": "D2", "status": "done", "commit": sha1, "path": "/settings/new"});
+    let Request::DesignNoteReport { path, .. } = to_request("design_note", args).unwrap() else {
+        panic!("a note report");
+    };
+    assert_eq!(path.as_deref(), Some("/settings/new"));
+    for path in ["settings", "//evil.example/x", "/a b", "http://127.0.0.1/x"] {
+        let args = json!({"id": "D2", "status": "done", "commit": sha1, "path": path});
+        assert!(
+            to_request("design_note", args).is_err(),
+            "{path} is refused"
         );
     }
     for commit in [&sha1, &sha256] {

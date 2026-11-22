@@ -252,10 +252,20 @@ pub(crate) async fn handle(
             reply,
             commit,
             no_change,
+            path,
             caller,
         } => {
             service
-                .note_report(ctx, &id, status, reply, commit, no_change, caller.as_ref())
+                .note_report(
+                    ctx,
+                    &id,
+                    status,
+                    reply,
+                    commit,
+                    no_change,
+                    path,
+                    caller.as_ref(),
+                )
                 .await
         }
         other => Err(ArchonError::Invalid(format!(

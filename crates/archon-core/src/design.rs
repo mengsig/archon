@@ -538,6 +538,30 @@ pub fn validate_preview_url(url: &str) -> Result<String, ArchonError> {
 
 /// `text` without control characters other than newline and tab, trimmed and
 /// cut to `max_chars` characters.
+/// The longest app path a note may name.
+pub const MAX_PATH_CHARS: usize = 512;
+
+/// An app path a page note names: `/` then no whitespace, control
+/// characters, scheme or host. Returns why not.
+pub fn check_app_path(path: &str) -> Result<(), &'static str> {
+    if !path.starts_with('/') || path.starts_with("//") {
+        return Err("must start with a single /, like /settings");
+    }
+    if path.chars().count() > MAX_PATH_CHARS {
+        return Err("is too long");
+    }
+    if path
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || c == '\\')
+    {
+        return Err("must not contain spaces, control characters or backslashes");
+    }
+    if path.contains("://") {
+        return Err("is a path in the app, not a URL");
+    }
+    Ok(())
+}
+
 pub fn clean_text(text: &str, max_chars: usize) -> String {
     let kept: String = text
         .chars()

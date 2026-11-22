@@ -5,7 +5,7 @@ use std::time::Duration;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::design::{
     AssetSource, DesignNote, DesignSession, FailReason, NoteKind, NoteStatus, ReplyAuthor,
-    SessionState, ThreadEntry, is_in_flight, validate_preview_url,
+    SessionState, Target, ThreadEntry, is_in_flight, validate_preview_url,
 };
 use archon_core::error::{ArchonError, DesignRefusal};
 use archon_core::protocol::{AgentNoteStatus, Reply};
@@ -189,13 +189,23 @@ impl DesignService {
         reply: Option<String>,
         commit: Option<String>,
         no_change: bool,
+        path: Option<String>,
         caller: Option<&AetherAgentId>,
     ) -> Result<Reply, ArchonError> {
+        if let Some(path) = &path {
+            archon_core::design::check_app_path(path)
+                .map_err(|why| ArchonError::Invalid(format!("path {why}")))?;
+            if status != AgentNoteStatus::Done {
+                return Err(ArchonError::Invalid(
+                    "path goes with done: the page that shows the change".into(),
+                ));
+            }
+        }
         let session = self.agent_session(ctx, caller).await?;
         let lock = self.item_lock(&session.item);
         let held = lock.lock().await;
         let result = self
-            .report_locked(ctx, &session, id, status, reply, commit, no_change)
+            .report_locked(ctx, &session, id, status, reply, commit, no_change, path)
             .await;
         drop(held);
         if result.is_ok() {
@@ -214,6 +224,7 @@ impl DesignService {
         reply: Option<String>,
         commit: Option<String>,
         no_change: bool,
+        path: Option<String>,
     ) -> Result<Reply, ArchonError> {
         let item = &session.item;
         let note = ctx
@@ -335,26 +346,43 @@ impl DesignService {
         tracing::info!(note = id, ?status, device = ?super::current_device_label(), "design: agent reported");
         self.emit_note(ctx, item, id).await;
         if to == NoteStatus::Done && !no_change {
-            self.after_picture(ctx, session, &note, &wt).await;
+            // A page note's own page (a new screen): an element's note stays
+            // on the page its element is on.
+            let shown = path.filter(|_| note.target.is_none());
+            self.after_picture(ctx, session, &note, &wt, shown.as_deref())
+                .await;
             self.emit_note(ctx, item, id).await;
         }
         self.note_reply(ctx, item, id).await
     }
 
     /// The operator-only picture after a change: network idle, one reload when
-    /// nothing moved, the same clip at the element's new box.
+    /// nothing moved, the same clip at the element's new box. A page note
+    /// done with a `path` first takes the preview there and is pictured whole;
+    /// its after picture records that path for the final picture.
     pub(crate) async fn after_picture(
         &self,
         ctx: &DaemonContext,
         session: &DesignSession,
         note: &DesignNote,
         wt: &WorktreeRef,
+        path: Option<&str>,
     ) {
         let Some(rt) = self.existing_runtime(&session.id) else {
             return;
         };
         let Some(browser) = rt.browser() else {
             return;
+        };
+        let shown = match (path, session.preview_url.as_deref()) {
+            (Some(path), Some(url)) => {
+                let to = format!("{}{path}", super::finish::origin_of(url));
+                if let Err(error) = browser.navigate(&to).await {
+                    tracing::info!(%error, "design: the preview did not go to the note's page");
+                }
+                Some(page_target(path, note))
+            }
+            _ => None,
         };
         let since = browser.latest_seq();
         let _ = browser
@@ -390,7 +418,8 @@ impl DesignService {
             }
         };
         let head = self.head_of(wt).unwrap_or_default();
-        if let Err(error) = self.keep_after(ctx, note, &picture, &head).await {
+        let target = shown.or_else(|| note.target.clone());
+        if let Err(error) = self.keep_after(ctx, note, target, &picture, &head).await {
             tracing::info!(%error, "design: the after picture was not kept");
         }
     }
@@ -399,6 +428,7 @@ impl DesignService {
         &self,
         ctx: &DaemonContext,
         note: &DesignNote,
+        target: Option<Target>,
         picture: &adb::Picture,
         head: &str,
     ) -> Result<(), ArchonError> {
@@ -408,7 +438,7 @@ impl DesignService {
                 &note.item,
                 NewAsset {
                     source: AssetSource::After,
-                    target: note.target.clone(),
+                    target,
                     note: Some(note.id.clone()),
                     commit: Some(head.to_owned()),
                     mime: picture.mime,
@@ -430,6 +460,28 @@ impl DesignService {
             )?;
         }
         Ok(())
+    }
+}
+
+/// Where a page note's change shows: the whole view at `path`, at the
+/// note's viewport. The after picture records it; Finish's final picture
+/// for the note is taken there.
+pub(crate) fn page_target(path: &str, note: &DesignNote) -> Target {
+    let v = note.viewport;
+    Target {
+        path: path.to_owned(),
+        selector: None,
+        role_name: None,
+        component: None,
+        rect: archon_core::design::Rect {
+            x: 0.0,
+            y: 0.0,
+            w: f64::from(v.w),
+            h: f64::from(v.h),
+        },
+        viewport: v,
+        styles: Default::default(),
+        region: false,
     }
 }
 

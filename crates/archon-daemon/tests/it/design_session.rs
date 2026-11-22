@@ -79,6 +79,7 @@ pub async fn report(
         reply: reply.map(str::to_owned),
         commit,
         no_change: false,
+        path: None,
         caller: Some(f.agent.clone()),
     })
     .await
@@ -337,6 +338,7 @@ async fn only_the_stage_agent_may_report() {
             reply: None,
             commit: None,
             no_change: false,
+            path: None,
             caller: None,
         })
         .await;
@@ -351,6 +353,7 @@ async fn only_the_stage_agent_may_report() {
             reply: None,
             commit: None,
             no_change: false,
+            path: None,
             caller: Some(archon_core::aether_ids::AetherAgentId::parse("agt_stranger").unwrap()),
         })
         .await;
@@ -1333,4 +1336,70 @@ async fn a_queued_note_edit_takes_the_item_lock() {
             .is_err(),
         "the edit ran while the item lock was held"
     );
+}
+
+/// Item A: a New screen note's change lives on a page of its own. Its final
+/// picture showed `/` (whatever the preview showed at Finish). The agent now
+/// names that page with `path` when it reports done: the preview goes there,
+/// the after picture records it, and Finish pictures the note there, whole.
+#[tokio::test]
+async fn a_page_note_done_with_a_path_is_pictured_on_that_page() {
+    let f = Fixture::new().await;
+    let added = add(&f, "k1", "Add a settings screen like my sketch").await;
+    assert!(added.target.is_none(), "a page note");
+    let report_with = |status, commit: Option<String>, path: &str| {
+        f.as_agent(Request::DesignNoteReport {
+            id: "D1".into(),
+            status,
+            reply: Some("Added /settings/new".into()),
+            commit,
+            no_change: false,
+            path: Some(path.into()),
+            caller: Some(f.agent.clone()),
+        })
+    };
+    let early = report_with(AgentNoteStatus::Working, None, "/settings/new").await;
+    assert!(early.is_err(), "a path goes with done");
+    let commit = f.commit(
+        "settings.html",
+        "<h1>Settings</h1>\n",
+        "Add a settings screen\n\nArchon-Note: D1\n",
+    );
+    let bad = report_with(AgentNoteStatus::Done, Some(commit.clone()), "settings").await;
+    assert!(bad.is_err(), "a path starts with /");
+    report_with(AgentNoteStatus::Done, Some(commit), "/settings/new")
+        .await
+        .expect("done");
+    let page = format!("{}settings/new", crate::common::design::PREVIEW);
+    let browser = f.factory.browser(0);
+    assert_eq!(
+        browser.calls(|c| c.navigated.last().cloned()).as_deref(),
+        Some(page.as_str()),
+        "the operator's preview shows the new screen"
+    );
+    let done = note(&f, "D1").await;
+    let after = done.after_asset.clone().expect("an after picture");
+    let shown =
+        f.h.ctx
+            .store
+            .lock()
+            .await
+            .design_asset(&f.item, &after)
+            .unwrap()
+            .unwrap()
+            .target
+            .expect("the after picture records its page");
+    assert_eq!(shown.path, "/settings/new");
+    // The operator wanders back to the home page before Finish.
+    let navigated_before = browser.calls(|c| c.navigated.len());
+    let (view, _) = confirm_with(&f, &[], false).await;
+    let card = view.cards.iter().find(|c| c.note == "D1").unwrap();
+    assert!(card.data_url.is_some(), "a final picture: {card:?}");
+    let navigated = browser.calls(|c| c.navigated[navigated_before..].to_vec());
+    assert!(
+        navigated.contains(&page),
+        "the final picture is taken on the note's page: {navigated:?}"
+    );
+    let last_capture = browser.calls(|c| c.captures.last().cloned()).unwrap();
+    assert_eq!(last_capture.0, None, "the whole view, not a crop");
 }

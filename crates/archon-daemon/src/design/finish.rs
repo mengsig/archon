@@ -279,7 +279,22 @@ impl DesignService {
             .map_or(note.viewport.preset, |t| t.viewport.preset);
         let (_, viewport) = to_adb_viewport(preset);
         let _ = browser.set_viewport(viewport).await;
-        if let (Some(url), Some(target)) = (row.preview_url.as_deref(), note.target.as_ref()) {
+        // A page note done with its own page (a new screen) is pictured
+        // there, as its after picture recorded, not on whatever page the
+        // preview shows at Finish.
+        let shown = match (&note.target, &note.after_asset) {
+            (None, Some(after)) => ctx
+                .store
+                .lock()
+                .await
+                .design_asset(&note.item, after)
+                .ok()
+                .flatten()
+                .and_then(|a| a.target),
+            _ => None,
+        };
+        let place = note.target.as_ref().or(shown.as_ref());
+        if let (Some(url), Some(target)) = (row.preview_url.as_deref(), place) {
             let origin = origin_of(url);
             let _ = browser.navigate(&format!("{origin}{}", target.path)).await;
             let _ = browser
@@ -760,7 +775,7 @@ impl DesignService {
     }
 }
 
-fn origin_of(url: &str) -> String {
+pub(crate) fn origin_of(url: &str) -> String {
     let rest = url.strip_prefix("http://").unwrap_or(url);
     let authority = rest.split('/').next().unwrap_or_default();
     format!("http://{authority}")

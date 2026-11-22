@@ -1,7 +1,6 @@
 //! Render a reviewable requirement ledger with its reference images.
 use archon_core::error::ArchonError;
 use archon_core::intent::{ApprovedIntent, ReferenceImage};
-use base64::{Engine, engine::general_purpose::STANDARD};
 use sha2::{Digest, Sha256};
 
 pub fn render(intent: &ApprovedIntent) -> Result<String, ArchonError> {
@@ -52,7 +51,7 @@ pub fn render(intent: &ApprovedIntent) -> Result<String, ArchonError> {
     Ok(html)
 }
 
-/// Isolate the proposal's scripts and styles from the ledger being approved.
+/// Render the ledger with sibling image files and isolate the proposal's scripts and styles from the ledger being approved.
 pub fn proposal(intent: &ApprovedIntent, original: &str) -> Result<String, ArchonError> {
     let ledger = render(intent)?;
     Ok(format!(
@@ -84,14 +83,25 @@ fn render_image(image: &ReferenceImage) -> Result<String, ArchonError> {
             image.id
         )));
     }
-    let mime = archon_core::attachment::sniff_media_type(&data)
-        .ok_or_else(|| ArchonError::Invalid(format!("unsupported image {}", image.id)))?;
+    if archon_core::attachment::sniff_media_type(&data).is_none() {
+        return Err(ArchonError::Invalid(format!(
+            "unsupported image {}",
+            image.id
+        )));
+    }
+    let name = image
+        .path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| {
+            name.bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        })
+        .ok_or_else(|| ArchonError::Invalid(format!("invalid filename for image {}", image.id)))?;
     let details = image_details(image);
     Ok(format!(
-        "<figure><img style=\"max-width:100%\" alt=\"{}\" src=\"data:{};base64,{}\"><figcaption>{}{}</figcaption></figure>",
+        "<figure><img style=\"max-width:100%\" alt=\"{}\" src=\"./{name}\"><figcaption>{}{}</figcaption></figure>",
         escape(&image.id),
-        mime,
-        STANDARD.encode(data),
         escape(&image.id),
         details
     ))
@@ -166,8 +176,8 @@ mod tests {
         };
         let html = render(&intent).unwrap();
         assert!(html.contains("&lt;keep this&gt;"));
-        assert!(html.contains("data:image/png;base64,"));
-        assert!(html.find("Match screen") < html.find("data:image/png"));
+        assert!(html.contains("src=\"./mock.png\""));
+        assert!(html.find("Match screen") < html.find("./mock.png"));
         let original =
             "<style>body{display:none}</style><script>parent.document.body.remove()</script>";
         let isolated = proposal(&intent, original).unwrap();

@@ -2,7 +2,7 @@ use crate::context::DaemonContext;
 use crate::resolve::RepoEnv;
 use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;
-use archon_core::intent::ApprovedIntent;
+use archon_core::intent::{ApprovedIntent, IntentSource, ReferenceImage};
 use archon_core::model::ModelRef;
 use archon_core::ports::SpawnRequest;
 use archon_core::queue::QueueItem;
@@ -117,21 +117,13 @@ fn attach_references(
         .len()
         .min(MAX_REFERENCES.saturating_sub(request.references.len()))
         .min(MAX_REFERENCE_IMAGES.saturating_sub(existing_images));
-    for (index, image) in record.images.iter().enumerate() {
-        if super::images::hash(&image.path)? != image.sha256 {
-            return Err(ArchonError::Invalid(format!(
-                "approved image {} changed",
-                image.id
-            )));
-        }
-        if index < images {
-            request.references.push(Reference {
-                path: image.path.clone(),
-                kind: ReferenceKind::Image,
-                label: Some(image.id.clone()),
-            });
-        }
-    }
+    request
+        .references
+        .extend(record.images.iter().take(images).map(|image| Reference {
+            path: image.path.clone(),
+            kind: ReferenceKind::Image,
+            label: Some(image.id.clone()),
+        }));
     if files < record.artifacts.len() || images < record.images.len() {
         request.instructions.push_str(&format!(
             "\nAether reference limits reached: remaining approved artifacts and images are listed by path below. {}\nApproved artifacts (path only): {}\nReference images (path only): {}\n",
@@ -424,37 +416,53 @@ fn materialize(
         artifact.path = crate::handlers::intent::preserve(&root, &artifact.path, &artifact.sha256)?;
     }
     for image in &mut record.images {
-        if super::images::hash(&image.path)? != image.sha256 {
-            return Err(ArchonError::Invalid(format!(
-                "approved image {} changed",
-                image.id
-            )));
-        }
-        let filename = format!(
-            "{}.{}",
-            image.id,
-            image
-                .path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("png")
-        );
-        let target = root.join(filename);
-        if target
-            .symlink_metadata()
-            .is_ok_and(|m| m.file_type().is_symlink())
-        {
-            return Err(ArchonError::Invalid(
-                "intent image target is a symlink".into(),
-            ));
-        }
-        std::fs::copy(&image.path, &target)
-            .map_err(|e| ArchonError::io("copy stage reference image", e))?;
-        image.path = target;
+        image.path = materialize_image(&root, image, &record.source)?;
     }
     assert!(record.images.iter().all(|i| i.path.starts_with(&root)));
     assert!(record.images.iter().all(|i| i.path.is_file()));
     Ok(record)
+}
+
+fn materialize_image(
+    root: &std::path::Path,
+    image: &ReferenceImage,
+    source: &IntentSource,
+) -> Result<std::path::PathBuf, ArchonError> {
+    let bytes = super::images::read_reference(&image.path)?;
+    if super::images::digest(&bytes) != image.sha256 {
+        return Err(ArchonError::Invalid(format!(
+            "approved image {} changed",
+            image.id
+        )));
+    }
+    if matches!(source, IntentSource::Gate { .. }) {
+        // The frozen gate page uses the same content-addressed names.
+        let name = crate::handlers::intent::preserved_filename(&image.path, &image.sha256);
+        let path = root.join(name);
+        crate::handlers::intent::save_bytes(&path, &bytes)?;
+        assert!(path.is_file());
+        assert!(path.starts_with(root));
+        return Ok(path);
+    }
+    let ext = image
+        .path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png");
+    let target = root.join(format!("{}.{ext}", image.id));
+    if target
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        return Err(ArchonError::Invalid(
+            "intent image target is a symlink".into(),
+        ));
+    }
+    std::fs::write(&target, bytes)
+        .map_err(|e| ArchonError::io("write stage reference image", e))?;
+    assert!(target.is_file());
+    assert!(target.starts_with(root));
+    Ok(target)
 }
 
 #[cfg(test)]

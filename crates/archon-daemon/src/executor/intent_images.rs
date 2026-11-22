@@ -9,61 +9,82 @@ pub(super) fn extract(
     html: &str,
     destination: &Path,
     record: &mut ApprovedIntent,
-) -> Result<(), ArchonError> {
+) -> Result<String, ArchonError> {
+    let mut rewritten = String::new();
     let mut rest = html;
     let mut index = 1;
+    let mut count = 0;
     while let Some(start) = rest.find("data:image/") {
-        rest = &rest[start..];
-        let comma = rest
-            .find(',')
-            .ok_or_else(|| ArchonError::Invalid("malformed embedded image".into()))?;
-        let header = &rest[..comma];
-        let payload_start = comma + 1;
-        let end = rest[payload_start..]
-            .find(['"', '\'', ')', ' ', '\n', '\r', '\t', '<', '>', ','])
-            .map_or(rest.len(), |n| payload_start + n);
-        let payload = &rest[payload_start..end];
-        let extension = match header {
-            "data:image/png;base64" => "png",
-            "data:image/jpeg;base64" => "jpg",
-            "data:image/gif;base64" => "gif",
-            "data:image/webp;base64" => "webp",
-            _ => {
-                return Err(ArchonError::Invalid(format!(
-                    "unsupported embedded image type {header}"
-                )));
-            }
-        };
-        let bytes = STANDARD
-            .decode(payload)
-            .map_err(|e| ArchonError::Invalid(format!("invalid embedded image: {e}")))?;
-        if bytes.is_empty() || bytes.len() > 32 * 1024 * 1024 || index > 64 {
-            return Err(ArchonError::Invalid(
-                "embedded images exceed size or count limit".into(),
-            ));
+        count += 1;
+        if count > 64 {
+            return Err(ArchonError::Invalid("too many embedded images".into()));
         }
+        rewritten.push_str(&rest[..start]);
+        let (length, extension, bytes) = decode(&rest[start..])?;
         let hash = Sha256::digest(&bytes)
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
-        let path = save(destination, &hash, extension, &bytes)?;
-        let mut id = format!("embedded{index}");
-        while record.images.iter().any(|image| image.id == id) {
-            index += 1;
-            id = format!("embedded{index}");
-        }
-        record.images.push(ReferenceImage {
-            id,
-            path,
-            sha256: hash,
-            viewport: None,
-            theme: None,
-            state: None,
-        });
-        index += 1;
-        rest = &rest[end..];
+        let name = match record.images.iter().find(|image| image.sha256 == hash) {
+            Some(image) => crate::handlers::intent::preserved_filename(&image.path, &hash),
+            None => {
+                let path = save(destination, &hash, extension, &bytes)?;
+                let mut id = format!("embedded{index}");
+                while record.images.iter().any(|image| image.id == id) {
+                    index += 1;
+                    id = format!("embedded{index}");
+                }
+                record.images.push(ReferenceImage {
+                    id,
+                    path,
+                    sha256: hash.clone(),
+                    viewport: None,
+                    theme: None,
+                    state: None,
+                });
+                index += 1;
+                format!("{hash}.{extension}")
+            }
+        };
+        assert!(name.starts_with(&hash));
+        rewritten.push_str("./");
+        rewritten.push_str(&name);
+        rest = &rest[start + length..];
     }
-    Ok(())
+    rewritten.push_str(rest);
+    Ok(rewritten)
+}
+
+fn decode(url: &str) -> Result<(usize, &'static str, Vec<u8>), ArchonError> {
+    assert!(url.starts_with("data:image/"));
+    let (header, rest) = url
+        .split_once(',')
+        .ok_or_else(|| ArchonError::Invalid("malformed embedded image".into()))?;
+    let extension = match header {
+        "data:image/png;base64" => "png",
+        "data:image/jpeg;base64" => "jpg",
+        "data:image/gif;base64" => "gif",
+        "data:image/webp;base64" => "webp",
+        _ => {
+            return Err(ArchonError::Invalid(format!(
+                "unsupported embedded image type {header}"
+            )));
+        }
+    };
+    let end = rest
+        .find(['"', '\'', ')', ' ', '\n', '\r', '\t', '<', '>', ','])
+        .unwrap_or(rest.len());
+    let bytes = STANDARD
+        .decode(&rest[..end])
+        .map_err(|e| ArchonError::Invalid(format!("invalid embedded image: {e}")))?;
+    if bytes.is_empty() || bytes.len() > 32 * 1024 * 1024 {
+        return Err(ArchonError::Invalid(
+            "embedded image exceeds size limit or is empty".into(),
+        ));
+    }
+    let length = header.len() + 1 + end;
+    assert!(length <= url.len());
+    Ok((length, extension, bytes))
 }
 
 fn save(

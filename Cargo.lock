@@ -201,7 +201,6 @@ name = "archon-lavish"
 version = "1.6.4"
 dependencies = [
  "archon-core",
- "base64",
  "serde_json",
  "sha2",
  "tempfile",

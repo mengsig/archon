@@ -1,6 +1,6 @@
 //! Runtime enforcement of approved intent, independent of review and CI.
 mod deviations;
-mod images;
+pub(super) mod images;
 mod pages;
 mod records;
 mod spawn;

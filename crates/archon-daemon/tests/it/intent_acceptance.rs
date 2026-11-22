@@ -9,6 +9,7 @@ use archon_core::run::{StageOutcome, StageState};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::path::Path;
 use std::time::Duration;
 
 async fn fixture(references: bool) -> (Harness, FakeAether, QueueItem) {
@@ -123,8 +124,12 @@ pub(crate) async fn evidence(h: &Harness, item: &QueueItem, status: &str) -> Val
 }
 
 pub(crate) async fn settle(h: &Harness, data: Value) {
+    settle_within(h, data, Duration::from_secs(5)).await;
+}
+
+async fn settle_within(h: &Harness, data: Value, timeout: Duration) {
     tokio::time::timeout(
-        Duration::from_secs(5),
+        timeout,
         h.settle_running(|_| StageOutcome::Completed {
             summary: "VERDICT: pass".into(),
             structured: Some(data.clone()),
@@ -132,7 +137,7 @@ pub(crate) async fn settle(h: &Harness, data: Value) {
     )
     .await
     .expect("settling must not deadlock");
-    tokio::time::timeout(Duration::from_secs(5), h.dispatch())
+    tokio::time::timeout(timeout, h.dispatch())
         .await
         .expect("dispatch must not deadlock");
 }
@@ -396,16 +401,16 @@ async fn proposal_approval_freezes_the_visible_ledger_and_delivers_it_to_build()
         .gates_for_item(&item.id)
         .unwrap()
         .remove(0);
-    let html = std::fs::read_to_string(gate.page.as_ref().unwrap()).unwrap();
+    let gate_page = std::path::Path::new(gate.page.as_ref().unwrap());
+    let html = std::fs::read_to_string(gate_page).unwrap();
     assert!(html.contains("Approved requirement ledger"));
     assert!(html.contains("R1: Keep ISO labels visible"));
     assert!(html.contains("sandbox=\"allow-scripts\""));
     if let Some(directory) = std::env::var_os("ARCHON_INTENT_EVIDENCE_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(directory).join("proposal.html"),
-            &html,
-        )
-        .unwrap();
+        let directory = std::path::PathBuf::from(directory);
+        let asset = format!("{}.png", approved.images[0].sha256);
+        std::fs::copy(gate_page.with_file_name(&asset), directory.join(asset)).unwrap();
+        std::fs::write(directory.join("proposal.html"), &html).unwrap();
     }
     assert!(h.item(&item.id).await.intent.is_none(), "not approved yet");
     h.cli(Request::Answer {
@@ -441,6 +446,205 @@ async fn proposal_approval_freezes_the_visible_ledger_and_delivers_it_to_build()
             .instructions
             .contains("Keep ISO labels visible")
     );
+}
+
+#[tokio::test]
+async fn approval_rejects_changes_to_the_published_proposal_snapshot() {
+    let (h, _fake, item) = proposed_item().await;
+    let mut approved = record(&h);
+    let image = &mut approved.images[0];
+    let path = h.run(&item.id).await.workspace.join("reference.png");
+    std::fs::copy(&image.path, &path).unwrap();
+    image.path = path;
+    let asset = format!("{}.png", image.sha256);
+    settle(&h, json!({"approved_intent": approved})).await;
+
+    let gate = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .gates_for_item(&item.id)
+        .unwrap()
+        .remove(0);
+    let published = std::path::PathBuf::from(gate.location.unwrap());
+    let source = std::path::PathBuf::from(gate.page.unwrap());
+    assert_ne!(published, source);
+    let question = gate.question.unwrap();
+    for (path, changed, problem) in [
+        (
+            published.with_file_name(&asset),
+            &b"\x89PNG\r\n\x1a\nchanged"[..],
+            "proposal image mockup changed",
+        ),
+        (
+            published,
+            &b"changed page"[..],
+            "proposal ledger page changed",
+        ),
+    ] {
+        let original = std::fs::read(&path).unwrap();
+        std::fs::write(&path, changed).unwrap();
+        assert_ne!(
+            std::fs::read(source.with_file_name(path.file_name().unwrap())).unwrap(),
+            changed
+        );
+        let refused = h
+            .cli(Request::Answer {
+                question: question.clone(),
+                text: "yes".into(),
+                chat: false,
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains(problem), "{refused}");
+        assert!(h.item(&item.id).await.intent.is_none());
+        std::fs::write(&path, original).unwrap();
+    }
+    h.cli(Request::Answer {
+        question,
+        text: "yes".into(),
+        chat: false,
+    })
+    .await
+    .unwrap();
+    assert!(h.item(&item.id).await.intent.is_some());
+}
+
+#[tokio::test]
+async fn image_heavy_proposal_freezes_a_small_page_and_starts_build() {
+    let (h, fake, item) = proposed_item().await;
+    fake.set_features(vec!["references".into()]);
+    let client = archon_aether::AetherClient::connect(&fake.endpoint())
+        .await
+        .unwrap();
+    h.ctx
+        .aether
+        .replace(Some(std::sync::Arc::new(client)))
+        .unwrap();
+    let run = h.run(&item.id).await;
+    let approved = write_image_heavy_proposal(&h, &run.workspace.join(".archon/reports/proposal"));
+    settle_within(
+        &h,
+        json!({"approved_intent": approved}),
+        Duration::from_secs(20),
+    )
+    .await;
+
+    let gate = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .gates_for_item(&item.id)
+        .unwrap()
+        .remove(0);
+    let page_path = std::path::PathBuf::from(gate.page.unwrap());
+    let page = std::fs::read_to_string(&page_path).unwrap();
+    eprintln!("Frozen intent HTML: {} bytes", page.len());
+    assert!(
+        page.len() < 16 * 1024 * 1024,
+        "frozen intent page is {} bytes",
+        page.len()
+    );
+    assert!(!page.contains("data:image/"));
+    assert!(page.contains("&lt;BASE HREF=./&gt;"));
+    capture(&run, "proposal");
+    assert!(
+        !page.contains("screen_0.png"),
+        "original preview uses the frozen assets"
+    );
+    h.cli(Request::Answer {
+        question: gate.question.unwrap(),
+        text: "yes".into(),
+        chat: false,
+    })
+    .await
+    .unwrap();
+    h.dispatch().await;
+    let build = h.running().await.remove(0);
+    assert_eq!(build.stage_id, "implement");
+    assert!(build.aether_agent.is_some());
+    let request = h.backend.requests().pop().unwrap();
+    let frozen = request
+        .references
+        .iter()
+        .find(|reference| std::fs::read(&reference.path).unwrap() == page.as_bytes())
+        .expect("build receives the frozen intent page");
+    let binding = h.item(&item.id).await.intent.unwrap();
+    let stored = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .approved_intent(&binding)
+        .unwrap()
+        .unwrap();
+    check_frozen_assets(&stored, &page_path, &frozen.path, &page);
+}
+
+fn check_frozen_assets(stored: &ApprovedIntent, page_path: &Path, frozen: &Path, page: &str) {
+    assert_eq!(
+        stored.images.len(),
+        16,
+        "embedded and local URLs share one image"
+    );
+    let first = stored.images[0].path.file_name().unwrap().to_str().unwrap();
+    assert!(page.contains(&format!("src=&#39;./{first}?preview=1&#39;")));
+    assert!(page.contains(&format!("srcset=&#39;./{first} 1x,")));
+    assert!(page.contains(&format!("url(./{first}?v=1#hero)")));
+    for image in &stored.images {
+        let name = image.path.file_name().unwrap();
+        assert!(page.contains(&format!("src=\"./{}\"", name.to_str().unwrap())));
+        for path in [page_path.with_file_name(name), frozen.with_file_name(name)] {
+            assert_eq!(std::fs::metadata(path).unwrap().len(), 1024 * 1024);
+        }
+    }
+}
+
+fn write_image_heavy_proposal(h: &Harness, reports: &Path) -> ApprovedIntent {
+    let mut approved = record(h);
+    let template = approved.images.pop().unwrap();
+    let mut original = String::from(
+        "<!doctype html><BASE HREF=./alternate/><style>.hero { background: url(screen_0.png?v=1#hero); }</style><body class=hero>\
+        <picture><source srcset='screen_0.png 1x, screen_1.png 2x'></picture>",
+    );
+    let mut bytes = std::fs::read(&template.path).unwrap();
+    bytes.resize(1024 * 1024, 0);
+    for index in 0..16 {
+        *bytes.last_mut().unwrap() = index;
+
+        let mut image = template.clone();
+        image.id = format!("screen_{index}");
+        image.path = reports.join(format!("{}.png", image.id));
+        image.sha256 = Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        if index < 15 {
+            std::fs::write(&image.path, &bytes).unwrap();
+            let query = if index == 0 { "?preview=1" } else { "" };
+            original.push_str(&format!("<img src='{}.png{query}'>", image.id));
+            approved.images.push(image);
+        }
+        if index == 0 || index == 15 {
+            original.push_str(&format!(
+                "<img src='data:image/png;base64,{}'>",
+                STANDARD.encode(&bytes)
+            ));
+        }
+    }
+    original.push_str("</body>");
+    std::fs::write(reports.join("index.html"), &original).unwrap();
+    approved.requirements[0].images = approved
+        .images
+        .iter()
+        .map(|image| image.id.clone())
+        .collect();
+    assert_eq!(approved.images.len(), 15);
+    assert_eq!(original.matches("data:image/").count(), 2);
+    approved
 }
 
 fn proposal_draft(kind: &str) -> Value {

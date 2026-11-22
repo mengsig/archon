@@ -77,6 +77,16 @@ pub(crate) async fn publish_page(
     input: &Path,
     item: Option<&QueueItemId>,
 ) -> Result<(ReportPublished, Option<String>), ArchonError> {
+    publish_checked_page(ctx, title, input, item, |_| Ok(())).await
+}
+
+pub(crate) async fn publish_checked_page(
+    ctx: &DaemonContext,
+    title: &str,
+    input: &Path,
+    item: Option<&QueueItemId>,
+    check: impl FnOnce(&Path) -> Result<(), ArchonError> + Send,
+) -> Result<(ReportPublished, Option<String>), ArchonError> {
     let files_guard = ctx.report_files.clone().lock_owned().await;
     let title = title.trim();
     if title.is_empty() {
@@ -116,6 +126,7 @@ pub(crate) async fn publish_page(
             html,
         },
         snapshot.as_mut(),
+        check,
     )
     .await;
     if result.is_err()
@@ -189,6 +200,7 @@ async fn record_publication(
     report: ReportId,
     page: PublishedPage<'_>,
     snapshot: Option<&mut files::Snapshot>,
+    check: impl FnOnce(&Path) -> Result<(), ArchonError>,
 ) -> Result<ReportPublished, ArchonError> {
     let PublishedPage {
         title,
@@ -197,6 +209,9 @@ async fn record_publication(
         source,
         html,
     } = page;
+    assert!(source.is_absolute());
+    assert!(html.is_absolute());
+    check(&html)?;
     let (location, published) = open_in_lavish(ctx, &html).await?;
     let record = ReportRecord {
         source: Some(source),
@@ -926,6 +941,15 @@ async fn load_reports(
     ctx: &DaemonContext,
 ) -> Result<BTreeMap<ReportId, ReportRecord>, ArchonError> {
     records::all(&mut *ctx.store.lock().await)
+}
+
+pub(crate) fn published_path(
+    store: &mut archon_queue::Store,
+    report: &ReportId,
+) -> Result<PathBuf, ArchonError> {
+    records::get(store, report)?
+        .map(|record| record.html)
+        .ok_or_else(|| ArchonError::NotFound(format!("published report {report}")))
 }
 
 async fn load_report(

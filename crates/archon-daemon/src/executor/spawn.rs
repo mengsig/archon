@@ -2,6 +2,7 @@
 //! Unsupported lean context may fall back to full before an agent is recorded.
 
 use std::collections::BTreeMap;
+use std::fmt::Write;
 use std::path::Path;
 use std::time::Instant;
 
@@ -20,6 +21,7 @@ use archon_core::model::{EffortContract, ModelChoice, ModelPlan};
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{CheckedOn, SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
+use archon_core::reference::ReferenceKind;
 use archon_core::repo::affected::{Affected, selects};
 use archon_core::repo::{Repo, RepoTiers};
 use archon_core::run::{PipelineRun, StageOutcome, StageRun, StageState};
@@ -951,6 +953,37 @@ fn hold_woken(
     Ok(taken.then(|| ran.clone()))
 }
 
+fn omit_oversized_references(request: &mut SpawnRequest) -> Result<(), ArchonError> {
+    const MIB: u64 = 1024 * 1024;
+    let references = std::mem::take(&mut request.references);
+    for reference in references {
+        // Aether's file and image reference caps differ.
+        let limit = match reference.kind {
+            ReferenceKind::File => 16 * MIB,
+            ReferenceKind::Image => 6 * MIB,
+        };
+        let path = &reference.path;
+        let metadata = path.metadata().map_err(|e| {
+            ArchonError::io(format!("inspect stage reference {}", path.display()), e)
+        })?;
+        assert!(path.is_absolute(), "stage references name workspace files");
+        assert!(metadata.is_file(), "stage references are files");
+        let bytes = metadata.len();
+        if bytes <= limit {
+            request.references.push(reference);
+            continue;
+        }
+        tracing::warn!(stage = %request.idempotency_key, path = %path.display(), bytes, limit,
+            "oversized stage reference delivered by path");
+        writeln!(
+            &mut request.instructions,
+            "\nOpen oversized reference from disk: {} ({bytes} bytes, attachment limit {limit} bytes). Pass its path to delegates.",
+            path.display(),
+        ).expect("writing to a String is infallible");
+    }
+    Ok(())
+}
+
 /// Persist the exact request, then the `spawning` stage run that owns it,
 /// with the slot's `budget`. `retry` numbers an infrastructure replacement
 /// of the slot.
@@ -983,6 +1016,7 @@ fn reserve_one(
     let observes = super::acceptance::observes_requirements(store, target.run, &plan.stage_id)?;
     let intent = (target.references, plan.reports_requirements || observes);
     super::acceptance::attach(store, target.item, &mut request, intent)?;
+    omit_oversized_references(&mut request)?;
     let not_before = retry.as_ref().and_then(|r| r.not_before);
     if let Some(until) = not_before {
         // Held as it is reserved, so no sweep issues it early; it loses no working time.

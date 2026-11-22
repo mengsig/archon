@@ -13,6 +13,12 @@ async fn fixture(
     images: usize,
     artifacts: usize,
 ) -> (Harness, FakeAether, QueueItem, ApprovedIntent) {
+    fixture_with(|h| many_references(h, images, artifacts)).await
+}
+
+async fn fixture_with(
+    intent: impl FnOnce(&Harness) -> ApprovedIntent,
+) -> (Harness, FakeAether, QueueItem, ApprovedIntent) {
     let h = Harness::new().await;
     let fake = models_listed(&h, &[common::MODEL, common::REVIEW_MODEL]).await;
     fake.set_features(vec!["references".into()]);
@@ -23,7 +29,7 @@ async fn fixture(
         .aether
         .replace(Some(std::sync::Arc::new(client)))
         .unwrap();
-    let intent = many_references(&h, images, artifacts);
+    let intent = intent(&h);
     h.ctx
         .store
         .lock()
@@ -180,4 +186,110 @@ async fn changed_hash_is_refused_for_attached_and_path_only_images() {
         assert!(error.contains(&intent.images[changed].id), "{error}");
         assert!(h.backend.requests().is_empty());
     }
+}
+
+#[tokio::test]
+async fn oversized_file_and_image_references_reach_build_by_path() {
+    const MIB: u64 = 1024 * 1024;
+    let (h, _fake, _, intent) = fixture_with(|h| {
+        let mut intent = many_references(h, 2, 2);
+        for (artifact, bytes) in intent.artifacts.iter_mut().zip([16 * MIB + 1, 16 * MIB]) {
+            artifact.sha256 = resize_and_hash(&artifact.path, bytes);
+        }
+        for (image, bytes) in intent.images.iter_mut().zip([21 * MIB, 6 * MIB]) {
+            image.sha256 = resize_and_hash(&image.path, bytes);
+        }
+        intent
+    })
+    .await;
+    let log = dispatch_with_stage_log(&h).await;
+    assert!(h.running().await[0].aether_agent.is_some());
+    let request = h.backend.requests().pop().unwrap();
+    let root = request
+        .workspace
+        .join(".archon/intent")
+        .join(&intent.id)
+        .join("1");
+    for (path, bytes) in [
+        (
+            root.join(format!("{}.html", intent.artifacts[0].sha256)),
+            16 * MIB + 1,
+        ),
+        (root.join("image_0.png"), 21 * MIB),
+    ] {
+        assert_oversized_fallback(&request, &log, &path, bytes);
+    }
+    assert_eq!(request.references.len(), 2);
+    assert_eq!(request.references[0].kind, ReferenceKind::File);
+    assert_eq!(
+        std::fs::metadata(&request.references[0].path)
+            .unwrap()
+            .len(),
+        16 * MIB
+    );
+    assert_eq!(request.references[1].kind, ReferenceKind::Image);
+    assert_eq!(
+        std::fs::metadata(&request.references[1].path)
+            .unwrap()
+            .len(),
+        6 * MIB
+    );
+}
+
+async fn dispatch_with_stage_log(h: &Harness) -> String {
+    let log = h.dir.path().join("stage-warnings.log");
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_ansi(false)
+        .with_writer(std::sync::Mutex::new(std::fs::File::create(&log).unwrap()))
+        .finish();
+    {
+        let _guard = tracing::subscriber::set_default(subscriber);
+        h.dispatch().await;
+    }
+    std::fs::read_to_string(log).unwrap()
+}
+
+fn assert_oversized_fallback(
+    request: &SpawnRequest,
+    log: &str,
+    path: &std::path::Path,
+    bytes: u64,
+) {
+    assert_eq!(std::fs::metadata(path).unwrap().len(), bytes);
+    assert!(request.instructions.contains(&format!(
+        "Open oversized reference from disk: {} ({bytes} bytes,",
+        path.display()
+    )));
+    assert!(
+        request
+            .references
+            .iter()
+            .all(|reference| reference.path != path)
+    );
+    assert!(
+        log.lines().any(
+            |line| line.contains("oversized stage reference delivered by path")
+                && line.contains(&format!("stage={}", request.idempotency_key))
+                && line.contains(&format!("path={}", path.display()))
+                && line.contains(&format!("bytes={bytes} "))
+        ),
+        "{log}"
+    );
+}
+
+fn resize_and_hash(path: &std::path::Path, bytes: u64) -> String {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_len(bytes)
+        .unwrap();
+    let data = std::fs::read(path).unwrap();
+    assert_eq!(data.len() as u64, bytes);
+    assert!(data.iter().any(|byte| *byte != 0));
+    Sha256::digest(data)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }

@@ -109,8 +109,9 @@ fn revise_key(run: &RunId, stage_id: &str, gate_attempt: u32) -> String {
 /// (notes need a live session, and the agent reads them after its preview).
 /// The agent then makes the change as a note, so the ledger, the review and
 /// the gate show it and the approved intent binds it, instead of a commit
-/// outside any note that Archon refuses and the next gate asks about. A retry of the attempt
-/// gets the request again unless an earlier session already did it.
+/// outside any note that Archon refuses and the next gate asks about. Keyed
+/// by session, so a retry of the attempt (a new session at the same
+/// attempt) gets the request again unless an earlier session already did it.
 fn revise_note(
     store: &mut Store,
     session: &DesignSession,
@@ -155,7 +156,7 @@ fn revise_note(
             h,
             preset: session.viewport_preset,
         },
-        client_key: format!("{prefix}{}", session.attempt),
+        client_key: format!("{prefix}{}", session.id),
         reverts: None,
         resent_from: None,
         before_asset: None,
@@ -198,12 +199,12 @@ pub(crate) enum Approval {
 /// The one rule Finish, the review, Confirm and the ledger share, so the
 /// review never offers an answer Confirm refuses. `active` are the notes
 /// active at the head under the choices in force, `notes` all of the
-/// item's, and `approved` the requirement ids of its approved intent.
+/// item's, and `approved` its approved intent ([`approved_design`]).
 pub(crate) fn approval(
     active: &[DesignNote],
     notes: &[DesignNote],
     session: &DesignSessionId,
-    approved: &[String],
+    approved: &ApprovedDesign,
 ) -> Approval {
     if !active.is_empty() {
         return Approval::Notes;
@@ -214,12 +215,42 @@ pub(crate) fn approval(
             && n.status == NoteStatus::Done
             && n.no_change
     });
-    let approved_before = notes.iter().any(|n| approved.contains(&n.id));
+    // An earlier design gate's approval, with notes or "as it is" (whose
+    // requirement is named from the note counter and matches no note).
+    let approved_before =
+        approved.by_design_gate || notes.iter().any(|n| approved.ids.contains(&n.id));
     if no_change || approved_before {
         Approval::NoChange
     } else {
         Approval::Nothing
     }
+}
+
+/// What the item's approved intent says for [`approval`].
+#[derive(Debug, Default)]
+pub(crate) struct ApprovedDesign {
+    /// Its requirement ids.
+    pub ids: Vec<String>,
+    /// It was approved at a design gate.
+    pub by_design_gate: bool,
+}
+
+/// The item's approved intent, for [`approval`] and the Q3 check.
+pub(crate) fn approved_design(
+    store: &Store,
+    item: &QueueItemId,
+) -> Result<ApprovedDesign, ArchonError> {
+    let Some(binding) = store.item(item)?.intent else {
+        return Ok(ApprovedDesign::default());
+    };
+    let by_design_gate = matches!(
+        store.approved_intent(&binding)?.map(|r| r.source),
+        Some(archon_core::intent::IntentSource::Gate { gate, .. }) if gate.starts_with("design:")
+    );
+    Ok(ApprovedDesign {
+        ids: binding.requirements,
+        by_design_gate,
+    })
 }
 
 /// The refusal for a Finish or Confirm with nothing to approve.

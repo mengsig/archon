@@ -536,8 +536,6 @@ pub fn validate_preview_url(url: &str) -> Result<String, ArchonError> {
     Ok(url.to_owned())
 }
 
-/// `text` without control characters other than newline and tab, trimmed and
-/// cut to `max_chars` characters.
 /// The longest app path a note may name.
 pub const MAX_PATH_CHARS: usize = 512;
 
@@ -562,6 +560,8 @@ pub fn check_app_path(path: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// `text` without control characters other than newline and tab, trimmed and
+/// cut to `max_chars` characters.
 pub fn clean_text(text: &str, max_chars: usize) -> String {
     let kept: String = text
         .chars()

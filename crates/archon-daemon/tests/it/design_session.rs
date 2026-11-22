@@ -778,6 +778,51 @@ async fn a_session_reopened_after_approval_can_be_approved_as_it_is() {
     );
 }
 
+/// A design approved "as it is" binds a requirement named from the note
+/// counter, which no note has. Reopened after that approval, the session
+/// still offers to approve as it is: the approval came from a design gate,
+/// so it is not a first session with nothing to approve.
+#[tokio::test]
+async fn a_session_reopened_after_an_approval_as_it_is_can_be_approved_again() {
+    let mut f = Fixture::new().await;
+    // The first session approved as it is (its note-less record is all a
+    // later session sees of it).
+    f.h.ctx
+        .design
+        .gate_decided(&f.h.ctx, &f.run, &f.stage_id, f.attempt, "approved")
+        .await
+        .expect("decided");
+    {
+        let mut store = f.h.ctx.store.lock().await;
+        let record: archon_core::intent::ApprovedIntent = serde_json::from_value(serde_json::json!({
+            "id": "as-it-is", "version": 1,
+            "source": {"kind": "gate", "item": f.item.to_string(), "gate": format!("design:{}", f.attempt)},
+            "operator_words": "Approved as it is", "artifacts": [], "images": [],
+            "requirements": [{"id": "D7", "text": "No change", "kind": "behaviour", "owner": "operator", "images": []}]
+        }))
+        .unwrap();
+        store.save_approved_intent(&record).unwrap();
+        let mut item = store.item(&f.item).unwrap();
+        item.intent = Some(Box::new(archon_core::intent::IntentBinding {
+            id: record.id.clone(),
+            version: 1,
+            requirements: vec!["D7".into()],
+        }));
+        store.update_item(&item).unwrap();
+    }
+    next_session(&mut f).await;
+    let (view, confirmed) = confirm_with(&f, &[], true).await;
+    assert!(
+        view.no_change_only,
+        "the review asks to approve as it is: {view:?}"
+    );
+    confirmed.expect("approved as it is again");
+    assert_eq!(
+        state(&f).await.session.unwrap().state,
+        SessionState::Confirmed
+    );
+}
+
 /// A session with no note and nothing approved before still has nothing to
 /// approve.
 #[tokio::test]
@@ -1360,6 +1405,21 @@ async fn a_page_note_done_with_a_path_is_pictured_on_that_page() {
     };
     let early = report_with(AgentNoteStatus::Working, None, "/settings/new").await;
     assert!(early.is_err(), "a path goes with done");
+    let unchanged = f
+        .as_agent(Request::DesignNoteReport {
+            id: "D1".into(),
+            status: AgentNoteStatus::Done,
+            reply: Some("Nothing to change".into()),
+            commit: None,
+            no_change: true,
+            path: Some("/settings/new".into()),
+            caller: Some(f.agent.clone()),
+        })
+        .await;
+    assert!(
+        unchanged.is_err(),
+        "a path names where a change shows, so never with no change"
+    );
     let commit = f.commit(
         "settings.html",
         "<h1>Settings</h1>\n",

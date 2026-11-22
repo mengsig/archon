@@ -204,7 +204,8 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
         ("design_preview", json!({"url": "http://127.0.0.1:5173/"})),
         (
             "design_note",
-            json!({"id": "D2", "status": "done", "reply": "Done.", "commit": "b".repeat(40), "no_change": false}),
+            json!({"id": "D2", "status": "done", "reply": "Done.", "commit": "b".repeat(40),
+                "no_change": false, "path": "/settings"}),
         ),
         (
             "read_artifact",

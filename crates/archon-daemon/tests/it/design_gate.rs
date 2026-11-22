@@ -658,7 +658,7 @@ async fn revise_resumes_the_design_agent_in_a_new_session_with_its_notes() {
     };
     preview().await.expect("preview reported");
     preview().await.expect("reported again");
-    let store = h.ctx.store.lock().await;
+    let mut store = h.ctx.store.lock().await;
     let notes = store.design_notes(&item.id).unwrap();
     assert_eq!(
         notes.len(),
@@ -679,6 +679,38 @@ async fn revise_resumes_the_design_agent_in_a_new_session_with_its_notes() {
         NoteStatus::Sent,
         "sent to the resumed agent"
     );
+    // The session is lost before the agent made the change, and a fresh
+    // agent retries the same attempt: its session gets the request again,
+    // rather than the old session's note answering for it.
+    store.design_session_end(&next.id, "test").unwrap();
+    drop(store);
+    let retry = Box::pin(h.ctx.design.stage_started(
+        &h.ctx,
+        &item.id,
+        &run.id,
+        "design",
+        2,
+        agent.as_ref().expect("an agent"),
+        archon_daemon::design::WorktreeRef {
+            repo: h.repo.clone(),
+            worktree: run.workspace.clone(),
+            branch: run.branch.clone(),
+        },
+    ))
+    .await
+    .expect("the retry's session starts");
+    assert_ne!(retry, next.id);
+    preview().await.expect("the retry's preview");
+    let store = h.ctx.store.lock().await;
+    let again: Vec<_> = store
+        .design_notes(&item.id)
+        .unwrap()
+        .into_iter()
+        .filter(|n| n.session == retry)
+        .collect();
+    assert_eq!(again.len(), 1, "{again:?}");
+    assert_eq!(again[0].text, "a darker green please");
+    assert_eq!(again[0].kind, archon_core::design::NoteKind::Page);
 }
 
 /// E2E S5: after Revise the resumed agent completes without a preview; the

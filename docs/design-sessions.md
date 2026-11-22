@@ -217,8 +217,8 @@ check the shipped UI against the final pictures and your words.
 If every note ended as "nothing to change", or nothing is left in force after
 your "superseded by" choices, the review asks "Approve the design as it is?"
 and its button reads **Approve as it is** (`confirm_no_change`). The same
-holds for a session reopened after its design was approved, even before
-you add a note.
+holds for a session reopened after its design was approved, with notes or
+as it is, even before you add a note.
 Archon then opens the proposal gate with an empty ledger delta, and you approve
 it as usual. With no active note and nothing confirmed there is nothing to
 approve: add a note or cancel.

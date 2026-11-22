@@ -9,10 +9,8 @@ use archon_core::design::{
     SessionState, Target, ViewportPreset, is_in_flight, undone_by,
 };
 use archon_core::error::{ArchonError, DesignRefusal};
-use archon_core::id::QueueItemId;
 use archon_core::protocol::{DesignFinishView, DesignStateView, FinishCard, Reply};
 use archon_design_browser as adb;
-use archon_queue::Store;
 use archon_queue::store::{FinishRecord, NoteChange};
 
 use super::assets::{NewAsset, caption_of};
@@ -196,7 +194,7 @@ impl DesignService {
             let carried = Self::review_choices(&store, &row.item, &row.id, None)?;
             (
                 self.active_notes(&store, &wt, &row.item, &head, carried.as_ref())?,
-                approved_requirements(&store, &row.item)?,
+                super::approved_design(&store, &row.item)?,
             )
         };
         if super::approval(&active, &notes, &row.id, &approved) == Approval::Nothing {
@@ -468,7 +466,7 @@ impl DesignService {
         }
         // The rule Confirm applies, on the same notes: the review asks
         // "approve as it is?" exactly when Confirm needs that answer.
-        let approved = approved_requirements(&*ctx.store.lock().await, &row.item)?;
+        let approved = super::approved_design(&*ctx.store.lock().await, &row.item)?;
         let no_change_only =
             super::approval(&active, &notes, &row.id, &approved) == Approval::NoChange;
         Ok(DesignFinishView {
@@ -643,9 +641,9 @@ impl DesignService {
             return Err(stale());
         }
         // Q3: an approved requirement is never superseded.
-        let approved = approved_requirements(&*ctx.store.lock().await, &row.item)?;
+        let approved = super::approved_design(&*ctx.store.lock().await, &row.item)?;
         for (id, by) in &superseded {
-            if by.is_some() && approved.contains(id) {
+            if by.is_some() && approved.ids.contains(id) {
                 return Err(ArchonError::Invalid(format!(
                     "{id} was approved earlier; add a new note instead"
                 )));
@@ -814,12 +812,3 @@ fn grow(rect: adb::ClipRect, margin: f64) -> adb::ClipRect {
 /// approve as it is. The review screen recognises it and asks.
 pub(crate) const NO_CHANGE_UNCONFIRMED: &str =
     "nothing changed in this session; confirm that you want to approve the design as it is";
-
-/// The requirement ids of `item`'s approved intent, if any.
-fn approved_requirements(store: &Store, item: &QueueItemId) -> Result<Vec<String>, ArchonError> {
-    Ok(store
-        .item(item)?
-        .intent
-        .map(|b| b.requirements)
-        .unwrap_or_default())
-}

@@ -384,11 +384,7 @@ pub(super) fn approvable_notes(
     // The rule Finish and Confirm apply (`crate::design::approval`): with
     // nothing active, a done "no change" note or an earlier approval of
     // design notes makes the session approvable as it is.
-    let approved = store
-        .item(item)?
-        .intent
-        .map(|b| b.requirements)
-        .unwrap_or_default();
+    let approved = crate::design::approved_design(store, item)?;
     let notes = store.design_notes(item)?;
     match crate::design::approval(&active, &notes, &session.id, &approved) {
         crate::design::Approval::Nothing => Err(ArchonError::Invalid(

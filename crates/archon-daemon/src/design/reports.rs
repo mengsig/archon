@@ -93,7 +93,7 @@ impl DesignService {
     ) -> Result<Reply, ArchonError> {
         let session = self.agent_session(ctx, caller).await?;
         let url = validate_preview_url(url)?;
-        let became_live = {
+        let (became_live, request) = {
             let mut store = ctx.store.lock().await;
             let patch = archon_queue::store::SessionPatch {
                 preview_url: Some(Some(url.clone())),
@@ -101,7 +101,7 @@ impl DesignService {
                 ..Default::default()
             };
             store.design_session_patch(&session.id, patch)?;
-            if session.state == SessionState::Starting {
+            let became_live = if session.state == SessionState::Starting {
                 store.design_session_transition(
                     &session.id,
                     SessionState::Starting,
@@ -109,15 +109,24 @@ impl DesignService {
                     None,
                     false,
                 )?;
-                let request = super::revise_note(&mut store, &session)?;
-                Some((store.item(&session.item)?.title, request))
+                Some(store.item(&session.item)?.title)
             } else {
                 None
-            }
-        };
-        let (became_live, request) = match became_live {
-            Some((title, request)) => (Some(title), request),
-            None => (None, None),
+            };
+            // On every report while live, not only the first: adding it is
+            // idempotent, so a request a failure kept out arrives on the
+            // agent's next report instead of being lost; and a failure here
+            // never fails the report that made the session live.
+            let request = match session.state {
+                SessionState::Starting | SessionState::Live => {
+                    super::revise_note(&mut store, &session).unwrap_or_else(|error| {
+                        tracing::warn!(%error, session = %session.id, "design: the operator's change request was not added; the next preview report tries again");
+                        None
+                    })
+                }
+                _ => None,
+            };
+            (became_live, request)
         };
         // The first report makes the session live: tell the operator, whose
         // inbox shows the entry with an Open button for the design screen.
@@ -161,7 +170,11 @@ impl DesignService {
         if let Some(note) = request {
             tracing::info!(note = %note.id, session = %session.id, "design: the operator's change request is the session's first note");
             self.emit_note(ctx, &session.item, &note.id).await;
-            self.pump(ctx, &session.item).await?;
+            // The note is stored as Sent: a failed delivery here is retried
+            // by the next pump, so it never fails the agent's report.
+            if let Err(error) = self.pump(ctx, &session.item).await {
+                tracing::warn!(%error, session = %session.id, "design: delivering the operator's change request failed");
+            }
         }
         Ok(Reply::DesignDone)
     }
@@ -195,9 +208,9 @@ impl DesignService {
         if let Some(path) = &path {
             archon_core::design::check_app_path(path)
                 .map_err(|why| ArchonError::Invalid(format!("path {why}")))?;
-            if status != AgentNoteStatus::Done {
+            if status != AgentNoteStatus::Done || no_change {
                 return Err(ArchonError::Invalid(
-                    "path goes with done: the page that shows the change".into(),
+                    "path goes with done and a change: the page that shows it".into(),
                 ));
             }
         }

@@ -84,6 +84,17 @@ const REFUSALS = {
   conflict: 'This session already moved on (finished, cancelled or ended); the screen now shows where it is.',
 };
 
+// The daemon's error text starts with its error kind ("invalid argument: …");
+// a person reads the sentence after it, capitalised and ended.
+const KIND_PREFIX = /^(?:invalid argument|state transition refused|forbidden|unavailable|configuration|pipeline|protocol|recovering):\s*/i;
+
+export function plainMessage(text) {
+  const rest = String(text ?? '').trim().replace(KIND_PREFIX, '').trim();
+  if (!rest) return '';
+  const said = rest[0].toUpperCase() + rest.slice(1);
+  return /[.!?…]$/.test(said) ? said : `${said}.`;
+}
+
 export function designErrorText(err) {
-  return REFUSALS[err?.code] ?? err?.message ?? 'Something went wrong.';
+  return REFUSALS[err?.code] ?? (plainMessage(err?.message) || 'Something went wrong.');
 }

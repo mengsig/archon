@@ -146,3 +146,11 @@ test('GATE: while the approval question is on its way the ledger never says none
   assert.doesNotMatch(ledgerLede(null, false), /appear here/);
   assert.match(ledgerLede(null, false), /operator device/);
 });
+
+test('item 7: a daemon refusal reads as a sentence, without its error kind', () => {
+  assert.equal(designErrorText({ code: 'invalid', message: 'invalid argument: nothing to approve; add a note or cancel' }), 'Nothing to approve; add a note or cancel.');
+  assert.equal(designErrorText({ code: 'forbidden', message: 'forbidden: only the operator can finish' }), 'Only the operator can finish.');
+  assert.equal(designErrorText({ code: 'x', message: 'Already a sentence.' }), 'Already a sentence.');
+  assert.equal(designErrorText({ code: 'invalid', message: 'invalid argument: ' }), 'Something went wrong.');
+  assert.equal(designErrorText({}), 'Something went wrong.');
+});

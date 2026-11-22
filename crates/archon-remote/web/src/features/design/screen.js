@@ -118,10 +118,10 @@ export function mountDesign(view, ctx) {
 
   const composer = createComposer({
     onSend: sendNote,
-    onCancel: () => { composer.hide(); stage.setSelection(null); dispatch({ type: 'selection', selection: null }); collapseSheet(); },
+    onCancel: () => { composer.hide(); stage.setSelection(null); dispatch({ type: 'selection', selection: null }); collapseSheet(true); },
     onDepth: (by) => widen(by),
   });
-  const notes = createNotesPanel({ ctx, getState: () => state, onFocusNote: () => {}, onAddPage: () => { pick = null; depth = 0; stage.setSelection(null); dispatch({ type: 'selection', selection: null }); composer.show(null, { keepText: true }); } });
+  const notes = createNotesPanel({ ctx, getState: () => state, onFocusNote: () => {}, onAddPage: () => { pick = null; depth = 0; stage.setSelection(null); dispatch({ type: 'selection', selection: null }); rememberScroll(); composer.show(null, { keepText: true }); } });
   // The decision ends the session at once; ask for it now and once more
   // shortly after, rather than waiting for the follower's next tick.
   let answeredTimer = null;
@@ -197,12 +197,13 @@ export function mountDesign(view, ctx) {
     if (layout !== 'desktop') { sheetHeight = 'half'; render(); }
   }
   function rememberScroll() { if (layout !== 'desktop' && !composer.open) scrollBeforeComposer = readScroll(); }
-  // Cancel and Escape: lower the sheet and put the page back so the stage is where it was.
-  function collapseSheet() {
-    if (layout === 'desktop') return;
-    sheetHeight = sheetAfterCancel(layout, sheetHeight);
+  // Cancel and Escape: lower the sheet and put the page back so the stage is
+  // where it was. With no composer open there is nothing to undo.
+  function collapseSheet(composerWasOpen) {
+    if (layout === 'desktop' || !composerWasOpen) return;
+    sheetHeight = sheetAfterCancel(layout, sheetHeight, composerWasOpen);
     render();
-    restoreScroll(scrollBeforeComposer ?? { x: 0, y: 0 });
+    if (scrollBeforeComposer) restoreScroll(scrollBeforeComposer);
     scrollBeforeComposer = null;
   }
   function newScreen() {
@@ -381,7 +382,7 @@ export function mountDesign(view, ctx) {
     if (!operator) return;
     e.preventDefault();
     switch (action.action) {
-      case 'escape': composer.hide(); stage.clearRegion(); stage.setHover(null); dispatch({ type: 'selection', selection: null }); collapseSheet(); break;
+      case 'escape': { const wasOpen = composer.open; composer.hide(); stage.clearRegion(); stage.setHover(null); dispatch({ type: 'selection', selection: null }); collapseSheet(wasOpen); break; }
       case 'mode': setMode(action.value); break;
       case 'wider': widen(1); break;
       case 'narrower': widen(-1); break;

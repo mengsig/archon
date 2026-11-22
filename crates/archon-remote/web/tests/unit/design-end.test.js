@@ -142,4 +142,7 @@ test('GATE: while the approval question is on its way the ledger never says none
   assert.doesNotMatch(ledgerLede(null), /No question/);
   assert.match(ledgerLede(null), /wrapping up/);
   assert.match(ledgerLede({ id: 'q1' }), /Approve it/);
+  // An observer never gets the buttons, so it is not promised them.
+  assert.doesNotMatch(ledgerLede(null, false), /appear here/);
+  assert.match(ledgerLede(null, false), /operator device/);
 });

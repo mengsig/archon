@@ -232,7 +232,7 @@ export function ledgerPanel(ctx, item, getState = () => null, onAnswered = () =>
     if (seenQuestion && !q) onAnswered();
     seenQuestion = q ? q.id : null;
     title.textContent = 'Waiting for your approval';
-    lede.textContent = ledgerLede(q);
+    lede.textContent = ledgerLede(q, ctx.canOperate);
     drawGate(q);
     gate.hidden = !q;
     link.hidden = false;

@@ -2,9 +2,10 @@
 // composer raises the sheet and focuses its textarea, which can scroll the
 // page; closing it without sending must undo both, or the stage stays covered.
 
-// Sheet height once the composer closes without a send.
-export function sheetAfterCancel(layout, sheetHeight) {
-  return layout === 'desktop' ? sheetHeight : 'peek';
+// Sheet height once the composer closes without a send. Escape with no
+// composer open (clearing a region, say) leaves the sheet where it is.
+export function sheetAfterCancel(layout, sheetHeight, composerWasOpen = true) {
+  return layout === 'desktop' || !composerWasOpen ? sheetHeight : 'peek';
 }
 
 // The page's scroll position, to put back when the composer closes.

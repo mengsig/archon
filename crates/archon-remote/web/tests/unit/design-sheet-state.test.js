@@ -6,6 +6,8 @@ test('Cancel collapses the notes sheet on phone and tablet, leaves desktop alone
   assert.equal(sheetAfterCancel('phone', 'half'), 'peek');
   assert.equal(sheetAfterCancel('tablet', 'full'), 'peek');
   assert.equal(sheetAfterCancel('desktop', 'half'), 'half');
+  // Escape with no composer open leaves a raised sheet alone.
+  assert.equal(sheetAfterCancel('phone', 'full', false), 'full');
 });
 
 test('the page scroll is read and put back', () => {

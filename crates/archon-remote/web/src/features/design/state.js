@@ -172,7 +172,8 @@ export function endInfo(reason) {
 // The ledger's lede after Confirm. The approval question opens once the agent
 // has wrapped up (and arrives a moment after each load), so its absence is no
 // sign that nothing is open.
-export function ledgerLede(question) {
+export function ledgerLede(question, canOperate = true) {
+  if (!canOperate) return 'Here is what changed. An operator device approves it, asks for changes, or rejects it.';
   return question ? 'Here is what changed. Approve it, ask for changes, or reject it.'
     : 'The agent is wrapping up. Approve, Ask for changes and Reject appear here in a moment.';
 }

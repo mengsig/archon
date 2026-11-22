@@ -181,8 +181,8 @@ async fn a_shared_selector_finds_the_recorded_element_and_crops_stay_on_the_page
     let page = serve(
         "<html><head><meta name=viewport content=\"width=device-width\"></head>\
          <body style=\"margin:0\"><nav style=\"position:relative;height:60px\">\
-         <a href=\"#\" style=\"position:absolute;left:200px;top:20px;width:50px;height:20px\">Tasks</a>\
-         <a href=\"#\" style=\"position:absolute;left:300px;top:20px;width:80px;height:20px\">New task</a>\
+         <a href=\"/tasks\" style=\"position:absolute;left:200px;top:20px;width:50px;height:20px\">Tasks</a>\
+         <a href=\"/new\" style=\"position:absolute;left:300px;top:20px;width:80px;height:20px\">New task</a>\
          </nav></body></html>",
     );
     b.navigate(&format!("http://127.0.0.1:{page}/"))
@@ -222,5 +222,30 @@ async fn a_shared_selector_finds_the_recorded_element_and_crops_stay_on_the_page
         ((390.0 - grown.x) * 2.0) as u32,
         "cut at the page's edge"
     );
+    // A pick names the link by its address, not its place among siblings.
+    let picked = b.resolve(340.0, 30.0, 0).await.unwrap();
+    let selector = picked.selector.expect("a selector");
+    assert!(selector.ends_with("a[href=\"/new\"]"), "{selector}");
+    // So a link the design adds before it leaves the note on its element.
+    let moved = serve(
+        "<html><head><meta name=viewport content=\"width=device-width\"></head>\
+         <body style=\"margin:0\"><nav style=\"position:relative;height:60px\">\
+         <a href=\"/\" style=\"position:absolute;left:10px;top:20px;width:50px;height:20px\">Home</a>\
+         <a href=\"/tasks\" style=\"position:absolute;left:100px;top:20px;width:50px;height:20px\">Tasks</a>\
+         <a href=\"/new\" style=\"position:absolute;left:200px;top:20px;width:80px;height:20px\">New task</a>\
+         </nav></body></html>",
+    );
+    b.navigate(&format!("http://127.0.0.1:{moved}/"))
+        .await
+        .unwrap();
+    let _ = b
+        .wait_network_idle(Duration::from_millis(300), Duration::from_secs(10))
+        .await;
+    let after = b
+        .resolve_selector(&selector, Some(recorded))
+        .await
+        .unwrap()
+        .expect("still found");
+    assert!(near(after.x, 200.0) && near(after.w, 80.0), "{after:?}");
     b.close().await.unwrap();
 }

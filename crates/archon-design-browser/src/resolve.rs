@@ -38,7 +38,14 @@ const part=function(e){
  const cls=(e.classList?Array.from(e.classList):[]).slice(0,2);
  for(const c of cls)s+='.'+esc(c);
  const up=e.parentElement;
- if(up){const same=Array.from(up.children).filter(function(c){return c.tagName===e.tagName;});if(same.length>1)s+=':nth-of-type('+(same.indexOf(e)+1)+')';}
+ if(up){const same=Array.from(up.children).filter(function(c){return c.tagName===e.tagName;});if(same.length>1){
+  let told=false;
+  for(const a of ['aria-label','name','href','title','alt']){
+   const v=e.getAttribute(a);
+   if(!v||v.length>40||/[?#"\\\n]/.test(v))continue;
+   if(same.filter(function(c){return c.getAttribute(a)===v;}).length===1){s+='['+a+'="'+v+'"]';told=true;break;}
+  }
+  if(!told)s+=':nth-of-type('+(same.indexOf(e)+1)+')';}}
  return{s:s,stop:false};};
  const parts=[];let e=el;
  for(let i=0;e&&e.nodeType===1&&i<5;i++){const p=part(e);parts.unshift(p.s);if(p.stop||e===document.body)break;e=e.parentElement;}
@@ -331,6 +338,10 @@ mod tests {
             INFO_JS.contains("same.length>1"),
             "only when a sibling shares the tag"
         );
+        // A stable attribute first, so a sibling inserted before the element
+        // does not move its selector; never a form field's value.
+        assert!(INFO_JS.contains("['aria-label','name','href','title','alt']"));
+        assert!(!INFO_JS.contains("'value'"));
     }
 
     // T-U8

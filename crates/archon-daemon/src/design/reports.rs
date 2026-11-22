@@ -115,8 +115,9 @@ impl DesignService {
             };
             // On every report while live, not only the first: adding it is
             // idempotent, so a request a failure kept out arrives on the
-            // agent's next report instead of being lost; and a failure here
-            // never fails the report that made the session live.
+            // agent's next report (or the next pump) instead of being lost;
+            // and a failure here never fails the report that made the session
+            // live.
             let request = match session.state {
                 SessionState::Starting | SessionState::Live => {
                     super::revise_note(&mut store, &session).unwrap_or_else(|error| {
@@ -170,8 +171,8 @@ impl DesignService {
         if let Some(note) = request {
             tracing::info!(note = %note.id, session = %session.id, "design: the operator's change request is the session's first note");
             self.emit_note(ctx, &session.item, &note.id).await;
-            // The note is stored as Sent: a failed delivery here is retried
-            // by the next pump, so it never fails the agent's report.
+            // The note is stored queued: a failed delivery here is retried
+            // by the next pump or sweep, so it never fails the agent's report.
             if let Err(error) = self.pump(ctx, &session.item).await {
                 tracing::warn!(%error, session = %session.id, "design: delivering the operator's change request failed");
             }

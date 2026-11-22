@@ -232,16 +232,31 @@ impl DesignService {
         let lock = self.item_lock(item);
         let _held = lock.lock().await;
         loop {
-            let (session, notes) = {
-                let store = ctx.store.lock().await;
-                (
-                    store.design_current_session(item)?,
-                    store.design_notes(item)?,
-                )
+            let (session, notes, request) = {
+                let mut store = ctx.store.lock().await;
+                let session = store.design_current_session(item)?;
+                // An Ask for changes a failed add kept out of a live session
+                // (a store error, a restart between going live and adding
+                // it) arrives with the next pump or sweep, not only on the
+                // agent's next preview report. Idempotent per session.
+                let request = match &session {
+                    Some(live) if live.state == SessionState::Live => {
+                        super::revise_note(&mut store, live).unwrap_or_else(|error| {
+                            tracing::warn!(%error, session = %live.id, "design: the operator's change request was not added; the next pump tries again");
+                            None
+                        })
+                    }
+                    _ => None,
+                };
+                (session, store.design_notes(item)?, request)
             };
             let Some(session) = session else {
                 return Ok(());
             };
+            if let Some(note) = &request {
+                tracing::info!(note = %note.id, session = %session.id, "design: the operator's change request was added late");
+                self.emit_note(ctx, item, &note.id).await;
+            }
             if !matches!(session.state, SessionState::Starting | SessionState::Live) {
                 return Ok(());
             }

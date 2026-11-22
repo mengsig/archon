@@ -780,6 +780,74 @@ async fn revise_resumes_the_design_agent_in_a_new_session_with_its_notes() {
     );
 }
 
+/// A revised session that went live without its change request (a restart
+/// between going live and adding it, or a store error then) gets the request
+/// with the next pump, here the one an operator's note runs, rather than
+/// only on a later preview report the agent may never send.
+#[tokio::test]
+async fn a_live_session_missing_its_change_request_gets_it_with_the_next_pump() {
+    let h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    let (_, head) = done_note(&h, &session, &run, "make it green", b"green").await;
+    confirm(&h, &session, &head, &["D1"], &[]).await;
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    let gate = open_proposal(&h, &item.id).await;
+    h.cli(Request::Answer {
+        chat: false,
+        question: gate.question.clone().expect("asked"),
+        text: "a darker green please".into(),
+    })
+    .await
+    .expect("answer");
+    h.dispatch().await;
+    let next = {
+        let mut store = h.ctx.store.lock().await;
+        let next = h
+            .ctx
+            .design
+            .session_of(&store, &run.id, "design", 2)
+            .unwrap()
+            .expect("a new session");
+        // Live, as its first preview made it, but the request was never added.
+        store
+            .design_session_transition(
+                &next.id,
+                SessionState::Starting,
+                SessionState::Live,
+                None,
+                false,
+            )
+            .unwrap();
+        assert_eq!(store.design_notes(&item.id).unwrap().len(), 1);
+        next
+    };
+    h.cli(Request::DesignNoteAdd {
+        session: next.id.clone(),
+        client_key: "op-1".into(),
+        text: "and a rounder button".into(),
+        asset: None,
+        send_picture: false,
+        details_text: None,
+    })
+    .await
+    .expect("the operator's note");
+    let store = h.ctx.store.lock().await;
+    let mine: Vec<_> = store
+        .design_notes(&item.id)
+        .unwrap()
+        .into_iter()
+        .filter(|n| n.session == next.id)
+        .collect();
+    assert!(
+        mine.iter()
+            .any(|n| n.text == "a darker green please"
+                && n.kind == archon_core::design::NoteKind::Page),
+        "the request is added late, not lost: {mine:?}"
+    );
+}
+
 /// E2E S5: after Revise the resumed agent completes without a preview; the
 /// result is refused and the slot retried. The retry's agent opens the
 /// attempt's session with its first `design_preview`, never "not live".

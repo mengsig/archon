@@ -11,13 +11,14 @@ pub(super) fn extract(
     destination: &Path,
     record: &mut ApprovedIntent,
 ) -> Result<String, ArchonError> {
-    let mut urls = image_urls(html)?;
-    urls.extend(css_image_urls(html)?);
-    let mut replacements = Vec::new();
-    for url in urls.into_iter().filter(|url| !url.starts_with("data:")) {
-        let range = html
-            .substr_range(url)
-            .expect("parsed URLs borrow the source HTML");
+    let PreviewUrls { mut images, bases } = preview_urls(html)?;
+    images.extend(css_image_urls(html)?);
+    let mut replacements: Vec<_> = bases
+        .into_iter()
+        .map(|base| (source_range(html, base), "./".to_owned()))
+        .collect();
+    for url in images.into_iter().filter(|url| !url.starts_with("data:")) {
+        let range = source_range(html, url);
         let source = local_path(url, page, workspace)?;
         let name = preserve_local_image(&source, destination, record)?;
         let suffix = url.find(['?', '#']).map_or("", |start| &url[start..]);
@@ -46,6 +47,11 @@ pub(super) fn extract(
     }
     rewritten.push_str(&html[position..]);
     Ok(rewritten)
+}
+
+fn source_range(html: &str, value: &str) -> std::range::Range<usize> {
+    html.substr_range(value)
+        .expect("parsed URLs borrow the source HTML")
 }
 
 fn preserve_local_image(
@@ -140,7 +146,11 @@ fn local_path(url: &str, page: &Path, workspace: &Path) -> Result<PathBuf, Archo
             "proposal image URL {url:?} must name a local file"
         )));
     }
-    let raw = url.split(['?', '#']).next().unwrap_or_default();
+    let raw = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('/');
     let decoded = decode_path(&raw.replace("&amp;", "&"))?;
     let parent = page
         .parent()
@@ -184,8 +194,14 @@ fn decode_path(raw: &str) -> Result<String, ArchonError> {
     String::from_utf8(out).map_err(|_| ArchonError::Invalid("image URL must be UTF-8".into()))
 }
 
-fn image_urls(html: &str) -> Result<Vec<&str>, ArchonError> {
-    let mut urls = Vec::new();
+#[derive(Default)]
+struct PreviewUrls<'a> {
+    images: Vec<&'a str>,
+    bases: Vec<&'a str>,
+}
+
+fn preview_urls(html: &str) -> Result<PreviewUrls<'_>, ArchonError> {
+    let mut urls = PreviewUrls::default();
     let mut rest = html;
     while let Some(start) = rest.find('<') {
         rest = &rest[start + 1..];
@@ -213,14 +229,22 @@ fn image_urls(html: &str) -> Result<Vec<&str>, ArchonError> {
             rest = &rest[end..];
             continue;
         }
+        if name.eq_ignore_ascii_case("base") {
+            for (name, href) in attributes(&tag[name_end..])? {
+                if name.eq_ignore_ascii_case("href") && !href.is_empty() {
+                    urls.bases.push(href);
+                }
+            }
+            continue;
+        }
         if !name.eq_ignore_ascii_case("img") && !name.eq_ignore_ascii_case("source") {
             continue;
         }
         for (name, value) in attributes(&tag[name_end..])? {
             if name.eq_ignore_ascii_case("src") && !value.is_empty() {
-                urls.push(value);
+                urls.images.push(value);
             } else if name.eq_ignore_ascii_case("srcset") {
-                urls.extend(srcset(value)?);
+                urls.images.extend(srcset(value)?);
             }
         }
     }
@@ -281,7 +305,7 @@ fn attribute_value(text: &str) -> Result<(&str, &str), ArchonError> {
     let end = text
         .find(|c: char| c.is_ascii_whitespace())
         .unwrap_or(text.len());
-    Ok((text[..end].trim_end_matches('/'), &text[end..]))
+    Ok((&text[..end], &text[end..]))
 }
 
 fn srcset(mut value: &str) -> Result<Vec<&str>, ArchonError> {
@@ -385,7 +409,7 @@ mod tests {
             .is_err()
         );
         assert!(local_path("../outside.png", &page, dir.path()).is_err());
-        assert!(image_urls("<img src='unclosed>").is_err());
+        assert!(preview_urls("<img src='unclosed>").is_err());
         assert_eq!(
             css_image_urls(".hero { background: url('../cover.png') }").unwrap(),
             vec!["../cover.png"]

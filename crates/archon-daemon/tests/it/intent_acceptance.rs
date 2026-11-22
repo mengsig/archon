@@ -549,6 +549,8 @@ async fn image_heavy_proposal_freezes_a_small_page_and_starts_build() {
         page.len()
     );
     assert!(!page.contains("data:image/"));
+    assert!(page.contains("&lt;BASE HREF=./&gt;"));
+    capture(&run, "proposal");
     assert!(
         !page.contains("screen_0.png"),
         "original preview uses the frozen assets"
@@ -589,7 +591,7 @@ fn check_frozen_assets(stored: &ApprovedIntent, page_path: &Path, frozen: &Path,
         "embedded and local URLs share one image"
     );
     let first = stored.images[0].path.file_name().unwrap().to_str().unwrap();
-    assert!(page.contains(&format!("src=&#39;./{first}&#39;")));
+    assert!(page.contains(&format!("src=&#39;./{first}?preview=1&#39;")));
     assert!(page.contains(&format!("srcset=&#39;./{first} 1x,")));
     assert!(page.contains(&format!("url(./{first}?v=1#hero)")));
     for image in &stored.images {
@@ -605,7 +607,7 @@ fn write_image_heavy_proposal(h: &Harness, reports: &Path) -> ApprovedIntent {
     let mut approved = record(h);
     let template = approved.images.pop().unwrap();
     let mut original = String::from(
-        "<!doctype html><style>.hero { background: url(screen_0.png?v=1#hero); }</style><body>\
+        "<!doctype html><BASE HREF=./alternate/><style>.hero { background: url(screen_0.png?v=1#hero); }</style><body class=hero>\
         <picture><source srcset='screen_0.png 1x, screen_1.png 2x'></picture>",
     );
     let mut bytes = std::fs::read(&template.path).unwrap();
@@ -622,7 +624,8 @@ fn write_image_heavy_proposal(h: &Harness, reports: &Path) -> ApprovedIntent {
             .collect::<String>();
         if index < 15 {
             std::fs::write(&image.path, &bytes).unwrap();
-            original.push_str(&format!("<img src='{}.png'>", image.id));
+            let query = if index == 0 { "?preview=1" } else { "" };
+            original.push_str(&format!("<img src='{}.png{query}'>", image.id));
             approved.images.push(image);
         }
         if index == 0 || index == 15 {

@@ -109,10 +109,15 @@ impl DesignService {
                     None,
                     false,
                 )?;
-                Some(store.item(&session.item)?.title)
+                let request = super::revise_note(&mut store, &session)?;
+                Some((store.item(&session.item)?.title, request))
             } else {
                 None
             }
+        };
+        let (became_live, request) = match became_live {
+            Some((title, request)) => (Some(title), request),
+            None => (None, None),
         };
         // The first report makes the session live: tell the operator, whose
         // inbox shows the entry with an Open button for the design screen.
@@ -153,6 +158,11 @@ impl DesignService {
         }
         tracing::info!(session = %session.id, url, "design: preview reported");
         self.emit_session(ctx, &session.id).await;
+        if let Some(note) = request {
+            tracing::info!(note = %note.id, session = %session.id, "design: the operator's change request is the session's first note");
+            self.emit_note(ctx, &session.item, &note.id).await;
+            self.pump(ctx, &session.item).await?;
+        }
         Ok(Reply::DesignDone)
     }
 

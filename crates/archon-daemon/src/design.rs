@@ -24,8 +24,8 @@ use std::sync::{Arc, OnceLock, Weak};
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::config::DesignConfig;
 use archon_core::design::{
-    DesignAsset, DesignNote, DesignSession, DesignSessionId, FinishChoices, NoteKind, NoteStatus,
-    SessionState, auto_supersession, undone_by,
+    DesignAsset, DesignNote, DesignSession, DesignSessionId, FinishChoices, MAX_NOTE_CHARS,
+    NoteKind, NoteStatus, SessionState, Viewport, auto_supersession, clean_text, undone_by,
 };
 use archon_core::error::{ArchonError, DesignRefusal};
 use archon_core::id::PipelineRunId as RunId;
@@ -96,6 +96,72 @@ pub(crate) fn refuse(code: DesignRefusal, message: impl Into<String>) -> ArchonE
         code,
         message: message.into(),
     }
+}
+
+/// The `client_key` prefix of the note that carries an Ask for changes on
+/// the gate of `stage_id`'s attempt `gate_attempt`.
+fn revise_key(run: &RunId, stage_id: &str, gate_attempt: u32) -> String {
+    format!("revise:{run}:{stage_id}:{gate_attempt}:")
+}
+
+/// A session opened after the operator asked for changes on the design gate
+/// starts with that request as its first page note, added as it goes live
+/// (notes need a live session, and the agent reads them after its preview).
+/// The agent then makes the change as a note, so the ledger, the review and
+/// the gate show it and the approved intent binds it, instead of a commit
+/// outside any note that Archon refuses and the next gate asks about. A retry of the attempt
+/// gets the request again unless an earlier session already did it.
+fn revise_note(
+    store: &mut Store,
+    session: &DesignSession,
+) -> Result<Option<DesignNote>, ArchonError> {
+    let gate = store
+        .gates_for_run(&session.run)?
+        .into_iter()
+        .filter(|g| g.stage_id == session.stage_id && g.attempt < session.attempt)
+        .max_by_key(|g| g.attempt);
+    let Some(archon_core::run::GateDecision::Revise { feedback }) =
+        gate.as_ref().and_then(|g| g.decision.clone())
+    else {
+        return Ok(None);
+    };
+    let text = clean_text(&feedback, MAX_NOTE_CHARS);
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let prefix = revise_key(
+        &session.run,
+        &session.stage_id,
+        gate.map_or(0, |g| g.attempt),
+    );
+    let done = store
+        .design_notes(&session.item)?
+        .iter()
+        .any(|n| n.client_key.starts_with(&prefix) && n.status == NoteStatus::Done);
+    if done {
+        return Ok(None);
+    }
+    let (w, h) = session.viewport_preset.size();
+    let (note, created) = store.design_note_add(archon_queue::store::NewDesignNote {
+        item: session.item.clone(),
+        session: session.id.clone(),
+        kind: NoteKind::Page,
+        text,
+        details_text: None,
+        send_picture: false,
+        target: None,
+        viewport: Viewport {
+            w,
+            h,
+            preset: session.viewport_preset,
+        },
+        client_key: format!("{prefix}{}", session.attempt),
+        reverts: None,
+        resent_from: None,
+        before_asset: None,
+        created_by_device: None,
+    })?;
+    Ok(created.then_some(note))
 }
 
 /// Drop each replacement whose replacing note no longer stands: one that

@@ -640,9 +640,45 @@ async fn revise_resumes_the_design_agent_in_a_new_session_with_its_notes() {
         next.state,
         SessionState::Starting | SessionState::Live
     ));
+    assert_eq!(next.state, SessionState::Starting);
+    assert_eq!(store.design_notes(&item.id).unwrap().len(), 1);
+    drop(store);
+    // The Ask for changes is the new session's first note once its preview is
+    // up, so the agent makes it as a note the ledger and the gate show, never
+    // as a commit outside one.
+    let preview = || {
+        Box::pin(archon_daemon::handlers::handle(
+            &h.ctx,
+            archon_core::protocol::ClientKind::ArchonMcp,
+            Request::DesignPreview {
+                url: "http://127.0.0.1:5173/".into(),
+                caller: agent.clone(),
+            },
+        ))
+    };
+    preview().await.expect("preview reported");
+    preview().await.expect("reported again");
+    let store = h.ctx.store.lock().await;
     let notes = store.design_notes(&item.id).unwrap();
-    assert_eq!(notes.len(), 1);
-    assert_eq!(notes[0].status, NoteStatus::Done);
+    assert_eq!(
+        notes.len(),
+        2,
+        "one request, however often the preview is reported"
+    );
+    let d1 = notes.iter().find(|n| n.id == "D1").unwrap();
+    assert_eq!(d1.status, NoteStatus::Done);
+    let request = notes
+        .iter()
+        .find(|n| n.id == "D2")
+        .expect("the request is a note");
+    assert_eq!(request.session, next.id);
+    assert_eq!(request.kind, archon_core::design::NoteKind::Page);
+    assert_eq!(request.text, "a darker green please");
+    assert_eq!(
+        request.status,
+        NoteStatus::Sent,
+        "sent to the resumed agent"
+    );
 }
 
 /// E2E S5: after Revise the resumed agent completes without a preview; the

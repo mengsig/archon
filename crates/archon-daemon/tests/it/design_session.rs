@@ -696,7 +696,10 @@ async fn confirm_with(
     f: &Fixture,
     superseded: &[(&str, &str)],
     confirm_no_change: bool,
-) -> (archon_core::protocol::DesignFinishView, Result<Reply, ArchonError>) {
+) -> (
+    archon_core::protocol::DesignFinishView,
+    Result<Reply, ArchonError>,
+) {
     let view = finish_view(
         f.operator(Request::DesignFinishCapture {
             session: f.session.clone(),
@@ -821,7 +824,11 @@ async fn undoing_a_carried_replacement_brings_the_replaced_note_back() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     let (view, confirmed) = confirm_with(&f, &[], false).await;
-    let card = view.cards.iter().find(|c| c.note == d1).expect("D1 is shown");
+    let card = view
+        .cards
+        .iter()
+        .find(|c| c.note == d1)
+        .expect("D1 is shown");
     assert_eq!(card.superseded_by, None, "the replacement lapsed");
     assert!(
         view.cards.iter().all(|c| c.note != d2),

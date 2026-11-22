@@ -22,9 +22,12 @@ Archon runs one and shows the operator pictures of the app.
 
 On a later attempt this is a new live session, even if you ran the last one:
 start the app again if it is not running and call `design_preview` before you
-change anything. Do not apply the feedback on your own and complete. Wait for
-the operator's notes, which say what to change, and complete only on `finish`.
-Notes from earlier sessions are already in the code.
+change anything. The feedback above is for context only. Archon sends it to
+you as this session's first note once your preview is up, so make the change
+for that note like any other: one commit with its trailer, then report it with
+`design_note`. Never commit the feedback on your own, outside a note, and
+never complete before `finish`: Archon refuses both. Notes from earlier
+sessions are already in the code.
 
 ## How to work
 

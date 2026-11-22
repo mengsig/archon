@@ -7,8 +7,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use archon_core::design::{
-    DesignNote, DesignSession, FinishChoices, IMAGE_CAP_WARN_MARGIN,
-    SessionState, Viewport,
+    DesignNote, DesignSession, FinishChoices, IMAGE_CAP_WARN_MARGIN, SessionState, Viewport,
 };
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;

@@ -41,6 +41,9 @@ pub(crate) fn resume_message(
     assert!(!feedback.is_empty(), "an agent is resumed with findings");
     assert!(attempt > 1, "the first attempt has nothing to resume");
     assert!(owed.review.is_none(), "the review's holder is never kept");
+    if stage.kind == StageKind::Design {
+        return design_resume_message(stage, attempt, feedback);
+    }
     let record = match owed.ship_record {
         true => format!(
             " End that message with the ship record of the commit you leave, read after \
@@ -64,6 +67,29 @@ pub(crate) fn resume_message(
         id = stage.id,
         blocked = StageOutcome::BLOCKED_PREFIX,
         escalate = StageOutcome::ESCALATE_PREFIX,
+    )
+}
+
+/// A kept design agent resumed after the operator asked for changes. The
+/// fix-and-end-your-turn message of other stages would have it commit the
+/// feedback outside any note and end its turn without a Finish, which Archon
+/// refuses: the request comes to it as the new session's first note instead.
+fn design_resume_message(stage: &StageSpec, attempt: u32, feedback: &str) -> String {
+    format!(
+        "Archon stage `{id}`, attempt {attempt}: a new live design session. The operator \
+         reviewed the design and asked for changes; what you already learned still holds.\n\n\
+         ## The operator's request (for context)\n\n{feedback}\n\n\
+         ## What to do\n\n\
+         1. Start the app again if it is not running and call `design_preview` with its URL.\n\
+         2. Archon then sends the request above as this session's first note. Make it like any \
+         note: exactly one commit with its `Archon-Note: D<n>` trailer, then `design_note` with \
+         `status: \"done\"`. Do not change the code before that note arrives.\n\
+         3. Keep calling `wait_for` and work through the notes one at a time, as before.\n\
+         4. On `finish`, stop the dev server by the PID you recorded and end your turn with a \
+         one-line summary. Your task is already recorded, so do not call `complete_task` or \
+         `fail_task` again.\n\n\
+         Archon refuses a commit outside a note and an end before `finish`.\n",
+        id = stage.id,
     )
 }
 
@@ -294,6 +320,31 @@ fn change_report(summary: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_design_agent_is_resumed_into_a_new_session_not_told_to_fix_and_stop() {
+        let spec = crate::autonomy::augment(
+            &crate::catalog::Catalog::builtin()
+                .get("direct")
+                .expect("built-in")
+                .clone(),
+            &archon_core::autonomy::Autonomy {
+                proposal: archon_core::autonomy::ProposalMode::Live,
+                ..Default::default()
+            },
+        )
+        .expect("live");
+        let stage = &spec.file.stages[0];
+        assert_eq!(stage.kind, StageKind::Design);
+        let feedback = operator_feedback(GateSubject::Proposal, "a darker green");
+        let text = resume_message(stage, 2, &feedback, spec.owed(stage));
+        assert!(text.contains("a darker green"));
+        assert!(text.contains("first note"));
+        assert!(text.contains("design_preview"));
+        assert!(text.contains("wait_for"));
+        assert!(!text.contains("Fix it in the same workspace"));
+        assert!(!text.contains("Do not wait for a reply"));
+    }
 
     #[test]
     fn operator_feedback_names_what_was_reviewed() {

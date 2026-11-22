@@ -301,7 +301,13 @@ fn ledger_notes(
     session: &DesignSession,
     active: &[DesignNote],
 ) -> Result<Vec<LedgerNote>, ArchonError> {
-    let choices: Option<&FinishChoices> = session.finish_choices.as_ref();
+    let carried = crate::design::DesignService::review_choices(
+        store,
+        item,
+        &session.id,
+        session.finish_choices.as_ref(),
+    )?;
+    let choices: Option<&FinishChoices> = carried.as_ref();
     let head = session.finish_head.clone().unwrap_or_default();
     let all = store.design_notes(item)?;
     let mut out = Vec::new();
@@ -367,9 +373,15 @@ pub(super) fn approvable_notes(
     session: &DesignSession,
     head: &str,
 ) -> Result<Vec<DesignNote>, ArchonError> {
-    let active =
-        ctx.design
-            .active_notes(store, worktree, item, head, session.finish_choices.as_ref())?;
+    let choices = crate::design::DesignService::review_choices(
+        store,
+        item,
+        &session.id,
+        session.finish_choices.as_ref(),
+    )?;
+    let active = ctx
+        .design
+        .active_notes(store, worktree, item, head, choices.as_ref())?;
     if !active.is_empty() {
         return Ok(active);
     }

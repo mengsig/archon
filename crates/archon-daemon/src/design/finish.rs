@@ -191,7 +191,8 @@ impl DesignService {
         }
         let active = {
             let store = ctx.store.lock().await;
-            self.active_notes(&store, &wt, &row.item, &head, None)?
+            let carried = Self::review_choices(&store, &row.item, &row.id, None)?;
+            self.active_notes(&store, &wt, &row.item, &head, carried.as_ref())?
         };
         let no_change_only = active.is_empty()
             && notes.iter().any(|n| {
@@ -366,11 +367,14 @@ impl DesignService {
             .clone()
             .ok_or_else(|| ArchonError::Corrupt("a finishing session has a head".into()))?;
         let capture = row.finish_capture.clone().unwrap_or_default();
-        let (active, notes) = {
+        let (active, notes, choices) = {
             let store = ctx.store.lock().await;
+            let choices =
+                Self::review_choices(&store, &row.item, &row.id, row.finish_choices.as_ref())?;
             (
-                self.active_notes(&store, wt, &row.item, &head, row.finish_choices.as_ref())?,
+                self.active_notes(&store, wt, &row.item, &head, choices.as_ref())?,
                 store.design_notes(&row.item)?,
+                choices,
             )
         };
         // Auto supersession is shown on the cards of the notes it covers.
@@ -391,8 +395,7 @@ impl DesignService {
         let auto = archon_core::design::auto_supersession(&refs);
         let mut cards = Vec::new();
         for note in &all_active {
-            let superseded_by = row
-                .finish_choices
+            let superseded_by = choices
                 .as_ref()
                 .and_then(|c| c.superseded.get(&note.id).cloned())
                 .unwrap_or_else(|| auto.get(&note.id).cloned());
@@ -659,8 +662,9 @@ impl DesignService {
         };
         let (active, notes) = {
             let store = ctx.store.lock().await;
+            let in_force = Self::review_choices(&store, &row.item, &row.id, Some(&choices))?;
             (
-                self.active_notes(&store, &wt, &row.item, &head, Some(&choices))?,
+                self.active_notes(&store, &wt, &row.item, &head, in_force.as_ref())?,
                 store.design_notes(&row.item)?,
             )
         };

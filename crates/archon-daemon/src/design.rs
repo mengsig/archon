@@ -536,6 +536,47 @@ impl DesignService {
         }
     }
 
+    /// The review choices in force for `session` of `item`: the replacements
+    /// confirmed at the reviews of the item's earlier sessions, under the
+    /// session's `own` choices. An earlier session's notes are read-only, so
+    /// "D1 is superseded by D2" chosen there lives only in that review's
+    /// record; without carrying it, a Revise brought D1 back as an active
+    /// requirement. Only replacements are carried: a later review that clears
+    /// one ends it, and an earlier "keep it" never blocks a new automatic
+    /// supersession. Inclusion is not carried, as each note records its own.
+    pub fn review_choices(
+        store: &Store,
+        item: &QueueItemId,
+        session: &DesignSessionId,
+        own: Option<&FinishChoices>,
+    ) -> Result<Option<FinishChoices>, ArchonError> {
+        let mut superseded = std::collections::BTreeMap::new();
+        for earlier in store.design_sessions(item)? {
+            if &earlier.id == session {
+                break;
+            }
+            let Some(choices) = &earlier.finish_choices else {
+                continue;
+            };
+            for (id, by) in &choices.superseded {
+                match by {
+                    Some(by) => superseded.insert(id.clone(), Some(by.clone())),
+                    None => superseded.remove(id),
+                };
+            }
+        }
+        if own.is_none() && superseded.is_empty() {
+            return Ok(None);
+        }
+        if let Some(own) = own {
+            superseded.extend(own.superseded.clone());
+        }
+        Ok(Some(FinishChoices {
+            include: own.map(|c| c.include.clone()).unwrap_or_default(),
+            superseded,
+        }))
+    }
+
     /// The notes of `item` that are active at commit `at`: done change and
     /// page notes not undone, still in the history, not already requirements
     /// of the item's approved intent, and not superseded (automatically, or

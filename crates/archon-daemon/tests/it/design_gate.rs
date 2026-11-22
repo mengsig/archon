@@ -1057,3 +1057,94 @@ async fn a_refused_build_after_an_approved_design_is_repaired_past_the_design() 
     );
     assert_ne!(running[0].run, build.run, "in a new run");
 }
+
+/// A revised session is reviewed, confirmed and approved through to its
+/// build, carrying the first review's choices. "D1 superseded by D2", chosen
+/// at the first review, lived only in that review's record (an earlier
+/// session's notes are read-only), so after Ask for changes D1 came back as
+/// an active requirement with its picture.
+#[tokio::test]
+async fn a_revised_session_is_approved_with_the_first_reviews_replacements() {
+    let h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    done_note(&h, &session, &run, "make it green", b"green").await;
+    let (_, head) = done_note(&h, &session, &run, "make it blue", b"blue").await;
+    confirm(&h, &session, &head, &["D1", "D2"], &[("D1", "D2")]).await;
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    let gate = open_proposal(&h, &item.id).await;
+    h.cli(Request::Answer {
+        chat: false,
+        question: gate.question.clone().expect("asked"),
+        text: "a darker blue please".into(),
+    })
+    .await
+    .expect("answer");
+    h.dispatch().await;
+    let next = {
+        let mut store = h.ctx.store.lock().await;
+        let next = h
+            .ctx
+            .design
+            .session_of(&store, &run.id, "design", 2)
+            .unwrap()
+            .expect("the revised session");
+        if next.state == SessionState::Starting {
+            store
+                .design_session_transition(
+                    &next.id,
+                    SessionState::Starting,
+                    SessionState::Live,
+                    None,
+                    false,
+                )
+                .unwrap()
+        } else {
+            next
+        }
+    };
+    done_note(&h, &next, &run, "darker blue", b"darker").await;
+    let view = match h
+        .cli(Request::DesignFinishCapture {
+            session: next.id.clone(),
+            cancel_queued: false,
+            recapture: false,
+        })
+        .await
+        .expect("finish")
+    {
+        Reply::DesignFinish(view) => view,
+        other => panic!("{other:?}"),
+    };
+    let card = |id: &str| view.cards.iter().find(|c| c.note == id).expect("a card");
+    assert_eq!(
+        card("D1").superseded_by.as_deref(),
+        Some("D2"),
+        "the first review's replacement is shown"
+    );
+    assert!(card("D2").earlier && card("D2").superseded_by.is_none());
+    assert!(!card("D3").earlier);
+    // Confirm without restating it: the replacement is carried regardless.
+    h.cli(Request::DesignFinishConfirm {
+        session: next.id.clone(),
+        capture: view.capture.clone(),
+        include: view.cards.iter().map(|c| (c.note.clone(), true)).collect(),
+        superseded: BTreeMap::new(),
+        confirm_no_change: false,
+    })
+    .await
+    .expect("confirmed");
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    let gate = open_proposal(&h, &item.id).await;
+    approve(&h, &gate).await;
+    let intent = intent_of(&h, &item.id).await;
+    let ids: Vec<_> = intent.requirements.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["D2", "D3"], "D1 stays replaced by D2");
+    let running = h.running().await;
+    assert!(
+        running.iter().any(|s| s.stage_id != "design"),
+        "the build runs past the approved design"
+    );
+}

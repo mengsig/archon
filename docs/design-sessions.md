@@ -173,7 +173,9 @@ design screen left open follows you into the new session and shows its preview
 as soon as the app is up. At **Finish** only the new session's notes are
 pictured and confirmed again; earlier notes keep the picture you confirmed for
 them before and still count toward what you approve, unless a later note
-supersedes them or you undo them.
+supersedes them or you undo them. A "superseded by" you chose at an earlier
+review still holds, and its card shows it; clear it there to bring the note
+back.
 
 ## Finishing and approving
 

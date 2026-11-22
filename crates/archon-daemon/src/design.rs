@@ -111,7 +111,8 @@ fn revise_key(run: &RunId, stage_id: &str, gate_attempt: u32) -> String {
 /// the gate show it and the approved intent binds it, instead of a commit
 /// outside any note that Archon refuses and the next gate asks about. Keyed
 /// by session, so a retry of the attempt (a new session at the same
-/// attempt) gets the request again unless an earlier session already did it.
+/// attempt) gets the request again unless an earlier session already did it
+/// or the operator cancelled it.
 fn revise_note(
     store: &mut Store,
     session: &DesignSession,
@@ -135,11 +136,12 @@ fn revise_note(
         &session.stage_id,
         gate.map_or(0, |g| g.attempt),
     );
-    let done = store
-        .design_notes(&session.item)?
-        .iter()
-        .any(|n| n.client_key.starts_with(&prefix) && n.status == NoteStatus::Done);
-    if done {
+    // Made, or withdrawn by the operator, in an earlier session: settled.
+    let settled = store.design_notes(&session.item)?.iter().any(|n| {
+        n.client_key.starts_with(&prefix)
+            && matches!(n.status, NoteStatus::Done | NoteStatus::Cancelled)
+    });
+    if settled {
         return Ok(None);
     }
     let (w, h) = session.viewport_preset.size();

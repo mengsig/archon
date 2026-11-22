@@ -220,10 +220,25 @@ impl DesignService {
         // taken first and the capture names the version they leave. An
         // earlier session's note keeps the picture its own review confirmed:
         // its row is never written again (design.md §8.6, Revise).
+        // The page the preview shows at Finish: a page note with no page of
+        // its own is pictured there, not on the page the note before it took
+        // the preview to, and the preview is taken back there afterwards.
+        let start = match self.existing_runtime(&row.id).and_then(|rt| rt.browser()) {
+            Some(browser) => browser.current_path().await.ok(),
+            None => None,
+        };
         for note in active.iter().filter(|n| n.session == row.id) {
-            self.capture_final(ctx, &row, note, &head, &wt).await;
+            self.capture_final(ctx, &row, note, &head, start.as_deref())
+                .await;
         }
         self.restore_viewport(ctx, &row).await;
+        if let (Some(start), Some(url)) = (start.as_deref(), row.preview_url.as_deref())
+            && let Some(browser) = self.existing_runtime(&row.id).and_then(|rt| rt.browser())
+        {
+            let _ = browser
+                .navigate(&format!("{}{start}", origin_of(url)))
+                .await;
+        }
         row = ctx
             .store
             .lock()
@@ -259,14 +274,15 @@ impl DesignService {
         }
     }
 
-    /// The final picture of one note on a fresh load at its page and viewport.
+    /// The final picture of one note on a fresh load at its page and viewport;
+    /// `start` is the page the preview showed at Finish.
     async fn capture_final(
         &self,
         ctx: &DaemonContext,
         row: &DesignSession,
         note: &DesignNote,
         head: &str,
-        _wt: &WorktreeRef,
+        start: Option<&str>,
     ) {
         let Ok(Some(browser)) = self.ensure_browser(ctx, &row.id).await else {
             return;
@@ -291,10 +307,15 @@ impl DesignService {
                 .and_then(|a| a.target),
             _ => None,
         };
-        let place = note.target.as_ref().or(shown.as_ref());
-        if let (Some(url), Some(target)) = (row.preview_url.as_deref(), place) {
+        let path = note
+            .target
+            .as_ref()
+            .or(shown.as_ref())
+            .map(|t| t.path.as_str())
+            .or(start);
+        if let (Some(url), Some(path)) = (row.preview_url.as_deref(), path) {
             let origin = origin_of(url);
-            let _ = browser.navigate(&format!("{origin}{}", target.path)).await;
+            let _ = browser.navigate(&format!("{origin}{path}")).await;
             let _ = browser
                 .wait_network_idle(
                     std::time::Duration::from_millis(500),

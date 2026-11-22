@@ -1450,15 +1450,45 @@ async fn a_page_note_done_with_a_path_is_pictured_on_that_page() {
             .target
             .expect("the after picture records its page");
     assert_eq!(shown.path, "/settings/new");
-    // The operator wanders back to the home page before Finish.
+    // A second page note, done with no page of its own.
+    add(&f, "k2", "Make the header bigger").await;
+    let commit = f.commit(
+        "header.css",
+        "h1 { font-size: 2rem }\n",
+        "Make the header bigger\n\nArchon-Note: D2\n",
+    );
+    f.as_agent(Request::DesignNoteReport {
+        id: "D2".into(),
+        status: AgentNoteStatus::Done,
+        reply: Some("Bigger header".into()),
+        commit: Some(commit),
+        no_change: false,
+        path: None,
+        caller: Some(f.agent.clone()),
+    })
+    .await
+    .expect("D2 done");
+    // The operator wanders back to the home page before Finish (the stand-in
+    // browser shows `/`).
     let navigated_before = browser.calls(|c| c.navigated.len());
     let (view, _) = confirm_with(&f, &[], false).await;
     let card = view.cards.iter().find(|c| c.note == "D1").unwrap();
     assert!(card.data_url.is_some(), "a final picture: {card:?}");
     let navigated = browser.calls(|c| c.navigated[navigated_before..].to_vec());
+    let at = navigated
+        .iter()
+        .position(|u| u == &page)
+        .unwrap_or_else(|| panic!("D1's final picture is taken on its page: {navigated:?}"));
+    let home = crate::common::design::PREVIEW.to_owned();
     assert!(
-        navigated.contains(&page),
-        "the final picture is taken on the note's page: {navigated:?}"
+        navigated[at + 1..].contains(&home),
+        "D2, with no page of its own, is pictured on the page shown at Finish, \
+         not on D1's: {navigated:?}"
+    );
+    assert_eq!(
+        navigated.last(),
+        Some(&home),
+        "the preview goes back to the page the operator left it on"
     );
     let last_capture = browser.calls(|c| c.captures.last().cloned()).unwrap();
     assert_eq!(last_capture.0, None, "the whole view, not a crop");

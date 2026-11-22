@@ -154,3 +154,18 @@ test('item 7: a daemon refusal reads as a sentence, without its error kind', () 
   assert.equal(designErrorText({ code: 'invalid', message: 'invalid argument: ' }), 'Something went wrong.');
   assert.equal(designErrorText({}), 'Something went wrong.');
 });
+
+test('item 8: an approved design says when the item is built, stopped or cancelled', () => {
+  const approved = (itemState) => {
+    const s = reduce(ended('approved'), { type: 'item_state', state: itemState });
+    return { phase: stagePhase(s), dot: dotLook(s) };
+  };
+  assert.match(approved('running').phase.text, /building it now/);
+  const built = approved('succeeded');
+  assert.equal(built.phase.title, 'Design approved and built');
+  assert.doesNotMatch(built.phase.text, /building it now/);
+  assert.equal(built.dot.label, 'Built');
+  assert.match(approved('failed').phase.text, /stopped after the design was approved/);
+  assert.match(approved('cancelled').phase.text, /cancelled after the design was approved/);
+  assert.equal(reduce(ended('approved'), { type: 'item_state', state: null }).itemState, null);
+});

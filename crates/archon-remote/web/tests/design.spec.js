@@ -169,6 +169,18 @@ test.describe('end states', () => {
     } finally { await harness.stop(); }
   });
 
+  test('an approved design whose item succeeded says it is built, not still building', async ({ browser, page }) => {
+    const done = { id: ITEM, title: 'Make it green', state: { state: 'succeeded' }, repo: null, pipeline: 'standard', priority: 'normal', updated_at: new Date().toISOString(), created_at: new Date().toISOString(), stage: null, spent_usd: 0, dependencies: [], autonomy: { review: 'standard', proposal: 'live' } };
+    const harness = await open(browser, page, { summaries: [done] });
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      harness.daemon.endSession('approved');
+      await expect(page.getByRole('heading', { name: 'Design approved and built' })).toBeVisible();
+      await expect(page.locator('.design-phase')).not.toContainText('building it now');
+      await expect(page.locator('.design-state')).toContainText('Built');
+    } finally { await harness.stop(); }
+  });
+
   test('after Ask for changes the screen switches to the new session', async ({ browser, page }) => {
     const harness = await open(browser, page);
     try {

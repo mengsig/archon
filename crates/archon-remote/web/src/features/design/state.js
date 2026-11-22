@@ -8,6 +8,7 @@ export function initialState(item) {
     degraded: false, noteVersion: 0, frame: null, selection: null, blocked: [], progress: '',
     dialog: null, toasts: [], ended: null, connection: 'open', mode: 'interact', preset: 'desktop', refresh: false, error: null,
     previewCommit: null, path: null, finishBlocker: null, imagesUsed: 0, imagesMax: 0, deadline: null,
+    itemState: null,
   };
 }
 
@@ -55,6 +56,9 @@ export function reduce(state, action) {
       return { ...state, loaded: true, error: action.error };
     case 'connection':
       return { ...state, connection: action.state === 'open' ? 'open' : 'reconnecting' };
+    // The item's own state (queued, running, succeeded…), from the app's item list.
+    case 'item_state':
+      return action.state === state.itemState ? state : { ...state, itemState: action.state ?? null };
     case 'mode':
       return { ...state, mode: action.mode, selection: action.mode === 'comment' || action.mode === 'region' ? state.selection : null };
     case 'preset':
@@ -135,7 +139,7 @@ export function stagePhase(state, { operator = true, features = true } = {}) {
     return { kind: 'confirmed', title: 'Waiting for your approval', text: 'You confirmed the design. Approve it, ask for changes, or reject it.', tone: 'accent' };
   }
   if (state.ended || s === 'ended') {
-    const end = endInfo(state.ended ?? state.session.end_reason);
+    const end = endInfo(state.ended ?? state.session.end_reason, state.itemState);
     return { kind: 'ended', end: end.end, title: end.title, text: end.text, tone: end.tone };
   }
   const b = state.browser?.status;
@@ -157,9 +161,16 @@ export function stagePhase(state, { operator = true, features = true } = {}) {
 
 // What each way a session ends means for the operator, from the daemon's end_reason
 // (the gate's answers are approved / revised / rejected).
-export function endInfo(reason) {
+// An approved design says what became of the item once it settled
+// (`itemState` is the item's state: succeeded, failed, cancelled or still going).
+export function endInfo(reason, itemState = null) {
   const r = String(reason ?? '').toLowerCase();
-  if (/approv/.test(r)) return { end: 'approved', title: 'Design approved', text: 'The agent is building it now. Follow its progress on the item.', dot: 'Approved', tone: 'green' };
+  if (/approv/.test(r)) {
+    if (itemState === 'succeeded') return { end: 'approved', title: 'Design approved and built', text: 'The item is done: the approved design is in its result. Open the item to see it.', dot: 'Built', tone: 'green' };
+    if (itemState === 'failed') return { end: 'approved', title: 'Design approved', text: 'The item stopped after the design was approved. Open the item to see what happened.', dot: 'Approved', tone: 'amber' };
+    if (itemState === 'cancelled') return { end: 'approved', title: 'Design approved', text: 'The item was cancelled after the design was approved.', dot: 'Approved', tone: 'muted' };
+    return { end: 'approved', title: 'Design approved', text: 'The agent is building it now. Follow its progress on the item.', dot: 'Approved', tone: 'green' };
+  }
   if (/revis|change/.test(r)) return { end: 'revised', title: 'Changes requested', text: 'A new design session starts with your changes. This screen switches to it when it opens.', dot: 'Changes requested', tone: 'accent' };
   if (/reject/.test(r)) return { end: 'rejected', title: 'Design rejected', text: 'The item stops here.', dot: 'Rejected', tone: 'red' };
   if (/cancel/.test(r)) return { end: 'cancelled', title: 'Session cancelled', text: 'The design session was cancelled. Open the item to see where it stands.', dot: 'Cancelled', tone: 'muted' };
@@ -189,7 +200,7 @@ export function followsNewSession(state) {
 // The top bar's dot: what the phase is, or how the session ended.
 export function dotLook(state) {
   const phase = stagePhase(state);
-  if (phase.kind === 'ended') { const e = endInfo(state.ended ?? state.session?.end_reason); return { label: e.dot, tone: e.tone }; }
+  if (phase.kind === 'ended') { const e = endInfo(state.ended ?? state.session?.end_reason, state.itemState); return { label: e.dot, tone: e.tone }; }
   const kind = phase.kind;
   if (kind === 'finishing') return { label: 'Finishing', tone: 'accent' };
   if (kind === 'live') return { label: 'Live', tone: 'green' };

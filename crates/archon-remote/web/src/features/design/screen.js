@@ -409,6 +409,9 @@ export function mountDesign(view, ctx) {
   const offFeatures = ctx.store.watch((s) => s.designEnabled, (on) => { if (on && !state.loaded) stream.start(); else render(); });
   const clock = setInterval(render, 30_000);
   const offConn = ctx.store.watch((s) => s.connection.state, () => render());
+  // The item's own state, so an approved design shows when the item is done.
+  const itemStateOf = (s) => s.summaries?.find((x) => x.id === item)?.state?.state ?? null;
+  const offItem = ctx.store.watch(itemStateOf, (st) => dispatch({ type: 'item_state', state: st }));
   render();
 
   return () => {
@@ -416,6 +419,6 @@ export function mountDesign(view, ctx) {
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', fit);
     vv?.removeEventListener('resize', onViewport);
-    clearInterval(clock); clearTimeout(follower); clearTimeout(answeredTimer); follower = null; offFeatures(); offConn();
+    clearInterval(clock); clearTimeout(follower); clearTimeout(answeredTimer); follower = null; offFeatures(); offConn(); offItem();
   };
 }

@@ -249,3 +249,104 @@ async fn a_shared_selector_finds_the_recorded_element_and_crops_stay_on_the_page
     assert!(near(after.x, 200.0) && near(after.w, 80.0), "{after:?}");
     b.close().await.unwrap();
 }
+
+/// A whole-page final picture at 2x came out as the 1x page tiled 2x2 when the
+/// stream's polling shot (scale 1) was in flight with it. With the live stream
+/// and a scale-1 loop running, every whole-page 2x shot must be one copy of the
+/// page: the same bytes as the element-crop path (which was always right) takes
+/// of the same, static page.
+#[tokio::test]
+async fn whole_page_pictures_at_2x_are_not_tiled_while_the_stream_runs() {
+    if std::env::var("ARCHON_DESIGN_REAL_BROWSER").as_deref() != Ok("1") {
+        eprintln!("skipped: ARCHON_DESIGN_REAL_BROWSER=1 not set");
+        return;
+    }
+    let path = std::env::var("PATH").unwrap_or_default();
+    let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let Ok(binary) = find_browser(None, &path, &home) else {
+        eprintln!("skipped: no browser found");
+        return;
+    };
+    let root = tempfile::tempdir().unwrap();
+    let desktop = Viewport {
+        width: 1440,
+        height: 900,
+        touch: false,
+        dpr: 1.0,
+    };
+    let spec = LaunchSpec {
+        binary,
+        profile_dir: root.path().join("ds_tile"),
+        sandbox: std::env::var("ARCHON_DESIGN_SANDBOX_OFF").as_deref() != Ok("1"),
+        allow_hosts: vec![],
+        viewport: desktop,
+        path_env: path,
+        lang: "C.UTF-8".into(),
+        tz: "UTC".into(),
+    };
+    let b = match Browser::launch(spec).await {
+        Ok(b) => std::sync::Arc::new(b),
+        Err(BrowserError::SandboxUnavailable { hint }) => {
+            eprintln!("skipped: sandbox unavailable: {hint}");
+            return;
+        }
+        Err(e) => panic!("launch: {e}"),
+    };
+    // Four quadrants of four colours: a tiled picture repeats them.
+    let quad = |l: u32, t: u32, c: &str| {
+        format!(
+            "<div style=\"position:absolute;left:{l}px;top:{t}px;width:720px;height:450px;background:{c}\"></div>"
+        )
+    };
+    let body = format!(
+        "<html><body style=\"margin:0\">{}{}{}{}</body></html>",
+        quad(0, 0, "#f00"),
+        quad(720, 0, "#0f0"),
+        quad(0, 450, "#00f"),
+        quad(720, 450, "#ff0"),
+    );
+    let page = serve(Box::leak(body.into_boxed_str()));
+    b.set_viewport(desktop).await.unwrap();
+    b.navigate(&format!("http://127.0.0.1:{page}/"))
+        .await
+        .unwrap();
+    let _ = b
+        .wait_network_idle(Duration::from_millis(300), Duration::from_secs(10))
+        .await;
+    let whole = archon_design_browser::ClipRect {
+        x: 0.0,
+        y: 0.0,
+        w: 1440.0,
+        h: 900.0,
+    };
+    let reference = b.capture(Some(whole), 2.0).await.unwrap();
+    assert_eq!((reference.width, reference.height), (2880, 1800));
+    let _relay = b.start_screencast().await.unwrap();
+    let poller = {
+        let b = b.clone();
+        tokio::spawn(async move {
+            loop {
+                let _ = b.capture(None, 1.0).await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+    };
+    for i in 0..20 {
+        if i % 5 == 0 {
+            b.set_viewport(desktop).await.unwrap();
+        }
+        let pic = b.capture(None, 2.0).await.unwrap();
+        assert_eq!((pic.width, pic.height), (2880, 1800), "shot {i}");
+        assert!(
+            pic.bytes == reference.bytes,
+            "shot {i} differs from one copy of the page (tiled?)"
+        );
+    }
+    poller.abort();
+    let _ = poller.await;
+    drop(_relay);
+    let Ok(b) = std::sync::Arc::try_unwrap(b) else {
+        panic!("the poller still holds the browser");
+    };
+    b.close().await.unwrap();
+}

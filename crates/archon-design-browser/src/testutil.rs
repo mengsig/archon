@@ -14,8 +14,19 @@ pub(crate) type Log = Arc<Mutex<Vec<(String, Value)>>>;
 pub(crate) async fn fake_browser(
     answer: impl Fn(&str, &Value) -> Option<Value> + Send + 'static,
 ) -> (Browser, Log) {
+    fake_browser_slow_shots(answer, None).await
+}
+
+/// Like [`fake_browser`], but a `Page.captureScreenshot` is answered only after
+/// `shot_delay`, off the read loop, so overlapping screenshots can be seen:
+/// the log gets a `"<answered>"` entry when each one is answered.
+pub(crate) async fn fake_browser_slow_shots(
+    answer: impl Fn(&str, &Value) -> Option<Value> + Send + 'static,
+    shot_delay: Option<std::time::Duration>,
+) -> (Browser, Log) {
     let (a_w, mut peer_r) = duplex(1 << 22);
-    let (mut peer_w, a_r) = duplex(1 << 22);
+    let (peer_w, a_r) = duplex(1 << 22);
+    let peer_w = Arc::new(tokio::sync::Mutex::new(peer_w));
     let log: Log = Arc::default();
     let l2 = log.clone();
     tokio::spawn(async move {
@@ -45,7 +56,14 @@ pub(crate) async fn fake_browser(
                     ev.push(0);
                     out.extend(ev);
                 }
-                if peer_w.write_all(&out).await.is_err() {
+                if let (Some(d), "Page.captureScreenshot") = (shot_delay, method.as_str()) {
+                    let (w, l) = (peer_w.clone(), l2.clone());
+                    tokio::spawn(async move {
+                        tokio::time::sleep(d).await;
+                        l.lock().unwrap().push(("<answered>".into(), Value::Null));
+                        let _ = w.lock().await.write_all(&out).await;
+                    });
+                } else if peer_w.lock().await.write_all(&out).await.is_err() {
                     return;
                 }
             }

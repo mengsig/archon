@@ -52,6 +52,10 @@ pub(crate) struct Shared {
     events: broadcast::Sender<BrowserEvent>,
     pub(crate) relay: Arc<RelayShared>,
     st: Mutex<State>,
+    /// Held for a whole `capture`: Chrome draws a screenshot whose clip scale
+    /// differs from one already in flight into a tiled copy (the page at 1x
+    /// repeated across the 2x canvas), so two never overlap on this target.
+    shot: tokio::sync::Mutex<()>,
 }
 
 /// A headless Chromium driven over CDP.
@@ -187,6 +191,9 @@ impl Shared {
     }
 
     async fn capture(&self, clip: Option<ClipRect>, dpr: f64) -> Result<Picture, BrowserError> {
+        // One screenshot at a time: the stream's polling loop (scale 1) must
+        // not race a final picture (scale 2). See `Shared::shot`.
+        let _one_at_a_time = self.shot.lock().await;
         // Crops are in page CSS pixels: take them on the unzoomed page the
         // operator saw, and leave it unzoomed for the stream. A full-view
         // shot (each polled stream frame) zooms nothing and pays nothing.
@@ -625,6 +632,7 @@ impl Browser {
             target_id,
             events,
             relay: Arc::new(RelayShared::default()),
+            shot: tokio::sync::Mutex::new(()),
             st: Mutex::new(State {
                 url: String::new(),
                 reqs: HashMap::new(),
@@ -1073,6 +1081,44 @@ mod capture_tests {
         .await
         .unwrap();
         assert_eq!(methods(&log), ["Emulation.resetPageScaleFactor"]);
+    }
+
+    #[tokio::test]
+    async fn screenshots_never_overlap_so_a_final_picture_is_not_tiled() {
+        // The polling loop's scale-1 shot and a final scale-2 shot were in
+        // flight together and Chrome tiled the 1x page across the 2x canvas.
+        let (b, log) = crate::testutil::fake_browser_slow_shots(
+            |m, _| (m == "Page.captureScreenshot").then(|| json!({"data": jpeg_of(100)})),
+            Some(Duration::from_millis(40)),
+        )
+        .await;
+        let b = Arc::new(b);
+        let poller = {
+            let b = b.clone();
+            tokio::spawn(async move {
+                for _ in 0..4 {
+                    b.capture(None, 1.0).await.unwrap();
+                }
+            })
+        };
+        for _ in 0..3 {
+            b.capture(None, 2.0).await.unwrap();
+        }
+        poller.await.unwrap();
+        let mut open = 0i32;
+        let mut shots = 0;
+        for (m, _) in log.lock().unwrap().iter() {
+            match m.as_str() {
+                "Page.captureScreenshot" => {
+                    open += 1;
+                    shots += 1;
+                    assert_eq!(open, 1, "a screenshot began while another was in flight");
+                }
+                "<answered>" => open -= 1,
+                _ => {}
+            }
+        }
+        assert_eq!(shots, 7);
     }
 
     #[tokio::test]

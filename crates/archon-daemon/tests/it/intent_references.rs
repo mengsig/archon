@@ -202,7 +202,7 @@ async fn oversized_file_and_image_references_reach_build_by_path() {
         intent
     })
     .await;
-    h.dispatch().await;
+    let log = dispatch_with_stage_log(&h).await;
     assert!(h.running().await[0].aether_agent.is_some());
     let request = h.backend.requests().pop().unwrap();
     let root = request
@@ -217,17 +217,7 @@ async fn oversized_file_and_image_references_reach_build_by_path() {
         ),
         (root.join("image_0.png"), 21 * MIB),
     ] {
-        assert_eq!(std::fs::metadata(&path).unwrap().len(), bytes);
-        assert!(request.instructions.contains(&format!(
-            "Open oversized reference from disk: {} ({bytes} bytes,",
-            path.display()
-        )));
-        assert!(
-            request
-                .references
-                .iter()
-                .all(|reference| reference.path != path)
-        );
+        assert_oversized_fallback(&request, &log, &path, bytes);
     }
     assert_eq!(request.references.len(), 2);
     assert_eq!(request.references[0].kind, ReferenceKind::File);
@@ -243,6 +233,48 @@ async fn oversized_file_and_image_references_reach_build_by_path() {
             .unwrap()
             .len(),
         6 * MIB
+    );
+}
+
+async fn dispatch_with_stage_log(h: &Harness) -> String {
+    let log = h.dir.path().join("stage-warnings.log");
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_ansi(false)
+        .with_writer(std::sync::Mutex::new(std::fs::File::create(&log).unwrap()))
+        .finish();
+    {
+        let _guard = tracing::subscriber::set_default(subscriber);
+        h.dispatch().await;
+    }
+    std::fs::read_to_string(log).unwrap()
+}
+
+fn assert_oversized_fallback(
+    request: &SpawnRequest,
+    log: &str,
+    path: &std::path::Path,
+    bytes: u64,
+) {
+    assert_eq!(std::fs::metadata(path).unwrap().len(), bytes);
+    assert!(request.instructions.contains(&format!(
+        "Open oversized reference from disk: {} ({bytes} bytes,",
+        path.display()
+    )));
+    assert!(
+        request
+            .references
+            .iter()
+            .all(|reference| reference.path != path)
+    );
+    assert!(
+        log.lines().any(
+            |line| line.contains("oversized stage reference delivered by path")
+                && line.contains(&format!("stage={}", request.idempotency_key))
+                && line.contains(&format!("path={}", path.display()))
+                && line.contains(&format!("bytes={bytes} "))
+        ),
+        "{log}"
     );
 }
 

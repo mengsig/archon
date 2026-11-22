@@ -449,6 +449,70 @@ async fn proposal_approval_freezes_the_visible_ledger_and_delivers_it_to_build()
 }
 
 #[tokio::test]
+async fn approval_rejects_changes_to_the_published_proposal_snapshot() {
+    let (h, _fake, item) = proposed_item().await;
+    let mut approved = record(&h);
+    let image = &mut approved.images[0];
+    let path = h.run(&item.id).await.workspace.join("reference.png");
+    std::fs::copy(&image.path, &path).unwrap();
+    image.path = path;
+    let asset = format!("{}.png", image.sha256);
+    settle(&h, json!({"approved_intent": approved})).await;
+
+    let gate = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .gates_for_item(&item.id)
+        .unwrap()
+        .remove(0);
+    let published = std::path::PathBuf::from(gate.location.unwrap());
+    let source = std::path::PathBuf::from(gate.page.unwrap());
+    assert_ne!(published, source);
+    let question = gate.question.unwrap();
+    for (path, changed, problem) in [
+        (
+            published.with_file_name(&asset),
+            &b"\x89PNG\r\n\x1a\nchanged"[..],
+            "proposal image mockup changed",
+        ),
+        (
+            published,
+            &b"changed page"[..],
+            "proposal ledger page changed",
+        ),
+    ] {
+        let original = std::fs::read(&path).unwrap();
+        std::fs::write(&path, changed).unwrap();
+        assert_ne!(
+            std::fs::read(source.with_file_name(path.file_name().unwrap())).unwrap(),
+            changed
+        );
+        let refused = h
+            .cli(Request::Answer {
+                question: question.clone(),
+                text: "yes".into(),
+                chat: false,
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains(problem), "{refused}");
+        assert!(h.item(&item.id).await.intent.is_none());
+        std::fs::write(&path, original).unwrap();
+    }
+    h.cli(Request::Answer {
+        question,
+        text: "yes".into(),
+        chat: false,
+    })
+    .await
+    .unwrap();
+    assert!(h.item(&item.id).await.intent.is_some());
+}
+
+#[tokio::test]
 async fn image_heavy_proposal_freezes_a_small_page_and_starts_build() {
     let (h, fake, item) = proposed_item().await;
     fake.set_features(vec!["references".into()]);
@@ -485,6 +549,10 @@ async fn image_heavy_proposal_freezes_a_small_page_and_starts_build() {
         page.len()
     );
     assert!(!page.contains("data:image/"));
+    assert!(
+        !page.contains("screen_0.png"),
+        "original preview uses the frozen assets"
+    );
     h.cli(Request::Answer {
         question: gate.question.unwrap(),
         text: "yes".into(),
@@ -520,6 +588,10 @@ fn check_frozen_assets(stored: &ApprovedIntent, page_path: &Path, frozen: &Path,
         16,
         "embedded and local URLs share one image"
     );
+    let first = stored.images[0].path.file_name().unwrap().to_str().unwrap();
+    assert!(page.contains(&format!("src=&#39;./{first}&#39;")));
+    assert!(page.contains(&format!("srcset=&#39;./{first} 1x,")));
+    assert!(page.contains(&format!("url(./{first}?v=1#hero)")));
     for image in &stored.images {
         let name = image.path.file_name().unwrap();
         assert!(page.contains(&format!("src=\"./{}\"", name.to_str().unwrap())));
@@ -532,7 +604,10 @@ fn check_frozen_assets(stored: &ApprovedIntent, page_path: &Path, frozen: &Path,
 fn write_image_heavy_proposal(h: &Harness, reports: &Path) -> ApprovedIntent {
     let mut approved = record(h);
     let template = approved.images.pop().unwrap();
-    let mut original = String::from("<!doctype html><body>");
+    let mut original = String::from(
+        "<!doctype html><style>.hero { background: url(screen_0.png?v=1#hero); }</style><body>\
+        <picture><source srcset='screen_0.png 1x, screen_1.png 2x'></picture>",
+    );
     let mut bytes = std::fs::read(&template.path).unwrap();
     bytes.resize(1024 * 1024, 0);
     for index in 0..16 {

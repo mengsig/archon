@@ -215,7 +215,24 @@ async fn show_selected_page(
         GateSubject::Proposal => format!("Proposal: {}", item.title),
         GateSubject::Report => format!("Change report: {}", item.title),
     };
-    match reports::publish_page(ctx, &title, Path::new(page), Some(&item.id)).await {
+    let pending = if gate.subject == GateSubject::Proposal {
+        let store = ctx.store.lock().await;
+        if super::intent::has_pending(&store, gate)? {
+            Some(super::intent::pending(&store, gate)?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let checked =
+        reports::publish_checked_page(ctx, &title, Path::new(page), Some(&item.id), |path| {
+            if let Some(saved) = &pending {
+                super::intent::verify_page(saved, path)?;
+            }
+            Ok(())
+        });
+    match checked.await {
         Ok((published, warning)) => {
             let location = match warning {
                 Some(warning) => format!("{} ({warning})", published.location),
@@ -276,14 +293,7 @@ pub(super) async fn decide(
             && matches!(decision, GateDecision::Approve { .. })
             && (requires_intent(&store, &gate)? || super::intent::has_pending(&store, &gate)?)
         {
-            if gate.report.is_none() {
-                return Err(ArchonError::Invalid(
-                    "proposal ledger must be published before approval".into(),
-                ));
-            }
-            let saved = super::intent::pending(&store, &gate)?;
-            super::intent::verify_page(&saved)?;
-            store.approve_gate_intent(&gate, &saved.record)?;
+            approve_intent(&mut store, &gate)?;
         } else {
             store.update_gate(&gate)?;
         }
@@ -347,6 +357,21 @@ pub(crate) async fn close_settled_questions(ctx: &DaemonContext) -> Result<(), A
     );
     crate::feed::publish(ctx, answers);
     Ok(())
+}
+
+fn approve_intent(store: &mut Store, gate: &OperatorGate) -> Result<(), ArchonError> {
+    assert_eq!(gate.subject, GateSubject::Proposal);
+    assert!(matches!(gate.decision, Some(GateDecision::Approve { .. })));
+    let report = gate.report.as_ref().ok_or_else(|| {
+        ArchonError::Invalid("proposal ledger must be published before approval".into())
+    })?;
+    let saved = super::intent::pending(store, gate)?;
+    let published = reports::published_path(store, report)?;
+    super::intent::verify_page(&saved, &saved.page)?;
+    if published != saved.page {
+        super::intent::verify_page(&saved, &published)?;
+    }
+    store.approve_gate_intent(gate, &saved.record)
 }
 
 /// `true` when `gate` is open; `false` when it holds `decision` already.

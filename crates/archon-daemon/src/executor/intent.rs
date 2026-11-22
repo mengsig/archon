@@ -58,7 +58,7 @@ pub(super) fn prepare(
     assert_eq!(gate.item, run.item, "freeze the gate's own item");
     if store.kv_get(&key(gate))?.is_some() {
         let saved = pending(store, gate)?;
-        verify_page(&saved)?;
+        verify_page(&saved, &saved.page)?;
         return Ok(saved.page);
     }
     let stage = stages
@@ -131,8 +131,9 @@ fn prepare_record(
     let html =
         std::fs::read_to_string(original).map_err(|e| ArchonError::io("read proposal page", e))?;
     let destination = ctx.paths.data_dir.join("approved-intent-artifacts");
-    super::intent_html::extract(&html, original, &run.workspace, &destination, &mut record)?;
-    let rewritten = super::intent_images::extract(&html, &destination, &mut record)?;
+    let rewritten =
+        super::intent_html::extract(&html, original, &run.workspace, &destination, &mut record)?;
+    let rewritten = super::intent_images::extract(&rewritten, &destination, &mut record)?;
     record.validate()?;
     preserve_files(ctx, &run.workspace, &mut record)?;
     let hash = Sha256::digest(html.as_bytes())
@@ -257,9 +258,12 @@ fn render_page(
     Ok(page)
 }
 
-pub(super) fn verify_page(saved: &Pending) -> Result<(), ArchonError> {
-    let bytes =
-        std::fs::read(&saved.page).map_err(|e| ArchonError::io("read proposal ledger page", e))?;
+pub(super) fn verify_page(saved: &Pending, page: &Path) -> Result<(), ArchonError> {
+    assert!(
+        page.is_absolute(),
+        "a frozen page names the exact file on disk"
+    );
+    let bytes = std::fs::read(page).map_err(|e| ArchonError::io("read proposal ledger page", e))?;
     if Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -272,9 +276,8 @@ pub(super) fn verify_page(saved: &Pending) -> Result<(), ArchonError> {
     }
     if saved.linked_images {
         for image in &saved.record.images {
-            let path = saved
-                .page
-                .with_file_name(image.path.file_name().expect("preserved image filename"));
+            let path =
+                page.with_file_name(image.path.file_name().expect("preserved image filename"));
             if super::acceptance::images::reference_hash(&path)? != image.sha256 {
                 return Err(ArchonError::Invalid(format!(
                     "proposal image {} changed after it was shown",
@@ -338,11 +341,11 @@ mod tests {
                 .collect::<String>(),
             linked_images: true,
         };
-        assert!(verify_page(&saved).is_ok());
+        assert!(verify_page(&saved, &saved.page).is_ok());
         let asset = saved.page.with_file_name(asset);
         std::fs::write(&asset, b"\x89PNG\r\n\x1a\nchanged").unwrap();
         assert!(
-            verify_page(&saved)
+            verify_page(&saved, &saved.page)
                 .unwrap_err()
                 .to_string()
                 .contains("proposal image screen changed")
@@ -350,7 +353,7 @@ mod tests {
         std::fs::write(&asset, image).unwrap();
         std::fs::write(&saved.page, "changed").unwrap();
         assert!(
-            verify_page(&saved)
+            verify_page(&saved, &saved.page)
                 .unwrap_err()
                 .to_string()
                 .contains("ledger page changed")

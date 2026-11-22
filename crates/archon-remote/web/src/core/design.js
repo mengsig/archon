@@ -86,7 +86,7 @@ const REFUSALS = {
 
 // The daemon's error text starts with its error kind ("invalid argument: …");
 // a person reads the sentence after it, capitalised and ended.
-const KIND_PREFIX = /^(?:invalid argument|state transition refused|forbidden|unavailable|configuration|pipeline|protocol|recovering):\s*/i;
+const KIND_PREFIX = /^(?:invalid argument|state transition refused|forbidden|unavailable|configuration|pipeline|protocol|recovering|store|corrupt record|aether|model policy|io):\s*/i;
 
 export function plainMessage(text) {
   const rest = String(text ?? '').trim().replace(KIND_PREFIX, '').trim();

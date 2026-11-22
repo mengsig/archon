@@ -11,7 +11,8 @@ import { IMAGE_CAP_WARN_MARGIN, designErrorText } from '../../core/design.js';
 // The daemon's answer when Confirm would approve no note (the choices made
 // here left nothing in force): the review asks to approve the design as it is.
 export const ASKS_NO_CHANGE = /approve the design as it is/i;
-export const NO_CHANGE_QUESTION = 'No note changed the code. Approve the design as it is?';
+export const NO_CHANGE_QUESTION = 'Nothing new to approve in this session. Approve the design as it is?';
+const LEDE = 'Review what the agent will keep. Each picture is checked against the final code.';
 
 export function finishBlockedText(state) {
   if (state.finishBlocker) return state.finishBlocker;
@@ -127,7 +128,9 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
     const sup = h('input', { class: 'input input-inline', type: 'text', list: `sup-${card.note}`, value: superseded.get(card.note) ?? '', placeholder: 'e.g. D5', 'aria-label': `${card.note} superseded by`, autocomplete: 'off' });
     sup.addEventListener('input', () => superseded.set(card.note, sup.value));
     // A changed choice may put a note back in force: ask Confirm again.
-    sup.addEventListener('change', () => { if (askNoChange) { askNoChange = false; draw(); } });
+    // Relabelled in place: this fires on blur, and redrawing then would
+    // replace the button the operator is clicking.
+    sup.addEventListener('change', () => { if (askNoChange) { askNoChange = false; relabel(); } });
     const inc = h('input', { class: 'switch-input', type: 'checkbox', role: 'switch', checked: include.get(card.note) !== false, 'aria-label': `Include picture for ${card.note}`, disabled: !card.data_url || card.earlier });
     inc.addEventListener('change', () => { include.set(card.note, inc.checked); draw(); });
     return h('li', { class: 'finish-card' },
@@ -143,19 +146,29 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
       h('label', { class: 'field-label', text: 'Superseded by' }, sup), list);
   }
 
+  let lede = null;
+  let confirmButton = null;
+  function relabel() {
+    const noChange = finish.no_change_only || askNoChange;
+    if (lede) {
+      lede.className = noChange ? 'finish-question' : 'finish-lede';
+      lede.textContent = noChange ? NO_CHANGE_QUESTION : LEDE;
+    }
+    if (confirmButton) confirmButton.textContent = noChange ? 'Approve as it is' : 'Confirm';
+  }
+
   function draw() {
     const included = [...include].filter(([k, v]) => v && finish.cards.find((c) => c.note === k)?.data_url).length;
     const warn = imageCapWarning(state.imagesUsed, state.imagesMax, included, IMAGE_CAP_WARN_MARGIN);
     const noChange = finish.no_change_only || askNoChange;
     body.replaceChildren(...[
       message ? h('p', { class: 'callout callout-amber', role: 'status', text: message }) : null,
-      noChange ? h('p', { class: 'finish-question', text: NO_CHANGE_QUESTION })
-        : h('p', { class: 'finish-lede', text: 'Review what the agent will keep. Each picture is checked against the final code.' }),
+      (lede = h('p', { class: noChange ? 'finish-question' : 'finish-lede', text: noChange ? NO_CHANGE_QUESTION : LEDE })),
       warn ? h('p', { class: 'callout callout-amber', role: 'note', text: warn }) : null,
       h('ul', { class: 'finish-cards' }, finish.cards.map(cardEl)),
       h('div', { class: 'sheet-actions' },
         h('button', { class: 'button button-plain', type: 'button', disabled: busy, onclick: () => run(back) }, 'Back to editing'),
-        h('button', { class: 'button button-primary', type: 'button', disabled: busy, onclick: () => run(confirm) }, noChange ? 'Approve as it is' : 'Confirm'))].filter(Boolean));
+        (confirmButton = h('button', { class: 'button button-primary', type: 'button', disabled: busy, onclick: () => run(confirm) }, noChange ? 'Approve as it is' : 'Confirm')))].filter(Boolean));
   }
   draw();
   onOpen?.();

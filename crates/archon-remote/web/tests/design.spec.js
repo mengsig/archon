@@ -140,6 +140,30 @@ test.describe('desktop', () => {
     } finally { await harness.stop(); }
   });
 
+  test('finishing: a Superseded by edit left by clicking Approve as it is still sends that click', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      harness.daemon.state.notes.unshift({ item: ITEM, id: 'D1', session: 'ds_FIXTURE', kind: 'change', text: 'make it green', details_text: null, send_picture: false, target: null, viewport: { w: 800, h: 500, preset: 'desktop' },
+        status: 'done', fail_reason: null, base_commit: 'base0001', commit: 'abc1234def', no_change: false, reverts: null, resent_from: null, superseded_by: null, thread: [], delivery: 0,
+        before_asset: null, after_asset: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+      harness.daemon.state.unconfirmedNoChange = true;
+      await page.getByRole('button', { name: 'Finish' }).click();
+      const review = page.getByRole('dialog', { name: 'Review before finishing' });
+      await review.getByRole('button', { name: 'Confirm' }).click();
+      await expect(review.getByText('Approve the design as it is?')).toBeVisible();
+      const confirms = () => harness.daemon.state.requests.filter((r) => r.cmd === 'design_finish_confirm').length;
+      expect(confirms()).toBe(1);
+      // The edit's change event fires as the click blurs the field: the
+      // review relabels in place instead of redrawing under the pointer, so
+      // the click lands and, as the choice changed, asks Confirm again.
+      await review.getByLabel('D1 superseded by').fill('D9');
+      await review.getByRole('button', { name: 'Approve as it is' }).click();
+      await expect.poll(confirms).toBe(2);
+      await expect(review.getByText('Approve the design as it is?')).toBeVisible();
+    } finally { await harness.stop(); }
+  });
+
   test('switching size hides the old picture and shows the new shape until its first frame', async ({ browser, page }) => {
     const harness = await open(browser, page);
     try {

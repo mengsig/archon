@@ -5,6 +5,7 @@ import { h } from '../../ui/dom.js';
 import { keyEvent } from './keymap.js';
 import { mouseEvent, wheelEvent, touchEvent, modifiersOf } from './input.js';
 import { toApp, effectiveScale, fitScale, boxToScreen, normalizeDrag, classifyTwoFinger, clampZoom, nudgeBox, centredBox } from './scale.js';
+import { createSwitchGate } from './switching.js';
 
 const DRAG_PX = 6;
 const HOVER_MS = 100; // 10 reads a second
@@ -24,6 +25,19 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
   // The preset size being switched to: until its first frame, the box takes
   // that size and the old picture is hidden.
   let pending = null;
+  let switchLabel = '';
+  const switchGate = createSwitchGate({
+    onChange(next) {
+      pending = next;
+      desk.classList.toggle('is-switching', Boolean(pending));
+      framebox.dataset.switching = pending ? switchLabel : '';
+      // The hidden layer's name is not read while hidden: the box says it.
+      framebox.setAttribute('aria-busy', pending ? 'true' : 'false');
+      if (pending) framebox.setAttribute('aria-label', switchLabel);
+      else framebox.removeAttribute('aria-label');
+      layout();
+    },
+  });
   let zoom = 1;
   let sizeMode = 'fit';
   let avail = { w: 0, h: 0 };
@@ -250,13 +264,10 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
     setPhone(value) { phone = value; layout(); },
     // `size` is the preset being switched to (null once its frames arrive);
     // `label` says so in the empty box.
+    // Time-limited (switching.js): a stalled switch shows the stream again.
     setSwitching(size, label = '') {
-      const next = size ? { w: size.w, h: size.h } : null;
-      if (next?.w === pending?.w && next?.h === pending?.h) return;
-      pending = next;
-      desk.classList.toggle('is-switching', Boolean(pending));
-      framebox.dataset.switching = pending ? label : '';
-      layout();
+      switchLabel = label;
+      switchGate.set(size);
     },
     toggleActual() { sizeMode = sizeMode === 'actual' ? 'fit' : 'actual'; zoom = 1; layout(); return sizeMode; },
     get sizeMode() { return sizeMode; },
@@ -278,6 +289,6 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
     // The box a region drawn from the keyboard starts with.
     startKeyboardRegion() { kbRegion = centredBox(frame); regionBox.hidden = false; place(regionBox, kbRegion); layer.focus({ preventScroll: true }); },
     clearRegion() { kbRegion = null; regionBox.hidden = true; },
-    destroy() { resizeObserver?.disconnect(); },
+    destroy() { resizeObserver?.disconnect(); switchGate.dispose(); },
   };
 }

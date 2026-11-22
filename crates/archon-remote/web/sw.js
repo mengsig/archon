@@ -54,6 +54,7 @@ const SHELL = [
   `${BASE}/src/features/design/sketch.js`,
   `${BASE}/src/features/design/state.js`,
   `${BASE}/src/features/design/stream.js`,
+  `${BASE}/src/features/design/switching.js`,
   `${BASE}/src/features/graph/data.js`,
   `${BASE}/src/features/graph/graph.js`,
   `${BASE}/src/features/graph/model.js`,

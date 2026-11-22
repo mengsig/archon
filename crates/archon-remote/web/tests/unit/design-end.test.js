@@ -152,6 +152,9 @@ test('item 7: a daemon refusal reads as a sentence, without its error kind', () 
   assert.equal(designErrorText({ code: 'forbidden', message: 'forbidden: only the operator can finish' }), 'Only the operator can finish.');
   assert.equal(designErrorText({ code: 'x', message: 'Already a sentence.' }), 'Already a sentence.');
   assert.equal(designErrorText({ code: 'invalid', message: 'invalid argument: ' }), 'Something went wrong.');
+  assert.equal(designErrorText({ code: 'x', message: 'store: disk full: no space left' }), 'Disk full: no space left.');
+  assert.equal(designErrorText({ code: 'x', message: 'io: read picture a.png: denied' }), 'Read picture a.png: denied.');
+  assert.equal(designErrorText({ code: 'x', message: 'aether: the agent is gone' }), 'The agent is gone.');
   assert.equal(designErrorText({}), 'Something went wrong.');
 });
 

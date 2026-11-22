@@ -310,8 +310,10 @@ export function mountDesign(view, ctx) {
     stage.element.hidden = !showStage;
     stage.layer.setAttribute('aria-label', status.frameText.textContent);
     stage.element.classList.toggle('is-dim', p.kind === 'preview_down' || p.kind === 'reconnecting');
-    // A picture at the old size is not shown while the preview switches size.
-    stage.setSwitching(showStage && presetMismatch(state) ? PRESET_SIZE[state.preset] : null, pointerBlockedText(state));
+    // A picture at the old size is not shown while the preview switches size;
+    // with the preview down or reconnecting the dimmed last picture says so.
+    const switching = (p.kind === 'live' || p.kind === 'finishing') && presetMismatch(state);
+    stage.setSwitching(showStage && switching ? PRESET_SIZE[state.preset] : null, pointerBlockedText(state));
     typeForm.hidden = !(showStage && state.mode === 'interact');
     side.hidden = !operator || !state.session;
     notes.element.hidden = false;

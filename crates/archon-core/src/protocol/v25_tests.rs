@@ -214,8 +214,13 @@ fn every_design_reply_round_trips() {
     let card = json!({
         "note": "D1", "text": "t", "asset": ASSET, "data_url": "data:image/png;base64,AA",
         "caption": null, "include": true, "superseded_by": null, "not_found": false,
-        "left_history": false,
+        "left_history": false, "earlier": false,
     });
+    // A card from a daemon that predates `earlier` reads as this session's.
+    let mut older = card.clone();
+    older.as_object_mut().unwrap().remove("earlier");
+    let read: FinishCard = serde_json::from_value(older).unwrap();
+    assert!(!read.earlier);
     let replies = [
         ("design_state", Some(state)),
         (

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use archon_core::design::{
-    DesignNote, DesignSession, FinishChoices, IMAGE_CAP_WARN_MARGIN, NoteKind, NoteStatus,
+    DesignNote, DesignSession, FinishChoices, IMAGE_CAP_WARN_MARGIN,
     SessionState, Viewport,
 };
 use archon_core::error::ArchonError;
@@ -382,23 +382,21 @@ pub(super) fn approvable_notes(
     let active = ctx
         .design
         .active_notes(store, worktree, item, head, choices.as_ref())?;
-    if !active.is_empty() {
-        return Ok(active);
-    }
-    // The rule Finish applies (`DesignService::finish_confirm`): with nothing
-    // active, a done "no change" note makes the session approvable.
-    let no_change = store.design_notes(item)?.into_iter().any(|n| {
-        n.session == session.id
-            && n.kind != NoteKind::Revert
-            && n.status == NoteStatus::Done
-            && n.no_change
-    });
-    if !no_change {
-        return Err(ArchonError::Invalid(
+    // The rule Finish and Confirm apply (`crate::design::approval`): with
+    // nothing active, a done "no change" note or an earlier approval of
+    // design notes makes the session approvable as it is.
+    let approved = store
+        .item(item)?
+        .intent
+        .map(|b| b.requirements)
+        .unwrap_or_default();
+    let notes = store.design_notes(item)?;
+    match crate::design::approval(&active, &notes, &session.id, &approved) {
+        crate::design::Approval::Nothing => Err(ArchonError::Invalid(
             "nothing to approve: the design session has no active note".into(),
-        ));
+        )),
+        _ => Ok(active),
     }
-    Ok(Vec::new())
 }
 
 /// Build, preserve and freeze the ledger of a design gate: the design twin of

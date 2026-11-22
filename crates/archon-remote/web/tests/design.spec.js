@@ -123,6 +123,23 @@ test.describe('desktop', () => {
     } finally { await harness.stop(); }
   });
 
+  test('finishing: when Confirm finds nothing in force the review asks to approve the design as it is', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      harness.daemon.state.unconfirmedNoChange = true;
+      await page.getByRole('button', { name: 'Finish' }).click();
+      const review = page.getByRole('dialog', { name: 'Review before finishing' });
+      await review.getByRole('button', { name: 'Confirm' }).click();
+      // No dead end and no raw error kind: the question and its answer take Confirm's place.
+      await expect(review.getByText('Approve the design as it is?')).toBeVisible();
+      await expect(review).not.toContainText('invalid argument');
+      await review.getByRole('button', { name: 'Approve as it is' }).click();
+      await expect(review).toHaveCount(0);
+      expect(harness.daemon.state.confirmed.confirm_no_change).toBe(true);
+    } finally { await harness.stop(); }
+  });
+
   test('T-E4: a frozen old tab learns its session ended and sends nothing more', async ({ browser, page }) => {
     const harness = await open(browser, page);
     try {

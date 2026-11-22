@@ -98,6 +98,67 @@ pub(crate) fn refuse(code: DesignRefusal, message: impl Into<String>) -> ArchonE
     }
 }
 
+/// Drop each replacement whose replacing note no longer stands: one that
+/// was undone, or is not a done change or page note (`review_choices`).
+pub(crate) fn lapse_replacements(
+    superseded: &mut std::collections::BTreeMap<String, Option<String>>,
+    notes: &[DesignNote],
+) {
+    let undone = undone_by(notes);
+    let stands = |id: &str| {
+        notes.iter().any(|n| {
+            n.id == id
+                && n.kind != NoteKind::Revert
+                && n.status == NoteStatus::Done
+                && !undone.contains_key(&n.id)
+        })
+    };
+    superseded.retain(|_, by| by.as_deref().is_none_or(stands));
+}
+
+/// What confirming a session would hand on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Approval {
+    /// The notes active at the finish head.
+    Notes,
+    /// Nothing new, and the operator may approve the design as it stands:
+    /// this session's notes changed nothing, or an earlier approval still
+    /// binds design notes (a session reopened after acceptance, say).
+    NoChange,
+    /// Nothing to approve: no active note and nothing approved before.
+    Nothing,
+}
+
+/// The one rule Finish, the review, Confirm and the ledger share, so the
+/// review never offers an answer Confirm refuses. `active` are the notes
+/// active at the head under the choices in force, `notes` all of the
+/// item's, and `approved` the requirement ids of its approved intent.
+pub(crate) fn approval(
+    active: &[DesignNote],
+    notes: &[DesignNote],
+    session: &DesignSessionId,
+    approved: &[String],
+) -> Approval {
+    if !active.is_empty() {
+        return Approval::Notes;
+    }
+    let no_change = notes.iter().any(|n| {
+        &n.session == session
+            && n.kind != NoteKind::Revert
+            && n.status == NoteStatus::Done
+            && n.no_change
+    });
+    let approved_before = notes.iter().any(|n| approved.contains(&n.id));
+    if no_change || approved_before {
+        Approval::NoChange
+    } else {
+        Approval::Nothing
+    }
+}
+
+/// The refusal for a Finish or Confirm with nothing to approve.
+pub(crate) const NOTHING_TO_APPROVE: &str = "nothing to approve; add a note or cancel";
+
 pub(crate) fn gone() -> ArchonError {
     refuse(DesignRefusal::Gone, "this design session has ended")
 }
@@ -544,6 +605,11 @@ impl DesignService {
     /// requirement. Only replacements are carried: a later review that clears
     /// one ends it, and an earlier "keep it" never blocks a new automatic
     /// supersession. Inclusion is not carried, as each note records its own.
+    ///
+    /// A replacement lapses once its replacing note no longer stands (undone,
+    /// or not done): the replaced note is active again, as it is when an
+    /// automatic supersession's newer note is undone. Otherwise undoing D2
+    /// would leave D1 hidden behind a change that is gone.
     pub fn review_choices(
         store: &Store,
         item: &QueueItemId,
@@ -571,6 +637,8 @@ impl DesignService {
         if let Some(own) = own {
             superseded.extend(own.superseded.clone());
         }
+        let notes = store.design_notes(item)?;
+        lapse_replacements(&mut superseded, &notes);
         Ok(Some(FinishChoices {
             include: own.map(|c| c.include.clone()).unwrap_or_default(),
             superseded,

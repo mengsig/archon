@@ -8,6 +8,9 @@ import { reconcile } from '../../ui/list.js';
 import { statusChip } from './notes.js';
 import { IMAGE_CAP_WARN_MARGIN, designErrorText } from '../../core/design.js';
 
+// The daemon's answer when Confirm would approve no note (the choices made
+// here left nothing in force): the review asks to approve the design as it is.
+export const ASKS_NO_CHANGE = /approve the design as it is/i;
 export const NO_CHANGE_QUESTION = 'No note changed the code. Approve the design as it is?';
 
 export function finishBlockedText(state) {
@@ -49,6 +52,7 @@ export async function resumeFinish(ctx, state, { onDone, onOpen, onClose }) {
 export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   let finish = initial;
   let message = '';
+  let askNoChange = false;
   const session = state.session.id;
   const include = new Map();
   const superseded = new Map();
@@ -73,6 +77,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   async function recapture(text) {
     finish = await ctx.design.finishCapture(session, { recapture: true });
     include.clear(); superseded.clear(); seed();
+    askNoChange = false;
     message = text;
   }
 
@@ -82,7 +87,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
         capture: finish.capture,
         include: Object.fromEntries(include),
         superseded: Object.fromEntries([...superseded].map(([k, v]) => [k, v ? v.trim() : null])),
-        confirmNoChange: finish.no_change_only,
+        confirmNoChange: finish.no_change_only || askNoChange,
       });
       sheet.close();
       toast('Finishing: the agent is wrapping up.', { tone: 'green' });
@@ -95,6 +100,9 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
         sheet.close();
         toast(`${designErrorText(err)} Reloading.`, { tone: 'amber' });
         onDone({ reload: true });
+      } else if (!askNoChange && ASKS_NO_CHANGE.test(err?.message ?? '')) {
+        askNoChange = true;
+        message = '';
       } else message = designErrorText(err);
     }
   }
@@ -118,6 +126,8 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
     const list = h('datalist', { id: `sup-${card.note}` }, options);
     const sup = h('input', { class: 'input input-inline', type: 'text', list: `sup-${card.note}`, value: superseded.get(card.note) ?? '', placeholder: 'e.g. D5', 'aria-label': `${card.note} superseded by`, autocomplete: 'off' });
     sup.addEventListener('input', () => superseded.set(card.note, sup.value));
+    // A changed choice may put a note back in force: ask Confirm again.
+    sup.addEventListener('change', () => { if (askNoChange) { askNoChange = false; draw(); } });
     const inc = h('input', { class: 'switch-input', type: 'checkbox', role: 'switch', checked: include.get(card.note) !== false, 'aria-label': `Include picture for ${card.note}`, disabled: !card.data_url || card.earlier });
     inc.addEventListener('change', () => { include.set(card.note, inc.checked); draw(); });
     return h('li', { class: 'finish-card' },
@@ -136,7 +146,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   function draw() {
     const included = [...include].filter(([k, v]) => v && finish.cards.find((c) => c.note === k)?.data_url).length;
     const warn = imageCapWarning(state.imagesUsed, state.imagesMax, included, IMAGE_CAP_WARN_MARGIN);
-    const noChange = finish.no_change_only;
+    const noChange = finish.no_change_only || askNoChange;
     body.replaceChildren(...[
       message ? h('p', { class: 'callout callout-amber', role: 'status', text: message }) : null,
       noChange ? h('p', { class: 'finish-question', text: NO_CHANGE_QUESTION })

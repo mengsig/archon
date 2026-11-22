@@ -9,13 +9,15 @@ use archon_core::design::{
     SessionState, Target, ViewportPreset, is_in_flight, undone_by,
 };
 use archon_core::error::{ArchonError, DesignRefusal};
+use archon_core::id::QueueItemId;
 use archon_core::protocol::{DesignFinishView, DesignStateView, FinishCard, Reply};
 use archon_design_browser as adb;
+use archon_queue::Store;
 use archon_queue::store::{FinishRecord, NoteChange};
 
 use super::assets::{NewAsset, caption_of};
 use super::browser::to_adb_viewport;
-use super::{DesignService, WorktreeRef, note_view, refuse};
+use super::{Approval, DesignService, WorktreeRef, note_view, refuse};
 use crate::context::DaemonContext;
 
 /// Margin around an element's final picture, in CSS pixels.
@@ -189,22 +191,16 @@ impl DesignService {
         if let Err(why) = self.worktree_at(&wt, &head)? {
             return Err(ArchonError::Invalid(why));
         }
-        let active = {
+        let (active, approved) = {
             let store = ctx.store.lock().await;
             let carried = Self::review_choices(&store, &row.item, &row.id, None)?;
-            self.active_notes(&store, &wt, &row.item, &head, carried.as_ref())?
+            (
+                self.active_notes(&store, &wt, &row.item, &head, carried.as_ref())?,
+                approved_requirements(&store, &row.item)?,
+            )
         };
-        let no_change_only = active.is_empty()
-            && notes.iter().any(|n| {
-                n.session == row.id
-                    && n.kind != NoteKind::Revert
-                    && n.status == NoteStatus::Done
-                    && n.no_change
-            });
-        if active.is_empty() && !no_change_only {
-            return Err(ArchonError::Invalid(
-                "nothing to approve; add a note or cancel".into(),
-            ));
+        if super::approval(&active, &notes, &row.id, &approved) == Approval::Nothing {
+            return Err(ArchonError::Invalid(super::NOTHING_TO_APPROVE.into()));
         }
         // Cancelled under the item's lock, which sending also needs, so the
         // note version the capture records is the one the freeze sees.
@@ -455,13 +451,11 @@ impl DesignService {
                 });
             }
         }
-        let no_change_only = all_active.is_empty()
-            && notes.iter().any(|n| {
-                n.session == row.id
-                    && n.kind != NoteKind::Revert
-                    && n.status == NoteStatus::Done
-                    && n.no_change
-            });
+        // The rule Confirm applies, on the same notes: the review asks
+        // "approve as it is?" exactly when Confirm needs that answer.
+        let approved = approved_requirements(&*ctx.store.lock().await, &row.item)?;
+        let no_change_only =
+            super::approval(&active, &notes, &row.id, &approved) == Approval::NoChange;
         Ok(DesignFinishView {
             capture,
             head,
@@ -634,14 +628,7 @@ impl DesignService {
             return Err(stale());
         }
         // Q3: an approved requirement is never superseded.
-        let approved = ctx
-            .store
-            .lock()
-            .await
-            .item(&row.item)?
-            .intent
-            .map(|b| b.requirements)
-            .unwrap_or_default();
+        let approved = approved_requirements(&*ctx.store.lock().await, &row.item)?;
         for (id, by) in &superseded {
             if by.is_some() && approved.contains(id) {
                 return Err(ArchonError::Invalid(format!(
@@ -668,22 +655,15 @@ impl DesignService {
                 store.design_notes(&row.item)?,
             )
         };
-        let no_change_only = active.is_empty()
-            && notes.iter().any(|n| {
-                n.session == row.id
-                    && n.kind != NoteKind::Revert
-                    && n.status == NoteStatus::Done
-                    && n.no_change
-            });
-        if active.is_empty() && !no_change_only {
-            return Err(ArchonError::Invalid(
-                "nothing to approve; add a note or cancel".into(),
-            ));
-        }
-        if no_change_only && !confirm_no_change {
-            return Err(ArchonError::Invalid(
-                "no note changed anything; confirm that you want to approve with no change".into(),
-            ));
+        match super::approval(&active, &notes, &row.id, &approved) {
+            Approval::Notes => {}
+            Approval::Nothing => {
+                return Err(ArchonError::Invalid(super::NOTHING_TO_APPROVE.into()));
+            }
+            Approval::NoChange if !confirm_no_change => {
+                return Err(ArchonError::Invalid(NO_CHANGE_UNCONFIRMED.into()));
+            }
+            Approval::NoChange => {}
         }
         let moved = ctx.store.lock().await.design_session_transition(
             &row.id,
@@ -813,4 +793,18 @@ fn grow(rect: adb::ClipRect, margin: f64) -> adb::ClipRect {
         w: rect.w + (rect.x - x) + margin,
         h: rect.h + (rect.y - y) + margin,
     }
+}
+
+/// Confirm's refusal when nothing changed and the operator did not say to
+/// approve as it is. The review screen recognises it and asks.
+pub(crate) const NO_CHANGE_UNCONFIRMED: &str =
+    "nothing changed in this session; confirm that you want to approve the design as it is";
+
+/// The requirement ids of `item`'s approved intent, if any.
+fn approved_requirements(store: &Store, item: &QueueItemId) -> Result<Vec<String>, ArchonError> {
+    Ok(store
+        .item(item)?
+        .intent
+        .map(|b| b.requirements)
+        .unwrap_or_default())
 }

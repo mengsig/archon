@@ -664,6 +664,172 @@ async fn a_revised_session_confirms_with_only_its_own_notes() {
     assert!(refused_capture.is_err());
 }
 
+/// Start the item's next design session (attempt + 1), live, as a revise or
+/// a rerun after a failed acceptance leaves it.
+async fn next_session(f: &mut Fixture) {
+    let next =
+        f.h.ctx
+            .design
+            .stage_started(
+                &f.h.ctx,
+                &f.item,
+                &f.run,
+                &f.stage_id,
+                f.attempt + 1,
+                &f.agent,
+                f.worktree.clone(),
+            )
+            .await
+            .expect("the next session starts");
+    f.session = next;
+    f.attempt += 1;
+    f.as_agent(Request::DesignPreview {
+        url: crate::common::design::PREVIEW.into(),
+        caller: Some(f.agent.clone()),
+    })
+    .await
+    .expect("preview reported");
+}
+
+/// Finish and Confirm with `superseded` choices, Confirm's flag as given.
+async fn confirm_with(
+    f: &Fixture,
+    superseded: &[(&str, &str)],
+    confirm_no_change: bool,
+) -> (archon_core::protocol::DesignFinishView, Result<Reply, ArchonError>) {
+    let view = finish_view(
+        f.operator(Request::DesignFinishCapture {
+            session: f.session.clone(),
+            cancel_queued: false,
+            recapture: false,
+        })
+        .await
+        .expect("finish"),
+    );
+    let confirmed = f
+        .operator(Request::DesignFinishConfirm {
+            session: f.session.clone(),
+            capture: view.capture.clone(),
+            include: Default::default(),
+            superseded: superseded
+                .iter()
+                .map(|(a, b)| ((*a).to_owned(), Some((*b).to_owned())))
+                .collect(),
+            confirm_no_change,
+        })
+        .await;
+    (view, confirmed)
+}
+
+/// Item A: a design approved with "D1 superseded by D2", then reopened (the
+/// operator answered a failed acceptance). Finish there was refused, "nothing
+/// to approve"; after a no-op note the review offered a plain Confirm, which
+/// was refused on every click, "confirm that you want to approve with no
+/// change", with no control to say so: the review read the notes without the
+/// carried replacement, Confirm with it. Now Finish opens a review that asks
+/// to approve as it is, and that answer is accepted.
+#[tokio::test]
+async fn a_session_reopened_after_approval_can_be_approved_as_it_is() {
+    let mut f = Fixture::new().await;
+    let (d1, _) = crate::design_undo::done_note(&f, "k1", "a.txt", "one\n").await;
+    let (d2, _) = crate::design_undo::done_note(&f, "k2", "b.txt", "two\n").await;
+    let (_, first) = confirm_with(&f, &[(&d1, &d2)], false).await;
+    first.expect("the first session is confirmed");
+    f.h.ctx
+        .design
+        .gate_decided(&f.h.ctx, &f.run, &f.stage_id, f.attempt, "approved")
+        .await
+        .expect("decided");
+    {
+        let mut store = f.h.ctx.store.lock().await;
+        let mut item = store.item(&f.item).unwrap();
+        item.intent = Some(Box::new(archon_core::intent::IntentBinding {
+            id: "approved".into(),
+            version: 1,
+            requirements: vec![d2.clone()],
+        }));
+        store.update_item(&item).unwrap();
+    }
+    next_session(&mut f).await;
+    let (view, refused) = confirm_with(&f, &[], false).await;
+    assert!(
+        view.no_change_only,
+        "the review asks to approve as it is: {view:?}"
+    );
+    let refused = refused.expect_err("Confirm needs that answer").to_string();
+    assert!(refused.contains("approve the design as it is"), "{refused}");
+    f.operator(Request::DesignFinishCancel {
+        session: f.session.clone(),
+    })
+    .await
+    .expect("back to editing");
+    let (view, confirmed) = confirm_with(&f, &[], true).await;
+    assert!(view.no_change_only);
+    confirmed.expect("approved as it is");
+    assert_eq!(
+        state(&f).await.session.unwrap().state,
+        SessionState::Confirmed
+    );
+}
+
+/// A session with no note and nothing approved before still has nothing to
+/// approve.
+#[tokio::test]
+async fn a_first_session_with_no_note_has_nothing_to_approve() {
+    let f = Fixture::new().await;
+    let refused = f
+        .operator(Request::DesignFinishCapture {
+            session: f.session.clone(),
+            cancel_queued: false,
+            recapture: false,
+        })
+        .await
+        .expect_err("nothing to approve")
+        .to_string();
+    assert!(refused.contains("nothing to approve"), "{refused}");
+}
+
+/// A replacement carried from an earlier review lapses when the replacing
+/// note is undone: D1 is active again, as with an automatic supersession.
+#[tokio::test]
+async fn undoing_a_carried_replacement_brings_the_replaced_note_back() {
+    let mut f = Fixture::new().await;
+    let (d1, _) = crate::design_undo::done_note(&f, "k1", "a.txt", "one\n").await;
+    let (d2, _) = crate::design_undo::done_note(&f, "k2", "b.txt", "two\n").await;
+    let (_, first) = confirm_with(&f, &[(&d1, &d2)], false).await;
+    first.expect("confirmed with D1 replaced by D2");
+    f.h.ctx
+        .design
+        .gate_decided(&f.h.ctx, &f.run, &f.stage_id, f.attempt, "revised")
+        .await
+        .expect("decided");
+    next_session(&mut f).await;
+    f.operator(Request::DesignNoteUndo {
+        item: f.item.clone(),
+        id: d2.clone(),
+    })
+    .await
+    .expect("undo queued");
+    for _ in 0..200 {
+        if note(&f, &d2).await.status == NoteStatus::Done
+            && state(&f).await.notes.iter().any(|n| {
+                n.note.reverts.as_deref() == Some(d2.as_str()) && n.note.status == NoteStatus::Done
+            })
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let (view, confirmed) = confirm_with(&f, &[], false).await;
+    let card = view.cards.iter().find(|c| c.note == d1).expect("D1 is shown");
+    assert_eq!(card.superseded_by, None, "the replacement lapsed");
+    assert!(
+        view.cards.iter().all(|c| c.note != d2),
+        "D2 is undone and no longer counts"
+    );
+    confirmed.expect("D1 is approved again");
+}
+
 mod stream {
     use super::*;
     use archon_core::protocol::{DesignEvent, ServerFrame, WelcomeDevice};

@@ -139,6 +139,8 @@ function createDaemon({ appPage, fixtureApp, role }) {
           cards: state.notes.filter((n) => n.status === 'done' && n.kind !== 'revert' && !view(n).undone_by).map((n) => ({ note: n.id, text: n.text, asset: 'da_f', data_url: PIXEL, caption: 'captured from the preview at commit abc1234', include: true, superseded_by: null, not_found: false, left_history: false })) });
       case 'design_finish_cancel': state.sessionState = 'live'; return reply(ws, req, 'design_done', null);
       case 'design_finish_confirm':
+        // As archond: approving with no note in force needs the operator's yes.
+        if (state.unconfirmedNoChange && !msg.confirm_no_change) return refuse(ws, req, 'invalid', 'invalid argument: nothing changed in this session; confirm that you want to approve the design as it is');
         state.confirmed = msg; state.sessionPatch = { ...state.sessionPatch }; state.sessionState = 'confirmed'; state.version += 1;
         broadcast({ event: 'session', state: 'confirmed', degraded: false, preview_path: '/', commit: null, browser: { status: 'running' }, note_version: state.version });
         return reply(ws, req, 'design_done', null);

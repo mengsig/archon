@@ -118,6 +118,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
     try {
       const out = await ctx.design.finalCapture(session, finish.capture, card.note);
       if (out?.cards) { finish = out; seed(); } else finish = await ctx.design.finishCapture(session, {});
+      askNoChange = false;
       message = '';
     } catch (err) { message = designErrorText(err); }
   }
@@ -132,7 +133,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
     // replace the button the operator is clicking.
     sup.addEventListener('change', () => { if (askNoChange) { askNoChange = false; relabel(); } });
     const inc = h('input', { class: 'switch-input', type: 'checkbox', role: 'switch', checked: include.get(card.note) !== false, 'aria-label': `Include picture for ${card.note}`, disabled: !card.data_url || card.earlier });
-    inc.addEventListener('change', () => { include.set(card.note, inc.checked); draw(); });
+    inc.addEventListener('change', () => { include.set(card.note, inc.checked); askNoChange = false; draw(); });
     return h('li', { class: 'finish-card' },
       h('div', { class: 'finish-card-head' }, h('strong', { text: card.note }), card.earlier ? h('span', { class: 'note-tag', text: 'Earlier session' }) : null, card.superseded_by ? h('span', { class: 'note-tag', text: `Superseded by ${card.superseded_by}` }) : null),
       h('p', { class: 'note-text', text: card.text }),

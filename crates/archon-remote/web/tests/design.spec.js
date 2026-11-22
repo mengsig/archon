@@ -175,12 +175,14 @@ test.describe('desktop', () => {
       await expect(desk).toHaveClass(/is-switching/);
       await expect(page.locator('.design-canvas')).toHaveCSS('visibility', 'hidden');
       await expect(page.locator('.design-framebox')).toHaveAttribute('data-switching', 'Switching to Phone…');
+      await expect(page.getByRole('img', { name: 'Switching to Phone…' })).toBeVisible();
       const box = await page.locator('.design-framebox').boundingBox();
       expect(Math.abs(box.width / box.height - 390 / 844)).toBeLessThan(0.02);
       await page.screenshot({ path: `${EVIDENCE}/switching-to-phone.png` });
       harness.daemon.resumeFrames();
       await expect(desk).not.toHaveClass(/is-switching/);
       await expect(page.locator('.design-canvas')).toHaveCSS('visibility', 'visible');
+      await expect(page.locator('.design-framebox')).not.toHaveAttribute('role', 'img');
     } finally { await harness.stop(); }
   });
 

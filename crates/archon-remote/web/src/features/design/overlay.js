@@ -31,10 +31,10 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
       pending = next;
       desk.classList.toggle('is-switching', Boolean(pending));
       framebox.dataset.switching = pending ? switchLabel : '';
-      // The hidden layer's name is not read while hidden: the box says it.
-      framebox.setAttribute('aria-busy', pending ? 'true' : 'false');
-      if (pending) framebox.setAttribute('aria-label', switchLabel);
-      else framebox.removeAttribute('aria-label');
+      // The layer, and its name, are hidden meanwhile: the box is the
+      // picture a screen reader finds, named for the switch.
+      if (pending) { framebox.setAttribute('role', 'img'); framebox.setAttribute('aria-label', switchLabel); }
+      else { framebox.removeAttribute('role'); framebox.removeAttribute('aria-label'); }
       layout();
     },
   });

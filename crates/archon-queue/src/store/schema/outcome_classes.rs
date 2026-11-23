@@ -500,6 +500,71 @@ fn v24_reads_daemon_stops_and_nested_reviews() {
 }
 
 #[test]
+fn failure_class_reads_terminal_states_and_record_refusals() {
+    let mut conn = v23_store();
+    let cases = [
+        (
+            StageState::Failed {
+                error: "failed".into(),
+            },
+            "stage `implement` failed: 1 failed",
+            FailureClass::Other,
+        ),
+        (
+            StageState::Cancelled,
+            "stage `implement` failed: 1 cancelled",
+            FailureClass::Other,
+        ),
+        (
+            StageState::TimedOut,
+            "stage `implement` failed: 1 timed out",
+            FailureClass::Timeout,
+        ),
+        (
+            StageState::Completed,
+            "stage `implement` failed: 1 failing verdict",
+            FailureClass::Review,
+        ),
+        (
+            StageState::Completed,
+            "stage `implement` failed: the review this pipeline declares is not on record: missing",
+            FailureClass::Review,
+        ),
+        (
+            StageState::Completed,
+            "stage `implement` failed: the ship record archond delivers is not on record: missing",
+            FailureClass::Ship,
+        ),
+    ];
+    let mut expected_runs = Vec::new();
+    for (state, error, expected) in cases {
+        let run = failed_run("implement", error);
+        let mut member = stage(&run, "implement", StageKind::Work, state);
+        if error.ends_with("1 failing verdict") {
+            member.only_reviews = Some(true);
+            member.verdict = Some(Verdict::Fail);
+        }
+        seed(&conn, &run, &[member], Some(FailureClass::Other), false);
+        expected_runs.push((run, expected));
+    }
+    let refused = failed_run("implement", "stage `implement` failed: gate failed");
+    let mut work = stage(
+        &refused,
+        "implement",
+        StageKind::Work,
+        StageState::Completed,
+    );
+    work.verdict = Some(Verdict::Pass);
+    work.structured = Some(serde_json::json!({"review": {"unverified": "no reviewer ran"}}));
+    seed(&conn, &refused, &[work], Some(FailureClass::Other), false);
+    expected_runs.push((refused, FailureClass::Review));
+    migrate(&mut conn).unwrap();
+    for (run, expected) in expected_runs {
+        assert_eq!(columns(&conn, &run).0.as_deref(), Some(expected.as_str()));
+    }
+}
+
+#[test]
 fn v24_keeps_the_old_class_of_rows_it_cannot_read_and_opens() {
     let mut conn = v23_store();
     let failed_review = |run: &PipelineRun| {

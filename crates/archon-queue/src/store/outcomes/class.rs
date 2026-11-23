@@ -65,6 +65,13 @@ pub(in crate::store) fn failure_class(
     if gate_said(error, stage_id, REVIEW_NOT_ON_RECORD) {
         return FailureClass::Review;
     }
+    if gate_said(
+        error,
+        stage_id,
+        "the ship record archond delivers is not on record",
+    ) {
+        return FailureClass::Ship;
+    }
     judged_class(stage_id, &ending, failed_reviews)
 }
 
@@ -465,6 +472,7 @@ pub(in crate::store) fn holds_review(
 ) -> bool {
     let recorded = stage.kind == Some(StageKind::Review)
         || stage.only_reviews == Some(true)
+        || stage.review_refused()
         || nested_verdict(stage).is_some()
         || failed_reviews.contains(&stage.id);
     recorded || kindless_review(stage)

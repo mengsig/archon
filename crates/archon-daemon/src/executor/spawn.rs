@@ -1775,8 +1775,10 @@ async fn spawn_bound(
             save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
         }
     }
-    if spawn.parent == ParentBinding::Pending {
-        bind_pending(ctx, stage, &mut spawn, checked).await?;
+    if spawn.parent == ParentBinding::Pending
+        && let Some(refused) = bind_pending(ctx, stage, &mut spawn, checked).await?
+    {
+        return Ok(refused);
     }
     let (network_default, default_on) = legacy_network_default(ctx, &spawn.request).await?;
     let connection = settle_host_context(ctx, stage, &mut spawn, checked).await?;
@@ -1794,20 +1796,27 @@ async fn spawn_bound(
     match ctx.backend.spawn_on(spawn.request, checked).await {
         Ok(agent) => Ok(Issued::Spawned(agent)),
         Err(error) if create_refused_model(&error, &stage.choice.model) => {
-            let reason = error.to_string();
-            ctx.store
-                .lock()
-                .await
-                .invalidate_model_catalog(reason.clone());
-            let catalog = learned::catalog(ctx).await?;
-            let refresh_error = catalog.not_ready_reason().map(str::to_owned);
-            Ok(Issued::CatalogRefused(settle::ModelRefusal::Create {
-                reason,
-                refresh_error,
-            }))
+            refresh_create_refusal(ctx, error).await
         }
         Err(error) => Err(error),
     }
+}
+
+async fn refresh_create_refusal(
+    ctx: &DaemonContext,
+    error: ArchonError,
+) -> Result<Issued, ArchonError> {
+    let reason = error.to_string();
+    ctx.store
+        .lock()
+        .await
+        .invalidate_model_catalog(reason.clone());
+    let catalog = learned::catalog(ctx).await?;
+    let refresh_error = catalog.not_ready_reason().map(str::to_owned);
+    Ok(Issued::CatalogRefused(settle::ModelRefusal::Create {
+        reason,
+        refresh_error,
+    }))
 }
 
 fn create_refused_model(error: &ArchonError, model: &ModelRef) -> bool {
@@ -1833,7 +1842,7 @@ async fn bind_pending(
     stage: &StageRun,
     spawn: &mut StoredSpawn,
     checked: &archon_core::model_tier::ModelCatalog,
-) -> Result<(), ArchonError> {
+) -> Result<Option<Issued>, ArchonError> {
     assert_eq!(spawn.parent, ParentBinding::Pending, "bound only once");
     assert!(
         spawn.request.parent.is_none() && spawn.request.network.is_none(),
@@ -1841,7 +1850,22 @@ async fn bind_pending(
     );
     let (default, read_on) = network_default_on(ctx).await?;
     let model = &spawn.request.choice.model;
-    let node = run_node::ensure(ctx, &stage.run, model, default).await?;
+    let node = match run_node::ensure(ctx, &stage.run, model, default).await {
+        Ok(node) => node,
+        Err(error) if create_refused_model(&error, model) => {
+            let stored = run_node::load_node(&*ctx.store.lock().await, &stage.run)?;
+            // The node may be retrying a frozen create on an earlier slot's model.
+            if stored.agent.is_none()
+                && stored
+                    .request
+                    .is_some_and(|request| request.model == *model)
+            {
+                return refresh_create_refusal(ctx, error).await.map(Some);
+            }
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
     let host_context = ctx
         .backend
         .host_context(ctx.config.aether.host_context.for_model(model))
@@ -1857,7 +1881,8 @@ async fn bind_pending(
     spawn.request.parent = Some(node.agent);
     spawn.request.network = Some(node.network.narrower(default));
     spawn.parent = ParentBinding::Bound;
-    save_spawn(&mut store, &stage.id, spawn)
+    save_spawn(&mut store, &stage.id, spawn)?;
+    Ok(None)
 }
 
 /// Freeze the host context the create sends, then return the connection it
@@ -2134,10 +2159,17 @@ async fn refuse(
     error: String,
 ) -> Result<FollowUp, ArchonError> {
     tracing::warn!(stage = %stage.id, %error, "stage spawn refused");
-    let outcome = StageOutcome::Failed {
-        error,
-        infra: false,
+    let infra = error.starts_with("cannot create agent:") && {
+        let message = error.to_ascii_lowercase();
+        message.contains("unknown model") || message.contains(" was retired; use ")
     };
+    if infra {
+        ctx.store
+            .lock()
+            .await
+            .invalidate_model_catalog(error.clone());
+    }
+    let outcome = StageOutcome::Failed { error, infra };
     settle::settle_locked(ctx, table, &stage.id, outcome).await
 }
 

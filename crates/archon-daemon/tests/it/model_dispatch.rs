@@ -187,7 +187,7 @@ async fn a_removed_tier_resolution_moves_within_the_requested_tier() {
     assert_eq!(store.runs_for_item(&id).unwrap().len(), 1);
 }
 
-fn remove_model_at_create(h: &Harness, removals: usize) {
+fn remove_model_at_create(h: &Harness, removals: usize, refuse_node: bool) {
     assert!((1..=2).contains(&removals));
     let models = ["old", "new", "last"];
     let removed = Arc::new(AtomicUsize::new(0));
@@ -203,10 +203,12 @@ fn remove_model_at_create(h: &Harness, removals: usize) {
     h.fake.set_responder(
         "create_agent",
         Arc::new(move |frame| {
-            if frame["start"] == json!(false) {
+            let starts = frame["start"]
+                .as_bool()
+                .expect("create says whether to start");
+            if !starts && !refuse_node {
                 return Scripted::reply("agent", fake::agent("agt_node", None));
             }
-            assert_eq!(frame["start"], json!(true));
             let current = removed.load(Ordering::Relaxed);
             let model = models[current];
             assert_eq!(frame["model"], json!({"provider": "p", "model": model}));
@@ -216,6 +218,9 @@ fn remove_model_at_create(h: &Harness, removals: usize) {
                     "unavailable",
                     &format!("unknown model `{model}` for provider `p`"),
                 );
+            }
+            if !starts {
+                return Scripted::reply("agent", fake::agent("agt_node", None));
             }
             Scripted::reply("agent", fake::agent("agt_new", Some("tsk_new")))
         }),
@@ -257,10 +262,19 @@ async fn issue_admitted_slot(h: &Harness, id: &QueueItemId) {
 
 #[tokio::test]
 async fn create_refusal_repairs_a_movable_slot_and_runs_it() {
+    assert_movable_repair(false).await;
+}
+
+#[tokio::test]
+async fn create_refusal_at_the_run_node_repairs_a_movable_slot_and_runs_it() {
+    assert_movable_repair(true).await;
+}
+
+async fn assert_movable_repair(refuse_node: bool) {
     let mut config = archon_core::config::Config::default();
     config.limits.infra_retries = 0;
     let h = Harness::with(config, None).await;
-    remove_model_at_create(&h, 1);
+    remove_model_at_create(&h, 1, refuse_node);
     h.connect().await;
     let id = queued(&h, "p/old", true).await;
     issue_admitted_slot(&h, &id).await;
@@ -279,14 +293,20 @@ async fn create_refusal_repairs_a_movable_slot_and_runs_it() {
             .any(|s| s.state == StageState::Running && s.choice.model.to_string() == "p/new"),
         "{stages:?}, creates: {creates:?}"
     );
-    assert_eq!(creates.len(), 3, "run node and two stage creates");
-    assert_ne!(creates[1]["idempotency_key"], creates[2]["idempotency_key"]);
+    assert_eq!(creates.len(), 3, "one refused create, run node, and stage");
+    let pair = if refuse_node {
+        &creates[..2]
+    } else {
+        &creates[1..]
+    };
+    assert_eq!(pair[0]["start"], pair[1]["start"]);
+    assert_ne!(pair[0]["idempotency_key"], pair[1]["idempotency_key"]);
 }
 
 #[tokio::test]
 async fn create_refusal_names_the_pin_and_keeps_the_failed_run() {
     let h = Harness::new().await;
-    remove_model_at_create(&h, 1);
+    remove_model_at_create(&h, 1, false);
     h.connect().await;
     let id = queued(&h, "p/old", false).await;
     issue_admitted_slot(&h, &id).await;
@@ -321,7 +341,7 @@ async fn create_refusal_does_not_repair_the_same_slot_twice() {
     let mut config = archon_core::config::Config::default();
     config.limits.infra_retries = 3;
     let h = Harness::with(config, None).await;
-    remove_model_at_create(&h, 2);
+    remove_model_at_create(&h, 2, false);
     h.connect().await;
     let id = queued(&h, "p/old", true).await;
     issue_admitted_slot(&h, &id).await;

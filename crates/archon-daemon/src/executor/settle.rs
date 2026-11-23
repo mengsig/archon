@@ -1122,7 +1122,7 @@ fn retry_choice(
     // The agent a wake keeps runs the model it was last steered to.
     let kept = catalog.canonical_alias(&ran.model);
     let woken = retry.wake.is_some().then_some(kept);
-    retry_judge(ctx, store, run, &mut plan, woken)?;
+    retry_judge(ctx, store, run, &mut plan, (woken, failed))?;
     if plan.choice.model != *kept {
         retry.wake = None;
     }
@@ -1163,20 +1163,22 @@ fn route_fresh(
 }
 
 /// An acceptance retry is judged by the `woken` judge while it is still
-/// eligible, else by one selected as its first attempt was, never the placeholder.
+/// eligible, else by one selected as its first attempt was, never the placeholder
+/// and never on a provider the `failed` attempt just ran out of quota on.
 fn retry_judge(
     ctx: &DaemonContext,
     store: &mut archon_queue::Store,
     run: &PipelineRun,
     plan: &mut SpawnPlan,
-    woken: Option<&archon_core::model::ModelRef>,
+    judged: (Option<&archon_core::model::ModelRef>, &StageRun),
 ) -> Result<(), ArchonError> {
     if plan.stage_id != archon_pipeline::acceptance::STAGE {
         return Ok(());
     }
     let item = store.item(&run.item)?;
     let plans = std::slice::from_mut(plan);
-    let selected = super::acceptance::select_model(ctx, store, &item, run, plans, woken);
+    let selected =
+        super::acceptance::select_model(ctx, store, &item, run, plans, (judged.0, Some(judged.1)));
     match selected {
         Ok(()) => {
             assert_eq!(plan.choice.tier, None, "a judge is selected, never tiered");

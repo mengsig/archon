@@ -29,6 +29,14 @@
 
 ### Fixed
 
+- Approved-intent acceptance honours the model the orchestrator or operator
+  pinned for `intent-acceptance` (when policy permits it and it can see the
+  images) and skips a judge whose provider is out of quota, so a spent
+  provider no longer fails the item. A retry after a usage-limit failure
+  moves to the next eligible judge. A pin that shares a builder's model or
+  vendor is labelled `acceptance: not independent`, and refused under
+  `[review] independent_acceptance = true`.
+
 - The review page at a live design session's approval gate is now a
   decision page: a summary with the answers on top, one card per note with
   its before and after pictures side by side, the commit and files changed

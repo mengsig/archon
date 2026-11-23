@@ -1584,12 +1584,19 @@ or malformed result, empty evidence or a bad visual pair gets the one automatic
 repair (`[review] auto_repair`), whose note quotes the allowed values; a blocked
 requirement fails. With no build evidence on record, as in a validation-only
 pipeline, the `intent-acceptance` stage reports the results itself under the same
-contract and repair. The `intent-acceptance` stage
+contract and repair. A model the plan pins for
+`intent-acceptance` (named by the operator or the orchestrator) judges as given,
+while policy permits it and, with approved reference images, it is a vision
+model. Without a pin the stage
 runs on a model apart from every builder and prefers a different vendor. That model
-must be a vision model when approved reference images exist. If none is permitted
-and connected, the strongest permitted model judges instead. The readiness report
-and the item's outcome then say `acceptance: not independent`. Set `[review]
-independent_acceptance = true` to refuse such a run instead. Missing or blocked
+must be a vision model when approved reference images exist. A judge whose provider
+is out of quota is skipped, and a retry after a usage-limit failure moves to the
+next eligible judge; with none left the run fails saying so. If no model apart from every builder
+is permitted and connected, the strongest permitted model judges instead. A judge
+that shares a builder's model or vendor, pinned or not, makes the readiness report
+and the item's outcome say `acceptance: not independent`. Set `[review]
+independent_acceptance = true` to refuse a pin that shares a builder's model or
+vendor, and any run with no model apart from every builder, instead. Missing or blocked
 requirements, changed images, unexplained gaps and unapproved deviations cannot
 pass.
 

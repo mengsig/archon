@@ -111,8 +111,8 @@ pub(crate) fn readiness_text(view: &AcceptanceReadiness) -> String {
         .unwrap_or_default();
     let honesty = match &view.record {
         Some(r) if !r.independent => format!(
-            "; acceptance: not independent (judged by builder model `{}`: no permitted, connected \
-             model apart from every builder could judge it)",
+            "; acceptance: not independent (judged by `{}`, which shares a model or vendor with a \
+             builder)",
             r.model
         ),
         _ => String::new(),
@@ -160,7 +160,7 @@ pub(super) fn failed(
         model: stage.choice.model.clone(),
         checked_at: archon_core::now(),
         page: page.into(),
-        independent: !builders.contains(&stage.choice.model),
+        independent: !super::spawn::shares_builder(&stage.choice.model, &builders),
     };
     assert!(!record.result.requirements.is_empty());
     assert!(!reason.is_empty());

@@ -42,6 +42,15 @@ const ENVIRONMENTAL_WORDS: [&str; 9] = [
     "engine login",
 ];
 
+/// Whether a recorded error says its provider's quota or usage limit is spent.
+pub(crate) fn is_quota(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    // The first five environmental words are the quota ones.
+    ENVIRONMENTAL_WORDS[..5]
+        .iter()
+        .any(|word| lower.contains(word))
+}
+
 /// The class of a failure recorded as `stage`; `None` for a stage that did
 /// not fail (it completed without a failing verdict, or is still live).
 pub(crate) fn of_stage(stage: &StageRun) -> Option<FailureClass> {

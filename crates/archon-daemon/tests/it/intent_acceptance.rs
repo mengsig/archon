@@ -63,13 +63,12 @@ pub(crate) async fn fixture_in(
         .await
         .save_approved_intent(&intent)
         .unwrap();
-    plan.0.insert(
-        "intent-acceptance".into(),
+    plan.0.entry("intent-acceptance".into()).or_insert_with(|| {
         vec![common::choice(
             common::REVIEW_MODEL,
             archon_core::model::Effort::High,
-        )],
-    );
+        )]
+    });
     let request = serde_json::from_value(json!({"repo":common::REPO_NAME,"pipeline":pipeline,"title":"preserve approved design","brief":"Use the approved ledger","intent":binding,"model_plan":plan})).unwrap();
     let Reply::Item(item) = h.cli(Request::Enqueue(request)).await.unwrap() else {
         panic!("item")
@@ -354,13 +353,12 @@ async fn proposed_item() -> (Harness, FakeAether, QueueItem) {
     let h = Harness::new().await;
     let fake = common::connect_aether_for_delegations(&h).await;
     let mut plan = common::plan();
-    plan.0.insert(
-        "intent-acceptance".into(),
+    plan.0.entry("intent-acceptance".into()).or_insert_with(|| {
         vec![common::choice(
             common::REVIEW_MODEL,
             archon_core::model::Effort::High,
-        )],
-    );
+        )]
+    });
     let request = serde_json::from_value(json!({"repo":common::REPO_NAME,"pipeline":common::PIPELINE,"title":"Choose a layout","brief":"Keep ISO labels visible","autonomy":{"proposal":"lavish"},"model_plan":plan})).unwrap();
     let Reply::Item(item) = h.cli(Request::Enqueue(request)).await.unwrap() else {
         panic!("item")

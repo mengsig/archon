@@ -4,10 +4,11 @@ use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;
 use archon_core::intent::ApprovedIntent;
 use archon_core::model::ModelRef;
+use archon_core::plan_origin::{Authority, PlanSource};
 use archon_core::ports::SpawnRequest;
 use archon_core::queue::QueueItem;
 use archon_core::reference::{Reference, ReferenceKind};
-use archon_core::run::{PipelineRun, StageRun};
+use archon_core::run::{PipelineRun, StageRun, StageState};
 use archon_pipeline::{SpawnPlan, acceptance::STAGE};
 use archon_queue::Store;
 
@@ -145,24 +146,36 @@ fn attach_references(
     Ok(())
 }
 
-/// Place the acceptance stage of `plans` on the model that judges the ledger:
+/// Place the acceptance stage of `plans` on the model that judges the ledger.
+/// A model the item's plan pins for it (named by the operator or the
+/// orchestrator) judges as given while policy permits it, the catalog lists it
+/// and it can see the images; unless `[review] independent_acceptance` holds,
+/// sharing a builder's model or vendor only labels the record. Without a pin:
 /// independent of every builder where one is permitted and connected, else,
-/// unless `[review] independent_acceptance` holds, the strongest one, labelled.
-/// A `woken` judge the catalog and policy still accept keeps judging.
+/// unless that knob holds, the strongest one, labelled. Either way a judge
+/// whose provider is out of quota is skipped. A `woken` judge the catalog and
+/// policy still accept keeps judging. `failed` is the attempt being replaced,
+/// not yet stored.
 pub(in crate::executor) fn select_model(
     ctx: &DaemonContext,
     store: &mut Store,
     item: &QueueItem,
     run: &PipelineRun,
     plans: &mut [SpawnPlan],
-    woken: Option<&ModelRef>,
+    (woken, failed): (Option<&ModelRef>, Option<&StageRun>),
 ) -> Result<(), ArchonError> {
-    if !plans.iter().any(|p| p.stage_id == STAGE) {
+    let Some(first) = plans.iter().find(|p| p.stage_id == STAGE) else {
         return Ok(());
-    }
+    };
+    let pin = pinned(item, first);
     super::records::invalidate(store, &item.id)?;
     let visual = super::intent(store, item)?.is_some_and(|r| !r.images.is_empty());
-    let builders = builder_models(&store.stage_runs(&run.id)?);
+    let mut stages = store.stage_runs(&run.id)?;
+    if let Some(failed) = failed {
+        stages.retain(|s| s.id != failed.id);
+        stages.push(failed.clone());
+    }
+    let builders = builder_models(&stages);
     let repo = item
         .repo
         .as_ref()
@@ -173,15 +186,44 @@ pub(in crate::executor) fn select_model(
     let catalog = store.model_catalog();
     let judges = |m: &ModelRef| policy.permits_model(m) && (!visual || vision.contains(m));
     let permitted = judge_pool(&catalog, judges, &builders);
+    let out_of_quota = Quota::of(crate::quota::standing(ctx), &stages);
+    let eligible: Vec<_> = permitted
+        .iter()
+        .copied()
+        .filter(|m| !out_of_quota.has(&m.model))
+        .collect();
     let still_judges = |judge: &&ModelRef| {
         catalog.check(judge).is_ok_and(|listed| listed == **judge)
             && policy.permits_model(judge)
             && (!visual || vision.contains(judge))
+            && !out_of_quota.has(judge)
     };
-    let model = match woken.filter(still_judges) {
+    let pinned_judge = match pin.as_ref().and_then(|m| catalog.check(m).ok()) {
+        Some(model) if eligible.iter().any(|m| m.model == model) => Some(model),
+        _ => None,
+    };
+    if let (Some(model), true) = (&pinned_judge, ctx.config.review.independent_acceptance)
+        && shares_builder(model, &builders)
+    {
+        return Err(ArchonError::Invalid(format!(
+            "independent acceptance needs a model different from every builder in model and \
+             vendor, but the plan pins `{model}` for {STAGE} ([review] independent_acceptance = true)"
+        )));
+    }
+    if let (Some(pin), None) = (&pin, &pinned_judge) {
+        tracing::info!(item = %item.id, model = %pin, "the pinned acceptance model cannot judge now; another is selected");
+    }
+    let model = match woken.filter(still_judges).or(pinned_judge.as_ref()) {
         Some(judge) => judge.clone(),
+        None if eligible.is_empty() && !permitted.is_empty() => {
+            return Err(ArchonError::Invalid(format!(
+                "no eligible acceptance judge: every permitted, connected model's provider is out \
+                 of quota ({})",
+                out_of_quota.names(permitted.iter().map(|m| &m.model))
+            )));
+        }
         None => judge_model(
-            &permitted,
+            &eligible,
             &builders,
             visual,
             ctx.config.review.independent_acceptance,
@@ -199,6 +241,67 @@ pub(in crate::executor) fn select_model(
     assert!(!visual || vision.contains(&model));
     assert!(policy.permits_model(&model));
     Ok(())
+}
+
+/// The model the item's plan pins for the acceptance stage `plan`: one the
+/// operator or the orchestrator named, not one the daemon filled in.
+fn pinned(item: &QueueItem, plan: &SpawnPlan) -> Option<ModelRef> {
+    let slots = item.model_plan.choices_for(STAGE)?;
+    let slot = plan.fan_index as usize % slots.len().max(1);
+    let origin = item.model_plan.origin(&item.id, STAGE, slot);
+    let named = origin.model.source == PlanSource::Explicit
+        && matches!(
+            origin.model.by,
+            Authority::Operator | Authority::Orchestrator
+        );
+    named.then(|| slots[slot].model.clone())
+}
+
+/// Providers a judge must not run on now: out of quota by Aether's trusted
+/// reading, or, where that reading says nothing, one an acceptance attempt of
+/// this run just failed on for a usage limit.
+struct Quota {
+    reading: Option<std::collections::BTreeMap<String, bool>>,
+    failed: std::collections::BTreeSet<String>,
+}
+
+impl Quota {
+    fn of(reading: Option<std::collections::BTreeMap<String, bool>>, stages: &[StageRun]) -> Self {
+        let failed = stages
+            .iter()
+            .filter(|s| s.stage_id == STAGE)
+            .filter(|s| match &s.state {
+                StageState::Failed { error } => crate::executor::failure_class::is_quota(error),
+                _ => false,
+            })
+            .map(|s| s.current_choice().model.provider.clone())
+            .collect();
+        Self { reading, failed }
+    }
+
+    fn has(&self, model: &ModelRef) -> bool {
+        match self.reading.as_ref().and_then(|r| r.get(&model.provider)) {
+            Some(exhausted) => *exhausted,
+            None => self.failed.contains(&model.provider),
+        }
+    }
+
+    fn names<'m>(&self, models: impl Iterator<Item = &'m ModelRef>) -> String {
+        let mut names: Vec<&str> = models
+            .filter(|m| self.has(m))
+            .map(|m| m.provider.as_str())
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names.join(", ")
+    }
+}
+
+/// Whether `model` is a builder's or of a builder's vendor.
+pub(super) fn shares_builder(model: &ModelRef, builders: &[ModelRef]) -> bool {
+    builders
+        .iter()
+        .any(|b| b == model || vendor(&b.provider) == vendor(&model.provider))
 }
 
 /// The model apart from every builder that prefers another vendor and then
@@ -297,9 +400,9 @@ pub(super) fn builder_models(stages: &[StageRun]) -> Vec<ModelRef> {
         .collect()
 }
 
-/// Whether the acceptance `stage` judged apart from every builder. Refused
-/// when it could not see the approved images, or under the strict knob when
-/// it was not independent.
+/// Whether the acceptance `stage` judged apart from every builder, in model
+/// and vendor. Refused when it could not see the approved images, or under
+/// the strict knob when it ran on a builder's model.
 pub(super) async fn check_judge(
     ctx: &DaemonContext,
     run: &PipelineRun,
@@ -310,8 +413,8 @@ pub(super) async fn check_judge(
         let store = ctx.store.lock().await;
         (store.stage_runs(&run.id)?, vision_models(&store)?)
     };
-    let independent = !builder_models(&stages).contains(&stage.choice.model);
-    if !independent && ctx.config.review.independent_acceptance {
+    let builders = builder_models(&stages);
+    if builders.contains(&stage.choice.model) && ctx.config.review.independent_acceptance {
         return Err(ArchonError::Invalid(
             "acceptance must use a different model from the builder".into(),
         ));
@@ -323,7 +426,7 @@ pub(super) async fn check_judge(
     }
     assert_eq!(stage.stage_id, STAGE);
     assert!(stage.aether_agent.is_some());
-    Ok(independent)
+    Ok(!shares_builder(&stage.choice.model, &builders))
 }
 
 const RULES: &str = r#"

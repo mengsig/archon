@@ -580,7 +580,9 @@ fn reserve_checked(
     mut plans: Vec<SpawnPlan>,
     (env, catalog): (&RepoEnv, &archon_core::model_tier::ModelCatalog),
 ) -> Result<Reserved, ArchonError> {
-    if let Err(error) = super::acceptance::select_model(ctx, store, &item, run, &mut plans, None) {
+    if let Err(error) =
+        super::acceptance::select_model(ctx, store, &item, run, &mut plans, (None, None))
+    {
         if error.is_store() {
             return Err(error);
         }

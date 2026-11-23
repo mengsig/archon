@@ -80,6 +80,8 @@ The browser tests start their own archond in a temp home (Aether stays down)
 and need the `archon` binary: set `ARCHON_BIN`, or `CARGO_TARGET_DIR` for
 `$CARGO_TARGET_DIR/debug/archon`.
 
+The tests need Node 20 or newer; `npm test`, `npm run test:unit` and `npm run e2e` stop with a plain message on an older one (`scripts/require-node.js`). A bare `node --test` or `npx playwright test` does not check.
+
 ```sh
 npm ci
 node --test                    # unit tests: transport, pairing code, bridge, shipped files, Markdown

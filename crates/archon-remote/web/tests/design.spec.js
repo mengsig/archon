@@ -25,6 +25,13 @@ async function open(browser, page, options) {
   return harness;
 }
 
+// A note D1 the agent has already done, for a session opened without one.
+function doneNote(harness) {
+  harness.daemon.state.notes.unshift({ item: ITEM, id: 'D1', session: 'ds_FIXTURE', kind: 'change', text: 'make it green', details_text: null, send_picture: false, target: null, viewport: { w: 800, h: 500, preset: 'desktop' },
+    status: 'done', fail_reason: null, base_commit: 'base0001', commit: 'abc1234def', no_change: false, reverts: null, resent_from: null, superseded_by: null, thread: [], delivery: 0,
+    before_asset: null, after_asset: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+}
+
 // The canvas pixel under the fixture's button, to see the frame change.
 const buttonPixel = async (page, harness) => page.evaluate((box) => {
   const canvas = document.querySelector('.design-canvas');
@@ -87,7 +94,11 @@ test.describe('desktop', () => {
       const ledger = page.getByRole('region', { name: 'Ledger and approval' });
       await expect(ledger.locator('.ledger-row')).toHaveCount(2);
       await expect(ledger.locator('.ledger-row').first()).toContainText('make this green');
-      await expect(ledger.locator('.ledger-img')).toHaveCount(2);
+      // Each note's card shows its picture from before and the one from after.
+      for (const row of await ledger.locator('.ledger-row').all()) {
+        await expect(row.locator('.ledger-pic .cmp-caption')).toHaveText(['Before', 'After']);
+        await expect(row.locator('.ledger-img')).toHaveCount(2);
+      }
       await expect(page.getByRole('dialog')).toHaveCount(0);
       await page.waitForTimeout(500);
       await page.screenshot({ path: `${EVIDENCE}/confirmed-approval.png` });
@@ -127,6 +138,7 @@ test.describe('desktop', () => {
     const harness = await open(browser, page);
     try {
       await expect(page.locator('.design-canvas')).toBeVisible();
+      doneNote(harness);
       await page.getByRole('button', { name: 'Finish' }).click();
       const review = page.getByRole('dialog', { name: 'Review before finishing' });
       await expect(review.getByLabel('Include picture for D1')).toBeChecked();
@@ -139,9 +151,10 @@ test.describe('desktop', () => {
     const harness = await open(browser, page);
     try {
       await expect(page.locator('.design-canvas')).toBeVisible();
+      doneNote(harness);
       await page.getByRole('button', { name: 'Finish' }).click();
       const review = page.getByRole('dialog', { name: 'Review before finishing' });
-      await review.getByLabel('Include picture for D1').uncheck({ force: true });
+      await review.getByLabel('Include picture for D1').uncheck();
       await review.getByRole('button', { name: 'Confirm' }).click();
       await expect.poll(() => harness.daemon.state.confirmed?.include).toEqual({ D1: false });
     } finally { await harness.stop(); }
@@ -168,9 +181,7 @@ test.describe('desktop', () => {
     const harness = await open(browser, page);
     try {
       await expect(page.locator('.design-canvas')).toBeVisible();
-      harness.daemon.state.notes.unshift({ item: ITEM, id: 'D1', session: 'ds_FIXTURE', kind: 'change', text: 'make it green', details_text: null, send_picture: false, target: null, viewport: { w: 800, h: 500, preset: 'desktop' },
-        status: 'done', fail_reason: null, base_commit: 'base0001', commit: 'abc1234def', no_change: false, reverts: null, resent_from: null, superseded_by: null, thread: [], delivery: 0,
-        before_asset: null, after_asset: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+      doneNote(harness);
       harness.daemon.state.unconfirmedNoChange = true;
       await page.getByRole('button', { name: 'Finish' }).click();
       const review = page.getByRole('dialog', { name: 'Review before finishing' });

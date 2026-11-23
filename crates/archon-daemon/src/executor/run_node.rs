@@ -29,7 +29,7 @@ use archon_core::run::StageRun;
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
 
-use super::{naming, resume};
+use super::{naming, resume, spawn};
 use crate::context::DaemonContext;
 use crate::resolve;
 
@@ -510,6 +510,8 @@ async fn send_generation(
             tracing::warn!(%run, generation, %error, "run node not created: its model left the catalog");
             Ok(Created::Unlisted { generation, frozen })
         }
+        // Let the stage refresh against the model this generation actually sent.
+        Err(error) if spawn::create_refused_model(&error, &frozen) => Err(error),
         Err(error @ (ArchonError::Invalid(_) | ArchonError::NotFound(_))) => {
             Ok(Created::Refused { generation, error })
         }

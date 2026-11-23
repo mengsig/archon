@@ -1819,7 +1819,7 @@ async fn refresh_create_refusal(
     }))
 }
 
-fn create_refused_model(error: &ArchonError, model: &ModelRef) -> bool {
+pub(super) fn create_refused_model(error: &ArchonError, model: &ModelRef) -> bool {
     let message = match error {
         ArchonError::Aether(message) => message.strip_prefix("unavailable: "),
         ArchonError::Invalid(message) => message.strip_prefix("aether: "),

@@ -11,7 +11,7 @@ use archon_core::id::{FeedbackId, PipelineRunId, RepoId};
 use archon_core::model::{Effort, ModelChoice};
 use archon_core::model_evidence::{
     MAX_ROWS, ModelEvidenceQuery, ModelEvidenceReport, ModelEvidenceRow, ProviderEvidenceRow,
-    SizingEvidenceRow, TierEvidenceRow,
+    RoutingEvidenceRow, SizingEvidenceRow, TierEvidenceRow,
 };
 use archon_core::model_tier::{ModelCatalog, Tier};
 use archon_core::outcome::{
@@ -40,6 +40,7 @@ struct Samples {
 #[derive(Debug)]
 pub struct ModelEvidenceSnapshot {
     attempts: Vec<Attempt>,
+    routing: Vec<RoutingEvidenceRow>,
     range: DayRange,
     estimates: bool,
 }
@@ -109,6 +110,12 @@ pub(super) fn read(
     }
     Ok(ModelEvidenceSnapshot {
         attempts,
+        routing: super::routing::read(
+            conn,
+            repo.as_ref().map(|repo| &repo.id),
+            query.pipeline.as_deref(),
+            range,
+        )?,
         range: *range,
         estimates,
     })
@@ -177,6 +184,7 @@ impl ModelEvidenceSnapshot {
         let mut report = finish(groups, tiers, self.range, self.estimates);
         report.providers = provider_rows(providers);
         report.sizing = sizing_rows(sized);
+        report.routing = self.routing;
         Ok(report)
     }
 }
@@ -453,6 +461,7 @@ fn finish(
         providers: Vec::new(),
         sizing: Vec::new(),
         pipelines: Vec::new(),
+        routing: Vec::new(),
         repo_names: Default::default(),
     }
 }

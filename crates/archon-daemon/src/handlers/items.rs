@@ -1229,7 +1229,11 @@ pub(super) async fn retry(
         };
         let kept = fresh.as_ref().and_then(|f| f.kept.as_deref());
         let mut store = ctx.store.lock().await;
-        let mut queued = queue_again(&mut store, &loaded, item).map_err(|error| match kept {
+        let now = archon_core::now();
+        if item != loaded {
+            item.updated_at = now.max(item.updated_at);
+        }
+        let mut queued = store.requeue_item(&item, now).map_err(|error| match kept {
             Some(kept) => error.with_detail(&format!("the retry was not queued, but: {kept}")),
             None => error,
         })?;
@@ -1466,24 +1470,6 @@ async fn start_fresh(
     })
 }
 
-/// Store what a retry changed on `loaded` and queue it again, with the
-/// dependents it alone blocked. The caller holds the run table.
-pub(super) fn queue_again(
-    store: &mut archon_queue::Store,
-    loaded: &QueueItem,
-    mut item: QueueItem,
-) -> Result<QueueItem, ArchonError> {
-    assert_eq!(loaded.id, item.id, "a retry changes its own item");
-    assert_eq!(loaded.state, item.state, "the state changes by transition");
-    if item != *loaded {
-        item.updated_at = archon_core::now().max(item.updated_at);
-        store.update_item(&item)?;
-    }
-    let item = store.transition_item(&item.id, QueueState::Queued, archon_core::now())?;
-    unblock_dependents(store, &item.id)?;
-    Ok(item)
-}
-
 /// Record an amendment of the item's brief in its feed history.
 async fn note_amendment(ctx: &DaemonContext, id: &QueueItemId, text: &str, via: &str) {
     let text = format!("Amended the brief of {id} ({via}): {}", text.trim());
@@ -1499,36 +1485,6 @@ pub(super) async fn post_note(ctx: &DaemonContext, id: &QueueItemId, text: &str)
     if let Err(error) = posted {
         tracing::error!(item = %id, %error, note = %text, "item note not posted");
     }
-}
-
-/// Blocked dependents of `id` whose dependencies are no longer broken.
-fn unblock_dependents(
-    store: &mut archon_queue::Store,
-    id: &QueueItemId,
-) -> Result<(), ArchonError> {
-    assert_eq!(
-        store.item(id)?.state,
-        QueueState::Queued,
-        "the retried item is queued"
-    );
-    for dependent in store.dependents(id)? {
-        let item = store.item(&dependent)?;
-        if !matches!(item.state, QueueState::Blocked { .. }) || item.state.is_model_pin_block() {
-            continue;
-        }
-        let mut broken = false;
-        for dep in &item.dependencies {
-            let state = store.item(dep)?.state;
-            broken |= matches!(
-                state,
-                QueueState::Failed { .. } | QueueState::Cancelled { .. }
-            );
-        }
-        if !broken {
-            store.transition_item(&dependent, QueueState::Queued, archon_core::now())?;
-        }
-    }
-    Ok(())
 }
 
 /// The item's repository environment and the pipeline it would run now: as

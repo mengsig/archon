@@ -1112,6 +1112,13 @@ again on its branch, delivering into the pull request it has; an item
 waiting on it waits for it to succeed again, and the retry counts against
 the run that passed.
 
+`archon model-evidence` counts a routing miss when `--switch` revives an
+escalated run on a different pipeline. Each miss belongs to the pipeline the
+failed run was using and the local day it finished. A count covers the
+recorded routing decisions in that repository and pipeline. The report
+shows `misses=unknown` when it has no classified decisions and lists failed
+runs with missing evidence as `unclassified`.
+
 Every steer is recorded with who made it (`operator` or `orchestrator`) and
 what it changed. `archon queue show <id>` lists them, and the feed has a
 `Steered …` entry for each. An item switched to another pipeline keeps the

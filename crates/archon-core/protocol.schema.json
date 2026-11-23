@@ -8700,8 +8700,15 @@
           "additionalProperties": {
             "type": "string"
           },
-          "description": "Names of the repositories `pipelines` cite, as `cost` names them.",
+          "description": "Names of the repositories the pipeline and routing rows cite.",
           "type": "object"
+        },
+        "routing": {
+          "description": "By repository and effective pipeline, using the failed run's finish day.",
+          "items": {
+            "$ref": "#/$defs/RoutingEvidenceRow"
+          },
+          "type": "array"
         },
         "rows": {
           "items": {
@@ -15314,6 +15321,43 @@
         "revision",
         "review",
         "task_class"
+      ],
+      "type": "object"
+    },
+    "RoutingEvidenceRow": {
+      "properties": {
+        "misses": {
+          "description": "Observed escalations followed by a switch to a different pipeline.\nNone means no classified routing decisions are available.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pipeline": {
+          "type": "string"
+        },
+        "repo": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RepoId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unclassified": {
+          "description": "Failed runs whose routing decision is unknown.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pipeline",
+        "unclassified"
       ],
       "type": "object"
     },

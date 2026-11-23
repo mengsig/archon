@@ -395,3 +395,109 @@ fn an_outcome_recorded_again_under_no_repository_is_still_reported() {
     let stats = store.learning_stats(Some(&alpha.id)).unwrap();
     assert_eq!(stats.outcomes, 1);
 }
+
+fn routing(
+    store: &Store,
+    repo: Option<&archon_core::id::RepoId>,
+    pipeline: Option<&str>,
+    at: Timestamp,
+) -> Vec<archon_core::model_evidence::RoutingEvidenceRow> {
+    let query = archon_core::model_evidence::ModelEvidenceQuery {
+        repo: repo.map(|id| archon_core::protocol::RepoRef(id.to_string())),
+        pipeline: pipeline.map(str::to_owned),
+        ..Default::default()
+    };
+    store
+        .model_evidence(&query, &range(at), true, |_, _| Ok(false))
+        .unwrap()
+        .routing
+}
+
+#[test]
+fn routing_evidence_filters_by_source_repository_pipeline_and_finish_day() {
+    use archon_core::steer::RunEdit;
+
+    let mut store = store();
+    let alpha = repo("alpha");
+    let beta = repo("beta");
+    store.insert_repo(&alpha).unwrap();
+    store.insert_repo(&beta).unwrap();
+    let old = t(DAY * 2);
+    let recent = t(DAY * 42);
+    let moved = item(Some(&alpha), "old escalation confirmed");
+    finish(&mut store, &moved, failed("ESCALATE: needs design"), old);
+    let failed_item = store.item(&moved.id).unwrap();
+    let shape = RunEdit::SwitchPipeline {
+        pipeline: "expanded".into(),
+        stages: vec![serde_json::json!({"keep": "review"})],
+    };
+    store
+        .apply_shape_steer(
+            &failed_item,
+            Some(&shape),
+            (&format!("steers:{}", moved.id), "[]"),
+            recent,
+        )
+        .unwrap();
+    finish(
+        &mut store,
+        &item(Some(&alpha), "historical escalation"),
+        failed("ESCALATE: no routing record"),
+        old,
+    );
+    finish(
+        &mut store,
+        &item(Some(&beta), "recent failure elsewhere"),
+        failed("ESCALATE: unresolved"),
+        recent,
+    );
+
+    let earlier = routing(&store, Some(&alpha.id), Some("direct"), old);
+    assert_eq!(earlier.len(), 1);
+    assert_eq!((earlier[0].misses, earlier[0].unclassified), (Some(1), 1));
+    assert!(routing(&store, Some(&alpha.id), Some("expanded"), old).is_empty());
+    assert!(routing(&store, Some(&beta.id), None, old).is_empty());
+    assert!(routing(&store, Some(&alpha.id), None, recent).is_empty());
+    let later = routing(&store, None, None, recent);
+    assert_eq!(later.len(), 1);
+    assert_eq!(later[0].repo.as_ref(), Some(&beta.id));
+    assert_eq!((later[0].misses, later[0].unclassified), (None, 1));
+}
+
+#[test]
+fn a_revival_without_the_ending_stage_does_not_invent_a_routing_class() {
+    use archon_core::steer::RunEdit;
+
+    let mut store = store();
+    let at = t(DAY);
+    let stopped = item(None, "no record of the ending stage");
+    finish(
+        &mut store,
+        &stopped,
+        RunState::Failed {
+            stage_id: "missing".into(),
+            error: "failed somewhere".into(),
+        },
+        at,
+    );
+    let shape = RunEdit::SwitchPipeline {
+        pipeline: "expanded".into(),
+        stages: vec![serde_json::json!({"keep": "review"})],
+    };
+    let revived = store
+        .apply_shape_steer(
+            &store.item(&stopped.id).unwrap(),
+            Some(&shape),
+            (&format!("steers:{}", stopped.id), "[]"),
+            at,
+        )
+        .unwrap();
+    assert_eq!(revived.state, QueueState::Queued);
+    assert_eq!(
+        store.steered_pipeline(&stopped.id).unwrap().as_deref(),
+        Some("expanded")
+    );
+    let rows = routing(&store, None, None, at);
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].misses, rows[0].unclassified), (None, 1));
+}

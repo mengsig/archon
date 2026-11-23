@@ -24,11 +24,11 @@ use super::{FollowUp, RunTable, load_spawn, recover, run_follow_up, settle, sibl
 use crate::context::DaemonContext;
 use crate::resolve::RepoEnv;
 
-pub(crate) use audit::{notes_since, record, records};
+pub(crate) use audit::{history_update, notes_since, records};
 pub(super) use owed::Locks;
 pub(crate) use owed::{deliver, owed};
 pub(crate) use plan::started_stages;
-pub(crate) use shape::{Current, Sources, forget as forget_shape, keep as keep_shape};
+pub(crate) use shape::{Current, Sources, kept_shape};
 pub(crate) use shape::{correct_shaped, reshape, shaped, shaped_in, switched_to};
 
 use owed::Delivery;

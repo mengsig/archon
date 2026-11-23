@@ -10,6 +10,7 @@ use archon_core::autonomy::{AutonomyPatch, ProposalMode};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::model::Effort;
+use archon_core::model_evidence::{ModelEvidenceQuery, RoutingEvidenceRow};
 use archon_core::notify::{NotificationKind, Question};
 use archon_core::plan_origin::{Authority, PlanSource};
 use archon_core::ports::{AgentUpdate, DescendantState};
@@ -1079,6 +1080,162 @@ async fn a_failed_item_is_revived_on_its_branch_by_a_shape_steer() {
         objective.contains("Continue from it; do not start over."),
         "{objective}"
     );
+}
+
+async fn fail_for_routing(h: &Harness, item: &QueueItem, error: &str) -> StageRun {
+    let ran = h
+        .settle_running(|_| StageOutcome::Failed {
+            error: error.into(),
+            infra: false,
+        })
+        .await;
+    assert_eq!(ran.len(), 1, "the lead stage was running");
+    assert!(
+        matches!(h.state(&item.id).await, QueueState::Failed { run: Some(id), .. } if id == ran[0].run)
+    );
+    ran.into_iter().next().unwrap()
+}
+
+async fn routing(h: &Harness, query: ModelEvidenceQuery) -> Vec<RoutingEvidenceRow> {
+    let Reply::ModelEvidence(report) = h.cli(Request::ModelEvidence(query)).await.unwrap() else {
+        panic!("model evidence report");
+    };
+    let text = report.text();
+    assert!(report.routing.iter().all(|row| !row.pipeline.is_empty()));
+    for row in &report.routing {
+        let misses = row.misses.map_or("unknown".into(), |n| n.to_string());
+        assert!(text.contains(&format!(" / {} misses={misses} ", row.pipeline)));
+    }
+    report.routing
+}
+
+#[tokio::test]
+async fn routing_misses_follow_each_failed_run_s_effective_pipeline_without_learning() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.enabled = false;
+    let h = harness_with(config).await;
+    let (item, _) = implementing(&h, "needs another pipeline").await;
+    let escalated = "ESCALATE: needs a design pass";
+    let first = fail_for_routing(&h, &item, escalated).await;
+    let captured = h.ctx.store.lock().await.outcome(&first.run).unwrap();
+    assert!(captured.is_none());
+    let first_switch = switch("steer-quick");
+    steer(&h, &item.id, first_switch.clone()).await.unwrap();
+    steer(&h, &item.id, first_switch).await.unwrap();
+    h.dispatch().await;
+    let second = fail_for_routing(&h, &item, escalated).await;
+    assert_ne!(first.run, second.run);
+    let second_run = h.ctx.store.lock().await.run(&second.run).unwrap();
+    assert_eq!(
+        second_run.pipeline, PIPELINE,
+        "the run keeps its queued name"
+    );
+    steer(&h, &item.id, switch(PIPELINE)).await.unwrap();
+    assert_eq!(switched_to(&h, &item.id).await, None);
+    h.dispatch().await;
+    fail_for_routing(&h, &item, escalated).await;
+    h.cli(Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: None,
+        stage_timeouts: Default::default(),
+    })
+    .await
+    .unwrap();
+
+    let repo = item.repo.unwrap();
+    let rows = routing(&h, ModelEvidenceQuery::default()).await;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].pipeline, "steer-quick");
+    assert_eq!(rows[1].pipeline, PIPELINE);
+    assert!(
+        rows.iter()
+            .all(|r| r.repo.as_ref() == Some(&repo) && r.misses == Some(1) && r.unclassified == 0),
+        "{rows:?}"
+    );
+    let filtered = routing(
+        &h,
+        ModelEvidenceQuery {
+            repo: Some(RepoRef(REPO_NAME.into())),
+            pipeline: Some("steer-quick".into()),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(filtered, rows[..1]);
+}
+
+#[tokio::test]
+async fn same_pipeline_and_non_escalated_revivals_record_zero_misses() {
+    for (from, error, target) in [
+        (PIPELINE, "ESCALATE: needs a design pass", PIPELINE),
+        (
+            "steer-quick",
+            "ESCALATE: needs a design pass",
+            "steer-quick",
+        ),
+        (PIPELINE, "BLOCKED: needs a token", "steer-quick"),
+    ] {
+        let h = harness().await;
+        let item = h.enqueue("stopped in the first stage").await;
+        assert_eq!(item.pipeline, PIPELINE);
+        if from != PIPELINE {
+            steer(&h, &item.id, switch(from)).await.unwrap();
+        }
+        h.dispatch().await;
+        fail_for_routing(&h, &item, error).await;
+        let before = routing(&h, ModelEvidenceQuery::default()).await;
+        assert_eq!(before.len(), 1);
+        assert_eq!((before[0].misses, before[0].unclassified), (None, 1));
+        let revived = steer(&h, &item.id, switch(target)).await.unwrap();
+        assert_eq!(revived.state, QueueState::Queued);
+        let after = routing(&h, ModelEvidenceQuery::default()).await;
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].pipeline, from);
+        assert_eq!((after[0].misses, after[0].unclassified), (Some(0), 0));
+    }
+}
+
+#[tokio::test]
+async fn a_failed_revival_rolls_back_its_routing_observation_shape_and_item() {
+    let h = harness().await;
+    let (item, _) = implementing(&h, "retry this failed switch").await;
+    fail_for_routing(&h, &item, "ESCALATE: needs a design pass").await;
+    let before = detail(&h, &item.id).await;
+    assert!(matches!(before.item.state, QueueState::Failed { .. }));
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER refuse_revival BEFORE UPDATE OF state ON items
+         WHEN OLD.state = 'failed' AND NEW.state = 'queued'
+         BEGIN SELECT RAISE(ABORT, 'simulated revival stop'); END;",
+    )
+    .unwrap();
+    let error = refused(&h, &item.id, switch("steer-quick")).await;
+    assert!(error.contains("simulated revival stop"), "{error}");
+    let after = detail(&h, &item.id).await;
+    assert_eq!(after.switched_to, before.switched_to);
+    assert_eq!(after.steers, before.steers);
+    let rows = routing(&h, ModelEvidenceQuery::default()).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].misses, rows[0].unclassified), (None, 1));
+
+    conn.execute_batch("DROP TRIGGER refuse_revival;").unwrap();
+    assert_eq!(
+        steer(&h, &item.id, switch("steer-quick"))
+            .await
+            .unwrap()
+            .state,
+        QueueState::Queued
+    );
+    assert_eq!(
+        switched_to(&h, &item.id).await.as_deref(),
+        Some("steer-quick")
+    );
+    let rows = routing(&h, ModelEvidenceQuery::default()).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].misses, rows[0].unclassified), (Some(1), 0));
 }
 
 /// Enqueue with a proposal gate, write the page `propose` owes, and settle

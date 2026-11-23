@@ -698,7 +698,16 @@ pub(super) fn update_with_kv(
     updates: &[(&str, &str)],
 ) -> Result<(), ArchonError> {
     let tx = write_tx(conn)?;
-    let stored = load(&tx, &item.id)?;
+    update_in(&tx, item)?;
+    for (key, value) in updates {
+        super::settings::kv_set(&tx, key, value)?;
+    }
+    tx.commit().ctx("commit item update")
+}
+
+pub(super) fn update_in(tx: &Connection, item: &QueueItem) -> Result<(), ArchonError> {
+    assert!(!tx.is_autocommit(), "item changes hold a write transaction");
+    let stored = load(tx, &item.id)?;
     if stored.state != item.state {
         return Err(ArchonError::InvalidTransition(format!(
             "update_item cannot move {} from {} to {}; use transition_item",
@@ -722,22 +731,47 @@ pub(super) fn update_with_kv(
     }
     let deps_changed = stored.dependencies != item.dependencies;
     if deps_changed {
-        check_dependencies(&tx, &item.id, &item.dependencies)?;
+        check_dependencies(tx, &item.id, &item.dependencies)?;
     }
-    write_columns(&tx, item)?;
+    assert_eq!(stored.id, item.id, "an update keeps the item's identity");
+    write_columns(tx, item)?;
     if deps_changed {
-        replace_deps(&tx, item)?;
+        replace_deps(tx, item)?;
         super::changes::record_dependencies(
-            &tx,
+            tx,
             &item.id,
             &stored.dependencies,
             &item.dependencies,
         )?;
     }
-    for (key, value) in updates {
-        super::settings::kv_set(&tx, key, value)?;
+    Ok(())
+}
+
+pub(super) fn requeue_in(
+    tx: &Connection,
+    id: &QueueItemId,
+    at: Timestamp,
+) -> Result<QueueItem, ArchonError> {
+    assert!(!tx.is_autocommit(), "requeueing holds a write transaction");
+    let queued = transition_in(tx, id, QueueState::Queued, at)?;
+    assert_eq!(queued.state, QueueState::Queued);
+    for dependent in dependents(tx, id)? {
+        let item = load(tx, &dependent)?;
+        if !matches!(item.state, QueueState::Blocked { .. }) || item.state.is_model_pin_block() {
+            continue;
+        }
+        let mut broken = false;
+        for dep in &item.dependencies {
+            broken |= matches!(
+                load(tx, dep)?.state,
+                QueueState::Failed { .. } | QueueState::Cancelled { .. }
+            );
+        }
+        if !broken {
+            transition_in(tx, &dependent, QueueState::Queued, at)?;
+        }
     }
-    tx.commit().ctx("commit item update")
+    Ok(queued)
 }
 
 pub(super) fn dependents(

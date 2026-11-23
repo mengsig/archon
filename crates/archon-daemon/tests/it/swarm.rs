@@ -395,6 +395,16 @@ async fn named_redo_slots_survive_replay_and_restart() {
         let workers = running_workers(&h, attempt, 1).await;
         assert_eq!(workers[0].fan_index, slot);
         assert_eq!(h.backend.created(), created + 1);
+        let request = h
+            .backend
+            .requests()
+            .pop()
+            .expect("the redo worker's prompt");
+        assert!(
+            request
+                .objective
+                .contains("The selected worker must fix its acceptance check.")
+        );
         let agent = workers[0]
             .aether_agent
             .as_ref()

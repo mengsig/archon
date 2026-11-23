@@ -17,6 +17,14 @@ use crate::template;
 /// What stands in for the summary of a stage a steer passed over.
 pub(crate) const SKIPPED_SUMMARY: &str = "(This stage was skipped by a steer and left no result.)";
 
+/// A header for displaying worker feedback. Scheduling uses structured slots.
+pub(crate) const REDISPATCH_PREFIX: &str = "REDISPATCH:";
+
+/// What a planned team's worker is told when the integrator failed without it.
+const NO_TASK_SENT_BACK: &str = "The integrator failed without sending a task back \
+     (no `REDISPATCH:` line), so no task is yours to redo: change nothing and \
+     complete at once, saying so.";
+
 /// One stage's share of a hand-off, and the whole of it, in characters.
 pub(crate) const HANDOFF_STAGE_CHARS: usize = 1_200;
 pub(crate) const HANDOFF_TOTAL_CHARS: usize = 4_000;
@@ -107,6 +115,23 @@ pub(crate) fn operator_feedback(subject: GateSubject, feedback: &str) -> String 
     )
 }
 
+/// A planned team's workers see only the feedback from its `REDISPATCH:` header.
+pub(crate) fn stage_feedback(stage: &StageSpec, feedback: &str) -> String {
+    if stage.roles_from.is_none() || feedback.trim().is_empty() {
+        return feedback.to_owned();
+    }
+    let line_start = |at: usize| at == 0 || feedback[..at].ends_with('\n');
+    let found = feedback
+        .match_indices(REDISPATCH_PREFIX)
+        .find(|(at, _)| line_start(*at));
+    let Some((at, _)) = found else {
+        return NO_TASK_SENT_BACK.to_owned();
+    };
+    let kept = feedback[at..].trim_end();
+    assert!(kept.starts_with(REDISPATCH_PREFIX), "kept from its line on");
+    kept.to_owned()
+}
+
 /// What `stage` gets beyond its own template: the `feedback` it was entered
 /// with when its template does not show it, and context from the summaries
 /// of the stages passed so far (`previous`) and the gates approved.
@@ -118,7 +143,8 @@ pub(crate) fn context(
     approved: &BTreeMap<String, Option<String>>,
 ) -> String {
     let summary_of = |id: &str| previous.get(&template::previous_variable(id));
-    let mut out = unshown_feedback(&spec.prompts[&stage.prompt], feedback);
+    let feedback = stage_feedback(stage, feedback);
+    let mut out = unshown_feedback(&spec.prompts[&stage.prompt], &feedback);
     out.push_str(&handoff(spec, stage, previous));
     // A planned team's workers follow the direction through their own task.
     let planned = stage.roles_from.is_some();

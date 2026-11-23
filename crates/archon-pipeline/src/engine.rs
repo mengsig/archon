@@ -179,15 +179,17 @@ enum Replay {
     AwaitShip { plan: ShipPlan },
 }
 
-/// Per-stage counters of one replay.
+/// Per-stage attempts and merge results seen during replay.
 #[derive(Debug)]
-struct Counters {
+struct Attempts {
     /// How often each stage was entered: its latest attempt.
     entries: Vec<u32>,
     /// `on_fail` loops taken from each stage.
     loops: Vec<u32>,
     /// Operator revisions requested at each gate stage.
     revisions: Vec<u32>,
+    /// Original per-slot attempts for each merged planned team group.
+    merged_slots: BTreeMap<(usize, u32), Vec<u32>>,
 }
 
 /// A stage group in the replay plus the template context it runs with.
@@ -200,8 +202,6 @@ struct Position {
     previous: BTreeMap<String, String>,
     /// Every `(stage, attempt)` group entered so far, this one included.
     entered: BTreeSet<(usize, u32)>,
-    /// Original per-slot attempts for each merged planned team group.
-    merged_slots: BTreeMap<(usize, u32), Vec<u32>>,
     /// Slots of the current attempt supplied by a previously merged group.
     carried_slots: BTreeMap<u32, u32>,
     /// Gate stages the operator approved, with the operator's note.
@@ -237,7 +237,6 @@ impl Position {
             feedback: String::new(),
             previous: BTreeMap::new(),
             entered: BTreeSet::new(),
-            merged_slots: BTreeMap::new(),
             carried_slots: BTreeMap::new(),
             approved: BTreeMap::new(),
             repaired: BTreeSet::new(),
@@ -955,10 +954,11 @@ impl RunDriver {
     fn replay(&self, runs: &[StageRun]) -> Replay {
         let slots = latest_per_slot(runs);
         let stages = &self.spec.file.stages;
-        let mut counts = Counters {
+        let mut counts = Attempts {
             entries: vec![0_u32; stages.len()],
             loops: vec![0_u32; stages.len()],
             revisions: vec![0_u32; stages.len()],
+            merged_slots: BTreeMap::new(),
         };
         let approved = self.approved_proposal.as_ref();
         let mut at = Position::first(&mut counts.entries, approved);
@@ -1004,7 +1004,7 @@ impl RunDriver {
     fn decide_group(
         &self,
         at: &mut Position,
-        counts: &mut Counters,
+        counts: &mut Attempts,
         members: &[&StageRun],
     ) -> Option<Replay> {
         let stage = &self.spec.file.stages[at.stage];
@@ -1072,7 +1072,7 @@ impl RunDriver {
     fn redo_team(
         &self,
         at: &mut Position,
-        counts: &mut Counters,
+        counts: &mut Attempts,
         member: &StageRun,
         redo: BTreeSet<u32>,
     ) -> Option<Replay> {
@@ -1097,7 +1097,7 @@ impl RunDriver {
     fn after_team_pass(
         &self,
         at: &mut Position,
-        counts: &mut Counters,
+        counts: &mut Attempts,
         members: &[&StageRun],
         summary: String,
     ) -> Option<Replay> {
@@ -1113,7 +1113,7 @@ impl RunDriver {
             Some(MergeOutcome::Merged) => {
                 if stage.roles_from.is_some() {
                     let sources = members.iter().map(|member| member.attempt).collect();
-                    let previous = at.merged_slots.insert((at.stage, at.attempt), sources);
+                    let previous = counts.merged_slots.insert((at.stage, at.attempt), sources);
                     assert!(previous.is_none(), "replay visits a merged group once");
                 }
                 return self.after_pass(at, counts, summary);
@@ -1136,10 +1136,10 @@ impl RunDriver {
     fn after_group_failure(
         &self,
         at: &mut Position,
-        counts: &mut Counters,
+        counts: &mut Attempts,
         members: &[&StageRun],
         headline: &str,
-        report: String,
+        mut report: String,
         redo: Option<BTreeSet<u32>>,
     ) -> Option<Replay> {
         if let Some(withheld) = self.loop_withheld(at.stage, &counts.loops, members) {
@@ -1153,7 +1153,7 @@ impl RunDriver {
         let mut carried = BTreeMap::new();
         if let Some(redo) = redo {
             let team = &self.spec.file.stages[target];
-            let Some(sources) = at.merged_slots.get(&(target, prior_attempt)) else {
+            let Some(sources) = counts.merged_slots.get(&(target, prior_attempt)) else {
                 let error = format!("redo_slots requires a merged attempt of `{}`", team.id);
                 return Some(self.stop_failed(at.stage, "", &error, &report));
             };
@@ -1164,6 +1164,15 @@ impl RunDriver {
                     .map(|slot| (slot, sources[slot as usize])),
             );
             assert_eq!(carried.len() + redo.len(), sources.len());
+            let roles: Vec<&str> = redo
+                .iter()
+                .map(|&slot| team.roles[slot as usize].as_str())
+                .collect();
+            report = format!(
+                "{} {}\n{report}",
+                sections::REDISPATCH_PREFIX,
+                roles.join(", ")
+            );
         }
         at.enter(target, &mut counts.entries, report);
         at.carried_slots = carried;
@@ -1205,7 +1214,7 @@ impl RunDriver {
 
     /// An aborted group is never judged: the run does what the steer said,
     /// a step back with a fresh fix-loop budget. `Some` ends the replay.
-    fn after_abort(&self, at: &mut Position, counts: &mut Counters, then: &Then) -> Option<Replay> {
+    fn after_abort(&self, at: &mut Position, counts: &mut Attempts, then: &Then) -> Option<Replay> {
         let stages = &self.spec.file.stages;
         let from = at.stage;
         let target = match then {
@@ -1252,7 +1261,7 @@ impl RunDriver {
     fn after_pass(
         &self,
         at: &mut Position,
-        counts: &mut Counters,
+        counts: &mut Attempts,
         summary: String,
     ) -> Option<Replay> {
         let stage = &self.spec.file.stages[at.stage];
@@ -1394,7 +1403,7 @@ impl RunDriver {
     fn revise(
         &self,
         at: &mut Position,
-        counts: &mut Counters,
+        counts: &mut Attempts,
         subject: GateSubject,
         feedback: &str,
     ) -> Option<Replay> {
@@ -1575,7 +1584,7 @@ impl RunDriver {
             ("attempt", at.attempt.to_string()),
             ("fan.index", (fan + 1).to_string()),
             ("fan.count", stage.fan_out.to_string()),
-            ("feedback", at.feedback.clone()),
+            ("feedback", sections::stage_feedback(stage, &at.feedback)),
         ];
         vars.extend(per_spawn.into_iter().map(|(k, v)| (k.to_owned(), v)));
         if let Some(slot) = team {
@@ -1676,7 +1685,6 @@ impl RunDriver {
             feedback: String::new(),
             previous: BTreeMap::new(),
             entered: BTreeSet::new(),
-            merged_slots: BTreeMap::new(),
             carried_slots: BTreeMap::new(),
             approved: BTreeMap::new(),
             repaired: BTreeSet::new(),

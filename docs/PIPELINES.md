@@ -959,7 +959,8 @@ already shows through `{{previous.<id>.summary}}` is not repeated there.
 A team stage with `roles_from` gets none: its workers see their own task
 only, so the plan's and their peers' reports stay out, and so does a
 proposal's direction, which the planner carries into the tasks. Workers
-that are sent back see the integrator's retry feedback.
+that are sent back see the integrator's retry feedback. A failure without
+structured slots supplies feedback through the legacy `REDISPATCH:` header.
 So a prompt needs `{{previous.*}}` only where the full summary matters;
 the next stage is not left to rediscover what changed, where, how it was
 verified and what is still open. That is what a stage summary should say.

@@ -452,10 +452,15 @@ fn prune_item_kv(tx: &Transaction<'_>) -> Result<usize, ArchonError> {
                                           UNION SELECT 'shape:' || id FROM temp.prune_items
                                           UNION SELECT 'learning/applied/' || id FROM temp.prune_runs
                                           UNION SELECT 'run_review:' || id FROM temp.prune_runs
-                                          UNION SELECT ?1 || id FROM temp.prune_runs)",
-            [super::run_plans::PREFIX],
+                                          UNION SELECT ?1 || id FROM temp.prune_runs
+                                          UNION SELECT ?2 || id FROM stage_runs
+                                                WHERE run IN (SELECT id FROM temp.prune_runs))",
+            [
+                super::run_plans::PREFIX,
+                super::keys::STAGE_DEFERRED_UNTIL_PREFIX,
+            ],
         )
-        .ctx("prune steer histories and finished run plans")?;
+        .ctx("prune steer histories, finished run plans and stage timing metadata")?;
     let settled = tx
         .execute(
             "DELETE FROM kv WHERE key IN (
@@ -483,14 +488,17 @@ fn prune_item_kv(tx: &Transaction<'_>) -> Result<usize, ArchonError> {
         )
         .ctx("prune restack fix indexes")?;
     // A crash between a stage run's settlement and its key's removal leaves one.
-    let restatements = tx
+    let stage_records = tx
         .execute(
-            "DELETE FROM kv WHERE key >= 'verdict_restatement:' AND key < 'verdict_restatement;'
-             AND substr(key, 21, instr(substr(key, 21), ':') - 1) IN (SELECT id FROM temp.prune_runs)",
+            "DELETE FROM kv
+             WHERE (key >= 'verdict_restatement:' AND key < 'verdict_restatement;'
+                    AND substr(key, 21, instr(substr(key, 21), ':') - 1) IN (SELECT id FROM temp.prune_runs))
+                OR (key >= 'swarm_carry:' AND key < 'swarm_carry;'
+                    AND substr(key, 13, instr(substr(key, 13), ':') - 1) IN (SELECT id FROM temp.prune_runs))",
             [],
         )
-        .ctx("prune verdict restatements")?;
-    Ok(steers + settled + restack + fixes + restatements)
+        .ctx("prune verdict restatements and carried swarm slots")?;
+    Ok(steers + settled + restack + fixes + stage_records)
 }
 
 /// Operator confirmations whose question closed and was asked before the

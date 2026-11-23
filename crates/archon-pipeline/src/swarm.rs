@@ -27,6 +27,38 @@ const MAX_TEXT: usize = 8000;
 /// Times a refused plan goes back to its planner before its stage fails.
 pub const MAX_CORRECTIONS: usize = 2;
 
+/// The slots a failing integrator asks to run again, in zero-based plan order.
+pub(crate) fn redo_slots(
+    structured: Option<&serde_json::Value>,
+    fan_out: u32,
+) -> Result<Option<BTreeSet<u32>>, String> {
+    let Some(value) = structured.and_then(|result| result.get("redo_slots")) else {
+        return Ok(None);
+    };
+    assert!(fan_out > 0, "the target has slots");
+    if !archon_core::run::Verdict::states_fail("", structured) {
+        return Err("redo_slots requires a structured fail verdict".into());
+    }
+    let slots = value
+        .as_array()
+        .filter(|slots| !slots.is_empty())
+        .ok_or("redo_slots must be a non-empty array of zero-based slot indexes")?;
+    let mut redo = BTreeSet::new();
+    for slot in slots {
+        let index = slot
+            .as_u64()
+            .ok_or("redo_slots entries must be non-negative integers")?;
+        if index >= u64::from(fan_out) {
+            return Err(format!("redo_slots entry {index} is outside 0..{fan_out}"));
+        }
+        if !redo.insert(index as u32) {
+            return Err(format!("redo_slots repeats slot {index}"));
+        }
+    }
+    assert_eq!(redo.len(), slots.len(), "every accepted slot is unique");
+    Ok(Some(redo))
+}
+
 const PLAN_SHAPE: &str = r#"{
   "version": 1,
   "summary": "What the change does.",
@@ -546,6 +578,40 @@ fn check_interfaces(tasks: &[SwarmTask], at_base: &BTreeSet<String>, problems: &
                 )),
                 Some(_) => {}
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redo_slots;
+    use serde_json::json;
+
+    #[test]
+    fn redo_slots_are_explicit_distinct_indexes_on_a_failed_result() {
+        let omitted = json!({"verdict": "fail"});
+        assert_eq!(redo_slots(Some(&omitted), 6).unwrap(), None);
+        let multiple = json!({"verdict": "fail", "redo_slots": [5, 0]});
+        assert_eq!(
+            redo_slots(Some(&multiple), 6).unwrap().unwrap(),
+            [0, 5].into()
+        );
+
+        let passed = json!({"verdict": "pass", "redo_slots": [0]});
+        assert!(
+            redo_slots(Some(&passed), 6)
+                .unwrap_err()
+                .contains("fail verdict")
+        );
+        for value in [
+            json!(null),
+            json!([]),
+            json!([2, 2]),
+            json!([-1]),
+            json!(["2"]),
+        ] {
+            let result = json!({"verdict": "fail", "redo_slots": value});
+            assert!(redo_slots(Some(&result), 6).is_err(), "{result}");
         }
     }
 }

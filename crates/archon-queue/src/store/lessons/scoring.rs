@@ -1,13 +1,17 @@
-use super::super::codec::{SqlContext, from_json, text_column};
+use super::super::codec::{SqlContext, text_column};
 use archon_core::error::ArchonError;
 use archon_core::id::LessonId;
-use archon_core::lesson::{Lesson, LessonState, MAX_LESSON_REFS};
+use archon_core::lesson::{Lesson, LessonRetirement, LessonSource, LessonState, MAX_LESSON_REFS};
 use archon_core::notify::FeedEntry;
 use archon_core::outcome::{FailureClass, Outcome, OutcomeResult, UNSCORED_FAILURES};
 use rusqlite::{Connection, params};
 use std::collections::BTreeSet;
 
-pub(in crate::store) fn score_run(conn: &Connection, outcome: &Outcome) -> Result<(), ArchonError> {
+pub(in crate::store) fn score_run(
+    conn: &Connection,
+    outcome: &Outcome,
+    min_uses: u32,
+) -> Result<(), ArchonError> {
     assert!(outcome.check().is_ok());
     let mut stmt = conn
         .prepare("SELECT lesson FROM lesson_uses WHERE run=?1")
@@ -23,20 +27,20 @@ pub(in crate::store) fn score_run(conn: &Connection, outcome: &Outcome) -> Resul
         !outcome.is_win() || won == Some(true),
         "a win is always scored"
     );
-    for id in ids {
-        conn.execute(
-            "UPDATE lesson_uses SET won=?1 WHERE run=?2 AND lesson=?3",
-            params![won, outcome.run.as_str(), id],
-        )
-        .ctx("score lesson use")?;
-        score_lesson(conn, outcome, &LessonId::parse(&id)?)?;
-    }
     // Both holdout arms take the run's score; a held-out lesson's own counts never do.
     conn.execute(
         "UPDATE lesson_trials SET won=?1 WHERE run=?2",
         params![won, outcome.run.as_str()],
     )
     .ctx("score lesson trials")?;
+    for id in ids {
+        conn.execute(
+            "UPDATE lesson_uses SET won=?1 WHERE run=?2 AND lesson=?3",
+            params![won, outcome.run.as_str(), id],
+        )
+        .ctx("score lesson use")?;
+        score_lesson(conn, outcome, &LessonId::parse(&id)?, min_uses)?;
+    }
     Ok(())
 }
 
@@ -65,23 +69,14 @@ pub(in crate::store) fn rescore_failed_runs(
         .ctx("rescore lesson trials")?;
         touched.extend(used_lessons(conn, run)?);
     }
-    let at = archon_core::now();
-    let (mut recounted, mut state_changed) = (0, false);
+    let mut recounted = 0;
     for id in &touched {
         let what = format!("lesson {id} keeps its stored counts");
-        if let Some(changed) = or_skipped(conn, &what, || recount_stored(conn, id, at))? {
+        if or_skipped(conn, &what, || recount_stored(conn, id))?.is_some() {
             recounted += 1;
-            state_changed |= changed;
         }
     }
     assert!(recounted <= touched.len(), "a lesson is recounted once");
-    if state_changed {
-        let what = "the lesson clusters stay as they were";
-        or_skipped(conn, what, || {
-            check_every_lesson_writable(conn)?;
-            super::consolidation::consolidate_all(conn)
-        })?;
-    }
     Ok(recounted)
 }
 
@@ -134,31 +129,32 @@ fn or_skipped<T>(
     }
 }
 
-/// Recounts the stored lesson `id` from its scored uses and writes it when
-/// that changed it; whether its state changed.
-fn recount_stored(
-    conn: &Connection,
-    id: &str,
-    at: archon_core::Timestamp,
-) -> Result<bool, ArchonError> {
+/// Rebuilds the stored counts during V24, before live learning is configured.
+fn recount_stored(conn: &Connection, id: &str) -> Result<(), ArchonError> {
     let mut lesson = super::load(conn, &LessonId::parse(id)?)?;
     if lesson.id.as_str() != id {
         let what = format!("lesson row {id} holds {}", lesson.id);
         return Err(ArchonError::Corrupt(what));
     }
-    let before = lesson.clone();
+    let before = (lesson.uses, lesson.wins);
     recount(conn, &mut lesson)?;
-    refresh(&mut lesson, at);
-    if lesson == before {
-        return Ok(false);
+    assert!(lesson.wins <= lesson.uses);
+    if (lesson.uses, lesson.wins) == before {
+        return Ok(());
     }
     check_writable(&lesson)?;
-    let state_changed = lesson.state != before.state;
-    save_scored(conn, before.state, lesson, at)?;
-    Ok(state_changed)
+    let rows = conn
+        .execute(
+            "UPDATE lessons SET uses=?2, wins=?3,
+                 data=json_set(data, '$.uses', ?2, '$.wins', ?3) WHERE id=?1",
+            params![id, lesson.uses, lesson.wins],
+        )
+        .ctx("write recounted lesson counts")?;
+    assert_eq!(rows, 1, "the recounted lesson came from this row");
+    Ok(())
 }
 
-/// Refuses a stored lesson that [`super::write`] takes for a caller's bug.
+/// Rejects a damaged lesson before updating its JSON.
 fn check_writable(lesson: &Lesson) -> Result<(), ArchonError> {
     let counted = lesson.wins <= lesson.uses;
     let confident = lesson.confidence.is_finite() && (0.0..=1.0).contains(&lesson.confidence);
@@ -172,29 +168,12 @@ fn check_writable(lesson: &Lesson) -> Result<(), ArchonError> {
     Err(ArchonError::Corrupt(what))
 }
 
-/// Refuses a store holding a lesson that consolidation could not write back,
-/// or one whose record names another lesson: writing it would replace that one.
-fn check_every_lesson_writable(conn: &Connection) -> Result<(), ArchonError> {
-    let mut stmt = conn
-        .prepare("SELECT id, data FROM lessons")
-        .ctx("prepare the stored lessons")?;
-    let rows = stmt
-        .query_map([], |r| Ok((text_column(r, 0)?, text_column(r, 1)?)))
-        .ctx("query the stored lessons")?;
-    for row in rows {
-        let unreadable = || ArchonError::Corrupt("a lesson row holds no text".into());
-        let (id, data) = row.ctx("read a stored lesson")?;
-        let lesson: Lesson = from_json(&data.ok_or_else(unreadable)?, "lesson")?;
-        if id.as_deref() != Some(lesson.id.as_str()) {
-            let what = format!("a lesson row holds lesson {}, not its own", lesson.id);
-            return Err(ArchonError::Corrupt(what));
-        }
-        check_writable(&lesson)?;
-    }
-    Ok(())
-}
-
-fn score_lesson(conn: &Connection, outcome: &Outcome, id: &LessonId) -> Result<(), ArchonError> {
+fn score_lesson(
+    conn: &Connection,
+    outcome: &Outcome,
+    id: &LessonId,
+    min_uses: u32,
+) -> Result<(), ArchonError> {
     let mut lesson = super::load(conn, id)?;
     let before = lesson.state;
     recount(conn, &mut lesson)?;
@@ -207,12 +186,12 @@ fn score_lesson(conn: &Connection, outcome: &Outcome, id: &LessonId) -> Result<(
     }
     if outcome.is_win()
         && lesson.state == LessonState::Proposed
-        && lesson.source == archon_core::lesson::LessonSource::Orchestrator
+        && lesson.source == LessonSource::Orchestrator
     {
         lesson.state = LessonState::Active;
     }
     let at = archon_core::now();
-    refresh(&mut lesson, at);
+    refresh(conn, &mut lesson, at, min_uses)?;
     let (scope, changed) = (lesson.scope.clone(), lesson.state != before);
     save_scored(conn, before, lesson, at)?;
     if changed {
@@ -273,7 +252,7 @@ pub(super) fn save_scored(
     }
     let verb = match lesson.state {
         LessonState::Active => "activated",
-        LessonState::Retracted => "retracted",
+        LessonState::Retracted => "retired",
         LessonState::Proposed => unreachable!("scoring never proposes a lesson"),
     };
     assert!(lesson.wins <= lesson.uses);
@@ -288,16 +267,37 @@ pub(super) fn save_scored(
     Ok(())
 }
 
-pub(super) fn refresh(lesson: &mut Lesson, at: archon_core::Timestamp) {
+pub(super) fn refresh(
+    conn: &Connection,
+    lesson: &mut Lesson,
+    at: archon_core::Timestamp,
+    min_uses: u32,
+) -> Result<(), ArchonError> {
+    refresh_confidence(lesson, at);
+    assert!(min_uses > 0);
+    if lesson.pinned
+        || lesson.source == LessonSource::Operator
+        || lesson.state == LessonState::Retracted
+        || lesson.uses < min_uses
+    {
+        return Ok(());
+    }
+    let baseline = super::holdout::baseline(conn, lesson, min_uses)?.unwrap_or(0.5);
+    assert!((0.0..=1.0).contains(&baseline));
+    let win_rate = f64::from(lesson.wins) / f64::from(lesson.uses);
+    if win_rate <= baseline {
+        lesson.state = LessonState::Retracted;
+        lesson.retirement = Some(LessonRetirement { min_uses, baseline });
+    }
+    Ok(())
+}
+
+pub(super) fn refresh_confidence(lesson: &mut Lesson, at: archon_core::Timestamp) {
     assert!(lesson.wins <= lesson.uses);
     let base = if lesson.uses == 0 {
         match lesson.source {
-            archon_core::lesson::LessonSource::Operator => 1.0,
-            archon_core::lesson::LessonSource::Orchestrator
-                if lesson.state == LessonState::Proposed =>
-            {
-                0.15
-            }
+            LessonSource::Operator => 1.0,
+            LessonSource::Orchestrator if lesson.state == LessonState::Proposed => 0.15,
             _ => 0.5,
         }
     } else {
@@ -316,9 +316,6 @@ pub(super) fn refresh(lesson: &mut Lesson, at: archon_core::Timestamp) {
         } else {
             2.0_f64.powf(-days / 30.0)
         };
-    if !lesson.pinned && lesson.uses >= 5 && wilson(lesson.wins, lesson.uses) < 0.3 {
-        lesson.state = LessonState::Retracted;
-    }
     assert!((0.0..=1.0).contains(&lesson.confidence));
 }
 

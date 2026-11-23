@@ -128,38 +128,33 @@ fn read_attempts(
 }
 
 const EVIDENCE_SQL: &str =
-        "WITH RECURSIVE selected AS MATERIALIZED (
+        "WITH selected AS MATERIALIZED (
              SELECT st.* FROM stage_runs st INDEXED BY stage_runs_by_started_at JOIN runs r ON r.id = st.run
              JOIN items i ON i.id = r.item
              WHERE (?1 IS NULL OR i.repo = ?1) AND (?2 IS NULL OR r.pipeline = ?2)
                AND (?3 IS NULL OR st.stage_id = ?3)
                AND st.started_at >= ?6 AND st.started_at < ?7
                AND date(st.started_at, 'localtime') BETWEEN ?4 AND ?5
-         ),
-         beneath(root, agent) AS (
-             SELECT st.aether_agent, d.agent FROM selected st
-             CROSS JOIN delegated_agents d ON d.parent = st.aether_agent
-             UNION
-             SELECT b.root, d.agent FROM beneath b JOIN delegated_agents d ON d.parent = b.agent
-         ),
-         delegated(root, cost_usd, estimated_cost_usd) AS (
-             SELECT b.root, SUM(s.cost_usd), SUM(s.estimated_cost_usd)
-             FROM beneath b JOIN spend s ON s.agent = b.agent GROUP BY b.root
          )
-         SELECT st.data, i.data, s.cost_usd, s.estimated_cost_usd, r.pipeline,
-                COALESCE(d.cost_usd, 0), COALESCE(d.estimated_cost_usd, 0),
+         SELECT st.data, i.data,
+                SUM(CASE WHEN w.root IS NOT NULL THEN x.cost_usd END),
+                SUM(CASE WHEN w.root IS NOT NULL THEN x.estimated_cost_usd END),
+                r.pipeline,
+                SUM(CASE WHEN w.root IS NULL THEN COALESCE(x.cost_usd, 0) ELSE 0 END),
+                SUM(CASE WHEN w.root IS NULL THEN COALESCE(x.estimated_cost_usd, 0) ELSE 0 END),
                 p.host, p.repository, p.number, json_extract(r.data, '$.branch')
          FROM selected st JOIN runs r ON r.id = st.run JOIN items i ON i.id = r.item
-         LEFT JOIN spend s ON s.agent = st.aether_agent
-         LEFT JOIN delegated d ON d.root = st.aether_agent
-         LEFT JOIN run_pull_requests p ON p.run = st.run";
+         LEFT JOIN stage_spend x ON x.stage = st.id
+         LEFT JOIN stage_spend_windows w ON w.root = x.agent AND w.stage = x.stage
+         LEFT JOIN run_pull_requests p ON p.run = st.run
+         GROUP BY st.id";
 
 #[cfg(test)]
 mod snapshot_plan_tests {
     use super::*;
 
     #[test]
-    fn selected_attempts_drive_indexed_descendant_lookup() {
+    fn selected_attempts_drive_indexed_spend_lookup() {
         let store = super::super::Store::open_in_memory().unwrap();
         let sql = format!("EXPLAIN QUERY PLAN {EVIDENCE_SQL}");
         let mut statement = store.conn.prepare(&sql).unwrap();
@@ -185,11 +180,10 @@ mod snapshot_plan_tests {
             "{plan:?}"
         );
         assert!(
-            plan.iter()
-                .any(|line| line.contains("delegated_agents_by_parent")),
+            plan.iter().any(|line| line.contains("stage_spend_by_stage")
+                || line.contains("sqlite_autoindex_stage_spend")),
             "{plan:?}"
         );
-        assert!(!plan.iter().any(|line| line == "SCAN d"), "{plan:?}");
     }
 }
 

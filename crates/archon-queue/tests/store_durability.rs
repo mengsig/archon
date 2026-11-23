@@ -225,6 +225,7 @@ fn recovery_after_a_crash_mid_dispatch() {
 /// Takes a store back to before V10, for tests that replay earlier migrations.
 const UNDO_V10: &str = "
     DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;
+    DROP TABLE stage_spend; DROP TABLE stage_spend_windows; ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
     DROP TABLE lesson_trials; DROP TABLE github_outbox; DROP TABLE github_objects; DROP TABLE github_links; DROP TABLE item_transitions; DROP TABLE changes;
     DROP TABLE spend_pruned; DROP TABLE tracked_requests; DROP TABLE run_pull_requests; DROP TABLE merge_requests;
     DROP TABLE operator_feedback;
@@ -253,7 +254,7 @@ fn migrations_apply_once_and_a_newer_store_is_refused() {
         schema_versions(&path),
         vec![
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25
+            25, 26
         ]
     );
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -327,7 +328,7 @@ fn concurrent_first_opens_migrate_once() {
         schema_versions(&path),
         vec![
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25
+            25, 26
         ]
     );
 }
@@ -605,7 +606,7 @@ fn v9_keeps_an_earlier_provider_reported_total_as_the_floor() {
     drop(conn);
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(schema_versions(&path).last(), Some(&25));
+    assert_eq!(schema_versions(&path).last(), Some(&26));
     for n in [1, 2] {
         let settled = SpendRow {
             cost_complete: Some(true),
@@ -1083,4 +1084,61 @@ fn v6_backfills_only_unambiguous_run_ownership_and_preserves_it() {
         let error = store.upsert_stage_run(&foreign_stage).unwrap_err();
         assert!(matches!(error, ArchonError::Invalid(_)));
     }
+}
+
+#[test]
+fn spend_migration_links_only_unambiguous_history_and_keeps_the_ledger() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db_path(&dir);
+    let mut store = Store::open(&path).unwrap();
+    let item = store
+        .insert_item(&item(None, "historical spend"), None)
+        .unwrap();
+    let run = start(&mut store, &item.id);
+    store.upsert_stage_run(&running_stage(&run, 0, 1)).unwrap();
+    let model = "codex/helper".parse().unwrap();
+    store
+        .record_delegated(&agent(2), &agent(1), &model, None)
+        .unwrap();
+    let at = local(8, 12);
+    for n in 1..=3 {
+        let row = SpendRow {
+            item: Some(item.id.clone()),
+            ..usage(n, f64::from(n), 0.0, at)
+        };
+        store.record_spend(&row).unwrap();
+    }
+    store
+        .kv_set(keys::ORCHESTRATOR_AGENT, agent(4).as_str())
+        .unwrap();
+    store.record_spend(&usage(4, 4.0, 0.0, at)).unwrap();
+    let mut kept = running_stage(&run, 1, 5);
+    kept.state = archon_core::run::StageState::Completed;
+    kept.finished_at = Some(t(30));
+    store.upsert_stage_run(&kept).unwrap();
+    kept.id = archon_core::id::StageRunId::new();
+    kept.attempt = 2;
+    kept.started_at = t(30);
+    kept.finished_at = Some(t(40));
+    store.upsert_stage_run(&kept).unwrap();
+    store
+        .record_spend(&SpendRow {
+            item: Some(item.id.clone()),
+            ..usage(5, 5.0, 0.0, at)
+        })
+        .unwrap();
+    drop(store);
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at; DROP TABLE stage_spend; DROP TABLE stage_spend_windows;
+         ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
+         DELETE FROM schema_migrations WHERE version >= 25;",
+    )
+    .unwrap();
+    drop(conn);
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.unlinked_spend().unwrap(), [agent(3), agent(5)]);
+    assert_eq!(store.spend_totals(at, false).unwrap(), (15.0, 15.0));
+    assert_eq!(store.spend_for_item(&item.id, false).unwrap(), 11.0);
 }

@@ -7,6 +7,7 @@ mod leftovers;
 mod mcp_tools;
 mod orchestrator;
 pub(super) mod registry;
+mod spend;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -104,6 +105,7 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
     checks.push(check_locations(&archon_client::default_socket()));
     let archond = connect_existing().await;
     checks.push(check_archond(&archond));
+    checks.push(spend::check_spend(&archon_core::paths::store_path()));
     checks.push(check_crash(&archon_core::paths::data_dir()));
     checks.push(check_quarantine(&archon_core::paths::data_dir()));
     checks.push(orchestrator::check_orchestrator(&archond).await);

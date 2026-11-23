@@ -209,6 +209,16 @@ pub(crate) async fn pull_request(
     repo: &Repo,
     request: Request<'_>,
 ) -> Result<Result<String, String>, ArchonError> {
+    Ok(pull_request_with_times(binary, repo, request)
+        .await?
+        .map(|pr| pr.url))
+}
+
+pub(super) async fn pull_request_with_times(
+    binary: &Path,
+    repo: &Repo,
+    request: Request<'_>,
+) -> Result<Result<gh::PullRequest, String>, ArchonError> {
     assert!(!request.title.is_empty() && !request.body.is_empty());
     assert_ne!(
         request.branch, request.base,
@@ -224,7 +234,7 @@ pub(crate) async fn pull_request(
             if pr.base_ref_name != request.base {
                 retarget(binary, repo, &pr.url, request.base).await?;
             }
-            Ok(Ok(pr.url.clone()))
+            Ok(Ok(pr.clone()))
         }
         several => Ok(Err(format!(
             "GitHub lists {} open pull requests for `{}`; close all but one, then retry the item",
@@ -240,7 +250,7 @@ async fn create(
     binary: &Path,
     repo: &Repo,
     request: Request<'_>,
-) -> Result<Result<String, String>, ArchonError> {
+) -> Result<Result<gh::PullRequest, String>, ArchonError> {
     assert!(!request.branch.is_empty() && !request.base.is_empty());
     assert_ne!(
         request.branch, request.base,
@@ -267,7 +277,7 @@ async fn create(
         Err(refusal) => return Ok(Err(refusal)),
     };
     if let [pr] = listed.as_slice() {
-        return Ok(Ok(pr.url.clone()));
+        return Ok(Ok(pr.clone()));
     }
     let said = created.detail();
     if let Some(blocked) = needs_operator("opening the pull request", &said) {

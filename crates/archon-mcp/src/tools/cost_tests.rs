@@ -176,3 +176,42 @@ fn rendered_list_prices_and_unknown_amounts_are_not_billed() {
          ≈ $3.00 API-equivalent)."
     );
 }
+
+#[test]
+fn timing_report_arguments_catalog_and_rendering() {
+    use archon_core::timing_report::{TimingQuery, TimingReport};
+    let definition = definition("timing_report").unwrap();
+    assert!(definition.read_only);
+    assert!(definition.input_schema["properties"]["since"].is_object());
+    let Request::TimingReport(query) = to_request(
+        "timing_report",
+        json!({"since": "2026-09-01", "until": "1d"}),
+    )
+    .unwrap() else {
+        panic!("expected timing query")
+    };
+    assert_eq!(query.since, Some(DayBound::parse("2026-09-01").unwrap()));
+    assert_eq!(query.until, Some(DayBound::Days(1)));
+    assert_eq!(
+        match to_request("timing_report", json!({})).unwrap() {
+            Request::TimingReport(q) => q,
+            _ => panic!("expected timing query"),
+        },
+        TimingQuery::default()
+    );
+    assert!(to_request("timing_report", json!({"since": "12h"})).is_err());
+    assert!(to_request("timing_report", json!({"until": ""})).is_err());
+    let report = TimingReport {
+        range: serde_json::from_value(json!({"since": "2026-09-01", "until": "2026-09-02"}))
+            .unwrap(),
+        queue_ms: [("ready".into(), 12)].into_iter().collect(),
+        stage_ms: 42,
+        gap_ms: 5,
+        retry_ms: 2,
+        merge_wait_ms: 8,
+        ci_wait_ms: 3,
+    };
+    let text = render("timing_report", &Reply::TimingReport(Box::new(report)));
+    assert!(text.contains("queue ready: 12") && text.contains("stage: 42"));
+    assert!(text.contains("Retry time is included") && text.contains("may overlap"));
+}

@@ -63,6 +63,7 @@ pub mod settings;
 pub mod steer;
 #[cfg(feature = "testing")]
 pub mod testing;
+pub mod timing_report;
 pub mod tracked;
 mod verdict_prose;
 

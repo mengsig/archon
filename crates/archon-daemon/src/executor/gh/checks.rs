@@ -29,6 +29,8 @@ pub(crate) struct Check {
     #[serde(default)]
     pub started_at: Option<DateTime<Utc>>,
     #[serde(default)]
+    pub completed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
     pub link: String,
 }
 
@@ -57,34 +59,31 @@ pub(crate) enum Checks {
     },
 }
 
-/// The checks of the pull request at `url`. Once `waited_long`, a check still
-/// queued counts as never started.
+/// One checks snapshot, with the event times GitHub returned.
+#[derive(Debug)]
+pub(crate) struct ObservedChecks {
+    pub state: Checks,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+/// Read the checks at `url`. Once `waited_long`, a check still queued
+/// counts as never started.
 pub(crate) async fn of_pull_request(
     binary: &Path,
     repo: &Repo,
     url: &str,
     waited_long: bool,
-) -> Result<Checks, ArchonError> {
+) -> Result<ObservedChecks, ArchonError> {
     if !url.contains("/pull/") {
         return Err(ArchonError::Invalid(format!(
             "{url:?} is not a pull request URL; `archon queue show` names the run's pull request"
         )));
     }
-    let fields = "name,bucket,startedAt,link";
+    let fields = "name,bucket,startedAt,completedAt,link";
     let args = ["pr", "checks", url, "--json", fields];
     let ran = run(binary, repo, &args, None).await?;
-    // `gh pr checks` exits non-zero while checks fail or are pending, yet prints them.
-    let checks: Vec<Check> = match serde_json::from_str(ran.stdout.trim()) {
-        Ok(checks) => checks,
-        Err(_) if ran.detail().to_lowercase().contains(NO_CHECKS) => return Ok(Checks::None),
-        Err(e) => {
-            let said = succeeded(ran, &format!("reading the checks of {url}"))?;
-            let said: String = said.chars().take(200).collect();
-            return Err(ArchonError::Protocol(format!(
-                "invalid `gh pr checks` response ({e}): {said}"
-            )));
-        }
-    };
+    let checks = decode_checks(ran, url)?;
     let failing: Vec<&Check> = checks.iter().filter(|c| failed(c)).collect();
     let mut not_started = Vec::new();
     let mut reason = None;
@@ -113,7 +112,58 @@ pub(crate) async fn of_pull_request(
     } else {
         Vec::new()
     };
-    Ok(classify(&checks, not_started, reason, queued))
+    let (started_at, finished_at) = timing(&checks);
+    Ok(ObservedChecks {
+        state: classify(&checks, not_started, reason, queued),
+        started_at,
+        finished_at,
+    })
+}
+
+fn decode_checks(ran: super::Ran, url: &str) -> Result<Vec<Check>, ArchonError> {
+    assert!(url.contains("/pull/"), "the checks are for a pull request");
+    // `gh pr checks` prints JSON even when failures or pending checks make it exit nonzero.
+    match serde_json::from_str(ran.stdout.trim()) {
+        Ok(checks) => Ok(checks),
+        Err(_) if ran.detail().to_lowercase().contains(NO_CHECKS) => Ok(Vec::new()),
+        Err(error) => {
+            let said = succeeded(ran, &format!("reading the checks of {url}"))?;
+            let detail: String = said.chars().take(200).collect();
+            Err(ArchonError::Protocol(format!(
+                "invalid `gh pr checks` response ({error}): {detail}"
+            )))
+        }
+    }
+}
+
+fn timing(checks: &[Check]) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+    observed_times(
+        checks
+            .iter()
+            .map(|c| (c.started_at, c.completed_at, c.bucket != "pending")),
+    )
+}
+
+/// The earliest reported start and, for a complete snapshot, the latest
+/// finish. A missing or zero time leaves that endpoint unknown.
+pub(crate) fn observed_times(
+    checks: impl IntoIterator<Item = (Option<DateTime<Utc>>, Option<DateTime<Utc>>, bool)>,
+) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+    let mut earliest = None;
+    let mut latest = None;
+    let mut complete = true;
+    for (start, end, terminal) in checks {
+        if let Some(start) = start.filter(|at| at.timestamp() > 0) {
+            earliest = Some(earliest.map_or(start, |seen: DateTime<Utc>| seen.min(start)));
+        }
+        if let Some(end) = end.filter(|at| at.timestamp() > 0 && terminal) {
+            latest = latest.max(Some(end));
+        } else {
+            complete = false;
+        }
+    }
+    let finished = latest.filter(|end| complete && earliest.is_none_or(|start| start <= *end));
+    (earliest, finished)
 }
 
 /// GitHub cancels a job left queued too long, so a cancelled one is probed too.
@@ -234,8 +284,27 @@ mod tests {
             name: name.into(),
             bucket: bucket.into(),
             started_at: Some(at.parse().unwrap()),
+            completed_at: None,
             link: String::new(),
         }
+    }
+
+    #[test]
+    fn timing_requires_a_complete_snapshot_and_ignores_zero_times() {
+        let mut first = check("one", "pass", true);
+        first.completed_at = Some("2026-10-15T09:21:00Z".parse().unwrap());
+        let mut second = check("two", "pending", false);
+        assert_eq!(
+            timing(&[first.clone(), second.clone()]),
+            (first.started_at, None)
+        );
+        second.bucket = "pass".into();
+        second.completed_at = Some("2026-10-15T09:22:00Z".parse().unwrap());
+        assert_eq!(
+            timing(&[first.clone(), second.clone()]),
+            (first.started_at, second.completed_at)
+        );
+        assert_eq!(timing(&[]), (None, None));
     }
 
     #[test]

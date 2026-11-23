@@ -33,6 +33,7 @@ use crate::queue::{Caps, PauseState, Priority, QueueItem};
 use crate::repo::{Attribution, Checks, GhUser, Repo, RepoTiers, ShipMode};
 use crate::run::{OperatorGate, PipelineRun, StageRun, StageState, Verdict};
 use crate::steer::Steer;
+use crate::timing_report::{TimingQuery, TimingReport};
 
 /// 3: a GitHub watcher `add` may carry an allowlist; an older archond
 /// would drop it and widen who may dispatch, so it is refused at hello.
@@ -548,6 +549,7 @@ pub enum Request {
     /// Spend over a range of local days, grouped by day, repository,
     /// pipeline, model, item or stage (ARCHITECTURE §5.3).
     CostReport(CostQuery),
+    TimingReport(TimingQuery),
     ModelEvidence(ModelEvidenceQuery),
 
     /// Autonomy defaults, ceiling and directives, for one repository or
@@ -833,6 +835,7 @@ impl Request {
             | Self::Conversation { .. }
             | Self::ListReports
             | Self::OrchestratorStatus
+            | Self::TimingReport(_)
             | Self::CostReport(_)
             | Self::ModelEvidence(_)
             | Self::Autonomy { .. }
@@ -1285,6 +1288,7 @@ pub enum Reply {
     /// How `submit_verdict` read a stage's verdict, and what it decided.
     VerdictCheck(crate::run::VerdictCheck),
     CostReport(Box<CostReport>),
+    TimingReport(Box<TimingReport>),
     ModelEvidence(Box<ModelEvidenceReport>),
     Initiative(Box<InitiativeDetail>),
     Initiatives(Vec<Initiative>),

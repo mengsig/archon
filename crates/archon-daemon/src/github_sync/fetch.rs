@@ -140,6 +140,7 @@ pub(crate) enum Fetched {
     Changed {
         cached: Box<CachedObject>,
         body: String,
+        created_at: Option<Timestamp>,
     },
     /// 304: the cached copy is current.
     NotModified,
@@ -175,9 +176,12 @@ pub(crate) async fn read(
     let now = archon_core::now();
     let backoff = response.backoff(u64::try_from(now.timestamp()).unwrap_or(0));
     let fetched = match response.status {
-        200 => parse_issue(reference, &response, now).map(|(cached, body)| Fetched::Changed {
-            cached: Box::new(cached),
-            body,
+        200 => parse_issue(reference, &response, now).map(|(cached, body, created_at)| {
+            Fetched::Changed {
+                cached: Box::new(cached),
+                body,
+                created_at,
+            }
         }),
         304 => Ok(Fetched::NotModified),
         404 | 410 => Ok(Fetched::Missing),
@@ -222,6 +226,8 @@ struct Issue {
     user: Option<User>,
     updated_at: Timestamp,
     #[serde(default)]
+    created_at: Option<Timestamp>,
+    #[serde(default)]
     body: Option<String>,
     #[serde(default)]
     draft: Option<bool>,
@@ -234,7 +240,7 @@ fn parse_issue(
     asked: &GithubRef,
     response: &Response,
     now: Timestamp,
-) -> Result<(CachedObject, String), ArchonError> {
+) -> Result<(CachedObject, String, Option<Timestamp>), ArchonError> {
     let issue: Issue = serde_json::from_str(&response.body).map_err(|e| {
         ArchonError::Protocol(format!(
             "GitHub's {}#{} did not parse: {e}",
@@ -288,7 +294,7 @@ fn parse_issue(
         merged_at,
         etag,
     };
-    Ok((cached, issue.body.unwrap_or_default()))
+    Ok((cached, issue.body.unwrap_or_default(), issue.created_at))
 }
 
 #[cfg(test)]
@@ -377,7 +383,7 @@ mod tests {
             "labels":[{"name":"bug"}],"user":{"login":"someone"},"operator":true,
             "updated_at":"2026-11-01T00:00:00Z","body":"text"}"#;
         let response = Response::parse(&format!("HTTP/2.0 200 OK\nEtag: \"x\"\n\n{body}")).unwrap();
-        let (cached, text) = parse_issue(&issue_ref(), &response, archon_core::now()).unwrap();
+        let (cached, text, _) = parse_issue(&issue_ref(), &response, archon_core::now()).unwrap();
         assert_eq!(cached.object.state, GithubObjectState::Closed);
         assert_eq!(cached.object.labels, ["bug"]);
         assert_eq!(cached.etag.as_deref(), Some("\"x\""));
@@ -385,7 +391,7 @@ mod tests {
         let merged = r#"{"number":7,"title":"T","state":"closed","draft":false,
             "pull_request":{"merged_at":"2026-11-02T00:00:00Z"},"updated_at":"2026-11-02T00:00:00Z"}"#;
         let response = Response::parse(&format!("HTTP/2.0 200 OK\n\n{merged}")).unwrap();
-        let (cached, _) = parse_issue(&issue_ref(), &response, archon_core::now()).unwrap();
+        let (cached, _, _) = parse_issue(&issue_ref(), &response, archon_core::now()).unwrap();
         assert_eq!(cached.object.reference.kind, GithubKind::PullRequest);
         assert_eq!(cached.object.state, GithubObjectState::Merged);
         let wrong = Response::parse("HTTP/2.0 200 OK\n\n{\"number\":8,\"title\":\"T\",\"state\":\"open\",\"updated_at\":\"2026-11-02T00:00:00Z\"}").unwrap();

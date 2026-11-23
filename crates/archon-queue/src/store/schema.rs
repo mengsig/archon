@@ -806,9 +806,12 @@ CREATE INDEX IF NOT EXISTS items_by_duplicate_candidate ON items (
 ) WHERE state != 'succeeded';
 "#;
 
+/// Version 28: observed queue-reason intervals and pull request event times.
+const V28: &str = include_str!("schema/timing.sql");
+
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27,
+    V22, V23, V24, V25, V26, V27, V28,
 ];
 // Later migrations must preserve the tables read by V24 reclassification.
 const _: () = assert!(RECLASSIFY_VERSION <= MIGRATIONS.len());
@@ -1069,6 +1072,8 @@ mod pr_identity;
 #[cfg(test)]
 mod refresh_index;
 #[cfg(test)]
+mod timing_upgrade;
+#[cfg(test)]
 mod v1_replay;
 
 #[cfg(test)]
@@ -1302,6 +1307,8 @@ mod tests {
     fn a_branch_built_v25_store_gains_stage_spend_and_keeps_its_indexes() {
         let mut conn = v2_store();
         migrate(&mut conn).unwrap();
+        conn.execute_batch(include_str!("../../tests/common/undo_timing.sql"))
+            .unwrap();
         conn.execute_batch("DROP TABLE stage_spend; DROP TABLE stage_spend_windows; ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq; DROP INDEX items_by_duplicate_candidate; DELETE FROM schema_migrations WHERE version >= 26;").unwrap();
         assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
         let versions: Vec<i64> = applied_versions(&conn).iter().map(|(v, _)| *v).collect();
@@ -1313,6 +1320,8 @@ mod tests {
     fn v24_upgrade_adds_the_evidence_item_time_index() {
         let mut conn = v2_store();
         migrate(&mut conn).unwrap();
+        conn.execute_batch(include_str!("../../tests/common/undo_timing.sql"))
+            .unwrap();
         conn.execute_batch("DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at; DROP INDEX items_by_duplicate_candidate; DELETE FROM schema_migrations WHERE version >= 26;").unwrap();
         assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
         let plan: String = conn.query_row(
@@ -1327,9 +1336,11 @@ mod tests {
     fn a_v26_store_from_next_gains_the_duplicate_candidate_index() {
         let mut conn = v2_store();
         migrate(&mut conn).unwrap();
+        conn.execute_batch(include_str!("../../tests/common/undo_timing.sql"))
+            .unwrap();
         conn.execute_batch("DROP INDEX items_by_duplicate_candidate; DELETE FROM schema_migrations WHERE version = 27;").unwrap();
         assert_eq!(applied_versions(&conn).last().unwrap().0, 26);
-        assert_eq!(migrate(&mut conn).unwrap(), 27);
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
         let found: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'items_by_duplicate_candidate'",
             [], |row| row.get(0),
@@ -1341,6 +1352,8 @@ mod tests {
     fn a_branch_built_v26_store_gains_the_evidence_indexes_and_v27() {
         let mut conn = v2_store();
         migrate(&mut conn).unwrap();
+        conn.execute_batch(include_str!("../../tests/common/undo_timing.sql"))
+            .unwrap();
         conn.execute_batch("DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at; DELETE FROM schema_migrations WHERE version = 27;").unwrap();
         assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
         let versions: Vec<i64> = applied_versions(&conn).iter().map(|(v, _)| *v).collect();
@@ -1568,7 +1581,7 @@ mod tests {
         .unwrap();
         insert_feedback(&conn, "fb_old", V11_ROW).unwrap();
         conn.execute_batch(
-            "DROP TABLE run_pull_requests; DROP TABLE merge_requests; DROP TABLE tracked_requests;
+            "DROP TABLE queue_reason_intervals; DROP TABLE run_pull_requests; DROP TABLE merge_requests; DROP TABLE tracked_requests;
              DROP TABLE spend_pruned; DROP TABLE item_transitions; DROP TABLE changes;
              DROP TABLE github_links; DROP TABLE github_objects; DROP TABLE github_outbox;
              DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;

@@ -63,6 +63,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             "model_evidence",
             json!({"repo": "web", "pipeline": "direct", "stage": "implement", "since": "30d"}),
         ),
+        ("timing_report", json!({"since": "7d", "until": "1d"})),
         (
             "cost_report",
             json!({"since": "2026-09-01", "until": "1d", "by": "model"}),
@@ -1558,6 +1559,7 @@ fn the_tool_list_stays_within_its_budget() {
     const FROM_1_0_BUDGET_BYTES: usize = 20_000 + INTENT_BINDING_BYTES;
     // `submit_verdict`, which every verdict-holding stage calls before it completes.
     const VERDICT_CHECK_BYTES: usize = 512;
+    const TIMING_REPORT_BYTES: usize = 512;
     // Each effort's note that `max` needs `[models] max_effort` (1.6.4).
     const EFFORT_CAP_NOTE_BYTES: usize = 256;
     const BUDGET_BYTES: usize = 33 * 1024
@@ -1589,7 +1591,17 @@ fn the_tool_list_stays_within_its_budget() {
         verdict_check <= VERDICT_CHECK_BYTES,
         "submit_verdict exceeds its allocation at {verdict_check} bytes"
     );
-    assert!(all <= BUDGET_BYTES, "the tool list grew to {all} bytes");
+    let timing_report = definitions.iter().find(|d| d.name == "timing_report");
+    let timing_report = shown_bytes(timing_report.expect("defined"));
+    assert!(
+        timing_report <= TIMING_REPORT_BYTES,
+        "timing_report exceeds its allocation at {timing_report} bytes"
+    );
+    assert!(
+        all - timing_report <= BUDGET_BYTES,
+        "the previous tools grew to {} bytes",
+        all - timing_report
+    );
 }
 
 /// Every effort a tool takes says that `max` needs the operator's cap: the

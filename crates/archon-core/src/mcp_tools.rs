@@ -81,6 +81,7 @@ pub const TOOLS: &[ToolName] = &[
     tool("request_status", ToolClass::ReadOnly),
     tool("approve_intent", ToolClass::Mutation),
     tool("watch_repo", ToolClass::Mutation),
+    tool("timing_report", ToolClass::ReadOnly),
 ];
 
 /// The tools a stage agent keeps whatever its item's `tools` mode: its

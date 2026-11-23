@@ -7,8 +7,6 @@
 //! `gh` runs without a lock; a request left `merging` by a stop or a lost
 //! confirmation is settled from GitHub by the coordination pass.
 
-use std::path::Path;
-
 use archon_core::autonomy::ReviewLevel;
 use archon_core::config::RepoConfig;
 use archon_core::error::ArchonError;
@@ -617,8 +615,7 @@ async fn seen_on_github(
         is_commit_id(&shipped.head),
         "a delivered head is a full commit id"
     );
-    let facts = gh::merge_facts(&ctx.config.github.binary, &shipped.repo, &shipped.pr_url);
-    let facts = facts.await?;
+    let facts = observe_merge(ctx, &shipped.repo, &shipped.pr_url).await?;
     if let Some(why) = moved_since_review(shipped, &facts) {
         return Err(refused_early(shipped, &why));
     }
@@ -833,7 +830,7 @@ pub(crate) async fn enable_auto_merge(
     }
     let base = base.map_err(|why| refused(&why))?;
     let binary = &ctx.config.github.binary;
-    let facts = gh::merge_facts(binary, &shipped.repo, &shipped.pr_url).await?;
+    let facts = observe_merge(ctx, &shipped.repo, &shipped.pr_url).await?;
     // Checks may be pending: auto-merge waits for them.
     let expected = Expected {
         head: &shipped.head,
@@ -1018,7 +1015,7 @@ async fn execute(
         method,
     ];
     let sent = gh::run(binary, &ready.repo, &args, None).await;
-    match confirm(binary, &ready.repo, &merge, method, sent).await {
+    match confirm(ctx, &ready.repo, &merge, method, sent).await? {
         Some(state) => {
             merge.state = state;
             finish_merge(ctx, merge).await
@@ -1172,9 +1169,9 @@ async fn ready(ctx: &DaemonContext, merge: &MergeRequest) -> Result<Readiness, A
         Ok(delivered) => delivered,
         Err(why) => return Ok(Readiness::Refused(why)),
     };
-    let binary = &ctx.config.github.binary;
-    let facts = match gh::merge_facts(binary, &shipped.repo, &merge.pr_url).await {
+    let facts = match observe_merge(ctx, &shipped.repo, &merge.pr_url).await {
         Ok(facts) => facts,
+        Err(error) if error.is_store() => return Err(error),
         Err(error) => {
             return Ok(Readiness::Refused(format!("{GITHUB_UNREADABLE}: {error}")));
         }
@@ -1336,31 +1333,52 @@ async fn retargeted(
 /// How the merge ended, read back from GitHub; `None` when it cannot be
 /// read, after a `gh pr merge` that may have merged.
 async fn confirm(
-    binary: &Path,
+    ctx: &DaemonContext,
     repo: &Repo,
     merge: &MergeRequest,
     method: &str,
     sent: Result<gh::Ran, ArchonError>,
-) -> Option<MergeState> {
+) -> Result<Option<MergeState>, ArchonError> {
     let said = match &sent {
         Ok(ran) if ran.ok => None,
         Ok(ran) => Some(ran.detail()),
         Err(error) => Some(error.to_string()),
     };
-    let after = match gh::merge_facts(binary, repo, &merge.pr_url).await {
+    let after = match observe_merge(ctx, repo, &merge.pr_url).await {
         Ok(after) => after,
+        Err(error) if error.is_store() => return Err(error),
         Err(error) => {
             tracing::warn!(merge = %merge.id, %error, "pull request not read after the merge");
-            return match &sent {
+            return Ok(match &sent {
                 Ok(ran) if !ran.ok => Some(MergeState::Refused {
                     reason: format!("GitHub refused the merge: {}", ran.detail()),
                 }),
                 // It may have merged: the coordination pass settles it.
                 _ => None,
-            };
+            });
         }
     };
-    Some(settled(&after, merge, method.trim_start_matches('-'), said))
+    Ok(Some(settled(
+        &after,
+        merge,
+        method.trim_start_matches('-'),
+        said,
+    )))
+}
+
+async fn observe_merge(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    url: &str,
+) -> Result<PullRequestFacts, ArchonError> {
+    let (facts, times) = gh::merge_facts_with_times(&ctx.config.github.binary, repo, url).await?;
+    if let Some(pr) = archon_core::pull_request::PullRequestRef::from_url(url) {
+        ctx.store
+            .lock()
+            .await
+            .observe_pull_request_times(&pr, times)?;
+    }
+    Ok(facts)
 }
 
 /// The request's end, from what GitHub shows after the merge was sent.
@@ -1791,8 +1809,7 @@ async fn settle_one(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<bool
         .lock()
         .await
         .repo(&crate::resolve::repo_ref(&merge.repo))?;
-    let binary = &ctx.config.github.binary;
-    let after = gh::merge_facts(binary, &repo, &merge.pr_url).await?;
+    let after = observe_merge(ctx, &repo, &merge.pr_url).await?;
     merge.state = match (after.state.as_str(), after.head == merge.head) {
         ("MERGED", true) => MergeState::Merged {
             method: "confirmed later by GitHub".into(),

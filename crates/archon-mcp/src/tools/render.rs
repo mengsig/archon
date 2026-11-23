@@ -92,6 +92,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
             listing("watched repositories", watches.iter().map(watch_line))
         }
         Reply::CostReport(report) => cost::report(report),
+        Reply::TimingReport(report) => report.text(),
         Reply::ModelEvidence(report) => report.text(),
         Reply::Initiatives(all) => initiatives::list(all),
         Reply::Initiative(detail) => initiatives::detail(tool, detail),

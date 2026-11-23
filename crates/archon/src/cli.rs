@@ -32,7 +32,7 @@ Setup:
                   Defaults, limits and what runs
 
 Advanced:
-  log, cost, reports, model-evidence, lessons, learning, clear-notifications,
+  log, cost, timing-report, reports, model-evidence, lessons, learning, clear-notifications,
   promote, release, orchestrator, daemon, aether, tui, gc, mcp, schema
                   Inspection, release and internals; see `archon <command> --help`
 
@@ -188,6 +188,16 @@ pub enum Command {
         /// spend with no such owner.
         #[arg(long, value_enum, default_value_t = CostBy::Day)]
         by: CostBy,
+    },
+    /// Observed timing over UTC days. Retry is included in stage time.
+    /// CI and merge waits may overlap.
+    TimingReport {
+        /// First UTC day as YYYY-MM-DD or an age like 7d. Defaults to 7d.
+        #[arg(long)]
+        since: Option<String>,
+        /// Last UTC day as YYYY-MM-DD or an age like 1d. Defaults to today.
+        #[arg(long)]
+        until: Option<String>,
     },
     /// Recorded stage cost, duration and verdict evidence (no recommendations).
     ModelEvidence {
@@ -1791,6 +1801,25 @@ mod tests {
             Cli::try_parse_from(["archon", "reports", "reopen"]).is_err(),
             "a report id is required"
         );
+    }
+
+    #[test]
+    fn timing_report_accepts_bounds_and_json() {
+        let cli = Cli::try_parse_from([
+            "archon",
+            "timing-report",
+            "--since",
+            "7d",
+            "--until",
+            "2026-09-01",
+            "--json",
+        ])
+        .unwrap();
+        assert!(cli.json);
+        assert!(
+            matches!(cli.command, Some(Command::TimingReport { since: Some(since), until: Some(until) }) if since == "7d" && until == "2026-09-01")
+        );
+        assert!(Cli::try_parse_from(["archon", "timing-report", "--by", "day"]).is_err());
     }
 
     #[test]

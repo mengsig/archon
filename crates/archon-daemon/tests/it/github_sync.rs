@@ -232,6 +232,58 @@ pub(crate) fn reference(number: u64, kind: GithubKind) -> GithubRef {
     }
 }
 
+#[tokio::test]
+async fn sync_records_pr_times_on_the_existing_etag_and_checks_reads() {
+    use archon_core::cost::DayBound;
+    use archon_core::pull_request::PullRequestRef;
+    use archon_core::timing_report::TimingQuery;
+    use serde_json::json;
+
+    let github = Github::new();
+    let mut opened = pr_json(7, false);
+    opened["created_at"] = json!("2026-11-01T00:00:00Z");
+    github.serve(7, opened, r#""p1""#);
+    let checks = |completed: bool| {
+        json!({"statusCheckRollup": [{
+            "startedAt": "2026-11-02T10:00:00Z",
+            "status": if completed { "COMPLETED" } else { "IN_PROGRESS" },
+            "conclusion": completed.then_some("SUCCESS"),
+            "completedAt": completed.then_some("2026-11-02T10:05:00Z"),
+        }]})
+    };
+    github.serve_pr_state(7, checks(false));
+    let h = harness(&github).await;
+    let item = h.enqueue("PR timing").await;
+    h.dispatch().await;
+    let run = h.run(&item.id).await;
+    let pr = PullRequestRef::from_url("https://github.com/o/r/pull/7").unwrap();
+    h.ctx
+        .store
+        .lock()
+        .await
+        .record_run_pull_request(&run.id, &pr, None)
+        .unwrap();
+    let first = GithubSync::new(MIN_INTERVAL).pass(&h.ctx).await.unwrap();
+    assert_eq!((first.changed, first.pr_states), (1, 1));
+    github.serve_pr_state(7, checks(true));
+    let unchanged = GithubSync::new(MIN_INTERVAL).pass(&h.ctx).await.unwrap();
+    assert_eq!((unchanged.unchanged, unchanged.pr_states), (1, 1));
+
+    github.serve(7, pr_json(7, true), r#""p2""#);
+    let merged = GithubSync::new(MIN_INTERVAL).pass(&h.ctx).await.unwrap();
+    assert_eq!((merged.changed, merged.pr_states), (1, 0));
+    let query = TimingQuery {
+        since: Some(DayBound::parse("2026-11-01").unwrap()),
+        until: Some(DayBound::parse("2026-11-03").unwrap()),
+    };
+    let Reply::TimingReport(report) = h.cli(Request::TimingReport(query)).await.unwrap() else {
+        panic!("expected timing report");
+    };
+    assert_eq!(report.ci_wait_ms, 5 * 60 * 1000);
+    assert_eq!(report.merge_wait_ms, 2 * 24 * 60 * 60 * 1000);
+    github.assert_only_reads();
+}
+
 /// A harness on the stub `gh`, whose repository's `origin` is github.com/o/r.
 pub(crate) async fn harness(github: &Github) -> Harness {
     let mut config = Config::default();

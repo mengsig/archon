@@ -63,6 +63,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         request_status(),
         approve_intent(),
         watch_repo(),
+        timing_report(),
     ]
 }
 
@@ -559,6 +560,22 @@ fn cost_report() -> ToolDefinition {
                 "since": {"type": "string", "minLength": 1, "description": format!("First day: `YYYY-MM-DD`, or days back as `7d` (the last 7 days, with today) or `2w`. Default: {DEFAULT_DAYS}d.")},
                 "until": {"type": "string", "minLength": 1, "description": "Last day likewise; `1d` = yesterday. Default: today."},
                 "by": {"type": "string", "enum": groups, "description": "Default: day."},
+            }),
+            &[],
+        ),
+        false,
+    )
+}
+
+fn timing_report() -> ToolDefinition {
+    define(
+        "timing_report",
+        "Timing report",
+        "Queue by reason, stages, gaps, retries, CI and merge wait over UTC days.",
+        object(
+            json!({
+                "since": {"type": "string", "minLength": 1, "description": format!("First day as YYYY-MM-DD or 7d. Defaults to {DEFAULT_DAYS}d.")},
+                "until": {"type": "string", "minLength": 1, "description": "Last day in the same format. Defaults to today."}
             }),
             &[],
         ),

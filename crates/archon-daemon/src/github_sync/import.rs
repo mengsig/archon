@@ -50,7 +50,7 @@ pub(crate) async fn read_issue(
     let binary = &ctx.config.github.binary;
     let read = fetch::read(binary, repo, reference, None).await?;
     let (cached, body) = match read.fetched? {
-        fetch::Fetched::Changed { cached, body } => (*cached, body),
+        fetch::Fetched::Changed { cached, body, .. } => (*cached, body),
         fetch::Fetched::NotModified => {
             return Err(ArchonError::Protocol(
                 "GitHub answered 304 to a read that sent no ETag".into(),

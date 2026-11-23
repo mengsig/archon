@@ -376,6 +376,7 @@ async fn the_web_app_speaks_23_or_24_and_the_cli_only_24() {
                 feature::TASK_GRAPH,
                 feature::RUN_PLAN,
                 feature::ITEM_FILTERS,
+                feature::ENQUEUE_ADVICE,
             ] {
                 assert!(served.iter().any(|f| f == served_feature), "{served:?}");
             }

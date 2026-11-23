@@ -84,6 +84,15 @@ its own, set by risk rather than size: see
 of a pipeline, and when work was split into parts it has the integrated
 result reviewed once, with a depth that follows the risk.
 
+Enqueue may return advice alongside the queued item. For `direct`, Archon
+suggests the `adaptive` pipeline when the title or brief puts a change verb near
+wording about concurrency, locking, migrations, security, or a breaking
+public format change. A risk word on its own is insufficient. For any
+pipeline, Archon suggests one item per fix when the title or brief lists
+at least two distinct numbered or bulleted fix entries, or distinct
+change labels such as `R2-3` and `R2-5`. The advice is part of the
+enqueue response only.
+
 What to know about helper agents:
 
 - A helper works in one mirror, or in the orchestrator's scratch directory
@@ -1110,6 +1119,13 @@ at all until it is retried. `archon queue retry` queues a succeeded item
 again on its branch, delivering into the pull request it has; an item
 waiting on it waits for it to succeed again, and the retry counts against
 the run that passed.
+
+`archon model-evidence` counts a routing miss when `--switch` revives an
+escalated run on a different pipeline. Each miss belongs to the pipeline the
+failed run was using and the local day it finished. A count covers the
+recorded routing decisions in that repository and pipeline. The report
+shows `misses=unknown` when it has no classified decisions and lists failed
+runs with missing evidence as `unclassified`.
 
 Every steer is recorded with who made it (`operator` or `orchestrator`) and
 what it changed. `archon queue show <id>` lists them, and the feed has a

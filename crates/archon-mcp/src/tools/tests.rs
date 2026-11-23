@@ -872,6 +872,32 @@ fn enqueue_and_get_item_show_the_superseded_item() {
 }
 
 #[test]
+fn enqueue_renders_advice_alongside_the_item_and_budget_note() {
+    use archon_core::protocol::EnqueueNotice;
+
+    let queued = item(QueueState::Queued);
+    let notices = vec![EnqueueNotice::DirectRisk, EnqueueNotice::BundledFixes];
+    let reply = Reply::EnqueueAdvised {
+        item: Box::new(queued.clone()),
+        notices: notices.clone(),
+        budgets_off: true,
+    };
+    let text = render("enqueue", &reply);
+    assert!(
+        text.starts_with("Enqueued ") && text.contains(queued.id.as_str()),
+        "{text}"
+    );
+    assert!(
+        text.contains(archon_core::protocol::BUDGETS_OFF_NOTE),
+        "{text}"
+    );
+    for notice in notices {
+        assert!(text.contains(notice.text()), "{text}");
+    }
+    assert!(text.contains("adaptive"), "{text}");
+}
+
+#[test]
 fn a_budget_set_while_budgets_are_off_is_said_not_to_be_enforced() {
     let queued = item(QueueState::Queued);
     let plain = render("update_item", &Reply::Item(queued.clone()));

@@ -75,6 +75,11 @@ pub fn instructions(
     }
     if holds_verdict(stage, owed) {
         out.push_str(SUBMIT_VERDICT_RULE);
+        if owed.requires_records() {
+            out.push_str("- Fix and resubmit any refused record. If asked to restate, keep `restating: true` on the corrected submission.\n");
+        }
+    } else if owed.requires_records() {
+        out.push_str(SUBMIT_RECORDS_RULE);
     }
     if stage.scenarios == Scenarios::Strict {
         out.push_str(STRICT_SCENARIO_RULES);
@@ -1219,6 +1224,12 @@ const SUBMIT_VERDICT_RULE: &str = "\
 `structured` (skip it if you have no such tool). If it asks, restate once as it says; \
 that submission is final. Then finish with what you last submitted.\n";
 
+const SUBMIT_RECORDS_RULE: &str = "\
+\n## Record precheck\n\n\
+- Before you finish, call `mcp__archon__submit_verdict` with the `summary` and `structured` \
+you will finish with (skip it if you have no such tool). Fix and resubmit any refused record. \
+Archon checks the final result again at settlement.\n";
+
 /// Where a strict stage's own `fail` leads, which its `on_fail` decides.
 fn strict_fail_route(stage: &StageSpec) -> String {
     assert_eq!(stage.scenarios, Scenarios::Strict, "a strict stage's rule");
@@ -2020,10 +2031,8 @@ mod tests {
         assert!(building.ends_with("write no `REVIEW:` line yourself.\n"));
     }
 
-    /// A finished agent cannot be asked again, so every contract with a
-    /// Verdict section, and no other, has the verdict read before completion.
     #[test]
-    fn only_a_contract_with_a_verdict_section_asks_for_submit_verdict() {
+    fn a_contract_with_a_verdict_or_required_records_asks_for_submit_verdict() {
         let rule = "- Before you finish, call `mcp__archon__submit_verdict`";
         let contract = |kind, gate, owed| {
             let (mode, part) = (WorkspaceMode::Worktree, TeamPart::Solo);
@@ -2049,14 +2058,28 @@ mod tests {
                 "{kind:?}: the rule ends that section"
             );
             assert!(verdict.contains("that submission is final"), "{kind:?}");
+            if owed.requires_records() {
+                assert!(verdict.contains("Fix and resubmit any refused record"));
+            }
             assert!(
                 verdict.contains("(skip it if you have no such tool)"),
                 "{kind:?}"
             );
         }
+        for owed in [
+            owing(1, false),
+            Owed {
+                ship_record: true,
+                ..Owed::default()
+            },
+        ] {
+            let text = contract(StageKind::Work, Gate::None, owed);
+            assert_eq!(text.matches(rule).count(), 1, "{text}");
+            assert!(text.contains("## Record precheck"), "{text}");
+        }
         let others = [
             (StageKind::Work, Gate::None, Owed::default()),
-            (StageKind::Work, Gate::None, owing(1, false)),
+            (StageKind::Work, Gate::None, owing(0, false)),
             (StageKind::Report, Gate::None, Owed::default()),
         ];
         for (kind, gate, owed) in others {

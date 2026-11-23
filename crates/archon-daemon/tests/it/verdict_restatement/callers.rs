@@ -15,7 +15,8 @@ use super::{
     E2E, PASS, at_e2e, call, disputed, e2e_plan, forwarded, kept, marked, only_running, restate,
     settle, setup_runs, stored, submit,
 };
-use crate::common::{Harness, MODEL, choice, completed};
+use crate::common::delivery::{pass_by, reviewed_by};
+use crate::common::{Harness, MODEL, REVIEW_MODEL, choice, completed};
 
 fn refused(answer: Result<VerdictCheck, ArchonError>, why: &str) {
     match answer {
@@ -37,7 +38,10 @@ async fn only_a_running_verdict_stage_s_own_agent_may_submit() {
     h.dispatch().await;
     let setup = only_running(&h, "setup").await;
     let setup_agent = setup.aether_agent.clone().expect("an agent");
-    refused(submit_as(&h, &setup_agent).await, "stage `setup` has not");
+    refused(
+        submit_as(&h, &setup_agent).await,
+        "stage `setup` has no verdict or required records",
+    );
     let stranger = AetherAgentId::parse("agt_stranger").unwrap();
     refused(submit_as(&h, &stranger).await, "has none on record");
     let unnamed = call(None, PASS, disputed(), false);
@@ -137,10 +141,15 @@ async fn a_review_only_lead_s_recorded_verdict_is_read_as_settlement_reads_it() 
     let h = Harness::new().await;
     h.add_pipeline("review-only", REVIEW_ONLY);
     let (passing, lead) = at_review_lead(&h, "passes on its record").await;
-    let accepted = submit(&h, &lead, "Reviewed.", recorded("pass")).await;
+    let reviewer = h
+        .backend
+        .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+    reviewed_by(&h, &lead, "Reviewed.", std::slice::from_ref(&reviewer)).await;
+    let record = pass_by(&[reviewer]);
+    let accepted = submit(&h, &lead, "Reviewed.", record.clone()).await;
     assert_eq!(accepted.decision, CheckDecision::Accepted);
     assert_eq!(accepted.reading.verdict, Verdict::Pass);
-    settle(&h, "Reviewed.", recorded("pass")).await;
+    settle(&h, "Reviewed.", record).await;
     let settled = stored(&h, &passing, &lead).await;
     assert_eq!(
         (settled.verdict, settled.restatement),
@@ -174,4 +183,35 @@ async fn a_review_only_lead_s_recorded_verdict_is_read_as_settlement_reads_it() 
         "{error}"
     );
     assert!(error.contains("the migration drops a column"), "{error}");
+}
+
+#[tokio::test]
+async fn a_refused_review_record_does_not_consume_the_verdict_restatement() {
+    let h = Harness::new().await;
+    h.add_pipeline("review-only", REVIEW_ONLY);
+    let (item, lead) = at_review_lead(&h, "restates a pass with a checked review").await;
+    let agent = lead.aether_agent.as_ref().unwrap();
+    let asked = submit(&h, &lead, "Reviewed.", json!({})).await;
+    assert_eq!(asked.decision, CheckDecision::Restate);
+    let before = kept(&h, &lead).await.unwrap();
+    assert!(before.restated.is_none());
+
+    let missing = call(Some(agent), "Reviewed.", recorded("pass"), true);
+    refused(
+        forwarded(&h, agent, missing).await,
+        "the review this pipeline declares is not on record",
+    );
+    assert_eq!(kept(&h, &lead).await, Some(before));
+
+    let reviewer = h.backend.delegate(agent, REVIEW_MODEL);
+    reviewed_by(&h, &lead, "Reviewed.", std::slice::from_ref(&reviewer)).await;
+    let record = pass_by(&[reviewer]);
+    let checked = restate(&h, &lead, "Reviewed.", record.clone()).await;
+    assert_eq!(checked.decision, CheckDecision::Final);
+    assert_eq!(checked.reading.verdict, Verdict::Pass);
+    settle(&h, "Reviewed.", record).await;
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Succeeded { .. }
+    ));
 }

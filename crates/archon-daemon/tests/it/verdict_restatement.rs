@@ -8,6 +8,7 @@ use crate::common;
 mod bindings;
 mod callers;
 mod cleanup;
+mod records;
 mod replaced;
 
 use std::collections::BTreeMap;
@@ -89,6 +90,17 @@ async fn forwarded(
     agent: &AetherAgentId,
     request: Request,
 ) -> Result<VerdictCheck, ArchonError> {
+    match forwarded_reply(h, agent, request).await? {
+        Reply::VerdictCheck(check) => Ok(check),
+        other => panic!("submit_verdict replied {other:?}"),
+    }
+}
+
+async fn forwarded_reply(
+    h: &Harness,
+    agent: &AetherAgentId,
+    request: Request,
+) -> Result<Reply, ArchonError> {
     let tracked = Request::Tracked {
         request_id: RequestId::new(),
         idempotency_key: None,
@@ -98,10 +110,7 @@ async fn forwarded(
         caller: agent.clone(),
         request: Box::new(tracked),
     };
-    match Box::pin(handlers::handle(&h.ctx, ClientKind::ArchonMcp, request)).await? {
-        Reply::VerdictCheck(check) => Ok(check),
-        other => panic!("submit_verdict replied {other:?}"),
-    }
+    Box::pin(handlers::handle(&h.ctx, ClientKind::ArchonMcp, request)).await
 }
 
 async fn sent(

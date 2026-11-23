@@ -177,8 +177,8 @@ fn submit_verdict() -> ToolDefinition {
     define(
         "submit_verdict",
         "Submit verdict",
-        "Stage agents with a Verdict section: have the result you will finish with read \
-         first. An unreadable verdict is asked back; the `restating` one is final.",
+        "Check your stage's verdict and required records before completion. Correct refused \
+         records and resubmit. Restate an unreadable verdict once if asked.",
         object(
             json!({
                 "summary": {"type": "string", "minLength": 1, "description": "The `summary` you will finish with."},

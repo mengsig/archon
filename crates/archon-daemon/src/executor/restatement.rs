@@ -1,9 +1,11 @@
-//! `submit_verdict`: a stage agent has its verdict read while it still runs.
+//! `submit_verdict`: a stage agent checks its verdict and records while it still runs.
 //! Aether cannot ask a finished agent again, so a verdict the gate would read
 //! as neither pass nor fail is answered here with what to restate, and the
 //! one sent back as the restatement is final. The ask is kept by stage
 //! attempt, so neither a restarted archond nor a replacement of the attempt's
 //! stage run asks for a second one. A stage that never calls it settles as before.
+
+mod records;
 
 use std::time::Duration;
 
@@ -12,9 +14,10 @@ use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
 use archon_core::protocol::Reply;
 use archon_core::run::{
-    Restatement, StageRun, StageState, Submission, Verdict, VerdictCheck, VerdictReading,
-    names_environment,
+    PipelineRun, Restatement, StageOutcome, StageRun, StageState, Submission, Verdict,
+    VerdictCheck, VerdictReading, names_environment,
 };
+use archon_pipeline::spec::Owed;
 use archon_queue::Store;
 
 use super::RunTable;
@@ -38,8 +41,7 @@ pub(crate) struct Submitted<'a> {
     pub restating: bool,
 }
 
-/// Read the verdict `caller`'s stage is about to finish with, as the gate
-/// will, and say whether it stands, is to be restated, or is final.
+/// Check what `caller`'s stage is about to finish with against its contract.
 pub(crate) async fn submit(
     ctx: &DaemonContext,
     caller: Option<&AetherAgentId>,
@@ -74,7 +76,8 @@ pub(crate) async fn submit(
             standing(&table, &mut store, agent, &sent)?
         };
         match standing {
-            Standing::Checked(check) => return Ok(Reply::VerdictCheck(check)),
+            Standing::Checked(check) => return Ok(check.map_or(Reply::Ok, Reply::VerdictCheck)),
+            Standing::Records(records) => return records.check(ctx, agent, &sent).await,
             Standing::Unbound if began < deadline => {}
             Standing::Unbound | Standing::Refused => {
                 return Err(ArchonError::Forbidden(format!(
@@ -92,11 +95,24 @@ pub(crate) async fn submit(
 
 /// Where a caller of `submit_verdict` stands.
 enum Standing {
-    /// It holds its attempt's running stage, whose verdict was read.
-    Checked(VerdictCheck),
+    Checked(Option<VerdictCheck>),
+    /// Record verification needs Git and Aether, with no daemon locks held.
+    Records(Box<RecordCheck>),
     /// A spawn or wake not on record yet may make it a stage's agent.
     Unbound,
     Refused,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Contract {
+    verdict: bool,
+    owed: Owed,
+}
+
+struct RecordCheck {
+    run: PipelineRun,
+    stage: StageRun,
+    contract: Contract,
 }
 
 /// Where `agent` stands, from one reading of the store: a binding recorded
@@ -115,18 +131,54 @@ fn standing(
             Standing::Refused
         });
     };
-    check(table, store, &stage, sent).map(Standing::Checked)
+    let contract = contract(table, &stage)?;
+    if contract.owed.requires_records() && records_can_pass(store, &stage, sent, contract.verdict)?
+    {
+        let run = store.run(&stage.run)?;
+        if run.state.is_terminal() {
+            return Ok(Standing::Refused);
+        }
+        return Ok(Standing::Records(Box::new(RecordCheck {
+            run,
+            stage,
+            contract,
+        })));
+    }
+    let verdict = contract
+        .verdict
+        .then(|| check(store, &stage, sent))
+        .transpose()?;
+    Ok(Standing::Checked(verdict))
+}
+
+fn records_can_pass(
+    store: &Store,
+    stage: &StageRun,
+    sent: &Submitted<'_>,
+    verdict: bool,
+) -> Result<bool, ArchonError> {
+    assert!(!stage.state.is_terminal(), "only a running stage submits");
+    if StageOutcome::states_failure(sent.summary, sent.structured) {
+        return Ok(false);
+    }
+    if !verdict {
+        return Ok(true);
+    }
+    let reading = read(stage, sent.summary, sent.structured);
+    if reading.verdict != Verdict::Pass {
+        return Ok(false);
+    }
+    let state = load(store, &key(stage))?;
+    Ok(state.is_none_or(|restatement| restatement.bind(reading).verdict == Verdict::Pass))
 }
 
 /// The check of `sent` for running `stage`, recorded with its attempt.
 fn check(
-    table: &RunTable,
     store: &mut Store,
     stage: &StageRun,
     sent: &Submitted<'_>,
 ) -> Result<VerdictCheck, ArchonError> {
     assert!(!stage.state.is_terminal(), "only a running stage submits");
-    holds_verdict(table, stage)?;
     let submission = Submission {
         reading: read(stage, sent.summary, sent.structured),
         restating: sent.restating,
@@ -202,25 +254,30 @@ fn binding_pending(store: &Store, agent: &AetherAgentId) -> Result<bool, ArchonE
     Ok(false)
 }
 
-/// Refuse a stage whose verdict Archon does not read: its run is not driven
-/// right now, or its contract has no Verdict section.
-fn holds_verdict(table: &RunTable, stage: &StageRun) -> Result<(), ArchonError> {
+/// The verdict and records a live stage can submit under its current contract.
+fn contract(table: &RunTable, stage: &StageRun) -> Result<Contract, ArchonError> {
     assert!(!stage.state.is_terminal(), "only a running stage submits");
     let driver = table.drivers.get(&stage.run).ok_or_else(|| {
         ArchonError::Unavailable(format!(
-            "Archon is not driving stage `{}`'s run right now, so its verdict is read when you \
-             finish. Finish as your instructions say",
+            "Archon is not driving stage `{}`'s run right now. Finish as your instructions say",
             stage.stage_id
         ))
     })?;
-    if !driver.holds_verdict(&stage.stage_id) {
+    let spec = driver.spec().stage(&stage.stage_id).ok_or_else(|| {
+        ArchonError::Unavailable(format!(
+            "Archon has no contract for stage `{}`",
+            stage.stage_id
+        ))
+    })?;
+    let owed = driver.spec().owed(spec);
+    let verdict = archon_pipeline::contract::holds_verdict(spec, owed);
+    if !verdict && !owed.requires_records() {
         return Err(ArchonError::Forbidden(format!(
-            "submit_verdict is for a stage whose contract has a Verdict section, which stage \
-             `{}` has not. Finish as your instructions say",
+            "stage `{}` has no verdict or required records to check. Finish as your instructions say",
             stage.stage_id
         )));
     }
-    Ok(())
+    Ok(Contract { verdict, owed })
 }
 
 /// A result's verdict as settlement reads it for `stage`.

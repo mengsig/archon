@@ -153,7 +153,7 @@ async fn settle_verified(
         };
         return settle_locked(ctx, &mut table, id, outcome).await;
     }
-    let (stage, run, review, daemon_ships, planner, record_stage, records_build, as_sent) = {
+    let (stage, run, owed, daemon_ships, planner, record_stage, records_build, as_sent) = {
         let table = ctx.runs.lock().await;
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
@@ -162,10 +162,13 @@ async fn settle_verified(
         }
         let run = store.run(&stage.run)?;
         let driver = table.drivers.get(&run.id);
-        let review = super::review::Owed {
-            reviewers: driver.map_or(0, |d| d.reviewers_owed(&stage.stage_id)),
-            records_ship: driver.is_some_and(|d| d.records_ship(&stage.stage_id)),
-        };
+        let owed = driver
+            .and_then(|d| {
+                d.spec()
+                    .stage(&stage.stage_id)
+                    .map(|spec| d.spec().owed(spec))
+            })
+            .unwrap_or_default();
         let daemon_ships = driver.is_some_and(|d| d.ships_by_daemon());
         let planner = driver.and_then(|d| swarm::Planner::of(d.spec(), &stage.stage_id));
         let record_stage = driver.and_then(|d| {
@@ -181,7 +184,7 @@ async fn settle_verified(
         (
             stage,
             run,
-            review,
+            owed,
             daemon_ships,
             planner,
             record_stage,
@@ -189,7 +192,7 @@ async fn settle_verified(
             as_sent,
         )
     };
-    if review.reviewers > 0
+    if owed.review.is_some_and(|duty| duty.reviewers > 0)
         && let Some(capped) = super::review::capped_at_completion(ctx, &stage).await?
     {
         return settle_capped(ctx, id, capped).await;
@@ -203,11 +206,8 @@ async fn settle_verified(
     let proposal_refused = matches!(&outcome, StageOutcome::Failed { error, .. }
         if super::intent::is_refusal(error));
     let outcome = ship::verify(ctx, &run, &stage, daemon_ships, outcome).await?;
-    let outcome = match (review.records_ship, &record_stage) {
-        (true, _) => {
-            let outcome = ship::with_full_ids(&run, outcome).await?;
-            ship::verify_no_change(ctx, &run, outcome).await?
-        }
+    let outcome = match (owed.ship_record, &record_stage) {
+        (true, _) => ship::verify_record(ctx, &run, outcome).await?,
         (false, Some(record)) => {
             ship::verify_standing_no_change(ctx, &run, record, &stage, outcome).await?
         }
@@ -224,8 +224,8 @@ async fn settle_verified(
     else {
         return Ok(FollowUp::default());
     };
-    let outcome = super::refresh::verify_unreviewed(ctx, &run, review, outcome).await?;
-    let (outcome, verified) = super::review::verify(ctx, &run, &stage, review, outcome).await?;
+    let outcome = super::refresh::verify_unreviewed(ctx, &run, owed, outcome).await?;
+    let (outcome, verified) = super::review::verify(ctx, &run, &stage, owed, outcome).await?;
     let planned = planner.is_some();
     let was_completed = matches!(outcome, StageOutcome::Completed { .. });
     let (outcome, assigned) = swarm::verify(ctx, &run, &stage, planner, outcome).await?;

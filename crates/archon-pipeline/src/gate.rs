@@ -194,25 +194,40 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
             false => GroupResult::Fail { headline, report },
         }
     };
-    if owed.ship_record && crate::ship::no_change_reason(structured).is_some() {
-        return GroupResult::Pass { summary };
-    }
-    if owed.ship_record
-        && let Err(why) = ShipRecord::read(structured)
-    {
-        // A repair that still hands in no valid ship record has none to loop on.
-        let spent = member.record_repair == Some(RecordRepair::Spent);
-        return refused(format!("{SHIP_REFUSAL}: {why}"), broken || spent);
-    }
-    let Some(duty) = owed.review else {
-        return GroupResult::Pass { summary };
-    };
-    match Evidence::read(structured, duty) {
-        Ok(evidence) => GroupResult::Pass {
+    match read_records(owed, structured) {
+        Ok(None) => GroupResult::Pass { summary },
+        Ok(Some(evidence)) => GroupResult::Pass {
             summary: format!("{summary}\n\n{}", evidence.line()),
         },
-        Err(why) => refused(format!("{REVIEW_REFUSAL}: {why}"), broken),
+        Err(headline) => {
+            // A repair that still hands in no valid ship record has none to loop on.
+            let spent = member.record_repair == Some(RecordRepair::Spent);
+            let unrecorded = broken || (spent && refuses_ship_record(&headline));
+            refused(headline, unrecorded)
+        }
     }
+}
+
+/// The gate's refusal of a result's records after the daemon verified them.
+pub fn check_records(owed: Owed, structured: Option<&serde_json::Value>) -> Result<(), String> {
+    read_records(owed, structured).map(drop)
+}
+
+fn read_records(
+    owed: Owed,
+    structured: Option<&serde_json::Value>,
+) -> Result<Option<Evidence>, String> {
+    if owed.ship_record {
+        if crate::ship::no_change_reason(structured).is_some() {
+            return Ok(None);
+        }
+        ShipRecord::read(structured).map_err(|why| format!("{SHIP_REFUSAL}: {why}"))?;
+    }
+    owed.review
+        .map(|duty| {
+            Evidence::read(structured, duty).map_err(|why| format!("{REVIEW_REFUSAL}: {why}"))
+        })
+        .transpose()
 }
 
 /// Why a review-only lead's recorded verdict is not a pass, worded from its

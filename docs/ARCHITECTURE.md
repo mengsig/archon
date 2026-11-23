@@ -2959,10 +2959,10 @@ again, and archond reads the verdict when the task settles
 with a Verdict section (`contract::holds_verdict`: a verdict stage, or the
 lead of a review-only run) tells its agent to call `submit_verdict` with the
 `summary` and `structured` it will finish with. `executor/restatement.rs`
-answers only the agent of a live stage run whose driver says it holds a
-verdict, refuses a `structured` that is no object before anything is
-stored, reads the submission as settlement will (`Verdict::read`, or
-`read_review_lead`) and applies `Restatement::submit`
+answers only the agent of a live stage run whose contract holds a verdict
+or requires a review or ship record. It requires an object when the caller
+supplies `structured`, reads any verdict as settlement will (`Verdict::read`
+or `read_review_lead`), and applies `Restatement::submit`
 (`archon_core::run::restatement`). The stage run must be its attempt's
 current one, the newest of its slot as the engine picks it (§6.4): after a
 crash mid-replacement the superseded stage run is still live, and its agent
@@ -2973,6 +2973,12 @@ its way, a wake not yet bound to the replacement stage run). When a
 a create was sent, the call waits up to 5 s for the record
 (`spawn_recorded`, no lock held) and is then read again; any other caller
 is refused at once.
+
+A stage that owes a review or ship record submits the same result, even
+when it has no verdict to restate. Archon checks the proposed records for
+a result that can pass, using settlement's checks. The call returns the
+refusal while the stage agent can still correct the record and submit
+again. Settlement checks the result afresh against the branch and Aether.
 
 - With nothing asked, a pass or a fail is `accepted` and keeps no state. An
   `Unknown` is `restate`: its `VerdictNote` is stored and the answer says
@@ -3975,7 +3981,7 @@ can reach the socket (§5.5).
 | `record_lesson` | `{kind: routing\|practice\|pitfall\|pipeline, text, repo?, pipeline?, item?}` | `RecordLesson` (§19; active at once, advice only) |
 | `request_merge` | `{item, reason?}` | `RequestMerge` (the orchestrator only, for the operator's own request; archond asks the operator to confirm unless `grant_merge` covers it; §18.6) |
 | `request_status` | `{request}` | `RequestStatus` (§11.1; the caller's own changes only) |
-| `submit_verdict` | `{summary, structured?, restating?}` | `SubmitVerdict` (the agent of a running stage whose contract has a Verdict section only; `structured` is an object; answers `accepted`, `restate`, or `final` for the one sent as `restating`; §8.6) |
+| `submit_verdict` | `{summary, structured?, restating?}` | `SubmitVerdict` (a running stage's agent checks its verdict or required review and ship records; `structured` is an object; verdicts answer `accepted`, `restate`, or `final`; §8.6) |
 
 `refresh_item`, `retry_item`, `steer_item`, `update_item`, `cancel_item`,
 `notify`, `github_reply`, `request_merge` and `message_orchestrator` also

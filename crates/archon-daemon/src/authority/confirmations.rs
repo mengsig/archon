@@ -70,11 +70,7 @@ pub(super) async fn ask(
     before: Value,
 ) -> Result<Reply, ArchonError> {
     let now = archon_core::now();
-    let text = format!(
-        "Approve operator authority change?\nBefore: {}\nRequested change: {}\nReply yes or no, or /answer N yes. A bare reply applies only to your first message after this question, with exactly one confirmation open (same GitHub thread).",
-        serde_json::to_string(&before)?,
-        serde_json::to_string(&action)?
-    );
+    let text = super::describe::question(&action, &before, &evidence.channel);
     let question = Question {
         id: QuestionId::new(),
         number: 0,

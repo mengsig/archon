@@ -1147,10 +1147,10 @@ async fn deliver(ctx: &DaemonContext, batch: &Batch) -> Result<(), ArchonError> 
             Ok(()) => return Ok(()),
             Err(error) if error.is_store() => return Err(error),
             Err(ArchonError::Invalid(refusal)) => {
+                tracing::error!("Aether refused trigger {key} ({refusal}): {payload}");
                 let text = format!(
-                    "Aether refused trigger {key} ({refusal}); its news was not delivered: {payload}"
+                    "Aether refused to take Archon's news ({refusal}); it was not delivered."
                 );
-                tracing::error!("{text}");
                 feed::system(ctx, text).await?;
                 return Ok(());
             }

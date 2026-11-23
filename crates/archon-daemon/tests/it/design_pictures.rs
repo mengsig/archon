@@ -338,3 +338,101 @@ async fn a_closed_note_cannot_be_retaken() {
     );
     assert!(said.contains("failed") && said.contains("closed"), "{said}");
 }
+
+/// The operator's own picture is theirs: the agent's steps retake a page
+/// capture, never a sketch the operator drew.
+#[tokio::test]
+async fn the_operators_sketch_is_not_replaced_by_a_retaken_before_picture() {
+    use base64::Engine;
+    let f = Fixture::new().await;
+    let browser = f.factory.browser(0);
+    let uploaded = match f
+        .operator(Request::DesignUpload {
+            session: f.session.clone(),
+            media_type: "image/jpeg".into(),
+            data: base64::engine::general_purpose::STANDARD.encode(jpeg(32, 32)),
+            name: None,
+            sketch: Some("[]".into()),
+            base: None,
+            blank: false,
+        })
+        .await
+        .expect("sketch uploaded")
+    {
+        Reply::DesignResolved(view) => view.asset.expect("a stored sketch"),
+        other => panic!("{other:?}"),
+    };
+    let added = match f
+        .operator(Request::DesignNoteAdd {
+            session: f.session.clone(),
+            client_key: "k1".into(),
+            text: "Make it look like this".into(),
+            asset: Some(uploaded.clone()),
+            send_picture: true,
+            details_text: None,
+        })
+        .await
+        .expect("note added")
+    {
+        Reply::DesignNote(view) => view.note,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(added.before_asset.as_ref(), Some(&uploaded));
+
+    let from = browser.calls(|c| c.captures.len());
+    browser.captures_return([jpeg(30, 30)]);
+    report_working(&f, "D1", vec![click("button.new-screen")]).await;
+    assert_eq!(
+        note(&f, "D1").await.before_asset.as_ref(),
+        Some(&uploaded),
+        "the sketch is still the before picture"
+    );
+    assert_eq!(
+        browser.calls(|c| c.captures.len()),
+        from,
+        "no picture was taken over it"
+    );
+}
+
+/// While the session finishes its pictures are frozen: a retake sent then is
+/// refused, not run against the pictures Finish is taking.
+#[tokio::test]
+async fn a_retake_during_finish_is_refused() {
+    let f = Fixture::new().await;
+    pick(&f, "k1", "Make the save button green").await;
+    let commit = commit_for(&f, "D1");
+    message(done(&f, "D1", &commit, Vec::new(), None).await);
+    {
+        let mut store = f.h.ctx.store.lock().await;
+        let current = store.design_session(&f.session).unwrap().unwrap();
+        store
+            .design_session_transition(
+                &f.session,
+                archon_core::design::SessionState::Live,
+                archon_core::design::SessionState::Finishing,
+                Some(archon_queue::store::FinishRecord {
+                    capture: "capture-1".into(),
+                    head: commit.clone(),
+                    note_version: current.note_version,
+                    choices: None,
+                }),
+                false,
+            )
+            .unwrap();
+    }
+    refused(
+        &done(
+            &f,
+            "D1",
+            &commit,
+            Vec::new(),
+            Some("Only the hover changed"),
+        )
+        .await,
+        DesignRefusal::Finishing,
+    );
+    assert!(
+        note(&f, "D1").await.after_asset.is_none(),
+        "the frozen pictures are as they were"
+    );
+}

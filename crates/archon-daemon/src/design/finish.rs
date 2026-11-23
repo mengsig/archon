@@ -302,17 +302,7 @@ impl DesignService {
         // (a new screen) is pictured there, not on whatever page the preview
         // shows at Finish, and a state the agent reached with steps is
         // reached again.
-        let shown = match &note.after_asset {
-            Some(after) => ctx
-                .store
-                .lock()
-                .await
-                .design_asset(&note.item, after)
-                .ok()
-                .flatten()
-                .and_then(|a| a.target),
-            None => None,
-        };
+        let shown = self.after_target(ctx, note).await;
         let steps = shown.as_ref().map(|t| t.steps.clone()).unwrap_or_default();
         // A page note with no page of its own stays on the page as shown
         // (its query and fragment too) unless an earlier picture moved it.
@@ -342,22 +332,8 @@ impl DesignService {
         {
             tracing::info!(note = %note.id, why, "design: the final picture's state was not reached");
         }
-        let clip = match note.target.as_ref() {
-            _ if !steps.is_empty() => None,
-            Some(target) if target.region => Some(clip_of(target, 0.0)),
-            Some(target) => match target.selector.as_deref() {
-                Some(selector) => match browser
-                    .resolve_selector(selector, Some(recorded_box(target)))
-                    .await
-                    .ok()
-                    .flatten()
-                {
-                    Some(rect) => Some(grow(rect, MARGIN)),
-                    None => return,
-                },
-                None => return,
-            },
-            None => None,
+        let Some(clip) = final_clip(&*browser, note, !steps.is_empty()).await else {
+            return;
         };
         let Ok(picture) = browser.capture(clip, 2.0).await else {
             return;
@@ -367,6 +343,18 @@ impl DesignService {
         if let Err(error) = self.keep_final(ctx, note, &picture, head).await {
             tracing::info!(%error, "design: a final picture was not kept");
         }
+    }
+
+    /// The target the note's after picture recorded: its page and steps.
+    async fn after_target(&self, ctx: &DaemonContext, note: &DesignNote) -> Option<Target> {
+        let after = note.after_asset.as_ref()?;
+        ctx.store
+            .lock()
+            .await
+            .design_asset(&note.item, after)
+            .ok()
+            .flatten()
+            .and_then(|a| a.target)
     }
 
     /// A done note with no after picture whose final picture matches its
@@ -865,6 +853,30 @@ pub(crate) fn origin_of(url: &str) -> String {
 
 /// The element's box as the note recorded it, in page CSS pixels at the
 /// note's preset: how a selector matching several elements finds the one meant.
+/// What the final picture covers: nothing is `None` (the note's element is
+/// gone), `Some(None)` the whole view (a state reached by steps, or no target).
+async fn final_clip(
+    browser: &dyn super::browser::PreviewBrowser,
+    note: &DesignNote,
+    stepped: bool,
+) -> Option<Option<adb::ClipRect>> {
+    let target = match note.target.as_ref() {
+        _ if stepped => return Some(None),
+        None => return Some(None),
+        Some(target) => target,
+    };
+    if target.region {
+        return Some(Some(clip_of(target, 0.0)));
+    }
+    let selector = target.selector.as_deref()?;
+    let rect = browser
+        .resolve_selector(selector, Some(recorded_box(target)))
+        .await
+        .ok()
+        .flatten()?;
+    Some(Some(grow(rect, MARGIN)))
+}
+
 pub(crate) fn recorded_box(target: &Target) -> adb::ClipRect {
     clip_of(target, 0.0)
 }

@@ -220,10 +220,18 @@ impl DesignService {
     ) -> Result<Reply, ArchonError> {
         let item = &session.item;
         let id = report.id.as_str();
-        let (note, all) = {
+        // The session may have moved on (Finish took its pictures) while this
+        // report waited for the item lock: judge the report by it as it is now.
+        let (note, all, session) = {
             let store = ctx.store.lock().await;
-            (store.design_note(item, id)?, store.design_notes(item)?)
+            let current = store.design_session(&session.id)?.ok_or_else(super::gone)?;
+            (
+                store.design_note(item, id)?,
+                store.design_notes(item)?,
+                current,
+            )
         };
+        let session = &session;
         let note = note.ok_or_else(|| {
             refuse(
                 DesignRefusal::NotYours,
@@ -335,6 +343,36 @@ impl DesignService {
         if let Tidy::Untidy(why) = design_git::check_tidy(&g, trailer.as_deref())? {
             return Err(ArchonError::Invalid(why));
         }
+        let to = self
+            .record_settled(ctx, item, &report, reply_text.clone(), done_commit)
+            .await?;
+        tracing::info!(note = id, ?status, device = ?super::current_device_label(), "design: agent reported");
+        self.emit_note(ctx, item, id).await;
+        if to == NoteStatus::Done && !report.no_change {
+            let fresh = ctx
+                .store
+                .lock()
+                .await
+                .design_note(item, id)?
+                .unwrap_or_else(|| note.clone());
+            return self
+                .picture_after_done(ctx, session, &fresh, &wt, &report, reply_text)
+                .await;
+        }
+        self.note_reply(ctx, item, id).await
+    }
+
+    /// Write an agent's settling report: its reply, then the new status.
+    /// Returns the status the note is now in.
+    async fn record_settled(
+        &self,
+        ctx: &DaemonContext,
+        item: &archon_core::id::QueueItemId,
+        report: &NoteReport,
+        reply_text: Option<String>,
+        done_commit: Option<String>,
+    ) -> Result<NoteStatus, ArchonError> {
+        let (id, status) = (report.id.as_str(), report.status);
         let (to, fail) = match status {
             AgentNoteStatus::Done => (NoteStatus::Done, None),
             AgentNoteStatus::NeedsReply => (NoteStatus::NeedsReply, None),
@@ -362,20 +400,7 @@ impl DesignService {
                 },
             )?;
         }
-        tracing::info!(note = id, ?status, device = ?super::current_device_label(), "design: agent reported");
-        self.emit_note(ctx, item, id).await;
-        if to == NoteStatus::Done && !report.no_change {
-            let fresh = ctx
-                .store
-                .lock()
-                .await
-                .design_note(item, id)?
-                .unwrap_or_else(|| note.clone());
-            return self
-                .picture_after_done(ctx, session, &fresh, &wt, &report, reply_text)
-                .await;
-        }
-        self.note_reply(ctx, item, id).await
+        Ok(to)
     }
 
     async fn history_changed(

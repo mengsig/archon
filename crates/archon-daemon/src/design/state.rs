@@ -21,6 +21,8 @@ use crate::context::DaemonContext;
 
 /// Longest a page gets to load and stop moving.
 const SETTLE_MAX: Duration = Duration::from_secs(10);
+/// Longest one whole picture (load, steps, capture) takes.
+const CAPTURE_MAX: Duration = Duration::from_secs(40);
 /// Longest a page gets to answer one step.
 const STEP_SETTLE: Duration = Duration::from_secs(3);
 
@@ -141,6 +143,24 @@ impl DesignService {
         wt: &WorktreeRef,
         shot: AfterShot<'_>,
     ) -> AfterOutcome {
+        match tokio::time::timeout(CAPTURE_MAX, self.take_after(ctx, session, note, wt, shot)).await
+        {
+            Ok(outcome) => outcome,
+            Err(_) => AfterOutcome::StepFailed(format!(
+                "the page did not finish loading and answering within {} seconds",
+                CAPTURE_MAX.as_secs()
+            )),
+        }
+    }
+
+    async fn take_after(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSession,
+        note: &DesignNote,
+        wt: &WorktreeRef,
+        shot: AfterShot<'_>,
+    ) -> AfterOutcome {
         let Some(browser) = self
             .existing_runtime(&session.id)
             .and_then(|rt| rt.browser())
@@ -202,10 +222,18 @@ impl DesignService {
         };
         let before = match ctx.store.lock().await.design_asset(&note.item, id) {
             Ok(Some(asset)) if asset.source == AssetSource::Capture => asset,
-            _ => return false,
+            Ok(_) => return false,
+            Err(error) => {
+                tracing::warn!(%error, note = %note.id, "design: the before picture could not be read to compare");
+                return false;
+            }
         };
-        let Ok(bytes) = self.asset_bytes(&before) else {
-            return false;
+        let bytes = match self.asset_bytes(&before) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::warn!(%error, note = %note.id, "design: the before picture file could not be read to compare");
+                return false;
+            }
         };
         match browser
             .pictures_match((&before.mime, &bytes), (picture.mime, &picture.bytes))
@@ -229,6 +257,27 @@ impl DesignService {
         note: &DesignNote,
         steps: &[UiStep],
     ) -> Result<(), String> {
+        tokio::time::timeout(CAPTURE_MAX, self.take_before(ctx, session, note, steps))
+            .await
+            .unwrap_or_else(|_| {
+                Err(format!(
+                    "the page did not finish loading and answering within {} seconds",
+                    CAPTURE_MAX.as_secs()
+                ))
+            })
+    }
+
+    async fn take_before(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSession,
+        note: &DesignNote,
+        steps: &[UiStep],
+    ) -> Result<(), String> {
+        if !self.before_is_replaceable(ctx, note).await {
+            tracing::info!(note = %note.id, "design: the operator's own picture stays the before picture");
+            return Ok(());
+        }
         let browser = match self.ensure_browser(ctx, &session.id).await {
             Ok(Some(browser)) => browser,
             Ok(None) | Err(_) => return Err("the preview browser is not running".into()),
@@ -247,6 +296,22 @@ impl DesignService {
         self.keep_before(ctx, note, target, &picture)
             .await
             .map_err(|e| format!("the before picture was not kept: {e}"))
+    }
+
+    /// Whether the note's before picture may be retaken: a page capture, or
+    /// none yet. A sketch or an upload is the operator's own and stays.
+    async fn before_is_replaceable(&self, ctx: &DaemonContext, note: &DesignNote) -> bool {
+        let Some(id) = note.before_asset.as_ref() else {
+            return true;
+        };
+        match ctx.store.lock().await.design_asset(&note.item, id) {
+            Ok(Some(asset)) => asset.source == AssetSource::Capture,
+            Ok(None) => true,
+            Err(error) => {
+                tracing::warn!(%error, note = %note.id, "design: the before picture could not be read");
+                false
+            }
+        }
     }
 
     async fn keep_before(

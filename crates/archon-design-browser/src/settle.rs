@@ -15,11 +15,13 @@ use crate::browser::Browser;
 use crate::{BrowserError, BrowserEvent};
 
 /// Longest side, in pixels, pictures are compared at.
-const COMPARE_SIDE: u32 = 256;
-/// A pixel differs when a colour channel moves by more than this (of 255).
-const CHANNEL_TOLERANCE: u32 = 40;
-/// Pictures match when no more than this share of their pixels differ.
-const MATCH_SHARE: f64 = 0.001;
+const COMPARE_SIDE: u32 = 1024;
+/// A pixel differs when a colour channel moves by more than this (of 255):
+/// above an encoder's noise, below a shade of blue a button darkens by.
+const CHANNEL_TOLERANCE: u32 = 8;
+/// Pictures match when no more than this share of their pixels differ: a
+/// couple of dozen pixels at the compare size, below a 1 px border or a label.
+const MATCH_SHARE: f64 = 0.00002;
 /// How often the page is looked at while it settles.
 const SETTLE_POLL: Duration = Duration::from_millis(200);
 /// How long the network must be quiet for the page to count as settled.
@@ -272,7 +274,7 @@ mod tests {
     #[tokio::test]
     async fn pictures_are_compared_in_the_page_on_the_bytes_given() {
         let (b, log) = fake_browser(|m, _| {
-            (m == "Runtime.evaluate").then(|| json!({"result": {"value": 0.0004}}))
+            (m == "Runtime.evaluate").then(|| json!({"result": {"value": 0.00001}}))
         })
         .await;
         assert!(
@@ -307,6 +309,18 @@ mod tests {
                 .pictures_match(("image/jpeg", &[1]), ("image/jpeg", &[2]))
                 .await
                 .is_err()
+        );
+    }
+
+    /// A shade of blue a button darkens by (blue-500 to blue-600) moves each
+    /// channel by more than the tolerance, so it is a change, not noise.
+    #[test]
+    fn a_darker_shade_is_a_difference_not_noise() {
+        let (a, b) = ([59_i32, 130, 246], [37_i32, 99, 235]);
+        assert!(
+            a.iter()
+                .zip(b)
+                .all(|(x, y)| x.abs_diff(y) > super::CHANNEL_TOLERANCE)
         );
     }
 }

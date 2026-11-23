@@ -29,6 +29,7 @@ use archon_pipeline::contract;
 use archon_pipeline::spec::MAX_TIMEOUT_MINUTES;
 use archon_pipeline::{PipelineSpec, SpawnPlan};
 use archon_queue::Store;
+use archon_queue::store::keys::{STAGE_DEFERRED_UNTIL_PREFIX, STAGE_SPAWN_PREFIX};
 use serde::{Deserialize, Serialize};
 
 use super::resume::Takeover;
@@ -43,7 +44,6 @@ use crate::experiments;
 use crate::learned;
 use crate::resolve::{self, RepoEnv};
 
-const REQUEST_KEY_PREFIX: &str = "spawn_request:";
 /// `Protocol`, `Io` or Aether `internal` failures of one `create_agent`
 /// before the stage fails.
 const MAX_TRANSPORT_ERRORS: u32 = 5;
@@ -211,7 +211,7 @@ pub(crate) enum ParentBinding {
 }
 
 pub(super) fn request_key(id: &StageRunId) -> String {
-    format!("{REQUEST_KEY_PREFIX}{id}")
+    format!("{STAGE_SPAWN_PREFIX}{id}")
 }
 
 pub(crate) fn load_spawn(store: &Store, id: &StageRunId) -> Result<StoredSpawn, ArchonError> {
@@ -305,9 +305,9 @@ fn record_host_context(
 /// (a kept agent's once its run's node retired) and of ones never recorded.
 pub(crate) fn prune_settled_requests(store: &mut Store) -> Result<usize, ArchonError> {
     let mut pruned = 0;
-    for (key, _) in store.kv_prefix(REQUEST_KEY_PREFIX)? {
+    for (key, _) in store.kv_prefix(STAGE_SPAWN_PREFIX)? {
         let raw = key
-            .strip_prefix(REQUEST_KEY_PREFIX)
+            .strip_prefix(STAGE_SPAWN_PREFIX)
             .expect("ranged by prefix");
         let id = StageRunId::parse(raw)
             .map_err(|e| ArchonError::Corrupt(format!("spawn request key {key}: {e}")))?;
@@ -1078,7 +1078,15 @@ fn reserve_one(
     bind_takeover(store, &target.run.id, plan, &mut spawn, now, retry)?;
     save_spawn(store, &id, &spawn)?;
     let note = workers.and_then(|narrowed| narrowed.note);
-    record_reserved_stage(store, target, plan, &id, now, note.as_deref())?;
+    record_reserved_stage(
+        store,
+        target,
+        plan,
+        &id,
+        now,
+        note.as_deref(),
+        spawn.not_before,
+    )?;
     Ok(id)
 }
 
@@ -1151,9 +1159,14 @@ fn record_reserved_stage(
     id: &StageRunId,
     now: Timestamp,
     note: Option<&str>,
+    not_before: Option<Timestamp>,
 ) -> Result<(), ArchonError> {
     assert!(plan.fan_index < plan.fan_count);
     assert!(plan.attempt > 0, "attempts are counted from one");
+    assert!(
+        not_before.is_none_or(|until| until > now),
+        "a deferred stage starts later"
+    );
     let sizing = crate::sizing::attempt(target.item, plan);
     let stage = StageRun {
         id: id.clone(),
@@ -1181,13 +1194,23 @@ fn record_reserved_stage(
         started_at: now,
         finished_at: None,
     };
-    match note {
-        Some(note) => {
-            let key = super::stage_note::key(id);
-            store.upsert_stage_run_with_kv(&stage, &[(key.as_str(), note)])
-        }
-        None => store.upsert_stage_run(&stage),
-    }
+    let note_key = note.map(|_| super::stage_note::key(id));
+    let deferred = not_before.map(|until| {
+        (
+            format!("{STAGE_DEFERRED_UNTIL_PREFIX}{id}"),
+            until.to_rfc3339(),
+        )
+    });
+    let updates: Vec<_> = [
+        note_key.as_deref().zip(note),
+        deferred
+            .as_ref()
+            .map(|(key, value)| (key.as_str(), value.as_str())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    store.upsert_stage_run_with_kv(&stage, &updates)
 }
 
 /// A team slot's share of what is left: the remainder split evenly across

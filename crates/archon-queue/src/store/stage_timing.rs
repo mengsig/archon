@@ -4,6 +4,7 @@ use archon_core::model::Effort;
 use rusqlite::{Connection, params};
 
 use super::codec::SqlContext;
+use super::keys::{STAGE_DEFERRED_UNTIL_PREFIX, STAGE_SPAWN_PREFIX};
 
 const MIN_SAMPLES: usize = 10;
 const MAX_SAMPLES: usize = 100;
@@ -16,8 +17,12 @@ pub(super) fn p90(
 ) -> Result<Option<u64>, ArchonError> {
     assert!(!pipeline.is_empty());
     assert!(!stage.is_empty());
-    let sql = "SELECT st.started_at, json_extract(st.data, '$.finished_at')
+    let sql = "SELECT COALESCE(deferred.value,
+                               json_extract(spawn.value, '$.not_before'), st.started_at),
+                      json_extract(st.data, '$.finished_at')
          FROM stage_runs st JOIN runs r ON r.id = st.run
+         LEFT JOIN kv deferred ON deferred.key = ?5 || st.id
+         LEFT JOIN kv spawn ON spawn.key = ?6 || st.id
          WHERE r.pipeline = ?1 AND st.stage_id = ?2 AND st.state = 'completed'
            AND COALESCE(json_extract(st.data, '$.infrastructure_failure'), 0) = 0
            AND replace(json_extract(st.data, '$.choice.effort'), 'xhigh', 'x_high') = ?3
@@ -32,7 +37,9 @@ pub(super) fn p90(
             pipeline,
             stage,
             effort.to_string(),
-            MAX_SAMPLES as i64
+            MAX_SAMPLES as i64,
+            STAGE_DEFERRED_UNTIL_PREFIX,
+            STAGE_SPAWN_PREFIX,
         ])
         .ctx("query stage timing")?;
     let mut samples = Vec::new();

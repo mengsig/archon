@@ -114,6 +114,12 @@ fn scan_stages(
         }
         let spawn = stored_spawn(store, &stage)?;
         let deadline = spawn.as_ref().and_then(|spawn| spawn.request.deadline);
+        if stage.state == StageState::Running
+            && let Some(spawn) = spawn
+            && let Err(error) = super::stage_timing::report_overrun(ctx, store, &stage, spawn, now)
+        {
+            tracing::warn!(%error, stage = %stage.id, "stage overrun news not recorded");
+        }
         if deadline.is_some_and(|d| d + grace < now) {
             stages.expired.push(stage);
             continue;
@@ -121,12 +127,6 @@ fn scan_stages(
         if stage.state == StageState::Running {
             if deadline.is_some_and(|d| held::near(d, now)) {
                 stages.nearing.push(stage.clone());
-            }
-            if let Some(spawn) = spawn
-                && let Err(error) =
-                    super::stage_timing::report_overrun(ctx, store, &stage, spawn, now)
-            {
-                tracing::warn!(%error, stage = %stage.id, "stage overrun news not recorded; retrying next sweep");
             }
             stages.running.push(stage);
         }

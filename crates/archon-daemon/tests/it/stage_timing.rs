@@ -7,7 +7,7 @@ use archon_core::settings::SettingSource;
 use archon_daemon::executor;
 use archon_daemon::triggers::{self, TriggerEvent};
 
-use crate::common::{Harness, stored_deadline};
+use crate::common::{Harness, expire_deadline, stored_deadline};
 
 #[tokio::test]
 async fn overrun_news_is_queued_once_per_running_attempt() {
@@ -18,11 +18,7 @@ async fn overrun_news_is_queued_once_per_running_attempt() {
     let stage = h.running().await.remove(0);
     assert!(overruns(&h).await.is_empty());
 
-    let threshold = stage.started_at + chrono::Duration::seconds(2);
-    if let Ok(wait) = (threshold - archon_core::now()).to_std() {
-        assert!(wait <= Duration::from_secs(2));
-        tokio::time::sleep(wait + Duration::from_millis(10)).await;
-    }
+    wait_for_overrun(&stage).await;
     h.dispatch().await;
     let first = overruns(&h).await;
     assert!(matches!(&first[..], [TriggerEvent::StageOverrun {
@@ -38,6 +34,36 @@ async fn overrun_news_is_queued_once_per_running_attempt() {
     executor::recover(&h.ctx).await.unwrap();
     h.dispatch().await;
     assert_eq!(overruns(&h).await, first, "the receipt survives restart");
+}
+
+#[tokio::test]
+async fn an_expired_running_stage_still_queues_its_overrun() {
+    let h = Harness::new().await;
+    seed_history(&h, 1).await;
+    let item = h.enqueue("overrun past deadline").await;
+    h.dispatch().await;
+    let stage = h.running().await.remove(0);
+    wait_for_overrun(&stage).await;
+    expire_deadline(&h, &stage).await;
+    assert!(overruns(&h).await.is_empty());
+
+    h.dispatch().await;
+    let first = overruns(&h).await;
+    assert!(matches!(&first[..], [TriggerEvent::StageOverrun {
+        item: id, stage_run, elapsed_seconds, p90_seconds: 1, ..
+    }] if id == &item.id && stage_run == &stage.id && *elapsed_seconds > 2));
+    assert!(h.stages(&item.id).await[0].state.is_terminal());
+    h.dispatch().await;
+    assert_eq!(overruns(&h).await, first);
+}
+
+async fn wait_for_overrun(stage: &StageRun) {
+    assert_eq!(stage.state, StageState::Running);
+    let threshold = stage.started_at + chrono::Duration::seconds(2);
+    if let Ok(wait) = (threshold - archon_core::now()).to_std() {
+        assert!(wait <= Duration::from_secs(2));
+        tokio::time::sleep(wait + Duration::from_millis(10)).await;
+    }
 }
 
 #[tokio::test]

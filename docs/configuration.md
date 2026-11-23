@@ -601,6 +601,7 @@ The daemon learns p90 from the most recent completed attempts still in the
 store, up to 100 per pipeline, stage and effort. It snapshots p90 at reservation
 and sends one `stage_overrun` news event if the running attempt exceeds twice
 that duration. This news is available with either timeout setting.
+Hold time before a delayed retry is excluded when its start time is recorded.
 
 Others stay fixed. `MAX_DIRECTIVES` caps the operator directives in force
 at once at 20, each at most 500 characters (`MAX_DIRECTIVE_CHARS`); expired

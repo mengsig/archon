@@ -91,6 +91,10 @@ pub mod keys {
     pub const CURSOR_ORCHESTRATOR: &str = "aether_cursor_orchestrator";
     pub const CURSOR_FLEET: &str = "aether_cursor_fleet";
     pub const AETHER_INSTANCE: &str = "aether_instance_id";
+    /// A stage run's reserved spawn request.
+    pub const STAGE_SPAWN_PREFIX: &str = "spawn_request:";
+    /// A delayed stage run's earliest working time, kept with its history.
+    pub const STAGE_DEFERRED_UNTIL_PREFIX: &str = "stage_deferred_until:";
     /// The last feed seq mirrored to Aether's notification center.
     pub const CURSOR_NOTIFICATION_CENTER: &str = "notification_center_feed_cursor";
     /// Prefix: + question id → the notification whose answer was refused.

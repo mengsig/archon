@@ -883,9 +883,10 @@ pub const REVIEW_ROUND_CAP: usize = 3;
 const REVIEW_ROUNDS_RULE: &str = "\
 - Delegate with `wait: false`, then use `wait_for`. Wait for all readers before editing. \
 Replace any cancelled reader with a whole-change read. Commit fixes with a \
-`Review-Fix: <id>` trailer per blocker. Have one new reviewer read only the delta \
-from the last reviewed head, including after a pass. Amend or rebase needs whole-change \
-reads. List all open IDs (`reviewer-agent:1-based position in findings`) in the prompt. \
+`Review-Fix: <id>` trailer per blocker. Have one new reviewer verify each open finding's \
+fix and read only the delta from the last reviewed head, including after a pass. Amend \
+or rebase needs whole-change reads. List all open findings and their IDs \
+(`reviewer-agent:1-based position in findings`) in the prompt. \
 Ask for confirmed IDs in `resolved_findings` and `findings[].id` for issues still open. \
 Carry unanswered IDs forward. Any real blocker found anywhere fails. Archon escalates \
 at 3 failed rounds unless all open blockers have committed fixes. In that case wait for \
@@ -1486,9 +1487,10 @@ mod tests {
                 "Wait for all readers before editing",
                 "Replace any cancelled reader with a whole-change read",
                 "Commit fixes with a `Review-Fix: <id>` trailer per blocker",
-                "one new reviewer read only the delta from the last reviewed head, including after a pass",
+                "one new reviewer verify each open finding's fix",
+                "read only the delta from the last reviewed head, including after a pass",
                 "Amend or rebase needs whole-change reads",
-                "List all open IDs",
+                "List all open findings and their IDs",
                 "confirmed IDs in `resolved_findings` and `findings[].id` for issues still open",
                 "Carry unanswered IDs forward",
                 "Any real blocker found anywhere fails",

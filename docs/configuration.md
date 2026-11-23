@@ -616,6 +616,7 @@ distill_every = 20
 distill_daily_budget_usd = 3.0
 explore_rate = 0.1
 holdout_rate = 0.0
+retire_min_uses = 20
 ```
 
 Learning keeps an outcome for every finished run: its result, its stage
@@ -648,10 +649,17 @@ Proposed lessons and pipelines wait for operator acceptance; inspect pipelines w
 contract would carry, chosen by a stable hash of the lesson and item IDs, so every run
 of an item gets the same answer. Each run records which lessons it was given and which
 it was denied; `archon lessons stats` reports the win rates of both once each has 20
-scored runs. Holding a lesson out never counts against it, the Wilson bound alone
-still activates and retracts lessons, and pinned lessons are never held out. Lessons
-whose text nearly repeats another in the same scope form a cluster: a contract carries
-at most one lesson of each, and clustering never accepts or promotes a lesson.
+scored runs. Held-out runs contribute to the baseline and pinned lessons are never
+held out. After `retire_min_uses` scored uses (a positive integer, default 20), learned
+advice at or below its baseline retires. The baseline is the same lesson's held-out
+win rate once that arm also has `retire_min_uses` scored runs, and 50% until then.
+Pinned and operator-accepted lessons are exempt. `archon lessons stats` shows the
+running daemon's sample floor.
+
+Recording near-identical advice of the same kind and scope reuses the existing
+lesson for learned advice. For an operator add, Archon names the existing lesson
+and lets the operator decide whether to edit it. Existing clusters still contribute
+at most one lesson per contract.
 
 `enabled = false` stops new learning and cancels queued distillation errands on the
 next maintenance pass. Recorded evidence stays readable, including offline lessons

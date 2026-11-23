@@ -444,7 +444,8 @@ impl Store {
         next: QueueState,
         at: Timestamp,
     ) -> Result<QueueItem, ArchonError> {
-        items::transition(&mut self.conn, id, next, at)
+        let min_uses = self.learning_config()?.retire_min_uses;
+        items::transition(&mut self.conn, id, next, at, min_uses)
     }
     /// Non-state fields only; repository, pipeline and `created_at` are
     /// fixed. Changed dependencies are checked like on insert.
@@ -508,7 +509,7 @@ impl Store {
         next: QueueState,
         at: Timestamp,
     ) -> Result<FinishedRun, ArchonError> {
-        runs::finish(&mut self.conn, run, None, next, at)
+        self.finish_run_with_plan(run, None, next, at)
     }
     /// [`Store::finish_run`], keeping `plan` as the plan the run finished
     /// with in the same transaction; with none, any earlier one is dropped.
@@ -519,7 +520,8 @@ impl Store {
         next: QueueState,
         at: Timestamp,
     ) -> Result<FinishedRun, ArchonError> {
-        runs::finish(&mut self.conn, run, plan, next, at)
+        let min_uses = self.learning_config()?.retire_min_uses;
+        runs::finish(&mut self.conn, run, plan, next, at, min_uses)
     }
     pub fn run(&self, id: &PipelineRunId) -> Result<PipelineRun, ArchonError> {
         runs::load(&self.conn, id)
@@ -711,7 +713,8 @@ impl Store {
     }
     /// Identity and subject are fixed; a decision or withdrawal is final.
     pub fn update_gate(&mut self, gate: &OperatorGate) -> Result<(), ArchonError> {
-        gates::update(&mut self.conn, gate)
+        let min_uses = self.learning_config()?.retire_min_uses;
+        gates::update(&mut self.conn, gate, min_uses)
     }
     pub fn gate(
         &self,

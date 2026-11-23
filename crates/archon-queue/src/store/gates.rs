@@ -166,7 +166,11 @@ pub(super) fn open(
 }
 
 /// Identity and subject are fixed, and a decision or withdrawal is final.
-pub(super) fn update(conn: &mut Connection, gate: &OperatorGate) -> Result<(), ArchonError> {
+pub(super) fn update(
+    conn: &mut Connection,
+    gate: &OperatorGate,
+    min_uses: u32,
+) -> Result<(), ArchonError> {
     check_shape(gate)?;
     let tx = write_tx(conn)?;
     let stored = find(&tx, &gate.run, &gate.stage_id, gate.attempt)?.ok_or_else(|| {
@@ -206,6 +210,7 @@ pub(super) fn update(conn: &mut Connection, gate: &OperatorGate) -> Result<(), A
             &tx,
             &gate.run,
             archon_core::outcome::Correction::GateRejected,
+            min_uses,
         )?;
     }
     tx.commit().ctx("commit gate update")

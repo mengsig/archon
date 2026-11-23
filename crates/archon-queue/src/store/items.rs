@@ -598,9 +598,10 @@ pub(super) fn transition(
     id: &QueueItemId,
     next: QueueState,
     at: Timestamp,
+    min_uses: u32,
 ) -> Result<QueueItem, ArchonError> {
     let tx = write_tx(conn)?;
-    let item = transition_in(&tx, id, next, at)?;
+    let item = transition_in(&tx, id, next, at, min_uses)?;
     tx.commit().ctx("commit item transition")?;
     Ok(item)
 }
@@ -611,6 +612,7 @@ pub(super) fn transition_in(
     id: &QueueItemId,
     next: QueueState,
     at: Timestamp,
+    min_uses: u32,
 ) -> Result<QueueItem, ArchonError> {
     let mut item = load(tx, id)?;
     let before = item.state.clone();
@@ -624,7 +626,12 @@ pub(super) fn transition_in(
     if let QueueState::Succeeded { run, .. } = &before
         && item.state == QueueState::Queued
     {
-        super::outcomes::correct(tx, run, archon_core::outcome::Correction::RetryAfterDone)?;
+        super::outcomes::correct(
+            tx,
+            run,
+            archon_core::outcome::Correction::RetryAfterDone,
+            min_uses,
+        )?;
     }
     if before.is_terminal()
         && item.state == QueueState::Queued

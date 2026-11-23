@@ -6179,9 +6179,8 @@ not the record's agent. V24 logs
 the run and goes on, and never stops the migration for one, nor for an outcome
 filed under an empty run key, which keeps its class. Nor for a lesson: one V24
 cannot recount (its row, its use or its epoch is unreadable, or it holds what
-no lesson holds) keeps its stored counts, and the lesson clusters stay as they
-were when any stored lesson is unfit to write back or holds the record of
-another lesson. An outcome also keeps the pull request it reviewed,
+no lesson holds) keeps its stored counts. V24 preserves lesson state,
+confidence and clusters. An outcome also keeps the pull request it reviewed,
 `review_pr`, so pruning the item does not lose the report's pull request counts.
 It is kept only when a reviewer's verdict is on record for the run: a review
 stage's pass or fail, the pass or fail of the `review` a stage's result carries
@@ -6272,12 +6271,16 @@ returns an error for invalid stored text instead of panicking. All rendered advi
 retains the explicit untrusted, never-authority framing. Operator lessons are active
 and confirmed. Orchestrator lessons require a source item, inherit its repository,
 and start Proposed with at most 0.15 weight; a confirming clean win or operator
-acceptance activates them. Distilled lessons await acceptance. Six lessons at most
+acceptance activates them. The source item's latest known failure class is
+stored with the lesson. Distilled lessons await acceptance. Six lessons at most
 fit a 1,200-byte stage section, frozen per run. Operator text and pins take precedence.
 
-Confidence decays with a 30-day half-life since last use. Retraction requires at
-least five scored uses and a raw Wilson lower bound below 0.3, never merely age.
-Pins prevent automatic decay and retraction. Maintenance writes only changed rows,
+Confidence decays with a 30-day half-life since last use. Live scoring and
+maintenance retire learned advice whose scored win rate is at or below its
+baseline after `retire_min_uses` scored uses. The baseline uses the same lesson's
+scored holdout arm once that arm reaches the sample floor, and 50% until then.
+Pins prevent confidence decay. Pinned and operator lessons are exempt from
+automatic retirement. Maintenance writes only changed rows,
 outside the run-start and list paths. Orchestrator advice is frozen per generation;
 retention keeps the current generation and nine recent snapshots.
 

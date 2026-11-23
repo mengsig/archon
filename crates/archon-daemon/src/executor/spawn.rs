@@ -1222,7 +1222,7 @@ fn save_review_spawn(
     stage: &StageRun,
     spawn: &mut StoredSpawn,
     reviews: bool,
-    replacing: None,
+    replacing: Option<&StageRun>,
 ) -> Result<(), ArchonError> {
     if let Some(handoff) = super::review::prior_handoff(store, stage, reviews, replacing)? {
         assert!(!spawn.request.objective.is_empty());

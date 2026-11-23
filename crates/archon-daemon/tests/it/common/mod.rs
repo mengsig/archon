@@ -844,6 +844,7 @@ struct FakeState {
     /// Every accepted `update_agent`, in order.
     updates: Vec<(AetherAgentId, AgentUpdate)>,
     update_failures: VecDeque<ArchonError>,
+    update_calls: Vec<String>,
     /// The key of every accepted keyed update: Aether makes a repeat once.
     update_keys: BTreeSet<String>,
     /// Every `interrupt` call, in order.
@@ -1131,6 +1132,10 @@ impl FakeBackend {
     /// Every update a live agent took, oldest first.
     pub fn updates(&self) -> Vec<(AetherAgentId, AgentUpdate)> {
         self.state().updates.clone()
+    }
+
+    pub fn keyed_update_calls(&self) -> Vec<String> {
+        self.state().update_calls.clone()
     }
 
     /// Every agent `interrupt` was asked to stop, in order.
@@ -1822,7 +1827,12 @@ impl AgentBackend for FakeBackend {
         key: &str,
     ) -> Result<(), ArchonError> {
         assert!(!key.is_empty(), "a keyed update has a key");
-        if self.state().update_keys.contains(key) {
+        let seen = {
+            let mut state = self.state();
+            state.update_calls.push(key.to_owned());
+            state.update_keys.contains(key)
+        };
+        if seen {
             return Ok(());
         }
         self.update_agent(agent, update).await?;

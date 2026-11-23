@@ -369,6 +369,60 @@ async fn a_refused_candidate_leaves_other_named_reviewers_eligible() {
     assert_review_passes(&h, &stage, &reviewer, SECOND_ALTERNATE).await;
 }
 
+#[tokio::test]
+async fn a_pending_replacement_that_loses_eligibility_can_switch_to_another_named_model() {
+    let h = Harness::new().await;
+    let (stage, reviewer) = due_review(&h, &[ALTERNATE_MODEL, SECOND_ALTERNATE]).await;
+    let lead = stage.aether_agent.as_ref().unwrap();
+    sweep(&h).await;
+    assert_eq!(
+        h.backend.descendants(lead).await.unwrap()[0]
+            .model
+            .to_string(),
+        ALTERNATE_MODEL
+    );
+
+    deny_alternate(&h);
+    sweep(&h).await;
+    sweep(&h).await;
+
+    assert!(told(&h, lead).is_empty());
+    assert_eq!(h.backend.updates().len(), 2);
+    let keys = h.backend.keyed_update_calls();
+    assert_eq!(keys.len(), 2);
+    assert_ne!(keys[0], keys[1]);
+    assert_eq!(
+        h.backend.quota_blocked(&reviewer).await.unwrap(),
+        Some(false)
+    );
+    assert_review_passes(&h, &stage, &reviewer, SECOND_ALTERNATE).await;
+}
+
+#[tokio::test]
+async fn an_aether_internal_error_retries_the_same_replacement_key() {
+    let h = Harness::new().await;
+    let (stage, reviewer) = due_review_with_an_alternate(&h).await;
+    h.backend
+        .fail_next_update(archon_core::error::ArchonError::Aether(
+            "internal: store busy".into(),
+        ));
+    let result = quota_wait::sweep_running(&h.ctx, archon_core::now()).await;
+    assert!(result.unwrap_err().to_string().contains("store busy"));
+    assert!(h.backend.updates().is_empty());
+
+    sweep(&h).await;
+    sweep(&h).await;
+
+    let keys = h.backend.keyed_update_calls();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0], keys[1]);
+    assert_eq!(
+        h.backend.quota_blocked(&reviewer).await.unwrap(),
+        Some(false)
+    );
+    assert_review_passes(&h, &stage, &reviewer, ALTERNATE_MODEL).await;
+}
+
 fn deny_alternate(h: &Harness) -> std::path::PathBuf {
     let dir = h.repo.join(".archon");
     std::fs::create_dir_all(&dir).unwrap();

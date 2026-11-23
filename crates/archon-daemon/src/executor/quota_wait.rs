@@ -64,21 +64,27 @@ struct Quota {
 #[derive(Deserialize, Serialize)]
 struct Wait {
     since: Timestamp,
+    source: ModelRef,
     report: Option<Report>,
     replacement: Option<Replacement>,
-    #[serde(default)]
     refused: BTreeSet<ModelRef>,
+    attempt: u32,
 }
 
 impl Wait {
-    fn reported(&self) -> bool {
-        self.report.as_ref().is_some_and(|report| report.sent)
+    fn new(since: Timestamp, source: ModelRef) -> Self {
+        Self {
+            since,
+            source,
+            report: None,
+            replacement: None,
+            refused: BTreeSet::new(),
+            attempt: 0,
+        }
     }
 
-    fn source<'a>(&'a self, reviewer: &'a Descendant) -> &'a ModelRef {
-        self.replacement
-            .as_ref()
-            .map_or(&reviewer.model, |pending| &pending.from)
+    fn reported(&self) -> bool {
+        self.report.as_ref().is_some_and(|report| report.sent)
     }
 }
 
@@ -292,7 +298,7 @@ async fn note_waits(
                 continue;
             }
             (Block::Free, None) => continue,
-            (Block::Blocked, Some(raw)) => Some(read_wait(&key, &raw)?),
+            (Block::Blocked, Some(raw)) => Some(read_wait(&key, &raw, &reviewer.model)?),
             (Block::Blocked, None) => None,
         };
         // A new wait counts from this sweep, and is saved so; so is one that a
@@ -301,12 +307,7 @@ async fn note_waits(
             Some(wait) => wait,
             None => {
                 store.kv_set(&key, &now.to_rfc3339())?;
-                Wait {
-                    since: now,
-                    report: None,
-                    replacement: None,
-                    refused: BTreeSet::new(),
-                }
+                Wait::new(now, reviewer.model.clone())
             }
         };
         noted.push((reviewer, wait));
@@ -320,7 +321,7 @@ async fn note_waits(
     Ok(noted)
 }
 
-fn read_wait(key: &str, raw: &str) -> Result<Wait, ArchonError> {
+fn read_wait(key: &str, raw: &str, model: &ModelRef) -> Result<Wait, ArchonError> {
     assert!(key.starts_with(WAIT_PREFIX));
     if raw.starts_with('{') {
         return serde_json::from_str(raw)
@@ -329,12 +330,7 @@ fn read_wait(key: &str, raw: &str) -> Result<Wait, ArchonError> {
     let since = raw
         .parse::<Timestamp>()
         .map_err(|error| ArchonError::Corrupt(format!("kv {key}: {error}")))?;
-    Ok(Wait {
-        since,
-        report: None,
-        replacement: None,
-        refused: BTreeSet::new(),
-    })
+    Ok(Wait::new(since, model.clone()))
 }
 
 /// Drop the waits recorded for stage runs other than the `watched` ones.
@@ -419,7 +415,7 @@ async fn report(
 ) -> Result<(), ArchonError> {
     assert_ne!(reviewer.agent, *lead, "the lead receives the report");
     if wait.report.is_none() {
-        let source = wait.source(reviewer);
+        let source = &wait.source;
         let resets_at = resets.get(&source.provider).copied().flatten();
         wait.report = Some(Report {
             text: report_text(&reviewer.agent, source, resets_at),

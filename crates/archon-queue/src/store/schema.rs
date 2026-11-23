@@ -801,7 +801,7 @@ CREATE INDEX IF NOT EXISTS stage_runs_by_started_at ON stage_runs (started_at);
 
 /// Keep candidate titles in insertion order without decoding every item during enqueue.
 const V27: &str = r#"
-CREATE INDEX items_by_duplicate_candidate ON items (
+CREATE INDEX IF NOT EXISTS items_by_duplicate_candidate ON items (
     repo, seq DESC, id, CASE WHEN json_valid(data) THEN json_extract(data, '$.title') END
 ) WHERE state != 'succeeded';
 "#;
@@ -977,6 +977,24 @@ fn forget_branch_only_v25(tx: &Connection) -> Result<(), ArchonError> {
     Ok(())
 }
 
+/// A branch build recorded version 26 for the duplicate-candidate index, now version 27.
+/// Forget that row so the real version 26 (evidence indexes) is applied.
+fn forget_branch_only_v26(tx: &Connection) -> Result<(), ArchonError> {
+    let has_evidence_index: bool = tx
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'items_by_created_at')",
+            [],
+            |row| row.get(0),
+        )
+        .ctx("look for the evidence indexes")?;
+    if has_evidence_index {
+        return Ok(());
+    }
+    tx.execute("DELETE FROM schema_migrations WHERE version >= 26", [])
+        .ctx("forget branch-only version 26")?;
+    Ok(())
+}
+
 /// Apply every migration newer than the store's version, each with its
 /// version row, in one write transaction. Returns the resulting version.
 pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
@@ -989,6 +1007,7 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
     .ctx("create schema_migrations")?;
     let tx = write_tx(conn)?;
     forget_branch_only_v25(&tx)?;
+    forget_branch_only_v26(&tx)?;
     let current: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
@@ -1308,6 +1327,26 @@ mod tests {
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'items_by_duplicate_candidate'",
             [], |row| row.get(0),
         ).unwrap();
+        assert_eq!(found, 1);
+    }
+
+    #[test]
+    fn a_branch_built_v26_store_gains_the_evidence_indexes_and_v27() {
+        let mut conn = v2_store();
+        migrate(&mut conn).unwrap();
+        conn.execute_batch("DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at; DELETE FROM schema_migrations WHERE version = 27;").unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+        let versions: Vec<i64> = applied_versions(&conn).iter().map(|(v, _)| *v).collect();
+        assert_eq!(versions, (1..=MIGRATIONS.len() as i64).collect::<Vec<_>>());
+        conn.prepare("SELECT 1 FROM sqlite_master WHERE name = 'items_by_created_at'")
+            .unwrap();
+        let found: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'items_by_created_at'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(found, 1);
     }
 

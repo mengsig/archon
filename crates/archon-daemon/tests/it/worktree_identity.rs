@@ -234,13 +234,28 @@ fn a_run_worktree_pointed_elsewhere_is_refused() {
 #[test]
 fn registered_worktrees_pass_with_relative_paths_too() {
     let t = team();
-    git(&t.repo, &["config", "worktree.useRelativePaths", "true"]);
-    git(
-        &t.repo,
-        &["worktree", "repair", t.api.to_str().expect("UTF-8")],
-    );
+    // Git 2.48 and later write this layout under `worktree.useRelativePaths`;
+    // older ones ignore the setting. Write it here so the test does not
+    // depend on the Git version: the worktree's `.git` file names its
+    // administrative directory relative to the worktree, and that
+    // directory's `gitdir` file names the `.git` file relative to itself.
+    let admin = PathBuf::from(git_dir(&t.api));
+    let relative_to = |path: &Path, base: &Path| {
+        let (path, base): (Vec<_>, Vec<_>) =
+            (path.components().collect(), base.components().collect());
+        let shared = path.iter().zip(&base).take_while(|(a, b)| a == b).count();
+        let mut relative = PathBuf::new();
+        base[shared..].iter().for_each(|_| relative.push(".."));
+        path[shared..].iter().for_each(|part| relative.push(part));
+        relative.to_str().expect("UTF-8").to_owned()
+    };
+    let to_admin = relative_to(&admin, &t.api);
+    std::fs::write(t.api.join(".git"), format!("gitdir: {to_admin}\n")).expect("write");
+    let to_gitfile = relative_to(&t.api.join(".git"), &admin);
+    std::fs::write(admin.join("gitdir"), format!("{to_gitfile}\n")).expect("write");
     let gitfile = std::fs::read_to_string(t.api.join(".git")).expect("read");
     assert!(gitfile.starts_with("gitdir: ../"), "{gitfile}");
+    assert_eq!(git_dir(&t.api), admin.to_str().expect("UTF-8"));
 
     let next = t.branch("api", 2);
     let saved = committed(

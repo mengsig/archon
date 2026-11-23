@@ -4632,8 +4632,17 @@ async fn a_restart_in_the_middle_of_a_round_counts_it_once() {
     pump::handle_fleet_event(&h.ctx, &event).await.unwrap();
     let error = escalated(&h, &lead).await.expect("the third round caps it");
     assert!(error.contains("failed 3 rounds"), "{error}");
+    let (findings, reviewers) = error
+        .split_once("The reviewers' results (")
+        .expect("the escalation names the reviewers");
+    let finding = format!("finding 3 [{third}:1]");
     assert_eq!(
-        error.matches(third.as_str()).count(),
+        findings.matches(&finding).count(),
+        1,
+        "the finding is recorded once: {error}"
+    );
+    assert_eq!(
+        reviewers.matches(third.as_str()).count(),
         1,
         "counted once: {error}"
     );

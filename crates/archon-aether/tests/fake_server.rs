@@ -1620,8 +1620,7 @@ async fn reference_wire_shape_is_frozen_across_retries_and_refused_after_capabil
     assert_eq!(fake.received_named("create_agent").len(), 2);
 }
 
-/// The read right before a quota-waiting reviewer is cancelled is a single
-/// `get_agent`: no second call widens the window a resume can land in.
+/// The quota sweep can recheck a live reviewer's own block with a single read.
 #[tokio::test]
 async fn a_quota_block_is_read_with_one_get_agent() {
     const REVIEWER: &str = "agt_01BX5ZZKBKACTAV9WEVGEMMVS4";
@@ -1646,4 +1645,31 @@ async fn a_quota_block_is_read_with_one_get_agent() {
     reviewer["status"] = json!({"state": "running"});
     fake.set_default("get_agent", Scripted::reply("agent", reviewer));
     assert_eq!(backend.quota_blocked(&id).await.unwrap(), Some(false));
+}
+
+#[tokio::test]
+async fn a_review_is_attributed_to_the_tasks_latest_completed_invocation() {
+    let (_dir, fake) = fake_aether().await;
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let task = AetherTaskId::parse(TASK).unwrap();
+    let mut invocation = agent_event(
+        42,
+        json!({
+            "type": "invocation.completed",
+            "model": {"provider": "codex", "model": "gpt-5"},
+        }),
+    );
+    invocation["task_id"] = json!(TASK);
+    fake.script("get_events", Scripted::reply("events", json!([invocation])));
+
+    let model = backend.review_model(&agent, &task).await.unwrap().unwrap();
+    assert_eq!(model.to_string(), "codex/gpt-5");
+    let reads = fake.received_named("get_events");
+    assert_eq!(reads.len(), 1);
+    assert_eq!(reads[0]["limit"], 1);
+    assert_eq!(reads[0]["query"]["before"], u64::MAX);
+    assert_eq!(reads[0]["query"]["agent"], AGENT);
+    assert_eq!(reads[0]["query"]["task"], TASK);
+    assert_eq!(reads[0]["query"]["types"], json!(["invocation.completed"]));
 }

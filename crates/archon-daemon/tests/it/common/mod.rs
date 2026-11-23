@@ -832,6 +832,7 @@ struct FakeState {
     unreadable: BTreeMap<AetherTaskId, String>,
     lost_replies: u32,
     outcomes: BTreeMap<AetherTaskId, StageOutcome>,
+    review_models: BTreeMap<AetherTaskId, archon_core::model::ModelRef>,
     cancelled: Vec<AetherAgentId>,
     /// The reason each cancel call gave, refused ones included, in order.
     cancel_reasons: Vec<(AetherAgentId, String)>,
@@ -1402,6 +1403,13 @@ impl FakeBackend {
         );
     }
 
+    /// The model of an in-flight turn may differ from the agent's current model.
+    pub fn record_review_model(&self, task: &AetherTaskId, model: &str) {
+        self.state()
+            .review_models
+            .insert(task.clone(), model.parse().expect("a review model"));
+    }
+
     /// The delegated `agent` completed with Aether's recorded outcome.
     pub fn complete_delegated_with(&self, agent: &AetherAgentId, outcome: StageOutcome) {
         assert!(matches!(outcome, StageOutcome::Completed { .. }));
@@ -1792,6 +1800,12 @@ impl AgentBackend for FakeBackend {
                 "aether: no live agent {agent}"
             )));
         }
+        if let Some(choice) = &update.choice
+            && let Some(child) = state.delegated.iter_mut().find(|d| d.agent == *agent)
+        {
+            child.model = choice.model.clone();
+            child.effort = Some(choice.effort);
+        }
         state.updates.push((agent.clone(), update));
         let hook = state.update_hook.take();
         drop(state);
@@ -1977,6 +1991,14 @@ impl AgentBackend for FakeBackend {
         Ok(state.answers.get(agent).cloned())
     }
 
+    async fn review_model(
+        &self,
+        _agent: &AetherAgentId,
+        task: &AetherTaskId,
+    ) -> Result<Option<archon_core::model::ModelRef>, ArchonError> {
+        Ok(self.state().review_models.get(task).cloned())
+    }
+
     async fn send_message(
         &self,
         to: &AetherAgentId,
@@ -2019,6 +2041,12 @@ impl AgentBackend for FakeBackend {
             None => {
                 let delivery = (idempotency_key.to_owned(), to.clone(), content.to_owned());
                 state.delivered.push(delivery);
+                if let Some(pulse) = state.pulses.get_mut(to).filter(|pulse| pulse.quota_blocked) {
+                    pulse.quota_blocked = false;
+                    pulse.held = false;
+                    pulse.held_for_cause = false;
+                    pulse.running = true;
+                }
                 // A new message starts a new turn: the last answer is history.
                 state.answers.remove(to);
                 Ok(())

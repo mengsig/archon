@@ -20,7 +20,7 @@ use crate::client::AetherClient;
 use crate::link::AetherLink;
 use crate::resumed;
 use crate::wire::{
-    Agent, AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, CreateAgent, ModelInfo,
+    Agent, AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, CreateAgent, EventQuery, ModelInfo,
     NetworkPolicy, ProviderInfo, Scope, Task, TaskStatus, ToolExposure,
 };
 
@@ -927,6 +927,36 @@ impl AgentBackend for AetherBackend {
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError> {
         let task = self.link.client()?.get_task(task).await?;
         Ok(task_outcome(&task))
+    }
+
+    async fn review_model(
+        &self,
+        agent: &AetherAgentId,
+        task: &AetherTaskId,
+    ) -> Result<Option<ModelRef>, ArchonError> {
+        let query = EventQuery {
+            agent: Some(agent.clone()),
+            task: Some(task.clone()),
+            types: vec!["invocation.completed".into()],
+            ..EventQuery::default()
+        };
+        let events = self.link.client()?.latest_events_raw(query, 1).await?;
+        let Some(event) = events.first() else {
+            return Ok(None);
+        };
+        if event["agent_id"] != agent.as_str()
+            || event["task_id"] != task.as_str()
+            || event["kind"]["type"] != "invocation.completed"
+        {
+            return Err(ArchonError::Protocol(format!(
+                "unexpected invocation event when reading reviewer {agent} task {task}"
+            )));
+        }
+        serde_json::from_value(event["kind"]["model"].clone())
+            .map(Some)
+            .map_err(|error| {
+                ArchonError::Protocol(format!("reviewer {agent} invocation model: {error}"))
+            })
     }
 
     async fn send_message(

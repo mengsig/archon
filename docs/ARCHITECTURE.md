@@ -1548,25 +1548,25 @@ in a new worktree off the base branch (§13).
   archond moves it to 30 min from now, in Aether (the lead and every live
   agent beneath it whose deadline is lower, one by one when Aether cannot
   update a subtree) and in the stored request, and
-  never times it out while held. A reviewer Aether itself blocks as
-  `exhausted` (quota or usage limit) is cancelled after 3 minutes, and its
-  lead is told to delegate the review on another allowed provider or fail
-  its task. The check runs every 30 seconds on its own worker
-  (`executor::quota_wait::watch`), apart from dispatch. Each time it starts
+  never times it out while held. When Aether reports a reviewer blocked on
+  quota or a usage limit for 3 minutes, archond looks for a model named in
+  the stage's review contract or delegation policy on another provider with
+  confirmed headroom. It switches the existing reviewer to that model and
+  releases the hold. The reviewer keeps its scope, instructions and task ID,
+  so the lead keeps waiting for the same task. The review check attributes
+  the verdict to the task's last completed model invocation when available.
+  If archond cannot find an eligible model, it reports the
+  block to the lead once per wait and keeps checking. The sweep runs every
+  30 seconds on its own worker (`executor::quota_wait::watch`), apart from
+  dispatch. Each time it starts
   a check of every running stage as a task of its own and waits for none,
   so no stage delays another's check; a stage whose last check still runs
   is passed over. A check waits at most 10 seconds for each request to
   Aether (20 for the listing of a stage's agents, which is two); an
   unanswered read keeps the wait as recorded and is asked again next time.
-  A check that stops nothing ends within one period, so the worst case is
-  3 minutes, two periods and the 50 seconds of requests up to the cancel:
-  within 5 minutes of the block first being seen. A wait recorded ahead of
-  the clock counts from now and is saved so. The reviewer's own block
-  is read again with one `get_agent` right before the cancel, which carries
-  that hint as its reason; the lead is messaged once the cancel is
-  accepted. Known limitation: Aether has no conditional cancel, so a
-  reviewer whose quota returns within the one round trip between that read
-  and the cancel is still cancelled, and its lead re-plans the review.
+  A check with no wait due for intervention finishes within one period.
+  A wait recorded ahead of the clock starts over at the next observation.
+  Archond rechecks the reviewer's block before reporting or intervening.
   When any agent of a running stage's tree gets a new child, every live
   agent beneath the lead with a deadline below the stored one is raised to
   it. The read and the raise run under the stage's steering lock, as every

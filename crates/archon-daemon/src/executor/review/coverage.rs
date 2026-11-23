@@ -59,13 +59,18 @@ struct FindingClaim {
 impl FindingClaims {
     fn new(agent: &str, verdict: &Verdict) -> Self {
         assert!(!agent.is_empty());
+        let mut continued_ids = BTreeSet::new();
         let listed = verdict
             .listed_findings
             .iter()
             .enumerate()
             .map(|(index, finding)| FindingClaim {
                 id: format!("{agent}:{}", index + 1),
-                continued: finding.id.clone(),
+                continued: finding
+                    .id
+                    .as_ref()
+                    .filter(|id| continued_ids.insert(id.as_str()))
+                    .cloned(),
                 blocking: finding.blocking,
             })
             .collect::<Vec<_>>();
@@ -74,10 +79,6 @@ impl FindingClaims {
             listed,
             resolved: verdict.resolved_findings.iter().cloned().collect(),
         }
-    }
-
-    fn resolves(&self, id: &str) -> bool {
-        self.resolved.contains(id) && !self.lists(id)
     }
 
     fn lists(&self, id: &str) -> bool {
@@ -855,18 +856,6 @@ fn blocker_id<'a>(
     if origin.superseded || origin.head == fail.head || !history.holds(&origin.head, &fail.head)? {
         return Ok(&finding.id);
     }
-    for read in reads
-        .iter()
-        .filter(|r| !r.superseded && resolves_at(reads, r, continued))
-    {
-        if read.head != origin.head
-            && read.head != fail.head
-            && history.holds(&origin.head, &read.head)?
-            && history.holds(&read.head, &fail.head)?
-        {
-            return Ok(&finding.id);
-        }
-    }
     Ok(continued)
 }
 
@@ -878,33 +867,41 @@ fn blocker_resolved(
     id: &str,
 ) -> Result<bool, ArchonError> {
     assert!(!fail.pass && !id.is_empty());
+    assert_eq!(reads.len(), current.len());
     for (read, held) in reads.iter().zip(current) {
-        if *held
-            && read.base.is_none()
-            && (fail.superseded || fail.carried)
-            && !read.claims.lists(id)
-            && answers(history, read, fail)?
-        {
-            return Ok(true);
+        if read.superseded || (read.pass && !held) {
+            continue;
         }
-        if (*held || !read.pass)
-            && !read.superseded
-            && !fail.superseded
+        let whole = *held && read.base.is_none() && answers(history, read, fail)?;
+        let stated = !fail.superseded
             && read.head != fail.head
-            && resolves_at(reads, read, id)
-            && history.holds(&fail.head, &read.head)?
-        {
+            && read.claims.resolved.contains(id)
+            && history.holds(&fail.head, &read.head)?;
+        if (whole || stated) && reads_past_open_claims(history, reads, current, read, id)? {
             return Ok(true);
         }
     }
     Ok(false)
 }
 
-fn resolves_at(reads: &[Placed], by: &Placed, id: &str) -> bool {
-    by.claims.resolves(id)
-        && !reads
-            .iter()
-            .any(|read| read.head == by.head && read.claims.lists(id))
+fn reads_past_open_claims(
+    history: &mut impl Ancestry,
+    reads: &[Placed],
+    current: &[bool],
+    resolution: &Placed,
+    id: &str,
+) -> Result<bool, ArchonError> {
+    assert_eq!(reads.len(), current.len());
+    assert!(!resolution.superseded && !id.is_empty());
+    for (read, held) in reads.iter().zip(current) {
+        if read.superseded || (read.pass && !held) || !read.claims.lists(id) {
+            continue;
+        }
+        if read.head == resolution.head || !history.holds(&read.head, &resolution.head)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Whether one of the counted passes answers `fail`.

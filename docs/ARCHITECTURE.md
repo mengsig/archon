@@ -2696,9 +2696,10 @@ names the named passes and the named whole-change fails they answered, so
 a strict review whose first reads failed still names three; a review whose
 named reads make a shorter record is refused, as is one with fewer reads.
 Fewer fail the run with the reasons. Review rounds count commits with at least
-one blocking fail. A later review must confirm each blocking ID before it
-can ship. At `REVIEW_ROUND_CAP` (three), the lead stays live while it commits
-fixes for all open blockers. The live-stage sweep checks for a descendant
+one blocking fail. A delta re-review must confirm each blocking ID before
+the change ships. An explicit still-open disposition after a resolution
+requires another confirmation. At `REVIEW_ROUND_CAP` (three), the lead stays
+live while it commits fixes for all open blockers. The live-stage sweep checks for a descendant
 commit on the run branch and a `Review-Fix: <id>` trailer for every blocker.
 Once those commits exist, the lead delegates one final review of that exact
 delta. The reviewer must explicitly resolve every capped ID and pass the

@@ -169,7 +169,7 @@ impl Confirmation {
         ctx: &DaemonContext,
         stage: &StageRun,
         lead: &AetherAgentId,
-    ) -> Result<bool, ArchonError> {
+    ) -> Result<Option<String>, ArchonError> {
         assert!(
             self.existing.is_some(),
             "the confirmation scope is frozen before delivery"
@@ -180,7 +180,10 @@ impl Confirmation {
             .map(|(id, text)| (id.as_str(), text.as_str()))
             .collect();
         let workspace = ctx.store.lock().await.run(&stage.run)?.workspace;
-        let findings = handoff::findings(&workspace, &findings)?;
+        let findings = match handoff::findings(&workspace, &findings) {
+            Ok(findings) => findings,
+            Err(error) => return Ok(Some(error.to_string())),
+        };
         let note = format!(
             concat!(
                 "The review reached the cap with fixes committed. Have exactly one reviewer read ",

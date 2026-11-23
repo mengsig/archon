@@ -115,6 +115,8 @@ struct Round<'a> {
     reviews: Vec<Review<'a>>,
     #[serde(skip)]
     open: Vec<Finding>,
+    #[serde(skip)]
+    resolved: BTreeSet<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -143,6 +145,7 @@ impl<'a> Rounds<'a> {
                 head: reads[0].head.as_deref(),
                 reviews: Vec::new(),
                 open: Vec::new(),
+                resolved: BTreeSet::new(),
             };
             let at = RoundId {
                 stage: stage.clone(),
@@ -155,6 +158,7 @@ impl<'a> Rounds<'a> {
                     .get_mut(id)
                     .expect("only known findings resolve");
                 finding.resolved_in = Some(at.clone());
+                round.resolved.insert(id.clone());
             }
             round.open = result
                 .findings
@@ -164,24 +168,22 @@ impl<'a> Rounds<'a> {
                 .collect();
             result.rounds.push(round);
         }
-        result.record_next_round(&stage);
+        result.record_next_round();
         result
     }
 
-    fn record_next_round(&mut self, stage: &str) {
-        let count = self.rounds.len();
-        for round in self.rounds.iter_mut().take(count.saturating_sub(1)) {
+    fn record_next_round(&mut self) {
+        for index in 1..self.rounds.len() {
+            let (before, after) = self.rounds.split_at_mut(index);
+            let round = before.last_mut().expect("there is a preceding round");
+            let resolved = &after[0].resolved;
+            assert_eq!(round.number + 1, after[0].number);
             for review in &mut round.reviews {
                 if review.finding_ids.is_empty() {
                     continue;
                 }
-                review.next_round_resolved = Some(review.finding_ids.iter().all(|id| {
-                    let finding = &self.findings[id];
-                    finding
-                        .resolved_in
-                        .as_ref()
-                        .is_some_and(|at| at.stage == stage && at.number == round.number + 1)
-                }));
+                review.next_round_resolved =
+                    Some(review.finding_ids.iter().all(|id| resolved.contains(id)));
             }
         }
     }
@@ -334,11 +336,11 @@ fn record_finding(
 ) -> String {
     assert!(!agent.is_empty(), "the id names a reviewer");
     if let Some(prior) = finding.id.as_ref().and_then(|id| findings.get_mut(id))
-        && prior.resolved_in.is_none()
         && prior.found_in != *at
         && !seen.contains(&prior.id)
     {
         prior.blocking |= finding.blocking;
+        prior.resolved_in = None;
         return prior.id.clone();
     }
     let id = format!("{agent}:{}", index + 1);

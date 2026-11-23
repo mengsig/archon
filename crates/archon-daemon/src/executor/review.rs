@@ -30,6 +30,7 @@ use crate::context::DaemonContext;
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack::{self, is_commit_id};
 use coverage::{Base, Held, History, Verdicts};
+pub(super) use handoff::FindingsFile;
 pub(super) use record::{attach as attach_rounds, prior_handoff};
 pub(super) use restate::reviewer_unreadable;
 pub(super) use rounds::{

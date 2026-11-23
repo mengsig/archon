@@ -4,6 +4,7 @@ use archon_aether::events::{AetherEvent, EventKind};
 use archon_aether::wire::TaskResult;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
+use archon_core::protocol::Request;
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{StageOutcome, StageRun, StageState, review_tally_key};
 use archon_daemon::pump;
@@ -69,7 +70,7 @@ impl Loop {
         if fixes != Fixes::OnlyOne {
             addressed.extend((2..=count).map(|n| format!("{reviewer}:{n}")));
         }
-        if fixes != Fixes::None {
+        if !matches!(fixes, Fixes::None | Fixes::Large) {
             commit_fixes(
                 &workspace,
                 &addressed.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -341,6 +342,33 @@ async fn partial_commit_evidence_still_escalates_at_the_cap() {
 }
 
 #[tokio::test]
+async fn a_sweep_recovers_a_cap_handoff_after_the_event_delivery_times_out() {
+    let (review, third) = Loop::pending_cap(Fixes::None).await;
+    review
+        .h
+        .backend
+        .fail_next_message(ArchonError::Unavailable("no delivery receipt".into()));
+    let failed = tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        pump::handle_fleet_event(&review.h.ctx, &third),
+    )
+    .await
+    .expect("the review event responds");
+    assert!(matches!(failed, Err(ArchonError::Unavailable(_))));
+    assert_eq!(review.stage().await.state, StageState::Running);
+    assert!(read_tally(&review.h, &review.lead).await["fix_wait"].is_object());
+    review.h.dispatch().await;
+    let notes = review.h.backend.messages();
+    assert!(
+        notes
+            .iter()
+            .any(|(_, note)| note.contains("commit fixes for every open blocker")),
+        "{notes:?}"
+    );
+    assert_eq!(confirmation_notes(&review.h), 0);
+}
+
+#[tokio::test]
 async fn a_new_blocker_in_confirmation_still_escalates() {
     let mut review = Loop::at_cap(Fixes::All).await;
     let resolved = json!([review.first_id, review.new_id]);
@@ -507,20 +535,90 @@ fn full_handoff(workspace: &Path, prompt: &str) -> String {
 #[tokio::test]
 async fn oversized_caps_link_to_the_complete_confirmation_list() {
     let review = Loop::at_cap(Fixes::Large).await;
+    let workspace = review.workspace().await;
     let notes = review.h.backend.messages();
     let note = &notes.last().unwrap().1;
-    assert!(note.contains("exactly one reviewer"), "{note}");
-    let full = full_handoff(&review.workspace().await, note);
+    assert!(
+        note.contains("commit fixes for every open blocker"),
+        "{note}"
+    );
+    assert_eq!(confirmation_notes(&review.h), 0);
+    let full = full_handoff(&workspace, note);
     assert!(
         full.contains(&review.first_id),
         "the earlier blocker is included"
     );
+    let mut ids = vec![review.first_id.clone()];
     for n in 2..=22 {
-        assert!(
-            full.contains(&format!("{}:{n}: ", review.reports[2])),
-            "missing ID {n}"
-        );
+        let id = format!("{}:{n}", review.reports[2]);
+        assert!(full.contains(&format!("{id}: ")), "missing ID {n}");
+        ids.push(id);
     }
+    commit_fixes(
+        &workspace,
+        &ids.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    review.h.dispatch().await;
+    let notes = review.h.backend.messages();
+    let note = &notes.last().unwrap().1;
+    assert!(note.contains("exactly one reviewer"), "{note}");
+    assert_eq!(full_handoff(&workspace, note), full);
+}
+
+#[tokio::test]
+async fn a_fresh_lead_on_the_same_branch_gets_the_complete_oversized_findings() {
+    let first = Loop::at_cap(Fixes::Large).await;
+    let workspace = first.workspace().await;
+    let notes = first.h.backend.messages();
+    let original = full_handoff(&workspace, &notes.last().unwrap().1);
+    first.cannot_fix().await;
+    first
+        .h
+        .cli(Request::RetryItem {
+            item: first.item.id.clone(),
+            model_plan: None,
+            model_reasons: None,
+            fresh: false,
+            brief_append: None,
+            stage_timeouts: Default::default(),
+        })
+        .await
+        .unwrap();
+    first.h.dispatch().await;
+    let lead = first.h.running().await.remove(0);
+    assert_ne!(first.lead.aether_agent, lead.aether_agent);
+    let request = first
+        .h
+        .backend
+        .requests()
+        .into_iter()
+        .find(|r| r.idempotency_key == lead.id.as_str())
+        .expect("the new lead's spawn");
+    let handed = full_handoff(&workspace, &request.objective);
+    assert_eq!(handed.lines().count(), 22, "one line per open ID");
+    for line in handed.lines() {
+        let (id, _) = line.split_once(": ").unwrap();
+        assert!(original.contains(id), "unexpected finding in {line}");
+    }
+}
+
+#[tokio::test]
+async fn a_report_directory_symlink_escalates_instead_of_losing_the_handoff() {
+    let (review, third) = Loop::pending_cap(Fixes::Large).await;
+    let workspace = review.workspace().await;
+    std::fs::create_dir_all(workspace.join(".archon")).unwrap();
+    let target = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(target.path(), workspace.join(".archon/reports")).unwrap();
+    handle(&review.h, &third).await;
+    let StageState::Failed { error } = review.stage().await.state else {
+        panic!("a refused report write must escalate at the cap")
+    };
+    assert!(
+        error.contains("writing the complete review finding list"),
+        "{error}"
+    );
+    assert!(target.path().read_dir().unwrap().next().is_none());
+    assert_eq!(confirmation_notes(&review.h), 0);
 }
 
 #[tokio::test]
@@ -590,14 +688,7 @@ async fn an_upgraded_tally_restores_already_counted_findings_and_their_ordinals(
         ]),
     );
     let reviewer = first.agent.unwrap();
-    let legacy = json!({"fails": [{"agent": reviewer, "head": initial["commit"], "findings": ["older blocker"]}], "read": [reviewer]});
-    let key = review_tally_key(&lead.id);
-    h.ctx
-        .store
-        .lock()
-        .await
-        .kv_set(&key, &legacy.to_string())
-        .unwrap();
+    seed_legacy_tally(&h, &lead, &reviewer, &initial["commit"]).await;
     let next = change(&workspace);
     let second = fail(
         &h,
@@ -623,6 +714,67 @@ async fn an_upgraded_tally_restores_already_counted_findings_and_their_ordinals(
         notes.len(),
         "replay keeps the same IDs"
     );
+}
+
+async fn seed_legacy_tally(h: &Harness, lead: &StageRun, reviewer: &AetherAgentId, head: &Value) {
+    assert!(head.as_str().is_some_and(|head| head.len() == 40));
+    let legacy = json!({"fails": [{"agent": reviewer, "head": head, "findings": ["older blocker"]}], "read": [reviewer]});
+    let key = review_tally_key(&lead.id);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &legacy.to_string())
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_forgotten_legacy_verdict_retains_its_blocker_without_an_extra_round() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.run(&item.id).await.workspace;
+    let initial = change(&workspace);
+    let first = fail(
+        &h,
+        &lead,
+        &initial["commit"],
+        None,
+        json!([{"title": "older blocker", "blocking": true}]),
+    );
+    let reviewer = first.agent.unwrap();
+    seed_legacy_tally(&h, &lead, &reviewer, &initial["commit"]).await;
+    let second_head = change(&workspace);
+    let second = fail(
+        &h,
+        &lead,
+        &second_head["commit"],
+        Some(&initial["commit"]),
+        json!([{"title": "new blocker", "blocking": true}]),
+    );
+    assert_ne!(second.agent.as_ref(), Some(&reviewer));
+    h.backend.forget_delegated(&reviewer);
+    handle(&h, &second).await;
+    handle(&h, &second).await;
+    let notes = h.backend.messages();
+    let note = &notes.last().unwrap().1;
+    let saved_id = format!("{reviewer}:1");
+    assert!(
+        note.contains(&format!("{saved_id}: older blocker")),
+        "{note}"
+    );
+    let current = h.ctx.store.lock().await.stage_run(&lead.id).unwrap();
+    assert_eq!(current.state, StageState::Running);
+    let tally = read_tally(&h, &lead).await;
+    assert_eq!(tally["fails"].as_array().unwrap().len(), 2);
+    assert_eq!(tally["reports"].as_array().unwrap().len(), 2);
+    assert_eq!(tally["reports"][0]["head"], initial["commit"]);
+}
+
+async fn read_tally(h: &Harness, lead: &StageRun) -> Value {
+    let key = review_tally_key(&lead.id);
+    let store = h.ctx.store.lock().await;
+    serde_json::from_str(&store.kv_get(&key).unwrap().unwrap()).unwrap()
 }
 
 #[tokio::test]
@@ -680,5 +832,107 @@ async fn a_delta_pass_must_confirm_the_blocker_even_if_the_lead_omits_its_review
                 "{error}"
             );
         }
+    }
+}
+
+#[tokio::test]
+async fn a_reopened_blocker_needs_a_resolution_after_the_reopening() {
+    for close_again in [false, true] {
+        let h = Harness::new().await;
+        let item = adaptive_item(&h).await;
+        let lead = h.running().await.remove(0);
+        let workspace = h.run(&item.id).await.workspace;
+        let initial = change(&workspace);
+        let first = fail(
+            &h,
+            &lead,
+            &initial["commit"],
+            None,
+            json!([{"title": "invalid input panics", "blocking": true}]),
+        );
+        handle(&h, &first).await;
+        let first = first.agent.unwrap();
+        let id = format!("{first}:1");
+        let (b, fixed) = delta_pass(
+            &h,
+            &lead,
+            &workspace,
+            &initial["commit"],
+            json!([id]),
+            json!([]),
+        )
+        .await;
+        let reopened = json!([{"title": "still open", "blocking": false, "id": id}]);
+        let (c, last) =
+            delta_pass(&h, &lead, &workspace, &fixed["commit"], json!([]), reopened).await;
+        let mut reviewers = vec![first, b, c];
+        let head = if close_again {
+            let (d, closed) = delta_pass(
+                &h,
+                &lead,
+                &workspace,
+                &last["commit"],
+                json!([id]),
+                json!([]),
+            )
+            .await;
+            reviewers.push(d);
+            closed
+        } else {
+            last
+        };
+        finish(&h, &head, &reviewers).await;
+        h.dispatch().await;
+        check_reopened(&h, &item, &lead, &id, close_again).await;
+    }
+}
+
+async fn delta_pass(
+    h: &Harness,
+    lead: &StageRun,
+    workspace: &Path,
+    base: &Value,
+    resolved: Value,
+    findings: Value,
+) -> (AetherAgentId, Value) {
+    let changed = change(workspace);
+    assert_ne!(changed["commit"], *base);
+    let review = reporter(
+        h,
+        lead,
+        json!({"verdict": "pass", "head": changed["commit"], "base": base, "resolved_findings": resolved, "findings": findings}),
+    );
+    handle(h, &review).await;
+    (review.agent.unwrap(), changed)
+}
+
+async fn check_reopened(h: &Harness, item: &QueueItem, lead: &StageRun, id: &str, closed: bool) {
+    let stage = h.ctx.store.lock().await.stage_run(&lead.id).unwrap();
+    let history = &stage.structured.unwrap()["review_rounds"];
+    assert_eq!(
+        history["rounds"][0]["reviews"][0]["next_round_resolved"],
+        true
+    );
+    assert_eq!(
+        history["rounds"][2]["reviews"][0]["finding_ids"],
+        json!([id])
+    );
+    if closed {
+        assert!(matches!(
+            h.state(&item.id).await,
+            QueueState::Succeeded { .. }
+        ));
+        assert_eq!(history["findings"][id]["resolved_in"]["number"], 4);
+    } else {
+        let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+            panic!("the reopened finding still blocks")
+        };
+        assert!(
+            error.contains(&format!(
+                "no subsequent review confirmed blocker {id} resolved"
+            )),
+            "{error}"
+        );
+        assert!(history["findings"][id]["resolved_in"].is_null());
     }
 }

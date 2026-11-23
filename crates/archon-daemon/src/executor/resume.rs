@@ -459,7 +459,7 @@ pub(super) async fn resumed_ok(
 
 /// A running attempt resumed on a kept agent, with that agent and what it
 /// was told; `None` for a stage run that waits for a task.
-fn resumed_on(
+pub(super) fn resumed_on(
     store: &Store,
     id: &StageRunId,
 ) -> Result<Option<(StageRun, KeptAgent)>, ArchonError> {

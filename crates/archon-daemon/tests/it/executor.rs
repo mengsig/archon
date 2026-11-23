@@ -3185,9 +3185,8 @@ async fn a_left_out_fail_of_an_earlier_head_is_answered_by_a_pass_of_the_fix() {
     let rereview = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
     let named = pass_by(std::slice::from_ref(&rereview));
     let fixed = shipped_by(&h, &lead, "Built, then fixed", named).await;
-    let mut reviewed = verdict_on(&fixed, "pass");
-    reviewed["resolved_findings"] = serde_json::json!([format!("{failing}:1")]);
-    h.backend.complete_delegated(&rereview, reviewed);
+    h.backend
+        .complete_delegated(&rereview, verdict_on(&fixed, "pass"));
     h.settle_running(|_| fixed.clone()).await;
     h.dispatch().await;
     assert!(delivered(&h, &item).await, "{:?}", h.state(&item.id).await);

@@ -255,11 +255,11 @@ async fn count(
     }
     if trigger.reviewer().is_some() && !tally.reports.is_empty() {
         let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
-        if !tell_findings(ctx, stage, lead, &records).await?
+        if let Some(refusal) = tell_findings(ctx, stage, lead, &records).await?
             && !lead_finished(ctx, stage, lead).await?
         {
             let reason = format!(
-                "{} review finding IDs could not be delivered to {lead}",
+                "{} review finding IDs could not be delivered to {lead}: {refusal}",
                 StageOutcome::ESCALATE_PREFIX
             );
             return stop(ctx, stage, &mut tally, reason).await.map(Some);
@@ -314,7 +314,14 @@ async fn lead_finished(
     assert!(!stage.state.is_terminal());
     let outcome = match &stage.aether_task {
         Some(task) => ctx.backend.task_outcome(task).await?,
-        None => ctx.backend.resumed_outcome(lead).await?,
+        None => {
+            let resumed = crate::executor::resume::resumed_on(&*ctx.store.lock().await, &stage.id)?;
+            let Some((_, kept)) = resumed else {
+                return Ok(false);
+            };
+            assert_eq!(&kept.agent, lead, "the resumed lead owns the message");
+            ctx.backend.resumed_outcome(lead, &kept.message).await?
+        }
     };
     Ok(outcome.is_some())
 }
@@ -329,7 +336,7 @@ async fn capped(
     assert!(tally.stopped.is_none());
     let rounds = rounds_of(&tally.fails);
     if tally.confirm.is_none() && rounds == REVIEW_ROUND_CAP && trigger.live() {
-        match prepare_confirmation(ctx, stage, (lead, beneath), trigger, tally).await? {
+        match prepare_confirmation(ctx, stage, (lead, beneath), tally).await? {
             Prepare::Waiting => return Ok(None),
             Prepare::Ready => {}
             Prepare::Refused(why) => {
@@ -339,7 +346,7 @@ async fn capped(
                     .expect("a capped review has a failed head");
                 let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
                 let latest = records.reported_blockers(&last.head);
-                let reason = capped_reason(stage, &tally.fails, &latest, why);
+                let reason = capped_reason(stage, &tally.fails, &latest, why.as_deref());
                 return stop(ctx, stage, tally, reason).await.map(Some);
             }
         }
@@ -359,21 +366,20 @@ async fn capped(
         .expect("the stage still has capped findings");
     let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
     let reported = records.reported_blockers(&last.head);
-    let reason = capped_reason(stage, &tally.fails, &reported, refusal);
+    let reason = capped_reason(stage, &tally.fails, &reported, refusal.as_deref());
     stop(ctx, stage, tally, reason).await.map(Some)
 }
 
 enum Prepare {
     Waiting,
     Ready,
-    Refused(Option<&'static str>),
+    Refused(Option<String>),
 }
 
 async fn prepare_confirmation(
     ctx: &DaemonContext,
     stage: &StageRun,
     (lead, beneath): (&AetherAgentId, &[Descendant]),
-    trigger: Trigger<'_>,
     tally: &mut Tally,
 ) -> Result<Prepare, ArchonError> {
     assert!(
@@ -394,11 +400,18 @@ async fn prepare_confirmation(
     if tally
         .fix_wait
         .as_ref()
-        .is_some_and(|known| !reviewers.is_subset(known))
+        .is_some_and(|wait| !reviewers.is_subset(&wait.reviewers))
     {
         return Ok(Prepare::Refused(Some(
-            "another review started before confirmation was authorized",
+            "another review started before confirmation was authorized".into(),
         )));
+    }
+    if tally.fix_wait.is_none() {
+        tally.fix_wait = Some(FixWait {
+            reviewers,
+            delivered: None,
+        });
+        save(ctx, &stage.id, tally).await?;
     }
     let workspace = run.workspace.clone();
     match Confirmation::eligible(run, &last.head, &latest).await? {
@@ -410,23 +423,60 @@ async fn prepare_confirmation(
         }
         Eligibility::AwaitingFixes => {}
     }
-    if tally.fix_wait.is_some() && matches!(trigger, Trigger::Sweep) {
-        return Ok(Prepare::Waiting);
-    }
-    let list = handoff::findings(&workspace, &latest)?;
+    let wait = tally.fix_wait.as_mut().expect("joined the cap fix wait");
+    let outcome = ask_for_fixes(
+        ctx,
+        stage,
+        lead,
+        (&workspace, &latest),
+        wait.delivered.as_deref(),
+    )
+    .await?;
+    let tag = match outcome {
+        FixOffer::Sent(tag) => tag,
+        FixOffer::Unchanged => return Ok(Prepare::Waiting),
+        FixOffer::Refused(why) => return Ok(Prepare::Refused(Some(why))),
+    };
+    wait.delivered = Some(tag);
+    save(ctx, &stage.id, tally).await?;
+    Ok(Prepare::Waiting)
+}
+
+enum FixOffer {
+    Unchanged,
+    Sent(String),
+    Refused(String),
+}
+
+async fn ask_for_fixes(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+    (workspace, findings): (&std::path::Path, &[(&str, &str)]),
+    delivered: Option<&str>,
+) -> Result<FixOffer, ArchonError> {
+    assert!(!findings.is_empty());
+    assert!(workspace.is_absolute());
+    let (list, file) = handoff::prepare(findings);
     let note = format!(
         "The review reached the cap. Wait for existing reviewers and commit fixes for every open blocker below with `Review-Fix: <id>` trailers. Then wait for Archon's confirmation instructions. If a fix cannot be committed, fail the stage.\n\n{list}"
     );
-    if !tell_note(ctx, stage, lead, "review-fix", &note).await? {
-        return Ok(Prepare::Refused(Some(
-            "the lead could not receive the capped finding list",
+    let tag = handoff::digest(&note);
+    if delivered == Some(tag.as_str()) {
+        return Ok(FixOffer::Unchanged);
+    }
+    if let Some(file) = file
+        && let Err(error) = file.install(workspace)
+    {
+        return Ok(FixOffer::Refused(error.to_string()));
+    }
+    let key = format!("archon:review-fix:{}:{tag}", stage.id);
+    if let Some(refusal) = tell(ctx, lead, &note, &key).await? {
+        return Ok(FixOffer::Refused(format!(
+            "the lead could not receive the capped finding list: {refusal}"
         )));
     }
-    if tally.fix_wait.is_none() {
-        tally.fix_wait = Some(reviewers);
-        save(ctx, &stage.id, tally).await?;
-    }
-    Ok(Prepare::Waiting)
+    Ok(FixOffer::Sent(tag))
 }
 
 fn all_blockers_recorded(tally: &Tally) -> bool {
@@ -442,9 +492,9 @@ async fn confirmation_refusal(
     (lead, beneath): (&AetherAgentId, &[Descendant]),
     live: bool,
     tally: &mut Tally,
-) -> Result<Option<&'static str>, ArchonError> {
+) -> Result<Option<String>, ArchonError> {
     if rounds_of(&tally.fails) > REVIEW_ROUND_CAP {
-        return Ok(Some("a further review reported a blocker"));
+        return Ok(Some("a further review reported a blocker".into()));
     }
     let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
     let confirm = tally
@@ -453,9 +503,18 @@ async fn confirmation_refusal(
         .expect("the capped review is authorized");
     let findings = records.blocking_at(&confirm.base);
     match confirm.status(lead, beneath, &tally.reports, &findings) {
-        Status::Passed => return Ok(None),
-        Status::Refused(why) => return Ok(Some(why)),
-        _ if !live => return Ok(Some("the lead finished before the confirmation passed")),
+        Status::Passed => {
+            if tally.fix_wait.take().is_some() {
+                save(ctx, &stage.id, tally).await?;
+            }
+            return Ok(None);
+        }
+        Status::Refused(why) => return Ok(Some(why.into())),
+        _ if !live => {
+            return Ok(Some(
+                "the lead finished before the confirmation passed".into(),
+            ));
+        }
         Status::WaitingForPeers => return Ok(None),
         Status::Ready => {
             confirm.prepare_delivery(lead, beneath, &findings);
@@ -467,11 +526,12 @@ async fn confirmation_refusal(
         .confirm
         .as_ref()
         .expect("a confirmation owes its note");
-    let sent = confirm.tell(ctx, stage, lead).await?;
-    if sent && tally.fix_wait.take().is_some() {
+    let refusal = confirm.tell(ctx, stage, lead).await?;
+    if refusal.is_none() && tally.fix_wait.take().is_some() {
         save(ctx, &stage.id, tally).await?;
     }
-    Ok((!sent).then_some("the lead could not receive the confirmation instructions"))
+    Ok(refusal
+        .map(|why| format!("the lead could not receive the confirmation instructions: {why}")))
 }
 
 async fn stop(
@@ -524,15 +584,18 @@ async fn tell_findings(
     stage: &StageRun,
     lead: &AetherAgentId,
     records: &Rounds<'_>,
-) -> Result<bool, ArchonError> {
+) -> Result<Option<String>, ArchonError> {
     let findings = records.last_open();
     if findings.is_empty() || stage.only_reviews == Some(true) {
-        return Ok(true);
+        return Ok(None);
     }
     let workspace = ctx.store.lock().await.run(&stage.run)?.workspace;
-    let list = handoff::findings(&workspace, &findings)?;
+    let list = match handoff::findings(&workspace, &findings) {
+        Ok(list) => list,
+        Err(error) => return Ok(Some(error.to_string())),
+    };
     let note = format!(
-        "Include every open ID below in the next review's instructions. Ask for each ID's disposition and a review of the new delta.\n\n{list}"
+        "For the next review, give the reviewer this list or its file path. Ask for each ID's disposition and a review of the new delta.\n\n{list}"
     );
     tell_note(ctx, stage, lead, "review-findings", &note).await
 }
@@ -543,7 +606,7 @@ async fn tell_note(
     lead: &AetherAgentId,
     purpose: &str,
     note: &str,
-) -> Result<bool, ArchonError> {
+) -> Result<Option<String>, ArchonError> {
     let key = format!("archon:{purpose}:{}:{}", stage.id, handoff::digest(note));
     tell(ctx, lead, note, &key).await
 }
@@ -553,16 +616,13 @@ pub(super) async fn tell(
     lead: &AetherAgentId,
     note: &str,
     key: &str,
-) -> Result<bool, ArchonError> {
+) -> Result<Option<String>, ArchonError> {
     assert!(!note.is_empty());
     assert!(!key.is_empty());
     match ctx.backend.send_message(lead, note, key).await {
-        Ok(()) => Ok(true),
+        Ok(()) => Ok(None),
         Err(error) if crate::executor::resume::unanswered(&error) || error.is_store() => Err(error),
-        Err(refusal) => {
-            tracing::warn!(%lead, %refusal, "review round note not delivered");
-            Ok(false)
-        }
+        Err(refusal) => Ok(Some(refusal.to_string())),
     }
 }
 
@@ -746,11 +806,17 @@ pub(super) struct Tally {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prior_findings: Vec<Finding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    fix_wait: Option<BTreeSet<String>>,
+    fix_wait: Option<FixWait>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     confirm: Option<Confirmation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stopped: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FixWait {
+    reviewers: BTreeSet<String>,
+    delivered: Option<String>,
 }
 
 impl Tally {

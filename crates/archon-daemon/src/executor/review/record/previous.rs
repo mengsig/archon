@@ -7,7 +7,7 @@ use archon_core::run::{PipelineRun, StageRun};
 use archon_queue::Store;
 use serde_json::Value;
 
-use super::{Finding, RoundId, Rounds};
+use super::{Finding, Rounds};
 use crate::executor::review::handoff;
 
 pub(in crate::executor::review) fn prior_findings(
@@ -96,12 +96,17 @@ fn read_prior(stage: &StageRun) -> Result<Option<Prior>, ArchonError> {
     }))
 }
 
+pub(in crate::executor) struct PriorHandoff {
+    pub text: String,
+    pub file: Option<handoff::FindingsFile>,
+}
+
 pub(in crate::executor) fn prior_handoff(
     store: &Store,
     stage: &StageRun,
     delegates_review: bool,
     replacing: Option<&StageRun>,
-) -> Result<Option<String>, ArchonError> {
+) -> Result<Option<PriorHandoff>, ArchonError> {
     if stage.only_reviews == Some(true)
         || (!delegates_review && stage.kind != Some(StageKind::Review))
     {
@@ -125,7 +130,7 @@ pub(in crate::executor) fn prior_handoff(
     let rule = "Return confirmed fixes as IDs in `resolved_findings`. Keep the `id` on each finding still open. Any real blocker found anywhere fails.";
     if delegates_review {
         objective.push_str(
-            "Include these findings and the following instructions in the next review prompt.\n",
+            "Give the next reviewer this list or its file path and the instructions below.\n",
         );
     }
     objective.push_str(rule);
@@ -134,10 +139,13 @@ pub(in crate::executor) fn prior_handoff(
         .iter()
         .map(|finding| (finding.id.as_str(), finding.description.as_str()))
         .collect();
-    let workspace = store.run(&stage.run)?.workspace;
+    let (list, file) = handoff::prepare(&findings);
     objective.push_str("\n\n");
-    objective.push_str(&handoff::findings(&workspace, &findings)?);
-    Ok(Some(objective))
+    objective.push_str(&list);
+    Ok(Some(PriorHandoff {
+        text: objective,
+        file,
+    }))
 }
 
 pub(super) fn update_previous(
@@ -147,10 +155,6 @@ pub(super) fn update_previous(
 ) -> Option<(StageRunId, Value)> {
     assert_ne!(stage.id, previous.stage);
     let first = rounds.rounds.first().expect("a settled review has rounds");
-    let at = RoundId {
-        stage: stage.id.to_string(),
-        number: first.number,
-    };
     let last = previous
         .record
         .get_mut("rounds")?
@@ -163,11 +167,9 @@ pub(super) fn update_previous(
         let Some(ids) = ids.filter(|ids| !ids.is_empty()) else {
             continue;
         };
-        let resolved = ids.iter().all(|id| {
-            id.as_str()
-                .and_then(|id| rounds.findings.get(id))
-                .is_some_and(|finding| finding.resolved_in.as_ref() == Some(&at))
-        });
+        let resolved = ids
+            .iter()
+            .all(|id| id.as_str().is_some_and(|id| first.resolved.contains(id)));
         review["next_round_resolved"] = Value::Bool(resolved);
         changed = true;
     }

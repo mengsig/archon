@@ -109,6 +109,8 @@ pub(crate) struct StoredSpawn {
     /// ran. `None` when it runs on as it is, or 1.6.3 stored the spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wake_retune: Option<ModelChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    review_findings: Option<super::review::FindingsFile>,
 }
 
 impl StoredSpawn {
@@ -1074,6 +1076,7 @@ fn reserve_one(
         effort_contract: Some(effort),
         issued_reviewers: plan.reviewers.clone(),
         wake_retune,
+        review_findings: None,
     };
     let sizing = crate::sizing::attempt(target.item, plan);
     let stage = StageRun {
@@ -1106,10 +1109,11 @@ fn reserve_one(
         super::review::prior_handoff(store, &stage, plan.reviewers.is_some(), target.replacing)?
     {
         assert!(!spawn.request.objective.is_empty());
-        spawn.request.objective.push_str(&handoff);
+        spawn.request.objective.push_str(&handoff.text);
         if let Some(resume) = &mut spawn.resume {
-            resume.message.push_str(&handoff);
+            resume.message.push_str(&handoff.text);
         }
+        spawn.review_findings = handoff.file;
     }
     save_spawn(store, &id, &spawn)?;
     let note = workers.and_then(|narrowed| narrowed.note);
@@ -1475,7 +1479,14 @@ async fn issue_claimed(ctx: &DaemonContext, id: &StageRunId) -> Result<FollowUp,
     let reviews = allowed.is_ok() && !unsent && can_review(&stage, &spawn);
     let workspace = prepare.then_some(spawn.request.workspace.as_path());
     let worker = worker.filter(|_| prepare);
-    let ready = ready_to_spawn(ctx, id, (worker, workspace), reviews, &item).await;
+    let ready = ready_to_spawn(ctx, id, (worker, workspace), reviews, &item)
+        .await
+        .and_then(|()| {
+            if let (Some(file), Some(workspace)) = (&spawn.review_findings, workspace) {
+                file.install(workspace).map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        });
     if let Err(error) = ready {
         let mut table = ctx.runs.lock().await;
         let was_claimed = table.in_flight.remove(id);

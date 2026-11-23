@@ -441,12 +441,7 @@ pub(super) async fn record_spend(
         output_tokens: usage.output_tokens,
         at: event.at,
     };
-    let mut store = ctx.store.lock().await;
-    if row.item.is_none() {
-        store.record_orchestration_spend(&row)
-    } else {
-        store.record_spend(&row)
-    }
+    ctx.store.lock().await.record_spend_event(&row, event.seq)
 }
 
 async fn question_asked(

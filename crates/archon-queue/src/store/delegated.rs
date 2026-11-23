@@ -9,7 +9,7 @@ use archon_core::model::{Effort, ModelRef};
 use archon_core::protocol::DelegatedAgent;
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::codec::{SqlContext, write_tx};
+use super::codec::{SqlContext, to_i64, write_tx};
 
 /// Every agent beneath a root, a row per pair; `UNION` ends a cycle a
 /// corrupted table could hold.
@@ -27,8 +27,12 @@ pub(super) fn record(
     parent: &AetherAgentId,
     model: &ModelRef,
     effort: Option<Effort>,
+    created_seq: Option<u64>,
 ) -> Result<(), ArchonError> {
     assert_ne!(agent, parent, "an agent is not its own parent");
+    let seq = created_seq
+        .map(|seq| to_i64(seq, "delegation event sequence"))
+        .transpose()?;
     let tx = write_tx(conn)?;
     let known: Option<String> = tx
         .query_row(
@@ -48,14 +52,17 @@ pub(super) fn record(
         )));
     }
     tx.execute(
-        "INSERT INTO delegated_agents (agent, parent, model, effort) VALUES (?1, ?2, ?3, ?4)
+        "INSERT INTO delegated_agents (agent, parent, model, effort, created_seq)
+         VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(agent) DO UPDATE SET
-             model = excluded.model, effort = COALESCE(excluded.effort, effort)",
+             model = excluded.model, effort = COALESCE(excluded.effort, effort),
+             created_seq = COALESCE(NULLIF(created_seq, 0), excluded.created_seq, created_seq)",
         params![
             agent.as_str(),
             parent.as_str(),
             model.to_string(),
-            effort.map(|e| e.to_string())
+            effort.map(|e| e.to_string()),
+            seq,
         ],
     )
     .ctx("record delegated agent")?;

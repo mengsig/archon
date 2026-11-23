@@ -1,10 +1,13 @@
 ALTER TABLE spend ADD COLUMN orchestration INTEGER NOT NULL DEFAULT 0
     CHECK (orchestration IN (0, 1));
 
+ALTER TABLE delegated_agents ADD COLUMN created_seq INTEGER CHECK (created_seq >= 0);
+
 CREATE TABLE stage_spend_windows (
     root TEXT NOT NULL,
     stage TEXT NOT NULL REFERENCES stage_runs (id) ON DELETE CASCADE,
     opens_at TEXT NOT NULL,
+    after_seq INTEGER CHECK (after_seq >= 0),
     PRIMARY KEY (root, stage)
 ) WITHOUT ROWID;
 CREATE INDEX stage_spend_windows_by_stage ON stage_spend_windows (stage);
@@ -49,6 +52,9 @@ GROUP BY s.agent HAVING COUNT(*) = 1;
 
 INSERT OR IGNORE INTO agent_runs (agent, run)
 SELECT x.agent, st.run FROM stage_spend x JOIN stage_runs st ON st.id = x.stage;
+
+-- Existing delegates precede every future checkpoint.
+UPDATE delegated_agents SET created_seq = 0;
 
 WITH RECURSIVE helpers(agent) AS (
     SELECT value FROM kv WHERE key = 'orchestrator_agent'

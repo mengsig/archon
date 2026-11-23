@@ -692,3 +692,60 @@ fn live_correction_distillation_input_is_bounded() {
     assert_eq!(input.len(), 100);
     assert!(input.iter().all(|o| o.repo.as_ref() == Some(&repo.id)));
 }
+
+#[test]
+fn outcome_cost_includes_each_attempt_of_a_kept_agent() {
+    use archon_core::cost::CostBasis;
+    use archon_queue::store::SpendRow;
+
+    let mut store = store();
+    let repo = repo("kept");
+    store.insert_repo(&repo).unwrap();
+    let item = store.insert_item(&item(Some(&repo), "kept"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let usage = |cost_usd, at| SpendRow {
+        agent: agent(0),
+        item: Some(item.id.clone()),
+        cost_usd,
+        cost_basis: CostBasis::ProviderReported,
+        cost_complete: Some(true),
+        estimated_cost_usd: 0.0,
+        input_tokens: 1,
+        output_tokens: 1,
+        at: t(at),
+    };
+    for (attempt, start, cost) in [(1, 20, 1.25), (2, 30, 3.25)] {
+        let mut stage = running_stage(&run, 0, 0);
+        stage.attempt = attempt;
+        stage.started_at = t(start);
+        stage.state = StageState::Completed;
+        stage.finished_at = Some(t(start + 5));
+        store.upsert_stage_run(&stage).unwrap();
+        store.record_spend(&usage(cost, start + 4)).unwrap();
+    }
+
+    settle_run(
+        &mut store,
+        &run,
+        QueueState::Succeeded {
+            run: run.id.clone(),
+            summary: "done".into(),
+        },
+        t(50),
+    );
+    store
+        .capture_outcome(&store.run(&run.id).unwrap(), None, true)
+        .unwrap();
+    let captured = store.outcomes_awaiting_merge(&t(0)).unwrap().remove(0);
+    assert_eq!(captured.run, run.id);
+    assert_eq!(captured.stages[0].attempts, 2);
+    assert_eq!(captured.stages[0].cost_usd, 3.25);
+
+    store.record_spend(&usage(3.5, 55)).unwrap();
+    let settled = store.outcome(&run.id).unwrap().unwrap();
+    assert_eq!(settled.stages[0].cost_usd, 3.5);
+    assert_eq!(
+        settled.cost_usd,
+        store.spend_for_run(&run.id, false).unwrap()
+    );
+}

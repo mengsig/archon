@@ -1456,7 +1456,7 @@ mod tests {
              DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster;
              ALTER TABLE lessons DROP COLUMN cluster;
              DROP TABLE stage_spend; DROP TABLE stage_spend_windows;
-             ALTER TABLE spend DROP COLUMN orchestration;
+             ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
              DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();

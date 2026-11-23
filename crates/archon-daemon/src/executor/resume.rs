@@ -278,14 +278,14 @@ async fn takes_over(
     agent: &AetherAgentId,
 ) -> Result<bool, ArchonError> {
     assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
+    let woken = load_spawn(&*ctx.store.lock().await, &stage.id)?.woken;
+    if !woken {
+        return ctx.backend.is_live(agent).await;
+    }
+    bind_spend_window(ctx, stage, agent).await?;
     let asked_before = {
         let mut store = ctx.store.lock().await;
         let mut spawn = load_spawn(&store, &stage.id)?;
-        if !spawn.woken {
-            drop(store);
-            return ctx.backend.is_live(agent).await;
-        }
-        store.bind_kept_spend(&stage.id, agent, &archon_core::now())?;
         let asked = std::mem::replace(&mut spawn.wake_asked, true);
         spawn::save_spawn(&mut store, &stage.id, &spawn)?;
         asked
@@ -301,6 +301,27 @@ async fn takes_over(
             Ok(live)
         }
     }
+}
+
+async fn bind_spend_window(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    agent: &AetherAgentId,
+) -> Result<(), ArchonError> {
+    assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
+    if ctx
+        .store
+        .lock()
+        .await
+        .has_stage_spend_window(&stage.id, agent)?
+    {
+        return Ok(());
+    }
+    let after_seq = ctx.backend.event_watermark().await?;
+    ctx.store
+        .lock()
+        .await
+        .bind_kept_spend(&stage.id, agent, &archon_core::now(), after_seq)
 }
 
 /// Give the kept agent its deadline, new grant, the choice a woken one is
@@ -337,10 +358,7 @@ pub(super) async fn hand_over(
     let key = stage.id.as_str();
     let handed = match ctx.backend.update_agent(agent, update).await {
         Ok(()) => {
-            ctx.store
-                .lock()
-                .await
-                .bind_kept_spend(&stage.id, agent, &archon_core::now())?;
+            bind_spend_window(ctx, stage, agent).await?;
             ctx.backend.send_message(agent, &kept.message, key).await
         }
         Err(error) => Err(error),

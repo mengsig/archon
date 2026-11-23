@@ -258,6 +258,7 @@ pub(super) fn record(
     conn: &mut Connection,
     row: &SpendRow,
     orchestration: bool,
+    event_seq: Option<u64>,
 ) -> Result<(), ArchonError> {
     check_row(row)?;
     assert!(
@@ -285,7 +286,7 @@ pub(super) fn record(
     let charge = charge(row, &held);
     upsert_latest(&tx, &charge.kept, charge.settled, orchestration)?;
     if !orchestration {
-        super::stage_spend::record(&tx, &charge.kept, charge.cost, charge.estimate)?;
+        super::stage_spend::record(&tx, &charge.kept, charge.cost, charge.estimate, event_seq)?;
     }
     add_to_day(&tx, &charge.kept, charge.cost.max(0.0), charge.estimate)?;
     if charge.cost < 0.0 {

@@ -80,21 +80,25 @@ pub(super) fn stage_observations(
     estimates: bool,
 ) -> Result<Vec<OutcomeStage>, ArchonError> {
     let mut grouped: BTreeMap<(String, String, String), (OutcomeStage, u32)> = BTreeMap::new();
-    let mut charged = BTreeSet::new();
+    let mut legacy_charged = BTreeSet::new();
     for stage in stages {
         assert!(stage.attempt > 0);
-        let cost = if stage
-            .aether_agent
-            .as_ref()
-            .is_none_or(|a| charged.insert(a.clone()))
-        {
-            stage_charge(store, stage, estimates)?
-        } else {
-            0.0
-        };
         if stage.zero_cost_create_refusal() {
             continue;
         }
+        let (direct, delegated) = stage_allocations(store, stage, estimates)?;
+        let direct = direct.unwrap_or_else(|| {
+            if stage
+                .aether_agent
+                .as_ref()
+                .is_none_or(|agent| legacy_charged.insert(agent.clone()))
+            {
+                stage.cost_usd
+            } else {
+                0.0
+            }
+        });
+        let cost = direct + delegated;
         for observed in super::segments::observations(stage, cost)? {
             merge_observation(&mut grouped, observed, stage.attempt);
         }
@@ -196,6 +200,17 @@ pub(super) fn stage_charge(
     stage: &StageRun,
     estimates: bool,
 ) -> Result<f64, ArchonError> {
+    let (direct, delegated) = stage_allocations(store, stage, estimates)?;
+    let total = direct.unwrap_or(stage.cost_usd) + delegated;
+    assert!(total.is_finite() && total >= 0.0);
+    Ok(total)
+}
+
+fn stage_allocations(
+    store: &Store,
+    stage: &StageRun,
+    estimates: bool,
+) -> Result<(Option<f64>, f64), ArchonError> {
     let (direct, delegated): (Option<f64>, f64) = store
         .conn
         .query_row(
@@ -211,9 +226,8 @@ pub(super) fn stage_charge(
         )
         .ctx("read outcome stage charge")?;
     assert!(delegated.is_finite() && delegated >= 0.0);
-    let total = direct.unwrap_or(stage.cost_usd) + delegated;
-    assert!(total.is_finite() && total >= 0.0);
-    Ok(total)
+    assert!(direct.is_none_or(|cost| cost.is_finite() && cost >= 0.0));
+    Ok((direct, delegated))
 }
 
 fn historical_corrections(

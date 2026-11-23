@@ -754,17 +754,7 @@ fn a_kept_agents_usage_is_split_at_the_resume_request_before_its_reply() {
     let mut first = running_stage(&run, 0, 3);
     first.started_at = t(100);
     let lead = first.aether_agent.clone().unwrap();
-    let usage = |cost_usd, at| SpendRow {
-        agent: lead.clone(),
-        item: Some(item.id.clone()),
-        cost_usd,
-        cost_basis: archon_core::cost::CostBasis::ProviderReported,
-        cost_complete: Some(true),
-        estimated_cost_usd: 0.0,
-        input_tokens: 1,
-        output_tokens: 1,
-        at: t(at),
-    };
+    let usage = |cost_usd, at| billed_event(&item.id, lead.clone(), cost_usd, at);
     store.upsert_stage_run(&first).unwrap();
     store.record_spend(&usage(1.0, 110)).unwrap();
     first.state = StageState::Completed;
@@ -775,8 +765,12 @@ fn a_kept_agents_usage_is_split_at_the_resume_request_before_its_reply() {
     kept.attempt = 2;
     kept.started_at = t(130);
     store.upsert_stage_run(&kept).unwrap();
-    store.bind_kept_spend(&kept.id, &lead, &t(140)).unwrap();
-    store.bind_kept_spend(&kept.id, &lead, &t(150)).unwrap();
+    store
+        .bind_kept_spend(&kept.id, &lead, &t(140), None)
+        .unwrap();
+    store
+        .bind_kept_spend(&kept.id, &lead, &t(150), None)
+        .unwrap();
     // The older usage was delayed. The first usage of the repair wins the
     // race with the resume reply, and can be replayed without a double charge.
     store.record_spend(&usage(1.25, 135)).unwrap();
@@ -801,4 +795,78 @@ fn a_kept_agents_usage_is_split_at_the_resume_request_before_its_reply() {
     assert_eq!(row.p90_cost_usd, Some(2.0));
     assert_eq!(store.spend_for_item(&item.id, false).unwrap(), 3.25);
     assert!(store.unlinked_spend().unwrap().is_empty());
+}
+
+#[test]
+fn aether_sequence_separates_kept_turns_and_keeps_delegates_with_their_review() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "remote"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let mut original = running_stage(&run, 0, 1);
+    original.state = StageState::Completed;
+    original.finished_at = Some(t(120));
+    store.upsert_stage_run(&original).unwrap();
+
+    let (lead, old_child, new_child, nested) = (
+        common::agent(1),
+        common::agent(2),
+        common::agent(3),
+        common::agent(4),
+    );
+    let model = "codex/helper".parse().unwrap();
+    store
+        .record_delegation_event(&old_child, &lead, &model, 10)
+        .unwrap();
+    let mut repair = common::stage(&run, 0);
+    repair.attempt = 2;
+    repair.started_at = t(130);
+    store.upsert_stage_run(&repair).unwrap();
+    store
+        .bind_kept_spend(&repair.id, &lead, &t(140), Some(20))
+        .unwrap();
+    store
+        .record_delegation_event(&new_child, &lead, &model, 21)
+        .unwrap();
+    store
+        .record_delegation_event(&nested, &old_child, &model, 22)
+        .unwrap();
+
+    // All Aether timestamps precede Archon's local handoff clock.
+    for (agent, cost_usd, seq) in [
+        (lead.clone(), 1.0, 19),
+        (lead.clone(), 2.0, 23),
+        (old_child, 0.5, 24),
+        (nested, 0.25, 25),
+        (new_child, 0.125, 26),
+    ] {
+        let row = billed_event(&item.id, agent, cost_usd, i64::try_from(seq).unwrap());
+        store.record_spend_event(&row, seq).unwrap();
+    }
+    repair.aether_agent = Some(lead);
+    repair.state = StageState::Completed;
+    repair.finished_at = Some(t(150));
+    store.upsert_stage_run(&repair).unwrap();
+    let evidence = report(&store, Default::default(), range(0, 0));
+    assert_eq!(evidence.rows[0].p90_cost_usd, Some(1.75));
+    assert_eq!(evidence.rows[0].median_cost_usd, Some(1.4375));
+    assert!(store.unlinked_spend().unwrap().is_empty());
+}
+
+fn billed_event(
+    item: &archon_core::id::QueueItemId,
+    agent: archon_core::aether_ids::AetherAgentId,
+    cost_usd: f64,
+    at: i64,
+) -> SpendRow {
+    SpendRow {
+        agent,
+        item: Some(item.clone()),
+        cost_usd,
+        cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: Some(true),
+        estimated_cost_usd: 0.0,
+        input_tokens: 1,
+        output_tokens: 1,
+        at: t(at),
+    }
 }

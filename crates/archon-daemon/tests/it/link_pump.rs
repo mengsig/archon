@@ -815,6 +815,16 @@ async fn book_orchestrator_spend(harness: &Harness) {
 async fn cost_reports_split_orchestrator_spend_from_its_helpers() {
     let harness = Harness::new().await;
     book_orchestrator_spend(&harness).await;
+    assert!(
+        harness
+            .ctx
+            .store
+            .lock()
+            .await
+            .unlinked_spend()
+            .unwrap()
+            .is_empty()
+    );
     let effort_rows = [
         (Some("low"), 0.5),
         (Some("(orchestrator)"), 0.25),

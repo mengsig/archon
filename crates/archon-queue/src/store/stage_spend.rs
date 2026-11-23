@@ -10,12 +10,12 @@ use archon_core::run::StageRun;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::SpendRow;
-use super::codec::{SqlContext, ts, write_tx};
+use super::codec::{SqlContext, to_i64, ts, write_tx};
 
-const ANCESTORS: &str = "ancestors(agent) AS (
-    SELECT ?1
+const ANCESTORS: &str = "ancestors(agent, child_seq) AS (
+    SELECT ?1, NULL
     UNION
-    SELECT d.parent FROM ancestors a JOIN delegated_agents d ON d.agent = a.agent
+    SELECT d.parent, d.created_seq FROM ancestors a JOIN delegated_agents d ON d.agent = a.agent
 )";
 
 pub(super) fn bind(
@@ -23,6 +23,7 @@ pub(super) fn bind(
     agent: &AetherAgentId,
     stage: &StageRun,
     opened: &Timestamp,
+    after_seq: Option<u64>,
 ) -> Result<(), ArchonError> {
     assert!(stage.attempt >= 1, "attempts are one-based");
     assert!(
@@ -30,15 +31,18 @@ pub(super) fn bind(
         "a binding is part of a stage transaction"
     );
     super::spend::link_run(conn, agent, &stage.run)?;
+    let after = after_seq
+        .map(|seq| to_i64(seq, "spend handoff sequence"))
+        .transpose()?;
     // The first window covers usage recorded before the create reply.
     let inserted = conn
         .execute(
-            "INSERT INTO stage_spend_windows (root, stage, opens_at)
+            "INSERT INTO stage_spend_windows (root, stage, opens_at, after_seq)
              VALUES (?1, ?2, CASE
                 WHEN EXISTS (SELECT 1 FROM stage_spend_windows WHERE root = ?1) THEN ?3
-                ELSE '' END)
+                ELSE '' END, ?4)
              ON CONFLICT (root, stage) DO NOTHING",
-            params![agent.as_str(), stage.id.as_str(), ts(opened)],
+            params![agent.as_str(), stage.id.as_str(), ts(opened), after],
         )
         .ctx("bind spend to stage")?;
     if inserted != 0 {
@@ -52,6 +56,7 @@ pub(super) fn bind_kept(
     stage: &StageRunId,
     agent: &AetherAgentId,
     at: &Timestamp,
+    after_seq: Option<u64>,
 ) -> Result<(), ArchonError> {
     let tx = write_tx(conn)?;
     let stage = super::runs::stage(&tx, stage)?;
@@ -69,7 +74,7 @@ pub(super) fn bind_kept(
             stage.id
         )));
     }
-    bind(&tx, agent, &stage, at)?;
+    bind(&tx, agent, &stage, at, after_seq)?;
     tx.commit().ctx("commit kept agent's spend binding")
 }
 
@@ -80,7 +85,7 @@ pub(super) fn bind_spawned(
 ) -> Result<(), ArchonError> {
     let tx = write_tx(conn)?;
     let stage = super::runs::stage(&tx, stage)?;
-    bind(&tx, agent, &stage, &stage.started_at)?;
+    bind(&tx, agent, &stage, &stage.started_at, None)?;
     tx.commit().ctx("commit late agent's spend binding")
 }
 
@@ -120,31 +125,14 @@ pub(super) fn record(
     row: &SpendRow,
     cost: f64,
     estimate: f64,
+    event_seq: Option<u64>,
 ) -> Result<(), ArchonError> {
     assert!(
         !conn.is_autocommit(),
         "attribute within the ledger transaction"
     );
     assert!(cost.is_finite() && estimate.is_finite() && estimate >= 0.0);
-    let sql = format!(
-        "WITH RECURSIVE {ANCESTORS}
-         SELECT w.stage FROM ancestors a JOIN stage_spend_windows w ON w.root = a.agent
-         JOIN stage_runs st ON st.id = w.stage JOIN runs r ON r.id = st.run
-         WHERE w.opens_at <= ?2 AND r.item = ?3
-         ORDER BY w.opens_at DESC, st.started_at DESC, st.id DESC LIMIT 1"
-    );
-    let stage: Option<String> = conn
-        .query_row(
-            &sql,
-            params![
-                row.agent.as_str(),
-                ts(&row.at),
-                row.item.as_ref().map(|i| i.as_str())
-            ],
-            |r| r.get(0),
-        )
-        .optional()
-        .ctx("find stage for usage")?;
+    let stage = stage_for(conn, row, event_seq)?;
     if let Some(stage) = stage {
         conn.execute(
             "INSERT INTO stage_spend (agent, stage, cost_usd, estimated_cost_usd)
@@ -160,6 +148,56 @@ pub(super) fn record(
         correct(conn, &row.agent, -cost)?;
     }
     Ok(())
+}
+
+fn stage_for(
+    conn: &Connection,
+    row: &SpendRow,
+    event_seq: Option<u64>,
+) -> Result<Option<String>, ArchonError> {
+    let seq = event_seq
+        .map(|seq| to_i64(seq, "spend event sequence"))
+        .transpose()?;
+    // The root uses its usage event; delegated subtrees stay with the first
+    // child below that root, even if their usage arrives during a later turn.
+    let sql = format!(
+        "WITH RECURSIVE {ANCESTORS}
+         SELECT w.stage FROM ancestors a JOIN stage_spend_windows w ON w.root = a.agent
+         JOIN stage_runs st ON st.id = w.stage JOIN runs r ON r.id = st.run
+         WHERE r.item = ?3
+           AND (?4 IS NULL OR a.agent = ?1 OR a.child_seq IS NOT NULL OR NOT EXISTS (
+               SELECT 1 FROM stage_spend_windows other WHERE other.root = w.root AND other.after_seq IS NOT NULL
+           ))
+           AND CASE WHEN w.after_seq IS NOT NULL AND ?4 IS NOT NULL
+               THEN COALESCE(a.child_seq, ?4) > w.after_seq ELSE w.opens_at <= ?2 END
+         ORDER BY CASE WHEN ?4 IS NOT NULL THEN w.after_seq END DESC,
+                  w.opens_at DESC, st.started_at DESC, st.id DESC LIMIT 1"
+    );
+    conn.query_row(
+        &sql,
+        params![
+            row.agent.as_str(),
+            ts(&row.at),
+            row.item.as_ref().map(|i| i.as_str()),
+            seq,
+        ],
+        |r| r.get(0),
+    )
+    .optional()
+    .ctx("find stage for usage")
+}
+
+pub(super) fn has_window(
+    conn: &Connection,
+    stage: &StageRunId,
+    agent: &AetherAgentId,
+) -> Result<bool, ArchonError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM stage_spend_windows WHERE stage = ?1 AND root = ?2)",
+        params![stage.as_str(), agent.as_str()],
+        |r| r.get(0),
+    )
+    .ctx("check for a spend window")
 }
 
 /// Like the daily ledger, refund the newest attributed charges first. If

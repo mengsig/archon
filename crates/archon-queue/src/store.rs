@@ -822,15 +822,24 @@ impl Store {
     /// Charge the agent's growth: usage events carry absolute totals. A replayed
     /// (older) row is ignored, and only a provider-settled total lowers a charge.
     pub fn record_spend(&mut self, row: &SpendRow) -> Result<(), ArchonError> {
-        spend::record(&mut self.conn, row, false)
+        spend::record(&mut self.conn, row, false, None)
     }
-    /// Record usage of the orchestrator or one of its non-pipeline helpers.
-    pub fn record_orchestration_spend(&mut self, row: &SpendRow) -> Result<(), ArchonError> {
-        spend::record(&mut self.conn, row, true)
+    /// Charge an event of the fleet or orchestrator stream in Aether's order.
+    pub fn record_spend_event(&mut self, row: &SpendRow, seq: u64) -> Result<(), ArchonError> {
+        assert!(seq > 0, "Aether event sequences are one-based");
+        spend::record(&mut self.conn, row, row.item.is_none(), Some(seq))
     }
     /// Spend rows without a stage or with an unassigned historical balance.
     pub fn unlinked_spend(&self) -> Result<Vec<AetherAgentId>, ArchonError> {
         stage_spend::unlinked(&self.conn)
+    }
+    /// Check whether a retry already has a spend boundary.
+    pub fn has_stage_spend_window(
+        &self,
+        stage: &StageRunId,
+        agent: &AetherAgentId,
+    ) -> Result<bool, ArchonError> {
+        stage_spend::has_window(&self.conn, stage, agent)
     }
     /// Set the spend boundary before a kept agent is told to resume or wake.
     pub fn bind_kept_spend(
@@ -838,8 +847,9 @@ impl Store {
         stage: &StageRunId,
         agent: &AetherAgentId,
         at: &Timestamp,
+        after_seq: Option<u64>,
     ) -> Result<(), ArchonError> {
-        stage_spend::bind_kept(&mut self.conn, stage, agent, at)
+        stage_spend::bind_kept(&mut self.conn, stage, agent, at, after_seq)
     }
     /// Bind a late create reply even if its attempt was already settled.
     pub fn bind_spawned_spend(
@@ -890,7 +900,18 @@ impl Store {
         model: &archon_core::model::ModelRef,
         effort: Option<archon_core::model::Effort>,
     ) -> Result<(), ArchonError> {
-        delegated::record(&mut self.conn, agent, parent, model, effort)
+        delegated::record(&mut self.conn, agent, parent, model, effort, None)
+    }
+    /// The delegation's creation event, which fixes its stage across lead handoffs.
+    pub fn record_delegation_event(
+        &mut self,
+        agent: &AetherAgentId,
+        parent: &AetherAgentId,
+        model: &archon_core::model::ModelRef,
+        seq: u64,
+    ) -> Result<(), ArchonError> {
+        assert!(seq > 0, "Aether event sequences are one-based");
+        delegated::record(&mut self.conn, agent, parent, model, None, Some(seq))
     }
     /// The agent that delegated to `agent`, as [`Self::record_delegated`] stored it.
     pub fn delegated_parent(

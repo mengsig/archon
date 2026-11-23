@@ -20,7 +20,7 @@ use crate::client::AetherClient;
 use crate::link::AetherLink;
 use crate::resumed;
 use crate::wire::{
-    Agent, AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, CreateAgent, ModelInfo,
+    Agent, AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, CreateAgent, EventQuery, ModelInfo,
     NetworkPolicy, ProviderInfo, Scope, Task, TaskStatus, ToolExposure,
 };
 
@@ -740,6 +740,13 @@ impl AgentBackend for AetherBackend {
     async fn network_default(&self) -> Result<NetworkPolicy, ArchonError> {
         let defaults = self.link.client()?.daemon_defaults().await?;
         Ok(defaults.network_default)
+    }
+
+    async fn event_watermark(&self) -> Result<Option<u64>, ArchonError> {
+        let client = self.link.client()?;
+        // A live-only subscription reports the global head even after history is pruned.
+        let checkpoint = client.subscribe(None, EventQuery::default()).await?;
+        Ok(Some(checkpoint.last_seq))
     }
 
     async fn is_live(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {

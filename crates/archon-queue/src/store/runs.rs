@@ -674,7 +674,7 @@ pub(super) fn upsert_stage(
             .and_then(|stored| stored.aether_agent.as_ref())
             != Some(agent)
     {
-        super::stage_spend::bind(&tx, agent, &stage, &stage.started_at)?;
+        super::stage_spend::bind(&tx, agent, &stage, &stage.started_at, None)?;
     }
     super::changes::record_stage(&tx, &stage, before.as_ref())?;
     for (key, value) in updates {

@@ -111,8 +111,9 @@ pub mod feature {
     pub const GITHUB_LINKS: &str = "github_links";
     pub const GITHUB_IMPORT: &str = "github_import";
     pub const DEVICE_ROLES: &str = "device_roles";
+    pub const ENQUEUE_ADVICE: &str = "enqueue_advice";
     /// Every feature protocol 24 defines.
-    pub const ALL: [&str; 9] = [
+    pub const ALL: [&str; 10] = [
         CHANGES,
         TASK_GRAPH,
         RUN_PLAN,
@@ -122,6 +123,7 @@ pub mod feature {
         GITHUB_LINKS,
         GITHUB_IMPORT,
         DEVICE_ROLES,
+        ENQUEUE_ADVICE,
     ];
 }
 

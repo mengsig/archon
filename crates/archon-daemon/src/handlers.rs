@@ -54,7 +54,7 @@ pub(crate) fn features() -> Vec<&'static str> {
         graph::FEATURES,
         github_links::FEATURES,
         crate::remote::FEATURES,
-        &[archon_core::protocol::client_feature::ENQUEUE_ADVICE],
+        &[archon_core::protocol::feature::ENQUEUE_ADVICE],
     ]
     .concat();
     let mut unique = served.clone();

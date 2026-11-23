@@ -13,7 +13,7 @@ pub mod client_feature {
     /// Waiting reasons may name an unavailable catalog directly.
     pub const MODEL_CATALOG_WAIT: &str = "model_catalog_wait";
     /// A successful enqueue may return advice alongside its item.
-    pub const ENQUEUE_ADVICE: &str = "enqueue_advice";
+    pub use crate::protocol::feature::ENQUEUE_ADVICE;
     /// Every feature this release's clients decode.
     pub const ALL: [&str; 3] = [ONTO_EDGES, MODEL_CATALOG_WAIT, ENQUEUE_ADVICE];
 }

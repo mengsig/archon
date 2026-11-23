@@ -4706,6 +4706,14 @@
       ],
       "type": "object"
     },
+    "EnqueueNotice": {
+      "description": "Advice that accompanies an enqueue's item.",
+      "enum": [
+        "direct_risk",
+        "bundled_fixes"
+      ],
+      "type": "string"
+    },
     "EnqueueRequest": {
       "properties": {
         "autonomy": {
@@ -11310,6 +11318,258 @@
             },
             "reply": {
               "const": "item_budgets_off",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A successful enqueue with advice derived from the queued item.",
+          "properties": {
+            "data": {
+              "description": "An item's model plan with where each field came from and how its efforts\nwere sized. Serialized as the item's `model_plan`, `model_origins` and\n`effort_sizing` keys, so stored items and older readers see the plan as before.",
+              "properties": {
+                "autonomy": {
+                  "$ref": "#/$defs/Autonomy",
+                  "default": {
+                    "merge": "manual",
+                    "proposal": "off",
+                    "report": "off",
+                    "review": "standard",
+                    "tools": "guarded"
+                  },
+                  "description": "Resolved at enqueue, within the ceiling (ARCHITECTURE §18)."
+                },
+                "brief": {
+                  "description": "The full brief handed to stage prompts as `{{task.brief}}`.",
+                  "type": "string"
+                },
+                "budget_usd": {
+                  "description": "Dollar cap for this item's whole run; `None` falls back to config.",
+                  "format": "double",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "budgets_off": {
+                  "type": "boolean"
+                },
+                "catalog_check": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CatalogCheck"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "dependencies": {
+                  "description": "Items that must have succeeded before this one dispatches.",
+                  "items": {
+                    "$ref": "#/$defs/QueueItemId"
+                  },
+                  "type": "array"
+                },
+                "effort_sizing": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/PlanSizing"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The sizing decisions frozen into this plan; absent on a plan no key\nof which was ever sized, which is every plan of 1.6.3."
+                },
+                "fresh_retries": {
+                  "default": 0,
+                  "description": "Fresh retries so far; each started the item again from the base\nbranch, on a branch of its own (ARCHITECTURE §13).",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "id": {
+                  "$ref": "#/$defs/QueueItemId"
+                },
+                "initiative": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/InitiativeId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The initiative it is a member of."
+                },
+                "intent": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/IntentBinding"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "model_origins": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/PlanOrigins"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "model_plan": {
+                  "$ref": "#/$defs/ModelPlan"
+                },
+                "model_reasons": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "notices": {
+                  "items": {
+                    "$ref": "#/$defs/EnqueueNotice"
+                  },
+                  "type": "array"
+                },
+                "onto": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/OntoPullRequest"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The existing pull request it delivers into, frozen at enqueue."
+                },
+                "origin": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/GithubThread"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The GitHub thread that asked for it; its outcome is reported there."
+                },
+                "pipeline": {
+                  "type": "string"
+                },
+                "priority": {
+                  "$ref": "#/$defs/Priority"
+                },
+                "provider_switch": {
+                  "description": "Why its tier-only choices last moved off the provider it held, and\nwhen: its quota ran out. `None` while it never moved.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "repo": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RepoId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "`None` only for pipelines with `requires_repo = false` (e.g. `ask`)."
+                },
+                "risk": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RiskLevel"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The risk level its last delivery labelled its pull request with."
+                },
+                "routed_provider": {
+                  "description": "The provider `[models] provider_weights` routed its tier-only choices\nto, chosen once from its id; stages keep it unless their floor rules\nit out. `None` while no weights are set.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "stage_timeouts": {
+                  "additionalProperties": {
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "description": "Stage id to the minutes that stage may run, instead of the pipeline's.",
+                  "type": "object"
+                },
+                "state": {
+                  "$ref": "#/$defs/QueueState"
+                },
+                "supersedes": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/QueueItemId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Earlier work this item supersedes."
+                },
+                "tags": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "title": {
+                  "description": "One line, shown in listings and used for the branch name.",
+                  "type": "string"
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "pipeline",
+                "title",
+                "brief",
+                "priority",
+                "dependencies",
+                "tags",
+                "model_plan",
+                "state",
+                "created_at",
+                "updated_at",
+                "notices"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "enqueue_advised",
               "type": "string"
             }
           },
@@ -18167,7 +18427,8 @@
     "item_filters",
     "github_links",
     "github_import",
-    "device_roles"
+    "device_roles",
+    "enqueue_advice"
   ],
   "min_web_protocol_version": 23,
   "protocol_version": 24,

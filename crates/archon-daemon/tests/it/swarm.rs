@@ -7,7 +7,9 @@ use crate::common;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use archon_core::config::Config;
 use archon_core::model::{Effort, ModelPlan};
+use archon_core::protocol::{Reply, Request, StageQuery};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
 use archon_core::steer::RunEdit;
@@ -18,6 +20,7 @@ use common::{Harness, MODEL, choice, completed, git};
 use serde_json::{Value, json};
 
 const TASKS: [&str; 3] = ["api", "cli", "docs"];
+const SIX_TASKS: [&str; 6] = ["api", "cli", "docs", "parse", "render", "store"];
 
 fn swarm_model_plan() -> ModelPlan {
     let stages = ["plan", "build", "integrate"]
@@ -101,14 +104,14 @@ async fn planned(h: &Harness, title: &str, plan: Option<&Value>) -> (QueueItem, 
 }
 
 /// The running workers, in task order, all at `attempt`.
-async fn running_workers(h: &Harness, attempt: u32) -> Vec<StageRun> {
+async fn running_workers(h: &Harness, attempt: u32, count: usize) -> Vec<StageRun> {
     let mut running = h.running().await;
     running.sort_by_key(|s| s.fan_index);
     let shape: Vec<(&str, u32)> = running
         .iter()
         .map(|s| (s.stage_id.as_str(), s.attempt))
         .collect();
-    assert_eq!(shape, vec![("build", attempt); TASKS.len()], "{running:?}");
+    assert_eq!(shape, vec![("build", attempt); count], "{running:?}");
     running
 }
 
@@ -129,9 +132,9 @@ fn assert_no_role_branches(run: &PipelineRun) {
 }
 
 /// Each worker commits in its own paths on its own branch and completes.
-async fn build_round(h: &Harness, run: &PipelineRun, attempt: u32) {
-    running_workers(h, attempt).await;
-    for task in TASKS {
+async fn build_round(h: &Harness, run: &PipelineRun, attempt: u32, tasks: &[&str]) {
+    running_workers(h, attempt, tasks.len()).await;
+    for task in tasks {
         let tree = worker_tree(run, task);
         let branch = worker_branch(&run.branch, &run.id, task, attempt);
         assert_eq!(git(&tree, &["rev-parse", "--abbrev-ref", "HEAD"]), branch);
@@ -141,9 +144,14 @@ async fn build_round(h: &Harness, run: &PipelineRun, attempt: u32) {
         );
         commit_file(&tree, &format!("{task}/v{attempt}.txt"), "work\n");
     }
-    let settled =
-        h.settle_running(|s| completed(&format!("{} built", TASKS[s.fan_index as usize])));
-    assert_eq!(settled.await.len(), TASKS.len());
+    let settled = h.settle_running(|s| {
+        let task = tasks[s.fan_index as usize];
+        StageOutcome::Completed {
+            summary: format!("{task} built"),
+            structured: Some(json!({"report": format!("{task} output")})),
+        }
+    });
+    assert_eq!(settled.await.len(), tasks.len());
     h.dispatch().await;
 }
 
@@ -207,7 +215,7 @@ fn assert_worker_prompts(h: &Harness, run: &PipelineRun) {
 async fn a_written_plan_gives_each_task_a_worker_with_its_task_and_peers() {
     let h = Harness::new().await;
     let (_, run) = planned(&h, "split three ways", Some(&swarm_plan(&TASKS))).await;
-    let workers = running_workers(&h, 1).await;
+    let workers = running_workers(&h, 1, TASKS.len()).await;
     assert_worker_prompts(&h, &run);
     let edits = h.ctx.store.lock().await.run_edits(&run.id).expect("edits");
     assert_eq!(edits.len(), 1, "one assignment: {edits:?}");
@@ -245,7 +253,7 @@ async fn a_task_may_consume_a_file_already_in_the_repository() {
     let mut plan = swarm_plan(&TASKS);
     plan["tasks"][2]["consumes"] = json!(["greet.py"]);
     let (_, run) = planned(&h, "consume greet", Some(&plan)).await;
-    let workers = running_workers(&h, 1).await;
+    let workers = running_workers(&h, 1, TASKS.len()).await;
     assert_eq!(workers.len(), TASKS.len(), "the plan was accepted");
     let edits = h.ctx.store.lock().await.run_edits(&run.id).expect("edits");
     let RunEdit::AssignRoles { role_prompts, .. } = &edits[0].edit else {
@@ -263,13 +271,13 @@ async fn a_task_may_consume_a_file_already_in_the_repository() {
 async fn a_restart_keeps_the_assigned_workers() {
     let mut h = Harness::new().await;
     let (_, run) = planned(&h, "restart mid-swarm", Some(&swarm_plan(&TASKS))).await;
-    running_workers(&h, 1).await;
+    running_workers(&h, 1, TASKS.len()).await;
     let created = h.backend.created();
     std::fs::remove_file(run.workspace.join(".archon/swarm-plan.json")).expect("drop the plan");
     h.restart();
     executor::recover(&h.ctx).await.expect("recover");
     h.dispatch().await;
-    running_workers(&h, 1).await;
+    running_workers(&h, 1, TASKS.len()).await;
     assert_eq!(h.backend.created(), created, "no worker is spawned twice");
 }
 
@@ -278,7 +286,7 @@ async fn the_integrator_sends_tasks_back_at_most_twice() {
     let h = Harness::new().await;
     let (item, run) = planned(&h, "loop the swarm", Some(&swarm_plan(&TASKS))).await;
     for attempt in 1..=3 {
-        build_round(&h, &run, attempt).await;
+        build_round(&h, &run, attempt, &TASKS).await;
         running_integrator(&h, attempt).await;
         let integrator = h.backend.requests().pop().expect("an integrator");
         assert!(
@@ -311,6 +319,128 @@ async fn the_integrator_sends_tasks_back_at_most_twice() {
     let builds = h.stages(&item.id).await;
     let workers = builds.iter().filter(|s| s.stage_id == "build").count();
     assert_eq!(workers, 3 * TASKS.len(), "three rounds of three workers");
+}
+
+async fn six_worker_swarm() -> (Harness, QueueItem, PipelineRun) {
+    let mut config = Config::default();
+    config.limits.max_parallel_agents = SIX_TASKS.len() as u32;
+    config.limits.max_per_repo = SIX_TASKS.len() as u32;
+    let h = Harness::with_config(config).await;
+    let (item, run) = planned(&h, "retry named workers", Some(&swarm_plan(&SIX_TASKS))).await;
+    build_round(&h, &run, 1, &SIX_TASKS).await;
+    running_integrator(&h, 1).await;
+    (h, item, run)
+}
+
+fn redo_slot(slot: u32) -> StageOutcome {
+    StageOutcome::Completed {
+        summary: "The selected worker must fix its acceptance check.".into(),
+        structured: Some(json!({"verdict": "fail", "redo_slots": [slot]})),
+    }
+}
+
+async fn assert_carry_outputs(h: &Harness, item: &QueueItem, attempt: u32, sources: [u32; 6]) {
+    let query = StageQuery {
+        item: item.id.clone(),
+        run: None,
+        stage: Some("build".into()),
+        attempt: Some(attempt),
+        slot: None,
+        offset: 0,
+        limit: None,
+    };
+    let Ok(Reply::StageDetail(detail)) = h.cli(Request::GetStage(query)).await else {
+        panic!("build attempt {attempt} should be readable");
+    };
+    assert_eq!(detail.stages.len(), SIX_TASKS.len());
+    for (slot, result) in detail.stages.iter().enumerate() {
+        let task = SIX_TASKS[slot];
+        assert_eq!((result.slot, result.attempt), (slot as u32, sources[slot]));
+        let output = &result.output.as_ref().expect("stage output").text;
+        let report = if sources[slot] == 1 {
+            format!("{task} output")
+        } else {
+            format!("{task} revised output")
+        };
+        assert!(output.contains(&report), "{output}");
+    }
+}
+
+async fn finish_redo(h: &Harness, run: &PipelineRun, task: &str, attempt: u32) {
+    let changed = format!("{task}/v{attempt}.txt");
+    commit_file(&worker_tree(run, task), &changed, "revised\n");
+    h.settle_running(|_| StageOutcome::Completed {
+        summary: format!("{task} rebuilt"),
+        structured: Some(json!({"report": format!("{task} revised output")})),
+    })
+    .await;
+    h.dispatch().await;
+    running_integrator(h, attempt).await;
+    assert!(run.workspace.join(changed).exists());
+    assert_no_role_branches(run);
+}
+
+#[tokio::test]
+async fn named_redo_slots_survive_replay_and_restart() {
+    let (mut h, item, run) = six_worker_swarm().await;
+    let sources = [[1, 1, 2, 1, 1, 1], [1, 3, 2, 1, 1, 1]];
+    let mut expected = SIX_TASKS.map(|task| format!("{task} built"));
+    for (index, slot) in [2, 1].into_iter().enumerate() {
+        let attempt = index as u32 + 2;
+        let created = h.backend.created();
+        h.settle_running(|_| redo_slot(slot)).await;
+        h.restart();
+        executor::recover(&h.ctx).await.expect("recover retry");
+        h.dispatch().await;
+        let workers = running_workers(&h, attempt, 1).await;
+        assert_eq!(workers[0].fan_index, slot);
+        assert_eq!(h.backend.created(), created + 1);
+        let agent = workers[0]
+            .aether_agent
+            .as_ref()
+            .expect("redo worker's agent");
+        let messages = h.backend.messages();
+        let roster = messages
+            .iter()
+            .find(|(to, text)| to == agent && text.contains("Archon team roster"))
+            .expect("the redo worker gets its roster");
+        assert_eq!(roster.1.matches(": agent").count(), 1);
+        h.restart();
+        executor::recover(&h.ctx)
+            .await
+            .expect("recover running retry");
+        h.dispatch().await;
+        assert_eq!(h.backend.created(), created + 1);
+
+        let task = SIX_TASKS[slot as usize];
+        finish_redo(&h, &run, task, attempt).await;
+        expected[slot as usize] = format!("{task} rebuilt");
+        let integrator = h.backend.requests().pop().expect("next integrator");
+        for (task, summary) in SIX_TASKS.iter().zip(&expected) {
+            assert!(
+                integrator
+                    .objective
+                    .contains(&format!("[role {task}] {summary}")),
+                "{}",
+                integrator.objective
+            );
+        }
+        assert_carry_outputs(&h, &item, attempt, sources[index]).await;
+    }
+}
+
+#[tokio::test]
+async fn out_of_range_redo_slot_is_refused() {
+    let (h, item, _) = six_worker_swarm().await;
+    let created = h.backend.created();
+    h.settle_running(|_| redo_slot(SIX_TASKS.len() as u32))
+        .await;
+    h.dispatch().await;
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("invalid redo_slots must fail the item");
+    };
+    assert!(error.contains("redo_slots entry 6"), "{error}");
+    assert_eq!(h.backend.created(), created, "no workers were redispatched");
 }
 
 /// The planner finishes again with `plan` committed, if any.
@@ -372,7 +502,7 @@ async fn corrected(h: &Harness, refused: &Value, problem: &str) {
         );
     }
     replan(h, &run, Some(&swarm_plan(&TASKS))).await;
-    running_workers(h, 1).await;
+    running_workers(h, 1, TASKS.len()).await;
     let stages = h.stages(&item.id).await;
     let plans = stages.iter().filter(|s| s.stage_id == "plan").count();
     assert_eq!(plans, 2, "one refusal, one correction: {stages:?}");
@@ -512,7 +642,7 @@ async fn a_run_that_ends_deletes_the_role_branches_left_merged() {
     let h = Harness::new().await;
     let (item, run) = planned(&h, "branch left", Some(&swarm_plan(&TASKS))).await;
     for attempt in 1..=3 {
-        build_round(&h, &run, attempt).await;
+        build_round(&h, &run, attempt, &TASKS).await;
         running_integrator(&h, attempt).await;
         if attempt == 3 {
             let stray = worker_branch(&run.branch, &run.id, "api", 1);

@@ -157,6 +157,7 @@ fn spawn_of(model: &str, effort: Effort) -> SpawnPlan {
         attempt: 1,
         fan_index: 0,
         fan_count: 1,
+        carried_slots: Default::default(),
         choice: ModelChoice::pinned(model.parse().unwrap(), effort),
         prompt: "do it".into(),
         instructions: "contract".into(),

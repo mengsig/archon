@@ -23,7 +23,7 @@ use crate::gate::{self, GroupResult};
 use crate::ship::{self, BodyAdditions, SHIP_STEP, ShipOutcome, ShipPlan, ShipRecord};
 use crate::spec::{PipelineSpec, ReviewDuty, StageSpec};
 use crate::team::{self, MergeOutcome, MergePlan, RoleBranch, TeamSlot};
-use crate::{contract, review, risk, sections, template};
+use crate::{contract, review, risk, sections, swarm, template};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EngineAction {
@@ -69,6 +69,8 @@ pub struct SpawnPlan {
     pub fan_index: u32,
     /// The stage's `fan_out`, so an agent can be named "2/3".
     pub fan_count: u32,
+    /// Untouched slots of this attempt and the attempts that ran them.
+    pub carried_slots: BTreeMap<u32, u32>,
     pub choice: ModelChoice,
     /// Rendered stage prompt (task objective).
     pub prompt: String,
@@ -198,6 +200,10 @@ struct Position {
     previous: BTreeMap<String, String>,
     /// Every `(stage, attempt)` group entered so far, this one included.
     entered: BTreeSet<(usize, u32)>,
+    /// Original per-slot attempts for each merged planned team group.
+    merged_slots: BTreeMap<(usize, u32), Vec<u32>>,
+    /// Slots of the current attempt supplied by a previously merged group.
+    carried_slots: BTreeMap<u32, u32>,
     /// Gate stages the operator approved, with the operator's note.
     approved: BTreeMap<String, Option<String>>,
     /// Stages given their record repair turn: at most one each per run.
@@ -231,6 +237,8 @@ impl Position {
             feedback: String::new(),
             previous: BTreeMap::new(),
             entered: BTreeSet::new(),
+            merged_slots: BTreeMap::new(),
+            carried_slots: BTreeMap::new(),
             approved: BTreeMap::new(),
             repaired: BTreeSet::new(),
             record: None,
@@ -255,6 +263,7 @@ impl Position {
         self.stage = stage;
         self.attempt = entries[stage];
         self.feedback = feedback;
+        self.carried_slots.clear();
         let fresh = self.entered.insert((stage, self.attempt));
         debug_assert!(fresh && self.attempt >= 1, "a group is entered once");
     }
@@ -562,8 +571,7 @@ impl RunDriver {
         records.is_some_and(|stage| stage.id == stage_id)
     }
 
-    /// Whether stage `stage_id` owes a record and its reply states a failure
-    /// or has no `structured`: the gate then decides the reply as sent.
+    /// Whether to send an unverified reply straight to the gate or redo check.
     pub fn decides_as_sent(
         &self,
         stage_id: &str,
@@ -573,7 +581,9 @@ impl RunDriver {
         let Some(stage) = self.spec.stage(stage_id) else {
             return false;
         };
-        gate::decided_as_sent(self.spec.owed(stage), summary, structured)
+        (self.redo_target(stage).is_some()
+            && structured.is_some_and(|result| result.get("redo_slots").is_some()))
+            || gate::decided_as_sent(self.spec.owed(stage), summary, structured)
     }
 
     /// How many independent reviewers stage `stage_id` owes this run as the
@@ -957,7 +967,7 @@ impl RunDriver {
         let passes = (slots.len() + self.aborts.len() + 1) * (stages.len() + 1);
         for _ in 0..passes {
             let stage = &stages[at.stage];
-            let group = group_at(&slots, stage, at.attempt);
+            let group = group_at(&slots, stage, &at);
             if let Some(then) = self.abort_at(&stage.id, at.attempt) {
                 if group.iter().flatten().any(|m| !m.state.is_terminal()) {
                     // Its agents are being stopped; no slot is spawned anew.
@@ -999,6 +1009,16 @@ impl RunDriver {
     ) -> Option<Replay> {
         let stage = &self.spec.file.stages[at.stage];
         let owed = self.spec.owed(stage);
+        if let Some(target) = self.redo_target(stage) {
+            let [member] = members else {
+                panic!("a redo request comes from a single integrator");
+            };
+            match swarm::redo_slots(member.structured.as_ref(), target.fan_out) {
+                Ok(Some(redo)) => return self.redo_team(at, counts, member, redo),
+                Err(error) => return Some(self.stop_failed(at.stage, "", &error, "")),
+                Ok(None) => {}
+            }
+        }
         let (headline, report) = match gate::evaluate(stage, at.attempt, members, owed) {
             GroupResult::Fail { headline, report } => (headline, report),
             // Keyed on the marker its stage run was created with, so a
@@ -1033,38 +1053,121 @@ impl RunDriver {
                 return self.after_pass(at, counts, summary);
             }
             GroupResult::Pass { summary } => {
-                let plan = self.merge_plan(stage, at.attempt);
-                match self.merges.get(&(stage.id.clone(), at.attempt)) {
-                    None => {
-                        let stage = at.stage;
-                        return Some(Replay::AwaitMerge { stage, plan });
-                    }
-                    Some(MergeOutcome::Merged) => return self.after_pass(at, counts, summary),
-                    Some(MergeOutcome::Conflict { role, files }) => (
-                        format!(
-                            "merging role `{role}` conflicted on {} file(s)",
-                            files.len()
-                        ),
-                        team::conflict_report(&plan, role, files),
-                    ),
-                    Some(MergeOutcome::Refused { role, reason }) => (
-                        format!("role `{role}`'s work could not be merged: {reason}"),
-                        team::refusal_report(&plan, role, reason),
-                    ),
-                }
+                return self.after_team_pass(at, counts, members, summary);
             }
         };
+        self.after_group_failure(at, counts, members, &headline, report, None)
+    }
+
+    fn redo_target(&self, stage: &StageSpec) -> Option<&StageSpec> {
+        if stage.kind != StageKind::Work || stage.fan_out != 1 {
+            return None;
+        }
+        let edge = stage.on_fail.as_ref()?;
+        self.spec
+            .stage(&edge.goto)
+            .filter(|target| target.roles_from.is_some())
+    }
+
+    fn redo_team(
+        &self,
+        at: &mut Position,
+        counts: &mut Counters,
+        member: &StageRun,
+        redo: BTreeSet<u32>,
+    ) -> Option<Replay> {
+        let stage = &self.spec.file.stages[at.stage];
+        assert_eq!(member.stage_id, stage.id);
+        assert_eq!(member.attempt, at.attempt);
+        let summary = member.summary.as_deref().unwrap_or_default().trim();
+        if StageOutcome::ends_run(summary) {
+            return Some(self.stop_failed(at.stage, "", summary, ""));
+        }
+        let report = gate::clip(summary, gate::MAX_FEEDBACK_CHARS);
+        self.after_group_failure(
+            at,
+            counts,
+            &[member],
+            archon_core::run::STATED_FAILURE,
+            report,
+            Some(redo),
+        )
+    }
+
+    fn after_team_pass(
+        &self,
+        at: &mut Position,
+        counts: &mut Counters,
+        members: &[&StageRun],
+        summary: String,
+    ) -> Option<Replay> {
+        let stage = &self.spec.file.stages[at.stage];
+        let plan = self.merge_plan(stage, at);
+        let (headline, report) = match self.merges.get(&(stage.id.clone(), at.attempt)) {
+            None => {
+                return Some(Replay::AwaitMerge {
+                    stage: at.stage,
+                    plan,
+                });
+            }
+            Some(MergeOutcome::Merged) => {
+                if stage.roles_from.is_some() {
+                    let sources = members.iter().map(|member| member.attempt).collect();
+                    let previous = at.merged_slots.insert((at.stage, at.attempt), sources);
+                    assert!(previous.is_none(), "replay visits a merged group once");
+                }
+                return self.after_pass(at, counts, summary);
+            }
+            Some(MergeOutcome::Conflict { role, files }) => (
+                format!(
+                    "merging role `{role}` conflicted on {} file(s)",
+                    files.len()
+                ),
+                team::conflict_report(&plan, role, files),
+            ),
+            Some(MergeOutcome::Refused { role, reason }) => (
+                format!("role `{role}`'s work could not be merged: {reason}"),
+                team::refusal_report(&plan, role, reason),
+            ),
+        };
+        self.after_group_failure(at, counts, members, &headline, report, None)
+    }
+
+    fn after_group_failure(
+        &self,
+        at: &mut Position,
+        counts: &mut Counters,
+        members: &[&StageRun],
+        headline: &str,
+        report: String,
+        redo: Option<BTreeSet<u32>>,
+    ) -> Option<Replay> {
         if let Some(withheld) = self.loop_withheld(at.stage, &counts.loops, members) {
             let report = format!("{withheld}\n\n{report}");
-            return Some(self.failed_stop(at.stage, &counts.loops, &headline, &report));
+            return Some(self.failed_stop(at.stage, &counts.loops, headline, &report));
         }
-        match self.loop_target(at.stage, &mut counts.loops) {
-            Some(target) => {
-                at.enter(target, &mut counts.entries, report);
-                None
-            }
-            None => Some(self.failed_stop(at.stage, &counts.loops, &headline, &report)),
+        let Some(target) = self.loop_target(at.stage, &mut counts.loops) else {
+            return Some(self.failed_stop(at.stage, &counts.loops, headline, &report));
+        };
+        let prior_attempt = counts.entries[target];
+        let mut carried = BTreeMap::new();
+        if let Some(redo) = redo {
+            let team = &self.spec.file.stages[target];
+            let Some(sources) = at.merged_slots.get(&(target, prior_attempt)) else {
+                let error = format!("redo_slots requires a merged attempt of `{}`", team.id);
+                return Some(self.stop_failed(at.stage, "", &error, &report));
+            };
+            assert_eq!(sources.len(), team.fan_out as usize, "one result per slot");
+            carried.extend(
+                (0..team.fan_out)
+                    .filter(|slot| !redo.contains(slot))
+                    .map(|slot| (slot, sources[slot as usize])),
+            );
+            assert_eq!(carried.len() + redo.len(), sources.len());
         }
+        at.enter(target, &mut counts.entries, report);
+        at.carried_slots = carried;
+        None
     }
 
     /// Why a failed group of `stage` does not take an `on_fail` loop it still
@@ -1380,7 +1483,6 @@ impl RunDriver {
             .choices_for(&stage.id)
             .filter(|c| !c.is_empty())
             .expect("RunDriver::new checked the plan names every stage");
-        let template = &self.spec.prompts[&stage.prompt];
         let mode = self.spec.file.pipeline.workspace;
         let context =
             sections::context(&self.spec, stage, &at.feedback, &at.previous, &at.approved);
@@ -1404,17 +1506,7 @@ impl RunDriver {
                 assert!(fan < stage.fan_out, "slot {fan} outside fan_out");
                 let team = self.team_slot(stage, at.attempt, fan);
                 let vars = self.spawn_vars(stage, at, fan, team.as_ref());
-                let mut prompt = template::render(template, &vars)
-                    .expect("RunDriver::new test-rendered every prompt");
-                prompt.push_str(&context);
-                if let Some(extra) = team.as_ref().and_then(|t| stage.role_prompts.get(&t.role)) {
-                    prompt.push_str(&format!("\n\n## Your role\n\n{}\n", extra.trim()));
-                }
-                let part = self.team_part(team.as_ref());
-                let workspace = &vars["workspace"];
-                let experiments = self.experiments.as_deref();
-                let instructions =
-                    contract::instructions(stage, mode, workspace, part, owed, experiments);
+                let prompt = self.spawn_prompt(stage, &vars, team.as_ref(), &context);
                 EngineAction::Spawn(SpawnPlan {
                     stage_id: stage.id.clone(),
                     kind: stage.kind,
@@ -1422,9 +1514,17 @@ impl RunDriver {
                     attempt: at.attempt,
                     fan_index: fan,
                     fan_count: stage.fan_out,
+                    carried_slots: at.carried_slots.clone(),
                     choice: choices[fan as usize % choices.len()].clone(),
                     prompt,
-                    instructions,
+                    instructions: contract::instructions(
+                        stage,
+                        mode,
+                        &vars["workspace"],
+                        self.team_part(team.as_ref()),
+                        owed,
+                        self.experiments.as_deref(),
+                    ),
                     timeout_minutes: stage.timeout_minutes,
                     // The run's reviewers are agents the stage delegates to.
                     allow_delegation: stage.allow_delegation || reviewers.is_some(),
@@ -1439,6 +1539,24 @@ impl RunDriver {
                 })
             })
             .collect()
+    }
+
+    fn spawn_prompt(
+        &self,
+        stage: &StageSpec,
+        vars: &BTreeMap<String, String>,
+        team: Option<&TeamSlot>,
+        context: &str,
+    ) -> String {
+        assert_eq!(vars.get("stage.id"), Some(&stage.id));
+        assert_eq!(team.is_some(), stage.kind == StageKind::Team);
+        let mut prompt = template::render(&self.spec.prompts[&stage.prompt], vars)
+            .expect("RunDriver::new test-rendered every prompt");
+        prompt.push_str(context);
+        if let Some(extra) = team.and_then(|slot| stage.role_prompts.get(&slot.role)) {
+            prompt.push_str(&format!("\n\n## Your role\n\n{}\n", extra.trim()));
+        }
+        prompt
     }
 
     /// Base variables plus the per-spawn ones. `fan.index` is 1-based for
@@ -1457,11 +1575,11 @@ impl RunDriver {
             ("attempt", at.attempt.to_string()),
             ("fan.index", (fan + 1).to_string()),
             ("fan.count", stage.fan_out.to_string()),
-            ("feedback", sections::stage_feedback(stage, &at.feedback)),
+            ("feedback", at.feedback.clone()),
         ];
         vars.extend(per_spawn.into_iter().map(|(k, v)| (k.to_owned(), v)));
         if let Some(slot) = team {
-            let plan = self.merge_plan(stage, at.attempt);
+            let plan = self.merge_plan(stage, at);
             let branches: Vec<&str> = plan.roles.iter().map(|r| r.branch.as_str()).collect();
             let per_slot = [
                 ("workspace", path_text(&slot.workspace)),
@@ -1522,22 +1640,28 @@ impl RunDriver {
         PipelineRunId::parse(&self.base_vars["run.id"]).expect("RunDriver::new checked the run id")
     }
 
-    /// The merge of every role's branch of `attempt`, in roles order.
-    fn merge_plan(&self, stage: &StageSpec, attempt: u32) -> MergePlan {
+    /// Merge the branches run in this attempt, in roles order.
+    fn merge_plan(&self, stage: &StageSpec, at: &Position) -> MergePlan {
         assert_eq!(stage.kind, StageKind::Team, "only team stages merge");
         let into = self.base_vars["branch"].clone();
         let run = self.run_id();
         let roles = stage
             .roles
             .iter()
-            .map(|role| RoleBranch {
+            .enumerate()
+            .filter(|(slot, _)| !at.carried_slots.contains_key(&(*slot as u32)))
+            .map(|(_, role)| RoleBranch {
                 role: role.clone(),
-                branch: team::worker_branch(&into, &run, role, attempt),
+                branch: team::worker_branch(&into, &run, role, at.attempt),
             })
-            .collect();
+            .collect::<Vec<_>>();
+        assert!(
+            !roles.is_empty() || stage.awaits_roles(),
+            "a retry runs a role"
+        );
         MergePlan {
             stage_id: stage.id.clone(),
-            attempt,
+            attempt: at.attempt,
             into,
             roles,
         }
@@ -1552,6 +1676,8 @@ impl RunDriver {
             feedback: String::new(),
             previous: BTreeMap::new(),
             entered: BTreeSet::new(),
+            merged_slots: BTreeMap::new(),
+            carried_slots: BTreeMap::new(),
             approved: BTreeMap::new(),
             repaired: BTreeSet::new(),
             record: None,
@@ -1674,14 +1800,23 @@ fn latest_per_slot(runs: &[StageRun]) -> BTreeMap<SlotKey<'_>, &StageRun> {
     slots
 }
 
-/// The latest stage run of each slot of `stage` at `attempt`.
+/// The latest run for each slot of this group, including any carried slots.
 fn group_at<'a>(
     slots: &BTreeMap<SlotKey<'_>, &'a StageRun>,
     stage: &StageSpec,
-    attempt: u32,
+    at: &Position,
 ) -> Vec<Option<&'a StageRun>> {
     (0..stage.fan_out)
-        .map(|fan| slots.get(&(stage.id.as_str(), attempt, fan)).copied())
+        .map(|fan| {
+            let attempt = at.carried_slots.get(&fan).copied().unwrap_or(at.attempt);
+            let member = slots.get(&(stage.id.as_str(), attempt, fan)).copied();
+            assert!(
+                attempt == at.attempt
+                    || (attempt < at.attempt && member.is_some_and(|m| m.state.is_terminal())),
+                "a carried slot has a prior terminal result"
+            );
+            member
+        })
         .collect()
 }
 

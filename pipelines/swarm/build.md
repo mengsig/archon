@@ -15,9 +15,8 @@ under "Your role" below. That is all you need: build exactly that.
 
 {{feedback}}
 
-On attempt 2 or later, the integrator sent tasks back. When the feedback
-names tasks to redo and yours is not one of them, change nothing and
-complete at once, saying so. Otherwise fix what it says about your task.
+On attempt 2 or later, use the feedback to fix problems in your task.
+If it calls for no changes to your task, report what you checked.
 
 ## How to work
 

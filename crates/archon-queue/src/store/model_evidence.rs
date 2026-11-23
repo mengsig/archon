@@ -23,7 +23,6 @@ use archon_core::run::{StageRun, StageState, Verdict, VerdictNote};
 use rusqlite::{Connection, params};
 
 use super::codec::{SqlContext, from_json};
-use super::delegated::BENEATH;
 use super::operator_feedback as feedback;
 
 #[derive(Default)]
@@ -74,22 +73,23 @@ pub(super) fn read(
         .transpose()?;
     // A stage cost is complete: its agent's spend and that of every agent
     // beneath it, so a lead that delegates is not compared as a cheap one.
-    let sql = format!(
-        "WITH RECURSIVE {BENEATH},
-         delegated(root, cost_usd, estimated_cost_usd) AS (
-             SELECT b.root, SUM(s.cost_usd), SUM(s.estimated_cost_usd)
-             FROM beneath b JOIN spend s ON s.agent = b.agent GROUP BY b.root
-         )
-         SELECT st.data, i.data, s.cost_usd, s.estimated_cost_usd, r.pipeline,
-                COALESCE(d.cost_usd, 0), COALESCE(d.estimated_cost_usd, 0)
-         FROM stage_runs st JOIN runs r ON r.id = st.run JOIN items i ON i.id = r.item
-         LEFT JOIN spend s ON s.agent = st.aether_agent
-         LEFT JOIN delegated d ON d.root = st.aether_agent
-         WHERE (?1 IS NULL OR i.repo = ?1) AND (?2 IS NULL OR r.pipeline = ?2)
-           AND (?3 IS NULL OR st.stage_id = ?3)
-           AND date(st.started_at, 'localtime') BETWEEN ?4 AND ?5"
-    );
-    let mut statement = conn.prepare(&sql).ctx("prepare model evidence")?;
+    let mut statement = conn
+        .prepare(
+            "SELECT st.data, i.data,
+                    SUM(CASE WHEN w.root IS NOT NULL THEN x.cost_usd END),
+                    SUM(CASE WHEN w.root IS NOT NULL THEN x.estimated_cost_usd END),
+                    r.pipeline,
+                    SUM(CASE WHEN w.root IS NULL THEN COALESCE(x.cost_usd, 0) ELSE 0 END),
+                    SUM(CASE WHEN w.root IS NULL THEN COALESCE(x.estimated_cost_usd, 0) ELSE 0 END)
+             FROM stage_runs st JOIN runs r ON r.id = st.run JOIN items i ON i.id = r.item
+             LEFT JOIN stage_spend x ON x.stage = st.id
+             LEFT JOIN stage_spend_windows w ON w.root = x.agent AND w.stage = x.stage
+             WHERE (?1 IS NULL OR i.repo = ?1) AND (?2 IS NULL OR r.pipeline = ?2)
+               AND (?3 IS NULL OR st.stage_id = ?3)
+               AND date(st.started_at, 'localtime') BETWEEN ?4 AND ?5
+             GROUP BY st.id",
+        )
+        .ctx("prepare model evidence")?;
     let mut rows = statement
         .query(params![
             repo.as_ref().map(|r| r.id.as_str()),

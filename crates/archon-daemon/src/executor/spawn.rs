@@ -2187,6 +2187,7 @@ async fn spawned_ok(
     let mut current = store.stage_run(&stage.id)?;
     if current.state != StageState::Spawning {
         tracing::error!(stage = %stage.id, agent = %spawned.agent, "spawned agent for a settled stage run; cancelling it");
+        store.bind_spawned_spend(&stage.id, &spawned.agent)?;
         let reason = "stage run already settled".to_owned();
         return Ok(FollowUp {
             cancel_agents: vec![(spawned.agent, reason)],

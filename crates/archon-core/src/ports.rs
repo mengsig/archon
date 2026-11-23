@@ -491,7 +491,7 @@ pub trait AgentBackend: Send + Sync {
     /// `None` while the task is still open; the settled outcome otherwise.
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError>;
 
-    /// Model that answered a settled review task, when invocation history is available.
+    /// Model that settled a review task, when the execution history is available.
     async fn review_model(
         &self,
         _agent: &AetherAgentId,

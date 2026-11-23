@@ -22,6 +22,7 @@ use serde_json::json;
 const REVIEW_PROVIDER: &str = "codex";
 const ALTERNATE_PROVIDER: &str = "claude-code";
 const ALTERNATE_MODEL: &str = "claude-code/claude-opus-5-5";
+const SECOND_ALTERNATE: &str = "claude-code/claude-haiku-5-5";
 
 /// Aether's reading of the review provider with `remaining` percent left.
 fn read_review_quota(h: &Harness, remaining: u64) {
@@ -160,13 +161,19 @@ async fn assert_reviewer_waiting(h: &Harness, lead: &AetherAgentId, reviewer: &A
 }
 
 async fn due_review_with_an_alternate(h: &Harness) -> (StageRun, AetherAgentId) {
+    due_review(h, &[ALTERNATE_MODEL]).await
+}
+
+async fn due_review(h: &Harness, alternates: &[&str]) -> (StageRun, AetherAgentId) {
     let lead = common::choice("codex/small", Effort::Medium);
-    let original = common::choice(common::REVIEW_MODEL, Effort::Medium);
-    let alternate = common::choice(ALTERNATE_MODEL, Effort::Medium);
+    let reviewers = std::iter::once(common::REVIEW_MODEL)
+        .chain(alternates.iter().copied())
+        .map(|model| common::choice(model, Effort::Medium))
+        .collect();
     let plan = ModelPlan(
         [
             ("build".into(), vec![lead]),
-            ("build.review".into(), vec![original, alternate]),
+            ("build.review".into(), reviewers),
         ]
         .into(),
     );
@@ -227,6 +234,7 @@ async fn a_replacement_completes_the_same_task_and_passes_the_gate() {
     let before = h.backend.descendants(lead).await.unwrap();
 
     sweep(&h).await;
+    sweep(&h).await;
 
     let after = h.backend.descendants(lead).await.unwrap();
     assert_eq!(after.len(), 1);
@@ -264,6 +272,7 @@ async fn a_reviewer_unblocked_during_replacement_counts_once_on_the_model_that_a
         },
     );
     sweep(&h).await;
+    sweep(&h).await;
 
     let children = h.backend.descendants(lead).await.unwrap();
     assert_eq!(children.len(), 1);
@@ -279,6 +288,7 @@ async fn a_reviewer_unblocked_during_replacement_counts_once_on_the_model_that_a
 async fn a_replacement_retries_the_release_without_patching_again() {
     let h = Harness::new().await;
     let (stage, reviewer) = due_review_with_an_alternate(&h).await;
+    sweep(&h).await;
     h.backend
         .fail_next_message(archon_core::error::ArchonError::Unavailable(
             "lost reply".into(),
@@ -301,17 +311,82 @@ async fn a_replacement_retries_the_release_without_patching_again() {
 }
 
 #[tokio::test]
+async fn a_pending_replacement_is_rechecked_for_headroom_and_policy_before_release() {
+    let h = Harness::new().await;
+    let (stage, reviewer) = due_review_with_an_alternate(&h).await;
+    let lead = stage.aether_agent.as_ref().unwrap();
+    sweep(&h).await;
+    assert_eq!(h.backend.updates().len(), 1);
+
+    set_quota(&h, &[(REVIEW_PROVIDER, 0), (ALTERNATE_PROVIDER, 0)]);
+    sweep(&h).await;
+    assert_eq!(
+        h.backend.quota_blocked(&reviewer).await.unwrap(),
+        Some(true)
+    );
+    assert_eq!(told(&h, lead).len(), 1);
+
+    set_quota(&h, &[(REVIEW_PROVIDER, 0), (ALTERNATE_PROVIDER, 80)]);
+    let config = deny_alternate(&h);
+    sweep(&h).await;
+    assert_eq!(
+        h.backend.quota_blocked(&reviewer).await.unwrap(),
+        Some(true)
+    );
+    assert!(h.backend.messages().iter().all(|(to, _)| *to != reviewer));
+
+    std::fs::write(config, "[models]\n").unwrap();
+    sweep(&h).await;
+    assert_eq!(
+        h.backend.quota_blocked(&reviewer).await.unwrap(),
+        Some(false)
+    );
+    assert_eq!(h.backend.updates().len(), 1);
+    assert_review_passes(&h, &stage, &reviewer, ALTERNATE_MODEL).await;
+}
+
+#[tokio::test]
+async fn a_refused_candidate_leaves_other_named_reviewers_eligible() {
+    let h = Harness::new().await;
+    let (stage, reviewer) = due_review(&h, &[ALTERNATE_MODEL, SECOND_ALTERNATE]).await;
+    let lead = stage.aether_agent.as_ref().unwrap();
+    h.backend
+        .fail_next_update(archon_core::error::ArchonError::Invalid(
+            "model refused".into(),
+        ));
+    sweep(&h).await;
+    assert_reviewer_waiting(&h, lead, &reviewer).await;
+
+    sweep(&h).await;
+    sweep(&h).await;
+
+    assert!(told(&h, lead).is_empty());
+    assert_eq!(h.backend.updates().len(), 1);
+    assert_eq!(
+        h.backend.quota_blocked(&reviewer).await.unwrap(),
+        Some(false)
+    );
+    assert_review_passes(&h, &stage, &reviewer, SECOND_ALTERNATE).await;
+}
+
+fn deny_alternate(h: &Harness) -> std::path::PathBuf {
+    let dir = h.repo.join(".archon");
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("config.toml");
+    std::fs::write(
+        &config,
+        format!("[models]\ndeny = [\"{ALTERNATE_MODEL}\"]\n"),
+    )
+    .unwrap();
+    config
+}
+
+#[tokio::test]
 async fn a_planned_model_denied_by_current_policy_cannot_replace_a_reviewer() {
     let h = Harness::new().await;
     let (stage, reviewer) = due_review_with_an_alternate(&h).await;
     let lead = stage.aether_agent.as_ref().unwrap();
-    let dir = h.repo.join(".archon");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("config.toml"),
-        format!("[models]\ndeny = [\"{ALTERNATE_MODEL}\"]\n"),
-    )
-    .unwrap();
+    deny_alternate(&h);
 
     sweep(&h).await;
 

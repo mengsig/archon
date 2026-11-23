@@ -1648,28 +1648,51 @@ async fn a_quota_block_is_read_with_one_get_agent() {
 }
 
 #[tokio::test]
-async fn a_review_is_attributed_to_the_tasks_latest_completed_invocation() {
+async fn a_review_is_attributed_to_the_model_running_when_the_task_completed() {
     let (_dir, fake) = fake_aether().await;
     let backend = backend(&fake, any_model()).await;
     let agent = AetherAgentId::parse(AGENT).unwrap();
     let task = AetherTaskId::parse(TASK).unwrap();
-    let mut invocation = agent_event(
-        42,
-        json!({
-            "type": "invocation.completed",
-            "model": {"provider": "codex", "model": "gpt-5"},
+    let mut history = [
+        agent_event(
+            54,
+            json!({"type": "snapshot.created", "model": "claude-code/claude-opus-5-5"}),
+        ),
+        agent_event(53, json!({"type": "task.completed"})),
+        agent_event(
+            52,
+            json!({"type": "snapshot.created", "model": "codex/gpt-5"}),
+        ),
+    ];
+    for event in &mut history {
+        event["task_id"] = json!(TASK);
+    }
+    fake.set_responder(
+        "get_events",
+        Arc::new(move |frame| {
+            let before = frame["query"]["before"].as_u64().unwrap();
+            let event = history
+                .iter()
+                .find(|event| {
+                    event["seq"].as_u64().unwrap() < before
+                        && event["kind"]["type"] == frame["query"]["types"][0]
+                })
+                .unwrap();
+            Scripted::reply("events", json!([event]))
         }),
     );
-    invocation["task_id"] = json!(TASK);
-    fake.script("get_events", Scripted::reply("events", json!([invocation])));
 
     let model = backend.review_model(&agent, &task).await.unwrap().unwrap();
     assert_eq!(model.to_string(), "codex/gpt-5");
     let reads = fake.received_named("get_events");
-    assert_eq!(reads.len(), 1);
-    assert_eq!(reads[0]["limit"], 1);
+    assert_eq!(reads.len(), 2);
+    for read in &reads {
+        assert_eq!(read["limit"], 1);
+        assert_eq!(read["query"]["agent"], AGENT);
+        assert_eq!(read["query"]["task"], TASK);
+    }
     assert_eq!(reads[0]["query"]["before"], u64::MAX);
-    assert_eq!(reads[0]["query"]["agent"], AGENT);
-    assert_eq!(reads[0]["query"]["task"], TASK);
-    assert_eq!(reads[0]["query"]["types"], json!(["invocation.completed"]));
+    assert_eq!(reads[0]["query"]["types"], json!(["task.completed"]));
+    assert_eq!(reads[1]["query"]["before"], 53);
+    assert_eq!(reads[1]["query"]["types"], json!(["snapshot.created"]));
 }

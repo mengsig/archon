@@ -66,11 +66,19 @@ struct Wait {
     since: Timestamp,
     report: Option<Report>,
     replacement: Option<Replacement>,
+    #[serde(default)]
+    refused: BTreeSet<ModelRef>,
 }
 
 impl Wait {
     fn reported(&self) -> bool {
         self.report.as_ref().is_some_and(|report| report.sent)
+    }
+
+    fn source<'a>(&'a self, reviewer: &'a Descendant) -> &'a ModelRef {
+        self.replacement
+            .as_ref()
+            .map_or(&reviewer.model, |pending| &pending.from)
     }
 }
 
@@ -297,6 +305,7 @@ async fn note_waits(
                     since: now,
                     report: None,
                     replacement: None,
+                    refused: BTreeSet::new(),
                 }
             }
         };
@@ -324,6 +333,7 @@ fn read_wait(key: &str, raw: &str) -> Result<Wait, ArchonError> {
         since,
         report: None,
         replacement: None,
+        refused: BTreeSet::new(),
     })
 }
 
@@ -361,27 +371,21 @@ async fn intervene(
     assert_ne!(reviewer.agent, *lead, "a lead is not its own reviewer");
     assert_eq!(reviewer.role, "reviewer", "only reviewers wait here");
     let key = format!("{WAIT_PREFIX}{}:{}", stage.id, reviewer.agent);
-    if let Some(pending) = &wait.replacement {
-        if pending.to.model == reviewer.model {
-            return replacement::release(ctx, reviewer, &key, &wait).await;
-        }
-        if pending.from != reviewer.model {
-            return ctx.store.lock().await.kv_delete(&key);
-        }
+    if let Some(pending) = &wait.replacement
+        && pending.from != reviewer.model
+        && pending.to.model != reviewer.model
+    {
+        return ctx.store.lock().await.kv_delete(&key);
     }
-    let choice = match &quota.headroom {
-        Some(quota) => {
-            let pending = wait.replacement.as_ref().map(|pending| &pending.to);
-            match replacement::choose(ctx, stage, reviewer, quota, pending).await {
-                Ok(choice) => choice,
-                Err(error) if error.is_store() => return Err(error),
-                Err(error) => {
-                    tracing::warn!(stage = %stage.id, reviewer = %reviewer.agent, %error, "could not choose a quota replacement");
-                    None
-                }
-            }
+    let choice = match replacement::choose(ctx, stage, reviewer, quota.headroom.as_ref(), &wait)
+        .await
+    {
+        Ok(choice) => choice,
+        Err(error) if error.is_store() => return Err(error),
+        Err(error) => {
+            tracing::warn!(stage = %stage.id, reviewer = %reviewer.agent, %error, "could not choose a quota replacement");
+            None
         }
-        None => None,
     };
     if choice.is_none() && wait.reported() {
         return Ok(());
@@ -390,20 +394,13 @@ async fn intervene(
         Some(true) => {}
         Some(false) | None => return ctx.store.lock().await.kv_delete(&key),
     }
-    if let Some(to) = choice {
-        if replacement::apply(ctx, reviewer, &key, &mut wait, to).await? || wait.reported() {
-            return Ok(());
+    match choice {
+        Some(to) if to.model == reviewer.model => {
+            replacement::release(ctx, reviewer, &key, &wait).await
         }
-        if bounded(1, ctx.backend.quota_blocked(&reviewer.agent)).await? != Some(true) {
-            return ctx.store.lock().await.kv_delete(&key);
-        }
+        Some(to) => replacement::apply(ctx, reviewer, &key, &mut wait, to).await,
+        None => report(ctx, lead, reviewer, &key, wait, &quota.resets).await,
     }
-    let resets_at = quota
-        .resets
-        .get(&reviewer.model.provider)
-        .copied()
-        .flatten();
-    report(ctx, lead, reviewer, &key, wait, resets_at).await
 }
 
 async fn save_wait(ctx: &DaemonContext, key: &str, wait: &Wait) -> Result<(), ArchonError> {
@@ -418,12 +415,14 @@ async fn report(
     reviewer: &Descendant,
     key: &str,
     mut wait: Wait,
-    resets_at: Option<Timestamp>,
+    resets: &BTreeMap<String, Option<Timestamp>>,
 ) -> Result<(), ArchonError> {
     assert_ne!(reviewer.agent, *lead, "the lead receives the report");
     if wait.report.is_none() {
+        let source = wait.source(reviewer);
+        let resets_at = resets.get(&source.provider).copied().flatten();
         wait.report = Some(Report {
-            text: report_text(reviewer, resets_at),
+            text: report_text(&reviewer.agent, source, resets_at),
             sent: false,
         });
         save_wait(ctx, key, &wait).await?;
@@ -440,17 +439,16 @@ async fn report(
     save_wait(ctx, key, &wait).await
 }
 
-fn report_text(reviewer: &Descendant, resets_at: Option<Timestamp>) -> String {
-    let provider = &reviewer.model.provider;
+fn report_text(reviewer: &AetherAgentId, model: &ModelRef, resets_at: Option<Timestamp>) -> String {
+    let provider = &model.provider;
     let reset = resets_at.map_or_else(
         || "no reset is known".to_owned(),
         |at| format!("resets at {}", at.format("%Y-%m-%d %H:%M UTC")),
     );
     format!(
-        "Archon: reviewer {} ({}) is still waiting on {provider} because its quota is spent \
+        "Archon: reviewer {reviewer} ({model}) is still waiting on {provider} because its quota is spent \
          ({reset}). No eligible replacement with confirmed headroom is available. The review \
-         stays pending on this reviewer.",
-        reviewer.agent, reviewer.model,
+         stays pending on this reviewer."
     )
 }
 

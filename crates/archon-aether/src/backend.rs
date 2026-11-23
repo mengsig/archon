@@ -32,6 +32,27 @@ pub const LIVE_STATES: &[&str] = &["created", "ready", "running", "waiting", "bl
 /// children. A state in neither list may still act.
 pub const STOPPED_STATES: &[&str] = &["completed", "failed", "cancelled", "imported"];
 
+fn review_event_seq(
+    event: &serde_json::Value,
+    agent: &AetherAgentId,
+    task: &AetherTaskId,
+    kind: &str,
+) -> Result<u64, ArchonError> {
+    let seq = event["seq"].as_u64().filter(|seq| *seq > 0);
+    match seq {
+        Some(seq)
+            if event["agent_id"] == agent.as_str()
+                && event["task_id"] == task.as_str()
+                && event["kind"]["type"] == kind =>
+        {
+            Ok(seq)
+        }
+        _ => Err(ArchonError::Protocol(format!(
+            "unexpected {kind} event when reading reviewer {agent} task {task}"
+        ))),
+    }
+}
+
 #[derive(Debug)]
 pub struct AetherBackend {
     link: Arc<AetherLink>,
@@ -934,28 +955,35 @@ impl AgentBackend for AetherBackend {
         agent: &AetherAgentId,
         task: &AetherTaskId,
     ) -> Result<Option<ModelRef>, ArchonError> {
-        let query = EventQuery {
+        let query = |kind: &str| EventQuery {
             agent: Some(agent.clone()),
             task: Some(task.clone()),
-            types: vec!["invocation.completed".into()],
+            types: vec![kind.into()],
             ..EventQuery::default()
         };
-        let events = self.link.client()?.latest_events_raw(query, 1).await?;
-        let Some(event) = events.first() else {
+        let client = self.link.client()?;
+        let completed = client.latest_events_raw(query("task.completed"), 1).await?;
+        let Some(completed) = completed.first() else {
             return Ok(None);
         };
-        if event["agent_id"] != agent.as_str()
-            || event["task_id"] != task.as_str()
-            || event["kind"]["type"] != "invocation.completed"
-        {
+        let completed_at = review_event_seq(completed, agent, task, "task.completed")?;
+        // Native tools can finish the task before their invocation is written.
+        let snapshots = client
+            .events_before_raw(completed_at, query("snapshot.created"), 1)
+            .await?;
+        let Some(snapshot) = snapshots.first() else {
+            return Ok(None);
+        };
+        let snapshot_at = review_event_seq(snapshot, agent, task, "snapshot.created")?;
+        if snapshot_at >= completed_at {
             return Err(ArchonError::Protocol(format!(
-                "unexpected invocation event when reading reviewer {agent} task {task}"
+                "execution snapshot of reviewer {agent} task {task} follows its completion"
             )));
         }
-        serde_json::from_value(event["kind"]["model"].clone())
+        serde_json::from_value(snapshot["kind"]["model"].clone())
             .map(Some)
             .map_err(|error| {
-                ArchonError::Protocol(format!("reviewer {agent} invocation model: {error}"))
+                ArchonError::Protocol(format!("reviewer {agent} execution model: {error}"))
             })
     }
 

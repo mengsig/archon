@@ -16,14 +16,17 @@ pub(super) async fn choose(
     ctx: &DaemonContext,
     stage: &StageRun,
     reviewer: &Descendant,
-    quota: &QuotaView,
-    pending: Option<&ModelChoice>,
+    quota: Option<&QuotaView>,
+    wait: &Wait,
 ) -> Result<Option<ModelChoice>, ArchonError> {
     if stage.aether_agent.as_ref() != Some(&reviewer.parent) {
         return Ok(None);
     }
     assert_ne!(reviewer.agent, reviewer.parent);
     assert_eq!(reviewer.role, "reviewer");
+    let Some(quota) = quota else {
+        return Ok(None);
+    };
     let (spawn, repo) = {
         let store = ctx.store.lock().await;
         let Some(spawn) = issuing_spawn(&store, &stage.id)? else {
@@ -34,8 +37,9 @@ pub(super) async fn choose(
         (spawn, item.repo)
     };
     let choices = named_choices(&spawn, reviewer);
+    let source = wait.source(reviewer);
     let has_quota = |model: &ModelRef| {
-        model.provider != reviewer.model.provider
+        model.provider != source.provider
             && quota.get(&model.provider).is_some_and(|h| !h.exhausted())
     };
     if !choices.iter().any(|choice| has_quota(&choice.model)) {
@@ -53,7 +57,11 @@ pub(super) async fn choose(
         choice.model = connected(&catalog, &choice.model)?;
         (choice.model != *lead_model
             && has_quota(&choice.model)
-            && pending.is_none_or(|pending| choice == *pending)
+            && !wait.refused.contains(&choice.model)
+            && wait
+                .replacement
+                .as_ref()
+                .is_none_or(|pending| choice == pending.to)
             && (!governed || provider_reports_cost(&choice.model.provider))
             && policy.check(&choice).is_ok())
         .then_some(choice)
@@ -69,7 +77,7 @@ pub(super) async fn apply(
     key: &str,
     wait: &mut Wait,
     to: ModelChoice,
-) -> Result<bool, ArchonError> {
+) -> Result<(), ArchonError> {
     assert_ne!(to.model.provider, reviewer.model.provider);
     if let Some(pending) = &wait.replacement {
         assert_eq!(pending.to, to, "a retry uses the same replacement");
@@ -80,21 +88,6 @@ pub(super) async fn apply(
         });
         save_wait(ctx, key, wait).await?;
     }
-    if switch(ctx, reviewer, key, wait).await? {
-        release(ctx, reviewer, key, wait).await?;
-        return Ok(true);
-    }
-    wait.replacement = None;
-    save_wait(ctx, key, wait).await?;
-    Ok(false)
-}
-
-async fn switch(
-    ctx: &DaemonContext,
-    reviewer: &Descendant,
-    key: &str,
-    wait: &Wait,
-) -> Result<bool, ArchonError> {
     let switch = wait
         .replacement
         .as_ref()
@@ -103,15 +96,15 @@ async fn switch(
         switch.from, reviewer.model,
         "the source reviewer still holds the old model"
     );
-    assert_ne!(
-        switch.to.model.provider, switch.from.provider,
-        "the replacement has new quota"
-    );
     let update = AgentUpdate {
         choice: Some(switch.to.clone()),
         ..AgentUpdate::default()
     };
-    let update_key = format!("{key}:switch:{}", wait.since.to_rfc3339());
+    let update_key = format!(
+        "{key}:switch:{}:{}",
+        wait.since.to_rfc3339(),
+        wait.refused.len()
+    );
     match bounded(
         1,
         ctx.backend
@@ -119,11 +112,22 @@ async fn switch(
     )
     .await
     {
-        Ok(()) => Ok(true),
+        Ok(()) => {
+            tracing::info!(
+                reviewer = %reviewer.agent,
+                from = %switch.from,
+                to = %switch.to.model,
+                reason = "provider quota exhausted",
+                "replaced reviewer model; hold will be rechecked"
+            );
+            Ok(())
+        }
         Err(error) if error.is_store() || resume::unanswered(&error) => Err(error),
         Err(error) => {
             tracing::warn!(reviewer = %reviewer.agent, model = %switch.to.model, %error, "reviewer quota replacement refused");
-            Ok(false)
+            wait.refused.insert(switch.to.model.clone());
+            wait.replacement = None;
+            save_wait(ctx, key, wait).await
         }
     }
 }
@@ -139,30 +143,26 @@ pub(super) async fn release(
         .as_ref()
         .expect("only a replacement needs release");
     assert_ne!(reviewer.agent, reviewer.parent);
-    assert!(reviewer.model == switch.from || reviewer.model == switch.to.model);
-    if bounded(1, ctx.backend.quota_blocked(&reviewer.agent)).await? == Some(true) {
-        // Aether keeps the old exhaustion block until an operator message wakes it.
-        let text = format!(
-            "Archon switched your review from {} to {} because of provider quota. {}",
-            switch.from,
-            switch.to.model,
-            "Continue the same review under its existing instructions."
-        );
-        let message_key = format!("{key}:release:{}", wait.since.to_rfc3339());
-        bounded(
-            1,
-            ctx.backend
-                .send_message(&reviewer.agent, &text, &message_key),
-        )
-        .await?;
-    }
+    assert_eq!(reviewer.model, switch.to.model);
     tracing::info!(
         reviewer = %reviewer.agent,
         from = %switch.from,
         to = %switch.to.model,
         reason = "provider quota exhausted",
-        "replaced reviewer model"
+        "releasing quota hold on replacement reviewer"
     );
+    // Aether keeps the old exhaustion block until an operator message wakes it.
+    let text = format!(
+        "Archon switched your review from {} to {} because of provider quota. {}",
+        switch.from, switch.to.model, "Continue the same review under its existing instructions."
+    );
+    let message_key = format!("{key}:release:{}", wait.since.to_rfc3339());
+    bounded(
+        1,
+        ctx.backend
+            .send_message(&reviewer.agent, &text, &message_key),
+    )
+    .await?;
     ctx.store.lock().await.kv_delete(key)
 }
 

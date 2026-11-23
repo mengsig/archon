@@ -1552,9 +1552,11 @@ in a new worktree off the base branch (§13).
   quota or a usage limit for 3 minutes, archond looks for a model named in
   the stage's review contract or delegation policy on another provider with
   confirmed headroom. It switches the existing reviewer to that model and
-  releases the hold. The reviewer keeps its scope, instructions and task ID,
+  rechecks its eligibility before releasing the hold on the next sweep.
+  The reviewer keeps its scope, instructions and task ID,
   so the lead keeps waiting for the same task. The review check attributes
-  the verdict to the task's last completed model invocation when available.
+  the verdict to the model running when the task completed, using its
+  recorded execution history when available.
   If archond cannot find an eligible model, it reports the
   block to the lead once per wait and keeps checking. The sweep runs every
   30 seconds on its own worker (`executor::quota_wait::watch`), apart from

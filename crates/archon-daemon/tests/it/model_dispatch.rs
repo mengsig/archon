@@ -1,10 +1,16 @@
 use crate::{common, link_common};
-use archon_aether::fake::Scripted;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use archon_aether::fake::{self, Scripted};
+use archon_core::id::QueueItemId;
 use archon_core::model::{Effort, ModelChoice, ModelPlan};
 use archon_core::plan_origin::{Authority, PlanSource, PlanWriter};
 use archon_core::queue::QueueState;
+use archon_core::run::{RunState, StageState};
 use archon_daemon::executor;
 use link_common::Harness;
+use serde_json::json;
 
 fn models(h: &Harness, names: &[&str]) {
     let models: Vec<_> = names
@@ -179,4 +185,162 @@ async fn a_removed_tier_resolution_moves_within_the_requested_tier() {
     assert_eq!(choice.effort, Effort::High);
     assert_eq!(choice.tier.as_ref().unwrap().requested, Tier::Strong);
     assert_eq!(store.runs_for_item(&id).unwrap().len(), 1);
+}
+
+fn remove_model_at_create(h: &Harness, removals: usize) {
+    assert!((1..=2).contains(&removals));
+    let models = ["old", "new", "last"];
+    let removed = Arc::new(AtomicUsize::new(0));
+    let catalog = removed.clone();
+    h.fake.set_responder(
+        "list_models",
+        Arc::new(move |_| {
+            let current = catalog.load(Ordering::Relaxed);
+            let model = format!("p/{}", models[current]);
+            Scripted::reply("models", json!([{"model": model, "configured": true}]))
+        }),
+    );
+    h.fake.set_responder(
+        "create_agent",
+        Arc::new(move |frame| {
+            if frame["start"] == json!(false) {
+                return Scripted::reply("agent", fake::agent("agt_node", None));
+            }
+            assert_eq!(frame["start"], json!(true));
+            let current = removed.load(Ordering::Relaxed);
+            let model = models[current];
+            assert_eq!(frame["model"], json!({"provider": "p", "model": model}));
+            if current < removals {
+                removed.fetch_add(1, Ordering::Relaxed);
+                return Scripted::refuse(
+                    "unavailable",
+                    &format!("unknown model `{model}` for provider `p`"),
+                );
+            }
+            Scripted::reply("agent", fake::agent("agt_new", Some("tsk_new")))
+        }),
+    );
+    h.fake.set_default("cancel", Scripted::ok());
+    h.fake.set_default(
+        "get_agent",
+        Scripted::reply("agent", fake::agent("agt_node", None)),
+    );
+    h.fake
+        .set_default("list_agents", Scripted::reply("agents", json!([])));
+    h.fake.set_default(
+        "get_task",
+        Scripted::reply(
+            "task",
+            fake::task(
+                "tsk_new",
+                Some("agt_new"),
+                fake::FAKE_RUN,
+                json!({"state": "active"}),
+            ),
+        ),
+    );
+}
+
+async fn issue_admitted_slot(h: &Harness, id: &QueueItemId) {
+    tokio::time::timeout(link_common::WAIT, async {
+        executor::start_item(&h.ctx, id).await.unwrap();
+        let runs = h.ctx.store.lock().await.runs_for_item(id).unwrap();
+        assert_eq!(runs.len(), 1, "admission starts one run");
+        assert!(h.fake.received_named("create_agent").is_empty());
+        executor::spawn_admitted(&h.ctx, &runs[0].id, 1)
+            .await
+            .unwrap();
+    })
+    .await
+    .expect("dispatch finishes");
+}
+
+#[tokio::test]
+async fn create_refusal_repairs_a_movable_slot_and_runs_it() {
+    let mut config = archon_core::config::Config::default();
+    config.limits.infra_retries = 0;
+    let h = Harness::with(config, None).await;
+    remove_model_at_create(&h, 1);
+    h.connect().await;
+    let id = queued(&h, "p/old", true).await;
+    issue_admitted_slot(&h, &id).await;
+
+    let store = h.ctx.store.lock().await;
+    let item = store.item(&id).unwrap();
+    assert_eq!(item.model_plan.0["implement"][0].model.to_string(), "p/new");
+    let runs = store.runs_for_item(&id).unwrap();
+    assert_eq!(runs.len(), 1);
+    let stages = store.stage_runs(&runs[0].id).unwrap();
+    assert_eq!(stages.len(), 2, "{stages:?}");
+    let creates = h.fake.received_named("create_agent");
+    assert!(
+        stages
+            .iter()
+            .any(|s| s.state == StageState::Running && s.choice.model.to_string() == "p/new"),
+        "{stages:?}, creates: {creates:?}"
+    );
+    assert_eq!(creates.len(), 3, "run node and two stage creates");
+    assert_ne!(creates[1]["idempotency_key"], creates[2]["idempotency_key"]);
+}
+
+#[tokio::test]
+async fn create_refusal_names_the_pin_and_keeps_the_failed_run() {
+    let h = Harness::new().await;
+    remove_model_at_create(&h, 1);
+    h.connect().await;
+    let id = queued(&h, "p/old", false).await;
+    issue_admitted_slot(&h, &id).await;
+
+    let store = h.ctx.store.lock().await;
+    let runs = store.runs_for_item(&id).unwrap();
+    assert_eq!(runs.len(), 1);
+    let RunState::Failed { error, .. } = &runs[0].state else {
+        panic!("expected a failed run, got {:?}", runs[0].state);
+    };
+    assert!(
+        error.contains("p/old") && error.contains("Re-plan"),
+        "{error}"
+    );
+    assert_eq!(
+        store.item(&id).unwrap().model_plan.0["implement"][0]
+            .model
+            .to_string(),
+        "p/old"
+    );
+    assert!(
+        store
+            .model_catalog()
+            .check(&"p/new".parse().unwrap())
+            .is_ok()
+    );
+    assert_eq!(h.fake.received_named("create_agent").len(), 2);
+}
+
+#[tokio::test]
+async fn create_refusal_does_not_repair_the_same_slot_twice() {
+    let mut config = archon_core::config::Config::default();
+    config.limits.infra_retries = 3;
+    let h = Harness::with(config, None).await;
+    remove_model_at_create(&h, 2);
+    h.connect().await;
+    let id = queued(&h, "p/old", true).await;
+    issue_admitted_slot(&h, &id).await;
+
+    let store = h.ctx.store.lock().await;
+    let runs = store.runs_for_item(&id).unwrap();
+    assert_eq!(runs.len(), 1);
+    let RunState::Failed { error, .. } = &runs[0].state else {
+        panic!("expected a failed run, got {:?}", runs[0].state);
+    };
+    assert!(
+        error.contains("p/new") && error.contains("already retried"),
+        "{error}"
+    );
+    assert!(
+        store
+            .model_catalog()
+            .check(&"p/last".parse().unwrap())
+            .is_ok()
+    );
+    assert_eq!(h.fake.received_named("create_agent").len(), 3);
 }

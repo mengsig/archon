@@ -17,7 +17,7 @@ use archon_core::delegation::Narrowed;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::lesson::CONTRACT_LESSONS;
-use archon_core::model::{EffortContract, ModelChoice, ModelPlan};
+use archon_core::model::{EffortContract, ModelChoice, ModelPlan, ModelRef};
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{CheckedOn, SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
@@ -1529,7 +1529,7 @@ pub(super) enum Issued {
     Resumed(AetherAgentId),
     /// The agent stopped at its stage deadline could not be woken.
     NotWoken,
-    CatalogRefused(String),
+    CatalogRefused(settle::ModelRefusal),
     /// The kept agent cannot go on, and a fresh one runs another model: a
     /// replacement attempt is reserved for it instead.
     Rerouted,
@@ -1609,9 +1609,7 @@ async fn resume_or_spawn(
             return Ok(Issued::Rerouted);
         }
     }
-    spawn_bound(ctx, stage, spawn, &checked)
-        .await
-        .map(Issued::Spawned)
+    spawn_bound(ctx, stage, spawn, &checked).await
 }
 
 /// What becomes of a frozen create the catalog refuses for `reason`: the agent
@@ -1628,7 +1626,7 @@ async fn landed_or_refused(
     {
         return Ok(Issued::Spawned(agent));
     }
-    Ok(Issued::CatalogRefused(reason))
+    Ok(Issued::CatalogRefused(settle::ModelRefusal::Frozen(reason)))
 }
 
 /// Count a deadline wake's minutes from now when it waited to be asked, as for
@@ -1767,7 +1765,7 @@ async fn spawn_bound(
     stage: &StageRun,
     mut spawn: StoredSpawn,
     checked: &archon_core::model_tier::ModelCatalog,
-) -> Result<SpawnedAgent, ArchonError> {
+) -> Result<Issued, ArchonError> {
     if spawn.request.cost_budget_usd.is_some() {
         let unresolved = spawn.request.aether_cost_budget.is_none();
         ctx.backend
@@ -1793,7 +1791,38 @@ async fn spawn_bound(
         network_default,
         aliases: checked.aliases(),
     };
-    ctx.backend.spawn_on(spawn.request, checked).await
+    match ctx.backend.spawn_on(spawn.request, checked).await {
+        Ok(agent) => Ok(Issued::Spawned(agent)),
+        Err(error) if create_refused_model(&error, &stage.choice.model) => {
+            let reason = error.to_string();
+            ctx.store
+                .lock()
+                .await
+                .invalidate_model_catalog(reason.clone());
+            let catalog = learned::catalog(ctx).await?;
+            let refresh_error = catalog.not_ready_reason().map(str::to_owned);
+            Ok(Issued::CatalogRefused(settle::ModelRefusal::Create {
+                reason,
+                refresh_error,
+            }))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn create_refused_model(error: &ArchonError, model: &ModelRef) -> bool {
+    let message = match error {
+        ArchonError::Aether(message) => message.strip_prefix("unavailable: "),
+        ArchonError::Invalid(message) => message.strip_prefix("aether: "),
+        _ => None,
+    };
+    message.is_some_and(|message| {
+        message == "unknown model"
+            || message.starts_with("unknown model ")
+            || message
+                .strip_prefix(&model.to_string())
+                .is_some_and(|tail| tail.starts_with(" was retired; use "))
+    })
 }
 
 /// Bind a new stage to its run node and freeze its parent, network and
@@ -1995,13 +2024,19 @@ async fn record(
             table.spawn_errors.remove(&stage.id);
             return resume::resumed_ok(ctx, stage, agent).await;
         }
-        Ok(Issued::CatalogRefused(reason)) => {
-            return settle::replace_refused_model(ctx, table, stage, reason).await;
+        Ok(Issued::CatalogRefused(refusal)) => {
+            return settle::replace_refused_model(ctx, table, stage, refusal).await;
         }
         Ok(Issued::Rerouted) => {
             table.spawn_errors.remove(&stage.id);
             let reason = "its kept agent cannot go on, and quota routes a fresh one elsewhere";
-            return settle::replace_refused_model(ctx, table, stage, reason.to_owned()).await;
+            return settle::replace_refused_model(
+                ctx,
+                table,
+                stage,
+                settle::ModelRefusal::Frozen(reason.to_owned()),
+            )
+            .await;
         }
         Ok(Issued::NotWoken) => {
             table.spawn_errors.remove(&stage.id);
@@ -2099,17 +2134,10 @@ async fn refuse(
     error: String,
 ) -> Result<FollowUp, ArchonError> {
     tracing::warn!(stage = %stage.id, %error, "stage spawn refused");
-    let infra = error.starts_with("cannot create agent:") && {
-        let message = error.to_ascii_lowercase();
-        message.contains("unknown model") || message.contains(" was retired; use ")
+    let outcome = StageOutcome::Failed {
+        error,
+        infra: false,
     };
-    if infra {
-        ctx.store
-            .lock()
-            .await
-            .invalidate_model_catalog(error.clone());
-    }
-    let outcome = StageOutcome::Failed { error, infra };
     settle::settle_locked(ctx, table, &stage.id, outcome).await
 }
 

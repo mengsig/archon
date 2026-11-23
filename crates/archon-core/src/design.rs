@@ -245,6 +245,113 @@ pub struct Target {
     pub styles: BTreeMap<String, String>,
     /// Whether the operator drew a region rather than picking an element.
     pub region: bool,
+    /// The steps that put the preview in the state this picture shows (a
+    /// dialog the button opens, a hovered menu); empty for the page as loaded.
+    #[serde(default, skip_serializing_if = "no_steps")]
+    pub steps: Box<[UiStep]>,
+}
+
+/// Whether a picture's state is the page as loaded. (A boxed slice keeps a
+/// note, and so every reply that carries one, from outgrowing the others.)
+fn no_steps(steps: &[UiStep]) -> bool {
+    steps.is_empty()
+}
+
+/// One step that drives the preview into the state that shows a change. The
+/// agent names the steps; the before and after pictures replay them on a
+/// fresh load of the note's page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "do", rename_all = "snake_case", deny_unknown_fields)]
+pub enum UiStep {
+    /// Go to an app path.
+    Open {
+        /// The path, like `/settings`.
+        path: String,
+    },
+    /// Click the element a CSS selector matches.
+    Click {
+        /// The selector.
+        selector: String,
+    },
+    /// Move the pointer over the element a CSS selector matches.
+    Hover {
+        /// The selector.
+        selector: String,
+    },
+    /// Wait for an animation or a request.
+    Wait {
+        /// Milliseconds.
+        ms: u32,
+    },
+}
+
+/// The most steps a state may take.
+pub const MAX_UI_STEPS: usize = 12;
+/// The longest single wait of a state, in milliseconds.
+pub const MAX_STEP_WAIT_MS: u32 = 5000;
+/// The longest selector of a step, in characters.
+pub const MAX_STEP_SELECTOR_CHARS: usize = 300;
+
+/// Why `steps` cannot be replayed, in plain words.
+pub fn check_steps(steps: &[UiStep]) -> Result<(), String> {
+    if steps.len() > MAX_UI_STEPS {
+        return Err(format!("take at most {MAX_UI_STEPS} steps"));
+    }
+    for (n, step) in steps.iter().enumerate() {
+        let at = n + 1;
+        match step {
+            UiStep::Open { path } => {
+                check_app_path(path).map_err(|why| format!("step {at}: path {why}"))?
+            }
+            UiStep::Click { selector } | UiStep::Hover { selector } => {
+                if selector.trim().is_empty() {
+                    return Err(format!("step {at}: the selector is empty"));
+                }
+                if selector.chars().count() > MAX_STEP_SELECTOR_CHARS
+                    || selector.chars().any(char::is_control)
+                {
+                    return Err(format!(
+                        "step {at}: the selector is too long or has control characters"
+                    ));
+                }
+            }
+            UiStep::Wait { ms } if *ms > MAX_STEP_WAIT_MS => {
+                return Err(format!("step {at}: wait at most {MAX_STEP_WAIT_MS} ms"));
+            }
+            UiStep::Wait { .. } => {}
+        }
+    }
+    Ok(())
+}
+
+/// What Archon says on a note whose after picture matched its before picture
+/// even after the agent's retake; the agent's own words follow it.
+pub const NO_VISIBLE_CHANGE: &str = "No visible change was captured";
+
+/// What Archon says on a done note when its after picture first matched its
+/// before picture and the agent was asked to retake it in the right state.
+pub const RETAKE_ASKED: &str = "The after picture matched the before picture";
+
+/// Whether the agent was already asked to retake `note`'s after picture.
+pub fn retake_asked(note: &DesignNote) -> bool {
+    note.thread
+        .iter()
+        .any(|e| e.from == ReplyAuthor::Archon && e.text.starts_with(RETAKE_ASKED))
+}
+
+/// The notice of a done note that has no after picture to compare because
+/// the one taken matched the before picture: Archon's newest thread entry
+/// that begins with [`NO_VISIBLE_CHANGE`]. A note with a real after picture
+/// has none.
+pub fn no_visible_change(note: &DesignNote) -> Option<&str> {
+    if note.after_asset.is_some() {
+        return None;
+    }
+    note.thread
+        .iter()
+        .rev()
+        .find(|e| e.from == ReplyAuthor::Archon && e.text.starts_with(NO_VISIBLE_CHANGE))
+        .map(|e| e.text.as_str())
 }
 
 /// One message in a note's conversation.

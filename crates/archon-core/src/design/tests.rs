@@ -116,6 +116,7 @@ fn target(path: &str, selector: Option<&str>, region: bool, r: Rect) -> Target {
         },
         styles: BTreeMap::new(),
         region,
+        steps: Box::default(),
     }
 }
 

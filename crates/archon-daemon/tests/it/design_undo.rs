@@ -207,6 +207,7 @@ async fn only_a_done_note_with_a_commit_can_be_undone() {
         commit: None,
         no_change: true,
         path: None,
+        steps: Vec::new(),
         caller: Some(f.agent.clone()),
     })
     .await
@@ -554,6 +555,7 @@ async fn finish_with_only_no_change_notes_needs_the_flag() {
         commit: None,
         no_change: true,
         path: None,
+        steps: Vec::new(),
         caller: Some(f.agent.clone()),
     })
     .await

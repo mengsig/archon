@@ -1,11 +1,10 @@
 //! What the stage agent says over MCP: `design_preview` and `design_note`.
 
-use std::time::Duration;
-
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::design::{
-    AssetSource, DesignNote, DesignSession, FailReason, NoteKind, NoteStatus, ReplyAuthor,
-    SessionState, Target, ThreadEntry, is_in_flight, validate_preview_url,
+    AssetSource, DesignNote, DesignSession, FailReason, NO_VISIBLE_CHANGE, NoteKind, NoteStatus,
+    RETAKE_ASKED, ReplyAuthor, SessionState, Target, ThreadEntry, UiStep, is_in_flight,
+    validate_preview_url,
 };
 use archon_core::error::{ArchonError, DesignRefusal};
 use archon_core::protocol::{AgentNoteStatus, Reply};
@@ -13,6 +12,7 @@ use archon_design_browser as adb;
 use archon_queue::store::NoteChange;
 
 use super::assets::NewAsset;
+use super::state::{AfterOutcome, AfterShot};
 use super::{DesignService, WorktreeRef, refuse};
 use crate::context::DaemonContext;
 use crate::worktree::design_git::{self, NoteGit, Shape, Tidy};
@@ -194,33 +194,17 @@ impl DesignService {
         });
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn note_report(
         &self,
         ctx: &DaemonContext,
-        id: &str,
-        status: AgentNoteStatus,
-        reply: Option<String>,
-        commit: Option<String>,
-        no_change: bool,
-        path: Option<String>,
+        report: NoteReport,
         caller: Option<&AetherAgentId>,
     ) -> Result<Reply, ArchonError> {
-        if let Some(path) = &path {
-            archon_core::design::check_app_path(path)
-                .map_err(|why| ArchonError::Invalid(format!("path {why}")))?;
-            if status != AgentNoteStatus::Done || no_change {
-                return Err(ArchonError::Invalid(
-                    "path goes with done and a change: the page that shows it".into(),
-                ));
-            }
-        }
+        check_report(&report)?;
         let session = self.agent_session(ctx, caller).await?;
         let lock = self.item_lock(&session.item);
         let held = lock.lock().await;
-        let result = self
-            .report_locked(ctx, &session, id, status, reply, commit, no_change, path)
-            .await;
+        let result = self.report_locked(ctx, &session, report).await;
         drop(held);
         if result.is_ok() {
             self.pump(ctx, &session.item).await?;
@@ -228,40 +212,62 @@ impl DesignService {
         result
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn report_locked(
         &self,
         ctx: &DaemonContext,
         session: &DesignSession,
-        id: &str,
-        status: AgentNoteStatus,
-        reply: Option<String>,
-        commit: Option<String>,
-        no_change: bool,
-        path: Option<String>,
+        report: NoteReport,
     ) -> Result<Reply, ArchonError> {
         let item = &session.item;
-        let note = ctx
-            .store
-            .lock()
-            .await
-            .design_note(item, id)?
-            .ok_or_else(|| refuse(DesignRefusal::NotYours, format!("{id} is not yours")))?;
-        // Only the current session's change or page note that is in flight.
-        let yours = note.session == session.id
-            && note.kind != NoteKind::Revert
-            && is_in_flight(note.status);
-        if !yours {
-            return Err(refuse(
+        let id = report.id.as_str();
+        // The session may have moved on (Finish took its pictures) while this
+        // report waited for the item lock: judge the report by it as it is now.
+        let (note, all, session) = {
+            let store = ctx.store.lock().await;
+            let current = store.design_session(&session.id)?.ok_or_else(super::gone)?;
+            (
+                store.design_note(item, id)?,
+                store.design_notes(item)?,
+                current,
+            )
+        };
+        let session = &session;
+        let note = note.ok_or_else(|| {
+            refuse(
                 DesignRefusal::NotYours,
-                format!("{id} is not yours"),
-            ));
-        }
-        let reply_text = reply
+                format!("{id} is not a note of this item"),
+            )
+        })?;
+        let reply_text = report
+            .reply
             .as_deref()
             .map(|r| archon_core::design::clean_text(r, archon_core::design::MAX_REPLY_CHARS))
             .filter(|r| !r.is_empty());
-        if status == AgentNoteStatus::Working {
+        match standing(&note, session, &all, &report)? {
+            Standing::Retake => self.retake(ctx, session, &note, &report, reply_text).await,
+            Standing::InFlight if report.status == AgentNoteStatus::Working => {
+                self.report_working(ctx, session, &note, &report, reply_text)
+                    .await
+            }
+            Standing::InFlight => {
+                self.report_settled(ctx, session, &note, report, reply_text)
+                    .await
+            }
+        }
+    }
+
+    /// `working`: the note is being worked on; with steps, its before picture
+    /// is retaken in the state they reach.
+    async fn report_working(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSession,
+        note: &DesignNote,
+        report: &NoteReport,
+        reply_text: Option<String>,
+    ) -> Result<Reply, ArchonError> {
+        let (item, id) = (&session.item, report.id.as_str());
+        {
             let mut store = ctx.store.lock().await;
             if let Some(text) = reply_text {
                 store.design_note_change(
@@ -277,10 +283,37 @@ impl DesignService {
                     super::status_change(NoteStatus::Working, None),
                 )?;
             }
-            drop(store);
-            self.emit_note(ctx, item, id).await;
-            return self.note_reply(ctx, item, id).await;
         }
+        let before = match report.steps.is_empty() {
+            true => Ok(()),
+            false => {
+                self.before_in_state(ctx, session, note, &report.steps)
+                    .await
+            }
+        };
+        self.emit_note(ctx, item, id).await;
+        match before {
+            Ok(()) => self.note_reply(ctx, item, id).await,
+            Err(why) => Ok(Reply::DesignAgent {
+                message: format!(
+                    "{id} is working, but its before picture was not taken in that state: {why}. \
+                     Fix the steps and report working again before you change the code."
+                ),
+            }),
+        }
+    }
+
+    /// `done`, `needs_reply`, `failed` or `cancelled` on a note in flight.
+    async fn report_settled(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSession,
+        note: &DesignNote,
+        report: NoteReport,
+        reply_text: Option<String>,
+    ) -> Result<Reply, ArchonError> {
+        let (item, id) = (&session.item, report.id.as_str());
+        let status = report.status;
         let base = note
             .base_commit
             .clone()
@@ -293,10 +326,10 @@ impl DesignService {
             worktree: &wt.worktree,
             branch: &wt.branch,
         };
-        let done_commit = (status == AgentNoteStatus::Done && !no_change)
-            .then(|| commit.clone())
+        let done_commit = (status == AgentNoteStatus::Done && !report.no_change)
+            .then(|| report.commit.clone())
             .flatten();
-        if status == AgentNoteStatus::Done && !no_change && done_commit.is_none() {
+        if status == AgentNoteStatus::Done && !report.no_change && done_commit.is_none() {
             return Err(ArchonError::Invalid(
                 "done needs the commit you made".into(),
             ));
@@ -304,42 +337,52 @@ impl DesignService {
         // History first (terminal), then tidiness (retryable).
         match design_git::check_shape(&g, &base, done_commit.as_deref())? {
             Shape::Accepted => {}
-            Shape::HistoryChanged(why) => {
-                tracing::info!(note = id, why, "design: history changed");
-                {
-                    let mut store = ctx.store.lock().await;
-                    let text = "The code history changed in a way Archon can't track; its edits may still show; add a note if something should change.".to_owned();
-                    store.design_note_change(
-                        item,
-                        id,
-                        NoteChange::Thread(thread(ReplyAuthor::Archon, text)),
-                    )?;
-                    store.design_note_change(
-                        item,
-                        id,
-                        super::status_change(NoteStatus::Failed, Some(FailReason::HistoryChanged)),
-                    )?;
-                }
-                self.emit_note(ctx, item, id).await;
-                return Ok(Reply::DesignAgent {
-                    message: format!("{id} not recorded: history changed"),
-                });
-            }
+            Shape::HistoryChanged(why) => return self.history_changed(ctx, item, id, why).await,
         }
         let trailer = done_commit.as_ref().map(|_| id.to_owned());
         if let Tidy::Untidy(why) = design_git::check_tidy(&g, trailer.as_deref())? {
             return Err(ArchonError::Invalid(why));
         }
+        let to = self
+            .record_settled(ctx, item, &report, reply_text.clone(), done_commit)
+            .await?;
+        tracing::info!(note = id, ?status, device = ?super::current_device_label(), "design: agent reported");
+        self.emit_note(ctx, item, id).await;
+        if to == NoteStatus::Done && !report.no_change {
+            let fresh = ctx
+                .store
+                .lock()
+                .await
+                .design_note(item, id)?
+                .unwrap_or_else(|| note.clone());
+            return self
+                .picture_after_done(ctx, session, &fresh, &wt, &report, reply_text)
+                .await;
+        }
+        self.note_reply(ctx, item, id).await
+    }
+
+    /// Write an agent's settling report: its reply, then the new status.
+    /// Returns the status the note is now in.
+    async fn record_settled(
+        &self,
+        ctx: &DaemonContext,
+        item: &archon_core::id::QueueItemId,
+        report: &NoteReport,
+        reply_text: Option<String>,
+        done_commit: Option<String>,
+    ) -> Result<NoteStatus, ArchonError> {
+        let (id, status) = (report.id.as_str(), report.status);
         let (to, fail) = match status {
             AgentNoteStatus::Done => (NoteStatus::Done, None),
             AgentNoteStatus::NeedsReply => (NoteStatus::NeedsReply, None),
             AgentNoteStatus::Failed => (NoteStatus::Failed, Some(FailReason::Agent)),
             AgentNoteStatus::Cancelled => (NoteStatus::Cancelled, None),
-            AgentNoteStatus::Working => unreachable!("handled above"),
+            AgentNoteStatus::Working => unreachable!("handled by the caller"),
         };
         {
             let mut store = ctx.store.lock().await;
-            if let Some(text) = reply_text {
+            if let Some(text) = reply_text.clone() {
                 store.design_note_change(
                     item,
                     id,
@@ -353,92 +396,172 @@ impl DesignService {
                     to,
                     fail_reason: fail,
                     commit: done_commit.clone(),
-                    no_change: no_change && status == AgentNoteStatus::Done,
+                    no_change: report.no_change && status == AgentNoteStatus::Done,
                 },
             )?;
         }
-        tracing::info!(note = id, ?status, device = ?super::current_device_label(), "design: agent reported");
-        self.emit_note(ctx, item, id).await;
-        if to == NoteStatus::Done && !no_change {
-            // A page note's own page (a new screen): an element's note stays
-            // on the page its element is on.
-            let shown = path.filter(|_| note.target.is_none());
-            self.after_picture(ctx, session, &note, &wt, shown.as_deref())
-                .await;
-            self.emit_note(ctx, item, id).await;
-        }
-        self.note_reply(ctx, item, id).await
+        Ok(to)
     }
 
-    /// The operator-only picture after a change: network idle, one reload when
-    /// nothing moved, the same clip at the element's new box. A page note
-    /// done with a `path` first takes the preview there and is pictured whole;
-    /// its after picture records that path for the final picture.
-    pub(crate) async fn after_picture(
+    async fn history_changed(
+        &self,
+        ctx: &DaemonContext,
+        item: &archon_core::id::QueueItemId,
+        id: &str,
+        why: String,
+    ) -> Result<Reply, ArchonError> {
+        tracing::info!(note = id, why, "design: history changed");
+        {
+            let mut store = ctx.store.lock().await;
+            let text = "The code history changed in a way Archon can't track; its edits may still show; add a note if something should change.".to_owned();
+            store.design_note_change(
+                item,
+                id,
+                NoteChange::Thread(thread(ReplyAuthor::Archon, text)),
+            )?;
+            store.design_note_change(
+                item,
+                id,
+                super::status_change(NoteStatus::Failed, Some(FailReason::HistoryChanged)),
+            )?;
+        }
+        self.emit_note(ctx, item, id).await;
+        Ok(Reply::DesignAgent {
+            message: format!("{id} not recorded: history changed"),
+        })
+    }
+
+    /// A done note's after picture, from the agent's `path` and `steps`.
+    async fn picture_after_done(
         &self,
         ctx: &DaemonContext,
         session: &DesignSession,
         note: &DesignNote,
         wt: &WorktreeRef,
-        path: Option<&str>,
-    ) {
-        let Some(rt) = self.existing_runtime(&session.id) else {
-            return;
+        report: &NoteReport,
+        reply_text: Option<String>,
+    ) -> Result<Reply, ArchonError> {
+        // A page note's own page (a new screen): an element's note stays on
+        // the page its element is on.
+        let shown = report.path.as_deref().filter(|_| note.target.is_none());
+        let shot = AfterShot {
+            path: shown,
+            steps: &report.steps,
         };
-        let Some(browser) = rt.browser() else {
-            return;
-        };
-        let shown = match (path, session.preview_url.as_deref()) {
-            (Some(path), Some(url)) => {
-                let to = format!("{}{path}", super::finish::origin_of(url));
-                if let Err(error) = browser.navigate(&to).await {
-                    tracing::info!(%error, "design: the preview did not go to the note's page");
-                }
-                Some(page_target(path, note))
-            }
-            _ => None,
-        };
-        let since = browser.latest_seq();
-        let _ = browser
-            .wait_network_idle(Duration::from_millis(500), Duration::from_secs(8))
-            .await;
-        let streaming = rt.st().screencast;
-        if streaming
-            && !browser
-                .frame_changed_within(since, Duration::from_secs(8))
-                .await
-        {
-            let _ = browser.reload().await;
-            let _ = browser
-                .wait_network_idle(Duration::from_millis(500), Duration::from_secs(8))
-                .await;
+        let outcome = self.after_picture(ctx, session, note, wt, shot).await;
+        self.emit_note(ctx, &note.item, &note.id).await;
+        self.settle_outcome(ctx, note, outcome, reply_text).await
+    }
+
+    /// A repeated `done` on a done note: its after picture is taken again, with
+    /// the steps and page the agent now gives.
+    async fn retake(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSession,
+        note: &DesignNote,
+        report: &NoteReport,
+        reply_text: Option<String>,
+    ) -> Result<Reply, ArchonError> {
+        if let Some(text) = reply_text.clone() {
+            ctx.store.lock().await.design_note_change(
+                &note.item,
+                &note.id,
+                NoteChange::Thread(thread(ReplyAuthor::Agent, text)),
+            )?;
         }
-        let clip = match note.target.as_ref().and_then(|t| t.selector.as_deref()) {
-            Some(selector) => browser
-                .resolve_selector(
-                    selector,
-                    note.target.as_ref().map(super::finish::recorded_box),
-                )
-                .await
-                .ok()
-                .flatten(),
-            None => None,
-        };
-        let picture = match browser.capture(clip, 2.0).await {
-            Ok(picture) => picture,
-            Err(error) => {
-                tracing::info!(%error, "design: the after picture was not taken");
-                return;
+        tracing::info!(note = %note.id, steps = report.steps.len(), "design: the agent retakes the after picture");
+        let wt = self.worktree_of(ctx, session).await?;
+        let note = ctx
+            .store
+            .lock()
+            .await
+            .design_note(&note.item, &note.id)?
+            .unwrap_or_else(|| note.clone());
+        self.picture_after_done(ctx, session, &note, &wt, report, reply_text)
+            .await
+    }
+
+    /// What a finished capture means for the note and for the agent: nothing
+    /// to say when a picture was kept; a request to retake when it matched
+    /// the before picture; a notice for the operator when the retake matched
+    /// too.
+    async fn settle_outcome(
+        &self,
+        ctx: &DaemonContext,
+        note: &DesignNote,
+        outcome: AfterOutcome,
+        reply_text: Option<String>,
+    ) -> Result<Reply, ArchonError> {
+        let id = note.id.as_str();
+        match outcome {
+            AfterOutcome::Kept | AfterOutcome::Skipped => {
+                self.note_reply(ctx, &note.item, id).await
             }
-        };
-        let head = self.head_of(wt).unwrap_or_default();
-        let target = shown.or_else(|| note.target.clone());
-        if let Err(error) = self.keep_after(ctx, note, target, &picture, &head).await {
-            tracing::info!(%error, "design: the after picture was not kept");
+            AfterOutcome::StepFailed(why) => Ok(Reply::DesignAgent {
+                message: format!(
+                    "{id}: the after picture was not taken: {why}. Fix the steps and report done \
+                     again for {id} with the same commit."
+                ),
+            }),
+            AfterOutcome::Matched if note.after_asset.is_some() => Ok(Reply::DesignAgent {
+                message: format!(
+                    "{id}: the new picture matches the before picture, so the earlier after \
+                     picture stays."
+                ),
+            }),
+            AfterOutcome::Matched => {
+                let said = reply_text.or_else(|| last_agent_words(note));
+                let message = self.matched_before(ctx, note, said).await?;
+                Ok(Reply::DesignAgent { message })
+            }
         }
     }
 
-    async fn keep_after(
+    /// The after picture matched the before one: ask for a retake the first
+    /// time, show the operator a notice after that. Returns what the agent is
+    /// told.
+    async fn matched_before(
+        &self,
+        ctx: &DaemonContext,
+        note: &DesignNote,
+        said: Option<String>,
+    ) -> Result<String, ArchonError> {
+        let id = note.id.as_str();
+        let (text, message) = if archon_core::design::retake_asked(note) {
+            let why = said.unwrap_or_else(|| "the agent gave no explanation".into());
+            (
+                format!("{NO_VISIBLE_CHANGE}: {why}"),
+                format!(
+                    "{id}: the after picture still matches the before picture. The operator sees \
+                     \"no visible change captured\" with your reply as the explanation."
+                ),
+            )
+        } else {
+            (
+                format!(
+                    "{RETAKE_ASKED}, so it shows no change; the agent was asked to retake it in \
+                     the state that shows the change."
+                ),
+                format!(
+                    "{id}: the after picture is identical to the before picture, so it shows no \
+                     change. Report done again for {id} with the same commit and `steps` that \
+                     open the state showing the change (click or hover what opens the dialog or \
+                     menu; `path` for a page), and say in `reply` what changed. If nothing \
+                     visible changed, say why in `reply` and report done again."
+                ),
+            )
+        };
+        ctx.store.lock().await.design_note_change(
+            &note.item,
+            id,
+            NoteChange::Thread(thread(ReplyAuthor::Archon, text)),
+        )?;
+        self.emit_note(ctx, &note.item, id).await;
+        Ok(message)
+    }
+
+    pub(crate) async fn keep_after(
         &self,
         ctx: &DaemonContext,
         note: &DesignNote,
@@ -496,7 +619,136 @@ pub(crate) fn page_target(path: &str, note: &DesignNote) -> Target {
         viewport: v,
         styles: Default::default(),
         region: false,
+        steps: Box::default(),
     }
+}
+
+/// What the agent reports about a note.
+#[derive(Debug, Clone)]
+pub(crate) struct NoteReport {
+    pub id: String,
+    pub status: AgentNoteStatus,
+    pub reply: Option<String>,
+    pub commit: Option<String>,
+    pub no_change: bool,
+    pub path: Option<String>,
+    pub steps: Vec<UiStep>,
+}
+
+/// The arguments that make no sense, refused before any note is read.
+fn check_report(report: &NoteReport) -> Result<(), ArchonError> {
+    let done_with_change = report.status == AgentNoteStatus::Done && !report.no_change;
+    if let Some(path) = &report.path {
+        archon_core::design::check_app_path(path)
+            .map_err(|why| ArchonError::Invalid(format!("path {why}")))?;
+        if !done_with_change {
+            return Err(ArchonError::Invalid(
+                "path goes with done and a change: the page that shows it".into(),
+            ));
+        }
+    }
+    archon_core::design::check_steps(&report.steps)
+        .map_err(|why| ArchonError::Invalid(format!("steps: {why}")))?;
+    if !report.steps.is_empty() && !done_with_change && report.status != AgentNoteStatus::Working {
+        return Err(ArchonError::Invalid(
+            "steps go with working (the before picture) or done and a change (the after picture)"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// How a report stands against its note.
+#[derive(Debug, PartialEq, Eq)]
+enum Standing {
+    /// The note is with the agent.
+    InFlight,
+    /// The note is done and the agent takes its after picture again.
+    Retake,
+}
+
+/// Whether `report` may be made on `note` by the agent of `session`; the
+/// refusal says why not in words the agent can act on.
+fn standing(
+    note: &DesignNote,
+    session: &DesignSession,
+    all: &[DesignNote],
+    report: &NoteReport,
+) -> Result<Standing, ArchonError> {
+    let id = &note.id;
+    let no = |why: String| Err(refuse(DesignRefusal::NotYours, why));
+    if note.session != session.id {
+        return no(format!(
+            "{id} belongs to an earlier design session, which is over; its notes cannot be reported on"
+        ));
+    }
+    if note.kind == NoteKind::Revert {
+        return no(format!(
+            "{id} is a revert note: Archon applies it itself, there is nothing to report"
+        ));
+    }
+    match note.status {
+        status if is_in_flight(status) => Ok(Standing::InFlight),
+        NoteStatus::Queued => no(format!(
+            "{id} has not been sent to you yet; report it once its message arrives"
+        )),
+        NoteStatus::Done => retake_standing(note, session, all, report),
+        status => no(format!(
+            "{id} is {} and closed; the operator can send it again as a new note",
+            format!("{status:?}").to_lowercase()
+        )),
+    }
+}
+
+fn retake_standing(
+    note: &DesignNote,
+    session: &DesignSession,
+    all: &[DesignNote],
+    report: &NoteReport,
+) -> Result<Standing, ArchonError> {
+    let id = &note.id;
+    let no = |why: String| Err(refuse(DesignRefusal::NotYours, why));
+    if report.status != AgentNoteStatus::Done || report.no_change {
+        return no(format!(
+            "{id} is already done; only a repeated `done` for the same commit retakes its after picture"
+        ));
+    }
+    if note.no_change {
+        return no(format!(
+            "{id} was reported with no change, so there is no after picture to retake"
+        ));
+    }
+    if let Some(by) = archon_core::design::undone_by(all).get(id) {
+        return no(format!(
+            "{id} was undone by {by}; there is nothing to retake"
+        ));
+    }
+    if let Some(by) = &note.superseded_by {
+        return no(format!(
+            "{id} was superseded by {by}; there is nothing to retake"
+        ));
+    }
+    if report.commit.is_some() && report.commit != note.commit {
+        return no(format!(
+            "{id} is done at commit {}; a retake pictures that commit. A different change needs a new note from the operator",
+            note.commit.as_deref().unwrap_or("unknown")
+        ));
+    }
+    if !matches!(session.state, SessionState::Starting | SessionState::Live) {
+        return Err(refuse(
+            DesignRefusal::Finishing,
+            format!("the operator is finishing the session; {id}'s pictures are frozen"),
+        ));
+    }
+    Ok(Standing::Retake)
+}
+
+fn last_agent_words(note: &DesignNote) -> Option<String> {
+    note.thread
+        .iter()
+        .rev()
+        .find(|e| e.from == ReplyAuthor::Agent)
+        .map(|e| e.text.clone())
 }
 
 fn thread(from: ReplyAuthor, text: String) -> ThreadEntry {

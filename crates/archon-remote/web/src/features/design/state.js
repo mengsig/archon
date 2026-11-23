@@ -323,14 +323,29 @@ export function noteActions(note, { finishing = false, live = false, now = Date.
 const canUndo = (note) => note.status === 'done' && Boolean(note.commit) && !note.undone_by && !note.no_change;
 
 export function hasPictures(note) {
-  return Boolean(note.before_asset && afterAssetOf(note));
+  return Boolean(note.before_asset && (afterAssetOf(note) || noVisibleChange(note) !== null));
 }
 
 // The picture taken after the change: the note's newest after capture (a
 // note done again replaces it). Finish's final picture only stands in when no
-// after capture was kept.
+// after capture was kept. A note whose pictures came out identical, even after
+// the agent's retake, has none: two equal pictures are never offered as a
+// comparison, whatever Finish took later.
 export function afterAssetOf(note) {
+  if (noVisibleChange(note) !== null) return null;
   return note.after_asset || (note.final_included !== false && note.final_asset) || null;
+}
+
+// Why a done note shows no change (the agent's own words, or a stock line),
+// or null when its pictures do differ. Archon writes the notice into the
+// note's thread when the after picture matched the before one, even after the
+// agent's retake; a note that has an after picture never has one.
+const NO_CHANGE_NOTICE = /^No visible change was captured:?\s*/;
+export function noVisibleChange(note) {
+  if (note.after_asset) return null;
+  const entry = [...(note.thread ?? [])].reverse().find((t) => t.from === 'archon' && NO_CHANGE_NOTICE.test(t.text ?? ''));
+  if (!entry) return null;
+  return entry.text.replace(NO_CHANGE_NOTICE, '').trim() || 'The agent gave no explanation.';
 }
 
 export function shortSha(sha) {

@@ -25,6 +25,8 @@ pub struct Calls {
     pub viewports: Vec<adb::Viewport>,
     pub inputs: usize,
     pub captures: Vec<(Option<adb::ClipRect>, f64)>,
+    /// Navigations, reloads, settles, inputs and captures, in the order asked.
+    pub ops: Vec<String>,
     pub screencasts_started: u32,
     pub screencasts_stopped: u32,
     pub closed: bool,
@@ -37,6 +39,10 @@ pub struct FakeBrowser {
     feed: Mutex<Option<mpsc::UnboundedSender<adb::Frame>>>,
     resolved: Mutex<Option<adb::Resolved>>,
     rss: Mutex<u64>,
+    /// The pictures the next captures return, first first; then the stock one.
+    pictures: Mutex<std::collections::VecDeque<Vec<u8>>>,
+    /// No selector matches anything on the page.
+    no_elements: Mutex<bool>,
     pid: u32,
 }
 
@@ -48,6 +54,8 @@ impl FakeBrowser {
             feed: Mutex::default(),
             resolved: Mutex::default(),
             rss: Mutex::new(100 * 1024 * 1024),
+            pictures: Mutex::default(),
+            no_elements: Mutex::default(),
             pid,
         }
     }
@@ -72,6 +80,20 @@ impl FakeBrowser {
     /// What the next `resolve` answers.
     pub fn resolves_to(&self, resolved: adb::Resolved) {
         *self.resolved.lock().unwrap() = Some(resolved);
+    }
+
+    /// The pictures the next captures return, in order.
+    pub fn captures_return(&self, pictures: impl IntoIterator<Item = Vec<u8>>) {
+        *self.pictures.lock().unwrap() = pictures.into_iter().collect();
+    }
+
+    /// From now on no selector matches an element.
+    pub fn finds_no_elements(&self) {
+        *self.no_elements.lock().unwrap() = true;
+    }
+
+    fn op(&self, what: impl Into<String>) {
+        self.calls.lock().unwrap().ops.push(what.into());
     }
 
     pub fn set_rss(&self, bytes: u64) {
@@ -103,10 +125,12 @@ impl PreviewBrowser for FakeBrowser {
     }
     async fn navigate(&self, url: &str) -> Result<(), adb::BrowserError> {
         self.calls.lock().unwrap().navigated.push(url.to_owned());
+        self.op(format!("navigate {url}"));
         Ok(())
     }
     async fn reload(&self) -> Result<(), adb::BrowserError> {
         self.calls.lock().unwrap().reloads += 1;
+        self.op("reload");
         Ok(())
     }
     async fn set_viewport(&self, viewport: adb::Viewport) -> Result<(), adb::BrowserError> {
@@ -115,6 +139,7 @@ impl PreviewBrowser for FakeBrowser {
     }
     async fn input(&self, events: &[adb::Input]) -> Result<(), adb::BrowserError> {
         self.calls.lock().unwrap().inputs += events.len();
+        self.op(format!("input {}", events.len()));
         Ok(())
     }
     async fn start_screencast(&self) -> Result<Box<dyn FrameFeed>, adb::BrowserError> {
@@ -134,9 +159,16 @@ impl PreviewBrowser for FakeBrowser {
         dpr: f64,
     ) -> Result<adb::Picture, adb::BrowserError> {
         self.calls.lock().unwrap().captures.push((clip, dpr));
+        self.op("capture");
+        let bytes = self
+            .pictures
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| jpeg(16, 16));
         Ok(adb::Picture {
             mime: "image/jpeg",
-            bytes: jpeg(16, 16),
+            bytes,
             width: 16,
             height: 16,
         })
@@ -155,6 +187,9 @@ impl PreviewBrowser for FakeBrowser {
         _selector: &str,
         _near: Option<adb::ClipRect>,
     ) -> Result<Option<adb::ClipRect>, adb::BrowserError> {
+        if *self.no_elements.lock().unwrap() {
+            return Ok(None);
+        }
         Ok(Some(adb::ClipRect {
             x: 10.0,
             y: 10.0,
@@ -166,6 +201,7 @@ impl PreviewBrowser for FakeBrowser {
         Ok("/".into())
     }
     async fn wait_network_idle(&self, _: Duration, _: Duration) -> Result<bool, adb::BrowserError> {
+        self.op("settle");
         Ok(true)
     }
     fn latest_seq(&self) -> u64 {

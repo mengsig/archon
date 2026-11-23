@@ -14,7 +14,7 @@ const PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS
 export const ITEM = 'qi_FIXTURE';
 const CSS_BASE = readFileSync(join(ROOT, 'tests/fixtures/design-app/style.css'), 'utf8');
 
-export async function startHarness(browser, { role = 'operator', questions = [], summaries = [] } = {}) {
+export async function startHarness(browser, { role = 'operator', questions = [], summaries = [], notes = [] } = {}) {
   const fixtureApp = await startFixtureApp();
   const appPage = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
   await appPage.goto(fixtureApp.url);
@@ -30,6 +30,7 @@ export async function startHarness(browser, { role = 'operator', questions = [],
   const daemon = createDaemon({ appPage, fixtureApp, role });
   daemon.state.questions.push(...questions);
   daemon.state.summaries.push(...summaries);
+  daemon.state.notes.push(...notes);
   return {
     baseURL: `http://127.0.0.1:${server.address().port}`,
     daemon,

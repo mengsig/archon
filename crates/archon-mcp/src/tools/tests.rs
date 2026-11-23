@@ -205,7 +205,8 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
         (
             "design_note",
             json!({"id": "D2", "status": "done", "reply": "Done.", "commit": "b".repeat(40),
-                "no_change": false, "path": "/settings"}),
+                "no_change": false, "path": "/settings",
+                "steps": [{"do": "click", "selector": "button.new"}]}),
         ),
         (
             "read_artifact",
@@ -1518,8 +1519,9 @@ fn the_tool_list_stays_within_its_budget() {
     const VERDICT_CHECK_BYTES: usize = 512;
     // Each effort's note that `max` needs `[models] max_effort` (1.6.4).
     const EFFORT_CAP_NOTE_BYTES: usize = 256;
-    // `design_preview` and `design_note` (live design sessions).
-    const DESIGN_TOOLS_BYTES: usize = 2 * 1024;
+    // `design_preview` and `design_note` (live design sessions), with the
+    // `steps` that put a note's pictures in the state that shows its change.
+    const DESIGN_TOOLS_BYTES: usize = 2 * 1024 + 512;
     const BUDGET_BYTES: usize = 33 * 1024
         + DESIGN_TOOLS_BYTES
         + INTENT_BINDING_BYTES
@@ -1717,6 +1719,7 @@ fn design_note_checks_its_status_and_commit() {
                 commit: None,
                 no_change: false,
                 path: None,
+                steps: Vec::new(),
                 caller: None
             }
         );
@@ -1759,6 +1762,55 @@ fn design_note_checks_its_status_and_commit() {
     ];
     for args in bad {
         assert!(to_request("design_note", args.clone()).is_err(), "{args}");
+    }
+}
+
+#[test]
+fn design_note_takes_the_steps_to_the_state_that_shows_the_change() {
+    use archon_core::design::UiStep;
+    let sha = "a".repeat(40);
+    let steps = json!([
+        {"do": "open", "path": "/screens"},
+        {"do": "click", "selector": "button.new-screen"},
+        {"do": "hover", "selector": ".menu"},
+        {"do": "wait", "ms": 300}
+    ]);
+    for (status, extra) in [("done", Some(&sha)), ("working", None)] {
+        let mut args = json!({"id": "D3", "status": status, "steps": steps});
+        if let Some(commit) = extra {
+            args["commit"] = json!(commit);
+        }
+        let Request::DesignNoteReport { steps: got, .. } = to_request("design_note", args).unwrap()
+        else {
+            panic!("a note report");
+        };
+        assert_eq!(
+            got,
+            [
+                UiStep::Open {
+                    path: "/screens".into()
+                },
+                UiStep::Click {
+                    selector: "button.new-screen".into()
+                },
+                UiStep::Hover {
+                    selector: ".menu".into()
+                },
+                UiStep::Wait { ms: 300 },
+            ]
+        );
+    }
+    let too_many = json!(vec![json!({"do": "wait", "ms": 1}); 13]);
+    for bad in [
+        json!([{"do": "drag", "selector": "a"}]),
+        json!([{"do": "click"}]),
+        json!([{"do": "click", "selector": ""}]),
+        json!([{"do": "open", "path": "https://evil.example/"}]),
+        json!([{"do": "wait", "ms": 600_000}]),
+        too_many,
+    ] {
+        let args = json!({"id": "D3", "status": "working", "steps": bad});
+        assert!(to_request("design_note", args).is_err(), "{bad}");
     }
 }
 

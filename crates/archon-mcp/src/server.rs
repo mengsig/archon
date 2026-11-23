@@ -541,7 +541,7 @@ fn how_to_check(request: &Request) -> String {
         Request::MessageOrchestrator { .. } => "the message may already be recorded; check the item's archon log before repeating it, and keep working on your stage".into(),
         Request::PublishArtifact { .. } => "the files may already be stored; list_artifacts for your item shows them, and publishing a name again replaces it".into(),
         Request::DesignPreview { .. } => "the preview may already point there; calling design_preview again with the same url is safe".into(),
-        Request::DesignNoteReport { id, .. } => format!("the report for {id} may already be recorded; repeating it is safe, and a repeat after a terminal status is refused with the note's current status"),
+        Request::DesignNoteReport { id, .. } => format!("the report for {id} may already be recorded; repeating it is safe; a repeated `done` for the same commit retakes the after picture, and any other repeat after a terminal status is refused with the reason"),
         Request::SubmitVerdict { .. } => "the submission may already be read; repeat it as you sent it, which answers it again and never counts an unmarked unreadable verdict as your restatement".into(),
         Request::GithubReply { thread, .. } => thread.check_before_retry(),
         Request::RecordChatAnswer { .. } => "the answer may already be recorded; a repeat is then refused as already answered, which is the confirmation".into(),

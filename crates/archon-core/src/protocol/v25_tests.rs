@@ -158,6 +158,33 @@ fn optional_flags_default_when_absent() {
     ));
 }
 
+/// An agent's steps cross the wire, and are optional for senders that predate them.
+#[test]
+fn the_agents_steps_round_trip() {
+    let wire = json!({
+        "cmd": "design_note_report", "id": "D3", "status": "done", "reply": "the dialog",
+        "commit": "a".repeat(40), "no_change": false,
+        "steps": [{"do": "click", "selector": "button.new"}, {"do": "wait", "ms": 200}],
+        "caller": null,
+    });
+    let report: Request = serde_json::from_value(wire.clone()).unwrap();
+    match &report {
+        Request::DesignNoteReport { steps, .. } => assert_eq!(steps.len(), 2),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(serde_json::to_value(&report).unwrap(), wire);
+
+    let old: Request = serde_json::from_value(json!({
+        "cmd": "design_note_report", "id": "D3", "status": "working", "reply": null,
+        "commit": null, "caller": null,
+    }))
+    .unwrap();
+    assert!(matches!(
+        old,
+        Request::DesignNoteReport { ref steps, .. } if steps.is_empty()
+    ));
+}
+
 fn at() -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap()
 }

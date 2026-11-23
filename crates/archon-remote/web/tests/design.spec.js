@@ -110,6 +110,31 @@ test.describe('desktop', () => {
     } finally { await harness.stop(); }
   });
 
+  test('a done note whose pictures match shows the notice, not two identical pictures', async ({ browser, page }) => {
+    const stamp = new Date().toISOString();
+    const note = (id, fields) => ({ item: ITEM, id, session: 'ds_FIXTURE', kind: 'change', text: `change ${id}`, details_text: null, send_picture: false, target: { path: '/', selector: 'button', role_name: null, component: null, box: { x: 0, y: 0, w: 10, h: 10 }, viewport: { w: 800, h: 500, preset: 'desktop' }, styles: {}, region: false },
+      viewport: { w: 800, h: 500, preset: 'desktop' }, status: 'done', fail_reason: null, base_commit: 'base0001', commit: 'abc1234def', no_change: false, reverts: null, resent_from: null, superseded_by: null, thread: [], delivery: 1,
+      before_asset: 'da_b', after_asset: null, final_asset: null, final_included: null, created_at: stamp, updated_at: stamp, ...fields });
+    const harness = await open(browser, page, { notes: [
+      note('D3', { thread: [{ at: stamp, from: 'archon', text: 'No visible change was captured: Only the hover colour changed.' }] }),
+      note('D2', { after_asset: 'da_a' }),
+    ] });
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      await page.locator('#note-D3').getByRole('button', { name: 'Compare' }).click();
+      const dialog = page.getByRole('dialog');
+      await expect(dialog.getByText('No visible change captured')).toBeVisible();
+      await expect(dialog).toContainText('Only the hover colour changed.');
+      await expect(dialog.locator('img.cmp-img')).toHaveCount(1); // the before picture alone
+      await expect(dialog.locator('.cmp-range')).toHaveCount(0);
+      await page.getByRole('button', { name: 'Close' }).click();
+      // A note that did change still compares its two pictures.
+      await page.locator('#note-D2').getByRole('button', { name: 'Compare' }).click();
+      await expect(page.getByRole('dialog').locator('img.cmp-img')).toHaveCount(2);
+      await expect(page.getByRole('dialog')).not.toContainText('No visible change captured');
+    } finally { await harness.stop(); }
+  });
+
   test('finishing: closing the review sheet leaves Review and Back to editing on the top bar', async ({ browser, page }) => {
     const harness = await open(browser, page);
     try {

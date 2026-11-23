@@ -11,6 +11,7 @@ mod launch;
 mod relay;
 mod resolve;
 mod sanitize;
+mod settle;
 #[cfg(test)]
 mod testutil;
 

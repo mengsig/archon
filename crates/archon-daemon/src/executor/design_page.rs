@@ -33,6 +33,21 @@ pub(crate) struct CommitFacts {
     pub files: Vec<String>,
 }
 
+/// What a note came to, for the summary's counts: every card is exactly one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Outcome {
+    /// Done with a commit, and still in force.
+    Changed,
+    /// Done with nothing to change.
+    NoChange,
+    /// Undone, or superseded by a later note.
+    Replaced,
+    /// Failed or cancelled.
+    Trouble,
+    /// Still queued, with the agent or waiting for an answer.
+    Open,
+}
+
 /// One note's card.
 pub(crate) struct Card {
     pub id: String,
@@ -44,6 +59,9 @@ pub(crate) struct Card {
     pub kind: Option<RequirementKind>,
     /// `(label, css class)`.
     pub status: (String, &'static str),
+    pub outcome: Outcome,
+    /// Archon's notice that the note's pictures matched, so none is shown.
+    pub unchanged: Option<String>,
     /// The element or area the operator pointed at.
     pub target: Option<String>,
     /// The agent's last reply on the note.
@@ -79,11 +97,19 @@ pub(crate) fn escape(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn mime_of(bytes: &[u8]) -> &'static str {
+/// The picture's own type, from its first bytes; anything else is not
+/// labelled as an image.
+pub(crate) fn mime_of(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
         "image/png"
-    } else {
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
         "image/jpeg"
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        "image/gif"
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else {
+        "application/octet-stream"
     }
 }
 
@@ -151,6 +177,9 @@ fn kind_label(kind: &RequirementKind) -> &'static str {
 }
 
 fn pictures(card: &Card, budget: &mut Budget, with_before: bool) -> String {
+    if let Some(notice) = &card.unchanged {
+        return format!("<p class=\"missing\">{}</p>", escape(notice));
+    }
     let side = |pic: &Option<Pic>, role: &str, budget: &mut Budget| match pic {
         Some(pic) => budget.figure(pic, role),
         None => format!(
@@ -251,14 +280,15 @@ fn card_html(card: &Card, budget: &mut Budget, with_before: bool) -> String {
 }
 
 fn summary_html(page: &Page) -> String {
-    let changed = page.cards.iter().filter(|c| c.commit.is_some()).count();
-    let pictured = page.cards.iter().filter(|c| c.after.is_some()).count();
-    let unchanged = page
+    let count = |outcome: Outcome| page.cards.iter().filter(|c| c.outcome == outcome).count();
+    let changed = count(Outcome::Changed);
+    let pictured = page
         .cards
         .iter()
-        .filter(|c| c.commit.is_none() && c.status.1 == "ok")
+        .filter(|c| c.outcome == Outcome::Changed && c.after.is_some())
         .count();
-    let trouble = page.cards.iter().filter(|c| c.status.1 == "bad").count();
+    let (unchanged, replaced) = (count(Outcome::NoChange), count(Outcome::Replaced));
+    let (trouble, open) = (count(Outcome::Trouble), count(Outcome::Open));
     let checks = if page.checks.is_empty() {
         "The agent reported no checks.".to_owned()
     } else {
@@ -266,7 +296,8 @@ fn summary_html(page: &Page) -> String {
     };
     let mut text = format!(
         "{} note{} in this session: {changed} changed the app ({pictured} with an after \
-         picture), {unchanged} needed no change, {trouble} failed or were withdrawn. {checks} \
+         picture), {unchanged} needed no change, {replaced} were superseded or undone, \
+         {trouble} failed or were withdrawn, {open} not finished. {checks} \
          Approving records {} requirement{} and {} picture{} as the approved intent that the \
          finished work is checked against.",
         page.cards.len(),
@@ -373,6 +404,8 @@ mod tests {
             earlier: Vec::new(),
             kind: Some(RequirementKind::Visual),
             status: ("Done".into(), "ok"),
+            outcome: Outcome::Changed,
+            unchanged: None,
             target: Some("\"Save\" on /home".into()),
             reply: None,
             commit: Some(CommitFacts {
@@ -425,6 +458,78 @@ mod tests {
             },
             limit,
         )
+    }
+
+    fn counts_line(page: &str) -> String {
+        let from = page.find("class=\"summary\"").unwrap();
+        page[from..page.find("Approving records").unwrap()].to_owned()
+    }
+
+    fn with(outcome: Outcome, id: &str) -> Card {
+        let mut c = card(id, "x");
+        c.outcome = outcome;
+        c.after = (outcome == Outcome::Changed).then(|| pic("After", 2, 40));
+        if outcome != Outcome::Changed {
+            c.commit = None;
+        }
+        c
+    }
+
+    #[test]
+    fn the_summary_counts_add_up_to_the_notes_shown() {
+        // A note whose commit could not be read still changed the app; one that
+        // was replaced or undone did not, and needed no change is a count of its own.
+        let mut unreadable = with(Outcome::Changed, "D5");
+        unreadable.commit = None;
+        unreadable.commit_note = Some("Commit abc1234: details unavailable".into());
+        unreadable.after = None;
+        let cards = [
+            with(Outcome::Changed, "D1"),
+            unreadable,
+            with(Outcome::NoChange, "D2"),
+            with(Outcome::Replaced, "D3"),
+            with(Outcome::Replaced, "D4"),
+            with(Outcome::Trouble, "D6"),
+            with(Outcome::Open, "D7"),
+        ];
+        let page = page_of(&cards, PICTURE_BUDGET);
+        let summary = counts_line(&page);
+        let needle = "7 notes in this session: 2 changed the app (1 with an after picture), \
+             1 needed no change, 2 were superseded or undone, 1 failed or were withdrawn, \
+             1 not finished.";
+        assert!(summary.contains(needle), "{needle}: {summary}");
+        assert_eq!(2 + 1 + 2 + 1 + 1, cards.len(), "the counts are the notes");
+    }
+
+    #[test]
+    fn a_picture_is_labelled_by_its_real_type() {
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        let jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0, 16];
+        let mut webp = b"RIFF\x10\0\0\0WEBPVP8 ".to_vec();
+        webp.extend([0; 8]);
+        assert_eq!(mime_of(&png), "image/png");
+        assert_eq!(mime_of(&jpeg), "image/jpeg");
+        assert_eq!(mime_of(b"GIF89a\x01\0"), "image/gif");
+        assert_eq!(mime_of(&webp), "image/webp");
+        assert_eq!(
+            mime_of(b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>"),
+            "application/octet-stream",
+            "a picture of no known type is not called a JPEG"
+        );
+        assert_eq!(
+            mime_of(b"RIFF\x10\0\0\0WAVEfmt "),
+            "application/octet-stream"
+        );
+        assert_eq!(mime_of(&[]), "application/octet-stream");
+    }
+
+    #[test]
+    fn a_note_with_no_visible_change_shows_the_notice_not_two_identical_pictures() {
+        let mut c = card("D3", "change the new screen button");
+        c.unchanged = Some("No visible change was captured: the change is in a dialog".into());
+        let page = page_of(&[c], PICTURE_BUDGET);
+        assert!(page.contains("No visible change was captured: the change is in a dialog"));
+        assert_eq!(page.matches("data:image/").count(), 0, "no picture at all");
     }
 
     #[test]

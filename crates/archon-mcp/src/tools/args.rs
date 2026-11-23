@@ -715,6 +715,12 @@ fn design_note(args: &mut Args) -> Result<Request, ToolError> {
     {
         return Err(args.error("path", why));
     }
+    let steps = args
+        .optional::<Vec<archon_core::design::UiStep>>("steps")?
+        .unwrap_or_default();
+    if let Err(why) = archon_core::design::check_steps(&steps) {
+        return Err(args.error("steps", why));
+    }
     Ok(Request::DesignNoteReport {
         id,
         status,
@@ -722,6 +728,7 @@ fn design_note(args: &mut Args) -> Result<Request, ToolError> {
         commit,
         no_change: args.optional("no_change")?.unwrap_or(false),
         path,
+        steps,
         caller: None,
     })
 }

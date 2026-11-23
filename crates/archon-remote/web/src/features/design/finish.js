@@ -3,7 +3,7 @@
 import { h } from '../../ui/dom.js';
 import { openSheet, confirmSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
-import { queuedNotes, imageCapWarning, ledgerLede, afterAssetOf } from './state.js';
+import { queuedNotes, imageCapWarning, ledgerLede, afterAssetOf, noVisibleChange } from './state.js';
 import { reconcile } from '../../ui/list.js';
 import { statusChip } from './notes.js';
 import { IMAGE_CAP_WARN_MARGIN, designErrorText } from '../../core/design.js';
@@ -228,7 +228,8 @@ export function ledgerPanel(ctx, item, getState = () => null, onAnswered = () =>
     h('p', { class: 'note-text', text: note.text }),
     note.before_asset || afterAssetOf(note) ? h('div', { class: 'ledger-pics' },
       note.before_asset ? picture(note.before_asset, 'Before') : null,
-      afterAssetOf(note) ? picture(afterAssetOf(note), 'After') : null) : null);
+      afterAssetOf(note) ? picture(afterAssetOf(note), 'After') : null) : null,
+    noVisibleChange(note) !== null ? h('p', { class: 'note-hint ledger-unchanged', role: 'status', text: `No visible change captured. ${noVisibleChange(note)}` }) : null);
 
   const answer = async (choice, q) => {
     if (busy) return;

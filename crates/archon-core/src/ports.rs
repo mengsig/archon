@@ -491,6 +491,15 @@ pub trait AgentBackend: Send + Sync {
     /// `None` while the task is still open; the settled outcome otherwise.
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError>;
 
+    /// Model that settled a review task, when the execution history is available.
+    async fn review_model(
+        &self,
+        _agent: &AetherAgentId,
+        _task: &AetherTaskId,
+    ) -> Result<Option<ModelRef>, ArchonError> {
+        Ok(None)
+    }
+
     /// Put `content` in `to`'s inbox. Safe to retry with the same
     /// `idempotency_key` and content: Aether delivers it once.
     async fn send_message(

@@ -1,18 +1,13 @@
-//! A reviewer delegated on a provider whose quota is spent is blocked by Aether
-//! until the quota resets, and a held stage has its deadline moved, so the
-//! review could wait for hours. Once such a reviewer has waited
-//! `FAIL_AFTER`, the sweep cancels it with a hint telling its lead to
-//! re-plan the review.
+//! A reviewer delegated on a provider whose quota is spent can remain held
+//! for hours. After three minutes the sweep looks for an eligible replacement
+//! and reports the block to the lead if none is available.
 //!
 //! The sweep keeps its own timer, apart from the dispatcher's. Each sweep
 //! starts a check of every running stage and waits for none, so no stage
 //! pushes another's check back; a stage whose last check still runs is
-//! passed over. Every Aether request is cut off at [`REQUEST_LIMIT`], and
-//! a reviewer is cancelled within five minutes of first being seen blocked.
-//!
-//! Aether has no conditional cancel. The block is read again right before
-//! the cancel, which leaves one round trip in which a reviewer whose quota
-//! came back is cancelled all the same: a known limit.
+//! passed over. Every Aether request is cut off at [`REQUEST_LIMIT`].
+
+mod replacement;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -23,18 +18,20 @@ use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
+use archon_core::model::{ModelChoice, ModelRef};
 use archon_core::ports::{Descendant, DescendantState};
+use archon_core::quota::QuotaView;
 use archon_core::run::{StageRun, StageState};
 use chrono::TimeDelta;
 use futures_util::future::join_all;
+use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
-use super::resume;
 use crate::context::DaemonContext;
 
-/// How long a reviewer may wait on a spent quota before it is stopped.
-const FAIL_AFTER: TimeDelta = TimeDelta::minutes(3);
+/// How long a reviewer may wait on a spent quota before Archon intervenes.
+const WAIT_AFTER: TimeDelta = TimeDelta::minutes(3);
 
 /// The wait between the starts of two sweeps, however long their checks run.
 pub const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
@@ -57,6 +54,50 @@ enum Block {
     Free,
     /// Aether did not answer in time: the reviewer's wait stays as it is.
     Unread,
+}
+
+struct Quota {
+    resets: BTreeMap<String, Option<Timestamp>>,
+    headroom: Option<QuotaView>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct Wait {
+    since: Timestamp,
+    source: ModelRef,
+    report: Option<Report>,
+    replacement: Option<Replacement>,
+    refused: BTreeSet<ModelRef>,
+    attempt: u32,
+}
+
+impl Wait {
+    fn new(since: Timestamp, source: ModelRef) -> Self {
+        Self {
+            since,
+            source,
+            report: None,
+            replacement: None,
+            refused: BTreeSet::new(),
+            attempt: 0,
+        }
+    }
+
+    fn reported(&self) -> bool {
+        self.report.as_ref().is_some_and(|report| report.sent)
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct Report {
+    text: String,
+    sent: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+struct Replacement {
+    from: ModelRef,
+    to: ModelChoice,
 }
 
 /// The checks of stages that sweeps started and that have not been reaped.
@@ -109,15 +150,16 @@ async fn start_checks(
         .filter(|stage| stage.state == StageState::Running)
         .collect();
     forget_unwatched(ctx, &running).await?;
-    // Only the hint's reset time comes from the last reading; Aether's own
-    // block says the reviewer waits on quota.
-    let resets = Arc::new(crate::quota::spent(ctx).unwrap_or_default());
+    let quota = Arc::new(Quota {
+        resets: crate::quota::spent(ctx).unwrap_or_default(),
+        headroom: crate::quota::view(ctx),
+    });
     for stage in running {
         if checks.contains_key(&stage.id) {
             continue;
         }
-        let (ctx, resets, id) = (ctx.clone(), resets.clone(), stage.id.clone());
-        let check = async move { sweep_stage(&ctx, &stage, &resets, now).await };
+        let (ctx, quota, id) = (ctx.clone(), quota.clone(), stage.id.clone());
+        let check = async move { sweep_stage(&ctx, &stage, &quota, now).await };
         let replaced = checks.insert(id, tokio::spawn(check));
         assert!(replaced.is_none(), "one check a stage at a time");
     }
@@ -172,12 +214,11 @@ async fn bounded<T>(
     }
 }
 
-/// Stop each reviewer of the running `stage` that waited [`FAIL_AFTER`] on
-/// a spent quota, and forget the waits of its reviewers that no longer wait.
+/// Handle reviewers due for intervention and clear waits as reviewers resume.
 async fn sweep_stage(
     ctx: &DaemonContext,
     stage: &StageRun,
-    resets: &BTreeMap<String, Option<Timestamp>>,
+    quota: &Quota,
     now: Timestamp,
 ) -> Result<(), ArchonError> {
     assert_eq!(
@@ -197,12 +238,12 @@ async fn sweep_stage(
         }
     };
     let waiting = note_waits(ctx, stage, reviewers, now).await?;
-    let due = (waiting.iter()).filter(|(_, since)| now - *since >= FAIL_AFTER);
-    let stops = due.map(|(reviewer, _)| {
-        let resets_at = resets.get(&reviewer.model.provider).copied().flatten();
-        stop(ctx, stage, lead, reviewer, resets_at)
-    });
-    join_all(stops).await.into_iter().collect()
+    let due = waiting
+        .into_iter()
+        .filter(|(_, wait)| now - wait.since >= WAIT_AFTER);
+    let interventions = due
+        .map(|(reviewer, wait)| async move { intervene(ctx, stage, &reviewer, wait, quota).await });
+    join_all(interventions).await.into_iter().collect()
 }
 
 /// The live reviewers beneath `lead`, each with its own quota block as
@@ -242,7 +283,7 @@ async fn note_waits(
     stage: &StageRun,
     reviewers: Vec<(Descendant, Block)>,
     now: Timestamp,
-) -> Result<Vec<(Descendant, Timestamp)>, ArchonError> {
+) -> Result<Vec<(Descendant, Wait)>, ArchonError> {
     let prefix = format!("{WAIT_PREFIX}{}:", stage.id);
     let mut store = ctx.store.lock().await;
     let mut seen: BTreeMap<String, String> = store.kv_prefix(&prefix)?.into_iter().collect();
@@ -257,30 +298,39 @@ async fn note_waits(
                 continue;
             }
             (Block::Free, None) => continue,
-            (Block::Blocked, Some(raw)) => Some(
-                raw.parse::<Timestamp>()
-                    .map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?,
-            ),
+            (Block::Blocked, Some(raw)) => Some(read_wait(&key, &raw, &reviewer.model)?),
             (Block::Blocked, None) => None,
         };
         // A new wait counts from this sweep, and is saved so; so is one that a
         // wall clock, stepped back since an earlier run saved it, left ahead.
-        let since = match recorded.filter(|since| *since <= now) {
-            Some(since) => since,
+        let wait = match recorded.filter(|wait| wait.since <= now) {
+            Some(wait) => wait,
             None => {
                 store.kv_set(&key, &now.to_rfc3339())?;
-                now
+                Wait::new(now, reviewer.model.clone())
             }
         };
-        noted.push((reviewer, since));
+        noted.push((reviewer, wait));
     }
     // What is left names reviewers that are no longer live.
     if !seen.is_empty() {
         let gone: Vec<&str> = seen.keys().map(String::as_str).collect();
         store.kv_update(&[], &gone)?;
     }
-    assert!(noted.iter().all(|(_, since)| *since <= now));
+    assert!(noted.iter().all(|(_, wait)| wait.since <= now));
     Ok(noted)
+}
+
+fn read_wait(key: &str, raw: &str, model: &ModelRef) -> Result<Wait, ArchonError> {
+    assert!(key.starts_with(WAIT_PREFIX));
+    if raw.starts_with('{') {
+        return serde_json::from_str(raw)
+            .map_err(|error| ArchonError::Corrupt(format!("kv {key}: {error}")));
+    }
+    let since = raw
+        .parse::<Timestamp>()
+        .map_err(|error| ArchonError::Corrupt(format!("kv {key}: {error}")))?;
+    Ok(Wait::new(since, model.clone()))
 }
 
 /// Drop the waits recorded for stage runs other than the `watched` ones.
@@ -303,121 +353,108 @@ async fn forget_unwatched(ctx: &DaemonContext, watched: &[StageRun]) -> Result<(
     Ok(())
 }
 
-/// Cancel the due `reviewer` if Aether still blocks it on its quota, with
-/// the re-plan hint as the reason its lead reads, then tell the lead the same.
-async fn stop(
+async fn intervene(
     ctx: &DaemonContext,
     stage: &StageRun,
+    reviewer: &Descendant,
+    mut wait: Wait,
+    quota: &Quota,
+) -> Result<(), ArchonError> {
+    let lead = stage
+        .aether_agent
+        .as_ref()
+        .expect("a stage with reviewers has a lead");
+    assert_ne!(reviewer.agent, *lead, "a lead is not its own reviewer");
+    assert_eq!(reviewer.role, "reviewer", "only reviewers wait here");
+    let key = format!("{WAIT_PREFIX}{}:{}", stage.id, reviewer.agent);
+    if let Some(pending) = &wait.replacement
+        && pending.from != reviewer.model
+        && pending.to.model != reviewer.model
+    {
+        return ctx.store.lock().await.kv_delete(&key);
+    }
+    let choice = match replacement::choose(ctx, stage, reviewer, quota.headroom.as_ref(), &wait)
+        .await
+    {
+        Ok(choice) => choice,
+        Err(error) if error.is_store() => return Err(error),
+        Err(error) => {
+            tracing::warn!(stage = %stage.id, reviewer = %reviewer.agent, %error, "could not choose a quota replacement");
+            None
+        }
+    };
+    if choice.is_none() && wait.reported() {
+        return Ok(());
+    }
+    match bounded(1, ctx.backend.quota_blocked(&reviewer.agent)).await? {
+        Some(true) => {}
+        Some(false) | None => return ctx.store.lock().await.kv_delete(&key),
+    }
+    match choice {
+        Some(to) if to.model == reviewer.model => {
+            replacement::release(ctx, reviewer, &key, &wait).await
+        }
+        Some(to) => replacement::apply(ctx, reviewer, &key, &mut wait, to).await,
+        None => report(ctx, lead, reviewer, &key, wait, &quota.resets).await,
+    }
+}
+
+async fn save_wait(ctx: &DaemonContext, key: &str, wait: &Wait) -> Result<(), ArchonError> {
+    assert!(key.starts_with(WAIT_PREFIX));
+    let stored = serde_json::to_string(wait)?;
+    ctx.store.lock().await.kv_set(key, &stored)
+}
+
+async fn report(
+    ctx: &DaemonContext,
     lead: &AetherAgentId,
     reviewer: &Descendant,
-    resets_at: Option<Timestamp>,
+    key: &str,
+    mut wait: Wait,
+    resets: &BTreeMap<String, Option<Timestamp>>,
 ) -> Result<(), ArchonError> {
-    assert_ne!(reviewer.agent, *lead, "a lead is not its own reviewer");
-    assert_eq!(reviewer.role, "reviewer", "only a reviewer is stopped");
-    let key = format!("{WAIT_PREFIX}{}:{}", stage.id, reviewer.agent);
-    // Read again right before the cancel: see the module's known limit.
-    match bounded(1, ctx.backend.quota_blocked(&reviewer.agent)).await {
-        Ok(Some(true)) => {}
-        Ok(Some(false) | None) => return ctx.store.lock().await.kv_delete(&key),
-        Err(error) if error.is_store() => return Err(error),
-        Err(error) => {
-            tracing::info!(stage = %stage.id, reviewer = %reviewer.agent, %error, "quota block not read again; read next sweep");
-            return Ok(());
-        }
+    assert_ne!(reviewer.agent, *lead, "the lead receives the report");
+    if wait.report.is_none() {
+        let source = &wait.source;
+        let resets_at = resets.get(&source.provider).copied().flatten();
+        wait.report = Some(Report {
+            text: report_text(&reviewer.agent, source, resets_at),
+            sent: false,
+        });
+        save_wait(ctx, key, &wait).await?;
     }
-    let text = replan_hint(reviewer, resets_at);
-    match bounded(1, ctx.backend.cancel(&reviewer.agent, &text)).await {
-        Ok(()) => {
-            tracing::info!(stage = %stage.id, reviewer = %reviewer.agent, "reviewer waiting on a spent quota stopped");
-            tell_lead(ctx, stage, lead, &reviewer.agent, &text).await?;
-        }
-        Err(error) if error.is_store() => return Err(error),
-        Err(error) if resume::unanswered(&error) => {
-            tracing::info!(stage = %stage.id, %error, "quota-waiting reviewer not stopped; tried again next sweep");
-            return Ok(());
-        }
-        // Most likely the lead or its reviewer ended meanwhile.
-        Err(refusal) => {
-            tracing::warn!(stage = %stage.id, reviewer = %reviewer.agent, %refusal, "quota-waiting reviewer not stopped");
-        }
-    }
-    ctx.store.lock().await.kv_delete(&key)
+    let report = wait.report.as_mut().expect("the report was saved");
+    assert!(!report.sent, "a wait is reported once");
+    let message_key = format!("{key}:report:{}", wait.since.to_rfc3339());
+    bounded(
+        1,
+        ctx.backend.send_message(lead, &report.text, &message_key),
+    )
+    .await?;
+    report.sent = true;
+    save_wait(ctx, key, &wait).await
 }
 
-/// Tell `lead` the hint its cancelled reviewer's outcome also carries. Keyed,
-/// so it is delivered once; a lost message leaves the hint in that outcome.
-async fn tell_lead(
-    ctx: &DaemonContext,
-    stage: &StageRun,
-    lead: &AetherAgentId,
-    reviewer: &AetherAgentId,
-    text: &str,
-) -> Result<(), ArchonError> {
-    assert!(
-        text.contains("Re-plan the review"),
-        "the hint says what to do"
-    );
-    let key = format!("{}:quota-wait:{reviewer}", stage.id);
-    match bounded(1, ctx.backend.send_message(lead, text, &key)).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.is_store() => Err(error),
-        Err(error) => {
-            tracing::warn!(stage = %stage.id, %lead, %error, "re-plan hint not sent; the cancelled reviewer's outcome carries it");
-            Ok(())
-        }
-    }
-}
-
-/// What the lead is told; the same words for a repeat of the same wait.
-fn replan_hint(reviewer: &Descendant, resets_at: Option<Timestamp>) -> String {
-    let provider = &reviewer.model.provider;
-    let resets = resets_at.map_or_else(
-        || "names no reset".to_owned(),
+fn report_text(reviewer: &AetherAgentId, model: &ModelRef, resets_at: Option<Timestamp>) -> String {
+    let provider = &model.provider;
+    let reset = resets_at.map_or_else(
+        || "no reset is known".to_owned(),
         |at| format!("resets at {}", at.format("%Y-%m-%d %H:%M UTC")),
     );
-    let text = format!(
-        "Archon: your reviewer {agent} ({model}) waited over {minutes} min for {provider}, whose \
-         quota is spent and {resets}, so Archon cancelled it. Re-plan the review: delegate it \
-         again on a reviewer model of another provider your instructions allow. If they allow \
-         none, call fail_task saying the {provider} quota is spent, so the orchestrator re-plans.",
-        agent = reviewer.agent,
-        model = reviewer.model,
-        minutes = FAIL_AFTER.num_minutes(),
-    );
-    assert!(
-        text.contains("Re-plan the review"),
-        "the hint says what to do"
-    );
-    text
+    format!(
+        "Archon: reviewer {reviewer} ({model}) is still waiting on {provider} because its quota is spent \
+         ({reset}). No eligible replacement with confirmed headroom is available. The review \
+         stays pending on this reviewer."
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Aether requests a stage's check makes in a row up to its cancel: the
-    /// listing of the lead's descendants, each reviewer's block, that block
-    /// again, the cancel.
-    const REQUESTS_TO_CANCEL: u32 = LISTING_REQUESTS + 3;
-
-    /// A check that stops no reviewer lists and reads, and ends within one
-    /// period: a sweep passes over a stage's still-running check at most once
-    /// before the check that finds its reviewer due.
     #[test]
-    fn a_check_that_stops_nothing_ends_within_a_period() {
-        assert!(REQUEST_LIMIT <= Duration::from_secs(20));
+    fn a_check_with_no_due_wait_ends_within_a_period() {
         let reads = REQUEST_LIMIT * (LISTING_REQUESTS + 1);
         assert!(reads <= SWEEP_INTERVAL, "{reads:?}");
-    }
-
-    /// A wait is due at the first sweep [`FAIL_AFTER`] after it was seen, or
-    /// the one after when that sweep passed its stage over; the check then
-    /// cancels within its requests. That is within five minutes.
-    #[test]
-    fn a_blocked_reviewer_is_stopped_within_five_minutes() {
-        let to_cancel = REQUEST_LIMIT * REQUESTS_TO_CANCEL;
-        let wait = FAIL_AFTER.to_std().expect("positive");
-        let worst = wait + SWEEP_INTERVAL * 2 + to_cancel;
-        assert!(worst <= Duration::from_secs(5 * 60), "{worst:?}");
     }
 }

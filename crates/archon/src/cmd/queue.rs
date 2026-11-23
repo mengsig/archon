@@ -169,6 +169,11 @@ async fn change(
 /// Print request notices on stderr so stdout remains machine-readable.
 pub(super) fn item_notes(reply: &Reply) {
     if let Reply::Item(item) | Reply::ItemBudgetsOff(item) = reply
+        && let Some(prior) = &item.supersedes
+    {
+        eprintln!("note: supersedes {prior}");
+    }
+    if let Reply::Item(item) | Reply::ItemBudgetsOff(item) = reply
         && let Some(check) = &item.model_plan.catalog_check
     {
         eprintln!("note: {}", crate::wrap::sanitize_line(&check.to_string()));

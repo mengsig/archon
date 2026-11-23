@@ -5415,7 +5415,7 @@ retired yet, a steer, agent stop or archive still owed to a stage run, a build d
 release still owed, an open gate, an open
 question, an open merge request, an operator correction, a live initiative,
 a report record, a distillation whose lessons are not applied, a dependency,
-stack or restack fix of a kept item (a fix and its owner go together), or what gc finds through the item still on disk:
+stack, supersession link or restack fix of a kept item (a fix and its owner go together), or what gc finds through the item still on disk:
 a run workspace, a flat copy a fresh retry set aside beside it, or the
 item's published artifacts. So does an item with spend
 on or after the cutoff's local day, so the daily and window budgets count

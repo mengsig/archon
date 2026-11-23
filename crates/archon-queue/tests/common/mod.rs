@@ -76,6 +76,7 @@ pub fn item(repo: Option<&Repo>, title: &str) -> QueueItem {
         autonomy: Autonomy::default(),
         origin: None,
         stage_timeouts: Default::default(),
+        supersedes: None,
         fresh_retries: 0,
         routed_provider: None,
         provider_switch: None,

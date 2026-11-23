@@ -827,6 +827,7 @@ pub(super) fn item(state: QueueState) -> QueueItem {
         autonomy: Default::default(),
         origin: None,
         stage_timeouts: Default::default(),
+        supersedes: None,
         fresh_retries: 0,
         routed_provider: None,
         provider_switch: None,
@@ -856,6 +857,18 @@ fn rendered_items_carry_their_id_state_and_reason() {
     );
     assert!(text.contains("dependency failed"), "{text}");
     assert_eq!(render("list_queue", &Reply::Items(vec![])), "No items.");
+}
+
+#[test]
+fn enqueue_and_get_item_show_the_superseded_item() {
+    let mut queued = item(QueueState::Queued);
+    let prior = QueueItemId::new();
+    queued.supersedes = Some(prior.clone());
+    for tool in ["enqueue", "get_item"] {
+        let text = render(tool, &Reply::Item(queued.clone()));
+        assert!(text.contains(&format!("supersedes {prior}")), "{text}");
+        assert!(text.contains(queued.id.as_str()), "{text}");
+    }
 }
 
 #[test]
@@ -1162,6 +1175,8 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
     let stored = serde_json::from_value(plan()).unwrap();
     item.model_plan = archon_core::plan_origin::PlannedPlan::legacy(stored);
     item.model_reasons = Some([("implement".into(), "Apply supplied fix".into())].into());
+    let prior = QueueItemId::new();
+    item.supersedes = Some(prior.clone());
     let mut detail = ItemDetail {
         acceptance: Default::default(),
         plan_origins: Default::default(),
@@ -1184,6 +1199,7 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
         clarifications: Vec::new(),
     };
     let text = render("get_item", &Reply::ItemDetail(Box::new(detail.clone())));
+    assert!(text.contains(&format!("supersedes {prior}")), "{text}");
     assert!(
         text.contains("implement = claude-code/claude-opus-5-5 high (Apply supplied fix)"),
         "{text}"

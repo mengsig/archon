@@ -228,6 +228,9 @@ fn item_line(item: &QueueItem, reason_chars: usize) -> String {
     if let Some(repo) = &item.repo {
         let _ = write!(line, ", repo {repo}");
     }
+    if let Some(id) = &item.supersedes {
+        let _ = write!(line, ", supersedes {id}");
+    }
     if !item.dependencies.is_empty() {
         let deps: Vec<String> = item.dependencies.iter().map(ToString::to_string).collect();
         let _ = write!(line, ", depends on {}", deps.join(", "));

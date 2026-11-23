@@ -121,6 +121,9 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
     let item = &detail.item;
     let mut out = String::new();
     let _ = writeln!(out, "{}  {}", item.id, sanitize_line(&item.title));
+    if let Some(id) = &item.supersedes {
+        let _ = writeln!(out, "supersedes: {id}");
+    }
     if detail.item.intent.is_some() {
         let _ = writeln!(
             out,
@@ -582,6 +585,7 @@ mod tests {
             autonomy: Autonomy::default(),
             origin: None,
             stage_timeouts: Default::default(),
+            supersedes: None,
             fresh_retries: 0,
             routed_provider: None,
             provider_switch: None,
@@ -733,6 +737,16 @@ mod tests {
         );
         assert_eq!(text, expected);
         assert_eq!(items(&[], &names, at(10, 0)), "The queue is empty.");
+    }
+
+    #[test]
+    fn item_detail_shows_superseded_item() {
+        let mut detail = detail_with_stages();
+        let prior = QueueItemId::new();
+        detail.item.supersedes = Some(prior.clone());
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        assert!(text.contains(&format!("supersedes: {prior}")), "{text}");
+        assert!(text.contains(detail.item.id.as_str()), "{text}");
     }
 
     #[test]

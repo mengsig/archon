@@ -222,9 +222,11 @@ reviewer's fail in archond's review tally), the pull request it reviewed. Outcom
 pull request, so the model evidence report leaves them out of its pull request
 counts.
 
-**Downgrading the binary is not supported after V24 has run.** The schema
-check of an older archond refuses a newer store ("store schema version 24 is
-newer than this archon supports (23); upgrade archon"), so no older daemon can
+V25 adds an index for near-duplicate enqueue detection.
+
+**Downgrading the binary is not supported after V25 has run.** The schema
+check of an older archond refuses a newer store ("store schema version 25 is
+newer than this archon supports (24); upgrade archon"), so no older daemon can
 read the upgraded store. Before the update, stop archond and copy `archon.db`
 and any `archon.db-wal`. Going back means stopping archond, installing the
 older release and restoring that copy. Everything recorded since the copy is

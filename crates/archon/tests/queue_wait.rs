@@ -32,6 +32,7 @@ fn item(state: QueueState) -> QueueItem {
         autonomy: Default::default(),
         origin: None,
         stage_timeouts: Default::default(),
+        supersedes: None,
         fresh_retries: 0,
         routed_provider: None,
         provider_switch: None,

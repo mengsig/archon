@@ -4,7 +4,7 @@
 //! for learning, and so does every item something live still names: a live
 //! stage run, an unretired run node, a steer, stop or archive owed to a stage,
 //! a build directory release still owed, a live item through a dependency, a
-//! stack or the restack index, an open gate, an open question, an open merge
+//! stack, supersession link or the restack index, an open gate, an open question, an open merge
 //! request, an operator correction, a live initiative, a report record or a
 //! distillation whose lessons are not applied yet. An item stays while gc may still find
 //! something of it on disk, such as a run workspace, through the item. A batch
@@ -112,7 +112,9 @@ DELETE FROM temp.prune_items WHERE id IN (
     UNION SELECT r.item FROM stacks s JOIN runs r ON r.id = s.run
     WHERE s.item NOT IN (SELECT id FROM temp.prune_items)
     UNION SELECT x.named FROM restack x JOIN items i ON i.id = x.namer
-    WHERE x.namer NOT IN (SELECT id FROM temp.prune_items))"
+    WHERE x.namer NOT IN (SELECT id FROM temp.prune_items)
+    UNION SELECT json_extract(i.data, '$.supersedes') FROM items i
+    WHERE i.id NOT IN (SELECT id FROM temp.prune_items))"
 );
 
 /// Whether gc may still find something on disk through an item, given its id
@@ -242,7 +244,10 @@ WHERE s.parent_item IN (SELECT id FROM temp.prune_items) AND s.item IN (SELECT i
 UNION SELECT s.item, r.item FROM stacks s JOIN runs r ON r.id = s.run
 WHERE r.item IN (SELECT id FROM temp.prune_items) AND s.item IN (SELECT id FROM temp.prune_items)
 UNION SELECT x.namer, x.named FROM restack x
-WHERE x.named IN (SELECT id FROM temp.prune_items) AND x.namer IN (SELECT id FROM temp.prune_items)"
+WHERE x.named IN (SELECT id FROM temp.prune_items) AND x.namer IN (SELECT id FROM temp.prune_items)
+UNION SELECT i.id, json_extract(i.data, '$.supersedes') FROM items i
+WHERE i.id IN (SELECT id FROM temp.prune_items)
+  AND json_extract(i.data, '$.supersedes') IN (SELECT id FROM temp.prune_items)"
 );
 
 /// Keep at most `limit` candidates, newest first, each with every candidate

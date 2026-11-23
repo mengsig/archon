@@ -226,7 +226,7 @@ fn recovery_after_a_crash_mid_dispatch() {
 const UNDO_V10: &str = "
     DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;
     DROP TABLE stage_spend; DROP TABLE stage_spend_windows; ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
-    DROP TABLE lesson_trials; DROP TABLE github_outbox; DROP TABLE github_objects; DROP TABLE github_links; DROP TABLE item_transitions; DROP TABLE changes;
+    DROP INDEX items_by_duplicate_candidate; DROP TABLE lesson_trials; DROP TABLE github_outbox; DROP TABLE github_objects; DROP TABLE github_links; DROP TABLE item_transitions; DROP TABLE changes;
     DROP TABLE spend_pruned; DROP TABLE tracked_requests; DROP TABLE run_pull_requests; DROP TABLE merge_requests;
     DROP TABLE operator_feedback;
     DROP TABLE lesson_uses; DROP TABLE lessons; DROP TABLE outcome_stages; DROP TABLE outcomes;
@@ -254,7 +254,7 @@ fn migrations_apply_once_and_a_newer_store_is_refused() {
         schema_versions(&path),
         vec![
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26
+            25, 26, 27
         ]
     );
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -328,7 +328,7 @@ fn concurrent_first_opens_migrate_once() {
         schema_versions(&path),
         vec![
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26
+            25, 26, 27
         ]
     );
 }
@@ -606,7 +606,7 @@ fn v9_keeps_an_earlier_provider_reported_total_as_the_floor() {
     drop(conn);
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(schema_versions(&path).last(), Some(&26));
+    assert_eq!(schema_versions(&path).last(), Some(&27));
     for n in [1, 2] {
         let settled = SpendRow {
             cost_complete: Some(true),
@@ -1133,7 +1133,7 @@ fn spend_migration_links_only_unambiguous_history_and_keeps_the_ledger() {
     conn.execute_batch(
         "DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at; DROP TABLE stage_spend; DROP TABLE stage_spend_windows;
          ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
-         DELETE FROM schema_migrations WHERE version >= 25;",
+         DROP INDEX items_by_duplicate_candidate; DELETE FROM schema_migrations WHERE version >= 25;",
     )
     .unwrap();
     drop(conn);
@@ -1141,4 +1141,42 @@ fn spend_migration_links_only_unambiguous_history_and_keeps_the_ledger() {
     assert_eq!(store.unlinked_spend().unwrap(), [agent(3), agent(5)]);
     assert_eq!(store.spend_totals(at, false).unwrap(), (15.0, 15.0));
     assert_eq!(store.spend_for_item(&item.id, false).unwrap(), 11.0);
+}
+
+#[test]
+fn a_store_at_next_v26_upgrades_to_v27_and_keeps_its_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db_path(&dir);
+    let mut store = Store::open(&path).unwrap();
+    let (items, _, _) = populate(&mut store);
+    drop(store);
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "DROP INDEX items_by_duplicate_candidate; DELETE FROM schema_migrations WHERE version = 27;",
+    )
+    .unwrap();
+    assert_eq!(schema_versions(&path).last(), Some(&26));
+    let stage_spend_tables: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('stage_spend', 'stage_spend_windows')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stage_spend_tables, 2);
+    drop(conn);
+
+    let store = Store::open(&path).unwrap();
+    assert_eq!(schema_versions(&path).last(), Some(&27));
+    assert_eq!(all_items(&store).len(), items.len());
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let index: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'items_by_duplicate_candidate'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(index, 1);
 }

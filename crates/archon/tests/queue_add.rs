@@ -58,6 +58,9 @@ fn enqueue_advice_uses_stderr_and_stdout_keeps_the_item_json() {
     let notes = String::from_utf8(out.stderr).unwrap();
     assert!(notes.contains("Consider one item per fix."), "{notes}");
 
+    let repo = env.path("demo");
+    git_repo(&repo);
+    env.run(&["repo", "add", repo.to_str().unwrap(), "--ship", "local"]);
     std::fs::write(env.path("brief.md"), "Fix a concurrency bug.").unwrap();
     let brief_path = env.path("brief.md");
     let out = env
@@ -69,6 +72,8 @@ fn enqueue_advice_uses_stderr_and_stdout_keeps_the_item_json() {
             "risky",
             "--pipeline",
             "direct",
+            "--repo",
+            "demo",
             "--brief-file",
             brief_path.to_str().unwrap(),
         ])

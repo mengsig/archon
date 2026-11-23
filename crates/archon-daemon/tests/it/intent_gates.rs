@@ -577,16 +577,20 @@ async fn pinned_at_review(
 
 /// Aether's reading that each of `providers` has no usage left.
 fn spent_providers(h: &Harness, providers: &[&str]) {
+    reading(h, &providers.iter().map(|p| (*p, 0)).collect::<Vec<_>>());
+}
+
+/// Aether's reading of each provider's remaining usage, in percent.
+fn reading(h: &Harness, providers: &[(&str, u64)]) {
     use archon_core::quota::{ProviderHeadroom, QuotaWindow};
-    let window = QuotaWindow {
-        name: "5h".into(),
-        window_minutes: Some(300),
-        remaining_percent: 0,
-        resets_at: Some(archon_core::now() + chrono::TimeDelta::hours(2)),
-        resets_in_seconds: None,
-    };
-    let headroom = ProviderHeadroom {
-        windows: vec![window],
+    let headroom = |remaining_percent| ProviderHeadroom {
+        windows: vec![QuotaWindow {
+            name: "5h".into(),
+            window_minutes: Some(300),
+            remaining_percent,
+            resets_at: Some(archon_core::now() + chrono::TimeDelta::hours(2)),
+            resets_in_seconds: None,
+        }],
         observed_at: Some(archon_core::now()),
         age_seconds: Some(0),
         stale: false,
@@ -595,7 +599,7 @@ fn spent_providers(h: &Harness, providers: &[&str]) {
         read_at: archon_core::now(),
         providers: providers
             .iter()
-            .map(|p| ((*p).to_owned(), headroom.clone()))
+            .map(|(p, left)| ((*p).to_owned(), headroom(*left)))
             .collect(),
     });
 }
@@ -710,5 +714,67 @@ async fn acceptance_with_every_judge_out_of_quota_fails_with_a_clear_error() {
     assert!(
         error.contains("codex") && error.contains("claude-code"),
         "{error}"
+    );
+}
+
+const USAGE_LIMIT: &str = "usage limit reached; try again at Nov 24th 4:07 PM";
+
+/// Run the first acceptance attempt to a usage-limit failure and dispatch the
+/// retry, returning the models that run it.
+async fn retried_after_usage_limit(h: &Harness, first: &str) -> Vec<String> {
+    settle(h, json!({"verdict":"pass","findings":[]})).await;
+    let attempt = h.running().await;
+    assert_eq!(attempt[0].stage_id, "intent-acceptance");
+    assert_eq!(attempt[0].choice.model.to_string(), first);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: USAGE_LIMIT.into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    h.running()
+        .await
+        .iter()
+        .filter(|s| s.stage_id == "intent-acceptance")
+        .map(|s| s.choice.model.to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_lone_judge_that_hit_its_usage_limit_is_retried() {
+    let vision = [common::MODEL, common::REVIEW_MODEL];
+    let (h, _fake, _item) = pinned_at_review(no_repair(), common::REVIEW_MODEL, &vision).await;
+    // The reading shows the builder's provider spent: codex is the only judge.
+    spent_providers(&h, &["claude-code"]);
+    let retry = retried_after_usage_limit(&h, common::REVIEW_MODEL).await;
+    assert_eq!(retry, [common::REVIEW_MODEL], "no other judge can run");
+}
+
+#[tokio::test]
+async fn a_quota_reading_overrides_the_failure_history() {
+    let vision = [common::MODEL, common::REVIEW_MODEL, SAME_VENDOR];
+    let (h, _fake, item) = pinned_at_review(no_repair(), common::REVIEW_MODEL, &vision).await;
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    assert_eq!(
+        h.running().await[0].choice.model.to_string(),
+        common::REVIEW_MODEL
+    );
+    // As the attempt fails Aether reads usage left on codex; without the
+    // reading the failure would move the retry to the other provider, as in
+    // the test above.
+    reading(&h, &[("codex", 80)]);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: USAGE_LIMIT.into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    let retry = h.running().await;
+    assert_eq!(retry.len(), 1, "{:?}", h.state(&item.id).await);
+    assert_eq!(retry[0].stage_id, "intent-acceptance");
+    assert_eq!(
+        retry[0].choice.model.to_string(),
+        common::REVIEW_MODEL,
+        "the reading shows usage left, so the failure does not move the judge"
     );
 }

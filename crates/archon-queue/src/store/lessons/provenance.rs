@@ -1,10 +1,33 @@
 //! Structured provenance: the item, run and pull request a lesson came from.
-use super::super::codec::SqlContext;
+use super::super::codec::{SqlContext, from_json};
 use archon_core::error::ArchonError;
-use archon_core::id::QueueItemId;
+use archon_core::id::{QueueItemId, RepoId};
 use archon_core::lesson::{LessonRef, LessonRefKind};
+use archon_core::outcome::FailureClass;
 use archon_core::pull_request::PullRequestRef;
 use rusqlite::{Connection, OptionalExtension};
+
+pub(super) fn failure_of_item(
+    conn: &Connection,
+    item: &QueueItemId,
+    repo: Option<&RepoId>,
+) -> Result<Option<FailureClass>, ArchonError> {
+    assert!(!item.as_str().is_empty());
+    let failure: Option<String> = conn
+        .query_row(
+            "SELECT json_quote(failure_class) FROM outcomes
+             WHERE item=?1 AND (?2 IS NULL OR repo=?2) AND failure_class IS NOT NULL
+             ORDER BY finished_at DESC, run DESC LIMIT 1",
+            (item.as_str(), repo.map(RepoId::as_str)),
+            |row| row.get(0),
+        )
+        .optional()
+        .ctx("read the lesson item's latest failure class")?;
+    assert!(failure.as_deref().is_none_or(|class| class != "null"));
+    failure
+        .map(|class| from_json(&class, "failure class"))
+        .transpose()
+}
 
 /// `item`, its newest run, and the pull request that run delivered to, as far
 /// as the store still knows them.

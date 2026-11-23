@@ -13,7 +13,8 @@ impl Store {
         event: archon_core::outcome::CorrectionEvent,
     ) -> Result<(), ArchonError> {
         use archon_core::outcome::{CorrectionCause, CorrectionEvent};
-        if !self.learning_config()?.enabled {
+        let config = self.learning_config()?;
+        if !config.enabled {
             return Ok(());
         }
         let stored = self.run(run)?;
@@ -52,7 +53,12 @@ impl Store {
         }
         assert_eq!(stored.item, event.item);
         if event.cause == CorrectionCause::Quality {
-            correct(&tx, run, Correction::OperatorContradiction)?;
+            correct(
+                &tx,
+                run,
+                Correction::OperatorContradiction,
+                config.retire_min_uses,
+            )?;
         }
         feedback.push(event);
         settings::kv_set(&tx, &key, &to_json(&feedback, "attributed corrections")?)?;

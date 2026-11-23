@@ -169,6 +169,8 @@ pub struct LearningConfig {
     /// Share of (lesson, item) pairs whose lesson is withheld to measure its
     /// lift; 0, the default, holds nothing out.
     pub holdout_rate: f64,
+    /// Minimum scored uses before a lesson can be retired for poor outcomes.
+    pub retire_min_uses: u32,
 }
 
 impl Default for LearningConfig {
@@ -179,6 +181,7 @@ impl Default for LearningConfig {
             distill_daily_budget_usd: 3.0,
             explore_rate: 0.1,
             holdout_rate: 0.0,
+            retire_min_uses: 20,
         }
     }
 }
@@ -203,6 +206,11 @@ impl LearningConfig {
         if !self.holdout_rate.is_finite() || !(0.0..=0.2).contains(&self.holdout_rate) {
             return Err(ArchonError::Config(
                 "learning.holdout_rate must be between 0 and 0.2".into(),
+            ));
+        }
+        if self.retire_min_uses == 0 {
+            return Err(ArchonError::Config(
+                "learning.retire_min_uses must be positive".into(),
             ));
         }
         Ok(())
@@ -1408,6 +1416,21 @@ fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retirement_sample_floor_defaults_and_requires_a_positive_value() {
+        let old: Config = toml::from_str("[learning]\nenabled = true").unwrap();
+        let custom: Config = toml::from_str("[learning]\nretire_min_uses = 42").unwrap();
+        let invalid: Config = toml::from_str("[learning]\nretire_min_uses = 0").unwrap();
+        assert_eq!(old.learning.retire_min_uses, 20);
+        assert_eq!(custom.learning.retire_min_uses, 42);
+        custom.learning.validate().unwrap();
+        let error = invalid.learning.validate().unwrap_err();
+        assert!(
+            error.to_string().contains("learning.retire_min_uses"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn repository_effort_cap_only_narrows_global_policy() {

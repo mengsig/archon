@@ -4928,6 +4928,45 @@
       ],
       "type": "object"
     },
+    "FailureClass": {
+      "description": "Why a failed run failed, as far as the daemon can tell.",
+      "oneOf": [
+        {
+          "enum": [
+            "budget",
+            "timeout",
+            "ship",
+            "other"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "review",
+          "description": "Review rounds ran out without a passing verdict.",
+          "type": "string"
+        },
+        {
+          "const": "verification",
+          "description": "Tests or checks kept failing.",
+          "type": "string"
+        },
+        {
+          "const": "infrastructure",
+          "description": "The agent backend or the machine, not the work.",
+          "type": "string"
+        },
+        {
+          "const": "escalated",
+          "description": "A stage said the task needs another pipeline (`ESCALATE:`).",
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "A stage said only the operator can unblock it (`BLOCKED:`).",
+          "type": "string"
+        }
+      ]
+    },
     "FeedEntry": {
       "description": "One line of the operator chat. Persisted so `archon chat` can replay.\nTagged `entry` because the wrapped `Notification` already has a `kind`.",
       "oneOf": [
@@ -7234,6 +7273,17 @@
           "format": "date-time",
           "type": "string"
         },
+        "failure_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FailureClass"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Failure observed on the source item when the lesson was recorded."
+        },
         "id": {
           "$ref": "#/$defs/LessonId"
         },
@@ -7269,6 +7319,17 @@
             "$ref": "#/$defs/LessonRef"
           },
           "type": "array"
+        },
+        "retirement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LessonRetirement"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The policy that triggered automatic retraction."
         },
         "scope": {
           "$ref": "#/$defs/LessonScope"
@@ -7501,6 +7562,24 @@
         }
       ]
     },
+    "LessonRetirement": {
+      "properties": {
+        "baseline": {
+          "format": "double",
+          "type": "number"
+        },
+        "min_uses": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "min_uses",
+        "baseline"
+      ],
+      "type": "object"
+    },
     "LessonScope": {
       "description": "Where a lesson applies; all `None` is everywhere.",
       "properties": {
@@ -7607,6 +7686,15 @@
           },
           "default": {},
           "type": "object"
+        },
+        "retire_min_uses": {
+          "description": "Effective sample floor while the daemon is running.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "retracted": {
           "format": "uint64",

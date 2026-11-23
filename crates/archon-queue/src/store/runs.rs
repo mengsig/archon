@@ -232,6 +232,7 @@ pub(super) fn finish(
     plan: Option<&RunPlan>,
     next: QueueState,
     at: Timestamp,
+    min_uses: u32,
 ) -> Result<FinishedRun, ArchonError> {
     check_run_shape(run)?;
     if !run.state.is_terminal() || !next.is_terminal() {
@@ -265,7 +266,7 @@ pub(super) fn finish(
     super::run_plans::keep(&tx, &run.id, plan)?;
     super::changes::record_run(&tx, run, Some(&stored.state))?;
     let answers = gates::withdraw_open(&tx, run, at)?;
-    let item = items::transition_in(&tx, &run.item, next, at)?;
+    let item = items::transition_in(&tx, &run.item, next, at, min_uses)?;
     debug_assert!(active_run_of(&tx, &item.id)?.is_none());
     tx.commit().ctx("commit finished run")?;
     Ok(FinishedRun { item, answers })

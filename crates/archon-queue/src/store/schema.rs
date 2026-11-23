@@ -790,11 +790,17 @@ ALTER TABLE outcomes ADD COLUMN failure_class_163 TEXT;
 /// The migration after whose SQL stored failure classes are recomputed.
 const RECLASSIFY_VERSION: usize = 24;
 
+/// Version 25: bound evidence's candidate item snapshot by creation time.
+const V25: &str = "
+CREATE INDEX items_by_created_at ON items (created_at);
+CREATE INDEX stage_runs_by_started_at ON stage_runs (started_at);
+";
+
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24,
+    V22, V23, V24, V25,
 ];
-const _: () = assert!(RECLASSIFY_VERSION == MIGRATIONS.len());
+const _: () = assert!(RECLASSIFY_VERSION <= MIGRATIONS.len());
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
 /// WAL mode; in-memory databases report `memory` and stay that way.
@@ -1234,6 +1240,20 @@ mod tests {
         assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
         assert_eq!(applied_versions(&conn), applied, "a reopen applies nothing");
         assert_eq!(question_number(&conn, "q_open"), 2);
+    }
+
+    #[test]
+    fn v24_upgrade_adds_the_evidence_item_time_index() {
+        let mut conn = v2_store();
+        migrate(&mut conn).unwrap();
+        conn.execute_batch("DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at; DELETE FROM schema_migrations WHERE version = 25;").unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+        let plan: String = conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT data FROM items WHERE created_at >= ?1 AND created_at < ?2",
+            ["2026-01-01", "2026-02-01"], |row| row.get(3),
+        ).unwrap();
+        assert!(plan.contains("items_by_created_at"), "{plan}");
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
     }
 
     fn insert_run(conn: &Connection, run: &str, item: &str) {

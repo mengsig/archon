@@ -681,6 +681,8 @@ fn existing_lessons_migrate_unchanged() {
     let path = dir.path().join("archon.db");
     drop(Store::open(&path).unwrap());
     let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(include_str!("common/undo_timing.sql"))
+        .unwrap();
     conn.execute_batch(
         "DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;
          DROP TABLE stage_spend; DROP TABLE stage_spend_windows; ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
@@ -724,6 +726,9 @@ fn existing_lessons_migrate_unchanged() {
         "SELECT COUNT(*) FROM lessons WHERE cluster IS NOT NULL",
     );
     assert_eq!(clusters, vec![vec![rusqlite::types::Value::Integer(0)]]);
-    let latest = rows(&conn, "SELECT MAX(version) FROM schema_migrations");
-    assert_eq!(latest, vec![vec![rusqlite::types::Value::Integer(27)]]);
+    let applied = rows(
+        &conn,
+        "SELECT version FROM schema_migrations WHERE version = 23",
+    );
+    assert_eq!(applied, vec![vec![rusqlite::types::Value::Integer(23)]]);
 }

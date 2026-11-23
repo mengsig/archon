@@ -2612,6 +2612,19 @@
           "type": "object"
         },
         {
+          "$ref": "#/$defs/TimingQuery",
+          "properties": {
+            "cmd": {
+              "const": "timing_report",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "$ref": "#/$defs/ModelEvidenceQuery",
           "properties": {
             "cmd": {
@@ -11995,6 +12008,22 @@
         {
           "properties": {
             "data": {
+              "$ref": "#/$defs/TimingReport"
+            },
+            "reply": {
+              "const": "timing_report",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
               "$ref": "#/$defs/ModelEvidenceReport"
             },
             "reply": {
@@ -14160,6 +14189,19 @@
           "properties": {
             "cmd": {
               "const": "cost_report",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/TimingQuery",
+          "properties": {
+            "cmd": {
+              "const": "timing_report",
               "type": "string"
             }
           },
@@ -17372,6 +17414,87 @@
           "default": "keep"
         }
       },
+      "type": "object"
+    },
+    "TimingQuery": {
+      "properties": {
+        "since": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DayBound"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "until": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DayBound"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "TimingReport": {
+      "properties": {
+        "ci_wait_ms": {
+          "description": "Time from first observed check start to last observed complete snapshot.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gap_ms": {
+          "description": "Dispatch provisioning and time inside a run outside its stages.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "merge_wait_ms": {
+          "description": "Time from creation to merge for each PR with both timestamps recorded.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queue_ms": {
+          "additionalProperties": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "Recorded queue intervals by the reason observed at dispatch.",
+          "type": "object"
+        },
+        "range": {
+          "$ref": "#/$defs/DayRange"
+        },
+        "retry_ms": {
+          "description": "The part of stage time spent on repeated attempts or repeated runs.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stage_ms": {
+          "description": "Stage wall time with parallel slots counted once per run.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "range",
+        "queue_ms",
+        "stage_ms",
+        "gap_ms",
+        "retry_ms",
+        "merge_wait_ms",
+        "ci_wait_ms"
+      ],
       "type": "object"
     },
     "ToolsMode": {

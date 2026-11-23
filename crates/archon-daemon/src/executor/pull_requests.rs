@@ -45,13 +45,23 @@ pub(super) fn record_delivery(
     store: &mut archon_queue::Store,
     run: &PipelineRunId,
     url: &str,
+    observed: Option<&PullRequest>,
 ) -> Result<(), ArchonError> {
     let Some(pr) = PullRequestRef::from_url(url) else {
         return Err(ArchonError::Protocol(format!(
             "run {run} delivered to {url:?}, which names no pull request"
         )));
     };
-    store.record_run_pull_request(run, &pr, None)
+    if let Some(observed) = observed {
+        assert_eq!(
+            observed.identity(),
+            pr,
+            "the observed delivery matches its URL"
+        );
+        store.record_run_pull_request_with_times(run, &pr, None, observed.times())
+    } else {
+        store.record_run_pull_request(run, &pr, None)
+    }
 }
 
 /// Record what changed in the watched pull requests, one GitHub listing per repository;

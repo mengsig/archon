@@ -22,7 +22,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::super::{
-    FollowUp, RunTable, ShipRetry, descendants, fast_check, initiative_ship, recover,
+    FollowUp, RunTable, ShipRetry, descendants, fast_check, gh, initiative_ship, recover,
     repo_identity, restack, settle,
 };
 use super::{auto_merge, checks, evidence, existing, gate, pr_checks, remote, risk};
@@ -93,7 +93,7 @@ struct Claimed {
 /// How far one delivery got: done, or waiting for its fast check to run.
 #[derive(Debug)]
 enum Carried {
-    Done(ShipOutcome),
+    Done(ShipOutcome, Option<Box<gh::PullRequest>>),
     Gate(gate::Check),
 }
 
@@ -108,7 +108,7 @@ pub(in crate::executor) async fn deliver(
     };
     let gate = claimed.gate.take();
     let delivered = match claimed.recorded.clone() {
-        Some(outcome) => Ok(Carried::Done(outcome)),
+        Some(outcome) => Ok(Carried::Done(outcome, None)),
         None => fresh(ctx, &claimed, gate).await,
     };
     let Claimed { plan, run, .. } = claimed;
@@ -125,7 +125,7 @@ pub(in crate::executor) async fn deliver(
             table.gates.start(run_id, check, Arc::clone(&ctx.dispatch));
             return Ok(FollowUp::default());
         }
-        Ok(Carried::Done(outcome)) => Ok(outcome),
+        Ok(Carried::Done(outcome, _)) => Ok(outcome),
         Err(error) => Err(error),
     };
     table.ships.remove(run_id);
@@ -224,8 +224,8 @@ async fn fresh(
         claimed.recorded.is_none(),
         "a recorded delivery is not repeated"
     );
-    let outcome = match carry_out(ctx, claimed, gate).await? {
-        Carried::Done(outcome) => outcome,
+    let (outcome, observed) = match carry_out(ctx, claimed, gate).await? {
+        Carried::Done(outcome, observed) => (outcome, observed),
         Carried::Gate(check) => return Ok(Carried::Gate(check)),
     };
     let (run, plan) = (&claimed.run, &claimed.plan);
@@ -252,9 +252,9 @@ async fn fresh(
             ctx.coordination.changed.notify_one();
         }
     }
-    persist(&mut store, run, plan, &outcome)?;
+    persist(&mut store, run, plan, &outcome, observed.as_deref())?;
     store.kv_delete(&retry_key(&run.id))?;
-    Ok(Carried::Done(outcome))
+    Ok(Carried::Done(outcome, None))
 }
 
 /// Prove the worktree and pass its fast check, then in `pr` mode push the
@@ -265,8 +265,8 @@ async fn carry_out(
     claimed: &Claimed,
     gate: Option<Result<gate::Verdict, ArchonError>>,
 ) -> Result<Carried, ArchonError> {
-    let refused = |error: String| Ok(Carried::Done(ShipOutcome::Failed { error }));
-    let (run, plan) = (&claimed.run, &claimed.plan);
+    let refused = |error: String| Ok(Carried::Done(ShipOutcome::Failed { error }, None));
+    let run = &claimed.run;
     let Some(repo) = claimed.repo.clone() else {
         return refused("the item's repository is no longer registered with Archon".into());
     };
@@ -286,7 +286,6 @@ async fn carry_out(
         Err(ArchonError::Invalid(why)) => return refused(why),
         Err(error) => return Err(error),
     };
-    let commit = checked.commit.clone();
     match gate_step(ctx, claimed, &repo, &base, gate)? {
         GateStep::Pass(None) => {}
         // `prove` just found the worktree on the tree the check passed on.
@@ -295,6 +294,7 @@ async fn carry_out(
         GateStep::Run(check) => return Ok(Carried::Gate(check)),
     }
     if !pushes {
+        let commit = checked.commit;
         // `pr` mode verifies in `deliver_pr`, before its push.
         match initiative_ship::verify_stack(ctx, run, &commit).await {
             Ok(()) => {}
@@ -307,38 +307,54 @@ async fn carry_out(
             updated: false,
             risk: None,
         };
-        return Ok(Carried::Done(shipped));
+        return Ok(Carried::Done(shipped, None));
     }
     if let Some(onto) = &claimed.onto {
         return into_existing(ctx, claimed, &repo, onto, checked).await;
     }
+    open_for_delivery(ctx, claimed, &repo, &checked, &base, draft, &acceptance).await
+}
+
+async fn open_for_delivery(
+    ctx: &DaemonContext,
+    claimed: &Claimed,
+    repo: &Repo,
+    checked: &checks::Checked,
+    base: &str,
+    draft: bool,
+    acceptance: &str,
+) -> Result<Carried, ArchonError> {
+    let (run, plan) = (&claimed.run, &claimed.plan);
+    let commit = checked.commit.clone();
     // The operator's policy as it stands at delivery, as the checks applied it.
     let has_intent = ctx.store.lock().await.item(&run.item)?.intent.is_some();
     let body = if has_intent {
-        risk::acceptance_body(&plan.body, &acceptance)
+        risk::acceptance_body(&plan.body, acceptance)
     } else {
         plan.body.clone()
     };
     let body = archon_pipeline::pr_body(&body, run.item.as_str(), repo.attribution);
     let request = remote::Request {
         branch: &run.branch,
-        base: &base,
+        base,
         title: &plan.record.title,
         body: &body,
         draft,
     };
-    let url = match deliver_pr(ctx, run, &repo, &commit, request).await? {
-        Ok(url) => url,
-        Err(refusal) => return refused(refusal),
+    let pr = match deliver_pr(ctx, run, repo, &commit, request).await? {
+        Ok(pr) => pr,
+        Err(error) => return Ok(Carried::Done(ShipOutcome::Failed { error }, None)),
     };
+    let url = pr.url.clone();
     let against = format!("`{base}`");
-    let risk = label(ctx, claimed, &repo, &url, &checked, against, false).await?;
-    Ok(Carried::Done(ShipOutcome::Shipped {
+    let risk = label(ctx, claimed, repo, &url, checked, against, false).await?;
+    let outcome = ShipOutcome::Shipped {
         commit,
         pr_url: Some(url),
         updated: false,
         risk: Some(risk),
-    }))
+    };
+    Ok(Carried::Done(outcome, Some(Box::new(pr))))
 }
 
 /// Push the checked commit into the existing pull request `onto` names, by
@@ -356,28 +372,30 @@ async fn into_existing(
         crate::worktree::stack::is_commit_id(&commit),
         "the checked commit"
     );
-    let outcome = match existing::deliver(ctx, repo, onto, &commit).await? {
-        Ok(url) => {
+    let (outcome, observed) = match existing::deliver(ctx, repo, onto, &commit).await? {
+        Ok(pr) => {
+            let url = onto.pr.url();
             let head = onto.head_sha.get(..12).unwrap_or(&onto.head_sha);
             let against = format!(
                 "`{head}`, the head of {} when this change was queued",
                 onto.pr.url()
             );
             let risk = label(ctx, claimed, repo, &url, &checked, against, true).await?;
-            ShipOutcome::Shipped {
+            let outcome = ShipOutcome::Shipped {
                 commit,
                 pr_url: Some(url),
                 updated: true,
                 risk: Some(risk),
-            }
+            };
+            (outcome, Some(Box::new(pr)))
         }
-        Err(error) => ShipOutcome::Failed { error },
+        Err(error) => (ShipOutcome::Failed { error }, None),
     };
     assert!(
         !matches!(&outcome, ShipOutcome::Shipped { pr_url: Some(url), .. } if *url != onto.pr.url()),
         "only the frozen pull request is updated"
     );
-    Ok(Carried::Done(outcome))
+    Ok(Carried::Done(outcome, observed))
 }
 
 /// Label the pull request at `url` with the risk level `claimed`'s plan
@@ -617,7 +635,7 @@ async fn deliver_pr(
     repo: &Repo,
     commit: &str,
     request: remote::Request<'_>,
-) -> Result<Result<String, String>, ArchonError> {
+) -> Result<Result<super::super::gh::PullRequest, String>, ArchonError> {
     assert_eq!(request.branch, run.branch, "the run branch is delivered");
     assert!(
         crate::worktree::stack::is_commit_id(commit),
@@ -632,12 +650,12 @@ async fn deliver_pr(
     if let Err(refusal) = remote::push(gh, data_dir, repo, &run.branch, commit).await? {
         return Ok(Err(refusal));
     }
-    let url = match remote::pull_request(gh, repo, request).await? {
-        Ok(url) => url,
+    let pr = match remote::pull_request_with_times(gh, repo, request).await? {
+        Ok(pr) => pr,
         Err(refusal) => return Ok(Err(refusal)),
     };
-    match initiative_ship::record(ctx, run, &url).await {
-        Ok(()) => Ok(Ok(url)),
+    match initiative_ship::record(ctx, run, &pr.url).await {
+        Ok(()) => Ok(Ok(pr)),
         Err(ArchonError::Invalid(why)) => Ok(Err(why)),
         Err(error) => Err(error),
     }
@@ -704,6 +722,7 @@ fn persist(
     run: &PipelineRun,
     plan: &ShipPlan,
     outcome: &ShipOutcome,
+    observed: Option<&gh::PullRequest>,
 ) -> Result<(), ArchonError> {
     if let ShipOutcome::Shipped { pr_url, commit, .. } = outcome {
         if let Some(url) = pr_url {
@@ -736,7 +755,7 @@ fn persist(
         stage.structured = Some(data.into());
         store.upsert_stage_run(&stage)?;
         if let Some(url) = pr_url {
-            super::super::pull_requests::record_delivery(store, &run.id, url)?;
+            super::super::pull_requests::record_delivery(store, &run.id, url, observed)?;
         }
     }
     store.kv_set(&ship_key(&run.id), &serde_json::to_string(outcome)?)
@@ -797,7 +816,7 @@ async fn retry_or_fail(
     let outcome = ShipOutcome::Failed {
         error: format!("delivery failed {failures} times, last with: {error}"),
     };
-    persist(&mut *ctx.store.lock().await, &run, plan, &outcome)?;
+    persist(&mut *ctx.store.lock().await, &run, plan, &outcome, None)?;
     apply(ctx, table, run, outcome).await
 }
 

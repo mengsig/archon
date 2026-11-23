@@ -21,6 +21,8 @@ pub(crate) struct PrState {
     /// `None` where no review decides it.
     pub review_decision: Option<ReviewDecision>,
     pub checks: ChecksSummary,
+    pub checks_started_at: Option<archon_core::Timestamp>,
+    pub checks_finished_at: Option<archon_core::Timestamp>,
 }
 
 /// The `gh` arguments that read `reference`'s review and checks.
@@ -76,6 +78,7 @@ struct View {
 
 /// One check run (`status`, `conclusion`) or commit status (`state`).
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Rollup {
     #[serde(default)]
     status: Option<String>,
@@ -83,6 +86,8 @@ struct Rollup {
     conclusion: Option<String>,
     #[serde(default)]
     state: Option<String>,
+    started_at: Option<archon_core::Timestamp>,
+    completed_at: Option<archon_core::Timestamp>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,9 +161,22 @@ fn parse(stdout: &str) -> Result<PrState, String> {
         .iter()
         .map(Rollup::outcome)
         .collect();
+    assert_eq!(outcomes.len(), view.status_check_rollup.len());
+    let (checks_started_at, checks_finished_at) =
+        gh::checks::observed_times(view.status_check_rollup.iter().zip(&outcomes).map(
+            |(check, outcome)| {
+                (
+                    check.started_at,
+                    check.completed_at,
+                    *outcome != Outcome::Pending,
+                )
+            },
+        ));
     Ok(PrState {
         review_decision: review_decision(view.review_decision.as_deref())?,
         checks: summarize(&outcomes)?,
+        checks_started_at,
+        checks_finished_at,
     })
 }
 
@@ -218,5 +236,31 @@ mod tests {
             (Some(ReviewDecision::ReviewRequired), neutral)
         );
         assert!(parse(r#"{"reviewDecision":"MAYBE"}"#).is_err());
+    }
+
+    #[test]
+    fn check_run_times_are_taken_from_the_existing_rollup() {
+        let pending = serde_json::json!({
+            "status": "IN_PROGRESS", "startedAt": "2026-10-15T09:10:00Z"
+        });
+        let done = serde_json::json!({
+            "status": "COMPLETED", "conclusion": "SUCCESS",
+            "startedAt": "2026-10-15T09:05:00Z", "completedAt": "2026-10-15T09:20:00Z"
+        });
+        let parse_rollup =
+            |rollup| parse(&serde_json::json!({"statusCheckRollup": rollup}).to_string()).unwrap();
+        let started = parse_rollup(vec![done.clone(), pending]);
+        assert_eq!(
+            started.checks_started_at,
+            Some("2026-10-15T09:05:00Z".parse().unwrap())
+        );
+        assert_eq!(started.checks_finished_at, None);
+
+        let finished = parse_rollup(vec![done]);
+        assert_eq!(finished.checks_started_at, started.checks_started_at);
+        assert_eq!(
+            finished.checks_finished_at,
+            Some("2026-10-15T09:20:00Z".parse().unwrap())
+        );
     }
 }

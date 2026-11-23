@@ -28,6 +28,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         get_stage(),
         queue_status(),
         cost_report(),
+        timing_report(),
         model_evidence(),
         register_repo(),
         enqueue(),
@@ -559,6 +560,22 @@ fn cost_report() -> ToolDefinition {
                 "since": {"type": "string", "minLength": 1, "description": format!("First day: `YYYY-MM-DD`, or days back as `7d` (the last 7 days, with today) or `2w`. Default: {DEFAULT_DAYS}d.")},
                 "until": {"type": "string", "minLength": 1, "description": "Last day likewise; `1d` = yesterday. Default: today."},
                 "by": {"type": "string", "enum": groups, "description": "Default: day."},
+            }),
+            &[],
+        ),
+        false,
+    )
+}
+
+fn timing_report() -> ToolDefinition {
+    define(
+        "timing_report",
+        "Timing report",
+        "Observed durations clipped to UTC days. Stage time counts parallel slots once and includes retries. Recorded CI and merge waits may overlap.",
+        object(
+            json!({
+                "since": {"type": "string", "minLength": 1, "description": format!("First UTC day as YYYY-MM-DD or an age like 7d. Defaults to {DEFAULT_DAYS}d.")},
+                "until": {"type": "string", "minLength": 1, "description": "Last UTC day as YYYY-MM-DD or an age like 1d. Defaults to today."}
             }),
             &[],
         ),

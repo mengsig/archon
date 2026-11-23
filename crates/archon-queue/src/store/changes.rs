@@ -77,7 +77,8 @@ fn transition_reason(state: &QueueState) -> Option<String> {
 }
 
 /// An item created (`before` is `None`) or moved to another state kind:
-/// one change and one transition. A write that keeps the kind records none.
+/// one change and one transition, with the queue interval updated in the same
+/// transaction. A write that keeps the kind records none.
 pub(super) fn record_item(
     conn: &Connection,
     item: &QueueItem,
@@ -92,6 +93,7 @@ pub(super) fn record_item(
         before.is_some() || item.state == QueueState::Queued,
         "an item is created queued"
     );
+    super::queue_timing::item_transition(conn, item, before)?;
     let subject = ChangeSubject::Item {
         item: item.id.clone(),
         state: to,

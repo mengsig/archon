@@ -68,7 +68,7 @@ pub(super) async fn verify(
             super::initiative_ship::record(ctx, run, &url).await?;
             {
                 let store = &mut *ctx.store.lock().await;
-                super::pull_requests::record_delivery(store, &run.id, &url)?;
+                super::pull_requests::record_delivery(store, &run.id, &url, None)?;
             }
             let risk = label_agent_pr(ctx, run, stage, &repo, &url, structured.as_ref()).await?;
             let mut data = structured

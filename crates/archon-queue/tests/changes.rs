@@ -529,6 +529,8 @@ fn the_migration_gives_older_items_one_change_each() {
         .unwrap();
     drop(store);
     let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(include_str!("common/undo_timing.sql"))
+        .unwrap();
     conn.execute_batch(
         "DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;
          DROP TABLE stage_spend; DROP TABLE stage_spend_windows; ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;

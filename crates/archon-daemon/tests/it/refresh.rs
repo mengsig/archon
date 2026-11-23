@@ -841,11 +841,25 @@ async fn failing_pending_and_queued_checks_are_told_apart() {
 async fn passing_checks_end_the_watch_quietly() {
     let (h, gh) = delivering().await;
     let (_, run) = shipped(&h, "the change").await;
-    gh.set_checks(&json!([job("test", "pass", "2026-10-15T09:20:44Z", 11)]));
+    let mut check = job("test", "pass", "2026-10-15T09:20:44Z", 11);
+    check["completedAt"] = json!("2026-10-15T09:23:18Z");
+    gh.set_checks(&json!([check]));
     age_watch(&h, &run, 3).await;
+    let before = gh.count("pr checks");
     executor::coordination::reconcile(&h.ctx).await.unwrap();
+    assert_eq!(gh.count("pr checks"), before + 1);
     assert_eq!(h.kv(&format!("ship_checks:{}", run.id)).await, None);
     assert!(pr_checks_news(&h).await.is_empty());
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let (started, finished): (String, String) = conn
+        .query_row(
+            "SELECT checks_started_at, checks_finished_at FROM run_pull_requests WHERE run = ?1",
+            [run.id.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(started, "2026-10-15T09:20:44.000000000Z");
+    assert_eq!(finished, "2026-10-15T09:23:18.000000000Z");
 }
 
 /// A watch whose repository was removed ends quietly, and the pass returns:

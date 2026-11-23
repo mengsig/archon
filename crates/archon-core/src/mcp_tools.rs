@@ -46,6 +46,7 @@ pub const TOOLS: &[ToolName] = &[
     tool("get_stage", ToolClass::ReadOnly),
     tool("queue_status", ToolClass::ReadOnly),
     tool("cost_report", ToolClass::ReadOnly),
+    tool("timing_report", ToolClass::ReadOnly),
     tool("model_evidence", ToolClass::ReadOnly),
     tool("register_repo", ToolClass::Mutation),
     tool("enqueue", ToolClass::Mutation),

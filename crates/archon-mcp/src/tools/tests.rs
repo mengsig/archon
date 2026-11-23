@@ -63,6 +63,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             "model_evidence",
             json!({"repo": "web", "pipeline": "direct", "stage": "implement", "since": "30d"}),
         ),
+        ("timing_report", json!({"since": "7d", "until": "1d"})),
         (
             "cost_report",
             json!({"since": "2026-09-01", "until": "1d", "by": "model"}),

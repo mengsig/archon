@@ -73,3 +73,21 @@ pub async fn evidence(
     emit(json, || to_json(&report), &report.text())?;
     Ok(ExitCode::SUCCESS)
 }
+
+pub async fn timing(
+    since: Option<&str>,
+    until: Option<&str>,
+    json: bool,
+) -> anyhow::Result<ExitCode> {
+    let query = archon_core::timing_report::TimingQuery {
+        since: bound("--since", since)?,
+        until: bound("--until", until)?,
+    };
+    let client = connect_running().await?;
+    let report = match client.request(Request::TimingReport(query)).await? {
+        Reply::TimingReport(report) => *report,
+        other => return Err(unexpected(&other, "timing report")),
+    };
+    emit(json, || to_json(&report), &report.text())?;
+    Ok(ExitCode::SUCCESS)
+}

@@ -99,6 +99,10 @@ fn query_request(tool: &str, args: &mut Args) -> Result<Option<Request>, ToolErr
         "get_stage" => get_stage(args)?,
         "queue_status" => Request::Status(Default::default()),
         "cost_report" => cost_report(args)?,
+        "timing_report" => Request::TimingReport(archon_core::timing_report::TimingQuery {
+            since: day_bound(args, "since")?,
+            until: day_bound(args, "until")?,
+        }),
         "model_evidence" => model_evidence(args)?,
         "request_status" => Request::RequestStatus {
             request: args.required("request")?,

@@ -37,6 +37,7 @@ mod modes;
 mod operator_feedback;
 mod outcomes;
 mod pull_requests;
+mod queue_timing;
 mod repos;
 mod retention;
 mod work_units;
@@ -56,6 +57,7 @@ mod snapshot;
 mod spend;
 pub mod stacks;
 mod stage_spend;
+mod timing_report;
 mod tracked;
 pub use tracked::{Claim, TrackedRequest};
 
@@ -84,7 +86,7 @@ use crate::dispatch::DispatchSnapshot;
 pub use model_evidence::ModelEvidenceSnapshot;
 pub use model_evidence::{CohortEvidence, RouteEvidence, RouteQuery, preferred_route};
 pub use operator_feedback::CorrectionFacts;
-pub use pull_requests::RunPullRequest;
+pub use pull_requests::{PullRequestTimes, RunPullRequest};
 pub use run_edits::RecordedEdit;
 
 /// Well-known `kv` keys.

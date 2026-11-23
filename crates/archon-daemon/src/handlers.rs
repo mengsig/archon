@@ -29,6 +29,7 @@ mod revise;
 mod settings;
 mod stages;
 mod steer;
+mod timing_report;
 mod waiting;
 
 use archon_core::aether_ids::AetherAgentId;
@@ -665,6 +666,7 @@ async fn handle_queue(
             control::list_pipelines(ctx, repo.as_ref(), pipeline.as_deref()).await
         }
         Request::ModelPolicy { repo } => control::model_policy(ctx, repo.as_ref()).await,
+        Request::TimingReport(query) => timing_report::report(ctx, &query).await,
         Request::CostReport(query) => cost::report(ctx, &query).await,
         Request::ModelEvidence(query) => model_evidence::report(ctx, &query).await,
         Request::OrchestratorStatus => control::orchestrator_status(ctx).await,

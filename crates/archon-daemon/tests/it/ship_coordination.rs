@@ -339,6 +339,16 @@ async fn a_run_s_pull_request_is_observed_by_number_after_its_branch_moved_on() 
     let first = delivered_to(&h, &run).await;
     assert_eq!(first.pr.url(), "https://github.com/o/r/pull/1");
     assert_eq!(first.node_id, None, "gh pr create gives no node id");
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let created: String = conn
+        .query_row(
+            "SELECT created_at FROM run_pull_requests WHERE run = ?1",
+            [run.id.as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(created, "2026-10-15T09:01:00.000000000Z");
+    drop(conn);
 
     let mut state = prs(&h);
     let mut old = state[&run.branch].take();
@@ -384,6 +394,7 @@ async fn two_runs_delivered_to_one_pull_request_both_see_its_outcome() {
     recorded.unwrap();
     set_pr(&h, &first.branch, "state", json!("MERGED"));
     set_pr(&h, &first.branch, "id", json!("PR_shared"));
+    set_pr(&h, &first.branch, "mergedAt", json!("2026-10-15T09:30:00Z"));
 
     let before = gh_calls(&h).len();
     let seen = pull_requests::observe(&h.ctx).await.unwrap();
@@ -394,6 +405,19 @@ async fn two_runs_delivered_to_one_pull_request_both_see_its_outcome() {
         assert_eq!(known.node_id.as_deref(), Some("PR_shared"), "{}", run.id);
     }
     assert_eq!(views_since(&h, before).len(), 1, "settled once, then known");
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let timed: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM run_pull_requests
+         WHERE number = 1 AND merged_at = '2026-10-15T09:30:00.000000000Z'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        timed, 2,
+        "the existing merge watcher timestamps both deliveries"
+    );
 }
 
 /// Everything logged at `WARN` or above while it is held, on this thread.

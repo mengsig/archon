@@ -68,7 +68,7 @@ if [ "$1 $2 $4 $5" = "pr view --json url,baseRefName,baseRefOid" ]; then
     python3 -c 'import json,sys; pr=json.load(open(sys.argv[1])); print(json.dumps({"url": pr["url"], "baseRefName": pr["baseRefName"], "baseRefOid": pr.get("baseRefOid")}))' "$shown"
     exit 0
 fi
-if [ "$1 $2 $4 $5" = "pr view --json id,number,url,state,headRefName,headRefOid,baseRefName,body,isDraft,reviewDecision,isCrossRepository,headRepository,headRepositoryOwner" ]; then
+if [ "$1 $2 $4 $5" = "pr view --json id,number,url,state,headRefName,headRefOid,baseRefName,body,isDraft,reviewDecision,createdAt,mergedAt,isCrossRepository,headRepository,headRepositoryOwner" ]; then
     shown="$state/headed-${3##*/}.json"
     [ -f "$shown" ] || { echo "GraphQL: Could not resolve to a PullRequest" >&2; exit 1; }
     now=OPEN
@@ -152,7 +152,7 @@ case "$1 $2" in
     printf '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":false}'
     ;;
 "pr view")
-    [ "$4 $5" = "--json state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup,mergedBy,autoMergeRequest" ] || exit 2
+    [ "$4 $5" = "--json state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup,mergedBy,autoMergeRequest,createdAt,mergedAt" ] || exit 2
     [ -f "$state/view-head" ] || { echo "no pull request at $3" >&2; exit 1; }
     shown=OPEN
     [ -f "$state/merged" ] && shown=MERGED
@@ -161,8 +161,10 @@ case "$1 $2" in
     [ -f "$state/actor" ] && actor=$(cat "$state/actor")
     auto=null
     [ -f "$state/queued" ] && auto='{}'
-    printf '{"state":"%s","isDraft":false,"headRefOid":"%s","baseRefName":"main","mergeable":"%s","statusCheckRollup":%s,"mergedBy":%s,"autoMergeRequest":%s}' \
-        "$shown" "$(cat "$state/view-head")" "$(cat "$state/view-mergeable")" "$(cat "$state/view-checks")" "$actor" "$auto"
+    merged_at=null
+    [ "$shown" = "MERGED" ] && merged_at='"2026-10-15T09:30:00Z"'
+    printf '{"state":"%s","isDraft":false,"headRefOid":"%s","baseRefName":"main","mergeable":"%s","statusCheckRollup":%s,"mergedBy":%s,"autoMergeRequest":%s,"createdAt":"2026-10-15T09:01:00Z","mergedAt":%s}' \
+        "$shown" "$(cat "$state/view-head")" "$(cat "$state/view-mergeable")" "$(cat "$state/view-checks")" "$actor" "$auto" "$merged_at"
     ;;
 "pr merge")
     if [ "$4" = "--auto" ]; then
@@ -179,7 +181,7 @@ case "$1 $2" in
     fi
     ;;
 "pr checks")
-    [ "$4 $5" = "--json name,bucket,startedAt,link" ] || exit 2
+    [ "$4 $5" = "--json name,bucket,startedAt,completedAt,link" ] || exit 2
     [ -f "$state/checks" ] || { echo "no checks reported on the 'b' branch" >&2; exit 1; }
     cat "$state/checks"
     ;;

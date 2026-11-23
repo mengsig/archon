@@ -11,7 +11,7 @@ use archon_core::intent::{ApprovedIntent, IntentBinding};
 use archon_core::model::Effort;
 use archon_core::protocol::{Reply, Request};
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::run::{RecordRepair, StageOutcome, StageState};
+use archon_core::run::{RecordRepair, StageOutcome, StageRun, StageState};
 use archon_queue::store::keys;
 use serde_json::json;
 use sha2::Digest;
@@ -719,25 +719,27 @@ async fn acceptance_with_every_judge_out_of_quota_fails_with_a_clear_error() {
 
 const USAGE_LIMIT: &str = "usage limit reached; try again at Nov 24th 4:07 PM";
 
-/// Run the first acceptance attempt to a usage-limit failure and dispatch the
-/// retry, returning the models that run it.
-async fn retried_after_usage_limit(h: &Harness, first: &str) -> Vec<String> {
-    settle(h, json!({"verdict":"pass","findings":[]})).await;
-    let attempt = h.running().await;
-    assert_eq!(attempt[0].stage_id, "intent-acceptance");
-    assert_eq!(attempt[0].choice.model.to_string(), first);
+/// Fail the running acceptance attempt on a usage limit and dispatch the
+/// retry: the stage that runs now, which is a new attempt, not the failed one.
+async fn retry_after_usage_limit(h: &Harness) -> Vec<StageRun> {
+    let failed: Vec<_> = h.running().await.iter().map(|s| s.id.clone()).collect();
     h.settle_running(|_| StageOutcome::Failed {
         error: USAGE_LIMIT.into(),
         infra: true,
     })
     .await;
     h.dispatch().await;
-    h.running()
+    let retry: Vec<_> = h
+        .running()
         .await
-        .iter()
+        .into_iter()
         .filter(|s| s.stage_id == "intent-acceptance")
-        .map(|s| s.choice.model.to_string())
-        .collect()
+        .collect();
+    assert!(
+        retry.iter().all(|s| !failed.contains(&s.id)),
+        "a new attempt runs, not the failed one"
+    );
+    retry
 }
 
 #[tokio::test]
@@ -746,8 +748,18 @@ async fn a_lone_judge_that_hit_its_usage_limit_is_retried() {
     let (h, _fake, _item) = pinned_at_review(no_repair(), common::REVIEW_MODEL, &vision).await;
     // The reading shows the builder's provider spent: codex is the only judge.
     spent_providers(&h, &["claude-code"]);
-    let retry = retried_after_usage_limit(&h, common::REVIEW_MODEL).await;
-    assert_eq!(retry, [common::REVIEW_MODEL], "no other judge can run");
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    assert_eq!(
+        h.running().await[0].choice.model.to_string(),
+        common::REVIEW_MODEL
+    );
+    let retry = retry_after_usage_limit(&h).await;
+    assert_eq!(
+        retry.len(),
+        1,
+        "no other judge can run, so the lone one does"
+    );
+    assert_eq!(retry[0].choice.model.to_string(), common::REVIEW_MODEL);
 }
 
 #[tokio::test]
@@ -763,15 +775,8 @@ async fn a_quota_reading_overrides_the_failure_history() {
     // reading the failure would move the retry to the other provider, as in
     // the test above.
     reading(&h, &[("codex", 80)]);
-    h.settle_running(|_| StageOutcome::Failed {
-        error: USAGE_LIMIT.into(),
-        infra: true,
-    })
-    .await;
-    h.dispatch().await;
-    let retry = h.running().await;
+    let retry = retry_after_usage_limit(&h).await;
     assert_eq!(retry.len(), 1, "{:?}", h.state(&item.id).await);
-    assert_eq!(retry[0].stage_id, "intent-acceptance");
     assert_eq!(
         retry[0].choice.model.to_string(),
         common::REVIEW_MODEL,

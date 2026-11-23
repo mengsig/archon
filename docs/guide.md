@@ -1591,8 +1591,9 @@ model. Without a pin the stage
 runs on a model apart from every builder and prefers a different vendor. That model
 must be a vision model when approved reference images exist. A judge whose provider
 is out of quota is skipped, and a retry after a usage-limit failure moves to the
-next eligible judge. A lone judge that just hit a usage limit is retried, and only
-when the quota reading shows every judge spent does the run end, saying so. If no model apart from every builder
+next eligible judge. A lone judge that just hit a usage limit is retried. Only when the quota reading
+shows every judge spent does acceptance stop: a first attempt fails the item saying
+so, and a retry waits until a judge has usage left. If no model apart from every builder
 is permitted and connected, the strongest permitted model judges instead. A judge
 that shares a builder's model or vendor, pinned or not, makes the readiness report
 and the item's outcome say `acceptance: not independent`. Set `[review]

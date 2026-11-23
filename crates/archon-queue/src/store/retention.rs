@@ -452,10 +452,15 @@ fn prune_item_kv(tx: &Transaction<'_>) -> Result<usize, ArchonError> {
                                           UNION SELECT 'shape:' || id FROM temp.prune_items
                                           UNION SELECT 'learning/applied/' || id FROM temp.prune_runs
                                           UNION SELECT 'run_review:' || id FROM temp.prune_runs
-                                          UNION SELECT ?1 || id FROM temp.prune_runs)",
-            [super::run_plans::PREFIX],
+                                          UNION SELECT ?1 || id FROM temp.prune_runs
+                                          UNION SELECT ?2 || id FROM stage_runs
+                                                WHERE run IN (SELECT id FROM temp.prune_runs))",
+            [
+                super::run_plans::PREFIX,
+                super::keys::STAGE_DEFERRED_UNTIL_PREFIX,
+            ],
         )
-        .ctx("prune steer histories and finished run plans")?;
+        .ctx("prune steer histories, finished run plans and stage timing metadata")?;
     let settled = tx
         .execute(
             "DELETE FROM kv WHERE key IN (

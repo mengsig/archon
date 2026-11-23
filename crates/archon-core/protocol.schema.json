@@ -4636,6 +4636,10 @@
             "null"
           ]
         },
+        "learned_stage_timeouts": {
+          "default": false,
+          "type": "boolean"
+        },
         "sources": {
           "additionalProperties": {
             "$ref": "#/$defs/SettingSource"
@@ -7221,6 +7225,32 @@
         "choice",
         "runs",
         "passed"
+      ],
+      "type": "object"
+    },
+    "LearnedStageTimeout": {
+      "description": "A timeout sourced from the p90 of completed stage runs at the slot's effort.",
+      "properties": {
+        "fan_index": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "p90_seconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timeout_minutes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "fan_index",
+        "timeout_minutes",
+        "p90_seconds"
       ],
       "type": "object"
     },
@@ -16236,6 +16266,13 @@
           "description": "A stage id, or `<stage>.review` for the reviewers that stage delegates.",
           "type": "string"
         },
+        "learned_timeouts": {
+          "description": "Learned overrides for the listed fan-out slots on the next attempt.",
+          "items": {
+            "$ref": "#/$defs/LearnedStageTimeout"
+          },
+          "type": "array"
+        },
         "model": {
           "$ref": "#/$defs/ModelSource",
           "description": "`tier` when every choice came from a tier, else `exact`."
@@ -16252,7 +16289,7 @@
           "description": "Where `timeout_minutes` comes from; absent with it."
         },
         "timeout_minutes": {
-          "description": "Minutes each new agent of the stage may run; absent for a reviewers\nkey, whose reviewers run within their stage's limit.",
+          "description": "Configured minutes for the stage; absent for a reviewers\nkey, whose reviewers run within their stage's limit.",
           "format": "uint32",
           "minimum": 0,
           "type": [

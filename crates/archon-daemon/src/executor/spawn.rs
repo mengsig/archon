@@ -29,9 +29,11 @@ use archon_pipeline::contract;
 use archon_pipeline::spec::MAX_TIMEOUT_MINUTES;
 use archon_pipeline::{PipelineSpec, SpawnPlan};
 use archon_queue::Store;
+use archon_queue::store::keys::{STAGE_DEFERRED_UNTIL_PREFIX, STAGE_SPAWN_PREFIX};
 use serde::{Deserialize, Serialize};
 
 use super::resume::Takeover;
+use super::stage_timing::{self, StageTiming};
 use super::{
     FollowUp, RunTable, archive, dependencies, descendants, fast_check, finish, naming, resume,
     run_node, settle, team,
@@ -42,7 +44,6 @@ use crate::experiments;
 use crate::learned;
 use crate::resolve::{self, RepoEnv};
 
-const REQUEST_KEY_PREFIX: &str = "spawn_request:";
 /// `Protocol`, `Io` or Aether `internal` failures of one `create_agent`
 /// before the stage fails.
 const MAX_TRANSPORT_ERRORS: u32 = 5;
@@ -59,6 +60,8 @@ pub(super) const WORKSPACE_MISSING: &str = StageOutcome::WORKSPACE_MISSING;
 pub(crate) struct StoredSpawn {
     pub request: SpawnRequest,
     pub timeout_minutes: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) timing: Option<StageTiming>,
     #[serde(default)]
     pub parent: ParentBinding,
     /// A team slot's worker; its worktree is `request.workspace`.
@@ -207,8 +210,8 @@ pub(crate) enum ParentBinding {
     Pending,
 }
 
-fn request_key(id: &StageRunId) -> String {
-    format!("{REQUEST_KEY_PREFIX}{id}")
+pub(super) fn request_key(id: &StageRunId) -> String {
+    format!("{STAGE_SPAWN_PREFIX}{id}")
 }
 
 pub(crate) fn load_spawn(store: &Store, id: &StageRunId) -> Result<StoredSpawn, ArchonError> {
@@ -302,9 +305,9 @@ fn record_host_context(
 /// (a kept agent's once its run's node retired) and of ones never recorded.
 pub(crate) fn prune_settled_requests(store: &mut Store) -> Result<usize, ArchonError> {
     let mut pruned = 0;
-    for (key, _) in store.kv_prefix(REQUEST_KEY_PREFIX)? {
+    for (key, _) in store.kv_prefix(STAGE_SPAWN_PREFIX)? {
         let raw = key
-            .strip_prefix(REQUEST_KEY_PREFIX)
+            .strip_prefix(STAGE_SPAWN_PREFIX)
             .expect("ranged by prefix");
         let id = StageRunId::parse(raw)
             .map_err(|e| ArchonError::Corrupt(format!("spawn request key {key}: {e}")))?;
@@ -834,12 +837,6 @@ impl Target<'_> {
         super::model_catalog::delegates(plan, self.item)
     }
 
-    /// Minutes the stage of `plan` may run: the item's override, else the pipeline's.
-    fn timeout_minutes(&self, plan: &SpawnPlan) -> u32 {
-        let own = self.item.stage_timeouts.get(&plan.stage_id);
-        own.copied().unwrap_or(plan.timeout_minutes)
-    }
-
     /// The stage contract, with its reviewers' models, its deadline `until`, the run's
     /// own sections and, when the agent can delegate, the rules and model policy for that.
     fn instructions(
@@ -853,7 +850,7 @@ impl Target<'_> {
         let policy = RepoEnv::new(self.repo.cloned())
             .map(|env| env.policy_in(self.config, &self.catalog.aliases()));
         let reviewers = reviewer_rules(plan, &policy, self, effort);
-        let minutes = self.timeout_minutes(plan);
+        let minutes = plan.timeout_minutes;
         let deadline = contract::deadline_rule(plan.kind, plan.workspace, minutes, until);
         let contract = format!(
             "{}{reviewers}{deadline}{}",
@@ -984,6 +981,45 @@ fn omit_oversized_references(request: &mut SpawnRequest) -> Result<(), ArchonErr
     Ok(())
 }
 
+fn resolve_stage_timing(
+    store: &Store,
+    target: &Target<'_>,
+    plan: &mut SpawnPlan,
+    retry: Option<&Retry>,
+) -> Option<StageTiming> {
+    assert!(plan.timeout_minutes > 0, "validated pipeline stage");
+    let configured = target
+        .item
+        .stage_timeouts
+        .get(&plan.stage_id)
+        .copied()
+        .unwrap_or(plan.timeout_minutes);
+    plan.timeout_minutes = configured;
+    let p90 = match store.stage_p90_seconds(
+        &target.run.pipeline,
+        &plan.stage_id,
+        plan.choice.effort,
+    ) {
+        Ok(p90) => p90,
+        Err(error) => {
+            tracing::warn!(%error, run = %target.run.id, stage = %plan.stage_id, "stage timing unavailable; using configured timeout");
+            return None;
+        }
+    };
+    let deadline_wake = retry.is_some_and(|retry| retry.extension.is_some());
+    if target.config.limits.learned_stage_timeouts()
+        && !deadline_wake
+        && let Some(minutes) = p90.and_then(|p90| stage_timing::learned_minutes(configured, p90))
+    {
+        plan.timeout_minutes = minutes;
+    }
+    assert!(
+        plan.timeout_minutes <= configured,
+        "history only caps a timeout"
+    );
+    Some(StageTiming::new(p90))
+}
+
 /// Persist the exact request, then the `spawning` stage run that owns it,
 /// with the slot's `budget`. `retry` numbers an infrastructure replacement
 /// of the slot.
@@ -1002,6 +1038,7 @@ fn reserve_one(
     };
     // Woken or fresh, the agent runs what a new one of its slot would.
     hold_new_agent(target, &mut held);
+    let timing = resolve_stage_timing(store, target, &mut held, retry.as_ref());
     let wake_retune = ran
         .filter(|ran| *ran != held.choice)
         .map(|_| held.choice.clone());
@@ -1017,16 +1054,66 @@ fn reserve_one(
     let intent = (target.references, plan.reports_requirements || observes);
     super::acceptance::attach(store, target.item, &mut request, intent)?;
     omit_oversized_references(&mut request)?;
+    let mut spawn = StoredSpawn {
+        request,
+        timeout_minutes: plan.timeout_minutes,
+        timing,
+        parent: ParentBinding::Pending,
+        team: plan.team.as_ref().map(|slot| StoredWorker {
+            role: slot.role.clone(),
+            branch: slot.branch.clone(),
+        }),
+        resume: None,
+        replaces: None,
+        woken: false,
+        wake_asked: false,
+        login_wake: false,
+        not_before: None,
+        deadline_wake: false,
+        deadline_warned: false,
+        effort_contract: Some(effort),
+        issued_reviewers: plan.reviewers.clone(),
+        wake_retune,
+    };
+    bind_takeover(store, &target.run.id, plan, &mut spawn, now, retry)?;
+    save_spawn(store, &id, &spawn)?;
+    let note = workers.and_then(|narrowed| narrowed.note);
+    record_reserved_stage(
+        store,
+        target,
+        plan,
+        &id,
+        now,
+        note.as_deref(),
+        spawn.not_before,
+    )?;
+    Ok(id)
+}
+
+fn bind_takeover(
+    store: &Store,
+    run: &PipelineRunId,
+    plan: &SpawnPlan,
+    spawn: &mut StoredSpawn,
+    now: Timestamp,
+    retry: Option<Retry>,
+) -> Result<(), ArchonError> {
     let not_before = retry.as_ref().and_then(|r| r.not_before);
     if let Some(until) = not_before {
         // Held as it is reserved, so no sweep issues it early; it loses no working time.
         assert!(until > now, "a retry waits until later");
-        request.deadline = request.deadline.map(|deadline| deadline + (until - now));
+        spawn.request.deadline = spawn
+            .request
+            .deadline
+            .map(|deadline| deadline + (until - now));
     }
     // An infrastructure replacement is a fresh agent: the kept one was lost.
-    let (resume, replaces) = match resume::takeover(store, &target.run.id, plan, nth.is_some())? {
+    let (resume, replaces) = match resume::takeover(store, run, plan, retry.is_some())? {
         Takeover::Fresh => (None, None),
-        Takeover::Resume(kept) => (Some(resume::with_deadline(kept, request.deadline)), None),
+        Takeover::Resume(kept) => (
+            Some(resume::with_deadline(kept, spawn.request.deadline)),
+            None,
+        ),
         Takeover::Replace(agent) => (None, Some(agent)),
     };
     let extension = retry.as_ref().and_then(|r| r.extension);
@@ -1041,7 +1128,7 @@ fn reserve_one(
             extension > chrono::Duration::zero(),
             "an extension lies ahead"
         );
-        request.deadline = Some(now + extension);
+        spawn.request.deadline = Some(now + extension);
     }
     let wake = retry.and_then(|r| r.wake);
     let woken = wake.is_some();
@@ -1049,31 +1136,37 @@ fn reserve_one(
     let (resume, replaces) = match wake {
         Some(kept) => {
             let woken = resume::wake_in(resume, replaces, kept);
-            (Some(resume::with_deadline(woken, request.deadline)), None)
+            (
+                Some(resume::with_deadline(woken, spawn.request.deadline)),
+                None,
+            )
         }
         None => (resume, replaces),
     };
-    let spawn = StoredSpawn {
-        request,
-        timeout_minutes: target.timeout_minutes(plan),
-        parent: ParentBinding::Pending,
-        team: plan.team.as_ref().map(|slot| StoredWorker {
-            role: slot.role.clone(),
-            branch: slot.branch.clone(),
-        }),
-        resume,
-        replaces,
-        woken,
-        wake_asked: false,
-        login_wake: retry_login,
-        not_before,
-        deadline_wake: extension.is_some(),
-        deadline_warned: false,
-        effort_contract: Some(effort),
-        issued_reviewers: plan.reviewers.clone(),
-        wake_retune,
-    };
-    save_spawn(store, &id, &spawn)?;
+    spawn.resume = resume;
+    spawn.replaces = replaces;
+    spawn.woken = woken;
+    spawn.login_wake = retry_login;
+    spawn.not_before = not_before;
+    spawn.deadline_wake = extension.is_some();
+    Ok(())
+}
+
+fn record_reserved_stage(
+    store: &mut Store,
+    target: &Target<'_>,
+    plan: &SpawnPlan,
+    id: &StageRunId,
+    now: Timestamp,
+    note: Option<&str>,
+    not_before: Option<Timestamp>,
+) -> Result<(), ArchonError> {
+    assert!(plan.fan_index < plan.fan_count);
+    assert!(plan.attempt > 0, "attempts are counted from one");
+    assert!(
+        not_before.is_none_or(|until| until > now),
+        "a deferred stage starts later"
+    );
     let sizing = crate::sizing::attempt(target.item, plan);
     let stage = StageRun {
         id: id.clone(),
@@ -1101,15 +1194,23 @@ fn reserve_one(
         started_at: now,
         finished_at: None,
     };
-    let note = workers.and_then(|narrowed| narrowed.note);
-    match &note {
-        Some(note) => {
-            let key = super::stage_note::key(&id);
-            store.upsert_stage_run_with_kv(&stage, &[(key.as_str(), note.as_str())])?;
-        }
-        None => store.upsert_stage_run(&stage)?,
-    }
-    Ok(id)
+    let note_key = note.map(|_| super::stage_note::key(id));
+    let deferred = not_before.map(|until| {
+        (
+            format!("{STAGE_DEFERRED_UNTIL_PREFIX}{id}"),
+            until.to_rfc3339(),
+        )
+    });
+    let updates: Vec<_> = [
+        note_key.as_deref().zip(note),
+        deferred
+            .as_ref()
+            .map(|(key, value)| (key.as_str(), value.as_str())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    store.upsert_stage_run_with_kv(&stage, &updates)
 }
 
 /// A team slot's share of what is left: the remainder split evenly across
@@ -1155,7 +1256,7 @@ fn build_request(
             .is_none_or(|root| workspace.starts_with(root)),
         "a team run's agents work under its team directory"
     );
-    let until = deadline(now, target.timeout_minutes(plan));
+    let until = deadline(now, plan.timeout_minutes);
     SpawnRequest {
         references: Vec::new(),
         host_context: Default::default(),

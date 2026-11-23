@@ -43,6 +43,7 @@ pub use schema::WAL_SIZE_LIMIT;
 mod run_edits;
 mod run_plans;
 mod run_reviews;
+mod stage_timing;
 pub use run_reviews::RunReview;
 mod runs;
 pub use runs::UnreadableRun;
@@ -91,6 +92,10 @@ pub mod keys {
     pub const CURSOR_ORCHESTRATOR: &str = "aether_cursor_orchestrator";
     pub const CURSOR_FLEET: &str = "aether_cursor_fleet";
     pub const AETHER_INSTANCE: &str = "aether_instance_id";
+    /// A stage run's reserved spawn request.
+    pub const STAGE_SPAWN_PREFIX: &str = "spawn_request:";
+    /// A delayed stage run's earliest working time, kept with its history.
+    pub const STAGE_DEFERRED_UNTIL_PREFIX: &str = "stage_deferred_until:";
     /// The last feed seq mirrored to Aether's notification center.
     pub const CURSOR_NOTIFICATION_CENTER: &str = "notification_center_feed_cursor";
     /// Prefix: + question id → the notification whose answer was refused.
@@ -957,6 +962,16 @@ impl Store {
         estimates: bool,
     ) -> Result<ModelEvidenceSnapshot, ArchonError> {
         model_evidence::read(&self.conn, query, range, estimates)
+    }
+
+    /// Nearest-rank p90 of recent completed stage runs in the same cohort.
+    pub fn stage_p90_seconds(
+        &self,
+        pipeline: &str,
+        stage: &str,
+        effort: archon_core::model::Effort,
+    ) -> Result<Option<u64>, ArchonError> {
+        stage_timing::p90(&self.conn, pipeline, stage, effort)
     }
 
     /// Spend over the local days of `range` grouped `by`, counted as the

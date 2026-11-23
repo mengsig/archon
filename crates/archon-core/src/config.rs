@@ -667,6 +667,9 @@ pub struct LimitsConfig {
     pub max_delegation_depth: u32,
     /// Longest per-stage timeout an item may ask for (`stage_timeouts`).
     pub max_stage_timeout_minutes: u32,
+    /// Shorten new stage deadlines when enough timing history is available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub learned_stage_timeouts: Option<bool>,
     /// Each stage's timeout in a refresh the request gives none for.
     pub refresh_stage_timeout_minutes: u32,
     /// Messages one agent may send the orchestrator, and one run node's
@@ -701,6 +704,7 @@ impl Default for LimitsConfig {
             per_pipeline: BTreeMap::new(),
             max_delegation_depth: DEFAULT_DELEGATION_DEPTH,
             max_stage_timeout_minutes: DEFAULT_STAGE_TIMEOUT_MINUTES,
+            learned_stage_timeouts: None,
             refresh_stage_timeout_minutes: DEFAULT_REFRESH_STAGE_TIMEOUT_MINUTES,
             max_agent_messages: DEFAULT_AGENT_MESSAGES,
             clarification_timeout_minutes: 30,
@@ -711,6 +715,10 @@ impl Default for LimitsConfig {
 }
 
 impl LimitsConfig {
+    pub fn learned_stage_timeouts(&self) -> bool {
+        self.learned_stage_timeouts.unwrap_or(false)
+    }
+
     /// `min_free_gb` in bytes; 0 when the disk hold is off.
     pub fn min_free_bytes(&self) -> u64 {
         self.min_free_gb.saturating_mul(1 << 30)
@@ -1870,6 +1878,7 @@ mod tests {
         assert_eq!(limits.max_delegation_depth, 2);
         assert_eq!(limits.max_agent_messages, 20);
         assert_eq!(limits.max_stage_timeout_minutes, 1440);
+        assert!(!limits.learned_stage_timeouts());
         assert_eq!(limits.refresh_stage_timeout_minutes, 30);
         assert_eq!(
             limits.initiatives(),

@@ -61,6 +61,7 @@ pub(crate) mod ship;
 mod siblings;
 mod spawn;
 pub(crate) mod stage_note;
+mod stage_timing;
 mod stall;
 mod start;
 pub(crate) mod steer;

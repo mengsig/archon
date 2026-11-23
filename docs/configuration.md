@@ -559,6 +559,7 @@ go past:
 [limits]
 max_delegation_depth = 2         # 1..=4
 max_stage_timeout_minutes = 1440 # 1..=43200
+learned_stage_timeouts = false
 refresh_stage_timeout_minutes = 30 # 1..=43200
 max_agent_messages = 20          # 1..=200; questions are exempt
 clarification_timeout_minutes = 30 # 1..=43200
@@ -574,6 +575,12 @@ initiative_contract_bytes = 2048 # 1..=16384
 - `max_stage_timeout_minutes`: the longest per-stage timeout an item may
   ask for with `stage_timeouts` at `enqueue`, `update_item`, `steer_item` or `retry_item` (`--stage-timeout` on `archon queue add|steer|retry`). A pipeline's
   own `timeout_minutes` is not capped by it.
+- `learned_stage_timeouts` caps a new attempt's configured timeout at three
+  times its learned p90 when enabled. The cap is rounded up to
+  minutes with a 30-minute floor. `archon settings` shows whether it is enabled
+  and where that value comes from. `run_plan` reports reductions as
+  `settings[].learned_timeouts`, by fan-out slot, with the p90 used. The configured
+  value still sets the timeout when fewer than ten samples exist.
 - `refresh_stage_timeout_minutes`: each stage's timeout in a refresh
   (`refresh_item`, `archon queue refresh`) whose request names none, instead
   of the owner's or the pipeline's: a refresh only merges a fresh base, so it
@@ -589,6 +596,12 @@ initiative_contract_bytes = 2048 # 1..=16384
 - `initiative_members` and `initiative_contract_bytes`: an initiative's
   size. The contract is in every member's stage contract, and is sent
   whole to running members whenever it changes.
+
+The daemon learns p90 from the most recent completed attempts still in the
+store, up to 100 per pipeline, stage and effort. It snapshots p90 at reservation
+and sends one `stage_overrun` news event if the running attempt exceeds twice
+that duration. This news is available with either timeout setting.
+Hold time before a delayed retry is excluded when its start time is recorded.
 
 Others stay fixed. `MAX_DIRECTIVES` caps the operator directives in force
 at once at 20, each at most 500 characters (`MAX_DIRECTIVE_CHARS`); expired

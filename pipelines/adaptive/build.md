@@ -87,9 +87,8 @@ read again.
    fixed with no regression. No new whole-change read is owed. If the
    operator adds scope while a review runs, let it finish, keep its verdict
    for the commit it read, and have the whole change read again with the
-   addition. After three failed rounds Archon stops this stage and escalates
-   the open blocking findings, so settle a disputed finding with evidence
-   rather than another round.
+   addition. After three failed rounds, follow the contract's cap rule.
+   Settle disputed findings with evidence.
 7. **Finish or fail.** An unresolved blocking finding, a failed check, a
    review your contract asks for that did not run, or delegation you needed
    and could not get fail this stage via `fail_task`; use `BLOCKED:` for

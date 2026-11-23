@@ -112,6 +112,8 @@ pub(crate) struct StoredSpawn {
     /// ran. `None` when it runs on as it is, or 1.6.3 stored the spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wake_retune: Option<ModelChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    review_findings: Option<super::review::FindingsFile>,
 }
 
 impl StoredSpawn {
@@ -692,6 +694,7 @@ fn reserve_each(
             governed: budget.is_some(),
             sections: &sections,
             experiments: &experiments,
+            replacing: None,
         };
         let share = slot_budget(budget, &plan);
         let now = archon_core::now();
@@ -828,6 +831,7 @@ struct Target<'a> {
     sections: &'a str,
     /// The item's directory for reviewers' experiment copies.
     experiments: &'a Path,
+    replacing: Option<&'a StageRun>,
 }
 
 impl Target<'_> {
@@ -1074,19 +1078,11 @@ fn reserve_one(
         effort_contract: Some(effort),
         issued_reviewers: plan.reviewers.clone(),
         wake_retune,
+        review_findings: None,
     };
     bind_takeover(store, &target.run.id, plan, &mut spawn, now, retry)?;
-    save_spawn(store, &id, &spawn)?;
     let note = workers.and_then(|narrowed| narrowed.note);
-    record_reserved_stage(
-        store,
-        target,
-        plan,
-        &id,
-        now,
-        note.as_deref(),
-        spawn.not_before,
-    )?;
+    record_reserved_stage(store, target, plan, &id, now, note.as_deref(), &mut spawn)?;
     Ok(id)
 }
 
@@ -1159,8 +1155,9 @@ fn record_reserved_stage(
     id: &StageRunId,
     now: Timestamp,
     note: Option<&str>,
-    not_before: Option<Timestamp>,
+    spawn: &mut StoredSpawn,
 ) -> Result<(), ArchonError> {
+    let not_before = spawn.not_before;
     assert!(plan.fan_index < plan.fan_count);
     assert!(plan.attempt > 0, "attempts are counted from one");
     assert!(
@@ -1194,6 +1191,13 @@ fn record_reserved_stage(
         started_at: now,
         finished_at: None,
     };
+    save_review_spawn(
+        store,
+        &stage,
+        spawn,
+        plan.reviewers.is_some(),
+        target.replacing,
+    )?;
     let note_key = note.map(|_| super::stage_note::key(id));
     let deferred = not_before.map(|until| {
         (
@@ -1211,6 +1215,24 @@ fn record_reserved_stage(
     .flatten()
     .collect();
     store.upsert_stage_run_with_kv(&stage, &updates)
+}
+
+fn save_review_spawn(
+    store: &mut Store,
+    stage: &StageRun,
+    spawn: &mut StoredSpawn,
+    reviews: bool,
+    replacing: Option<&StageRun>,
+) -> Result<(), ArchonError> {
+    if let Some(handoff) = super::review::prior_handoff(store, stage, reviews, replacing)? {
+        assert!(!spawn.request.objective.is_empty());
+        spawn.request.objective.push_str(&handoff.text);
+        if let Some(resume) = &mut spawn.resume {
+            resume.message.push_str(&handoff.text);
+        }
+        spawn.review_findings = handoff.file;
+    }
+    save_spawn(store, &stage.id, spawn)
 }
 
 /// A team slot's share of what is left: the remainder split evenly across
@@ -1435,6 +1457,7 @@ pub(super) fn reserve_replacement(
         governed: false,
         sections: &sections,
         experiments: &experiments,
+        replacing: Some(failed),
     };
     // An earlier grant is not enforced once budgets are off.
     let budget = match resolve::item_caps(ctx, item.repo.as_ref()).budgets_enabled {
@@ -1571,7 +1594,14 @@ async fn issue_claimed(ctx: &DaemonContext, id: &StageRunId) -> Result<FollowUp,
     let reviews = allowed.is_ok() && !unsent && can_review(&stage, &spawn);
     let workspace = prepare.then_some(spawn.request.workspace.as_path());
     let worker = worker.filter(|_| prepare);
-    let ready = ready_to_spawn(ctx, id, (worker, workspace), reviews, &item).await;
+    let ready = ready_to_spawn(ctx, id, (worker, workspace), reviews, &item)
+        .await
+        .and_then(|()| {
+            if let (Some(file), Some(workspace)) = (&spawn.review_findings, workspace) {
+                file.install(workspace).map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        });
     if let Err(error) = ready {
         let mut table = ctx.runs.lock().await;
         let was_claimed = table.in_flight.remove(id);

@@ -69,6 +69,9 @@ pub fn instructions(
     }
     if needs_verdict(stage) {
         out.push_str(VERDICT_RULES);
+        if stage.kind == StageKind::Review && mode != WorkspaceMode::Scratch {
+            out.push_str("- In a Git workspace, include the reviewed commit as `head`.\n");
+        }
     }
     if owed.review.is_some_and(|duty| duty.records_verdict) {
         out.push_str(LEAD_VERDICT_RULES);
@@ -873,24 +876,20 @@ tests for changed behaviour, and broken documented behaviour, as the brief narro
 extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` or \
 `false`: only blocking ones fail. List the rest as follow-ups in your summary";
 
-/// Failing review rounds of one stage attempt after which Archon stops the stage.
-/// A round is one commit that at least one of the lead's reviewers failed with a
-/// blocking finding, so three parallel reviewers of one head are one round. The
-/// stage fails with an `ESCALATE:` error listing the open blocking findings,
-/// which ends the run and hands the item to the orchestrator.
+/// Distinct heads failed with blockers before escalation or one confirmation.
+/// Parallel reviewers of one head count as one round in the stage attempt.
 pub const REVIEW_ROUND_CAP: usize = 3;
 
 const REVIEW_ROUNDS_RULE: &str = "\
-- Delegate with `wait: false`, then use `wait_for`. On a blocking fail, edit nothing \
-until the reviewers still reading finish (they share your workspace); one you cancel \
-counts for nothing and needs a whole-change replacement. Fix every blocking finding \
-and commit, then re-review only the fix with one reviewer: a finished one cannot be \
-asked again, so delegate a new one with `base` at the head the failed review read, \
-given the fix commits and the open findings, to verify each is fixed and the fix \
-regresses nothing. No new whole-change read is needed. A commit after passes needs \
-only a delta read from the head they passed; an amend or rebase needs whole-change \
-reads. Tell every delta reviewer to fail only on a defect in its commits or an open \
-finding unfixed: a new finding in code a pass already read is `\"blocking\": false`. After 3 failed rounds Archon stops the stage and escalates.\n";
+- Delegate with `wait: false`, then use `wait_for`. Wait for all readers before editing. \
+Replace any cancelled reader with a whole-change read. Commit fixes with a \
+`Review-Fix: <id>` trailer per blocker. Have one new reviewer verify each open finding's \
+fix and read only the delta from the last reviewed head, including after a pass. Amend \
+or rebase needs whole-change reads. List all open findings and their IDs \
+(`reviewer-agent:1-based position in findings`) in the prompt. \
+Ask for `resolved_findings` and `findings[].id` for open issues. Carry omissions forward. \
+Any real blocker anywhere fails. At 3 failed rounds, commit all fixes, then wait for \
+Archon to request one final confirmation. If you cannot commit every fix, fail.\n";
 
 /// A review-only lead's rounds: one, whose findings it records rather than fixes.
 const REVIEW_ONLY_ROUNDS_RULE: &str = "\
@@ -1484,22 +1483,24 @@ mod tests {
             let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
             for said in [
                 "Delegate with `wait: false`, then use `wait_for`",
-                "On a blocking fail, edit nothing until the reviewers still reading finish",
-                "one you cancel counts for nothing and needs a whole-change replacement",
-                "Fix every blocking finding and commit, then re-review only the fix with one reviewer",
-                "delegate a new one with `base` at the head the failed review read",
-                "given the fix commits and the open findings",
-                "Tell every delta reviewer to fail only on a defect in its commits or an open \
-                 finding unfixed",
-                "a new finding in code a pass already read is `\"blocking\": false`",
-                "No new whole-change read is needed",
-                "A commit after passes needs only a delta read from the head they passed",
-                "an amend or rebase needs whole-change reads",
+                "Wait for all readers before editing",
+                "Replace any cancelled reader with a whole-change read",
+                "Commit fixes with a `Review-Fix: <id>` trailer per blocker",
+                "one new reviewer verify each open finding's fix",
+                "read only the delta from the last reviewed head, including after a pass",
+                "Amend or rebase needs whole-change reads",
+                "List all open findings and their IDs",
+                "Ask for `resolved_findings` and `findings[].id` for open issues",
+                "Carry omissions forward",
+                "Any real blocker anywhere fails",
+                "If you cannot commit every fix, fail",
                 "As many as the review asks must have read the whole change",
                 "one must have passed the branch head itself",
                 "A pass of an earlier head only anchors such a delta",
                 "A fail stands until a pass read past it",
-                &format!("After {REVIEW_ROUND_CAP} failed rounds Archon stops the stage"),
+                &format!(
+                    "At {REVIEW_ROUND_CAP} failed rounds, commit all fixes, then wait for Archon to request one final confirmation"
+                ),
             ] {
                 assert!(text.contains(said), "missing {said:?} in {text}");
             }
@@ -2017,14 +2018,14 @@ mod tests {
         assert!(reviewing.contains("with a blocking finding open, record `fail`"));
         assert!(!reviewing.contains("call `fail_task` and say which"));
         assert!(reviewing.contains("fix and commit nothing"));
-        assert!(!reviewing.contains("Fix every blocking finding"));
+        assert!(!reviewing.contains("Review-Fix"));
         assert!(!reviewing.contains("pr.body") && !reviewing.contains("findings you fixed"));
         assert!(!reviewing.contains("a failed one") && !reviewing.contains("delta"));
         assert!(reviewing.contains("passed the whole change at this head"));
         assert_eq!(reviewing.matches("## Verdict").count(), 1);
         let building = work_contract(owing(1, false));
         assert!(building.contains("with a blocking finding open, call `fail_task` and say which."));
-        assert!(building.contains("Fix every blocking finding and commit"));
+        assert!(building.contains("Commit fixes with a `Review-Fix: <id>` trailer per blocker"));
         assert!(building.contains("a failed one whose findings you fixed included:"));
         assert!(building.contains("follow-ups in your summary and `pr.body`.\n"));
         assert!(!building.contains("## Verdict"));

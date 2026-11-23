@@ -553,7 +553,7 @@ impl Store {
     /// (`spawning` → `running` → terminal) and keep their identity and
     /// Aether ids once set.
     pub fn upsert_stage_run(&mut self, stage: &StageRun) -> Result<(), ArchonError> {
-        runs::upsert_stage(&mut self.conn, stage, &[])
+        runs::upsert_stage(&mut self.conn, stage, &[], None)
     }
     /// `upsert_stage_run` and the `kv` `updates` in one transaction: both or neither.
     pub fn upsert_stage_run_with_kv(
@@ -561,7 +561,18 @@ impl Store {
         stage: &StageRun,
         updates: &[(&str, &str)],
     ) -> Result<(), ArchonError> {
-        runs::upsert_stage(&mut self.conn, stage, updates)
+        runs::upsert_stage(&mut self.conn, stage, updates, None)
+    }
+    /// Settle a review and record what its first round resolved on the preceding stage.
+    pub fn upsert_stage_with_previous_review(
+        &mut self,
+        stage: &StageRun,
+        previous: &StageRunId,
+        rounds: &serde_json::Value,
+    ) -> Result<(), ArchonError> {
+        assert!(stage.state.is_terminal());
+        assert_ne!(stage.id, *previous);
+        runs::upsert_stage(&mut self.conn, stage, &[], Some((previous, rounds)))
     }
     /// Delete `run`'s stage rows that do not decode; the `(id, raw data)` of
     /// each is returned and saved under `archive` for the operator.

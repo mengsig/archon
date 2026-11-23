@@ -632,14 +632,20 @@ pub(super) fn prepare(
     record.validate()?;
     let cards = page_cards(ctx, store, &worktree, &session, &notes, &record)?;
     let (checks, agent_summary) = reported(stages, gate);
-    let html = design_page::render(&Page {
+    let page_of = |with_before| Page {
         title: &item.title,
         brief: &item.brief,
         draft: &record,
         agent_summary: &agent_summary,
         checks: &checks,
         cards: &cards,
-    });
+        with_before,
+    };
+    // The operator sees the whole page; the copy kept with the approved
+    // intent leaves the before pictures out, as they are never sent to a
+    // later model.
+    let html = design_page::render(&page_of(true));
+    let kept_html = design_page::render(&page_of(false));
     let directory = ctx.paths.data_dir.join("design").join("ledger");
     std::fs::create_dir_all(&directory)
         .map_err(|e| ArchonError::io("create the design ledger directory", e))?;
@@ -649,10 +655,16 @@ pub(super) fn prepare(
     ));
     crate::handlers::intent::save_bytes(&page, html.as_bytes())?;
     let page_sha256 = sha_hex(html.as_bytes());
-    let preserved = crate::handlers::intent::preserve(&destination, &page, &page_sha256)?;
+    let kept = directory.join(format!(
+        "{}-{}-{}-kept.html",
+        run.id, gate.stage_id, gate.attempt
+    ));
+    crate::handlers::intent::save_bytes(&kept, kept_html.as_bytes())?;
+    let kept_sha256 = sha_hex(kept_html.as_bytes());
+    let preserved = crate::handlers::intent::preserve(&destination, &kept, &kept_sha256)?;
     record.artifacts.push(IntentArtifact {
         path: preserved,
-        sha256: page_sha256.clone(),
+        sha256: kept_sha256,
     });
     record.validate()?;
     let saved = Pending {

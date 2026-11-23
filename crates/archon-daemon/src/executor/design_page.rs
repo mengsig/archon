@@ -67,6 +67,9 @@ pub(crate) struct Page<'a> {
     /// The checks the agent says it ran, each with its result.
     pub checks: &'a [String],
     pub cards: &'a [Card],
+    /// Whether the before pictures are shown. The copy kept with the
+    /// approved intent leaves them out: they are never sent to a later model.
+    pub with_before: bool,
 }
 
 pub(crate) fn escape(text: &str) -> String {
@@ -147,14 +150,7 @@ fn kind_label(kind: &RequirementKind) -> &'static str {
     }
 }
 
-fn pictures(card: &Card, budget: &mut Budget) -> String {
-    if card.withheld {
-        return "<p class=\"missing\">Picture withheld by the operator in the finish step.</p>"
-            .into();
-    }
-    if card.before.is_none() && card.after.is_none() {
-        return "<p class=\"missing\">No picture was captured for this note.</p>".into();
-    }
+fn pictures(card: &Card, budget: &mut Budget, with_before: bool) -> String {
     let side = |pic: &Option<Pic>, role: &str, budget: &mut Budget| match pic {
         Some(pic) => budget.figure(pic, role),
         None => format!(
@@ -162,8 +158,30 @@ fn pictures(card: &Card, budget: &mut Budget) -> String {
             role.to_lowercase()
         ),
     };
+    if !with_before {
+        if card.withheld {
+            return "<p class=\"missing\">Picture withheld by the operator in the finish step.</p>"
+                .into();
+        }
+        return match &card.after {
+            Some(_) => format!(
+                "<div class=\"pair\">{}</div>",
+                side(&card.after, "After", budget)
+            ),
+            None => "<p class=\"missing\">No picture was captured for this note.</p>".into(),
+        };
+    }
+    if card.before.is_none() && card.after.is_none() && !card.withheld {
+        return "<p class=\"missing\">No picture was captured for this note.</p>".into();
+    }
     let before = side(&card.before, "Before", budget);
-    let after = side(&card.after, "After", budget);
+    // The operator withheld only the final picture; the before one stays.
+    let after = if card.withheld {
+        "<div class=\"missing\">After picture withheld by the operator in the finish step.</div>"
+            .to_owned()
+    } else {
+        side(&card.after, "After", budget)
+    };
     format!("<div class=\"pair\">{before}{after}</div>")
 }
 
@@ -189,7 +207,7 @@ fn commit_block(card: &Card) -> String {
     }
 }
 
-fn card_html(card: &Card, budget: &mut Budget) -> String {
+fn card_html(card: &Card, budget: &mut Budget, with_before: bool) -> String {
     let mut html = format!(
         "<section class=\"card\" id=\"{id}\"><div class=\"head\"><span class=\"id\">{id}</span>\
          <span class=\"chip {}\">{}</span>",
@@ -220,7 +238,7 @@ fn card_html(card: &Card, budget: &mut Budget) -> String {
             escape(target)
         ));
     }
-    html.push_str(&pictures(card, budget));
+    html.push_str(&pictures(card, budget, with_before));
     html.push_str(&commit_block(card));
     if let Some(reply) = &card.reply {
         html.push_str(&format!(
@@ -299,7 +317,7 @@ fn render_within(page: &Page, limit: usize) -> String {
     let cards: String = page
         .cards
         .iter()
-        .map(|c| card_html(c, &mut budget))
+        .map(|c| card_html(c, &mut budget, page.with_before))
         .collect();
     let mut warnings = String::new();
     if page.draft.images.len() + IMAGE_CAP_WARN_MARGIN as usize >= MAX_IMAGES {
@@ -403,6 +421,7 @@ mod tests {
                 agent_summary: "Two commits.",
                 checks: &["npm test (pass)".to_owned()],
                 cards,
+                with_before: true,
             },
             limit,
         )
@@ -424,6 +443,34 @@ mod tests {
     }
 
     #[test]
+    fn the_kept_copy_leaves_every_before_picture_out() {
+        let draft = draft(&[("D1", RequirementKind::Visual)]);
+        let cards = [card("D1", "a")];
+        let page = render(&Page {
+            title: "t",
+            brief: "b",
+            draft: &draft,
+            agent_summary: "",
+            checks: &[],
+            cards: &cards,
+            with_before: false,
+        });
+        assert_eq!(page.matches("data:image/png;base64,").count(), 1);
+        assert!(!page.contains("Before") && !page.contains("before the change"));
+        assert!(page.contains("<strong>After</strong>"));
+    }
+
+    #[test]
+    fn a_withheld_card_keeps_its_before_picture() {
+        let mut c = card("D1", "a");
+        c.withheld = true;
+        c.after = None;
+        let page = page_of(&[c], PICTURE_BUDGET);
+        assert_eq!(page.matches("data:image/png;base64,").count(), 1);
+        assert_eq!(page.matches("withheld by the operator").count(), 1);
+    }
+
+    #[test]
     fn a_picture_is_called_withheld_only_when_the_operator_withheld_it() {
         let mut withheld = card("D2", "wider");
         withheld.withheld = true;
@@ -434,7 +481,7 @@ mod tests {
         let page = page_of(&[card("D1", "a"), withheld, none], PICTURE_BUDGET);
         assert_eq!(page.matches("withheld by the operator").count(), 1);
         assert_eq!(page.matches("No picture was captured").count(), 1);
-        assert_eq!(page.matches("data:image/png").count(), 2);
+        assert_eq!(page.matches("data:image/png").count(), 3);
     }
 
     #[test]

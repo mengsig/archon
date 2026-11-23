@@ -530,6 +530,11 @@ async fn the_gate_page_shows_before_and_after_and_withholds_only_what_the_operat
     let after = &intent.images[0];
     assert_eq!(after.id, "D1-final");
     assert_eq!(std::fs::read(&after.path).unwrap(), AFTER_PNG);
+    // The page kept with the intent, which a later model reads, has no
+    // before picture; the gate page above did.
+    let kept = std::fs::read_to_string(&intent.artifacts[0].path).unwrap();
+    assert_eq!(kept.matches("data:image/png").count(), 2, "D1 and D3 final");
+    assert!(!kept.contains("before the change") && !kept.contains("<strong>Before</strong>"));
 }
 
 /// The second guard: without the model-plan entry a live item still takes the intent path.

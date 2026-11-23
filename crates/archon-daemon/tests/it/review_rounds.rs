@@ -572,19 +572,7 @@ async fn a_fresh_lead_on_the_same_branch_gets_the_complete_oversized_findings() 
     let notes = first.h.backend.messages();
     let original = full_handoff(&workspace, &notes.last().unwrap().1);
     first.cannot_fix().await;
-    first
-        .h
-        .cli(Request::RetryItem {
-            item: first.item.id.clone(),
-            model_plan: None,
-            model_reasons: None,
-            fresh: false,
-            brief_append: None,
-            stage_timeouts: Default::default(),
-        })
-        .await
-        .unwrap();
-    first.h.dispatch().await;
+    retry_on_branch(&first).await;
     let lead = first.h.running().await.remove(0);
     assert_ne!(first.lead.aether_agent, lead.aether_agent);
     let request = first
@@ -600,6 +588,58 @@ async fn a_fresh_lead_on_the_same_branch_gets_the_complete_oversized_findings() 
         let (id, _) = line.split_once(": ").unwrap();
         assert!(original.contains(id), "unexpected finding in {line}");
     }
+}
+
+#[tokio::test]
+async fn a_permanent_report_write_failure_refuses_the_replacement_before_spawn() {
+    let first = Loop::at_cap(Fixes::Large).await;
+    let workspace = first.workspace().await;
+    first.cannot_fix().await;
+    let reports = workspace.join(".archon/reports");
+    let denied = tempfile::tempdir().unwrap();
+    std::fs::rename(&reports, workspace.join(".archon/saved-reports")).unwrap();
+    std::os::unix::fs::symlink(denied.path(), &reports).unwrap();
+    let issued = first.h.backend.requests().len();
+
+    retry_on_branch(&first).await;
+    let QueueState::Failed {
+        error,
+        run: Some(run),
+    } = first.h.state(&first.item.id).await
+    else {
+        panic!("a replacement with an unavailable finding handoff fails");
+    };
+    assert!(
+        error.contains("writing the complete review finding list"),
+        "{error}"
+    );
+    assert_ne!(run, first.lead.run, "the retry reached its own stage");
+    let stages = first.h.ctx.store.lock().await.stage_runs(&run).unwrap();
+    assert_eq!(stages.len(), 1, "the replacement was reserved");
+    assert!(
+        stages[0].aether_agent.is_none(),
+        "the replacement was not issued"
+    );
+    assert_eq!(first.h.backend.requests().len(), issued);
+    assert!(denied.path().read_dir().unwrap().next().is_none());
+}
+
+async fn retry_on_branch(first: &Loop) {
+    first
+        .h
+        .cli(Request::RetryItem {
+            item: first.item.id.clone(),
+            model_plan: None,
+            model_reasons: None,
+            fresh: false,
+            brief_append: None,
+            stage_timeouts: Default::default(),
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(12), first.h.dispatch())
+        .await
+        .expect("retry issues or refuses its lead");
 }
 
 #[tokio::test]

@@ -1490,16 +1490,16 @@ mod tests {
                 "read only the delta from the last reviewed head, including after a pass",
                 "Amend or rebase needs whole-change reads",
                 "List all open findings and their IDs",
-                "confirmed IDs in `resolved_findings` and `findings[].id` for issues still open",
-                "Carry unanswered IDs forward",
-                "Any real blocker found anywhere fails",
-                "Archon to request one final confirmation",
+                "Ask for `resolved_findings` and `findings[].id` for open issues",
+                "Carry omissions forward",
+                "Any real blocker anywhere fails",
+                "If you cannot commit every fix, fail",
                 "As many as the review asks must have read the whole change",
                 "one must have passed the branch head itself",
                 "A pass of an earlier head only anchors such a delta",
                 "A fail stands until a pass read past it",
                 &format!(
-                    "Archon escalates at {REVIEW_ROUND_CAP} failed rounds unless all open blockers have committed fixes"
+                    "At {REVIEW_ROUND_CAP} failed rounds, commit all fixes, then wait for Archon to request one final confirmation"
                 ),
             ] {
                 assert!(text.contains(said), "missing {said:?} in {text}");

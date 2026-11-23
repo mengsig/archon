@@ -530,7 +530,7 @@ fn the_migration_gives_older_items_one_change_each() {
     drop(store);
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute_batch(
-        "DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster; ALTER TABLE lessons DROP COLUMN cluster;
+        "DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster; DROP INDEX items_by_duplicate_candidate; ALTER TABLE lessons DROP COLUMN cluster;
          DROP TABLE github_outbox; DROP TABLE github_objects; DROP TABLE github_links; DROP TABLE item_transitions; DROP TABLE changes;
          ALTER TABLE outcomes DROP COLUMN class_source; ALTER TABLE outcomes DROP COLUMN failure_class_163;
          DELETE FROM schema_migrations WHERE version >= 19;",

@@ -2,20 +2,61 @@ use std::collections::HashMap;
 
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::protocol::{ItemQuery, WorkUnitCounts};
-use archon_core::queue::QueueItem;
+use archon_core::protocol::WorkUnitCounts;
+use archon_core::queue::QueueState;
 
 use super::Store;
+use super::codec::SqlContext;
+
+struct WorkItem {
+    id: QueueItemId,
+    supersedes: Option<QueueItemId>,
+    active: bool,
+}
 
 impl Store {
     /// Count connected supersession chains among all retained items.
     pub fn work_unit_counts(&self) -> Result<WorkUnitCounts, ArchonError> {
-        let items = self.items(&ItemQuery {
-            limit: Some(usize::MAX),
-            ..Default::default()
-        })?;
+        let items = work_items(self)?;
         Ok(count(&items))
     }
+}
+
+fn work_items(store: &Store) -> Result<Vec<WorkItem>, ArchonError> {
+    let mut stmt = store
+        .conn
+        .prepare("SELECT id, state, json_extract(data, '$.supersedes'), json_extract(data, '$.state.state') FROM items")
+        .ctx("prepare work-unit items")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .ctx("query work-unit items")?;
+    let mut items = Vec::new();
+    for row in rows {
+        let (id, state, supersedes, data_state) = row.ctx("read work-unit item")?;
+        if !QueueState::KINDS.contains(&state.as_str()) {
+            return Err(ArchonError::Corrupt(format!(
+                "unknown state {state:?} for item {id}"
+            )));
+        }
+        if data_state.as_deref() != Some(state.as_str()) {
+            return Err(ArchonError::Corrupt(format!(
+                "state disagrees with item {id}"
+            )));
+        }
+        items.push(WorkItem {
+            id: QueueItemId::parse(&id)?,
+            supersedes: supersedes.as_deref().map(QueueItemId::parse).transpose()?,
+            active: !matches!(state.as_str(), "succeeded" | "failed" | "cancelled"),
+        });
+    }
+    Ok(items)
 }
 
 fn root(parents: &mut [usize], mut index: usize) -> usize {
@@ -34,7 +75,7 @@ fn root(parents: &mut [usize], mut index: usize) -> usize {
     index
 }
 
-fn count(items: &[QueueItem]) -> WorkUnitCounts {
+fn count(items: &[WorkItem]) -> WorkUnitCounts {
     let mut ids: HashMap<&QueueItemId, usize> = HashMap::new();
     for item in items {
         let next = ids.len();
@@ -57,7 +98,7 @@ fn count(items: &[QueueItem]) -> WorkUnitCounts {
     for item in items {
         let component = root(&mut parents, ids[&item.id]);
         let active = components.entry(component).or_insert(false);
-        *active |= !item.state.is_terminal();
+        *active |= item.active;
     }
     let active = components.values().filter(|&&active| active).count();
     let finished = components.len() - active;

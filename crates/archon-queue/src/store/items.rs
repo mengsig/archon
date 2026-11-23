@@ -498,17 +498,7 @@ fn insert_requested_in(
         return load(tx, &first);
     }
     let mut stored = as_stored(item).into_owned();
-    if exists(tx, &stored.id)? {
-        return Err(ArchonError::Invalid(format!(
-            "queue item {} already exists",
-            stored.id
-        )));
-    }
-    if let Some(repo) = &stored.repo
-        && !repos::exists(tx, repo)?
-    {
-        return Err(ArchonError::NotFound(format!("repository {repo}")));
-    }
+    check_identity(tx, &stored)?;
     stored.supersedes = supersedes(tx, &stored)?;
     let item = &stored;
     check_dependencies(tx, &item.id, &item.dependencies)?;
@@ -537,6 +527,25 @@ fn insert_requested_in(
     super::changes::record_dependencies(tx, &item.id, &[], &item.dependencies)?;
     super::github_links::record_origin(tx, item)?;
     Ok(item.clone())
+}
+
+fn check_identity(tx: &Connection, item: &QueueItem) -> Result<(), ArchonError> {
+    assert!(
+        !tx.is_autocommit(),
+        "identity is checked inside the insertion transaction"
+    );
+    if exists(tx, &item.id)? {
+        return Err(ArchonError::Invalid(format!(
+            "queue item {} already exists",
+            item.id
+        )));
+    }
+    if let Some(repo) = &item.repo
+        && !repos::exists(tx, repo)?
+    {
+        return Err(ArchonError::NotFound(format!("repository {repo}")));
+    }
+    Ok(())
 }
 
 fn supersedes(conn: &Connection, item: &QueueItem) -> Result<Option<QueueItemId>, ArchonError> {

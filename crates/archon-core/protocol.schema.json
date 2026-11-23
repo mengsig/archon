@@ -4330,6 +4330,17 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "work_units": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkUnitCounts"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Counts of retained work units; absent on older daemons."
         }
       },
       "required": [
@@ -6985,6 +6996,17 @@
         },
         "state": {
           "$ref": "#/$defs/QueueState"
+        },
+        "supersedes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Earlier work this item supersedes."
         },
         "switched_to": {
           "description": "The catalog pipeline a steer switched the item to; `item.pipeline`\nstays the one it was queued with.",
@@ -10645,6 +10667,17 @@
         },
         "state": {
           "$ref": "#/$defs/QueueState"
+        },
+        "supersedes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Earlier work this item supersedes."
         },
         "tags": {
           "items": {
@@ -17913,6 +17946,33 @@
         "elapsed_percent",
         "resets_at",
         "short"
+      ],
+      "type": "object"
+    },
+    "WorkUnitCounts": {
+      "description": "Retained supersession components, active while any member is active.",
+      "properties": {
+        "active": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "finished": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "missing_targets": {
+          "description": "Distinct referenced items no longer retained; counts may be too high.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "active",
+        "finished",
+        "missing_targets"
       ],
       "type": "object"
     },

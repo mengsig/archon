@@ -4,7 +4,7 @@
 //! for learning, and so does every item something live still names: a live
 //! stage run, an unretired run node, a steer, stop or archive owed to a stage,
 //! a build directory release still owed, a live item through a dependency, a
-//! stack or the restack index, an open gate, an open question, an open merge
+//! stack, supersession link or the restack index, an open gate, an open question, an open merge
 //! request, an operator correction, a live initiative, a report record or a
 //! distillation whose lessons are not applied yet. An item stays while gc may still find
 //! something of it on disk, such as a run workspace, through the item. A batch

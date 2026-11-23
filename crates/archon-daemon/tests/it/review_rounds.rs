@@ -3,8 +3,9 @@ use std::path::Path;
 use archon_aether::events::{AetherEvent, EventKind};
 use archon_aether::wire::TaskResult;
 use archon_core::aether_ids::AetherAgentId;
-use archon_core::queue::QueueItem;
-use archon_core::run::{StageOutcome, StageRun, StageState};
+use archon_core::error::ArchonError;
+use archon_core::queue::{QueueItem, QueueState};
+use archon_core::run::{StageOutcome, StageRun, StageState, review_tally_key};
 use archon_daemon::pump;
 use serde_json::{Value, json};
 
@@ -25,9 +26,11 @@ struct Loop {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fixes {
+    None,
     All,
     OnlyOne,
     OmittedEarlier,
+    Large,
 }
 
 impl Loop {
@@ -45,22 +48,33 @@ impl Loop {
         let (first_id, second_head, [first_read, second_read]) =
             first_two_reviews(&h, &lead, &workspace, fixes == Fixes::OmittedEarlier).await;
         let third = change(&workspace);
+        let mut findings = vec![
+            json!({"title": "null check still bypassed", "blocking": true, "id": first_id}),
+            json!({"title": "malformed record panics", "blocking": true}),
+        ];
+        if fixes == Fixes::Large {
+            findings.extend(large_findings());
+        }
+        let count = findings.len();
         let third_read = fail(
             &h,
             &lead,
             &third["commit"],
             Some(&second_head),
-            json!([
-                {"title": "null check still bypassed", "blocking": true, "id": first_id},
-                {"title": "malformed record panics", "blocking": true}
-            ]),
+            json!(findings),
         );
-        let new_id = format!("{}:2", third_read.agent.as_ref().unwrap());
-        let mut addressed = vec![first_id.as_str()];
+        let reviewer = third_read.agent.as_ref().unwrap();
+        let new_id = format!("{reviewer}:2");
+        let mut addressed = vec![first_id.clone()];
         if fixes != Fixes::OnlyOne {
-            addressed.push(&new_id);
+            addressed.extend((2..=count).map(|n| format!("{reviewer}:{n}")));
         }
-        commit_fixes(&workspace, &addressed);
+        if fixes != Fixes::None {
+            commit_fixes(
+                &workspace,
+                &addressed.iter().map(String::as_str).collect::<Vec<_>>(),
+            );
+        }
         let fixed = record(&workspace);
         let review = Self {
             h,
@@ -89,17 +103,31 @@ impl Loop {
     }
 
     async fn finish(&self) {
-        let mut built = self.fixed.clone();
-        let reviewed = pass_by(&self.reports);
-        built
-            .as_object_mut()
-            .unwrap()
-            .extend(reviewed.as_object().unwrap().clone());
-        let result = StageOutcome::Completed {
-            summary: "Confirmed".into(),
-            structured: Some(built),
+        finish(&self.h, &self.fixed, &self.reports).await;
+    }
+
+    async fn cannot_fix(&self) {
+        let outcome = StageOutcome::Failed {
+            error: "could not fix every blocker".into(),
+            infra: false,
         };
-        self.h.settle_running(|_| result.clone()).await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(8),
+            self.h.settle_running(|_| outcome.clone()),
+        )
+        .await
+        .expect("reporting the failed stage settles the cap");
+    }
+
+    async fn workspace(&self) -> std::path::PathBuf {
+        self.h
+            .ctx
+            .store
+            .lock()
+            .await
+            .run(&self.lead.run)
+            .unwrap()
+            .workspace
     }
 
     async fn confirm(&mut self, verdict: &str, resolved: Value, findings: Value) {
@@ -112,6 +140,17 @@ impl Loop {
         handle(&self.h, &event).await;
         self.reports.push(event.agent.unwrap());
     }
+}
+
+async fn finish(h: &Harness, fixed: &Value, approvals: &[AetherAgentId]) {
+    assert!(!approvals.is_empty());
+    let mut built = fixed.clone();
+    built["review"] = pass_by(approvals)["review"].clone();
+    let result = StageOutcome::Completed {
+        summary: "Reviewed".into(),
+        structured: Some(built),
+    };
+    h.settle_running(|_| result.clone()).await;
 }
 
 async fn first_two_reviews(
@@ -217,8 +256,20 @@ async fn handle(h: &Harness, event: &AetherEvent) {
 
 #[tokio::test]
 async fn committed_fixes_get_one_confirmation_and_ship_in_the_same_run() {
-    let mut review = Loop::at_cap(Fixes::All).await;
+    let mut review = Loop::at_cap(Fixes::None).await;
     assert_eq!(review.stage().await.state, StageState::Running);
+    assert_eq!(confirmation_notes(&review.h), 0);
+    assert!(review.h.backend.messages().iter().any(|(_, note)| {
+        note.contains("commit fixes for every open blocker") && note.contains(&review.new_id)
+    }));
+    let workspace = review.workspace().await;
+    commit_fixes(&workspace, &[&review.first_id, &review.new_id]);
+    review.fixed = record(&workspace);
+    for _ in 0..2 {
+        tokio::time::timeout(std::time::Duration::from_secs(8), review.h.dispatch())
+            .await
+            .expect("the sweep checks for committed fixes");
+    }
     let messages = review.h.backend.messages();
     assert_eq!(
         messages
@@ -271,6 +322,10 @@ async fn committed_fixes_get_one_confirmation_and_ship_in_the_same_run() {
 #[tokio::test]
 async fn partial_commit_evidence_still_escalates_at_the_cap() {
     let review = Loop::at_cap(Fixes::OnlyOne).await;
+    assert_eq!(review.stage().await.state, StageState::Running);
+    review.h.dispatch().await;
+    assert_eq!(confirmation_notes(&review.h), 0);
+    review.cannot_fix().await;
     let StageState::Failed { error } = review.stage().await.state else {
         panic!("a partial fix must escalate");
     };
@@ -356,6 +411,7 @@ async fn omitted_blockers_stay_in_the_prompt_and_count_at_the_cap() {
         "{note}"
     );
     handle(&review.h, &third).await;
+    review.cannot_fix().await;
     let stage = review.stage().await;
     let StageState::Failed { error } = stage.state else {
         panic!("the omitted blocker still needs a committed fix");
@@ -429,4 +485,200 @@ fn confirmation_notes(h: &Harness) -> usize {
         .iter()
         .filter(|(_, note)| note.contains("exactly one reviewer"))
         .count()
+}
+
+fn large_findings() -> Vec<Value> {
+    (1..=20).map(|n| json!({"title": format!("large report finding {n}: {}", "λ".repeat(180)), "blocking": true})).collect()
+}
+
+fn full_handoff(workspace: &Path, prompt: &str) -> String {
+    let path = prompt
+        .split('`')
+        .find(|word| word.starts_with(".archon/reports/review-findings-"))
+        .expect("the prompt points to the full findings");
+    assert!(prompt.len() < 1024 || !prompt.starts_with("The review"));
+    assert!(
+        !prompt.contains("large report finding 12"),
+        "large details stay in the file"
+    );
+    std::fs::read_to_string(workspace.join(path)).unwrap()
+}
+
+#[tokio::test]
+async fn oversized_caps_link_to_the_complete_confirmation_list() {
+    let review = Loop::at_cap(Fixes::Large).await;
+    let notes = review.h.backend.messages();
+    let note = &notes.last().unwrap().1;
+    assert!(note.contains("exactly one reviewer"), "{note}");
+    let full = full_handoff(&review.workspace().await, note);
+    assert!(
+        full.contains(&review.first_id),
+        "the earlier blocker is included"
+    );
+    for n in 2..=22 {
+        assert!(
+            full.contains(&format!("{}:{n}: ", review.reports[2])),
+            "missing ID {n}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn oversized_open_findings_link_to_the_complete_list_after_a_resume() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.run(&item.id).await.workspace;
+    let initial = change(&workspace);
+    let event = fail(&h, &lead, &initial["commit"], None, json!(large_findings()));
+    handle(&h, &event).await;
+    let first = h.backend.messages();
+    let first = full_handoff(&workspace, &first.last().unwrap().1);
+    assert_eq!(first.lines().count(), 20);
+
+    h.backend.fail_agent(lead.aether_agent.as_ref().unwrap());
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    let resumed = h.running().await.remove(0);
+    assert_ne!(lead.id, resumed.id);
+    let prompt = h.backend.resumed_with(&resumed);
+    let full = full_handoff(&workspace, &prompt);
+    assert_eq!(full, first);
+    assert!(full.contains(&format!("{}:20: ", event.agent.unwrap())));
+}
+
+#[tokio::test]
+async fn a_refused_finding_handoff_escalates_visibly() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.run(&item.id).await.workspace;
+    let initial = change(&workspace);
+    let event = fail(&h, &lead, &initial["commit"], None, json!(large_findings()));
+    h.backend
+        .fail_next_message(ArchonError::Forbidden("test refused the handoff".into()));
+    handle(&h, &event).await;
+    let stage = h.ctx.store.lock().await.stage_run(&lead.id).unwrap();
+    let StageState::Failed { error } = stage.state else {
+        panic!("the refused handoff must be visible")
+    };
+    assert!(
+        error.contains("review finding IDs could not be delivered"),
+        "{error}"
+    );
+    assert!(error.starts_with("ESCALATE:"), "{error}");
+}
+
+#[tokio::test]
+async fn an_upgraded_tally_restores_already_counted_findings_and_their_ordinals() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.run(&item.id).await.workspace;
+    let initial = change(&workspace);
+    let first = fail(
+        &h,
+        &lead,
+        &initial["commit"],
+        None,
+        json!([
+            {"title": "a follow-up", "blocking": false}, {"title": "older blocker", "blocking": true}
+        ]),
+    );
+    let reviewer = first.agent.unwrap();
+    let legacy = json!({"fails": [{"agent": reviewer, "head": initial["commit"], "findings": ["older blocker"]}], "read": [reviewer]});
+    let key = review_tally_key(&lead.id);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &legacy.to_string())
+        .unwrap();
+    let next = change(&workspace);
+    let second = fail(
+        &h,
+        &lead,
+        &next["commit"],
+        Some(&initial["commit"]),
+        json!([{"title": "another blocker", "blocking": true}]),
+    );
+    handle(&h, &second).await;
+    let notes = h.backend.messages();
+    let note = &notes.last().unwrap().1;
+    assert!(
+        note.contains(&format!("{reviewer}:1: a follow-up")),
+        "{note}"
+    );
+    assert!(
+        note.contains(&format!("{reviewer}:2: older blocker")),
+        "{note}"
+    );
+    handle(&h, &second).await;
+    assert_eq!(
+        h.backend.messages().len(),
+        notes.len(),
+        "replay keeps the same IDs"
+    );
+}
+
+#[tokio::test]
+async fn a_delta_pass_must_confirm_the_blocker_even_if_the_lead_omits_its_reviewer() {
+    for (claim, named, ship) in [
+        ("omitted", false, false),
+        ("still open", true, false),
+        ("resolved", true, true),
+    ] {
+        let h = Harness::new().await;
+        let item = adaptive_item(&h).await;
+        let lead = h.running().await.remove(0);
+        let workspace = h.run(&item.id).await.workspace;
+        let first = change(&workspace);
+        let fail = fail(
+            &h,
+            &lead,
+            &first["commit"],
+            None,
+            json!([{"title": "invalid input panics", "blocking": true}]),
+        );
+        handle(&h, &fail).await;
+        let failed = fail.agent.unwrap();
+        let id = format!("{failed}:1");
+        let fixed = change(&workspace);
+        let mut result = json!({"verdict": "pass", "head": fixed["commit"], "base": first["commit"], "findings": []});
+        match claim {
+            "still open" => {
+                result["findings"] = json!([{"title": "still open", "blocking": false, "id": id}])
+            }
+            "resolved" => result["resolved_findings"] = json!([id]),
+            _ => {}
+        }
+        let delta = reporter(&h, &lead, result);
+        handle(&h, &delta).await;
+        let mut approvals = vec![delta.agent.unwrap()];
+        if named {
+            approvals.push(failed);
+        }
+        finish(&h, &fixed, &approvals).await;
+        h.dispatch().await;
+        if ship {
+            assert!(matches!(
+                h.state(&item.id).await,
+                QueueState::Succeeded { .. }
+            ));
+        } else {
+            let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+                panic!("{claim}: a missing disposition must block shipping")
+            };
+            assert!(
+                error.contains(&format!(
+                    "no subsequent review confirmed blocker {id} resolved"
+                )),
+                "{error}"
+            );
+        }
+    }
 }

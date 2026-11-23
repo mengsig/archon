@@ -121,11 +121,19 @@ async fn retried(h: &Harness, item: &QueueItem, fresh: bool) -> StageRun {
 
 /// The new lead commits a fix and names one delta reviewer, which passed it
 /// from `base`; the lead's stage then completes with that pass.
-async fn one_delta_pass(h: &Harness, lead: &StageRun, base: &Value) -> AetherAgentId {
+async fn one_delta_pass(
+    h: &Harness,
+    lead: &StageRun,
+    base: &Value,
+    resolved: Option<&AetherAgentId>,
+) -> AetherAgentId {
     let delta = h.backend.delegate(&lead_agent(lead), REVIEW_MODEL);
     let built = shipped_by(h, lead, "fixed", pass_by(std::slice::from_ref(&delta))).await;
     let mut verdict = verdict_on(&built, "pass");
     verdict["base"] = base.clone();
+    if let Some(original) = resolved {
+        verdict["resolved_findings"] = json!([format!("{original}:1")]);
+    }
     h.backend.complete_delegated(&delta, verdict);
     h.settle_running(|_| built.clone()).await;
     h.dispatch().await;
@@ -153,7 +161,7 @@ async fn a_retry_on_the_branch_ships_on_one_delta_pass_of_the_new_commits() {
     let first = first_run_escalates(&h, &item).await;
     let lead = retried(&h, &item, false).await;
     assert_ne!(first.lead, lead_agent(&lead), "a new lead");
-    let delta = one_delta_pass(&h, &lead, &first.head).await;
+    let delta = one_delta_pass(&h, &lead, &first.head, Some(&first.reviewers[0])).await;
     assert!(
         matches!(h.state(&item.id).await, QueueState::Succeeded { .. }),
         "{:?}",
@@ -177,6 +185,23 @@ async fn a_retry_on_the_branch_ships_on_one_delta_pass_of_the_new_commits() {
     );
 }
 
+#[tokio::test]
+async fn a_retry_delta_pass_cannot_leave_an_earlier_runs_blocker_open() {
+    let h = Harness::new().await;
+    let item = strict_item(&h).await;
+    let first = first_run_escalates(&h, &item).await;
+    let lead = retried(&h, &item, false).await;
+    one_delta_pass(&h, &lead, &first.head, None).await;
+    let error = refused(&h, &item).await;
+    assert!(
+        error.contains(&format!(
+            "no subsequent review confirmed blocker {}:1 resolved",
+            first.reviewers[0]
+        )),
+        "{error}"
+    );
+}
+
 /// A fresh retry starts over from the base: the first run's reviews read
 /// commits its branch never holds, so one delta pass is no review.
 #[tokio::test]
@@ -185,7 +210,7 @@ async fn a_fresh_retry_owes_the_whole_review_again() {
     let item = strict_item(&h).await;
     let first = first_run_escalates(&h, &item).await;
     let lead = retried(&h, &item, true).await;
-    one_delta_pass(&h, &lead, &first.head).await;
+    one_delta_pass(&h, &lead, &first.head, None).await;
     let error = refused(&h, &item).await;
     assert!(error.contains("names 1 reviewer"), "{error}");
 }
@@ -207,7 +232,7 @@ async fn a_rewritten_history_drops_the_earlier_runs_reviews() {
         &["commit", "--quiet", "--allow-empty", "-m", "Start over"],
     );
     assert_ne!(fork, first.head, "the reviewed commit is gone");
-    one_delta_pass(&h, &lead, &fork).await;
+    one_delta_pass(&h, &lead, &fork, None).await;
     let error = refused(&h, &item).await;
     assert!(error.contains("1 of the reviewers"), "{error}");
 }
@@ -240,7 +265,7 @@ async fn amending_only_the_failed_fix_drops_the_earlier_runs_reviews() {
     ];
     git(&workspace, &amend);
     assert_eq!(json!(git(&workspace, &["rev-parse", "HEAD~1"])), first.head);
-    one_delta_pass(&h, &lead, &first.head).await;
+    one_delta_pass(&h, &lead, &first.head, None).await;
     let error = refused(&h, &item).await;
     let from = &first.head.as_str().unwrap()[..12];
     assert!(error.contains(&format!("read only from {from}")), "{error}");
@@ -332,7 +357,7 @@ async fn a_listed_workers_recorded_fail_keeps_the_carry() {
     escalate(&h, &item).await;
     let lead = retried(&h, &item, false).await;
     let head = verdict_on(&read, "pass")["head"].clone();
-    one_delta_pass(&h, &lead, &head).await;
+    one_delta_pass(&h, &lead, &head, None).await;
     let state = h.state(&item.id).await;
     assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
 }

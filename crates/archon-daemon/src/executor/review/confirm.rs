@@ -7,8 +7,8 @@ use archon_core::ports::{Descendant, DescendantState};
 use archon_core::run::{PipelineRun, StageRun};
 use serde::{Deserialize, Serialize};
 
-use super::record::Report;
 use super::rounds::same_commit;
+use super::{handoff, record::Report};
 use crate::{context::DaemonContext, worktree};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -27,15 +27,19 @@ pub(super) enum Status {
     Refused(&'static str),
 }
 
+pub(super) enum Eligibility {
+    NoBranch,
+    AwaitingFixes,
+    Ready(Confirmation),
+}
+
 impl Confirmation {
     pub async fn eligible(
         run: PipelineRun,
         failed_head: &str,
         findings: &[(&str, &str)],
-    ) -> Result<Option<Self>, ArchonError> {
-        if findings.is_empty() || run.branch.is_empty() {
-            return Ok(None);
-        }
+    ) -> Result<Eligibility, ArchonError> {
+        assert!(!findings.is_empty());
         assert!(!failed_head.is_empty());
         let failed = failed_head.to_owned();
         let fixes = tokio::task::spawn_blocking(move || committed_fixes(&run, &failed))
@@ -44,16 +48,17 @@ impl Confirmation {
                 ArchonError::io("check committed review fixes", std::io::Error::other(e))
             })??;
         let Some((base, head, fixes)) = fixes else {
-            return Ok(None);
+            return Ok(Eligibility::NoBranch);
         };
         if findings.iter().any(|(id, _)| !fixes.contains(*id)) {
-            return Ok(None);
+            return Ok(Eligibility::AwaitingFixes);
         }
+        assert_ne!(base, head, "trailer evidence requires a later commit");
         let findings = findings
             .iter()
             .map(|(id, text)| ((*id).to_owned(), (*text).to_owned()))
             .collect();
-        Ok(Some(Self {
+        Ok(Eligibility::Ready(Self {
             base,
             head,
             findings,
@@ -169,12 +174,13 @@ impl Confirmation {
             self.existing.is_some(),
             "the confirmation scope is frozen before delivery"
         );
-        let findings = self
+        let findings: Vec<_> = self
             .findings
             .iter()
-            .map(|(id, text)| format!("- {id}: {text}"))
-            .collect::<Vec<_>>()
-            .join("\n");
+            .map(|(id, text)| (id.as_str(), text.as_str()))
+            .collect();
+        let workspace = ctx.store.lock().await.run(&stage.run)?.workspace;
+        let findings = handoff::findings(&workspace, &findings)?;
         let note = format!(
             concat!(
                 "The review reached the cap with fixes committed. Have exactly one reviewer read ",
@@ -195,7 +201,7 @@ impl Confirmation {
     }
 }
 
-fn reviewers<'a>(
+pub(super) fn reviewers<'a>(
     lead: &'a AetherAgentId,
     beneath: &'a [Descendant],
 ) -> impl Iterator<Item = &'a Descendant> {
@@ -209,7 +215,10 @@ fn committed_fixes(
     failed: &str,
 ) -> Result<Option<(String, String, BTreeSet<String>)>, ArchonError> {
     let path = &run.workspace;
-    if !path.join(".git").exists() || !worktree::head(path)?.is_branch(&run.branch) {
+    if run.branch.is_empty()
+        || !path.join(".git").exists()
+        || !worktree::head(path)?.is_branch(&run.branch)
+    {
         return Ok(None);
     }
     let Some(base) = worktree::commit_id(path, failed)? else {
@@ -218,11 +227,13 @@ fn committed_fixes(
     let Some(head) = worktree::commit_id(path, "HEAD")? else {
         return Ok(None);
     };
-    if base == head || !worktree::is_ancestor(path, &base, &head)? {
+    if base != head && !worktree::is_ancestor(path, &base, &head)? {
         return Ok(None);
     }
-    if worktree::stack::tree_of(path, &head)? == worktree::stack::tree_of(path, &base)? {
-        return Ok(None);
+    if base == head
+        || worktree::stack::tree_of(path, &head)? == worktree::stack::tree_of(path, &base)?
+    {
+        return Ok(Some((base, head, BTreeSet::new())));
     }
     assert!(
         head.len() == base.len(),

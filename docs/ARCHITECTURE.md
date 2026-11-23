@@ -2696,12 +2696,16 @@ names the named passes and the named whole-change fails they answered, so
 a strict review whose first reads failed still names three; a review whose
 named reads make a shorter record is refused, as is one with fewer reads.
 Fewer fail the run with the reasons. Review rounds count commits with at least
-one blocking fail. At `REVIEW_ROUND_CAP` (three), Archon checks for a newer
-descendant commit on the run branch and a `Review-Fix: <id>` trailer for each
-open blocker at the cap. When those fixes are already committed, the lead
-delegates one final review of that exact delta. The reviewer must explicitly
-confirm every capped ID as resolved and pass the delta. A new or unresolved
-blocker ends the stage. The normal branch and coverage checks still apply.
+one blocking fail. A later review must confirm each blocking ID before it
+can ship. At `REVIEW_ROUND_CAP` (three), the lead stays live while it commits
+fixes for all open blockers. The live-stage sweep checks for a descendant
+commit on the run branch and a `Review-Fix: <id>` trailer for every blocker.
+Once those commits exist, the lead delegates one final review of that exact
+delta. The reviewer must explicitly resolve every capped ID and pass the
+delta. A new or unresolved blocker ends the stage. The normal branch and
+coverage checks still apply. When a finding list is too large for an inbox
+message or a resumed objective, it is written in full to an ignored file
+under `.archon/reports/` in the shared worktree.
 When the cap stops the stage, it fails with an
 `ESCALATE:` error, marked first like a stall (§16) so its cancel does not
 settle it as cancelled, and retried by the next sweep when the cancel goes

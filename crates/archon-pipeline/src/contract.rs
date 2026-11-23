@@ -887,10 +887,9 @@ Replace any cancelled reader with a whole-change read. Commit fixes with a \
 fix and read only the delta from the last reviewed head, including after a pass. Amend \
 or rebase needs whole-change reads. List all open findings and their IDs \
 (`reviewer-agent:1-based position in findings`) in the prompt. \
-Ask for confirmed IDs in `resolved_findings` and `findings[].id` for issues still open. \
-Carry unanswered IDs forward. Any real blocker found anywhere fails. Archon escalates \
-at 3 failed rounds unless all open blockers have committed fixes. In that case wait for \
-Archon to request one final confirmation.\n";
+Ask for `resolved_findings` and `findings[].id` for open issues. Carry omissions forward. \
+Any real blocker anywhere fails. At 3 failed rounds, commit all fixes, then wait for \
+Archon to request one final confirmation. If you cannot commit every fix, fail.\n";
 
 /// A review-only lead's rounds: one, whose findings it records rather than fixes.
 const REVIEW_ONLY_ROUNDS_RULE: &str = "\

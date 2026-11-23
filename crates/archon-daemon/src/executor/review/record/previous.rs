@@ -8,6 +8,7 @@ use archon_queue::Store;
 use serde_json::Value;
 
 use super::{Finding, RoundId, Rounds};
+use crate::executor::review::handoff;
 
 pub(in crate::executor::review) fn prior_findings(
     store: &Store,
@@ -52,58 +53,70 @@ fn findings_before(
     let earlier = stages.iter().rev().filter(|candidate| {
         candidate.stage_id == stage.stage_id
             && candidate.fan_index == stage.fan_index
-            && (!same_run || candidate.attempt < stage.attempt)
+            && (!same_run || (candidate.started_at, &candidate.id) < (stage.started_at, &stage.id))
             && candidate.state.is_terminal()
     });
     for candidate in earlier {
         assert_ne!(stage.id, candidate.id);
         assert_eq!(stage.run == candidate.run, same_run);
-        let records = candidate
-            .structured
-            .as_ref()
-            .and_then(|s| s.get("review_rounds"));
-        if let Some(record) = records.filter(|r| r.get("findings").is_some()) {
-            let found: BTreeMap<String, Finding> =
-                serde_json::from_value(record["findings"].clone())?;
-            let head = record
-                .get("rounds")
-                .and_then(Value::as_array)
-                .and_then(|rounds| rounds.last())
-                .and_then(|r| r.get("head"))
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            let open = found
-                .into_values()
-                .filter(|f| f.resolved_in.is_none())
-                .collect();
-            return Ok(Some(Prior {
-                stage: candidate.id.clone(),
-                head,
-                open,
-                record: record.clone(),
-            }));
+        if let Some(prior) = read_prior(candidate)? {
+            return Ok(Some(prior));
         }
     }
     Ok(None)
 }
 
-pub(in crate::executor) fn append_prior(
+fn read_prior(stage: &StageRun) -> Result<Option<Prior>, ArchonError> {
+    let Some(record) = stage
+        .structured
+        .as_ref()
+        .and_then(|s| s.get("review_rounds"))
+        .filter(|r| r.get("findings").is_some())
+    else {
+        return Ok(None);
+    };
+    assert!(stage.state.is_terminal());
+    let found: BTreeMap<String, Finding> = serde_json::from_value(record["findings"].clone())?;
+    let head = record
+        .get("rounds")
+        .and_then(Value::as_array)
+        .and_then(|rounds| rounds.last())
+        .and_then(|r| r.get("head"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let open = found
+        .into_values()
+        .filter(|f| f.resolved_in.is_none())
+        .collect();
+    Ok(Some(Prior {
+        stage: stage.id.clone(),
+        head,
+        open,
+        record: record.clone(),
+    }))
+}
+
+pub(in crate::executor) fn prior_handoff(
     store: &Store,
     stage: &StageRun,
-    objective: &mut String,
     delegates_review: bool,
-) -> Result<(), ArchonError> {
+    replacing: Option<&StageRun>,
+) -> Result<Option<String>, ArchonError> {
     if stage.only_reviews == Some(true)
         || (!delegates_review && stage.kind != Some(StageKind::Review))
     {
-        return Ok(());
+        return Ok(None);
     }
-    let Some(prior) = previous(store, stage)?.filter(|p| !p.open.is_empty()) else {
-        return Ok(());
+    let prior = match replacing.map(read_prior).transpose()?.flatten() {
+        Some(prior) => Some(prior),
+        None => previous(store, stage)?,
     };
-    assert!(!objective.is_empty());
+    let Some(prior) = prior.filter(|p| !p.open.is_empty()) else {
+        return Ok(None);
+    };
+    assert_ne!(stage.id, prior.stage);
     assert!(prior.open.iter().all(|f| f.resolved_in.is_none()));
-    objective.push_str("\n\n## Open findings from the previous review\n\n");
+    let mut objective = "\n\n## Open findings from the previous review\n\n".to_owned();
     if let Some(head) = prior.head {
         objective.push_str(&format!(
             "The last review read `{head}`. Review the new delta if that head is still an ancestor.\n"
@@ -116,10 +129,15 @@ pub(in crate::executor) fn append_prior(
         );
     }
     objective.push_str(rule);
-    for finding in prior.open {
-        objective.push_str(&format!("\n- {}: {}", finding.id, finding.description));
-    }
-    Ok(())
+    let findings: Vec<_> = prior
+        .open
+        .iter()
+        .map(|finding| (finding.id.as_str(), finding.description.as_str()))
+        .collect();
+    let workspace = store.run(&stage.run)?.workspace;
+    objective.push_str("\n\n");
+    objective.push_str(&handoff::findings(&workspace, &findings)?);
+    Ok(Some(objective))
 }
 
 pub(super) fn update_previous(

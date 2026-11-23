@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::rounds::{load_from, same_commit};
-pub(in crate::executor) use previous::append_prior;
 pub(super) use previous::prior_findings;
+pub(in crate::executor) use previous::prior_handoff;
 use previous::{previous, update_previous};
 
 #[derive(Debug, Serialize, Deserialize)]

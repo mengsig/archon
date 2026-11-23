@@ -78,7 +78,7 @@ async fn failure_at_review_cap(
     id: &StageRunId,
     outcome: StageOutcome,
 ) -> Result<StageOutcome, ArchonError> {
-    if matches!(outcome, StageOutcome::Failed { infra: false, .. })
+    if matches!(outcome, StageOutcome::Failed { .. })
         && let Some(capped) = super::review::capped_on_failure(ctx, id).await?
     {
         assert_eq!(capped.stage, *id, "the cap belongs to the failed stage");
@@ -763,6 +763,9 @@ pub(super) async fn deadline_stopped(
     ctx: &DaemonContext,
     id: &StageRunId,
 ) -> Result<FollowUp, ArchonError> {
+    if let Some(capped) = super::review::capped_on_failure(ctx, id).await? {
+        return settle_capped(ctx, id, capped).await;
+    }
     let mut table = ctx.runs.lock().await;
     let (stage, run, all, outcome) = {
         let store = ctx.store.lock().await;
@@ -1045,14 +1048,19 @@ async fn replace(
     // Owed before the replacement exists, so it never starts beside them.
     let woken = retry.wake.is_some();
     descendants::owe(&mut store, failed, woken)?;
-    let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, retry)? else {
+    let mut failed = restatement::bound(&store, failed.clone())?;
+    let previous_review = super::review::attach_rounds(&store, &mut failed)?;
+    let Some(id) = spawn::reserve_replacement(ctx, &mut store, &failed, &plan, retry)? else {
         return Ok(None);
     };
     // Replacement first: a crash in between leaves a superseded live
     // stage run, never a failure that looks final on resume.
     // The attempt goes on, so its restatement is kept for the replacement too.
-    let failed = restatement::bound(&store, failed.clone())?;
-    store.upsert_stage_run(&failed)?;
+    if let Some((stage, rounds)) = previous_review {
+        store.upsert_stage_with_previous_review(&failed, &stage, &rounds)?;
+    } else {
+        store.upsert_stage_run(&failed)?;
+    }
     Ok(Some((id, woken)))
 }
 

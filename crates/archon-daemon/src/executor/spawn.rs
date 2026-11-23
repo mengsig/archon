@@ -689,6 +689,7 @@ fn reserve_each(
             governed: budget.is_some(),
             sections: &sections,
             experiments: &experiments,
+            replacing: None,
         };
         let share = slot_budget(budget, &plan);
         let now = archon_core::now();
@@ -825,6 +826,7 @@ struct Target<'a> {
     sections: &'a str,
     /// The item's directory for reviewers' experiment copies.
     experiments: &'a Path,
+    replacing: Option<&'a StageRun>,
 }
 
 impl Target<'_> {
@@ -1100,12 +1102,15 @@ fn reserve_one(
         started_at: now,
         finished_at: None,
     };
-    super::review::append_prior(
-        store,
-        &stage,
-        &mut spawn.request.objective,
-        plan.reviewers.is_some(),
-    )?;
+    if let Some(handoff) =
+        super::review::prior_handoff(store, &stage, plan.reviewers.is_some(), target.replacing)?
+    {
+        assert!(!spawn.request.objective.is_empty());
+        spawn.request.objective.push_str(&handoff);
+        if let Some(resume) = &mut spawn.resume {
+            resume.message.push_str(&handoff);
+        }
+    }
     save_spawn(store, &id, &spawn)?;
     let note = workers.and_then(|narrowed| narrowed.note);
     match &note {
@@ -1333,6 +1338,7 @@ pub(super) fn reserve_replacement(
         governed: false,
         sections: &sections,
         experiments: &experiments,
+        replacing: Some(failed),
     };
     // An earlier grant is not enforced once budgets are off.
     let budget = match resolve::item_caps(ctx, item.repo.as_ref()).budgets_enabled {

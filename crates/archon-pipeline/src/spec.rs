@@ -124,6 +124,13 @@ pub struct Owed {
     pub ship_record: bool,
 }
 
+impl Owed {
+    /// Whether a stage must hand in a ship record or account for reviewers.
+    pub fn requires_records(self) -> bool {
+        self.ship_record || self.review.is_some_and(|duty| duty.reviewers > 0)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(from = "StageToml")]
 pub struct StageSpec {

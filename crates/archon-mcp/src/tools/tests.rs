@@ -259,7 +259,7 @@ fn submit_verdict_carries_the_result_and_its_answer_says_what_to_do_next() {
     assert!(
         definition
             .description
-            .contains("the `restating` one is final")
+            .contains("Correct refused records and resubmit")
     );
     assert!(
         !definition.description.contains("complete_task"),
@@ -288,6 +288,12 @@ fn submit_verdict_carries_the_result_and_its_answer_says_what_to_do_next() {
     let pass = VerdictReading::new((Verdict::Pass, None));
     let accepted = answer(CheckDecision::Accepted, pass);
     assert!(accepted.contains("reads this as a pass"), "{accepted}");
+    let records = render("submit_verdict", &Reply::Ok);
+    assert!(records.starts_with("Precheck complete."), "{records}");
+    assert!(
+        records.contains("submitted `summary` and `structured`"),
+        "{records}"
+    );
 }
 
 #[test]

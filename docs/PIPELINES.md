@@ -1031,9 +1031,9 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
 - **Restating a verdict.** A finished agent cannot be asked again, so every
   contract with a Verdict section tells its agent to call `submit_verdict`
   with the `summary` and `structured` (an object) it is about to finish
-  with. Archon reads them as the gate will. A pass or a fail is accepted and
-  the agent finishes. A verdict that reads as neither (a pass beside a
-  blocking finding, no verdict, a hedged one) is answered with what to
+  with. Archon reads them as the gate will. It accepts a fail or a pass
+  whose required records hold. A verdict that reads as neither (a pass
+  beside a blocking finding, no verdict, a hedged one) is answered with what to
   change, and the agent submits the corrected result with `"restating":
   true`: that submission is final, whatever it reads as. An unreadable
   submission repeated without the mark restates nothing and is given the
@@ -1069,6 +1069,9 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
 - **The stage `[pipeline.ship]` names.** `## Ship record`: commit with the
   repository's git identity, leave a clean tree, do not push, and return
   `commit`, `tree`, `checks` and `pr` in `structured` (see "Shipping").
+- **Stages that owe a review or ship record** submit their proposed result
+  through `submit_verdict`. Correct any refusal and submit again before
+  finishing. Settlement rechecks the records against the branch and Aether.
 - **Ship stages**, in a pipeline of your own that has one. `structured`
   includes `{"pr_url": …}` or `{"commit": …}`. The commits a ship stage is
   given are delivered as they are: it does not amend, rebase, squash or

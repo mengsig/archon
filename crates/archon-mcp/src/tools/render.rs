@@ -140,6 +140,9 @@ fn ok(tool: &str) -> &'static str {
         "update_item" => "Updated.",
         "retry_item" => "Re-queued.",
         "refresh_item" => "Refresh queued.",
+        "submit_verdict" => {
+            "Precheck complete. Finish as your instructions say with the submitted `summary` and `structured`."
+        }
         _ => "Done.",
     }
 }

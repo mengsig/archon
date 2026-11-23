@@ -24,6 +24,10 @@ You are stage `build` (kind `work`) of an Archon pipeline, running unattended. A
 - Report the `git rev-parse HEAD^{tree}` of your last full check. A passing check of a tree holds for any later head with that tree. After a passing full check, a later diff of only prose or raster images that no build or test reads needs only the repository's link and notice checks.
 - Check your change against each user-outcome criterion in the brief and say how. Say plainly which this environment cannot check, and why: never claim one you did not check.
 
+## Record precheck
+
+- Before you finish, call `mcp__archon__submit_verdict` with the `summary` and `structured` you will finish with (skip it if you have no such tool). Fix and resubmit any refused record. Archon checks the final result again at settlement.
+
 ## Review on record
 
 - Your stage holds this run's review: the change as it finally stands is reviewed by 3 agents you delegate to, each working alone and none of which wrote any of it. Delegate all 3 yourself; naming fewer fails the run. Where earlier runs of this item reviewed this branch, each whole-change read they made still counts toward the 3: delegate only the whole-change reviewers they lack, and one delta reviewer of the commits after their last reviewed head. No more, not even to confirm a pass: another only for a read the rules below require.

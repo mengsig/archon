@@ -19,6 +19,7 @@ use archon_core::repo::Repo;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
 use archon_pipeline::ShipRecord;
 use archon_pipeline::review::{self, MAX_NAMED_REVIEWERS, Reviewer, Verdict};
+use archon_pipeline::spec::Owed;
 use archon_queue::RunReview;
 
 use super::recover;
@@ -82,15 +83,6 @@ enum Checked {
     Unanchored(String),
 }
 
-/// What a settling stage's result owes besides its gate.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct Owed {
-    /// Reviewers this item's review level asks of the stage; 0: none.
-    pub reviewers: u32,
-    /// Whether the result is also the ship record archond delivers.
-    pub records_ship: bool,
-}
-
 /// `outcome` with Archon's own finding on the review pass it claims, for a
 /// `stage` owing `owed`, and the review it verified when that pass holds.
 /// `Err` while Aether cannot be asked.
@@ -114,14 +106,12 @@ pub(super) async fn verify(
     };
     // A missing ship record binds nothing: the stage's gate refuses it.
     let record = owed
-        .records_ship
+        .ship_record
         .then(|| ShipRecord::read(Some(&structured)));
     let shipped = record.and_then(Result::ok).map(|record| record.tree);
+    let count = owed.review.map_or(0, |duty| duty.reviewers);
     let found = match review::claimed_reviewers(&structured) {
-        Some(named) if owed.reviewers > 0 => {
-            let owed = owed.reviewers;
-            Some(reviewers(ctx, run, stage, &named, owed, shipped).await?)
-        }
+        Some(named) if count > 0 => Some(reviewers(ctx, run, stage, &named, count, shipped).await?),
         _ => None,
     };
     let (implicit, reads, corrections) = match &found {

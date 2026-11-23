@@ -120,7 +120,7 @@ pub(super) async fn with_full_ids(
 
 /// `outcome`, failed when the record stage claims "no change needed" but the
 /// run worktree holds one: a claim never bypasses the review of a change.
-pub(super) async fn verify_no_change(
+async fn verify_no_change(
     ctx: &DaemonContext,
     run: &PipelineRun,
     outcome: StageOutcome,
@@ -141,6 +141,16 @@ pub(super) async fn verify_no_change(
             infra: false,
         }),
     }
+}
+
+/// Normalize the record's git ids and verify any claim that nothing ships.
+pub(super) async fn verify_record(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    outcome: StageOutcome,
+) -> Result<StageOutcome, ArchonError> {
+    let outcome = with_full_ids(run, outcome).await?;
+    verify_no_change(ctx, run, outcome).await
 }
 
 /// `outcome`, failed when a stage after the record stage ends with the record

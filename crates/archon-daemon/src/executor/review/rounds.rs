@@ -370,8 +370,11 @@ async fn tell_findings(
     let note = format!(
         "Include every open ID below in the next review's instructions. Ask for each ID's disposition and a review of the new delta.\n\n{list}"
     );
-    let digest = Sha256::digest(note.as_bytes());
-    let key = format!("archon:review-findings:{}:{digest:x}", stage.id);
+    let digest: String = Sha256::digest(note.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let key = format!("archon:review-findings:{}:{digest}", stage.id);
     tell(ctx, lead, &note, &key).await?;
     Ok(())
 }

@@ -201,7 +201,7 @@ fn reviewers<'a>(
 ) -> impl Iterator<Item = &'a Descendant> {
     beneath
         .iter()
-        .filter(|d| &d.parent == lead && d.role.eq_ignore_ascii_case(REVIEWER_ROLE))
+        .filter(move |d| &d.parent == lead && d.role.eq_ignore_ascii_case(REVIEWER_ROLE))
 }
 
 fn committed_fixes(

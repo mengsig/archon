@@ -2,7 +2,7 @@
 // captioned with the commit it came from.
 import { h } from '../../ui/dom.js';
 import { openSheet } from '../../ui/sheet.js';
-import { captionFor } from './state.js';
+import { captionFor, afterAssetOf } from './state.js';
 import { designErrorText } from '../../core/design.js';
 
 // A note with no target points at nothing on the page: its Before picture is
@@ -16,7 +16,10 @@ export function compareLayout(note) {
   return { mode: 'slider', beforeWord: 'Before' };
 }
 
-export function openCompare(ctx, note) {
+// The after picture is always the one taken after the change for this note:
+// its newest after capture. It is read from the note each time, so a capture
+// that lands after the window is open, or a note done again, swaps it in.
+export function createCompare(ctx, note) {
   const layout = compareLayout(note);
   const pair = layout.mode === 'pair';
   const before = h('figure', { class: 'cmp-pane cmp-before' }, h('div', { class: 'list-status', text: 'Loading…' }));
@@ -28,19 +31,34 @@ export function openCompare(ctx, note) {
   apply();
   const controls = pair ? null : h('div', { class: 'cmp-controls' }, h('span', { class: 'cmp-end', text: 'Before' }), split, h('span', { class: 'cmp-end', text: 'After' }));
   const content = h('div', { class: 'cmp' }, stage, controls);
-  openSheet({ title: `${note.id}: before and after`, content, size: 'tall' });
-  const fill = async (figure, id, commit, word) => {
+  const fill = async (figure, id, commit, word, stale = () => false) => {
     try {
       const asset = await ctx.design.asset(note.item, id);
+      if (stale()) return;
       // The slider's stage takes the Before picture's proportions; both pictures then scale to fit it.
       if (word === layout.beforeWord && !pair && asset.width && asset.height) stage.style.setProperty('--ar', `${asset.width} / ${asset.height}`);
       figure.replaceChildren(
         h('img', { class: 'cmp-img', src: asset.data_url, alt: `${word} picture of ${note.id}`, width: String(asset.width), height: String(asset.height) }),
         h('figcaption', { class: 'cmp-caption', text: word === 'Your sketch' ? word : `${word}: ${asset.caption ?? captionFor(commit, null)}` }));
     } catch (err) {
-      figure.replaceChildren(h('p', { class: 'form-error', role: 'alert', text: designErrorText(err) }));
+      if (!stale()) figure.replaceChildren(h('p', { class: 'form-error', role: 'alert', text: designErrorText(err) }));
     }
   };
+  let shown = null;
+  const update = (latest) => {
+    const id = afterAssetOf(latest);
+    if (!id) { if (!shown) after.replaceChildren(h('div', { class: 'list-status', text: 'The after picture is on its way…' })); return; }
+    if (id === shown) return;
+    shown = id;
+    fill(after, id, latest.captured_commit ?? latest.commit, 'After', () => shown !== id);
+  };
   fill(before, note.before_asset, note.base_commit, layout.beforeWord);
-  fill(after, note.after_asset, note.commit, 'After');
+  update(note);
+  return { content, update };
+}
+
+export function openCompare(ctx, note, { onClose = () => {} } = {}) {
+  const view = createCompare(ctx, note);
+  openSheet({ title: `${note.id}: before and after`, content: view.content, size: 'tall', onClose });
+  return view;
 }

@@ -323,7 +323,14 @@ export function noteActions(note, { finishing = false, live = false, now = Date.
 const canUndo = (note) => note.status === 'done' && Boolean(note.commit) && !note.undone_by && !note.no_change;
 
 export function hasPictures(note) {
-  return Boolean(note.before_asset && note.after_asset);
+  return Boolean(note.before_asset && afterAssetOf(note));
+}
+
+// The picture taken after the change: the note's newest after capture (a
+// note done again replaces it). Finish's final picture only stands in when no
+// after capture was kept.
+export function afterAssetOf(note) {
+  return note.after_asset || (note.final_included !== false && note.final_asset) || null;
 }
 
 export function shortSha(sha) {

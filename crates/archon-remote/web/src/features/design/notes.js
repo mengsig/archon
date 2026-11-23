@@ -32,6 +32,13 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage }) {
     }
   };
 
+  // Compare windows now open, by note: each is handed the note again on every render.
+  const compares = new Map();
+  function openLiveCompare(note) {
+    const view = openCompare(ctx, note, { onClose: () => { if (compares.get(note.id) === view) compares.delete(note.id); } });
+    compares.set(note.id, view);
+  }
+
   function card(note) {
     const state = getState();
     const acts = noteActions(note, { finishing: state.session?.state === 'finishing', live: state.session?.state === 'live' });
@@ -55,7 +62,7 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage }) {
         h('span', { class: 'thread-from', text: { operator: 'You', agent: 'Agent', archon: 'Archon' }[t.from] ?? t.from }), h('span', { text: t.text })))));
     }
     const actions = h('div', { class: 'note-actions' });
-    if (acts.compare) actions.append(button('Compare', 'compare', () => openCompare(ctx, note)));
+    if (acts.compare) actions.append(button('Compare', 'compare', () => openLiveCompare(note)));
     if (acts.edit) actions.append(button('Edit', 'pencil', () => editNote(li, note)));
     if (acts.cancel) actions.append(button('Cancel', 'close', () => act(() => ctx.design.noteCancel(note.item, note.id), `${note.id} cancelled`)));
     if (acts.drop) actions.append(button('Drop note', 'stop', () => dropNote(note)));
@@ -100,12 +107,13 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage }) {
     const notes = state.notes;
     reconcile(list, notes, {
       key: (n) => n.id,
-      signature: (n) => { const acts = noteActions(n, { finishing: state.session?.state === 'finishing', live: state.session?.state === 'live' }); return JSON.stringify([n.approved, n.status, n.text, n.thread, n.undone_by, n.fail_reason, n.read_only, n.after_asset, n.commit, state.session?.state, selected === n.id, acts.drop, acts.undo]); },
+      signature: (n) => { const acts = noteActions(n, { finishing: state.session?.state === 'finishing', live: state.session?.state === 'live' }); return JSON.stringify([n.approved, n.status, n.text, n.thread, n.undone_by, n.fail_reason, n.read_only, n.after_asset, n.final_asset, n.final_included, n.commit, state.session?.state, selected === n.id, acts.drop, acts.undo]); },
       render: card,
     });
     empty.hidden = notes.length > 0 || pending.children.length > 0;
     title.textContent = notesHeading(notes);
     add.disabled = state.session?.state !== 'live';
+    for (const [id, view] of compares) { const latest = notes.find((n) => n.id === id); if (latest) view.update(latest); }
   }
 
   return {

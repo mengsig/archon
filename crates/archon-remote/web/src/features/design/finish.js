@@ -3,7 +3,7 @@
 import { h } from '../../ui/dom.js';
 import { openSheet, confirmSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
-import { queuedNotes, imageCapWarning, ledgerLede } from './state.js';
+import { queuedNotes, imageCapWarning, ledgerLede, afterAssetOf } from './state.js';
 import { reconcile } from '../../ui/list.js';
 import { statusChip } from './notes.js';
 import { IMAGE_CAP_WARN_MARGIN, designErrorText } from '../../core/design.js';
@@ -224,9 +224,9 @@ export function ledgerPanel(ctx, item, getState = () => null, onAnswered = () =>
   const row = (note) => h('li', { class: 'ledger-row' },
     h('div', { class: 'note-head' }, h('strong', { class: 'note-id', text: note.id }), statusChip(note)),
     h('p', { class: 'note-text', text: note.text }),
-    note.before_asset || note.final_asset ? h('div', { class: 'ledger-pics' },
+    note.before_asset || afterAssetOf(note) ? h('div', { class: 'ledger-pics' },
       note.before_asset ? picture(note.before_asset, 'Before') : null,
-      note.final_asset && note.final_included !== false ? picture(note.final_asset, 'Final') : null) : null);
+      afterAssetOf(note) ? picture(afterAssetOf(note), 'After') : null) : null);
 
   const answer = async (choice, q) => {
     if (busy) return;
@@ -260,7 +260,7 @@ export function ledgerPanel(ctx, item, getState = () => null, onAnswered = () =>
     drawGate(q);
     gate.hidden = !q;
     link.hidden = false;
-    reconcile(rows, ledgerNotes(state.notes), { key: (n) => n.id, signature: (n) => JSON.stringify([n.status, n.text, n.undone_by, n.before_asset, n.final_asset, n.final_included]), render: row });
+    reconcile(rows, ledgerNotes(state.notes), { key: (n) => n.id, signature: (n) => JSON.stringify([n.status, n.text, n.undone_by, n.before_asset, n.after_asset, n.final_asset, n.final_included]), render: row });
     if (!rows.children.length) rows.replaceChildren(h('li', { class: 'ledger-empty muted', text: 'No notes were made in this session.' }));
     else rows.querySelector('.ledger-empty')?.remove();
   };

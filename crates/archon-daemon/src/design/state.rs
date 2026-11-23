@@ -21,8 +21,25 @@ use crate::context::DaemonContext;
 
 /// Longest a page gets to load and stop moving.
 const SETTLE_MAX: Duration = Duration::from_secs(10);
-/// Longest one whole picture (load, steps, capture) takes.
-const CAPTURE_MAX: Duration = Duration::from_secs(40);
+/// Longest one picture takes besides its steps: a cold browser start, a load
+/// that never settles, the capture.
+const CAPTURE_BASE: Duration = Duration::from_secs(60);
+/// What each step adds: an element to wait for and a settle after it.
+const CAPTURE_PER_STEP: Duration = Duration::from_secs(25);
+
+/// Longest a picture with these steps takes.
+fn capture_budget(steps: &[UiStep]) -> Duration {
+    CAPTURE_BASE + CAPTURE_PER_STEP * u32::try_from(steps.len()).unwrap_or(u32::MAX)
+}
+
+/// What the agent is told when a picture ran out of time.
+fn out_of_time(budget: Duration) -> String {
+    format!(
+        "the picture was not ready within {} seconds: the page is slow to load or settle, or a \
+         step waits too long",
+        budget.as_secs()
+    )
+}
 /// Longest a page gets to answer one step.
 const STEP_SETTLE: Duration = Duration::from_secs(3);
 
@@ -143,13 +160,10 @@ impl DesignService {
         wt: &WorktreeRef,
         shot: AfterShot<'_>,
     ) -> AfterOutcome {
-        match tokio::time::timeout(CAPTURE_MAX, self.take_after(ctx, session, note, wt, shot)).await
-        {
+        let budget = capture_budget(shot.steps);
+        match tokio::time::timeout(budget, self.take_after(ctx, session, note, wt, shot)).await {
             Ok(outcome) => outcome,
-            Err(_) => AfterOutcome::StepFailed(format!(
-                "the page did not finish loading and answering within {} seconds",
-                CAPTURE_MAX.as_secs()
-            )),
+            Err(_) => AfterOutcome::StepFailed(out_of_time(budget)),
         }
     }
 
@@ -257,14 +271,10 @@ impl DesignService {
         note: &DesignNote,
         steps: &[UiStep],
     ) -> Result<(), String> {
-        tokio::time::timeout(CAPTURE_MAX, self.take_before(ctx, session, note, steps))
+        let budget = capture_budget(steps);
+        tokio::time::timeout(budget, self.take_before(ctx, session, note, steps))
             .await
-            .unwrap_or_else(|_| {
-                Err(format!(
-                    "the page did not finish loading and answering within {} seconds",
-                    CAPTURE_MAX.as_secs()
-                ))
-            })
+            .unwrap_or_else(|_| Err(out_of_time(budget)))
     }
 
     async fn take_before(
@@ -363,4 +373,23 @@ fn recorded_state(note: &DesignNote, shot: AfterShot<'_>, base: Option<&str>) ->
         target.steps = shot.steps.into();
     }
     target
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A path, a dialog to open and a click always fit: the budget grows with
+    /// the steps and covers a page that never settles (two waits of
+    /// `SETTLE_MAX`) before each one.
+    #[test]
+    fn the_time_for_a_picture_grows_with_its_steps() {
+        let click = UiStep::Click {
+            selector: "button".into(),
+        };
+        assert_eq!(capture_budget(&[]), CAPTURE_BASE);
+        let three = capture_budget(&[click.clone(), click.clone(), click]);
+        assert_eq!(three, CAPTURE_BASE + CAPTURE_PER_STEP * 3);
+        assert!(three > SETTLE_MAX * 2 + (STEP_SETTLE + SETTLE_MAX * 2) * 3);
+    }
 }

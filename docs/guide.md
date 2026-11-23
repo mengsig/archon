@@ -84,6 +84,15 @@ its own, set by risk rather than size: see
 of a pipeline, and when work was split into parts it has the integrated
 result reviewed once, with a depth that follows the risk.
 
+Enqueue may return advice alongside the queued item. For `direct`, Archon
+suggests strict review when the title or brief puts a change verb near
+wording about concurrency, locking, migrations, security, or a breaking
+public format change. A risk word on its own is insufficient. For any
+pipeline, Archon suggests one item per fix when the title or brief lists
+at least two distinct numbered or bulleted fix entries, or distinct
+change labels such as `R2-3` and `R2-5`. The advice is part of the
+enqueue response only.
+
 What to know about helper agents:
 
 - A helper works in one mirror, or in the orchestrator's scratch directory

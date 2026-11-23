@@ -30,11 +30,32 @@ use crate::worktree::WorktreeManager;
 use crate::{executor, knobs, learned, sizing};
 use archon_core::autonomy::MergeMode;
 
+mod advice;
+
 pub(super) async fn enqueue(
+    ctx: &DaemonContext,
+    req: EnqueueRequest,
+    by: Authority,
+) -> Result<Reply, ArchonError> {
+    let set_budget = req.budget_usd.is_some();
+    let item = enqueue_item(ctx, req, by).await?;
+    let notices = advice::notices(&item);
+    if notices.is_empty() {
+        return Ok(item_reply(ctx, item, set_budget).await);
+    }
+    let budgets_off = budget_unenforced(ctx, &item, set_budget);
+    Ok(Reply::EnqueueAdvised {
+        item: Box::new(item),
+        notices,
+        budgets_off,
+    })
+}
+
+pub(super) async fn enqueue_item(
     ctx: &DaemonContext,
     mut req: EnqueueRequest,
     by: Authority,
-) -> Result<Reply, ArchonError> {
+) -> Result<QueueItem, ArchonError> {
     req.intent = resolve_intent(ctx, req.intent.as_ref(), req.onto.as_ref()).await?;
     check_enqueue(&req.title, &req.brief, &req.tags, req.budget_usd)?;
     let (env, mut resolved) = enqueue_context(ctx, &req).await?;
@@ -60,8 +81,7 @@ pub(super) async fn enqueue(
         let local = local_onto(&env, target.0);
         let replay = ctx.store.lock().await;
         if let Some(stored) = replay.replayed_enqueue(&item, key, (&asked, local))? {
-            drop(replay);
-            return Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await);
+            return Ok(stored);
         }
         legacy = replay.legacy_replay_plan(key)?;
     }
@@ -79,8 +99,7 @@ pub(super) async fn enqueue(
     let (plan, replays) = keyed_plan(ctx, &req, scope, (route, by), legacy.as_ref()).await?;
     item.model_plan = plan;
     if let (Some(key), true) = (key, replays) {
-        let stored = legacy_replay(ctx, (&env, target.0), &item, (key, &asked)).await?;
-        return Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await);
+        return legacy_replay(ctx, (&env, target.0), &item, (key, &asked)).await;
     }
     let stored = store_enqueued(ctx, (&env, &resolved.spec), target, &item, (key, &asked)).await?;
     assert!(
@@ -88,7 +107,7 @@ pub(super) async fn enqueue(
         "only a key returns an older item"
     );
     ctx.dispatch.notify_one();
-    Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await)
+    Ok(stored)
 }
 
 /// The item `req` asks for, before routing and the model plan: what a
@@ -233,10 +252,14 @@ pub(super) async fn resolve_pull_request_intent(
 /// `Reply::Item`, or `ItemBudgetsOff` when the change set a budget that
 /// is not enforced while budgets are off for the item's repository.
 pub(super) async fn item_reply(ctx: &DaemonContext, item: QueueItem, set_budget: bool) -> Reply {
-    match set_budget && !resolve::item_caps(ctx, item.repo.as_ref()).budgets_enabled {
+    match budget_unenforced(ctx, &item, set_budget) {
         true => Reply::ItemBudgetsOff(item),
         false => Reply::Item(item),
     }
+}
+
+fn budget_unenforced(ctx: &DaemonContext, item: &QueueItem, set_budget: bool) -> bool {
+    set_budget && !resolve::item_caps(ctx, item.repo.as_ref()).budgets_enabled
 }
 
 async fn enqueue_context(

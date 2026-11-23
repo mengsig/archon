@@ -168,18 +168,31 @@ async fn change(
 
 /// Print request notices on stderr so stdout remains machine-readable.
 pub(super) fn item_notes(reply: &Reply) {
-    if let Reply::Item(item) | Reply::ItemBudgetsOff(item) = reply
-        && let Some(prior) = &item.supersedes
-    {
+    let item = match reply {
+        Reply::Item(item) | Reply::ItemBudgetsOff(item) => item,
+        Reply::EnqueueAdvised { item, .. } => item,
+        _ => return,
+    };
+    if let Some(prior) = &item.supersedes {
         eprintln!("note: supersedes {prior}");
     }
-    if let Reply::Item(item) | Reply::ItemBudgetsOff(item) = reply
-        && let Some(check) = &item.model_plan.catalog_check
-    {
+    if let Some(check) = &item.model_plan.catalog_check {
         eprintln!("note: {}", crate::wrap::sanitize_line(&check.to_string()));
     }
-    if matches!(reply, Reply::ItemBudgetsOff(_)) {
+    if matches!(
+        reply,
+        Reply::ItemBudgetsOff(_)
+            | Reply::EnqueueAdvised {
+                budgets_off: true,
+                ..
+            }
+    ) {
         eprintln!("note: {}", archon_core::protocol::BUDGETS_OFF_NOTE);
+    }
+    if let Reply::EnqueueAdvised { notices, .. } = reply {
+        for notice in notices {
+            eprintln!("note: {}", notice.text());
+        }
     }
 }
 

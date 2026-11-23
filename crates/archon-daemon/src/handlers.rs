@@ -54,6 +54,7 @@ pub(crate) fn features() -> Vec<&'static str> {
         graph::FEATURES,
         github_links::FEATURES,
         crate::remote::FEATURES,
+        &[archon_core::protocol::client_feature::ENQUEUE_ADVICE],
     ]
     .concat();
     let mut unique = served.clone();
@@ -589,10 +590,7 @@ pub(crate) async fn enqueue_for_archond(
     request: archon_core::protocol::EnqueueRequest,
 ) -> Result<archon_core::queue::QueueItem, ArchonError> {
     let by = archon_core::plan_origin::Authority::Daemon;
-    match items::enqueue(ctx, request, by).await? {
-        Reply::Item(item) | Reply::ItemBudgetsOff(item) => Ok(item),
-        other => unreachable!("an enqueue answers with its item, not {other:?}"),
-    }
+    items::enqueue_item(ctx, request, by).await
 }
 
 /// The one item whose id starts with `prefix`, as `archon` resolves it.

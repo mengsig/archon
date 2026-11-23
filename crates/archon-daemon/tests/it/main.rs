@@ -25,6 +25,7 @@ mod effort_sizing_cover;
 mod effort_sizing_fixes;
 mod effort_sizing_rulings;
 mod engine_login;
+mod enqueue_advice;
 mod errand;
 mod executor;
 mod experiments;

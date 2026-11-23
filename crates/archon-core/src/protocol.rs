@@ -1190,6 +1190,25 @@ pub enum PauseTarget {
     },
 }
 
+/// Advice that accompanies an enqueue's item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EnqueueNotice {
+    DirectRisk,
+    BundledFixes,
+}
+
+impl EnqueueNotice {
+    pub const fn text(self) -> &'static str {
+        match self {
+            Self::DirectRisk => "This direct item describes risky work. Consider strict review.",
+            Self::BundledFixes => {
+                "This brief appears to bundle independent fixes. Consider one item per fix."
+            }
+        }
+    }
+}
+
 /// Adjacently tagged like Aether's replies: `{"reply":"item","data":{...}}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "reply", content = "data", rename_all = "snake_case")]
@@ -1210,6 +1229,14 @@ pub enum Reply {
     Item(QueueItem),
     /// `Item`, for a change that set a dollar budget while budgets are off.
     ItemBudgetsOff(QueueItem),
+    /// A successful enqueue with advice derived from the queued item.
+    EnqueueAdvised {
+        #[serde(flatten)]
+        item: Box<QueueItem>,
+        notices: Vec<EnqueueNotice>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        budgets_off: bool,
+    },
     Items(Vec<QueueItem>),
     ItemSummaries(Vec<ItemSummary>),
     /// `list_item_summaries` asked `with_as_of`: the summaries and the last

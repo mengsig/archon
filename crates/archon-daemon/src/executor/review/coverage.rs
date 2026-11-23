@@ -11,8 +11,9 @@
 //! count as whole-change reviewers while the branch holds every head they read;
 //! a carried fail, anchored or not, stands as one of this attempt would.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use archon_core::error::ArchonError;
 use archon_pipeline::review::Verdict;
@@ -39,6 +40,52 @@ pub(super) struct Placed {
     pub base: Option<String>,
     /// The branch no longer holds `head`: an amend or rebase replaced it.
     pub superseded: bool,
+    claims: Arc<FindingClaims>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct FindingClaims {
+    listed: Vec<FindingClaim>,
+    resolved: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FindingClaim {
+    id: String,
+    continued: Option<String>,
+    blocking: bool,
+}
+
+impl FindingClaims {
+    fn new(agent: &str, verdict: &Verdict) -> Self {
+        assert!(!agent.is_empty());
+        let mut continued_ids = BTreeSet::new();
+        let listed = verdict
+            .listed_findings
+            .iter()
+            .enumerate()
+            .map(|(index, finding)| FindingClaim {
+                id: format!("{agent}:{}", index + 1),
+                continued: finding
+                    .id
+                    .as_ref()
+                    .filter(|id| continued_ids.insert(id.as_str()))
+                    .cloned(),
+                blocking: finding.blocking,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(listed.len(), verdict.listed_findings.len());
+        Self {
+            listed,
+            resolved: verdict.resolved_findings.iter().cloned().collect(),
+        }
+    }
+
+    fn lists(&self, id: &str) -> bool {
+        self.listed
+            .iter()
+            .any(|f| f.id == id || f.continued.as_deref() == Some(id))
+    }
 }
 
 /// Ancestry in the run's workspace, each pair asked of git once.
@@ -329,6 +376,7 @@ fn place_one(
         head,
         base,
         superseded,
+        claims: Arc::new(FindingClaims::new(agent, verdict)),
     };
     if !history.holds(&read, head)? {
         return Ok(Ok(placed(read, None, true)));
@@ -368,6 +416,7 @@ fn place_one(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Held {
     pub passes: Vec<usize>,
+    pub whole_at_head: usize,
     /// The named whole-change reads that failed and whose findings were
     /// fixed: the record names them beside the passes, as the level counts them.
     pub answered: Vec<usize>,
@@ -411,6 +460,10 @@ pub(super) fn counted(
     let at =
         |picked: Vec<usize>| -> Vec<usize> { picked.into_iter().map(|i| in_play[i]).collect() };
     let (passes, answered, carried) = (at(passes), at(answered), at(carried));
+    let whole_at_head = passes
+        .iter()
+        .filter(|i| placed[**i].base.is_none() && placed[**i].head == head)
+        .count();
     assert!(
         passes.iter().chain(&answered).all(|i| placed[*i].named),
         "only a named read counts toward the review"
@@ -428,6 +481,7 @@ pub(super) fn counted(
     let carried = carried.into_iter().map(|i| placed[i].agent.clone());
     Ok(Ok(Held {
         passes,
+        whole_at_head,
         answered,
         carried: carried.collect(),
         implicit,
@@ -746,7 +800,7 @@ fn open_fail(
         .find(|(read, held)| !read.pass && !**held)
         .map(|(read, _)| read)
     else {
-        return Ok(None);
+        return open_blocker(history, placed, current);
     };
     let at = short(&fail.head);
     Ok(Some(match fail.superseded {
@@ -761,6 +815,91 @@ fn open_fail(
             fail.agent
         ),
     }))
+}
+
+fn open_blocker(
+    history: &mut impl Ancestry,
+    reads: &[Placed],
+    current: &[bool],
+) -> Result<Option<String>, ArchonError> {
+    assert_eq!(reads.len(), current.len());
+    for fail in reads.iter().filter(|r| !r.pass) {
+        for finding in fail.claims.listed.iter().filter(|f| f.blocking) {
+            let id = blocker_id(history, reads, fail, finding)?;
+            if !blocker_resolved(history, reads, current, fail, id)? {
+                return Ok(Some(format!(
+                    "reviewer {} failed the change at {}, and no subsequent review confirmed blocker {id} resolved",
+                    fail.agent,
+                    short(&fail.head)
+                )));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn blocker_id<'a>(
+    history: &mut impl Ancestry,
+    reads: &[Placed],
+    fail: &Placed,
+    finding: &'a FindingClaim,
+) -> Result<&'a str, ArchonError> {
+    let Some(continued) = finding.continued.as_deref().filter(|_| !fail.superseded) else {
+        return Ok(&finding.id);
+    };
+    let origin = reads
+        .iter()
+        .find(|read| read.claims.listed.iter().any(|f| f.id == continued));
+    let Some(origin) = origin else {
+        return Ok(&finding.id);
+    };
+    if origin.superseded || origin.head == fail.head || !history.holds(&origin.head, &fail.head)? {
+        return Ok(&finding.id);
+    }
+    Ok(continued)
+}
+
+fn blocker_resolved(
+    history: &mut impl Ancestry,
+    reads: &[Placed],
+    current: &[bool],
+    fail: &Placed,
+    id: &str,
+) -> Result<bool, ArchonError> {
+    assert!(!fail.pass && !id.is_empty());
+    assert_eq!(reads.len(), current.len());
+    for (read, held) in reads.iter().zip(current) {
+        if read.superseded || (read.pass && !held) || !read.claims.resolved.contains(id) {
+            continue;
+        }
+        let whole = *held && read.base.is_none() && answers(history, read, fail)?;
+        let stated =
+            !fail.superseded && read.head != fail.head && history.holds(&fail.head, &read.head)?;
+        if (whole || stated) && reads_past_open_claims(history, reads, current, read, id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn reads_past_open_claims(
+    history: &mut impl Ancestry,
+    reads: &[Placed],
+    current: &[bool],
+    resolution: &Placed,
+    id: &str,
+) -> Result<bool, ArchonError> {
+    assert_eq!(reads.len(), current.len());
+    assert!(!resolution.superseded && !id.is_empty());
+    for (read, held) in reads.iter().zip(current) {
+        if read.superseded || (read.pass && !held) || !read.claims.lists(id) {
+            continue;
+        }
+        if read.head == resolution.head || !history.holds(&read.head, &resolution.head)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Whether one of the counted passes answers `fail`.
@@ -909,6 +1048,7 @@ mod tests {
             head: head.into(),
             base: base.map(Into::into),
             superseded: false,
+            claims: Arc::default(),
         }
     }
 
@@ -1503,6 +1643,8 @@ mod tests {
             findings: None,
             blocking: None,
             blocking_findings: Vec::new(),
+            listed_findings: Vec::new(),
+            resolved_findings: Vec::new(),
         };
         let named = [("agt_r".to_owned(), verdict)];
 
@@ -1566,6 +1708,8 @@ mod tests {
             findings: None,
             blocking: None,
             blocking_findings: Vec::new(),
+            listed_findings: Vec::new(),
+            resolved_findings: Vec::new(),
         };
         let named = [("agt_r".to_owned(), verdict)];
         let mut base = Base {
@@ -1598,6 +1742,8 @@ mod tests {
             findings: None,
             blocking: None,
             blocking_findings: Vec::new(),
+            listed_findings: Vec::new(),
+            resolved_findings: Vec::new(),
         };
         let base = Base {
             branch: "main",
@@ -1642,6 +1788,8 @@ mod tests {
             findings: None,
             blocking: None,
             blocking_findings: Vec::new(),
+            listed_findings: Vec::new(),
+            resolved_findings: Vec::new(),
         };
         let named = [("agt_r".to_owned(), verdict)];
         let base = Base {

@@ -35,9 +35,8 @@ pub(crate) fn record(
     store: &mut Store,
     item: &QueueItemId,
     run: Option<&PipelineRunId>,
-    mut record: SteerRecord,
+    record: SteerRecord,
 ) -> Result<(), ArchonError> {
-    assert!(!record.what.trim().is_empty(), "a steer changed something");
     if let Some(run) = run {
         assert_eq!(
             &store.run(run)?.item,
@@ -45,13 +44,24 @@ pub(crate) fn record(
             "a steer belongs to its item's run"
         );
     }
+    let (key, value) = history_update(store, item, record)?;
+    store.kv_set(&key, &value)
+}
+
+pub(crate) fn history_update(
+    store: &Store,
+    item: &QueueItemId,
+    mut record: SteerRecord,
+) -> Result<(String, String), ArchonError> {
+    assert!(!record.what.trim().is_empty(), "a steer changed something");
     let mut all = records(store, item)?;
     // The wall clock may step back; the history stays in recorded order.
     record.at = all.last().map_or(record.at, |last| record.at.max(last.at));
     all.push(record);
     let excess = all.len().saturating_sub(MAX_STEER_RECORDS);
     all.drain(..excess);
-    store.kv_set(&key(item), &serde_json::to_string(&all)?)
+    assert!(all.len() <= MAX_STEER_RECORDS);
+    Ok((key(item), serde_json::to_string(&all)?))
 }
 
 /// The notes steered into `item` after `since`, oldest first: what an agent

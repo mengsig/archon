@@ -12,8 +12,10 @@ pub mod client_feature {
     pub const ONTO_EDGES: &str = "onto_edges";
     /// Waiting reasons may name an unavailable catalog directly.
     pub const MODEL_CATALOG_WAIT: &str = "model_catalog_wait";
+    /// A successful enqueue may return advice alongside its item.
+    pub use crate::protocol::feature::ENQUEUE_ADVICE;
     /// Every feature this release's clients decode.
-    pub const ALL: [&str; 2] = [ONTO_EDGES, MODEL_CATALOG_WAIT];
+    pub const ALL: [&str; 3] = [ONTO_EDGES, MODEL_CATALOG_WAIT, ENQUEUE_ADVICE];
 }
 
 /// What one connection's client declared it decodes.
@@ -21,6 +23,7 @@ pub mod client_feature {
 pub struct ClientFeatures {
     onto_edges: bool,
     model_catalog_wait: bool,
+    enqueue_advice: bool,
 }
 
 impl ClientFeatures {
@@ -32,6 +35,7 @@ impl ClientFeatures {
                 .iter()
                 .any(|f| f == client_feature::MODEL_CATALOG_WAIT),
             onto_edges: features.iter().any(|f| f == client_feature::ONTO_EDGES),
+            enqueue_advice: features.iter().any(|f| f == client_feature::ENQUEUE_ADVICE),
         }
     }
 
@@ -40,6 +44,7 @@ impl ClientFeatures {
         Self {
             onto_edges: true,
             model_catalog_wait: true,
+            enqueue_advice: true,
         }
     }
 
@@ -103,6 +108,17 @@ impl ClientFeatures {
     pub fn adapt_reply(self, mut reply: Reply) -> Reply {
         if self == Self::all() {
             return reply;
+        }
+        if !self.enqueue_advice
+            && let Reply::EnqueueAdvised {
+                item, budgets_off, ..
+            } = reply
+        {
+            return if budgets_off {
+                Reply::ItemBudgetsOff(*item)
+            } else {
+                Reply::Item(*item)
+            };
         }
         match &mut reply {
             Reply::TaskGraph(graph) => {

@@ -9,7 +9,7 @@ use archon_core::pull_request::OntoTarget;
 
 use crate::cli::QueueAddArgs;
 use crate::cmd::{emit, read_map, read_text};
-use crate::connect::{connect_or_start, reply_data, unexpected};
+use crate::connect::{connect_or_start, unexpected};
 use crate::views;
 
 pub async fn run(args: QueueAddArgs, json: bool) -> anyhow::Result<()> {
@@ -58,11 +58,17 @@ pub async fn run(args: QueueAddArgs, json: bool) -> anyhow::Result<()> {
         origin: None,
     };
     let reply = client.request(Request::Enqueue(request)).await?;
-    let (Reply::Item(item) | Reply::ItemBudgetsOff(item)) = &reply else {
-        return Err(unexpected(&reply, "item"));
+    let item = match &reply {
+        Reply::Item(item) | Reply::ItemBudgetsOff(item) => item,
+        Reply::EnqueueAdvised { item, .. } => item,
+        _ => return Err(unexpected(&reply, "item")),
     };
     super::item_notes(&reply);
-    emit(json, || reply_data(&reply), &item.id.to_string())
+    emit(
+        json,
+        || Ok(serde_json::to_value(item)?),
+        &item.id.to_string(),
+    )
 }
 
 /// `--onto`: an item id or prefix, resolved now, else a number or a branch.

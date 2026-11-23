@@ -1103,6 +1103,12 @@ async fn a_strict_review_whose_whole_reads_all_failed_ships_on_one_delta_pass() 
     let built = shipped_by(&h, &lead, "Built; fixed and reviewed", pass_by(&named)).await;
     let mut verdict = verdict_on(&built, "pass");
     verdict["base"] = verdict_on(&read, "fail")["head"].clone();
+    verdict["resolved_findings"] = json!(
+        first
+            .iter()
+            .map(|reviewer| format!("{reviewer}:1"))
+            .collect::<Vec<_>>()
+    );
     h.backend.complete_delegated(&delta, verdict);
     h.settle_running(|_| built.clone()).await;
     h.dispatch().await;

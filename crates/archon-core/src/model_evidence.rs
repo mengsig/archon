@@ -116,6 +116,17 @@ pub struct ProviderEvidenceRow {
     pub cost_usd: f64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RoutingEvidenceRow {
+    pub repo: Option<RepoId>,
+    pub pipeline: String,
+    /// Observed escalations followed by a switch to a different pipeline.
+    /// None means no classified routing decisions are available.
+    pub misses: Option<u64>,
+    /// Failed runs whose routing decision is unknown.
+    pub unclassified: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModelEvidenceReport {
     pub range: DayRange,
@@ -134,7 +145,10 @@ pub struct ModelEvidenceReport {
     pub sizing: Vec<SizingEvidenceRow>,
     #[serde(default)]
     pub pipelines: Vec<crate::lesson::PipelineEvidence>,
-    /// Names of the repositories `pipelines` cite, as `cost` names them.
+    /// By repository and effective pipeline, using the failed run's finish day.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routing: Vec<RoutingEvidenceRow>,
+    /// Names of the repositories the pipeline and routing rows cite.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub repo_names: BTreeMap<RepoId, String>,
 }
@@ -247,6 +261,7 @@ impl ModelEvidenceReport {
         self.provider_text(&mut text);
         self.sizing_text(&mut text);
         self.pipeline_text(&mut text);
+        self.routing_text(&mut text);
         text.trim_end().to_owned()
     }
 
@@ -287,11 +302,7 @@ impl ModelEvidenceReport {
 
     fn pipeline_text(&self, text: &mut String) {
         for p in &self.pipelines {
-            let repo = p.repo.as_ref().map_or("global", |repo| {
-                self.repo_names
-                    .get(repo)
-                    .map_or(repo.as_str(), String::as_str)
-            });
+            let repo = self.repo_label(p.repo.as_ref());
             let prs = p.review_prs.as_ref().map_or(String::new(), |prs| {
                 let rounds = prs
                     .median_rounds_to_pass
@@ -316,6 +327,28 @@ impl ModelEvidenceReport {
                 p.correction_rate * 100.0
             );
         }
+    }
+
+    fn routing_text(&self, text: &mut String) {
+        for row in &self.routing {
+            let repo = self.repo_label(row.repo.as_ref());
+            let misses = row
+                .misses
+                .map_or_else(|| "unknown".to_owned(), |n| n.to_string());
+            let _ = writeln!(
+                text,
+                "Routing {repo} / {} misses={misses} unclassified={} (by run finish)",
+                row.pipeline, row.unclassified,
+            );
+        }
+    }
+
+    fn repo_label<'a>(&'a self, repo: Option<&'a RepoId>) -> &'a str {
+        repo.map_or("global", |repo| {
+            self.repo_names
+                .get(repo)
+                .map_or(repo.as_str(), String::as_str)
+        })
     }
 }
 

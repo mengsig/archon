@@ -6,7 +6,10 @@
 //! reviewer of the attempt that failed the change counts, named or not. Reads
 //! from the item's earlier runs on the branch count while it still holds their heads.
 
+mod confirm;
 mod coverage;
+mod handoff;
+mod record;
 mod restate;
 mod rounds;
 
@@ -27,8 +30,13 @@ use crate::context::DaemonContext;
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack::{self, is_commit_id};
 use coverage::{Base, Held, History, Verdicts};
+pub(super) use handoff::FindingsFile;
+pub(super) use record::{attach as attach_rounds, prior_handoff};
 pub(super) use restate::reviewer_unreadable;
-pub(super) use rounds::{Capped, attempt_resumed, capped_at_completion, reviewer_settled};
+pub(super) use rounds::{
+    Capped, attempt_resumed, capped_at_completion, capped_on_failure,
+    confirmation_reviewer_stopped, review_fix_waiting, reviewer_settled, revisit_fix_wait,
+};
 
 /// Agents named in a refusal: enough to see what the lead delegated to.
 const MAX_LISTED: usize = 6;
@@ -266,10 +274,10 @@ async fn check_chosen(
         let carried: &[Read] = if carrying { &carried.reads } else { &[] };
         holding(ctx, run, read, carried, owed, shipped.clone())
     };
-    // A run whose own reads make the review judges the head afresh, as one carrying none would.
+    // A run whose own whole reviews read the final head judges it afresh.
     if !carried.reads.is_empty() && picked.len() >= owed as usize {
         let alone = check_with(None, false).await?;
-        if matches!(alone, Checked::Held(..)) {
+        if matches!(&alone, Checked::Held(held, ..) if held.whole_at_head >= owed as usize) {
             return Ok(alone);
         }
     }
@@ -458,7 +466,7 @@ async fn left_out_fails(
         .as_ref()
         .expect("a checked stage has its agent");
     assert!(!picked.is_empty(), "a review names its reviewers");
-    let tallied = rounds::attempt_children(ctx, &stage.id).await?;
+    let mut tallied = rounds::attempt_children(ctx, &stage.id).await?;
     let mut reads = Vec::with_capacity(tallied.children.len());
     for (agent, tallied_head) in tallied.children {
         if picked.iter().any(|p| p.agent.as_str() == agent) {
@@ -470,7 +478,10 @@ async fn left_out_fails(
         let Some(child) = listed else {
             // Aether no longer lists it: any fail the tally kept still stands.
             match tallied_head {
-                Some(head) => reads.push((agent, tallied_fail(head))),
+                Some(head) => {
+                    let saved = tallied.reports.remove(&agent);
+                    reads.push((agent, tallied_fail(head, saved)));
+                }
                 None if !tallied.every_fail_kept => {
                     return Ok(Err(forgotten_unkept(&agent)));
                 }
@@ -513,8 +524,11 @@ fn forgotten_unkept(agent: &str) -> String {
 
 /// The fail of `head` the attempt's tally read, for a reviewer Aether no
 /// longer lists: read as a whole-change fail.
-fn tallied_fail(head: String) -> Verdict {
+fn tallied_fail(head: String, report: Option<record::Report>) -> Verdict {
     assert!(!head.is_empty(), "a counted fail names its head");
+    assert!(report.as_ref().is_none_or(|r| r.pass == Some(false)));
+    let (listed_findings, resolved_findings) =
+        report.map_or_else(Default::default, |r| (r.findings, r.resolved_findings));
     Verdict {
         pass: false,
         head,
@@ -522,6 +536,8 @@ fn tallied_fail(head: String) -> Verdict {
         findings: None,
         blocking: None,
         blocking_findings: Vec::new(),
+        listed_findings,
+        resolved_findings,
     }
 }
 

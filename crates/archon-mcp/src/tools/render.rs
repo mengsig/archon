@@ -62,6 +62,20 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
             item_line(item, CLIP_CHARS),
             archon_core::protocol::BUDGETS_OFF_NOTE
         ),
+        Reply::EnqueueAdvised {
+            item,
+            notices,
+            budgets_off,
+        } => {
+            let mut text = format!("{}{}", item_verb(tool, item), item_line(item, CLIP_CHARS));
+            if *budgets_off {
+                let _ = write!(text, "\nNote: {}", archon_core::protocol::BUDGETS_OFF_NOTE);
+            }
+            for notice in notices {
+                let _ = write!(text, "\nNote: {}", notice.text());
+            }
+            text
+        }
         Reply::Items(items) => listing("items", items.iter().map(|i| item_line(i, LINE_CHARS))),
         Reply::ItemDetail(detail) => item_detail(detail),
         Reply::ItemSummaries(rows) => item_summaries(rows),

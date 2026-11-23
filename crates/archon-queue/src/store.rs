@@ -40,6 +40,7 @@ mod pull_requests;
 mod queue_timing;
 mod repos;
 mod retention;
+mod routing;
 mod work_units;
 pub use retention::HistoryPruned;
 pub use schema::WAL_SIZE_LIMIT;
@@ -91,6 +92,8 @@ pub use run_edits::RecordedEdit;
 
 /// Well-known `kv` keys.
 pub mod keys {
+    use archon_core::id::QueueItemId;
+
     pub const ORCHESTRATOR_AGENT: &str = "orchestrator_agent";
     pub const ORCHESTRATOR_GENERATION: &str = "orchestrator_generation";
     pub const CURSOR_ORCHESTRATOR: &str = "aether_cursor_orchestrator";
@@ -109,6 +112,11 @@ pub mod keys {
     /// `<item>`: the feed head when a view of the settled item last asked the
     /// notification center to resolve what it holds for it.
     pub const NOTIFICATION_CENTER_VIEWED: &str = "notification_center_viewed:";
+
+    /// The stage list an item keeps from a shape steer.
+    pub fn item_shape(item: &QueueItemId) -> String {
+        format!("shape:{item}")
+    }
 }
 
 /// Latest absolute usage for one Aether agent (`agent.usage_updated`).
@@ -547,7 +555,7 @@ impl Store {
     /// (`spawning` → `running` → terminal) and keep their identity and
     /// Aether ids once set.
     pub fn upsert_stage_run(&mut self, stage: &StageRun) -> Result<(), ArchonError> {
-        runs::upsert_stage(&mut self.conn, stage, &[])
+        runs::upsert_stage(&mut self.conn, stage, &[], None)
     }
     /// `upsert_stage_run` and the `kv` `updates` in one transaction: both or neither.
     pub fn upsert_stage_run_with_kv(
@@ -555,7 +563,18 @@ impl Store {
         stage: &StageRun,
         updates: &[(&str, &str)],
     ) -> Result<(), ArchonError> {
-        runs::upsert_stage(&mut self.conn, stage, updates)
+        runs::upsert_stage(&mut self.conn, stage, updates, None)
+    }
+    /// Settle a review and record what its first round resolved on the preceding stage.
+    pub fn upsert_stage_with_previous_review(
+        &mut self,
+        stage: &StageRun,
+        previous: &StageRunId,
+        rounds: &serde_json::Value,
+    ) -> Result<(), ArchonError> {
+        assert!(stage.state.is_terminal());
+        assert_ne!(stage.id, *previous);
+        runs::upsert_stage(&mut self.conn, stage, &[], Some((previous, rounds)))
     }
     /// Delete `run`'s stage rows that do not decode; the `(id, raw data)` of
     /// each is returned and saved under `archive` for the operator.
@@ -965,7 +984,10 @@ impl Store {
         range: &DayRange,
         estimates: bool,
     ) -> Result<ModelEvidenceSnapshot, ArchonError> {
-        model_evidence::read(&self.conn, query, range, estimates)
+        let tx = codec::read_tx(&self.conn)?;
+        let snapshot = model_evidence::read(&self.conn, query, range, estimates)?;
+        codec::end_read_tx(tx, "close model evidence snapshot")?;
+        Ok(snapshot)
     }
 
     /// Nearest-rank p90 of recent completed stage runs in the same cohort.

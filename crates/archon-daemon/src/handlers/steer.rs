@@ -460,7 +460,7 @@ async fn store_steer(
     changed: Changed,
 ) -> Result<QueueItem, ArchonError> {
     let Changed {
-        item,
+        mut item,
         mut what,
         shape,
     } = changed;
@@ -471,45 +471,15 @@ async fn store_steer(
     );
     let now = archon_core::now();
     let mut store = ctx.store.lock().await;
-    let mut item = item;
-    let mut revive = false;
-    // The failed run a shape steer revives; a steer is no correction of it.
-    let mut revived_run = None;
-    if let Some((edit, stages)) = &shape {
-        let switched = match edit {
-            RunEdit::SwitchPipeline { pipeline, .. } => Some(pipeline.as_str()),
-            _ => None,
-        };
-        match asked.sources.switches_to(&item.pipeline) {
-            true => live::forget_shape(&mut store, &item.id)?,
-            false => live::keep_shape(&mut store, &item.id, stages, switched)?,
+    if let Some((edit, _)) = &shape
+        && let QueueState::Failed { run, .. } = &loaded.state
+    {
+        if let Some(run) = run {
+            item = prepare_revival(ctx, asked, &store.run(run)?, edit, item, &mut what)?;
         }
-        if let QueueState::Failed { run, .. } = &loaded.state {
-            revive = true;
-            if let Some(run) = run {
-                let before = sizing::Inputs::of(&item);
-                item = revived(&store.run(run)?, edit, item)?;
-                // Its brief now names the failure, and is what the sizer reads as it is stored.
-                let policy = asked.env.resolved_policy(ctx);
-                let unstarted = Default::default();
-                let resized =
-                    sizing::resize((&ctx.config, &policy), &mut item, &unstarted, &before);
-                if resized && !what.iter().any(|done| done == sizing::RESIZED) {
-                    what.push(sizing::RESIZED.to_owned());
-                }
-            }
-            revived_run = run.clone();
-            what.push("queued it again on its branch".to_owned());
-        }
+        what.push("queued it again on its branch".to_owned());
     }
-    let item = match revive {
-        true => items::queue_again(&mut store, loaded, item)?,
-        false => {
-            item.updated_at = now.max(loaded.updated_at);
-            store.update_item(&item)?;
-            item
-        }
-    };
+    item.updated_at = item.updated_at.max(now).max(loaded.updated_at);
     let what = what.join("; ");
     let record = SteerRecord {
         at: now,
@@ -517,11 +487,68 @@ async fn store_steer(
         what: what.clone(),
         note: asked.steer.note.as_ref().map(|note| note.trim().to_owned()),
     };
-    live::record(&mut store, &item.id, revived_run.as_ref(), record)?;
+    let (key, value) = live::history_update(&store, &item.id, record)?;
+    let item = if let Some((edit, stages)) = &shape {
+        let shape = waiting_shape(&store, asked, &item, edit, stages)?;
+        store.apply_shape_steer(&item, shape.as_ref(), (&key, &value), now)?
+    } else {
+        store.update_item_with_kv(&item, &[(&key, &value)])?;
+        item
+    };
     drop(store);
     let text = live::history_line(&item.id, asked.by, &what, asked.steer.note.as_deref());
     items::post_note(ctx, &item.id, &text).await;
     Ok(item)
+}
+
+fn prepare_revival(
+    ctx: &DaemonContext,
+    asked: &Asked<'_>,
+    run: &archon_core::run::PipelineRun,
+    edit: &RunEdit,
+    item: QueueItem,
+    what: &mut Vec<String>,
+) -> Result<QueueItem, ArchonError> {
+    assert_eq!(item.id, run.item);
+    let before = sizing::Inputs::of(&item);
+    let mut item = revived(run, edit, item)?;
+    let policy = asked.env.resolved_policy(ctx);
+    let resized = sizing::resize(
+        (&ctx.config, &policy),
+        &mut item,
+        &Default::default(),
+        &before,
+    );
+    if resized && !what.iter().any(|done| done == sizing::RESIZED) {
+        what.push(sizing::RESIZED.to_owned());
+    }
+    assert!(matches!(item.state, QueueState::Failed { .. }));
+    Ok(item)
+}
+
+fn waiting_shape(
+    store: &archon_queue::Store,
+    asked: &Asked<'_>,
+    item: &QueueItem,
+    edit: &RunEdit,
+    stages: &PipelineSpec,
+) -> Result<Option<RunEdit>, ArchonError> {
+    assert_eq!(
+        stages.name(),
+        &item.pipeline,
+        "the shape keeps the queued name"
+    );
+    if asked.sources.switches_to(&item.pipeline) {
+        assert!(
+            matches!(edit, RunEdit::SwitchPipeline { pipeline, .. } if pipeline == &item.pipeline)
+        );
+        return Ok(None);
+    }
+    let switched = match edit {
+        RunEdit::SwitchPipeline { pipeline, .. } => Some(pipeline.as_str()),
+        _ => None,
+    };
+    live::kept_shape(store, &item.id, stages, switched).map(Some)
 }
 
 /// A new model or effort for one stage of a waiting item, which names the

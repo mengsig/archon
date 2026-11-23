@@ -107,6 +107,18 @@ pub(crate) fn evaluate(
             summary: joined_summary(stage, members),
         };
     }
+    failed_group(stage, attempt, members, passes)
+}
+
+fn failed_group(
+    stage: &StageSpec,
+    attempt: u32,
+    members: &[&StageRun],
+    passes: usize,
+) -> GroupResult {
+    let total = members.len();
+    assert!(passes < total, "a failed gate has non-passing members");
+    assert!(members.iter().all(|m| m.state.is_terminal()));
     let headline = match stage.gate {
         Gate::None if stage.kind == StageKind::Team => team_headline(stage, members),
         Gate::None => format!(
@@ -207,7 +219,11 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     };
     // A stated failure is refused on its merits, whatever its gate or record.
     if decided_since_repairs(member) && states_failure(member) {
-        return failed(archon_core::run::STATED_FAILURE.to_owned());
+        let mut headline = archon_core::run::STATED_FAILURE.to_owned();
+        if owed.review.is_some_and(|duty| duty.reviewers > 0) {
+            headline.push_str(" (review was owed)");
+        }
+        return failed(headline);
     }
     // A review-only lead's verdict is the run's: anything but pass never merges.
     if let Some(note) = unpassed_review(member, owed) {

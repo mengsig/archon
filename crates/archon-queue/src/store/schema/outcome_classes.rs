@@ -522,7 +522,7 @@ fn failure_class_reads_terminal_states_and_record_refusals() {
         ),
         (
             StageState::Completed,
-            "stage `implement` failed: 1 failing verdict",
+            "stage `implement` failed: its agent stated a failure (review was owed)",
             FailureClass::Review,
         ),
         (
@@ -540,28 +540,50 @@ fn failure_class_reads_terminal_states_and_record_refusals() {
     for (state, error, expected) in cases {
         let run = failed_run("implement", error);
         let mut member = stage(&run, "implement", StageKind::Work, state);
-        if error.ends_with("1 failing verdict") {
-            member.only_reviews = Some(true);
+        if error.ends_with("(review was owed)") {
+            member.only_reviews = Some(false);
             member.verdict = Some(Verdict::Fail);
         }
         seed(&conn, &run, &[member], Some(FailureClass::Other), false);
         expected_runs.push((run, expected));
     }
-    let refused = failed_run("implement", "stage `implement` failed: gate failed");
+    migrate(&mut conn).unwrap();
+    for (run, expected) in expected_runs {
+        assert_eq!(columns(&conn, &run).0.as_deref(), Some(expected.as_str()));
+    }
+}
+
+#[test]
+fn failure_class_distrusts_agent_markers_and_prefers_stops() {
+    let mut conn = v23_store();
+    let refused = failed_run(
+        "implement",
+        "stage `implement` failed: its agent stated a failure",
+    );
     let mut work = stage(
         &refused,
         "implement",
         StageKind::Work,
         StageState::Completed,
     );
-    work.verdict = Some(Verdict::Pass);
+    work.verdict = Some(Verdict::Fail);
     work.structured = Some(serde_json::json!({"review": {"unverified": "no reviewer ran"}}));
     seed(&conn, &refused, &[work], Some(FailureClass::Other), false);
-    expected_runs.push((refused, FailureClass::Review));
+    let blocked = failed_run(
+        "implement",
+        "stage `implement` failed: its agent stated a failure (review was owed)",
+    );
+    let mut work = stage(
+        &blocked,
+        "implement",
+        StageKind::Work,
+        StageState::Completed,
+    );
+    work.summary = Some("BLOCKED: missing access".into());
+    seed(&conn, &blocked, &[work], Some(FailureClass::Other), false);
     migrate(&mut conn).unwrap();
-    for (run, expected) in expected_runs {
-        assert_eq!(columns(&conn, &run).0.as_deref(), Some(expected.as_str()));
-    }
+    assert_eq!(columns(&conn, &refused).0.as_deref(), Some("other"));
+    assert_eq!(columns(&conn, &blocked).0.as_deref(), Some("blocked"));
 }
 
 #[test]

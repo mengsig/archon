@@ -2809,6 +2809,24 @@ fn a_recorded_review_fail_completes_the_lead_and_fails_the_run() {
     assert_eq!(lead.only_reviews, Some(true));
 }
 
+#[test]
+fn delivery_work_failure_names_its_review_duty() {
+    let mut sim = sim_reviewed("direct", ReviewLevel::Standard);
+    sim.start();
+    let actions = sim.settle(
+        "implement",
+        0,
+        Agent::Recorded("VERDICT: FAIL", serde_json::json!({"verdict": "fail"})),
+    );
+    let (stage, error) = failed(&actions);
+    assert_eq!(stage, "implement");
+    assert!(
+        error.contains("its agent stated a failure (review was owed)"),
+        "{error}"
+    );
+    assert_eq!(sim.stages.last().unwrap().only_reviews, Some(false));
+}
+
 /// A review-only lead's pass that its own findings dispute is no pass: the run
 /// fails though its review record passes, so nothing can merge on it.
 #[test]

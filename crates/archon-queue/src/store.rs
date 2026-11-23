@@ -43,6 +43,7 @@ pub use schema::WAL_SIZE_LIMIT;
 mod run_edits;
 mod run_plans;
 mod run_reviews;
+mod stage_timing;
 pub use run_reviews::RunReview;
 mod runs;
 pub use runs::UnreadableRun;
@@ -900,6 +901,16 @@ impl Store {
         estimates: bool,
     ) -> Result<ModelEvidenceSnapshot, ArchonError> {
         model_evidence::read(&self.conn, query, range, estimates)
+    }
+
+    /// Nearest-rank p90 of recent completed stage runs in the same cohort.
+    pub fn stage_p90_seconds(
+        &self,
+        pipeline: &str,
+        stage: &str,
+        effort: archon_core::model::Effort,
+    ) -> Result<Option<u64>, ArchonError> {
+        stage_timing::p90(&self.conn, pipeline, stage, effort)
     }
 
     /// Spend over the local days of `range` grouped `by`, counted as the

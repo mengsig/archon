@@ -113,6 +113,7 @@ mod ship;
 mod ship_coordination;
 mod snapshot;
 mod stability;
+mod stage_timing;
 mod stages;
 mod stall;
 mod steer;

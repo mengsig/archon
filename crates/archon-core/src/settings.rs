@@ -260,6 +260,8 @@ pub struct EffectiveSettings {
     pub default_pipeline: Option<String>,
     #[serde(default)]
     pub checks: ChecksMode,
+    #[serde(default)]
+    pub learned_stage_timeouts: bool,
     /// Field (`caps.budget_usd_daily`, `autonomy.max.merge`, …) to the
     /// layer that decided it.
     pub sources: BTreeMap<String, SettingSource>,
@@ -325,11 +327,18 @@ impl Layers<'_> {
         });
         let (checks, source) = self.checks();
         sources.insert("checks".into(), source);
+        let limits = &self.config.limits;
+        let timeout_source = match limits.learned_stage_timeouts {
+            Some(_) => SettingSource::Config,
+            None => SettingSource::Builtin,
+        };
+        sources.insert("learned_stage_timeouts".into(), timeout_source);
         EffectiveSettings {
             autonomy,
             caps,
             default_pipeline,
             checks,
+            learned_stage_timeouts: limits.learned_stage_timeouts(),
             sources,
         }
     }
@@ -595,6 +604,15 @@ impl SettingsView {
                 source("checks")
             ));
         }
+        let learned = if effective.learned_stage_timeouts {
+            "on"
+        } else {
+            "off"
+        };
+        lines.push(format!(
+            "learned stage timeouts {learned} ({})",
+            source("learned_stage_timeouts")
+        ));
         lines.join("\n")
     }
 }
@@ -664,6 +682,10 @@ mod tests {
         assert!(text.contains("daily unlimited ("), "{text}");
         assert!(text.contains("total unlimited ("), "{text}");
         assert!(text.contains("max per repo unlimited ("), "{text}");
+        assert!(
+            text.contains("learned stage timeouts off (builtin)"),
+            "{text}"
+        );
         let ceiling = view.effective.autonomy.ceiling.describe_allowed();
         let ranges = ceiling.split(", ").map(|knob| format!("{knob} ("));
         for knob in ranges {

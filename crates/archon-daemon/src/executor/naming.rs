@@ -115,6 +115,7 @@ mod tests {
             attempt,
             fan_index,
             fan_count,
+            carried_slots: Default::default(),
             choice: ModelChoice {
                 model: "claude-code/claude-sonnet-5".parse().unwrap(),
                 effort: Effort::Medium,

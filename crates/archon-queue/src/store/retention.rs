@@ -483,14 +483,17 @@ fn prune_item_kv(tx: &Transaction<'_>) -> Result<usize, ArchonError> {
         )
         .ctx("prune restack fix indexes")?;
     // A crash between a stage run's settlement and its key's removal leaves one.
-    let restatements = tx
+    let stage_records = tx
         .execute(
-            "DELETE FROM kv WHERE key >= 'verdict_restatement:' AND key < 'verdict_restatement;'
-             AND substr(key, 21, instr(substr(key, 21), ':') - 1) IN (SELECT id FROM temp.prune_runs)",
+            "DELETE FROM kv
+             WHERE (key >= 'verdict_restatement:' AND key < 'verdict_restatement;'
+                    AND substr(key, 21, instr(substr(key, 21), ':') - 1) IN (SELECT id FROM temp.prune_runs))
+                OR (key >= 'swarm_carry:' AND key < 'swarm_carry;'
+                    AND substr(key, 13, instr(substr(key, 13), ':') - 1) IN (SELECT id FROM temp.prune_runs))",
             [],
         )
-        .ctx("prune verdict restatements")?;
-    Ok(steers + settled + restack + fixes + restatements)
+        .ctx("prune verdict restatements and carried swarm slots")?;
+    Ok(steers + settled + restack + fixes + stage_records)
 }
 
 /// Operator confirmations whose question closed and was asked before the

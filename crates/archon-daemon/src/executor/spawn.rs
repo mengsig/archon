@@ -1113,7 +1113,7 @@ fn reserve_one(
 }
 
 /// A team slot's share of what is left: the remainder split evenly across
-/// the stage's slots, so the roles together cannot overspend it.
+/// the slots this attempt runs, so the roles together cannot overspend it.
 fn slot_budget(budget: Option<f64>, plan: &SpawnPlan) -> Option<f64> {
     assert!(plan.fan_count >= 1, "a stage has at least one slot");
     assert!(
@@ -1121,7 +1121,14 @@ fn slot_budget(budget: Option<f64>, plan: &SpawnPlan) -> Option<f64> {
         "budgets are finite amounts"
     );
     match plan.team {
-        Some(_) => budget.map(|left| left / f64::from(plan.fan_count)),
+        Some(_) => {
+            let carried = u32::try_from(plan.carried_slots.len()).expect("few slots per team");
+            assert!(
+                carried < plan.fan_count,
+                "the team attempts at least one slot"
+            );
+            budget.map(|left| left / f64::from(plan.fan_count - carried))
+        }
         None => budget,
     }
 }

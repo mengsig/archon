@@ -168,9 +168,9 @@ fn old_settled_items_go_with_their_history_and_learning_and_budgets_stay() {
 }
 
 /// A crash between a stage's settlement and its key's removal leaves a
-/// verdict restatement behind: it goes with its run, and no other run's does.
+/// verdict restatement behind. Restatements and swarm carry records go with their run.
 #[test]
-fn a_pruned_run_takes_the_verdict_restatements_left_under_it() {
+fn a_pruned_run_takes_its_verdict_restatements_and_swarm_carry_records() {
     let mut store = store();
     let old = settled_item(&mut store, 1, 2.0, 30, 50);
     let recent = settled_item(&mut store, 2, 1.0, 31 * DAY, 31 * DAY);
@@ -179,21 +179,24 @@ fn a_pruned_run_takes_the_verdict_restatements_left_under_it() {
     let left = [
         format!("verdict_restatement:{}:1:0:e2e", old_run.id),
         format!("verdict_restatement:{}:2:1:odd:stage", old_run.id),
+        format!("swarm_carry:{}:build:2", old_run.id),
     ];
-    let stays = format!("verdict_restatement:{}:1:0:e2e", recent_run.id);
-    for key in left.iter().chain([&stays]) {
+    let stays = [
+        format!("verdict_restatement:{}:1:0:e2e", recent_run.id),
+        format!("swarm_carry:{}:build:2", recent_run.id),
+    ];
+    for key in left.iter().chain(&stays) {
         store.kv_set(key, "{}").unwrap();
     }
 
     let pruned = store.prune_history(cutoff(), 100, |_, _| false).unwrap();
-    assert_eq!((pruned.runs, pruned.kv), (1, 2), "{pruned:?}");
+    assert_eq!((pruned.runs, pruned.kv), (1, left.len()), "{pruned:?}");
     for key in &left {
         assert_eq!(store.kv_get(key).unwrap(), None, "{key}");
     }
-    assert!(
-        store.kv_get(&stays).unwrap().is_some(),
-        "a kept run's stays"
-    );
+    for key in &stays {
+        assert!(store.kv_get(key).unwrap().is_some(), "{key} stays");
+    }
 }
 
 #[test]

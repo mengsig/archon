@@ -31,18 +31,26 @@ const PR_ONE: &str = "https://github.com/o/r/pull/1";
 
 #[tokio::test]
 async fn validation_failures_refuse_delivery_without_retry() {
-    for (message, action) in [
+    for (message, action, wrong_action) in [
         (
             "GraphQL: No commits between main and feature (createPullRequest)",
             "add commits to",
-        ),
-        (
-            "GraphQL: Base ref must be a branch (createPullRequest)",
-            "check that base branch",
-        ),
-        (
-            "GraphQL: Head sha can't be blank, Head ref must be a branch (createPullRequest)",
             "check that head branch",
+        ),
+        (
+            "GraphQL: Base sha can't be blank, No commits between main and feature, Base ref must be a branch (createPullRequest)",
+            "check that base branch",
+            "add commits to",
+        ),
+        (
+            "GraphQL: Head sha can't be blank, Base sha can't be blank, No commits between main and feature, Head ref must be a branch (createPullRequest)",
+            "check that head branch",
+            "add commits to",
+        ),
+        (
+            "GraphQL: No commits between main and feature, Base ref must be a branch, Head ref must be a branch (createPullRequest)",
+            "exists and head branch",
+            "add commits to",
         ),
     ] {
         let (h, gh) = delivering().await;
@@ -51,6 +59,7 @@ async fn validation_failures_refuse_delivery_without_retry() {
         settle_changed(&h, json!({})).await;
         let error = failed(&h, &item).await;
         assert!(error.contains(action), "{error}");
+        assert!(!error.contains(wrong_action), "{error}");
         assert!(error.contains(message), "{error}");
         assert_eq!(gh.count("pr create"), 1);
         assert!(h.kv(&format!("ship_retry:{}", run.id)).await.is_none());

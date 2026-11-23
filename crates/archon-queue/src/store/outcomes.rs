@@ -89,7 +89,8 @@ impl Store {
 
     pub fn record_outcome(&self, outcome: &Outcome) -> Result<(), ArchonError> {
         outcome.check()?;
-        if !self.learning_config()?.enabled {
+        let config = self.learning_config()?;
+        if !config.enabled {
             return Ok(());
         }
         let tx = self.conn.unchecked_transaction().ctx("begin outcome")?;
@@ -127,7 +128,7 @@ impl Store {
             value.feedback = from_json(&raw, "attributed corrections")?;
         }
         write(&tx, &value)?;
-        super::lessons::score_run(&tx, &value)?;
+        super::lessons::score_run(&tx, &value, config.retire_min_uses)?;
         assert!(
             value.check().is_ok(),
             "only valid observations are committed"
@@ -140,16 +141,18 @@ impl Store {
         run: &PipelineRunId,
         correction: Correction,
     ) -> Result<(), ArchonError> {
-        if !self.learning_config()?.enabled {
+        let config = self.learning_config()?;
+        if !config.enabled {
             return Ok(());
         }
         let tx = self.conn.unchecked_transaction().ctx("begin correction")?;
-        correct(&tx, run, correction)?;
+        correct(&tx, run, correction, config.retire_min_uses)?;
         tx.commit().ctx("commit correction")
     }
 
     pub fn outcome_merged(&self, run: &PipelineRunId, merged: bool) -> Result<(), ArchonError> {
-        if !self.learning_config()?.enabled {
+        let config = self.learning_config()?;
+        if !config.enabled {
             return Ok(());
         }
         let tx = self
@@ -163,7 +166,7 @@ impl Store {
             &to_json(&merged, "merge observation")?,
         )?;
         if !merged {
-            correct(&tx, run, Correction::PrClosed)?;
+            correct(&tx, run, Correction::PrClosed, config.retire_min_uses)?;
         }
         if let Some(mut outcome) = load(&tx, run)? {
             outcome.merged = Some(merged);
@@ -197,6 +200,7 @@ pub(super) fn correct(
     conn: &Connection,
     run: &PipelineRunId,
     correction: Correction,
+    min_uses: u32,
 ) -> Result<(), ArchonError> {
     super::runs::load(conn, run)?;
     let mut values = corrections(conn, run)?;
@@ -222,7 +226,7 @@ pub(super) fn correct(
         outcome.corrections = values;
         assert!(!outcome.is_win(), "a correction revokes an uncorrected win");
         write(conn, &outcome)?;
-        super::lessons::score_run(conn, &outcome)?;
+        super::lessons::score_run(conn, &outcome, min_uses)?;
     }
     Ok(())
 }

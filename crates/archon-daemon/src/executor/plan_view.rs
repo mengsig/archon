@@ -6,14 +6,17 @@
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
 use archon_core::model::{Effort, ModelChoice, REVIEWERS_KEY_SUFFIX};
+use archon_core::protocol::graph::LearnedStageTimeout;
 use archon_core::protocol::{ModelSource, RunPlan, SettingSource, StageSettings};
 use archon_core::queue::QueueItem;
 use archon_core::run::{PipelineRun, RunState};
 use archon_core::steer::RunEdit;
 use archon_pipeline::PipelineSpec;
+use archon_queue::Store;
 
 use super::RunTable;
 use super::frozen;
+use super::stage_timing::learned_minutes;
 use crate::context::DaemonContext;
 
 /// The plan of run `run` of `item`, from its pipeline `spec` as `edits` left it.
@@ -98,7 +101,44 @@ fn key_settings(
         effort,
         timeout_minutes: timeout.map(|(minutes, _)| minutes),
         timeout: timeout.map(|(_, source)| source),
+        learned_timeouts: Vec::new(),
     }
+}
+
+pub(crate) fn set_learned_timeouts(
+    store: &Store,
+    pipeline: &str,
+    plan: &mut RunPlan,
+) -> Result<(), ArchonError> {
+    assert!(!plan.finished, "a kept plan's settings are frozen");
+    for setting in &mut plan.settings {
+        let Some(configured) = setting.timeout_minutes else {
+            continue;
+        };
+        assert!(
+            setting.learned_timeouts.is_empty(),
+            "resolve each setting once"
+        );
+        let mut by_effort = std::collections::BTreeMap::new();
+        for (fan_index, choice) in setting.choices.iter().enumerate() {
+            let p90 = match by_effort.entry(choice.effort) {
+                std::collections::btree_map::Entry::Occupied(entry) => *entry.get(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    *entry.insert(store.stage_p90_seconds(pipeline, &setting.key, choice.effort)?)
+                }
+            };
+            if let Some((p90_seconds, timeout_minutes)) =
+                p90.and_then(|p90| learned_minutes(configured, p90).map(|minutes| (p90, minutes)))
+            {
+                setting.learned_timeouts.push(LearnedStageTimeout {
+                    fan_index,
+                    timeout_minutes,
+                    p90_seconds,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The plan `run` ran, to keep as it ends in `state`: from its snapshot with
@@ -132,16 +172,23 @@ pub(super) async fn finished(
             return Ok(None);
         }
     };
-    let plan = match plan_of(&run.id, &spec, &edits, &item) {
-        Ok(plan) => RunPlan {
-            finished: true,
-            ..plan
-        },
+    let mut plan = match plan_of(&run.id, &spec, &edits, &item) {
+        Ok(plan) => plan,
         Err(error) => {
             tracing::warn!(run = %run.id, %error, "the finished run's plan does not encode; run_plan cannot show it");
             return Ok(None);
         }
     };
+    if ctx.config.limits.learned_stage_timeouts() {
+        let store = ctx.store.lock().await;
+        if let Err(error) = set_learned_timeouts(&store, &run.pipeline, &mut plan) {
+            tracing::warn!(run = %run.id, %error, "finished run's learned timeout settings unavailable");
+            for setting in &mut plan.settings {
+                setting.learned_timeouts.clear();
+            }
+        }
+    }
+    plan.finished = true;
     assert_eq!(plan.run, run.id, "the run's own plan");
     Ok(Some(plan))
 }

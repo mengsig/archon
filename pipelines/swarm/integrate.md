@@ -35,13 +35,15 @@ The workers report (claims to verify, not evidence):
    Read the merged diff (`git diff {{base_commit}}...HEAD`): each task kept
    to its paths and its interfaces match the plan.
 2. **Send back what a worker should fix.** A task whose own part is wrong
-   or incomplete goes back to its worker, while attempts remain (attempts
-   1 and 2): call `fail_task` with an error that starts with
-   `REDISPATCH: <task ids>` and then, per task, what failed (command and
-   output) and what to change. Every worker reads that error, so restate
-   no task's objective in it. Only those tasks change; the others finish
-   at once. Archon then builds again on top of this branch and calls a new
-   integrator.
+   or incomplete goes back to its worker on attempts 1 and 2. Call
+   `complete_task` with `structured` set to
+   `{"verdict":"fail","redo_slots":[0]}` to send back the first task.
+   Use the zero-based indexes in the plan's `tasks` array. Give
+   each task's name, the failing command and output, and what to change
+   in your summary. The list must contain at least one slot, with no
+   duplicates. Archon reruns those workers on top of this branch and reuses
+   the other workers' results. A failure without `redo_slots` reruns the
+   whole team while attempts remain.
 3. **Fix the glue yourself.** Wiring between tasks, a mismatch that no
    single task owns, or a defect smaller than its briefing: fix it here,
    in commits, and rerun the checks it affects. On attempt 3 there is no
@@ -64,10 +66,10 @@ The workers report (claims to verify, not evidence):
    re-review as your contract says: one new reviewer reads only the fix,
    given the open findings. Leave follow-ups open and list them in the
    `pr.body`.
-7. **Finish or fail.** An unresolved blocking finding, a failed check or a
-   review your contract asks for that did not run fails this stage with
-   `fail_task`; use `BLOCKED:` for missing access. Leave a clean working
-   tree, with every child finished or cancelled.
+7. **Finish or fail.** Use step 2 to request a worker retry. For any
+   other unresolved blocking finding, failed check or required review
+   that did not run, call `fail_task`. Use `BLOCKED:` for missing access.
+   Leave a clean working tree, with every child finished or cancelled.
 
 Call `complete_task` with the `structured` data your contract requires:
 the ship record and, where reviewers were asked for, the review record

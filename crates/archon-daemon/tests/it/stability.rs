@@ -632,6 +632,11 @@ async fn unreadable_records_in_the_startup_sweeps_do_not_stop_recovery() {
         [orphan.id.as_str()],
     )
     .unwrap();
+    db.execute(
+        "DELETE FROM agent_runs WHERE run IN (SELECT id FROM runs WHERE item = ?1)",
+        [orphan.id.as_str()],
+    )
+    .unwrap();
     db.execute("DELETE FROM runs WHERE item = ?1", [orphan.id.as_str()])
         .unwrap();
     drop(db);

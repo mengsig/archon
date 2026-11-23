@@ -232,6 +232,7 @@ pub(super) fn finish(
     plan: Option<&RunPlan>,
     next: QueueState,
     at: Timestamp,
+    min_uses: u32,
 ) -> Result<FinishedRun, ArchonError> {
     check_run_shape(run)?;
     if !run.state.is_terminal() || !next.is_terminal() {
@@ -265,7 +266,7 @@ pub(super) fn finish(
     super::run_plans::keep(&tx, &run.id, plan)?;
     super::changes::record_run(&tx, run, Some(&stored.state))?;
     let answers = gates::withdraw_open(&tx, run, at)?;
-    let item = items::transition_in(&tx, &run.item, next, at)?;
+    let item = items::transition_in(&tx, &run.item, next, at, min_uses)?;
     debug_assert!(active_run_of(&tx, &item.id)?.is_none());
     tx.commit().ctx("commit finished run")?;
     Ok(FinishedRun { item, answers })
@@ -668,6 +669,14 @@ pub(super) fn upsert_stage(
     }
     let holds_agent = claim_agent(&tx, &stage)?;
     write_stage(&tx, &stage, holds_agent)?;
+    if let Some(agent) = &stage.aether_agent
+        && before
+            .as_ref()
+            .and_then(|stored| stored.aether_agent.as_ref())
+            != Some(agent)
+    {
+        super::stage_spend::bind(&tx, agent, &stage, &stage.started_at, None)?;
+    }
     super::changes::record_stage(&tx, &stage, before.as_ref())?;
     for (key, value) in updates {
         super::settings::kv_set(&tx, key, value)?;

@@ -787,8 +787,11 @@ ALTER TABLE outcomes ADD COLUMN class_source TEXT
 ALTER TABLE outcomes ADD COLUMN failure_class_163 TEXT;
 "#;
 
+/// Version 25: attribute cumulative spend deltas to concrete stage runs.
+const V25: &str = include_str!("schema/stage_spend.sql");
+
 /// Keep candidate titles in insertion order without decoding every item during enqueue.
-const V25: &str = r#"
+const V26: &str = r#"
 CREATE INDEX items_by_duplicate_candidate ON items (
     repo, seq DESC, id, CASE WHEN json_valid(data) THEN json_extract(data, '$.title') END
 ) WHERE state != 'succeeded';
@@ -799,7 +802,7 @@ const RECLASSIFY_VERSION: usize = 24;
 
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25,
+    V22, V23, V24, V25, V26,
 ];
 // Later migrations must preserve the tables read by V24 reclassification.
 const _: () = assert!(RECLASSIFY_VERSION <= MIGRATIONS.len());
@@ -1461,6 +1464,8 @@ mod tests {
              DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster;
              DROP INDEX items_by_duplicate_candidate;
              ALTER TABLE lessons DROP COLUMN cluster;
+             DROP TABLE stage_spend; DROP TABLE stage_spend_windows;
+             ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
              DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();

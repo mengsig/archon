@@ -317,6 +317,50 @@ async fn a_refresh_merges_the_new_base_into_the_same_branch_and_pull_request() {
     assert!(again.contains("nothing to refresh"), "{again}");
 }
 
+#[tokio::test]
+async fn evidence_attributes_refresh_usage_to_the_refresh_stage() {
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "the change").await;
+    let upstream = advance_origin(&h, "change.txt", "upstream wording\n");
+    let fix = refresh(&h, &owner).await.unwrap();
+    h.dispatch().await;
+    let stage = h.running().await.remove(0);
+    let run = h.run(&fix.id).await;
+    assert_eq!(stage.run, run.id);
+    let charge = archon_queue::store::SpendRow {
+        agent: stage.aether_agent.clone().unwrap(),
+        item: Some(fix.id.clone()),
+        cost_usd: 1.5,
+        cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: Some(true),
+        estimated_cost_usd: 0.0,
+        input_tokens: 1,
+        output_tokens: 1,
+        at: archon_core::now(),
+    };
+    h.ctx.store.lock().await.record_spend(&charge).unwrap();
+
+    let first_parent = git(&run.workspace, &["rev-parse", "HEAD"]);
+    merge_by_hand(&run.workspace, &upstream, "change.txt", "both wordings\n");
+    settle_reviewed(&h, Some(&first_parent)).await;
+    let day = stage.started_at.with_timezone(&chrono::Local).date_naive();
+    let range = archon_core::cost::DayRange {
+        since: day,
+        until: day,
+    };
+    let query = archon_core::model_evidence::ModelEvidenceQuery {
+        stage: Some(stage.stage_id.clone()),
+        ..Default::default()
+    };
+    let store = h.ctx.store.lock().await;
+    let report = store
+        .model_evidence(&query, &range, false, |_, _| Ok(false))
+        .unwrap();
+    assert!(report.rows.iter().any(|row| row.p90_cost_usd == Some(1.5)));
+    assert_eq!(store.spend_for_item(&owner.id, false).unwrap(), 0.0);
+    assert!(store.unlinked_spend().unwrap().is_empty());
+}
+
 /// A refresh's prompts hand reviewers the base commit it merges, never the
 /// old fork, whose diff would hold every upstream commit the merge brings in.
 #[tokio::test]

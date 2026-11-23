@@ -3,7 +3,7 @@
 //! stage watchdog. Everything
 //! here is derived from persisted state, so it also repairs a crash.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use archon_core::Timestamp;
 use archon_core::aether_ids::{AetherAgentId, AetherTaskId};
@@ -25,7 +25,6 @@ const DEADLINE_GRACE_SECS: i64 = 60;
 pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonError> {
     super::acceptance::resume_decisions(ctx).await?;
     let now = archon_core::now();
-    let grace = chrono::Duration::seconds(DEADLINE_GRACE_SECS);
     let (in_flight, merge, ship, retry) = {
         let table = ctx.runs.lock().await;
         let due = ship::stalled(&table, std::time::Instant::now());
@@ -41,56 +40,9 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
         ship,
         ..FollowUp::default()
     };
-    let (running, expired, nearing) = {
-        let store = ctx.store.lock().await;
-        let mut finished: BTreeMap<PipelineRunId, bool> = BTreeMap::new();
-        let mut running: Vec<StageRun> = Vec::new();
-        let (mut expired, mut nearing) = (Vec::new(), Vec::new());
-        for stage in store.live_stage_runs()? {
-            if in_flight.contains(&stage.id) {
-                continue;
-            }
-            if stage.state == StageState::Spawning {
-                follow.issue.push(stage.id);
-                continue;
-            }
-            let run_done = match finished.get(&stage.run) {
-                Some(done) => *done,
-                None => {
-                    let done = store.run(&stage.run)?.state.is_terminal();
-                    *finished.entry(stage.run.clone()).or_insert(done)
-                }
-            };
-            if run_done {
-                follow.stop.push(stage.run.clone());
-                continue;
-            }
-            if super::acceptance::pending(&store, &stage.id)? {
-                continue;
-            }
-            follow.roster.push(stage.run.clone());
-            if let Some(task) = stage
-                .aether_task
-                .as_ref()
-                .filter(|_| retry.contains(&stage.id))
-            {
-                follow.check.push((stage.id.clone(), task.clone()));
-            }
-            if stage.aether_agent.is_some() && stage.aether_task.is_none() {
-                follow.resumed.push(stage.id.clone());
-            }
-            let deadline = stored_deadline(&store, &stage)?;
-            if deadline.is_some_and(|d| d + grace < now) {
-                expired.push(stage);
-                continue;
-            }
-            if stage.state == StageState::Running {
-                if deadline.is_some_and(|d| held::near(d, now)) {
-                    nearing.push(stage.clone());
-                }
-                running.push(stage);
-            }
-        }
+    let stages = {
+        let mut store = ctx.store.lock().await;
+        let stages = scan_stages(ctx, &mut store, now, &in_flight, &retry, &mut follow)?;
         follow.retire = run_node::runs_to_retire(&store)?;
         follow.sibling_stops = siblings::owed(&store)?;
         follow.steers = super::steer::owed(&store)?;
@@ -99,62 +51,141 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
             .into_iter()
             .map(|(item, repo_name)| super::ItemBuild { item, repo_name })
             .collect();
-        (running, expired, nearing)
+        stages
     };
-    {
-        let mut table = ctx.runs.lock().await;
-        let store = ctx.store.lock().await;
-        table
-            .settle_claims
-            .retain(|_, claim| claim.strong_count() > 0);
-        let live: std::collections::BTreeSet<_> = store
-            .live_stage_runs()?
-            .into_iter()
-            .map(|stage| stage.id)
-            .collect();
-        let mut finished: std::collections::BTreeSet<_> = table
-            .settle_retries
-            .keys()
-            .filter(|id| !live.contains(*id) && !table.settle_claims.contains_key(*id))
-            .cloned()
-            .collect();
-        for (key, _) in store.kv_prefix(super::coordination::STAGE_BLOCKER_PREFIX)? {
-            let raw = key
-                .strip_prefix(super::coordination::STAGE_BLOCKER_PREFIX)
-                .expect("the store returns the requested prefix");
-            let id = StageRunId::parse(raw)
-                .map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?;
-            if !live.contains(&id) && !table.settle_claims.contains_key(&id) {
-                finished.insert(id);
-            }
-        }
-        drop(store);
-        for id in finished {
-            if table
-                .settle_retries
-                .get(&id)
-                .is_some_and(|r| r.not_before > std::time::Instant::now())
-            {
-                continue;
-            }
-            if super::coordination::clear_stage(ctx, &id.to_string()).await? {
-                table.settle_retries.remove(&id);
-            } else {
-                settle::schedule_retry(&mut table, &id);
-            }
-        }
-    }
-    follow.time_out = held::sweep(ctx, expired, &nearing, now).await?;
-    forewarn::sweep(ctx, &running, now).await?;
-    let stalled = settle_stalled(ctx, &running, now, &mut follow).await;
+    clear_settled_blockers(ctx).await?;
+    follow.time_out = held::sweep(ctx, stages.expired, &stages.nearing, now).await?;
+    forewarn::sweep(ctx, &stages.running, now).await?;
+    let stalled = settle_stalled(ctx, &stages.running, now, &mut follow).await;
     run_follow_up(ctx, follow).await?;
     stalled
 }
 
-/// The deadline in `stage`'s stored request; `None` without one.
-fn stored_deadline(store: &Store, stage: &StageRun) -> Result<Option<Timestamp>, ArchonError> {
+#[derive(Default)]
+struct LiveStages {
+    running: Vec<StageRun>,
+    expired: Vec<StageRun>,
+    nearing: Vec<StageRun>,
+}
+
+fn scan_stages(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    now: Timestamp,
+    in_flight: &BTreeSet<StageRunId>,
+    retry: &[StageRunId],
+    follow: &mut FollowUp,
+) -> Result<LiveStages, ArchonError> {
+    let grace = chrono::Duration::seconds(DEADLINE_GRACE_SECS);
+    let mut finished: BTreeMap<PipelineRunId, bool> = BTreeMap::new();
+    let mut stages = LiveStages::default();
+    for stage in store.live_stage_runs()? {
+        if in_flight.contains(&stage.id) {
+            continue;
+        }
+        if stage.state == StageState::Spawning {
+            follow.issue.push(stage.id);
+            continue;
+        }
+        let run_done = match finished.get(&stage.run) {
+            Some(done) => *done,
+            None => {
+                let done = store.run(&stage.run)?.state.is_terminal();
+                *finished.entry(stage.run.clone()).or_insert(done)
+            }
+        };
+        if run_done {
+            follow.stop.push(stage.run.clone());
+            continue;
+        }
+        if super::acceptance::pending(store, &stage.id)? {
+            continue;
+        }
+        follow.roster.push(stage.run.clone());
+        if let Some(task) = stage
+            .aether_task
+            .as_ref()
+            .filter(|_| retry.contains(&stage.id))
+        {
+            follow.check.push((stage.id.clone(), task.clone()));
+        }
+        if stage.aether_agent.is_some() && stage.aether_task.is_none() {
+            follow.resumed.push(stage.id.clone());
+        }
+        let spawn = stored_spawn(store, &stage)?;
+        let deadline = spawn.as_ref().and_then(|spawn| spawn.request.deadline);
+        if stage.state == StageState::Running
+            && let Some(spawn) = spawn
+            && let Err(error) = super::stage_timing::report_overrun(ctx, store, &stage, spawn, now)
+        {
+            tracing::warn!(%error, stage = %stage.id, "stage overrun news not recorded");
+        }
+        if deadline.is_some_and(|d| d + grace < now) {
+            stages.expired.push(stage);
+            continue;
+        }
+        if stage.state == StageState::Running {
+            if deadline.is_some_and(|d| held::near(d, now)) {
+                stages.nearing.push(stage.clone());
+            }
+            stages.running.push(stage);
+        }
+    }
+    Ok(stages)
+}
+
+async fn clear_settled_blockers(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    let mut table = ctx.runs.lock().await;
+    let store = ctx.store.lock().await;
+    table
+        .settle_claims
+        .retain(|_, claim| claim.strong_count() > 0);
+    let live: BTreeSet<_> = store
+        .live_stage_runs()?
+        .into_iter()
+        .map(|stage| stage.id)
+        .collect();
+    let mut finished: BTreeSet<_> = table
+        .settle_retries
+        .keys()
+        .filter(|id| !live.contains(*id) && !table.settle_claims.contains_key(*id))
+        .cloned()
+        .collect();
+    for (key, _) in store.kv_prefix(super::coordination::STAGE_BLOCKER_PREFIX)? {
+        let raw = key
+            .strip_prefix(super::coordination::STAGE_BLOCKER_PREFIX)
+            .expect("the store returns the requested prefix");
+        let id =
+            StageRunId::parse(raw).map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?;
+        if !live.contains(&id) && !table.settle_claims.contains_key(&id) {
+            finished.insert(id);
+        }
+    }
+    drop(store);
+    for id in finished {
+        if table
+            .settle_retries
+            .get(&id)
+            .is_some_and(|r| r.not_before > std::time::Instant::now())
+        {
+            continue;
+        }
+        if super::coordination::clear_stage(ctx, &id.to_string()).await? {
+            table.settle_retries.remove(&id);
+        } else {
+            settle::schedule_retry(&mut table, &id);
+        }
+    }
+    Ok(())
+}
+
+/// The stage's stored request, including its frozen deadline and timing sample.
+fn stored_spawn(
+    store: &Store,
+    stage: &StageRun,
+) -> Result<Option<super::spawn::StoredSpawn>, ArchonError> {
     match load_spawn(store, &stage.id) {
-        Ok(spawn) => Ok(spawn.request.deadline),
+        Ok(spawn) => Ok(Some(spawn)),
         Err(ArchonError::NotFound(what)) => {
             tracing::warn!(stage = %stage.id, "no {what}; no deadline timer");
             Ok(None)

@@ -16,12 +16,13 @@ pub(super) struct Confirmation {
     pub base: String,
     pub head: String,
     findings: Vec<(String, String)>,
-    after: String,
-    parallel: Vec<String>,
+    existing: Option<BTreeSet<String>>,
 }
 
 pub(super) enum Status {
     Waiting,
+    WaitingForPeers,
+    Ready,
     Passed,
     Refused(&'static str),
 }
@@ -31,14 +32,11 @@ impl Confirmation {
         run: PipelineRun,
         failed_head: &str,
         findings: &[(&str, &str)],
-        after: &str,
-        parallel: Vec<String>,
     ) -> Result<Option<Self>, ArchonError> {
         if findings.is_empty() || run.branch.is_empty() {
             return Ok(None);
         }
         assert!(!failed_head.is_empty());
-        assert!(!after.is_empty());
         let failed = failed_head.to_owned();
         let fixes = tokio::task::spawn_blocking(move || committed_fixes(&run, &failed))
             .await
@@ -59,8 +57,7 @@ impl Confirmation {
             base,
             head,
             findings,
-            after: after.to_owned(),
-            parallel,
+            existing: None,
         }))
     }
 
@@ -79,25 +76,28 @@ impl Confirmation {
             !self.findings.is_empty(),
             "confirmation has findings to verify"
         );
-        if capped.iter().any(|(id, text)| {
-            !self
-                .findings
-                .iter()
-                .any(|(known, original)| known == id && original == text)
-        }) {
+        if capped
+            .iter()
+            .any(|(id, _)| !self.findings.iter().any(|(known, _)| known == id))
+        {
             return Status::Refused("another blocker was reported at the capped head");
         }
-        let Some(after) = beneath.iter().position(|d| d.agent.as_str() == self.after) else {
-            return Status::Refused("Aether no longer lists the capped round's reviewer");
+        let mut direct = reviewers(lead, beneath).peekable();
+        if direct.peek().is_none() {
+            return Status::Refused("Aether no longer lists the capped review's reviewers");
+        }
+        let Some(existing) = &self.existing else {
+            return if direct.any(|d| d.state == DescendantState::Live) {
+                Status::WaitingForPeers
+            } else {
+                Status::Ready
+            };
         };
-        let mut reviewers = beneath[after + 1..]
-            .iter()
-            .filter(|d| &d.parent == lead && d.role.eq_ignore_ascii_case(REVIEWER_ROLE))
-            .filter(|d| !self.parallel.iter().any(|peer| peer == d.agent.as_str()));
-        let Some(reviewer) = reviewers.next() else {
+        let mut new = direct.filter(|d| !existing.contains(d.agent.as_str()));
+        let Some(reviewer) = new.next() else {
             return Status::Waiting;
         };
-        if reviewers.next().is_some() {
+        if new.next().is_some() {
             return Status::Refused("more than one reviewer followed the capped round");
         }
         match reviewer.state {
@@ -105,6 +105,30 @@ impl Confirmation {
             DescendantState::Stopped => Status::Refused("the confirmation reviewer stopped"),
             DescendantState::Completed => self.completed(reports, &reviewer.agent),
         }
+    }
+
+    pub fn prepare_delivery(
+        &mut self,
+        lead: &AetherAgentId,
+        beneath: &[Descendant],
+        capped: &[(&str, &str)],
+    ) {
+        assert!(self.existing.is_none(), "confirmation is instructed once");
+        let existing: BTreeSet<_> = reviewers(lead, beneath)
+            .map(|d| d.agent.to_string())
+            .collect();
+        assert!(
+            !existing.is_empty(),
+            "the capped round already had reviewers"
+        );
+        self.existing = Some(existing);
+        self.findings.extend(
+            capped
+                .iter()
+                .map(|(id, text)| ((*id).to_owned(), (*text).to_owned())),
+        );
+        self.findings.sort_unstable();
+        self.findings.dedup();
     }
 
     fn completed(&self, reports: &[Report], agent: &AetherAgentId) -> Status {
@@ -141,6 +165,10 @@ impl Confirmation {
         stage: &StageRun,
         lead: &AetherAgentId,
     ) -> Result<bool, ArchonError> {
+        assert!(
+            self.existing.is_some(),
+            "the confirmation scope is frozen before delivery"
+        );
         let findings = self
             .findings
             .iter()
@@ -165,6 +193,15 @@ impl Confirmation {
         )
         .await
     }
+}
+
+fn reviewers<'a>(
+    lead: &'a AetherAgentId,
+    beneath: &'a [Descendant],
+) -> impl Iterator<Item = &'a Descendant> {
+    beneath
+        .iter()
+        .filter(|d| &d.parent == lead && d.role.eq_ignore_ascii_case(REVIEWER_ROLE))
 }
 
 fn committed_fixes(

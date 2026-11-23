@@ -2698,7 +2698,7 @@ named reads make a shorter record is refused, as is one with fewer reads.
 Fewer fail the run with the reasons. Review rounds count commits with at least
 one blocking fail. At `REVIEW_ROUND_CAP` (three), Archon checks for a newer
 descendant commit on the run branch and a `Review-Fix: <id>` trailer for each
-blocker of the capped head. When those fixes are already committed, the lead
+open blocker at the cap. When those fixes are already committed, the lead
 delegates one final review of that exact delta. The reviewer must explicitly
 confirm every capped ID as resolved and pass the delta. A new or unresolved
 blocker ends the stage. The normal branch and coverage checks still apply.

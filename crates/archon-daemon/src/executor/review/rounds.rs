@@ -10,6 +10,7 @@ use archon_core::run::{StageOutcome, StageRun, review_tally_key};
 use archon_pipeline::contract::REVIEW_ROUND_CAP;
 use archon_pipeline::review::Verdict;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::confirm::{Confirmation, Status};
 use super::record::{self, Finding, Report, Rounds};
@@ -205,14 +206,9 @@ async fn count(
     }
     let rounds = rounds_of(&tally.fails);
     if rounds < REVIEW_ROUND_CAP {
-        if let Some(reviewer) = reviewer
-            && tally
-                .reports
-                .iter()
-                .any(|r| r.agent == reviewer.as_str() && !r.findings.is_empty())
-        {
+        if reviewer.is_some() && !tally.reports.is_empty() {
             let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
-            tell_findings(ctx, stage, lead, reviewer, &records).await?;
+            tell_findings(ctx, stage, lead, &records).await?;
         }
         return Ok(None);
     }
@@ -237,31 +233,30 @@ async fn capped(
         .fails
         .last()
         .expect("a capped review has a failed head");
-    let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
-    let latest = records.blocking_at(&last.head);
     if tally.confirm.is_none() && rounds == REVIEW_ROUND_CAP {
+        let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
+        let latest = records.blocking_at(&last.head);
         tally.confirm = authorize(ctx, stage, tally, last, &latest).await?;
         if tally.confirm.is_some() {
             save(ctx, &stage.id, tally).await?;
         }
     }
-    let refusal = if let Some(confirm) = &tally.confirm {
-        let findings = records.blocking_at(&confirm.base);
-        match confirm.status(lead, beneath, &tally.reports, &findings) {
-            Status::Passed => return Ok(None),
-            Status::Waiting if event.is_some() => {
-                if confirm.tell(ctx, stage, lead).await? {
-                    return Ok(None);
-                }
-                Some("the lead could not receive the confirmation instructions")
-            }
-            Status::Waiting => Some("the lead finished before the confirmation passed"),
-            Status::Refused(why) => Some(why),
-        }
+    let refusal = if tally.confirm.is_some() {
+        let progress = confirmation_refusal(ctx, stage, (lead, beneath), event.is_some(), tally);
+        let Some(why) = progress.await? else {
+            return Ok(None);
+        };
+        Some(why)
     } else {
         None
     };
-    let reason = capped_reason(stage, &tally.fails, &latest, refusal);
+    let last = tally
+        .fails
+        .last()
+        .expect("the stage still has capped findings");
+    let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
+    let reported = records.reported_blockers(&last.head);
+    let reason = capped_reason(stage, &tally.fails, &reported, refusal);
     tally.stopped = Some(reason.clone());
     save(ctx, &stage.id, tally).await?;
     Ok(Some(Capped {
@@ -291,18 +286,42 @@ async fn authorize(
         return Ok(None);
     }
     let run = ctx.store.lock().await.run(&stage.run)?;
-    let parallel = tally
-        .reports
-        .iter()
-        .filter(|r| {
-            r.agent != last.agent
-                && r.head
-                    .as_deref()
-                    .is_some_and(|head| same_commit(head, &last.head))
-        })
-        .map(|r| r.agent.clone())
-        .collect();
-    Confirmation::eligible(run, &last.head, latest, &last.agent, parallel).await
+    Confirmation::eligible(run, &last.head, latest).await
+}
+
+async fn confirmation_refusal(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    (lead, beneath): (&AetherAgentId, &[Descendant]),
+    live: bool,
+    tally: &mut Tally,
+) -> Result<Option<&'static str>, ArchonError> {
+    if rounds_of(&tally.fails) > REVIEW_ROUND_CAP {
+        return Ok(Some("a further review reported a blocker"));
+    }
+    let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
+    let confirm = tally
+        .confirm
+        .as_mut()
+        .expect("the capped review is authorized");
+    let findings = records.blocking_at(&confirm.base);
+    match confirm.status(lead, beneath, &tally.reports, &findings) {
+        Status::Passed => return Ok(None),
+        Status::Refused(why) => return Ok(Some(why)),
+        _ if !live => return Ok(Some("the lead finished before the confirmation passed")),
+        Status::WaitingForPeers => return Ok(None),
+        Status::Ready => {
+            confirm.prepare_delivery(lead, beneath, &findings);
+            save(ctx, &stage.id, tally).await?;
+        }
+        Status::Waiting => {}
+    }
+    let confirm = tally
+        .confirm
+        .as_ref()
+        .expect("a confirmation owes its note");
+    let sent = confirm.tell(ctx, stage, lead).await?;
+    Ok((!sent).then_some("the lead could not receive the confirmation instructions"))
 }
 
 fn capped_reason(
@@ -337,10 +356,9 @@ async fn tell_findings(
     ctx: &DaemonContext,
     stage: &StageRun,
     lead: &AetherAgentId,
-    reviewer: &AetherAgentId,
     records: &Rounds<'_>,
 ) -> Result<(), ArchonError> {
-    let findings = records.report_findings(reviewer);
+    let findings = records.last_open();
     if findings.is_empty() || stage.only_reviews == Some(true) {
         return Ok(());
     }
@@ -350,15 +368,11 @@ async fn tell_findings(
         .collect::<Vec<_>>()
         .join("\n");
     let note = format!(
-        "Review findings from {reviewer}. Include the still-open IDs and findings in the next review's instructions.\n\n{list}"
+        "Include every open ID below in the next review's instructions. Ask for each ID's disposition and a review of the new delta.\n\n{list}"
     );
-    tell(
-        ctx,
-        lead,
-        &note,
-        &format!("archon:review-findings:{}:{reviewer}", stage.id),
-    )
-    .await?;
+    let digest = Sha256::digest(note.as_bytes());
+    let key = format!("archon:review-findings:{}:{digest:x}", stage.id);
+    tell(ctx, lead, &note, &key).await?;
     Ok(())
 }
 

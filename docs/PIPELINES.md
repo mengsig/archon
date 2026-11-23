@@ -1392,7 +1392,7 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   are listed in the `pr.body` and left. A re-review confirms the previous
   round's open findings by ID and reviews the new delta. A real blocker
   anywhere fails. At three failed rounds, Archon escalates or, when fixes for
-  every blocker of the capped head are already committed with
+  every open blocker at the cap are already committed with
   `Review-Fix: <id>` trailers, asks the lead for one final confirmation.
   An unresolved blocker, new blocker or missing confirmation escalates. A
   retry on the same branch keeps the earlier runs' reviews while the branch

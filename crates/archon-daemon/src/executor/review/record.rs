@@ -2,7 +2,6 @@ mod previous;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use archon_core::aether_ids::AetherAgentId;
 use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
@@ -114,6 +113,8 @@ struct Round<'a> {
     number: usize,
     head: Option<&'a str>,
     reviews: Vec<Review<'a>>,
+    #[serde(skip)]
+    open: Vec<Finding>,
 }
 
 #[derive(Debug, Serialize)]
@@ -141,6 +142,7 @@ impl<'a> Rounds<'a> {
                 number: result.rounds.len() + first,
                 head: reads[0].head.as_deref(),
                 reviews: Vec::new(),
+                open: Vec::new(),
             };
             let at = RoundId {
                 stage: stage.clone(),
@@ -154,6 +156,12 @@ impl<'a> Rounds<'a> {
                     .expect("only known findings resolve");
                 finding.resolved_in = Some(at.clone());
             }
+            round.open = result
+                .findings
+                .values()
+                .filter(|f| f.resolved_in.is_none())
+                .cloned()
+                .collect();
             result.rounds.push(round);
         }
         result.record_next_round(&stage);
@@ -179,33 +187,35 @@ impl<'a> Rounds<'a> {
     }
 
     pub fn blocking_at(&self, head: &str) -> Vec<(&str, &str)> {
-        let Some(round) = self
-            .rounds
-            .iter()
-            .find(|r| r.head.is_some_and(|r| same_commit(r, head)))
-        else {
+        self.at_head(head)
+            .map_or_else(Vec::new, |round| round.open_findings(true))
+    }
+
+    pub fn reported_blockers(&self, head: &str) -> Vec<(&str, &str)> {
+        let Some(round) = self.at_head(head) else {
             return Vec::new();
         };
         round
             .reviews
             .iter()
             .flat_map(Review::findings)
-            .filter(|(id, f)| f.blocking || self.findings[*id].blocking)
+            .filter(|(_, f)| f.blocking)
             .map(|(id, f)| (id, f.description.as_str()))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
     }
 
-    pub fn report_findings(&self, agent: &AetherAgentId) -> Vec<(&str, &str)> {
+    pub fn last_open(&self) -> Vec<(&str, &str)> {
+        self.rounds
+            .last()
+            .map_or_else(Vec::new, |round| round.open_findings(false))
+    }
+
+    fn at_head(&self, head: &str) -> Option<&Round<'_>> {
         self.rounds
             .iter()
-            .flat_map(|r| &r.reviews)
-            .find(|r| r.agent == agent.as_str())
-            .into_iter()
-            .flat_map(Review::findings)
-            .map(|(id, f)| (id, f.description.as_str()))
-            .collect()
+            .find(|r| r.head.is_some_and(|r| same_commit(r, head)))
     }
 }
 
@@ -237,6 +247,32 @@ fn group(reports: &[Report]) -> Vec<Vec<&Report>> {
 }
 
 impl<'a> Round<'a> {
+    fn open_findings(&self, blocking_only: bool) -> Vec<(&str, &str)> {
+        let mut unlisted: BTreeMap<&str, &str> = self
+            .open
+            .iter()
+            .filter(|f| !blocking_only || f.blocking)
+            .map(|f| (f.id.as_str(), f.description.as_str()))
+            .collect();
+        let mut findings: BTreeSet<_> = self
+            .reviews
+            .iter()
+            .flat_map(Review::findings)
+            .filter(|(id, _)| unlisted.contains_key(id))
+            .map(|(id, f)| (id, f.description.as_str()))
+            .collect();
+        for (id, _) in &findings {
+            unlisted.remove(id);
+        }
+        findings.extend(unlisted);
+        assert!(
+            findings
+                .iter()
+                .all(|(id, text)| !id.is_empty() && !text.is_empty())
+        );
+        findings.into_iter().collect()
+    }
+
     fn record(
         &mut self,
         findings: &mut BTreeMap<String, Finding>,

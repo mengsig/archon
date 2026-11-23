@@ -896,7 +896,8 @@ reads. In each re-review prompt list the previous round's open findings and thei
 (Archon supplies them; for a new finding use the reviewer agent ID and its 1-based \
 position in `findings`, joined with a colon). Ask the reviewer to list confirmed fixes in \
 `resolved_findings` and reuse the `id` on each finding still open, then review the new \
-delta. Any real blocker found anywhere fails. In each fix commit add a `Review-Fix: <id>` \
+delta. Carry forward any ID the reviewer leaves unanswered. Any real blocker found anywhere \
+fails. In each fix commit add a `Review-Fix: <id>` \
 trailer per blocker it addresses. At 3 failed rounds Archon escalates unless every blocker \
 of that round already has a committed fix. In that case wait for Archon's instructions for \
 one final confirmation of those fixes and their delta; any remaining or new blocker escalates.\n";

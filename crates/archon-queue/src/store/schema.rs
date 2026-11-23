@@ -795,8 +795,8 @@ const RECLASSIFY_VERSION: usize = 24;
 
 /// Version 26: bound evidence's candidate item snapshot by creation time.
 const V26: &str = "
-CREATE INDEX items_by_created_at ON items (created_at);
-CREATE INDEX stage_runs_by_started_at ON stage_runs (started_at);
+CREATE INDEX IF NOT EXISTS items_by_created_at ON items (created_at);
+CREATE INDEX IF NOT EXISTS stage_runs_by_started_at ON stage_runs (started_at);
 ";
 
 pub(super) const MIGRATIONS: &[&str] = &[
@@ -951,6 +951,24 @@ fn enable_wal(conn: &Connection) -> Result<String, ArchonError> {
     }
 }
 
+/// A branch build recorded version 25 for the evidence indexes, now version 26.
+/// Forget that row so the real version 25 (stage spend) is applied.
+fn forget_branch_only_v25(tx: &Connection) -> Result<(), ArchonError> {
+    let has_stage_spend: bool = tx
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'stage_spend')",
+            [],
+            |row| row.get(0),
+        )
+        .ctx("look for stage_spend")?;
+    if has_stage_spend {
+        return Ok(());
+    }
+    tx.execute("DELETE FROM schema_migrations WHERE version = 25", [])
+        .ctx("forget branch-only version 25")?;
+    Ok(())
+}
+
 /// Apply every migration newer than the store's version, each with its
 /// version row, in one write transaction. Returns the resulting version.
 pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
@@ -962,6 +980,7 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
     )
     .ctx("create schema_migrations")?;
     let tx = write_tx(conn)?;
+    forget_branch_only_v25(&tx)?;
     let current: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
@@ -1243,6 +1262,17 @@ mod tests {
         assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
         assert_eq!(applied_versions(&conn), applied, "a reopen applies nothing");
         assert_eq!(question_number(&conn, "q_open"), 2);
+    }
+
+    #[test]
+    fn a_branch_built_v25_store_gains_stage_spend_and_keeps_its_indexes() {
+        let mut conn = v2_store();
+        migrate(&mut conn).unwrap();
+        conn.execute_batch("DROP TABLE stage_spend; DROP TABLE stage_spend_windows; ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq; DELETE FROM schema_migrations WHERE version = 26;").unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+        let versions: Vec<i64> = applied_versions(&conn).iter().map(|(v, _)| *v).collect();
+        assert_eq!(versions, (1..=MIGRATIONS.len() as i64).collect::<Vec<_>>());
+        conn.prepare("SELECT 1 FROM stage_spend").unwrap();
     }
 
     #[test]

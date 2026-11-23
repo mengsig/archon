@@ -51,56 +51,89 @@ fn advice(store: &archon_queue::Store, pinned: bool) -> Lesson {
 }
 
 #[test]
-fn losing_lesson_retracts_but_pinned_lesson_survives() {
-    for pinned in [false, true] {
-        let mut store = store();
-        let lesson = advice(&store, pinned);
-        for n in 0..5 {
-            let item = store
-                .insert_item(&item(None, &format!("test {n}")), None)
-                .unwrap();
-            let run = start(&mut store, &item.id);
-            assert_eq!(
-                store
-                    .lessons_for_run(&run.id, None, "direct")
-                    .unwrap()
-                    .len(),
-                1
-            );
-            settle_run(
-                &mut store,
-                &run,
-                QueueState::Failed {
-                    run: Some(run.id.clone()),
-                    error: "test failed".into(),
-                },
-                t(30),
-            );
-            store
-                .capture_outcome(&store.run(&run.id).unwrap(), None, true)
-                .unwrap();
-        }
-        let scored = store.lesson(&lesson.id).unwrap();
-        assert_eq!(scored.uses, 5);
-        assert_eq!(scored.wins, 0);
-        assert_eq!(
-            scored.state,
-            if pinned {
-                LessonState::Active
-            } else {
-                LessonState::Retracted
-            }
-        );
-        let posted = lesson_lines(&store, &lesson);
-        if pinned {
-            assert!(posted.is_empty(), "{posted:?}");
-            assert_eq!(scored.updated_at, lesson.updated_at);
-        } else {
-            assert_eq!(posted.len(), 1, "{posted:?}");
-            assert!(posted[0].contains("retracted automatically: 0 of 5 scored runs won"));
-            assert!(scored.updated_at > scored.created_at);
-        }
+fn a_lesson_at_its_baseline_retires_only_at_the_configured_floor() {
+    use archon_core::config::LearningConfig;
+
+    let mut store = store();
+    assert_eq!(store.learning_config().unwrap().retire_min_uses, 20);
+    store
+        .configure_learning(&LearningConfig {
+            retire_min_uses: 6,
+            ..Default::default()
+        })
+        .unwrap();
+    let lesson = advice(&store, false);
+    for n in 0..5 {
+        settle_use(&mut store, n, (n < 3).then_some("test failed"));
     }
+    let before = store.lesson(&lesson.id).unwrap();
+    assert_eq!((before.uses, before.wins), (5, 2));
+    assert_eq!(before.state, LessonState::Active);
+    assert!(before.retirement.is_none());
+
+    settle_use(&mut store, 5, None);
+
+    let retired = store.lesson(&lesson.id).unwrap();
+    assert_eq!((retired.uses, retired.wins), (6, 3));
+    assert_eq!(retired.state, LessonState::Retracted);
+    let reason = retired.retirement.unwrap();
+    assert_eq!(reason.min_uses, 6);
+    assert_eq!(reason.baseline, 0.5);
+    assert_eq!(store.lessons(&Default::default()).unwrap(), [retired]);
+    assert!(
+        store
+            .select_lessons(None, Some("direct"), 10, 4096)
+            .unwrap()
+            .is_empty()
+    );
+    let posted = lesson_lines(&store, &lesson);
+    assert_eq!(posted.len(), 1, "{posted:?}");
+    assert!(posted[0].contains("retired automatically: 3 of 6 scored runs won"));
+
+    let accepted = store
+        .update_lesson(
+            &lesson.id,
+            LessonPatch {
+                state: Some(LessonState::Active),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(accepted.state, LessonState::Active);
+    assert!(accepted.retirement.is_none());
+}
+
+#[test]
+fn an_unpinned_operator_accepted_lesson_survives_scoring_and_refresh() {
+    let mut store = store();
+    store
+        .configure_learning(&archon_core::config::LearningConfig {
+            retire_min_uses: 6,
+            ..Default::default()
+        })
+        .unwrap();
+    let lesson = advice(&store, false);
+    let accepted = store
+        .update_lesson(
+            &lesson.id,
+            LessonPatch {
+                state: Some(LessonState::Active),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(accepted.source, LessonSource::Operator);
+    assert!(!accepted.pinned);
+
+    for n in 0..7 {
+        settle_use(&mut store, n, Some("test failed"));
+    }
+    store.refresh_lessons(archon_core::now()).unwrap();
+    let scored = store.lesson(&lesson.id).unwrap();
+    assert_eq!((scored.uses, scored.wins), (7, 0));
+    assert_eq!(scored.state, LessonState::Active);
+    assert!(scored.retirement.is_none());
+    assert!(lesson_lines(&store, &lesson).is_empty());
 }
 
 /// The system feed lines that name `lesson`.
@@ -261,6 +294,12 @@ fn unpinning_a_lesson_with_1_4_6_losses_from_unscored_uses_does_not_retract_it()
 #[test]
 fn late_correction_revokes_a_win_once_and_keeps_the_run_snapshot() {
     let mut store = store();
+    store
+        .configure_learning(&archon_core::config::LearningConfig {
+            retire_min_uses: 1,
+            ..Default::default()
+        })
+        .unwrap();
     let lesson = advice(&store, false);
     let item = store.insert_item(&item(None, "result"), None).unwrap();
     let run = start(&mut store, &item.id);
@@ -285,6 +324,9 @@ fn late_correction_revokes_a_win_once_and_keeps_the_run_snapshot() {
     }
     let scored = store.lesson(&lesson.id).unwrap();
     assert_eq!((scored.uses, scored.wins), (1, 0));
+    assert_eq!(scored.state, LessonState::Retracted);
+    assert_eq!(lesson_lines(&store, &lesson).len(), 1);
+
     store
         .update_lesson(
             &lesson.id,

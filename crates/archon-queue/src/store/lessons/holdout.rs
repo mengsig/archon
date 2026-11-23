@@ -4,6 +4,7 @@ use super::super::codec::{SqlContext, ts};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, RepoId};
 use archon_core::lesson::{HoldoutLift, Lesson, held_out};
+use archon_core::outcome::{FailureClass, OutcomeResult, UNSCORED_FAILURES};
 use rusqlite::{Connection, params};
 
 /// Splits `selected` into the lessons `item` is given and those held out from
@@ -53,6 +54,35 @@ pub(super) fn record(
         .ctx("record lesson trial")?;
     }
     Ok(())
+}
+
+/// The measured win rate without this lesson, after enough scored holdouts.
+pub(super) fn baseline(
+    conn: &Connection,
+    lesson: &Lesson,
+    min_uses: u32,
+) -> Result<Option<f64>, ArchonError> {
+    let [budget, timeout, infrastructure] = UNSCORED_FAILURES.map(FailureClass::as_str);
+    let (uses, wins): (u32, u32) = conn
+        .query_row(
+            "SELECT COUNT(t.won), COALESCE(SUM(t.won), 0) FROM lesson_trials t
+             LEFT JOIN outcomes o ON o.run=t.run
+             WHERE t.lesson=?1 AND t.held=1
+             AND (o.run IS NULL OR (o.result<>?2
+                  AND COALESCE(o.failure_class,'') NOT IN (?3,?4,?5)))",
+            params![
+                lesson.id.as_str(),
+                OutcomeResult::Cancelled.as_str(),
+                budget,
+                timeout,
+                infrastructure
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ctx("measure the lesson's holdout baseline")?;
+    assert!(wins <= uses);
+    assert!(min_uses > 0);
+    Ok((uses >= min_uses).then(|| f64::from(wins) / f64::from(uses)))
 }
 
 /// Both arms' scored runs, reported only when each has the minimum sample. A

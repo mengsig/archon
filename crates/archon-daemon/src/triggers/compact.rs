@@ -321,6 +321,7 @@ fn relevance_of(
         | TriggerEvent::OperatorAnswer { .. }
         | TriggerEvent::AgentMessage { .. }
         | TriggerEvent::MessageCapReached { .. }
+        | TriggerEvent::StageOverrun { .. }
         | TriggerEvent::ChatAnswer { .. }
         | TriggerEvent::ChatCommand { .. }
         | TriggerEvent::ChatMergeRefused { .. }

@@ -74,6 +74,7 @@ impl Store {
         }
         if let Some(state) = patch.state {
             lesson.state = state;
+            lesson.retirement = None;
         }
         lesson.source = LessonSource::Operator;
         lesson.updated_at = archon_core::now();
@@ -100,7 +101,8 @@ impl Store {
     }
 
     pub fn refresh_lessons(&self, at: archon_core::Timestamp) -> Result<(), ArchonError> {
-        if !self.learning_config()?.enabled {
+        let config = self.learning_config()?;
+        if !config.enabled {
             return Ok(());
         }
         let tx = self
@@ -111,7 +113,7 @@ impl Store {
             let previous = lesson.clone();
             // Counts cached by 1.4.6 still hold unscored uses as losses.
             scoring::recount(&tx, &mut lesson)?;
-            scoring::refresh(&mut lesson, at);
+            scoring::refresh(&tx, &mut lesson, at, config.retire_min_uses)?;
             if lesson != previous {
                 scoring::save_scored(&tx, previous.state, lesson, at)?;
             }
@@ -229,19 +231,18 @@ fn accept_rewrite(conn: &Connection, lesson: &Lesson) -> Result<(), ArchonError>
 
 fn record_on(conn: &Connection, mut lesson: Lesson) -> Result<Lesson, ArchonError> {
     lesson.text = archon_core::lesson::sanitized_text(&lesson.text)?;
-    if let Some(item) = &lesson.item {
-        lesson.add_refs(provenance::of_item(conn, item)?);
-    }
+    record_provenance(conn, &mut lesson)?;
     let at = lesson.created_at;
-    scoring::refresh(&mut lesson, at);
+    scoring::refresh_confidence(&mut lesson, at);
     let existing = scoped(conn, lesson.scope.repo.as_ref())?;
+    let text = normalized(&lesson.text);
     if let Some(known) = existing
         .iter()
-        .find(|l| l.scope == lesson.scope && normalized(&l.text) == normalized(&lesson.text))
+        .find(|l| l.scope == lesson.scope && normalized(&l.text) == text)
     {
         assert_eq!(known.scope, lesson.scope);
         if known.source == LessonSource::Operator || lesson.source != LessonSource::Operator {
-            return reinforced(conn, known.clone(), lesson.refs);
+            return reinforced(conn, known.clone(), lesson);
         }
         let found = std::mem::take(&mut lesson.refs);
         lesson.add_refs(known.refs.iter().cloned().chain(found));
@@ -251,6 +252,18 @@ fn record_on(conn: &Connection, mut lesson: Lesson) -> Result<Lesson, ArchonErro
         lesson.wins = known.wins;
         lesson.confidence = known.confidence;
         lesson.cluster = known.cluster.clone();
+        if lesson.item.is_none() {
+            lesson.item = known.item.clone();
+            lesson.failure_class = known.failure_class;
+        }
+    } else if let Some(known) = consolidation::near_duplicate(&lesson, &existing) {
+        if lesson.source == LessonSource::Operator {
+            return Err(ArchonError::Invalid(format!(
+                "lesson nearly duplicates {}; edit the existing lesson or clarify the new advice",
+                known.id
+            )));
+        }
+        return reinforced(conn, known.clone(), lesson);
     } else if existing.len() >= MAX_SCOPE_LESSONS {
         return Err(ArchonError::Invalid(format!(
             "lesson scope limit is {MAX_SCOPE_LESSONS}; edit existing lessons"
@@ -262,15 +275,44 @@ fn record_on(conn: &Connection, mut lesson: Lesson) -> Result<Lesson, ArchonErro
     load(conn, &lesson.id)
 }
 
-/// A repeat of `known` adds its provenance to it and nothing else: the
-/// repeat never changes its text, state or weight.
+fn record_provenance(conn: &Connection, lesson: &mut Lesson) -> Result<(), ArchonError> {
+    let Some(item) = &lesson.item else {
+        return Ok(());
+    };
+    let failure = provenance::failure_of_item(conn, item, lesson.scope.repo.as_ref())?;
+    if lesson.source == LessonSource::Distilled
+        && (lesson.scope.repo.is_none() || failure.is_none())
+    {
+        return Err(ArchonError::Invalid(format!(
+            "distilled lesson source {item} must have a recorded failure in this repository"
+        )));
+    }
+    let refs = provenance::of_item(conn, item)?;
+    assert!(
+        refs.iter()
+            .any(|reference| reference.value == item.as_str())
+    );
+    lesson.failure_class = failure;
+    lesson.add_refs(refs);
+    assert!(lesson.refs.len() <= archon_core::lesson::MAX_LESSON_REFS);
+    Ok(())
+}
+
+/// Repeated advice contributes evidence without changing the recorded advice.
 fn reinforced(
     conn: &Connection,
     mut known: Lesson,
-    refs: Vec<archon_core::lesson::LessonRef>,
+    incoming: Lesson,
 ) -> Result<Lesson, ArchonError> {
     let before = known.clone();
-    known.add_refs(refs);
+    assert_eq!(known.scope, incoming.scope);
+    if known.failure_class.is_none() && (known.item.is_none() || known.item == incoming.item) {
+        known.failure_class = incoming.failure_class;
+        if known.failure_class.is_some() {
+            known.item = incoming.item;
+        }
+    }
+    known.add_refs(incoming.refs);
     assert_eq!(
         (&known.text, known.state, known.confidence),
         (&before.text, before.state, before.confidence)
@@ -318,8 +360,9 @@ impl Store {
                     continue;
                 }
             }
+            let proposed = lesson.id.clone();
             let recorded = record_on(&tx, lesson)?;
-            if let Some(id) = replaces.filter(|id| *id != recorded.id) {
+            if let Some(id) = replaces.filter(|_| recorded.id == proposed) {
                 super::settings::kv_set(
                     &tx,
                     &format!("learning/rewrite/{}", recorded.id),

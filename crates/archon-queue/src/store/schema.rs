@@ -787,18 +787,21 @@ ALTER TABLE outcomes ADD COLUMN class_source TEXT
 ALTER TABLE outcomes ADD COLUMN failure_class_163 TEXT;
 "#;
 
+/// Version 25: attribute cumulative spend deltas to concrete stage runs.
+const V25: &str = include_str!("schema/stage_spend.sql");
+
 /// The migration after whose SQL stored failure classes are recomputed.
 const RECLASSIFY_VERSION: usize = 24;
 
-/// Version 25: bound evidence's candidate item snapshot by creation time.
-const V25: &str = "
-CREATE INDEX items_by_created_at ON items (created_at);
-CREATE INDEX stage_runs_by_started_at ON stage_runs (started_at);
+/// Version 26: bound evidence's candidate item snapshot by creation time.
+const V26: &str = "
+CREATE INDEX IF NOT EXISTS items_by_created_at ON items (created_at);
+CREATE INDEX IF NOT EXISTS stage_runs_by_started_at ON stage_runs (started_at);
 ";
 
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25,
+    V22, V23, V24, V25, V26,
 ];
 const _: () = assert!(RECLASSIFY_VERSION <= MIGRATIONS.len());
 
@@ -948,6 +951,24 @@ fn enable_wal(conn: &Connection) -> Result<String, ArchonError> {
     }
 }
 
+/// A branch build recorded version 25 for the evidence indexes, now version 26.
+/// Forget that row so the real version 25 (stage spend) is applied.
+fn forget_branch_only_v25(tx: &Connection) -> Result<(), ArchonError> {
+    let has_stage_spend: bool = tx
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'stage_spend')",
+            [],
+            |row| row.get(0),
+        )
+        .ctx("look for stage_spend")?;
+    if has_stage_spend {
+        return Ok(());
+    }
+    tx.execute("DELETE FROM schema_migrations WHERE version = 25", [])
+        .ctx("forget branch-only version 25")?;
+    Ok(())
+}
+
 /// Apply every migration newer than the store's version, each with its
 /// version row, in one write transaction. Returns the resulting version.
 pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
@@ -959,6 +980,7 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
     )
     .ctx("create schema_migrations")?;
     let tx = write_tx(conn)?;
+    forget_branch_only_v25(&tx)?;
     let current: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
@@ -1243,10 +1265,21 @@ mod tests {
     }
 
     #[test]
+    fn a_branch_built_v25_store_gains_stage_spend_and_keeps_its_indexes() {
+        let mut conn = v2_store();
+        migrate(&mut conn).unwrap();
+        conn.execute_batch("DROP TABLE stage_spend; DROP TABLE stage_spend_windows; ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq; DELETE FROM schema_migrations WHERE version = 26;").unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+        let versions: Vec<i64> = applied_versions(&conn).iter().map(|(v, _)| *v).collect();
+        assert_eq!(versions, (1..=MIGRATIONS.len() as i64).collect::<Vec<_>>());
+        conn.prepare("SELECT 1 FROM stage_spend").unwrap();
+    }
+
+    #[test]
     fn v24_upgrade_adds_the_evidence_item_time_index() {
         let mut conn = v2_store();
         migrate(&mut conn).unwrap();
-        conn.execute_batch("DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at; DELETE FROM schema_migrations WHERE version = 25;").unwrap();
+        conn.execute_batch("DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at; DELETE FROM schema_migrations WHERE version = 26;").unwrap();
         assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
         let plan: String = conn.query_row(
             "EXPLAIN QUERY PLAN SELECT data FROM items WHERE created_at >= ?1 AND created_at < ?2",
@@ -1473,6 +1506,8 @@ mod tests {
              DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;
              DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster;
              ALTER TABLE lessons DROP COLUMN cluster;
+             DROP TABLE stage_spend; DROP TABLE stage_spend_windows;
+             ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
              DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();

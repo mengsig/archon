@@ -91,6 +91,64 @@ fn reads_with_no_daemon_start_nothing() {
     assert_nothing_started(&env.path("archond.sock"), &env.path("data"));
 }
 
+#[test]
+fn lessons_include_automatic_retirements_in_offline_text_and_json() {
+    use archon_core::lesson::{Lesson, LessonKind, LessonRetirement, LessonSource, LessonState};
+    use archon_core::outcome::FailureClass;
+
+    let env = Env::new();
+    let store = archon_queue::Store::open(&env.path("data/archon.db")).unwrap();
+    let make = |text, state| {
+        Lesson::new(
+            Default::default(),
+            LessonKind::Practice,
+            text,
+            LessonSource::Orchestrator,
+            state,
+            archon_core::now(),
+        )
+        .unwrap()
+    };
+    let mut retired = make("Check legacy migrations", LessonState::Retracted);
+    retired.retirement = Some(LessonRetirement {
+        min_uses: 20,
+        baseline: 0.5,
+    });
+    retired.failure_class = Some(FailureClass::Verification);
+    retired.uses = 20;
+    retired.wins = 10;
+    store.record_lesson(retired.clone()).unwrap();
+    let proposed = make("Review release notes", LessonState::Proposed);
+    store.record_lesson(proposed.clone()).unwrap();
+    let retracted = make("Compare build outputs", LessonState::Retracted);
+    store.record_lesson(retracted.clone()).unwrap();
+    let active = make("Check the production rollout", LessonState::Active);
+    store.record_lesson(active.clone()).unwrap();
+    drop(store);
+
+    let listed = text(&env.run(&["lessons"]).stdout);
+    assert!(listed.contains("[retired]"), "{listed}");
+    assert!(
+        listed.contains("failure=verification retirement_floor=20 baseline=50%"),
+        "{listed}"
+    );
+    assert!(!listed.contains(proposed.id.as_str()), "{listed}");
+    assert!(!listed.contains(retracted.id.as_str()), "{listed}");
+    assert!(listed.contains(active.id.as_str()), "{listed}");
+    let json = env.run(&["--json", "lessons"]);
+    let lessons: Vec<Lesson> = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(lessons.len(), 2);
+    let listed_retired = lessons
+        .iter()
+        .find(|lesson| lesson.id == retired.id)
+        .unwrap();
+    assert_eq!(listed_retired.retirement, retired.retirement);
+    let all = text(&env.run(&["lessons", "--all"]).stdout);
+    assert!(all.contains(proposed.id.as_str()), "{all}");
+    assert!(all.contains(retracted.id.as_str()), "{all}");
+    assert!(!env.path("archond.sock").exists());
+}
+
 fn assert_nothing_started(socket: &Path, data: &Path) {
     assert!(!socket.exists(), "a socket at {}", socket.display());
     assert!(

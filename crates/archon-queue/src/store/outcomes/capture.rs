@@ -9,7 +9,6 @@ use archon_core::outcome::{
 };
 use archon_core::queue::QueueItem;
 use archon_core::run::{PipelineRun, RunState, StageRun, Verdict};
-use rusqlite::OptionalExtension;
 use std::collections::{BTreeMap, BTreeSet};
 
 impl Store {
@@ -81,21 +80,25 @@ pub(super) fn stage_observations(
     estimates: bool,
 ) -> Result<Vec<OutcomeStage>, ArchonError> {
     let mut grouped: BTreeMap<(String, String, String), (OutcomeStage, u32)> = BTreeMap::new();
-    let mut charged = BTreeSet::new();
+    let mut legacy_charged = BTreeSet::new();
     for stage in stages {
         assert!(stage.attempt > 0);
-        let cost = if stage
-            .aether_agent
-            .as_ref()
-            .is_none_or(|a| charged.insert(a.clone()))
-        {
-            stage_charge(store, stage, estimates)?
-        } else {
-            0.0
-        };
         if stage.zero_cost_create_refusal() {
             continue;
         }
+        let (direct, delegated) = stage_allocations(store, stage, estimates)?;
+        let direct = direct.unwrap_or_else(|| {
+            if stage
+                .aether_agent
+                .as_ref()
+                .is_none_or(|agent| legacy_charged.insert(agent.clone()))
+            {
+                stage.cost_usd
+            } else {
+                0.0
+            }
+        });
+        let cost = direct + delegated;
         for observed in super::segments::observations(stage, cost)? {
             merge_observation(&mut grouped, observed, stage.attempt);
         }
@@ -197,28 +200,34 @@ pub(super) fn stage_charge(
     stage: &StageRun,
     estimates: bool,
 ) -> Result<f64, ArchonError> {
-    let Some(agent) = &stage.aether_agent else {
-        return Ok(stage.cost_usd);
-    };
-    let direct:Option<f64>=store.conn.query_row("SELECT cost_usd + CASE WHEN ?2 THEN estimated_cost_usd ELSE 0 END FROM spend WHERE agent=?1",
-        rusqlite::params![agent.as_str(),estimates],|r| r.get(0)).optional().ctx("read outcome stage cost")?;
-    let descendants: f64 = store
-        .conn
-        .query_row(
-            "WITH RECURSIVE descendants(agent) AS (
-            SELECT agent FROM delegated_agents WHERE parent=?1
-            UNION
-            SELECT d.agent FROM delegated_agents d JOIN descendants p ON d.parent=p.agent
-        ) SELECT COALESCE(SUM(s.cost_usd + CASE WHEN ?2 THEN s.estimated_cost_usd ELSE 0 END),0)
-          FROM descendants d JOIN spend s ON s.agent=d.agent WHERE d.agent<>?1",
-            rusqlite::params![agent.as_str(), estimates],
-            |r| r.get(0),
-        )
-        .ctx("read outcome descendant cost")?;
-    assert!(descendants.is_finite() && descendants >= 0.0);
-    let total = direct.unwrap_or(stage.cost_usd) + descendants;
+    let (direct, delegated) = stage_allocations(store, stage, estimates)?;
+    let total = direct.unwrap_or(stage.cost_usd) + delegated;
     assert!(total.is_finite() && total >= 0.0);
     Ok(total)
+}
+
+fn stage_allocations(
+    store: &Store,
+    stage: &StageRun,
+    estimates: bool,
+) -> Result<(Option<f64>, f64), ArchonError> {
+    let (direct, delegated): (Option<f64>, f64) = store
+        .conn
+        .query_row(
+            "SELECT SUM(CASE WHEN w.root IS NOT NULL
+                         THEN x.cost_usd + CASE WHEN ?2 THEN x.estimated_cost_usd ELSE 0 END END),
+                    COALESCE(SUM(CASE WHEN w.root IS NULL
+                         THEN x.cost_usd + CASE WHEN ?2 THEN x.estimated_cost_usd ELSE 0 END END), 0)
+             FROM stage_spend x
+             LEFT JOIN stage_spend_windows w ON w.root = x.agent AND w.stage = x.stage
+             WHERE x.stage = ?1",
+            rusqlite::params![stage.id.as_str(), estimates],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .ctx("read outcome stage charge")?;
+    assert!(delegated.is_finite() && delegated >= 0.0);
+    assert!(direct.is_none_or(|cost| cost.is_finite() && cost >= 0.0));
+    Ok((direct, delegated))
 }
 
 fn historical_corrections(

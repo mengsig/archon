@@ -17471,7 +17471,8 @@
           "type": "object"
         },
         "range": {
-          "$ref": "#/$defs/DayRange"
+          "$ref": "#/$defs/DayRange",
+          "description": "Inclusive UTC calendar days."
         },
         "retry_ms": {
           "description": "The part of stage time spent on repeated attempts or repeated runs.",

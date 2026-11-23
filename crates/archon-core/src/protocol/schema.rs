@@ -142,6 +142,18 @@ mod tests {
         assert!(first.ends_with("}\n"), "one final newline");
     }
 
+    #[test]
+    fn timing_range_describes_utc_days_without_changing_cost_day_bounds() {
+        let schema = schema();
+        let timing_range = &definition(&schema, "TimingReport")["properties"]["range"];
+        assert_eq!(timing_range["description"], "Inclusive UTC calendar days.");
+        assert!(
+            definition(&schema, "DayRange")["description"]
+                .as_str()
+                .is_some_and(|description| description.starts_with("Local calendar days"))
+        );
+    }
+
     /// Both roots resolve, and protocol 24's types are all defined;
     /// `ChangeSubject` is flattened into `Change`, so it has no definition.
     #[test]

@@ -28,7 +28,6 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         get_stage(),
         queue_status(),
         cost_report(),
-        timing_report(),
         model_evidence(),
         register_repo(),
         enqueue(),
@@ -64,6 +63,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         request_status(),
         approve_intent(),
         watch_repo(),
+        timing_report(),
     ]
 }
 
@@ -571,11 +571,11 @@ fn timing_report() -> ToolDefinition {
     define(
         "timing_report",
         "Timing report",
-        "Observed durations clipped to UTC days. Stage time counts parallel slots once and includes retries. Recorded CI and merge waits may overlap.",
+        "Queue by reason, stages, gaps, retries, CI and merge wait over UTC days.",
         object(
             json!({
-                "since": {"type": "string", "minLength": 1, "description": format!("First UTC day as YYYY-MM-DD or an age like 7d. Defaults to {DEFAULT_DAYS}d.")},
-                "until": {"type": "string", "minLength": 1, "description": "Last UTC day as YYYY-MM-DD or an age like 1d. Defaults to today."}
+                "since": {"type": "string", "minLength": 1, "description": format!("First day as YYYY-MM-DD or 7d. Defaults to {DEFAULT_DAYS}d.")},
+                "until": {"type": "string", "minLength": 1, "description": "Last day in the same format. Defaults to today."}
             }),
             &[],
         ),

@@ -30,6 +30,7 @@ impl TimingQuery {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TimingReport {
+    /// Inclusive UTC calendar days.
     pub range: DayRange,
     /// Recorded queue intervals by the reason observed at dispatch.
     pub queue_ms: BTreeMap<String, u64>,

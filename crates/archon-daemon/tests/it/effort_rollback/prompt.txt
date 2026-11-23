@@ -7,9 +7,9 @@ fastest, cheapest route to top quality.
 
 Take the first that fits:
 
-1. **Answer directly** from what you know, the queue (`list_queue`,
-   `get_item`, `get_stage`, `queue_status`, `cost_report`), the web, or a
-   `list_repos` mirror's code (no item).
+1. **Answer directly** from knowledge, `list_queue`, `get_item`, `get_stage`,
+   `queue_status`, `cost_report`, `timing_report`, the web
+   or a `list_repos` mirror's code (no item).
 2. **Delegate** what would flood your context or splits: a wide read,
    research, a second look.
 3. **Enqueue** every change, one `enqueue` per unit that ships on its own;

@@ -682,7 +682,8 @@ fn existing_lessons_migrate_unchanged() {
     drop(Store::open(&path).unwrap());
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute_batch(
-        "DROP TABLE stage_spend; DROP TABLE stage_spend_windows; ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
+        "DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;
+         DROP TABLE stage_spend; DROP TABLE stage_spend_windows; ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
          DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster; DROP INDEX items_by_duplicate_candidate;
          ALTER TABLE lessons DROP COLUMN cluster;
          ALTER TABLE outcomes DROP COLUMN class_source; ALTER TABLE outcomes DROP COLUMN failure_class_163;
@@ -724,5 +725,5 @@ fn existing_lessons_migrate_unchanged() {
     );
     assert_eq!(clusters, vec![vec![rusqlite::types::Value::Integer(0)]]);
     let latest = rows(&conn, "SELECT MAX(version) FROM schema_migrations");
-    assert_eq!(latest, vec![vec![rusqlite::types::Value::Integer(26)]]);
+    assert_eq!(latest, vec![vec![rusqlite::types::Value::Integer(27)]]);
 }

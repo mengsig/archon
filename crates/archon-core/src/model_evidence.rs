@@ -55,6 +55,20 @@ pub struct ModelEvidenceRow {
     /// kept out of `verdicts`, so it is no fail of the model.
     #[serde(default)]
     pub disputed: usize,
+    #[serde(default)]
+    /// First attempts that completed successfully; review/test stages use recorded verdicts.
+    pub first_attempt_passed: usize,
+    #[serde(default)]
+    pub first_attempt_verdicts: usize,
+    #[serde(default)]
+    /// Recorded findings on review attempts; absent when no findings array was recorded.
+    pub review_findings: Option<usize>,
+    #[serde(default)]
+    /// Later same-PR/branch items or dependencies queued after a failed review; absent if unlinked.
+    pub fix_up_items: Option<usize>,
+    #[serde(default)]
+    /// Linked later items titled Revert or tagged revert; absent if unlinked.
+    pub revert_items: Option<usize>,
 }
 
 /// The same observations pooled by the tier of the model that ran, so they
@@ -158,6 +172,26 @@ fn measures(
     )
 }
 
+fn quality_measures(row: &ModelEvidenceRow) -> String {
+    let rate = if row.first_attempt_verdicts == 0 {
+        "unknown".to_owned()
+    } else {
+        format!(
+            "{:.0}%",
+            100.0 * row.first_attempt_passed as f64 / row.first_attempt_verdicts as f64
+        )
+    };
+    let count = |value: Option<usize>| value.map_or("unknown".to_owned(), |n| n.to_string());
+    format!(
+        "first_attempt_stage_pass={}/{} ({rate}) review_findings={} fix_up_items={} revert_items={}",
+        row.first_attempt_passed,
+        row.first_attempt_verdicts,
+        count(row.review_findings),
+        count(row.fix_up_items),
+        count(row.revert_items)
+    )
+}
+
 impl ModelEvidenceReport {
     /// Shared compact text for MCP and CLI. Missing observations stay missing.
     pub fn text(&self) -> String {
@@ -171,6 +205,10 @@ impl ModelEvidenceReport {
                 "exclude"
             }
         );
+        if !self.rows.is_empty() {
+            text.push_str("Rates are not controlled for task difficulty.\n");
+            text.push_str("Fix-ups: later same PR/branch or dependent after failed review; reverts: linked items titled Revert or tagged revert. Unlinked signals are unknown.\n");
+        }
         for row in &self.rows {
             let measures = measures(
                 row.completed,
@@ -179,12 +217,13 @@ impl ModelEvidenceReport {
             );
             let _ = writeln!(
                 text,
-                "{} {} {} host_context={} n={} {measures}",
+                "{} {} {} host_context={} n={} {measures} {}",
                 row.stage,
                 row.choice.model,
                 row.choice.effort,
                 row.host_context.as_str(),
                 row.attempts,
+                quality_measures(row),
             );
         }
         if self.rows.is_empty() {
@@ -284,6 +323,72 @@ impl ModelEvidenceReport {
 mod tests {
     use super::*;
     use crate::lesson::PipelineEvidence;
+
+    fn report_with_legacy_row() -> ModelEvidenceReport {
+        serde_json::from_value(serde_json::json!({
+            "range": {"since": "2026-10-01", "until": "2026-10-26"},
+            "estimates_counted": true,
+            "rows": [{
+                "stage": "review", "choice": {"model": "codex/test", "effort": "high"},
+                "attempts": 4, "completed": 4, "median_cost_usd": null,
+                "p90_cost_usd": null, "median_minutes": null, "verdicts": 3, "passed": 2
+            }],
+            "omitted": 0
+        }))
+        .expect("legacy evidence report")
+    }
+
+    #[test]
+    fn legacy_rows_default_quality_and_display_unknowns() {
+        let report = report_with_legacy_row();
+        let row = &report.rows[0];
+        assert_eq!(
+            (row.first_attempt_passed, row.first_attempt_verdicts),
+            (0, 0)
+        );
+        assert_eq!(
+            (row.review_findings, row.fix_up_items, row.revert_items),
+            (None, None, None)
+        );
+        let text = report.text();
+        assert!(text.contains("pass=2/3 (67%)"), "{text}");
+        assert!(
+            text.contains("first_attempt_stage_pass=0/0 (unknown)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("review_findings=unknown fix_up_items=unknown revert_items=unknown"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn quality_counts_round_trip_and_display_rate_with_denominator() {
+        let mut report = report_with_legacy_row();
+        let row = &mut report.rows[0];
+        row.first_attempt_passed = 2;
+        row.first_attempt_verdicts = 3;
+        row.review_findings = Some(0);
+        row.fix_up_items = Some(4);
+        row.revert_items = Some(1);
+        let value = serde_json::to_value(&report).expect("serialize quality evidence");
+        let decoded: ModelEvidenceReport =
+            serde_json::from_value(value).expect("deserialize quality evidence");
+        assert_eq!(decoded, report);
+        let text = decoded.text();
+        assert!(
+            text.contains("first_attempt_stage_pass=2/3 (67%)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("review_findings=0 fix_up_items=4 revert_items=1"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Rates are not controlled for task difficulty."),
+            "{text}"
+        );
+    }
 
     #[test]
     fn pipeline_evidence_names_the_repository_and_falls_back_to_its_id() {

@@ -42,11 +42,12 @@ const ENVIRONMENTAL_WORDS: [&str; 9] = [
     "engine login",
 ];
 
-/// Whether a recorded error says its provider's quota or usage limit is spent.
+/// Whether a recorded error says its provider's quota or usage limit is spent
+/// (a transient rate limit is not).
 pub(crate) fn is_quota(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
-    // The first five environmental words are the quota ones.
-    ENVIRONMENTAL_WORDS[..5]
+    // The first three environmental words are the quota ones.
+    ENVIRONMENTAL_WORDS[..3]
         .iter()
         .any(|word| lower.contains(word))
 }

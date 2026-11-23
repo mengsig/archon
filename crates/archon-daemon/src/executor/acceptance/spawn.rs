@@ -187,16 +187,25 @@ pub(in crate::executor) fn select_model(
     let judges = |m: &ModelRef| policy.permits_model(m) && (!visual || vision.contains(m));
     let permitted = judge_pool(&catalog, judges, &builders);
     let out_of_quota = Quota::of(crate::quota::standing(ctx), &stages);
-    let eligible: Vec<_> = permitted
+    // A provider the reading shows spent is never used. One the latest attempt
+    // failed on, with no reading to say otherwise, is only passed over while
+    // another judge can run: a lone provider is retried, as it always was.
+    let usable: Vec<_> = permitted
         .iter()
         .copied()
-        .filter(|m| !out_of_quota.has(&m.model))
+        .filter(|m| !out_of_quota.spent(&m.model))
         .collect();
+    let moved: Vec<_> = usable
+        .iter()
+        .copied()
+        .filter(|m| !out_of_quota.failed_on(&m.model))
+        .collect();
+    let eligible = if moved.is_empty() { usable } else { moved };
     let still_judges = |judge: &&ModelRef| {
         catalog.check(judge).is_ok_and(|listed| listed == **judge)
             && policy.permits_model(judge)
             && (!visual || vision.contains(judge))
-            && !out_of_quota.has(judge)
+            && eligible.iter().any(|m| m.model == **judge)
     };
     let pinned_judge = match pin.as_ref().and_then(|m| catalog.check(m).ok()) {
         Some(model) if eligible.iter().any(|m| m.model == model) => Some(model),
@@ -257,12 +266,14 @@ fn pinned(item: &QueueItem, plan: &SpawnPlan) -> Option<ModelRef> {
     named.then(|| slots[slot].model.clone())
 }
 
-/// Providers a judge must not run on now: out of quota by Aether's trusted
-/// reading, or, where that reading says nothing, one an acceptance attempt of
-/// this run just failed on for a usage limit.
+/// Providers a judge should not run on now. `spent` is what Aether's trusted
+/// reading shows has no usage left, and holds whatever else is known; `failed`
+/// is the provider the run's latest acceptance attempt ended on for a usage
+/// limit, which only steers the choice while another judge is eligible and a
+/// reading that shows the provider with usage left overrides.
 struct Quota {
     reading: Option<std::collections::BTreeMap<String, bool>>,
-    failed: std::collections::BTreeSet<String>,
+    failed: Option<String>,
 }
 
 impl Quota {
@@ -270,25 +281,34 @@ impl Quota {
         let failed = stages
             .iter()
             .filter(|s| s.stage_id == STAGE)
+            .max_by_key(|s| (s.started_at, s.attempt))
             .filter(|s| match &s.state {
                 StageState::Failed { error } => crate::executor::failure_class::is_quota(error),
                 _ => false,
             })
-            .map(|s| s.current_choice().model.provider.clone())
-            .collect();
+            .map(|s| s.current_choice().model.provider.clone());
         Self { reading, failed }
     }
 
-    fn has(&self, model: &ModelRef) -> bool {
-        match self.reading.as_ref().and_then(|r| r.get(&model.provider)) {
-            Some(exhausted) => *exhausted,
-            None => self.failed.contains(&model.provider),
-        }
+    /// The reading shows `model`'s provider with no usage left.
+    fn spent(&self, model: &ModelRef) -> bool {
+        let known = self.reading.as_ref().and_then(|r| r.get(&model.provider));
+        known.copied().unwrap_or(false)
+    }
+
+    /// The latest acceptance attempt failed on `model`'s provider's usage
+    /// limit, and no trusted reading says the provider has usage left.
+    fn failed_on(&self, model: &ModelRef) -> bool {
+        let known = self
+            .reading
+            .as_ref()
+            .is_some_and(|r| r.contains_key(&model.provider));
+        !known && self.failed.as_deref() == Some(model.provider.as_str())
     }
 
     fn names<'m>(&self, models: impl Iterator<Item = &'m ModelRef>) -> String {
         let mut names: Vec<&str> = models
-            .filter(|m| self.has(m))
+            .filter(|m| self.spent(m))
             .map(|m| m.provider.as_str())
             .collect();
         names.sort_unstable();

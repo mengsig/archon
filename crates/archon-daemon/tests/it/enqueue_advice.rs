@@ -43,6 +43,7 @@ async fn direct_enqueues_advise_on_each_risk_category() {
             panic!("{title}: {reply:?}");
         };
         assert_eq!(notices, [EnqueueNotice::DirectRisk], "{title}");
+        assert!(notices[0].text().contains("adaptive"));
         assert_eq!((item.title.as_str(), item.brief.as_str()), (title, brief));
         assert_eq!(item.pipeline, "direct");
         assert_eq!(item.autonomy.review, ReviewLevel::None);

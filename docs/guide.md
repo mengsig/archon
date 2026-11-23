@@ -85,7 +85,7 @@ of a pipeline, and when work was split into parts it has the integrated
 result reviewed once, with a depth that follows the risk.
 
 Enqueue may return advice alongside the queued item. For `direct`, Archon
-suggests strict review when the title or brief puts a change verb near
+suggests the `adaptive` pipeline when the title or brief puts a change verb near
 wording about concurrency, locking, migrations, security, or a breaking
 public format change. A risk word on its own is insufficient. For any
 pipeline, Archon suggests one item per fix when the title or brief lists

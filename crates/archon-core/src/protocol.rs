@@ -1203,7 +1203,9 @@ pub enum EnqueueNotice {
 impl EnqueueNotice {
     pub const fn text(self) -> &'static str {
         match self {
-            Self::DirectRisk => "This direct item describes risky work. Consider strict review.",
+            Self::DirectRisk => {
+                "This direct item describes risky work. Consider re-queueing it on the adaptive pipeline."
+            }
             Self::BundledFixes => {
                 "This brief appears to bundle independent fixes. Consider one item per fix."
             }

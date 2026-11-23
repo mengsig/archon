@@ -894,6 +894,7 @@ fn enqueue_renders_advice_alongside_the_item_and_budget_note() {
     for notice in notices {
         assert!(text.contains(notice.text()), "{text}");
     }
+    assert!(text.contains("adaptive"), "{text}");
 }
 
 #[test]

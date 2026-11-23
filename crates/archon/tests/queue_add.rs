@@ -57,6 +57,27 @@ fn enqueue_advice_uses_stderr_and_stdout_keeps_the_item_json() {
     assert!(item.get("notices").is_none(), "{item}");
     let notes = String::from_utf8(out.stderr).unwrap();
     assert!(notes.contains("Consider one item per fix."), "{notes}");
+
+    std::fs::write(env.path("brief.md"), "Fix a concurrency bug.").unwrap();
+    let brief_path = env.path("brief.md");
+    let out = env
+        .command(&[
+            "--json",
+            "queue",
+            "add",
+            "--title",
+            "risky",
+            "--pipeline",
+            "direct",
+            "--brief-file",
+            brief_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(parsed(&out)["pipeline"], "direct");
+    let notes = String::from_utf8(out.stderr).unwrap();
+    assert!(notes.contains("adaptive"), "{notes}");
     stop_daemon(&env, daemon);
 }
 

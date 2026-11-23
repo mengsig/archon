@@ -541,11 +541,36 @@ fn ungated_fan_out_fails_when_any_agent_fails() {
     let (stage, error) =
         failed(&sim.settle("exercise", 0, Agent::Error("could not start the app")));
     assert_eq!(stage, "exercise");
-    assert!(
-        error.contains("1 of 2 agent(s) did not complete"),
-        "{error}"
-    );
+    assert!(error.contains("1 of 2 did not pass: 1 failed"), "{error}");
     assert!(error.contains("could not start the app"), "{error}");
+}
+
+#[test]
+fn gate_headlines_name_each_terminal_failure() {
+    for (agent, reason) in [
+        (Agent::Error("failed"), "1 failed"),
+        (Agent::Cancelled, "1 cancelled"),
+        (Agent::TimedOut, "1 timed out"),
+    ] {
+        let mut sim = sim("agent-testing");
+        sim.start();
+        sim.settle("plan", 0, Agent::Done("charters"));
+        sim.settle("exercise", 1, Agent::Done("done"));
+        let actions = sim.settle("exercise", 0, agent);
+        let (_, error) = failed(&actions);
+        assert!(
+            error.contains(&format!("1 of 2 did not pass: {reason}")),
+            "{error}"
+        );
+    }
+    let mut sim = majority_sim();
+    sim.start();
+    sim.settle("build", 0, Agent::Done("built"));
+    sim.settle("review", 0, Agent::Pass);
+    sim.settle("review", 1, Agent::Fail("wrong"));
+    let actions = sim.settle("review", 2, Agent::TimedOut);
+    let (_, error) = failed(&actions);
+    assert!(error.contains("1 timed out, 1 failing verdict"), "{error}");
 }
 
 #[test]
@@ -2782,6 +2807,24 @@ fn a_recorded_review_fail_completes_the_lead_and_fails_the_run() {
     assert_eq!(lead.state, StageState::Completed);
     assert_eq!(lead.verdict, Some(archon_core::run::Verdict::Fail));
     assert_eq!(lead.only_reviews, Some(true));
+}
+
+#[test]
+fn delivery_work_failure_names_its_review_duty() {
+    let mut sim = sim_reviewed("direct", ReviewLevel::Standard);
+    sim.start();
+    let actions = sim.settle(
+        "implement",
+        0,
+        Agent::Recorded("VERDICT: FAIL", serde_json::json!({"verdict": "fail"})),
+    );
+    let (stage, error) = failed(&actions);
+    assert_eq!(stage, "implement");
+    assert!(
+        error.contains("its agent stated a failure (review was owed)"),
+        "{error}"
+    );
+    assert_eq!(sim.stages.last().unwrap().only_reviews, Some(false));
 }
 
 /// A review-only lead's pass that its own findings dispute is no pass: the run

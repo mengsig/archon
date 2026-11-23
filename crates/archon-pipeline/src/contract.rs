@@ -69,6 +69,9 @@ pub fn instructions(
     }
     if needs_verdict(stage) {
         out.push_str(VERDICT_RULES);
+        if stage.kind == StageKind::Review && mode != WorkspaceMode::Scratch {
+            out.push_str("- In a Git workspace, include the reviewed commit as `head`.\n");
+        }
     }
     if owed.review.is_some_and(|duty| duty.records_verdict) {
         out.push_str(LEAD_VERDICT_RULES);
@@ -889,8 +892,14 @@ asked again, so delegate a new one with `base` at the head the failed review rea
 given the fix commits and the open findings, to verify each is fixed and the fix \
 regresses nothing. No new whole-change read is needed. A commit after passes needs \
 only a delta read from the head they passed; an amend or rebase needs whole-change \
-reads. Tell every delta reviewer to fail only on a defect in its commits or an open \
-finding unfixed: a new finding in code a pass already read is `\"blocking\": false`. After 3 failed rounds Archon stops the stage and escalates.\n";
+reads. In each re-review prompt list the previous round's open findings and their IDs \
+(Archon supplies them; for a new finding use the reviewer agent ID and its 1-based \
+position in `findings`, joined with a colon). Ask the reviewer to list confirmed fixes in \
+`resolved_findings` and reuse the `id` on each finding still open, then review the new \
+delta. Any real blocker found anywhere fails. In each fix commit add a `Review-Fix: <id>` \
+trailer per blocker it addresses. At 3 failed rounds Archon escalates unless every blocker \
+of that round already has a committed fix. In that case wait for Archon's instructions for \
+one final confirmation of those fixes and their delta; any remaining or new blocker escalates.\n";
 
 /// A review-only lead's rounds: one, whose findings it records rather than fixes.
 const REVIEW_ONLY_ROUNDS_RULE: &str = "\
@@ -1489,9 +1498,9 @@ mod tests {
                 "Fix every blocking finding and commit, then re-review only the fix with one reviewer",
                 "delegate a new one with `base` at the head the failed review read",
                 "given the fix commits and the open findings",
-                "Tell every delta reviewer to fail only on a defect in its commits or an open \
-                 finding unfixed",
-                "a new finding in code a pass already read is `\"blocking\": false`",
+                "previous round's open findings and their IDs",
+                "Any real blocker found anywhere fails",
+                "one final confirmation of those fixes and their delta",
                 "No new whole-change read is needed",
                 "A commit after passes needs only a delta read from the head they passed",
                 "an amend or rebase needs whole-change reads",

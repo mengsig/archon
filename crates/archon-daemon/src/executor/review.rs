@@ -6,7 +6,9 @@
 //! reviewer of the attempt that failed the change counts, named or not. Reads
 //! from the item's earlier runs on the branch count while it still holds their heads.
 
+mod confirm;
 mod coverage;
+mod record;
 mod restate;
 mod rounds;
 
@@ -27,8 +29,12 @@ use crate::context::DaemonContext;
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack::{self, is_commit_id};
 use coverage::{Base, Held, History, Verdicts};
+pub(super) use record::{append_prior, attach as attach_rounds};
 pub(super) use restate::reviewer_unreadable;
-pub(super) use rounds::{Capped, attempt_resumed, capped_at_completion, reviewer_settled};
+pub(super) use rounds::{
+    Capped, attempt_resumed, capped_at_completion, capped_on_failure,
+    confirmation_reviewer_stopped, reviewer_settled,
+};
 
 /// Agents named in a refusal: enough to see what the lead delegated to.
 const MAX_LISTED: usize = 6;
@@ -516,6 +522,8 @@ fn tallied_fail(head: String) -> Verdict {
         findings: None,
         blocking: None,
         blocking_findings: Vec::new(),
+        listed_findings: Vec::new(),
+        resolved_findings: Vec::new(),
     }
 }
 

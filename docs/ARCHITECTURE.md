@@ -2695,10 +2695,14 @@ anchored delta pass of the final head completes the review. The record
 names the named passes and the named whole-change fails they answered, so
 a strict review whose first reads failed still names three; a review whose
 named reads make a shorter record is refused, as is one with fewer reads.
-Fewer fail the run with the reasons. A reviewer's `fail` whose findings are all marked
-`"blocking": false` reads as a pass (`archon_pipeline::review`), and the
-review rounds of `executor/review/rounds.rs` count only blocking fails: at
-`REVIEW_ROUND_CAP` (three) the stage is cancelled and fails with an
+Fewer fail the run with the reasons. Review rounds count commits with at least
+one blocking fail. At `REVIEW_ROUND_CAP` (three), Archon checks for a newer
+descendant commit on the run branch and a `Review-Fix: <id>` trailer for each
+blocker of the capped head. When those fixes are already committed, the lead
+delegates one final review of that exact delta. The reviewer must explicitly
+confirm every capped ID as resolved and pass the delta. A new or unresolved
+blocker ends the stage. The normal branch and coverage checks still apply.
+When the cap stops the stage, it fails with an
 `ESCALATE:` error, marked first like a stall (§16) so its cancel does not
 settle it as cancelled, and retried by the next sweep when the cancel goes
 unanswered. The error names the last failed head and the orchestrator's three
@@ -2732,11 +2736,15 @@ cannot wake a lead whose run ended (`wake` and `restart` need a live parent,
 and the run node is retired with the run), so a retry never resumes the
 escalated lead. Archon does not edit the brief for it: the orchestrator's
 `brief_append` on the non-fresh `retry_item` gives the new lead the head, the
-open findings and the delta-only review. Each delta reviewer is told to fail
-only on a defect in its commits or an open finding left unfixed; a new finding
-in code a pass already read is advisory, `"blocking": false`, and goes to the
-orchestrator as a follow-up. The verdict carries no finding locations, so the
-round tally counts the reviewer's own blocking marks.
+open findings and the delta review. In each re-review the lead includes the
+open findings and their IDs. A reviewer returns the IDs of confirmed fixes in
+`resolved_findings` and uses `findings[].id` for a finding still open. Any
+real blocker the reviewer discovers fails, including outside the delta.
+Archon assigns each new finding an ID from its reviewer agent and ordinal.
+The stage's `structured.review_rounds` records each review's verdict, model
+and finding count by round, and when each finding was discovered and resolved.
+A same-branch continuation carries forward the open IDs and records whether
+its first round resolved the preceding round's findings.
 
 A child of a live, owing lead delegated with role `reviewer` that
 completes with no verdict the gate reads (`executor/review/restate.rs`) is

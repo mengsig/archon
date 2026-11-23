@@ -1053,7 +1053,7 @@ fn reserve_one(
         }
         None => (resume, replaces),
     };
-    let spawn = StoredSpawn {
+    let mut spawn = StoredSpawn {
         request,
         timeout_minutes: target.timeout_minutes(plan),
         parent: ParentBinding::Pending,
@@ -1073,7 +1073,6 @@ fn reserve_one(
         issued_reviewers: plan.reviewers.clone(),
         wake_retune,
     };
-    save_spawn(store, &id, &spawn)?;
     let sizing = crate::sizing::attempt(target.item, plan);
     let stage = StageRun {
         id: id.clone(),
@@ -1101,6 +1100,13 @@ fn reserve_one(
         started_at: now,
         finished_at: None,
     };
+    super::review::append_prior(
+        store,
+        &stage,
+        &mut spawn.request.objective,
+        plan.reviewers.is_some(),
+    )?;
+    save_spawn(store, &id, &spawn)?;
     let note = workers.and_then(|narrowed| narrowed.note);
     match &note {
         Some(note) => {

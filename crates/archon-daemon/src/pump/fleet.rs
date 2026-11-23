@@ -175,6 +175,9 @@ async fn child_settled(
         (EventKind::TaskCompleted { .. }, Some(lead)) => {
             executor::reviewer_settled(ctx, lead, agent).await
         }
+        (EventKind::TaskFailed { .. } | EventKind::TaskCancelled { .. }, Some(lead)) => {
+            executor::reviewer_stopped(ctx, lead, agent).await
+        }
         _ => Ok(()),
     }
 }

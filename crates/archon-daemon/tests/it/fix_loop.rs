@@ -225,6 +225,59 @@ async fn learned_as_three_attempts(h: &Harness, run: &PipelineRun) {
 }
 
 #[tokio::test]
+async fn a_review_stage_records_its_verdict_and_the_next_attempts_resolution() {
+    let h = harness().await;
+    add_origin(&h);
+    let _gh = FakeGh::install(&h);
+    let (item, _) = implemented(&h, "add a greeting").await;
+    let first = running(&h, "review").await;
+    let workspace = h.run(&item.id).await.workspace;
+    let head = git(&workspace, &["rev-parse", "HEAD"]);
+    let failed = StageOutcome::Completed {
+        summary: FINDINGS.into(),
+        structured: Some(serde_json::json!({
+            "verdict": "fail", "head": head,
+            "findings": [{"title": FINDINGS, "blocking": true}]
+        })),
+    };
+    h.settle_running(|_| failed.clone()).await;
+    h.dispatch().await;
+    let fix = running(&h, "implement").await;
+    answers(&h, &fix, "added tests/greet.rs").await;
+    let second = running(&h, "review").await;
+    let id = format!("{}:1", agent(&first));
+    let request = h.backend.requests().last().unwrap().objective.clone();
+    assert!(
+        request.contains(&format!("- {id}: {FINDINGS}")),
+        "{request}"
+    );
+    assert!(
+        request.contains(&head) && request.contains("new delta"),
+        "{request}"
+    );
+    let passed = StageOutcome::Completed {
+        summary: "The greeting is tested".into(),
+        structured: Some(serde_json::json!({
+            "verdict": "pass", "head": git(&workspace, &["rev-parse", "HEAD"]),
+            "base": head, "findings": [], "resolved_findings": [id]
+        })),
+    };
+    h.settle_running(|_| passed.clone()).await;
+    let store = h.ctx.store.lock().await;
+    let before = store.stage_run(&first.id).unwrap().structured.unwrap();
+    let after = store.stage_run(&second.id).unwrap().structured.unwrap();
+    let previous = &before["review_rounds"]["rounds"][0]["reviews"][0];
+    assert_eq!(previous["verdict"], "fail");
+    assert_eq!(previous["model"], REVIEW_MODEL);
+    assert_eq!(previous["finding_count"], 1);
+    assert_eq!(previous["next_round_resolved"], true);
+    let finding = &after["review_rounds"]["findings"][&id];
+    assert_eq!(finding["found_in"]["stage"], first.id.as_str());
+    assert_eq!(finding["resolved_in"]["stage"], second.id.as_str());
+    assert_eq!(finding["resolved_in"]["number"], 2);
+}
+
+#[tokio::test]
 async fn a_kept_agent_waits_parked_and_gets_its_stage_deadline_back() {
     let h = harness().await;
     let (_, first) = implemented(&h, "park").await;

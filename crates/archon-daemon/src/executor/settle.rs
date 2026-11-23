@@ -44,6 +44,7 @@ pub(super) async fn settle(
     } else {
         None
     };
+    let outcome = failure_at_review_cap(ctx, id, outcome).await?;
     match settle_verified(ctx, id, outcome).await {
         Err(error) if super::gh::is_failure(&error) => {
             hold_for_retry(
@@ -70,6 +71,24 @@ pub(super) async fn settle(
             Ok(follow)
         }
     }
+}
+
+async fn failure_at_review_cap(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+    outcome: StageOutcome,
+) -> Result<StageOutcome, ArchonError> {
+    if matches!(outcome, StageOutcome::Failed { infra: false, .. })
+        && let Some(capped) = super::review::capped_on_failure(ctx, id).await?
+    {
+        assert_eq!(capped.stage, *id, "the cap belongs to the failed stage");
+        assert!(StageOutcome::ends_run(&capped.reason));
+        return Ok(StageOutcome::Failed {
+            error: capped.reason,
+            infra: false,
+        });
+    }
+    Ok(outcome)
 }
 
 async fn claim_verification(
@@ -486,10 +505,15 @@ async fn persist(
     let (settled, owes_stop, kept) = {
         let mut store = ctx.store.lock().await;
         // A final restated verdict that is no pass stands over the result.
-        let settled = restatement::bound(&store, settled)?;
+        let mut settled = restatement::bound(&store, settled)?;
+        let previous_review = super::review::attach_rounds(&store, &mut settled)?;
         let kept = resume::after_settle(&store, &settled)?;
         let owes_stop = descendants::owe(&mut store, &settled, false)?;
-        store.upsert_stage_run(&settled)?;
+        if let Some((stage, rounds)) = previous_review {
+            store.upsert_stage_with_previous_review(&settled, &stage, &rounds)?;
+        } else {
+            store.upsert_stage_run(&settled)?;
+        }
         restatement::forget(&mut store, &settled)?;
         (settled, owes_stop, kept)
     };

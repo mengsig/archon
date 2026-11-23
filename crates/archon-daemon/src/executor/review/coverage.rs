@@ -1503,6 +1503,8 @@ mod tests {
             findings: None,
             blocking: None,
             blocking_findings: Vec::new(),
+            listed_findings: Vec::new(),
+            resolved_findings: Vec::new(),
         };
         let named = [("agt_r".to_owned(), verdict)];
 
@@ -1566,6 +1568,8 @@ mod tests {
             findings: None,
             blocking: None,
             blocking_findings: Vec::new(),
+            listed_findings: Vec::new(),
+            resolved_findings: Vec::new(),
         };
         let named = [("agt_r".to_owned(), verdict)];
         let mut base = Base {
@@ -1598,6 +1602,8 @@ mod tests {
             findings: None,
             blocking: None,
             blocking_findings: Vec::new(),
+            listed_findings: Vec::new(),
+            resolved_findings: Vec::new(),
         };
         let base = Base {
             branch: "main",
@@ -1642,6 +1648,8 @@ mod tests {
             findings: None,
             blocking: None,
             blocking_findings: Vec::new(),
+            listed_findings: Vec::new(),
+            resolved_findings: Vec::new(),
         };
         let named = [("agt_r".to_owned(), verdict)];
         let base = Base {

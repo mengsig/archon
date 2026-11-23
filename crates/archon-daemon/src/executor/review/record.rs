@@ -381,7 +381,7 @@ pub(in crate::executor) fn attach(
         (tally.reports.as_slice(), 1)
     };
     let prior = previous(store, stage)?;
-    let findings = prior.as_ref().map_or_else(Vec::new, |p| p.open.clone());
+    let findings = prior.as_ref().map_or_else(Vec::new, |p| p.findings.clone());
     let rounds = Rounds::new(stage, reports, findings, first);
     let previous = prior.and_then(|p| update_previous(p, stage, &rounds));
     let mut structured = match stage.structured.take() {

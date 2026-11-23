@@ -869,14 +869,12 @@ fn blocker_resolved(
     assert!(!fail.pass && !id.is_empty());
     assert_eq!(reads.len(), current.len());
     for (read, held) in reads.iter().zip(current) {
-        if read.superseded || (read.pass && !held) {
+        if read.superseded || (read.pass && !held) || !read.claims.resolved.contains(id) {
             continue;
         }
         let whole = *held && read.base.is_none() && answers(history, read, fail)?;
-        let stated = !fail.superseded
-            && read.head != fail.head
-            && read.claims.resolved.contains(id)
-            && history.holds(&fail.head, &read.head)?;
+        let stated =
+            !fail.superseded && read.head != fail.head && history.holds(&fail.head, &read.head)?;
         if (whole || stated) && reads_past_open_claims(history, reads, current, read, id)? {
             return Ok(true);
         }

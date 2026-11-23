@@ -818,11 +818,14 @@ async fn read_tally(h: &Harness, lead: &StageRun) -> Value {
 }
 
 #[tokio::test]
-async fn a_delta_pass_must_confirm_the_blocker_even_if_the_lead_omits_its_reviewer() {
-    for (claim, named, ship) in [
-        ("omitted", false, false),
-        ("still open", true, false),
-        ("resolved", true, true),
+async fn a_pass_must_confirm_the_blocker_even_if_the_lead_omits_its_reviewer() {
+    for (claim, named, whole, ship) in [
+        ("omitted", false, false, false),
+        ("still open", true, false, false),
+        ("resolved", true, false, true),
+        ("omitted", false, true, false),
+        ("omitted", true, true, false),
+        ("resolved", true, true, true),
     ] {
         let h = Harness::new().await;
         let item = adaptive_item(&h).await;
@@ -841,6 +844,9 @@ async fn a_delta_pass_must_confirm_the_blocker_even_if_the_lead_omits_its_review
         let id = format!("{failed}:1");
         let fixed = change(&workspace);
         let mut result = json!({"verdict": "pass", "head": fixed["commit"], "base": first["commit"], "findings": []});
+        if whole {
+            result.as_object_mut().unwrap().remove("base");
+        }
         match claim {
             "still open" => {
                 result["findings"] = json!([{"title": "still open", "blocking": false, "id": id}])

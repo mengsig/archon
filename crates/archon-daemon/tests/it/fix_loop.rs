@@ -278,6 +278,78 @@ async fn a_review_stage_records_its_verdict_and_the_next_attempts_resolution() {
 }
 
 #[tokio::test]
+async fn reopening_a_resolved_id_across_attempts_preserves_its_origin_and_severity() {
+    use serde_json::json;
+
+    let h = Harness::new().await;
+    h.add_pipeline(
+        REVIEWED,
+        &REVIEWED_TOML.replace("max_loops = 2", "max_loops = 3"),
+    );
+    add_origin(&h);
+    let _gh = FakeGh::install(&h);
+    let (item, _) = implemented(&h, "repair a recurring defect").await;
+    let workspace = h.run(&item.id).await.workspace;
+    let first = running(&h, "review").await;
+    let id = format!("{}:1", agent(&first));
+    let original = json!([{"title": FINDINGS, "blocking": true}]);
+    record_review_attempt(&h, &workspace, original, json!([]), false).await;
+    let other = running(&h, "review").await;
+    let other_id = format!("{}:1", agent(&other));
+    let different = json!([{"title": "another defect", "blocking": true}]);
+    let resolved = record_review_attempt(&h, &workspace, different, json!([id]), false).await;
+    assert_eq!(resolved["findings"][&id]["resolved_in"]["number"], 2);
+    let prompt = h.backend.requests().last().unwrap().objective.clone();
+    assert!(prompt.contains(&other_id));
+    assert!(!prompt.contains(&format!("- {id}:")));
+    let reopened = json!([{"title": FINDINGS, "blocking": false, "id": id}]);
+    let record = record_review_attempt(&h, &workspace, reopened, json!([other_id]), false).await;
+    assert_eq!(
+        record["rounds"][0]["reviews"][0]["finding_ids"],
+        json!([id])
+    );
+    let finding = &record["findings"][&id];
+    assert_eq!(finding["found_in"]["stage"], first.id.as_str());
+    assert_eq!(finding["blocking"], true);
+    assert!(finding["resolved_in"].is_null());
+    let record = record_review_attempt(&h, &workspace, json!([]), json!([id]), true).await;
+    assert_eq!(record["findings"][&id]["resolved_in"]["number"], 4);
+}
+
+async fn record_review_attempt(
+    h: &Harness,
+    workspace: &std::path::Path,
+    findings: serde_json::Value,
+    resolved: serde_json::Value,
+    pass: bool,
+) -> serde_json::Value {
+    let stage = running(h, "review").await;
+    let verdict = if pass { "pass" } else { "fail" };
+    let outcome = StageOutcome::Completed {
+        summary: verdict.into(),
+        structured: Some(serde_json::json!({
+            "verdict": verdict, "head": git(workspace, &["rev-parse", "HEAD"]),
+            "findings": findings, "resolved_findings": resolved,
+        })),
+    };
+    h.settle_running(|_| outcome.clone()).await;
+    let stored = h.ctx.store.lock().await.stage_run(&stage.id).unwrap();
+    assert!(stored.state.is_terminal());
+    if !pass {
+        h.dispatch().await;
+        answers(
+            h,
+            &running(h, "implement").await,
+            "fixed the reported issue",
+        )
+        .await;
+    }
+    let record = stored.structured.unwrap()["review_rounds"].clone();
+    assert!(record["findings"].is_object());
+    record
+}
+
+#[tokio::test]
 async fn evidence_counts_each_turn_of_the_kept_implementer_once() {
     let h = harness().await;
     let (item, first) = implemented(&h, "charge the repair").await;

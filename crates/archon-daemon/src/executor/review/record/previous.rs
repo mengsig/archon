@@ -14,13 +14,13 @@ pub(in crate::executor::review) fn prior_findings(
     store: &Store,
     stage: &StageRun,
 ) -> Result<Vec<Finding>, ArchonError> {
-    Ok(previous(store, stage)?.map_or_else(Vec::new, |p| p.open))
+    Ok(previous(store, stage)?.map_or_else(Vec::new, |p| p.findings))
 }
 
 pub(super) struct Prior {
     stage: StageRunId,
     head: Option<String>,
-    pub(super) open: Vec<Finding>,
+    pub(super) findings: Vec<Finding>,
     record: Value,
 }
 
@@ -84,14 +84,10 @@ fn read_prior(stage: &StageRun) -> Result<Option<Prior>, ArchonError> {
         .and_then(|r| r.get("head"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let open = found
-        .into_values()
-        .filter(|f| f.resolved_in.is_none())
-        .collect();
     Ok(Some(Prior {
         stage: stage.id.clone(),
         head,
-        open,
+        findings: found.into_values().collect(),
         record: record.clone(),
     }))
 }
@@ -116,11 +112,19 @@ pub(in crate::executor) fn prior_handoff(
         Some(prior) => Some(prior),
         None => previous(store, stage)?,
     };
-    let Some(prior) = prior.filter(|p| !p.open.is_empty()) else {
+    let Some(prior) = prior else {
         return Ok(None);
     };
     assert_ne!(stage.id, prior.stage);
-    assert!(prior.open.iter().all(|f| f.resolved_in.is_none()));
+    let findings: Vec<_> = prior
+        .findings
+        .iter()
+        .filter(|finding| finding.resolved_in.is_none())
+        .map(|finding| (finding.id.as_str(), finding.description.as_str()))
+        .collect();
+    if findings.is_empty() {
+        return Ok(None);
+    }
     let mut objective = "\n\n## Open findings from the previous review\n\n".to_owned();
     if let Some(head) = prior.head {
         objective.push_str(&format!(
@@ -134,11 +138,6 @@ pub(in crate::executor) fn prior_handoff(
         );
     }
     objective.push_str(rule);
-    let findings: Vec<_> = prior
-        .open
-        .iter()
-        .map(|finding| (finding.id.as_str(), finding.description.as_str()))
-        .collect();
     let (list, file) = handoff::prepare(&findings);
     objective.push_str("\n\n");
     objective.push_str(&list);

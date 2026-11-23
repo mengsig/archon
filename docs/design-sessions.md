@@ -208,11 +208,24 @@ replaced note counts again.
    work too. They use the same proposal gate as any other proposal.
 
 The ledger is built by Archon from its own records, never from what the agent
-reports. It has one requirement `D<n>` per active note, bound to its final
-picture only. A picture you withheld makes a text requirement marked "(visual;
-picture withheld by the operator)". Before, after and in-between pictures are
-never part of it and never sent to a later model. Review and acceptance then
-check the shipped UI against the final pictures and your words.
+reports. It has one requirement `D<n>` per active note, bound to one picture:
+the final picture, or the after picture captured when the note was done if
+there is no final one. A picture you switched off in the review makes a text
+requirement marked "(visual; picture withheld by the operator)"; only a switch
+you moved counts, never a card that merely had no picture yet. Before and
+in-between pictures are never part of it and never sent to a later model.
+Review and acceptance then check the shipped UI against these pictures and
+your words.
+
+The page shown at the gate is a decision page. At the top are a summary (how
+many notes changed the app, the checks the agent reported, what approving
+does) and the answers. Each note then has a card: your words, what you
+pointed at, the before and after pictures side by side, the commit's message
+and changed files, and its status (done, no change needed, failed, cancelled)
+with the agent's last reply. The full brief is folded at the end. The page is
+one self-contained HTML file with the pictures inline, readable on a phone.
+It says so when the intent nears its 128 image cap, or when pictures were left
+out of the page to keep it under 24 MiB (they stay in the intent).
 
 If every note ended as "nothing to change", or nothing is left in force after
 your "superseded by" choices, the review asks "Approve the design as it is?"

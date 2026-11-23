@@ -55,11 +55,13 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   let message = '';
   let askNoChange = false;
   const session = state.session.id;
-  const include = new Map();
+  // Only what the operator switched by hand: a card that had no picture when
+  // the review opened must not stay "left out" once a Capture gives it one.
+  const chosen = new Map();
+  const included = (card) => (chosen.has(card.note) ? chosen.get(card.note) : card.include);
   const superseded = new Map();
   const seed = () => {
     for (const c of finish.cards) {
-      if (!include.has(c.note)) include.set(c.note, c.include);
       if (!superseded.has(c.note)) superseded.set(c.note, c.superseded_by ?? '');
     }
   };
@@ -77,7 +79,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
 
   async function recapture(text) {
     finish = await ctx.design.finishCapture(session, { recapture: true });
-    include.clear(); superseded.clear(); seed();
+    chosen.clear(); superseded.clear(); seed();
     askNoChange = false;
     message = text;
   }
@@ -86,7 +88,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
     try {
       await ctx.design.finishConfirm(session, {
         capture: finish.capture,
-        include: Object.fromEntries(include),
+        include: Object.fromEntries(chosen),
         superseded: Object.fromEntries([...superseded].map(([k, v]) => [k, v ? v.trim() : null])),
         confirmNoChange: finish.no_change_only || askNoChange,
       });
@@ -132,8 +134,8 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
     // Relabelled in place: this fires on blur, and redrawing then would
     // replace the button the operator is clicking.
     sup.addEventListener('change', () => { if (askNoChange) { askNoChange = false; relabel(); } });
-    const inc = h('input', { class: 'switch-input', type: 'checkbox', role: 'switch', checked: include.get(card.note) !== false, 'aria-label': `Include picture for ${card.note}`, disabled: !card.data_url || card.earlier });
-    inc.addEventListener('change', () => { include.set(card.note, inc.checked); askNoChange = false; draw(); });
+    const inc = h('input', { class: 'switch-input', type: 'checkbox', role: 'switch', checked: included(card) !== false, 'aria-label': `Include picture for ${card.note}`, disabled: !card.data_url || card.earlier });
+    inc.addEventListener('change', () => { chosen.set(card.note, inc.checked); askNoChange = false; draw(); });
     return h('li', { class: 'finish-card' },
       h('div', { class: 'finish-card-head' }, h('strong', { text: card.note }), card.earlier ? h('span', { class: 'note-tag', text: 'Earlier session' }) : null, card.superseded_by ? h('span', { class: 'note-tag', text: `Superseded by ${card.superseded_by}` }) : null),
       h('p', { class: 'note-text', text: card.text }),
@@ -159,8 +161,8 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   }
 
   function draw() {
-    const included = [...include].filter(([k, v]) => v && finish.cards.find((c) => c.note === k)?.data_url).length;
-    const warn = imageCapWarning(state.imagesUsed, state.imagesMax, included, IMAGE_CAP_WARN_MARGIN);
+    const picked = finish.cards.filter((c) => c.data_url && included(c)).length;
+    const warn = imageCapWarning(state.imagesUsed, state.imagesMax, picked, IMAGE_CAP_WARN_MARGIN);
     const noChange = finish.no_change_only || askNoChange;
     body.replaceChildren(...[
       message ? h('p', { class: 'callout callout-amber', role: 'status', text: message }) : null,

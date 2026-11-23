@@ -79,7 +79,7 @@ test.describe('desktop', () => {
       await expect(page.getByLabel('Include picture for D1')).toBeVisible();
       await expect(page.getByLabel('Include picture for D2')).toHaveCount(0);
       await page.getByRole('button', { name: 'Confirm' }).click();
-      await expect.poll(() => harness.daemon.state.confirmed?.include).toEqual({ D1: true });
+      await expect.poll(() => harness.daemon.state.confirmed?.include).toEqual({});
 
       // Confirmed is not ended: the screen waits for the operator's approval.
       await expect(page.getByRole('heading', { name: 'Waiting for your approval' }).first()).toBeVisible();
@@ -120,6 +120,30 @@ test.describe('desktop', () => {
       expect(harness.daemon.state.requests.some((r) => r.cmd === 'design_finish_cancel')).toBe(true);
       // One subscription for the whole run, however many session events came.
       expect(harness.daemon.state.requests.filter((r) => r.cmd === 'subscribe_design')).toHaveLength(1);
+    } finally { await harness.stop(); }
+  });
+
+  test('finishing: only a switch the operator moved is sent as a choice', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      await page.getByRole('button', { name: 'Finish' }).click();
+      const review = page.getByRole('dialog', { name: 'Review before finishing' });
+      await expect(review.getByLabel('Include picture for D1')).toBeChecked();
+      await review.getByRole('button', { name: 'Confirm' }).click();
+      await expect.poll(() => harness.daemon.state.confirmed?.include).toEqual({});
+    } finally { await harness.stop(); }
+  });
+
+  test('finishing: switching a picture off is sent as an explicit choice', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      await page.getByRole('button', { name: 'Finish' }).click();
+      const review = page.getByRole('dialog', { name: 'Review before finishing' });
+      await review.getByLabel('Include picture for D1').uncheck({ force: true });
+      await review.getByRole('button', { name: 'Confirm' }).click();
+      await expect.poll(() => harness.daemon.state.confirmed?.include).toEqual({ D1: false });
     } finally { await harness.stop(); }
   });
 

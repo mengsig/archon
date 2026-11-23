@@ -57,6 +57,38 @@ pub(crate) fn head(g: &NoteGit) -> Result<String, ArchonError> {
     Ok(sha)
 }
 
+/// The one-line message of `commit` and the files it changed, for the review
+/// page. Reads only; a commit id that is not in full is refused.
+pub(crate) fn commit_facts(
+    g: &NoteGit,
+    commit: &str,
+) -> Result<(String, Vec<String>), ArchonError> {
+    if !is_commit_id(commit) {
+        return Err(ArchonError::Invalid(format!(
+            "{commit:?} is not a commit id"
+        )));
+    }
+    let subject = DaemonGit::sealed_in(g.repo)
+        .args(["show", "-s", "--format=%s", commit])
+        .text()?;
+    let files = DaemonGit::sealed_in(g.repo)
+        .args([
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "--root",
+            commit,
+        ])
+        .text()?;
+    let files: Vec<String> = files.lines().map(str::to_owned).collect();
+    assert!(
+        files.iter().all(|f| !f.is_empty()),
+        "diff-tree prints no empty path"
+    );
+    Ok((subject, files))
+}
+
 /// Whether `of` holds the commit `commit`.
 pub(crate) fn contains(g: &NoteGit, commit: &str, of: &str) -> Result<bool, ArchonError> {
     stack::contains(g.repo, commit, of)

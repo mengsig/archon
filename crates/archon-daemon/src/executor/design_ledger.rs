@@ -3,11 +3,11 @@
 //! It starts from the item's current approved intent and appends to it, so
 //! the store's `check_preserved` holds across a Revise.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use archon_core::design::{
-    DesignNote, DesignSession, FinishChoices, IMAGE_CAP_WARN_MARGIN, SessionState, Viewport,
+    DesignAsset, DesignAssetId, DesignNote, DesignSession, FinishChoices, NoteKind, NoteStatus,
+    ReplyAuthor, SessionState, Target, Viewport, undone_by,
 };
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
@@ -17,15 +17,12 @@ use archon_core::intent::{
 };
 use archon_core::run::{OperatorGate, PipelineRun, StageRun, StageState};
 use archon_queue::Store;
-use base64::{Engine, engine::general_purpose::STANDARD};
 use sha2::{Digest, Sha256};
 
+use super::design_page::{self, Card, CommitFacts, Page, Pic};
 use super::intent::{Pending, key};
 use crate::context::DaemonContext;
 use crate::design::WorktreeRef;
-
-/// The most reference images an intent holds (`ApprovedIntent::validate`).
-const MAX_IMAGES: usize = 128;
 
 /// Marks a visual note whose final picture the operator did not include.
 const WITHHELD: &str = "(visual; picture withheld by the operator)";
@@ -40,8 +37,11 @@ pub(crate) struct LedgerNote {
     pub text: String,
     /// `(note id, its words)` of each note this one superseded.
     pub earlier: Vec<(String, String)>,
-    /// The included final picture, if any.
+    /// The picture the ledger binds: the final one, else the newest after
+    /// capture; none only when the operator left it out.
     pub picture: Option<LedgerPicture>,
+    /// The operator chose, in the finish step, to leave the picture out.
+    pub withheld: bool,
 }
 
 pub(crate) struct LedgerPicture {
@@ -159,7 +159,8 @@ pub(crate) fn build_draft(
                 requirement.kind = RequirementKind::Visual;
                 requirement.images = vec![image_id];
             }
-            None => requirement.text.push_str(&format!(" {WITHHELD}")),
+            None if note.withheld => requirement.text.push_str(&format!(" {WITHHELD}")),
+            None => {}
         }
         draft.requirements.push(requirement);
         words.push(text.to_owned());
@@ -171,103 +172,6 @@ pub(crate) fn build_draft(
         .join("\n\n");
     draft.validate()?;
     Ok(draft)
-}
-
-fn escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-fn mime_of(bytes: &[u8]) -> &'static str {
-    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-        "image/png"
-    } else {
-        "image/jpeg"
-    }
-}
-
-/// Each new reference image's caption (where the picture came from), by id.
-pub(crate) fn captions(notes: &[LedgerNote]) -> BTreeMap<String, String> {
-    notes
-        .iter()
-        .filter_map(|n| {
-            let picture = n.picture.as_ref()?;
-            Some((
-                format!("{}-final", n.id),
-                format!(
-                    "{}, {}x{}",
-                    picture.caption, picture.viewport.w, picture.viewport.h
-                ),
-            ))
-        })
-        .collect()
-}
-
-/// The ledger page: self-contained HTML with the included final pictures as
-/// `data:` images. `pictures` maps a reference image id to its bytes; any
-/// other picture of the session is never shown. `captions` names where each
-/// picture came from.
-pub(crate) fn render_page(
-    draft: &ApprovedIntent,
-    pictures: &BTreeMap<String, Vec<u8>>,
-    captions: &BTreeMap<String, String>,
-) -> String {
-    let mut html = String::from(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Design ledger</title>\
-         <style>body{font:16px/1.5 system-ui,sans-serif;max-width:60rem;margin:2rem auto;\
-         padding:0 1rem}figure{margin:1rem 0}img{max-width:100%;border:1px solid #8884}\
-         .warn{background:#fe9;padding:.5rem 1rem;border-radius:4px;color:#000}\
-         li{margin:.75rem 0}</style></head><body><h1>Design ledger</h1>",
-    );
-    if draft.images.len() + IMAGE_CAP_WARN_MARGIN as usize >= MAX_IMAGES {
-        html.push_str(&format!(
-            "<p class=\"warn\">{} of {MAX_IMAGES} reference images used. The limit caps the \
-             number of notes that can carry a picture.</p>",
-            draft.images.len()
-        ));
-    }
-    html.push_str(&format!(
-        "<h2>What the operator asked</h2><p>{}</p><h2>Requirements</h2><ol>",
-        escape(&draft.operator_words).replace('\n', "<br>")
-    ));
-    for requirement in &draft.requirements {
-        html.push_str(&format!(
-            "<li><strong>{}</strong> ({:?}): {}",
-            escape(&requirement.id),
-            requirement.kind,
-            escape(&requirement.text)
-        ));
-        for id in &requirement.images {
-            let Some(image) = draft.images.iter().find(|i| &i.id == id) else {
-                continue;
-            };
-            let caption = escape(
-                captions
-                    .get(id)
-                    .map(String::as_str)
-                    .or(image.state.as_deref())
-                    .unwrap_or(""),
-            );
-            match pictures.get(id) {
-                Some(bytes) => html.push_str(&format!(
-                    "<figure><img alt=\"{}\" src=\"data:{};base64,{}\"><figcaption>{}</figcaption></figure>",
-                    escape(id),
-                    mime_of(bytes),
-                    STANDARD.encode(bytes),
-                    caption
-                )),
-                None => html.push_str(&format!(
-                    "<p>Reference image {} ({caption})</p>",
-                    escape(id)
-                )),
-            }
-        }
-        html.push_str("</li>");
-    }
-    html.push_str("</ol></body></html>");
-    html
 }
 
 /// The run's worktree, with the repository it belongs to.
@@ -289,6 +193,60 @@ pub(super) fn worktree_ref(store: &Store, run: &PipelineRun) -> Result<WorktreeR
 fn preset_viewport(preset: archon_core::design::ViewportPreset) -> Viewport {
     let (w, h) = preset.size();
     Viewport { w, h, preset }
+}
+
+/// The picture a note takes into the ledger, and whether the operator left
+/// it out. The final picture counts, else the newest after capture, so a
+/// captured picture is never lost for want of a final one. Only a note with a
+/// final picture can be withheld: that is what the review's switch is for.
+fn chosen_picture(
+    note: &DesignNote,
+    choices: Option<&FinishChoices>,
+) -> (Option<DesignAssetId>, bool) {
+    let asset = note
+        .final_asset
+        .clone()
+        .or_else(|| note.after_asset.clone());
+    let chose = choices.and_then(|c| c.include.get(&note.id).copied());
+    let left_out = note.final_asset.is_some()
+        && chose.map_or(note.final_included == Some(false), |include| !include);
+    assert!(
+        asset.is_some() || !left_out,
+        "only a picture that exists can be withheld"
+    );
+    if left_out {
+        (None, true)
+    } else {
+        (asset, false)
+    }
+}
+
+fn ledger_picture(
+    ctx: &DaemonContext,
+    note: &DesignNote,
+    asset: &DesignAsset,
+    head: &str,
+) -> LedgerPicture {
+    let commit = asset
+        .commit
+        .as_deref()
+        .or(note.captured_commit.as_deref())
+        .unwrap_or(head);
+    LedgerPicture {
+        path: ctx.design.asset_path(asset),
+        // The viewport the picture was taken at: its target's preset, else
+        // the note's (`capture_final`).
+        viewport: preset_viewport(
+            note.target
+                .as_ref()
+                .map_or(note.viewport.preset, |t| t.viewport.preset),
+        ),
+        caption: format!(
+            "captured from the preview at commit {} {}",
+            &commit[..commit.len().min(7)],
+            asset.created_at.format("%Y-%m-%d %H:%M UTC")
+        ),
+    }
 }
 
 /// The notes the confirmed `session` puts in the ledger, each with the words
@@ -322,30 +280,12 @@ fn ledger_notes(
             .collect();
         earlier.sort_by_key(|n| n.number);
         earlier.dedup_by_key(|n| n.number);
-        let included = choices
-            .and_then(|c| c.include.get(&note.id).copied())
-            .or(note.final_included)
-            .unwrap_or(true);
-        let picture = match (&note.final_asset, included) {
-            (Some(asset), true) => store.design_asset(item, asset)?.map(|asset| {
-                let commit = note.captured_commit.as_deref().unwrap_or(&head);
-                LedgerPicture {
-                    path: ctx.design.asset_path(&asset),
-                    // The viewport Finish took the picture at: its
-                    // target's preset, else the note's (`capture_final`).
-                    viewport: preset_viewport(
-                        note.target
-                            .as_ref()
-                            .map_or(note.viewport.preset, |t| t.viewport.preset),
-                    ),
-                    caption: format!(
-                        "captured from the preview at commit {} {}",
-                        &commit[..commit.len().min(7)],
-                        asset.created_at.format("%Y-%m-%d %H:%M UTC")
-                    ),
-                }
-            }),
-            _ => None,
+        let (asset, withheld) = chosen_picture(note, choices);
+        let picture = match asset {
+            Some(id) => store
+                .design_asset(item, &id)?
+                .map(|asset| ledger_picture(ctx, note, &asset, &head)),
+            None => None,
         };
         out.push(LedgerNote {
             id: note.id.clone(),
@@ -355,9 +295,240 @@ fn ledger_notes(
                 .map(|n| (n.id.clone(), n.text.clone()))
                 .collect(),
             picture,
+            withheld,
         });
     }
     Ok(out)
+}
+
+/// What the operator pointed at, in words.
+fn describe_target(target: Option<&Target>, kind: NoteKind) -> Option<String> {
+    let Some(target) = target else {
+        return (kind == NoteKind::Page).then(|| "the whole page".to_owned());
+    };
+    let clip = |text: &str| -> String {
+        let text = text.trim();
+        match text.char_indices().nth(80) {
+            Some((end, _)) => format!("{}...", &text[..end]),
+            None => text.to_owned(),
+        }
+    };
+    let what = if target.region {
+        format!(
+            "an area of {} by {} pixels",
+            target.rect.w.round(),
+            target.rect.h.round()
+        )
+    } else if let Some(name) = target.role_name.as_deref().filter(|n| !n.trim().is_empty()) {
+        format!("\"{}\"", clip(name))
+    } else if let Some(component) = &target.component {
+        format!("the {} component", component.name)
+    } else if let Some(selector) = &target.selector {
+        format!("the element {}", clip(selector))
+    } else {
+        "an element".to_owned()
+    };
+    Some(format!("{what} on {}", target.path))
+}
+
+/// `(label, css class)` of a note's status.
+fn status_of(
+    note: &DesignNote,
+    undone: bool,
+    superseded_by: Option<&str>,
+) -> (String, &'static str) {
+    if undone {
+        return ("Undone".into(), "idle");
+    }
+    if let Some(by) = superseded_by {
+        return (format!("Superseded by {by}"), "idle");
+    }
+    match note.status {
+        NoteStatus::Done if note.no_change => ("No change needed".into(), "ok"),
+        NoteStatus::Done => ("Done".into(), "ok"),
+        NoteStatus::Failed => ("Failed".into(), "bad"),
+        NoteStatus::Cancelled => ("Cancelled".into(), "bad"),
+        NoteStatus::NeedsReply => ("Waiting for the operator".into(), "idle"),
+        NoteStatus::Queued | NoteStatus::Sent | NoteStatus::Working => {
+            ("Not finished".into(), "idle")
+        }
+    }
+}
+
+/// A picture's bytes. A missing file leaves the card without it: the page
+/// says so, and the gate is never blocked by a picture it only displays.
+fn read_pic(path: &Path, label: String, caption: String) -> Option<Pic> {
+    match std::fs::read(path) {
+        Ok(bytes) => Some(Pic {
+            label,
+            caption,
+            bytes,
+        }),
+        Err(error) => {
+            tracing::warn!(%error, path = %path.display(), "design review page: picture unreadable");
+            None
+        }
+    }
+}
+
+/// The commit's one-line message and files, or why they are missing.
+fn commit_of(
+    ctx: &DaemonContext,
+    worktree: &WorktreeRef,
+    commit: &str,
+) -> (Option<CommitFacts>, Option<String>) {
+    use crate::worktree::design_git::{self, NoteGit};
+    let short = commit[..commit.len().min(7)].to_owned();
+    let facts = ctx.design.shadow(worktree).and_then(|shadow| {
+        design_git::commit_facts(
+            &NoteGit {
+                shadow: &shadow,
+                repo: &worktree.repo,
+                worktree: &worktree.worktree,
+                branch: &worktree.branch,
+            },
+            commit,
+        )
+    });
+    match facts {
+        Ok((subject, files)) => (
+            Some(CommitFacts {
+                short,
+                subject,
+                files,
+            }),
+            None,
+        ),
+        Err(error) => (
+            None,
+            Some(format!("Commit {short}: details unavailable ({error})")),
+        ),
+    }
+}
+
+/// The cards of the review page: every note of the session (and each active
+/// note of an earlier one), in note order. `notes` are the ledger's notes.
+fn page_cards(
+    ctx: &DaemonContext,
+    store: &Store,
+    worktree: &WorktreeRef,
+    session: &DesignSession,
+    notes: &[LedgerNote],
+    draft: &ApprovedIntent,
+) -> Result<Vec<Card>, ArchonError> {
+    let all = store.design_notes(&session.item)?;
+    let undone = undone_by(&all);
+    let choices = crate::design::DesignService::review_choices(
+        store,
+        &session.item,
+        &session.id,
+        session.finish_choices.as_ref(),
+    )?;
+    let mut shown: Vec<&DesignNote> = all
+        .iter()
+        .filter(|n| n.kind != NoteKind::Revert)
+        .filter(|n| n.session == session.id || notes.iter().any(|l| l.id == n.id))
+        .collect();
+    shown.sort_by_key(|n| n.number);
+    let mut cards = Vec::new();
+    for note in shown {
+        let ledger = notes.iter().find(|l| l.id == note.id);
+        // A note in the ledger is in force, whatever else was said of it.
+        let by = match ledger {
+            Some(_) => None,
+            None => note.superseded_by.clone().or_else(|| {
+                choices
+                    .as_ref()
+                    .and_then(|c| c.superseded.get(&note.id).cloned().flatten())
+            }),
+        };
+        let (commit, commit_note) = match note.commit.as_deref() {
+            Some(c) => commit_of(ctx, worktree, c),
+            None => (None, None),
+        };
+        let status = status_of(note, undone.contains_key(&note.id), by.as_deref());
+        let facts = (commit, commit_note);
+        cards.push(card_of(ctx, store, note, ledger, draft, status, facts)?);
+    }
+    Ok(cards)
+}
+
+/// The card of `note`; `facts` are its commit's facts, or why they are missing.
+fn card_of(
+    ctx: &DaemonContext,
+    store: &Store,
+    note: &DesignNote,
+    ledger: Option<&LedgerNote>,
+    draft: &ApprovedIntent,
+    status: (String, &'static str),
+    facts: (Option<CommitFacts>, Option<String>),
+) -> Result<Card, ArchonError> {
+    let after = ledger.and_then(|l| l.picture.as_ref()).and_then(|p| {
+        let caption = format!("{}, {}x{}", p.caption, p.viewport.w, p.viewport.h);
+        read_pic(&p.path, format!("{} after the change", note.id), caption)
+    });
+    let before = match &note.before_asset {
+        Some(id) => store.design_asset(&note.item, id)?.and_then(|a| {
+            let caption = format!(
+                "taken before the change, {}x{}, {}",
+                a.width,
+                a.height,
+                a.created_at.format("%Y-%m-%d %H:%M UTC")
+            );
+            let label = format!("{} before the change", note.id);
+            read_pic(&ctx.design.asset_path(&a), label, caption)
+        }),
+        None => None,
+    };
+    Ok(Card {
+        id: note.id.clone(),
+        text: note.text.clone(),
+        earlier: ledger.map(|l| l.earlier.clone()).unwrap_or_default(),
+        kind: draft
+            .requirements
+            .iter()
+            .find(|r| r.id == note.id)
+            .map(|r| r.kind.clone()),
+        status,
+        target: describe_target(note.target.as_ref(), note.kind),
+        reply: note
+            .thread
+            .iter()
+            .rev()
+            .find(|e| e.from == ReplyAuthor::Agent)
+            .map(|e| e.text.clone()),
+        commit: facts.0,
+        commit_note: facts.1,
+        before,
+        after,
+        withheld: ledger.is_some_and(|l| l.withheld),
+    })
+}
+
+/// The checks the run's stages reported (the latest to list any) and what the
+/// design stage's agent said.
+fn reported(stages: &[StageRun], gate: &OperatorGate) -> (Vec<String>, String) {
+    let done = |s: &&StageRun| s.state == StageState::Completed;
+    let checks = stages
+        .iter()
+        .filter(done)
+        .rev()
+        .find_map(|s| {
+            let list = s.structured.as_ref()?.get("checks")?.as_array()?;
+            Some(
+                list.iter()
+                    .filter_map(|c| c.as_str().map(str::to_owned))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .unwrap_or_default();
+    let said = stages
+        .iter()
+        .filter(done)
+        .find(|s| s.stage_id == gate.stage_id && s.attempt == gate.attempt)
+        .and_then(|s| s.summary.clone())
+        .unwrap_or_default();
+    (checks, said)
 }
 
 /// The active notes the confirmed `session` puts in the ledger. A session whose
@@ -451,19 +622,24 @@ pub(super) fn prepare(
         gate: format!("design:{}", gate.attempt),
     };
     let destination = ctx.paths.data_dir.join("approved-intent-artifacts");
-    let mut pictures = BTreeMap::new();
     for image in record
         .images
         .iter_mut()
         .filter(|i| !base_images.contains(&i.id))
     {
-        let bytes = std::fs::read(&image.path)
-            .map_err(|e| ArchonError::io(format!("read picture {}", image.path.display()), e))?;
         image.path = crate::handlers::intent::preserve(&destination, &image.path, &image.sha256)?;
-        pictures.insert(image.id.clone(), bytes);
     }
     record.validate()?;
-    let html = render_page(&record, &pictures, &captions(&notes));
+    let cards = page_cards(ctx, store, &worktree, &session, &notes, &record)?;
+    let (checks, agent_summary) = reported(stages, gate);
+    let html = design_page::render(&Page {
+        title: &item.title,
+        brief: &item.brief,
+        draft: &record,
+        agent_summary: &agent_summary,
+        checks: &checks,
+        cards: &cards,
+    });
     let directory = ctx.paths.data_dir.join("design").join("ledger");
     std::fs::create_dir_all(&directory)
         .map_err(|e| ArchonError::io("create the design ledger directory", e))?;
@@ -497,6 +673,7 @@ pub(super) fn is_ledger_page(ctx: &DaemonContext, page: &Path) -> bool {
 mod tests {
     use super::*;
     use archon_core::design::ViewportPreset;
+    use std::collections::BTreeMap;
 
     const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 1, 2, 3];
 
@@ -524,6 +701,7 @@ mod tests {
             text: text.into(),
             earlier: Vec::new(),
             picture,
+            withheld: false,
         }
     }
 
@@ -594,7 +772,9 @@ mod tests {
 
     #[test]
     fn a_withheld_picture_gives_a_marked_behaviour() {
-        let notes = [note("D1", "tighten the header", None)];
+        let mut withheld = note("D1", "tighten the header", None);
+        withheld.withheld = true;
+        let notes = [withheld];
         let draft = build_draft(None, "Polish", &notes, None).unwrap();
         let requirement = &draft.requirements[0];
         assert_eq!(requirement.kind, RequirementKind::Behaviour);
@@ -683,44 +863,140 @@ mod tests {
         draft.validate().unwrap();
     }
 
-    #[test]
-    fn the_page_embeds_included_pictures_and_nothing_else() {
-        let dir = tempfile::tempdir().unwrap();
-        let notes = [
-            note("D1", "make it <red>", Some(picture(dir.path(), "d1.png"))),
-            note("D2", "wider", None),
-        ];
-        let draft = build_draft(None, "Button", &notes, None).unwrap();
-        let bytes = std::fs::read(&draft.images[0].path).unwrap();
-        let pictures = BTreeMap::from([("D1-final".to_owned(), bytes.clone())]);
-        let page = render_page(&draft, &pictures, &captions(&notes));
-        assert!(page.contains(&format!(
-            "data:image/png;base64,{}",
-            STANDARD.encode(&bytes)
-        )));
-        assert_eq!(page.matches("data:image/").count(), 1);
-        assert!(page.contains("make it &lt;red&gt;"));
-        assert!(page.contains("captured from the preview at commit 3f9c2a1"));
-        assert!(!page.contains("class=\"warn\""));
+    fn dnote(number: u64) -> DesignNote {
+        let at = chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).unwrap();
+        DesignNote {
+            item: QueueItemId::new(),
+            id: format!("D{number}"),
+            number,
+            session: archon_core::design::DesignSessionId::new(),
+            kind: NoteKind::Change,
+            text: String::new(),
+            details_text: None,
+            send_picture: true,
+            target: None,
+            viewport: viewport(),
+            status: NoteStatus::Done,
+            fail_reason: None,
+            base_commit: None,
+            commit: None,
+            no_change: false,
+            reverts: None,
+            resent_from: None,
+            superseded_by: None,
+            thread: Vec::new(),
+            client_key: String::new(),
+            delivery: 0,
+            before_asset: None,
+            after_asset: None,
+            final_asset: None,
+            final_included: None,
+            captured_commit: None,
+            created_by_device: None,
+            created_at: at,
+            updated_at: at,
+        }
+    }
+
+    fn choice(note: &str, include: bool) -> FinishChoices {
+        FinishChoices {
+            include: BTreeMap::from([(note.to_owned(), include)]),
+            superseded: BTreeMap::new(),
+        }
     }
 
     #[test]
-    fn the_page_warns_near_the_image_cap() {
-        let mut draft = build_draft(None, "x", &[note("D1", "y", None)], None).unwrap();
-        for n in 0..(MAX_IMAGES - 8) {
-            draft.images.push(ReferenceImage {
-                id: format!("i{n}"),
-                path: PathBuf::from("/x"),
-                sha256: "e".repeat(64),
-                viewport: None,
-                theme: None,
-                state: None,
-            });
-        }
-        assert!(render_page(&draft, &BTreeMap::new(), &BTreeMap::new()).contains("120 of 128"));
-        draft.images.pop();
-        assert!(
-            !render_page(&draft, &BTreeMap::new(), &BTreeMap::new()).contains("class=\"warn\"")
+    fn a_captured_after_picture_is_used_when_there_is_no_final_one() {
+        let mut d6 = dnote(6);
+        d6.after_asset = Some(DesignAssetId::new());
+        let (asset, withheld) = chosen_picture(&d6, None);
+        assert_eq!((asset, withheld), (d6.after_asset.clone(), false));
+        // An old client sent `false` for a card that had no picture to switch.
+        let (asset, withheld) = chosen_picture(&d6, Some(&choice("D6", false)));
+        assert_eq!((asset, withheld), (d6.after_asset.clone(), false));
+    }
+
+    #[test]
+    fn the_final_picture_wins_and_only_a_real_choice_withholds_it() {
+        let mut d5 = dnote(5);
+        d5.after_asset = Some(DesignAssetId::new());
+        d5.final_asset = Some(DesignAssetId::new());
+        let (asset, withheld) = chosen_picture(&d5, None);
+        assert_eq!((asset, withheld), (d5.final_asset.clone(), false));
+        let (asset, withheld) = chosen_picture(&d5, Some(&choice("D5", true)));
+        assert_eq!((asset, withheld), (d5.final_asset.clone(), false));
+        let (asset, withheld) = chosen_picture(&d5, Some(&choice("D5", false)));
+        assert_eq!((asset, withheld), (None, true));
+        // An earlier session's note keeps what its own review recorded.
+        d5.final_included = Some(false);
+        assert_eq!(chosen_picture(&d5, None), (None, true));
+        d5.final_included = Some(true);
+        assert!(!chosen_picture(&d5, None).1);
+    }
+
+    #[test]
+    fn a_note_without_a_picture_is_not_marked_withheld() {
+        let draft = build_draft(None, "x", &[note("D1", "y", None)], None).unwrap();
+        assert!(!draft.requirements[0].text.contains("withheld"));
+        assert_eq!(
+            chosen_picture(&dnote(1), Some(&choice("D1", false))),
+            (None, false)
         );
+    }
+
+    #[test]
+    fn the_target_is_put_in_words() {
+        use archon_core::design::{ComponentRef, Rect};
+        let mut target = Target {
+            path: "/overview".into(),
+            selector: Some("div.a > canvas".into()),
+            role_name: Some("Match confidence 90%".into()),
+            component: Some(ComponentRef {
+                name: "Meter".into(),
+                framework: "react".into(),
+            }),
+            rect: Rect {
+                x: 1.0,
+                y: 2.0,
+                w: 143.4,
+                h: 92.0,
+            },
+            viewport: viewport(),
+            styles: BTreeMap::new(),
+            region: false,
+        };
+        assert_eq!(
+            describe_target(Some(&target), NoteKind::Change).unwrap(),
+            "\"Match confidence 90%\" on /overview"
+        );
+        target.role_name = None;
+        assert_eq!(
+            describe_target(Some(&target), NoteKind::Change).unwrap(),
+            "the Meter component on /overview"
+        );
+        target.region = true;
+        assert_eq!(
+            describe_target(Some(&target), NoteKind::Change).unwrap(),
+            "an area of 143 by 92 pixels on /overview"
+        );
+        assert_eq!(
+            describe_target(None, NoteKind::Page).as_deref(),
+            Some("the whole page")
+        );
+        assert_eq!(describe_target(None, NoteKind::Change), None);
+    }
+
+    #[test]
+    fn a_status_names_what_became_of_the_note() {
+        let mut n = dnote(1);
+        assert_eq!(status_of(&n, false, None), ("Done".into(), "ok"));
+        n.no_change = true;
+        assert_eq!(status_of(&n, false, None).0, "No change needed");
+        n.status = NoteStatus::Failed;
+        assert_eq!(status_of(&n, false, None), ("Failed".into(), "bad"));
+        n.status = NoteStatus::Cancelled;
+        assert_eq!(status_of(&n, false, None).0, "Cancelled");
+        assert_eq!(status_of(&n, true, None).0, "Undone");
+        assert_eq!(status_of(&n, false, Some("D3")).0, "Superseded by D3");
     }
 }

@@ -29,6 +29,13 @@
 
 ### Fixed
 
+- The review page at a live design session's approval gate is now a
+  decision page: a summary with the answers on top, one card per note with
+  its before and after pictures side by side, the commit and files changed
+  and its status, and the full brief folded at the end. A note whose after
+  picture was captured always shows it and binds it to the approved intent,
+  and a picture is called withheld only when you switched it off: a card that
+  had no picture when the review opened no longer counts as switched off.
 - The bench's archon arm no longer voids a trial when the orchestrator
   delegates a helper: Aether lists the helper's events (its creation, task
   and turns) among the orchestrator's, and the harness now skips every event

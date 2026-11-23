@@ -106,17 +106,90 @@ fn commit(run: &PipelineRun, file: &str, body: &str) -> String {
     common::git(&run.workspace, &["rev-parse", "HEAD"])
 }
 
-/// A done change note with its commit and final picture, as the agent loop leaves it.
-async fn done_note(
+/// What a done note can carry besides its words and commit.
+#[derive(Default)]
+struct Pictures<'a> {
+    before: Option<&'a [u8]>,
+    after: Option<&'a [u8]>,
+    fin: Option<&'a [u8]>,
+    /// The element the operator pointed at, by its accessible name.
+    pointed_at: Option<&'a str>,
+    /// What the agent answered on the note.
+    reply: Option<&'a str>,
+}
+
+fn stored(
+    h: &Harness,
+    session: &DesignSession,
+    note: &str,
+    commit: &str,
+    source: AssetSource,
+    picture: &[u8],
+) -> DesignAsset {
+    let sha256 = Sha256::digest(picture)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let mut asset = DesignAsset {
+        id: DesignAssetId::new(),
+        item: session.item.clone(),
+        sha256,
+        mime: "image/png".into(),
+        bytes: picture.len() as u64,
+        width: 320,
+        height: 200,
+        path: String::new(),
+        source,
+        target: None,
+        note: Some(note.to_owned()),
+        commit: Some(commit.to_owned()),
+        created_at: archon_core::now(),
+    };
+    let path = h.ctx.design.asset_path(&asset);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, picture).unwrap();
+    asset.path = path.display().to_string();
+    asset
+}
+
+fn target_named(name: &str) -> archon_core::design::Target {
+    archon_core::design::Target {
+        path: "/overview".into(),
+        selector: None,
+        role_name: Some(name.to_owned()),
+        component: None,
+        rect: archon_core::design::Rect {
+            x: 10.0,
+            y: 10.0,
+            w: 200.0,
+            h: 80.0,
+        },
+        viewport: Viewport {
+            w: 1440,
+            h: 900,
+            preset: ViewportPreset::Desktop,
+        },
+        styles: BTreeMap::new(),
+        region: false,
+    }
+}
+
+/// A done change note with its commit and pictures, as the agent loop leaves it.
+async fn note_with(
     h: &Harness,
     session: &DesignSession,
     run: &PipelineRun,
     text: &str,
-    picture: &[u8],
+    pictures: Pictures<'_>,
 ) -> (String, String) {
     let file = format!("{}.txt", text.replace(' ', "-"));
     let sha = commit(run, &file, text);
     let mut store = h.ctx.store.lock().await;
+    // The before picture is taken when the note is made, before its commit.
+    let before = pictures.before.map(|bytes| {
+        let asset = stored(h, session, "", &sha, AssetSource::Capture, bytes);
+        store.design_asset_put(asset).unwrap().id
+    });
     let (note, _) = store
         .design_note_add(NewDesignNote {
             item: session.item.clone(),
@@ -125,7 +198,7 @@ async fn done_note(
             text: text.into(),
             details_text: None,
             send_picture: false,
-            target: None,
+            target: pictures.pointed_at.map(target_named),
             viewport: Viewport {
                 w: 1440,
                 h: 900,
@@ -134,7 +207,7 @@ async fn done_note(
             client_key: format!("key-{text}"),
             reverts: None,
             resent_from: None,
-            before_asset: None,
+            before_asset: before,
             created_by_device: None,
         })
         .unwrap();
@@ -155,44 +228,63 @@ async fn done_note(
             .design_note_change(&session.item, &note.id, change)
             .unwrap();
     }
+    if let Some(reply) = pictures.reply {
+        let entry = archon_core::design::ThreadEntry {
+            at: archon_core::now(),
+            from: archon_core::design::ReplyAuthor::Agent,
+            text: reply.to_owned(),
+        };
+        store
+            .design_note_change(&session.item, &note.id, NoteChange::Thread(entry))
+            .unwrap();
+    }
+    if let Some(bytes) = pictures.after {
+        let asset = stored(h, session, &note.id, &sha, AssetSource::After, bytes);
+        let asset = store.design_asset_put(asset).unwrap();
+        store
+            .design_note_change(
+                &session.item,
+                &note.id,
+                NoteChange::After {
+                    asset: asset.id,
+                    captured_commit: sha.clone(),
+                },
+            )
+            .unwrap();
+    }
+    if let Some(bytes) = pictures.fin {
+        let asset = stored(h, session, &note.id, &sha, AssetSource::Final, bytes);
+        let asset = store.design_asset_put(asset).unwrap();
+        store
+            .design_note_change(
+                &session.item,
+                &note.id,
+                NoteChange::Final {
+                    asset: Some(asset.id),
+                    included: Some(true),
+                    captured_commit: Some(sha.clone()),
+                },
+            )
+            .unwrap();
+    }
+    (note.id, sha)
+}
+
+/// A done change note with its commit and final picture.
+async fn done_note(
+    h: &Harness,
+    session: &DesignSession,
+    run: &PipelineRun,
+    text: &str,
+    picture: &[u8],
+) -> (String, String) {
     let mut bytes = PNG.to_vec();
     bytes.extend_from_slice(picture);
-    let sha256 = Sha256::digest(&bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
-    let mut asset = DesignAsset {
-        id: DesignAssetId::new(),
-        item: session.item.clone(),
-        sha256,
-        mime: "image/png".into(),
-        bytes: bytes.len() as u64,
-        width: 1,
-        height: 1,
-        path: String::new(),
-        source: AssetSource::Final,
-        target: None,
-        note: Some(note.id.clone()),
-        commit: Some(sha.clone()),
-        created_at: archon_core::now(),
+    let pictures = Pictures {
+        fin: Some(&bytes),
+        ..Pictures::default()
     };
-    let path = h.ctx.design.asset_path(&asset);
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, &bytes).unwrap();
-    asset.path = path.display().to_string();
-    let asset = store.design_asset_put(asset).unwrap();
-    store
-        .design_note_change(
-            &session.item,
-            &note.id,
-            NoteChange::Final {
-                asset: Some(asset.id),
-                included: Some(true),
-                captured_commit: Some(sha.clone()),
-            },
-        )
-        .unwrap();
-    (note.id, sha)
+    note_with(h, session, run, text, pictures).await
 }
 
 /// Finish and confirm the session at `head`, with `superseded` choices.
@@ -201,6 +293,18 @@ async fn confirm(
     session: &DesignSession,
     head: &str,
     include: &[&str],
+    superseded: &[(&str, &str)],
+) {
+    let include: Vec<(&str, bool)> = include.iter().map(|n| (*n, true)).collect();
+    confirm_with(h, session, head, &include, superseded).await;
+}
+
+/// `confirm` with the switches the operator set: `(note, include)`.
+async fn confirm_with(
+    h: &Harness,
+    session: &DesignSession,
+    head: &str,
+    include: &[(&str, bool)],
     superseded: &[(&str, &str)],
 ) {
     let mut store = h.ctx.store.lock().await;
@@ -221,7 +325,7 @@ async fn confirm(
         )
         .unwrap();
     let choices = FinishChoices {
-        include: include.iter().map(|n| ((*n).to_owned(), true)).collect(),
+        include: include.iter().map(|(n, v)| ((*n).to_owned(), *v)).collect(),
         superseded: superseded
             .iter()
             .map(|(a, b)| ((*a).to_owned(), Some((*b).to_owned())))
@@ -349,6 +453,83 @@ async fn a_fresh_live_item_is_approved_from_archonds_records_not_the_agents() {
     assert_eq!(intent.images.len(), 1);
     assert_eq!(intent.images[0].id, "D1-final");
     assert_eq!(intent.requirements[0].images, ["D1-final"]);
+}
+
+const BEFORE_PNG: &[u8] = include_bytes!("../fixtures/design/before.png");
+const AFTER_PNG: &[u8] = include_bytes!("../fixtures/design/after.png");
+
+/// The gate page is a decision page: every captured picture is on it, the
+/// operator's own choice is the only reason one is withheld, and the same
+/// pictures are the approved intent's.
+#[tokio::test]
+async fn the_gate_page_shows_before_and_after_and_withholds_only_what_the_operator_did() {
+    let h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    // D1: before + after captured, no final picture (the operator never had one to switch).
+    let both = Pictures {
+        before: Some(BEFORE_PNG),
+        after: Some(AFTER_PNG),
+        pointed_at: Some("Detections by type"),
+        reply: Some(
+            "The chart, tiles and legend now use purple for people and orange for vehicles.",
+        ),
+        ..Pictures::default()
+    };
+    note_with(&h, &session, &run, "use purple and orange", both).await;
+    // D2: a final picture the operator switched off.
+    let switched_off = Pictures {
+        fin: Some(BEFORE_PNG),
+        ..Pictures::default()
+    };
+    note_with(&h, &session, &run, "make it wider", switched_off).await;
+    let shown = Pictures {
+        before: Some(BEFORE_PNG),
+        fin: Some(AFTER_PNG),
+        ..Pictures::default()
+    };
+    let (_, head) = note_with(&h, &session, &run, "shrink the logo", shown).await;
+    confirm_with(&h, &session, &head, &[("D2", false), ("D3", true)], &[]).await;
+    h.settle_running(|_| StageOutcome::Completed {
+        summary: "Two changes made".into(),
+        structured: Some(json!({"checks": ["npm test (pass)"]})),
+    })
+    .await;
+    h.dispatch().await;
+    let gate = open_proposal(&h, &item.id).await;
+    let html = std::fs::read_to_string(gate.page.clone().unwrap()).unwrap();
+    if let Some(out) = std::env::var_os("ARCHON_EXAMPLE_PAGE_OUT") {
+        std::fs::write(out, &html).unwrap();
+    }
+    // D1: both pictures, labelled visual, with its commit message and file.
+    assert_eq!(
+        html.matches("data:image/png").count(),
+        4,
+        "D1 before and after, D3 before and final"
+    );
+    assert!(html.contains("Pointed at: &quot;Detections by type&quot; on /overview"));
+    assert!(html.contains("purple for people and orange for vehicles"));
+    assert_eq!(html.matches("withheld by the operator").count(), 1);
+    assert!(html.contains("<strong>Before</strong>") && html.contains("<strong>After</strong>"));
+    assert!(html.contains("design: use-purple-and-orange.txt"));
+    assert!(html.contains("use-purple-and-orange.txt</code>"));
+    assert!(html.contains("npm test (pass)") && html.contains("Two changes made"));
+    assert!(html.find("class=\"card\"").unwrap() < html.find("The full brief").unwrap());
+    approve(&h, &gate).await;
+    let intent = intent_of(&h, &item.id).await;
+    let kinds: Vec<_> = intent
+        .requirements
+        .iter()
+        .map(|r| (r.id.as_str(), r.kind.clone(), r.images.len()))
+        .collect();
+    use archon_core::intent::RequirementKind::{Behaviour, Visual};
+    assert_eq!(
+        kinds,
+        [("D1", Visual, 1), ("D2", Behaviour, 0), ("D3", Visual, 1)]
+    );
+    let after = &intent.images[0];
+    assert_eq!(after.id, "D1-final");
+    assert_eq!(std::fs::read(&after.path).unwrap(), AFTER_PNG);
 }
 
 /// The second guard: without the model-plan entry a live item still takes the intent path.

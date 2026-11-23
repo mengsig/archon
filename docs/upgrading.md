@@ -69,7 +69,8 @@ default `[review] default_effort` change as above.
 
 To keep 1.6.3's effort rules, set `effort_sizing = false` under the global
 `[models]` and restart archond; new spawns then get 1.6.3's effort rules,
-byte for byte (a stage with a verdict still gets the `submit_verdict` rule above).
+byte for byte. Current contracts ask stages with a verdict or required review
+or ship records to call `submit_verdict` before finishing.
 A running orchestrator keeps the prompt it was created with until
 `archon orchestrator restart`; archond refreshes it by itself only after an
 upgrade to another build. A repository config may still say `effort_sizing =

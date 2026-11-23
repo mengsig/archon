@@ -256,6 +256,32 @@ async fn handle(h: &Harness, event: &AetherEvent) {
 }
 
 #[tokio::test]
+async fn cancellation_while_waiting_for_fixes_captures_the_outcome() {
+    use archon_core::run::TalliedFails;
+
+    let review = Loop::at_cap(Fixes::None).await;
+    let tally = read_tally(&review.h, &review.lead).await;
+    assert!(tally["fix_wait"]["delivered"].is_string());
+    let fails: TalliedFails = serde_json::from_value(tally).unwrap();
+    assert_eq!(fails.reviewers(), review.reports.len());
+    review
+        .h
+        .cli(Request::CancelItem {
+            item: review.item.id.clone(),
+            reason: Some("cancel during capped fix wait".into()),
+        })
+        .await
+        .unwrap();
+    let store = review.h.ctx.store.lock().await;
+    let outcome = store
+        .outcome(&review.lead.run)
+        .unwrap()
+        .expect("cancelled run outcome");
+    assert_eq!(outcome.run, review.lead.run);
+    assert!(!outcome.is_win());
+}
+
+#[tokio::test]
 async fn committed_fixes_get_one_confirmation_and_ship_in_the_same_run() {
     let mut review = Loop::at_cap(Fixes::None).await;
     assert_eq!(review.stage().await.state, StageState::Running);

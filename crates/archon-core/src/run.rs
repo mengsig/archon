@@ -1351,9 +1351,19 @@ struct StoredTally {
     #[serde(default)]
     prior_findings: Vec<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
+    fix_wait: Option<StoredFixWait>,
+    #[serde(default)]
     confirm: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     stopped: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[expect(dead_code, reason = "decoding each field is the check")]
+struct StoredFixWait {
+    reviewers: Vec<TalliedAgent>,
+    delivered: Option<String>,
 }
 
 /// One failing verdict as archond keeps it, in either shape it has written:

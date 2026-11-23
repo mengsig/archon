@@ -987,10 +987,17 @@ fn forget_branch_only_v26(tx: &Connection) -> Result<(), ArchonError> {
             |row| row.get(0),
         )
         .ctx("look for the evidence indexes")?;
-    if has_evidence_index {
+    let newest: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )
+        .ctx("read newest version")?;
+    if has_evidence_index || newest != 26 {
         return Ok(());
     }
-    tx.execute("DELETE FROM schema_migrations WHERE version >= 26", [])
+    tx.execute("DELETE FROM schema_migrations WHERE version = 26", [])
         .ctx("forget branch-only version 26")?;
     Ok(())
 }

@@ -159,6 +159,7 @@ fn linked_status() -> archon_core::protocol::DaemonStatus {
         instance_id: "01FAKE".into(),
     };
     archon_core::protocol::DaemonStatus {
+        work_units: None,
         waiting_items: vec![],
         waiting_total: 0,
         waiting_next_offset: None,

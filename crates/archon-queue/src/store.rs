@@ -38,6 +38,7 @@ mod outcomes;
 mod pull_requests;
 mod repos;
 mod retention;
+mod work_units;
 pub use retention::HistoryPruned;
 pub use schema::WAL_SIZE_LIMIT;
 mod run_edits;

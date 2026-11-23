@@ -994,6 +994,7 @@ pub(crate) mod tests {
 
     pub(crate) fn status_with(aether: AetherLinkStatus) -> DaemonStatus {
         DaemonStatus {
+            work_units: None,
             waiting_items: vec![],
             daemon_version: "0.1.0".into(),
             pid: 42,

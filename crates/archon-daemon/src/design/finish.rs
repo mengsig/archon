@@ -851,8 +851,6 @@ pub(crate) fn origin_of(url: &str) -> String {
     format!("http://{authority}")
 }
 
-/// The element's box as the note recorded it, in page CSS pixels at the
-/// note's preset: how a selector matching several elements finds the one meant.
 /// What the final picture covers: nothing is `None` (the note's element is
 /// gone), `Some(None)` the whole view (a state reached by steps, or no target).
 async fn final_clip(
@@ -877,6 +875,8 @@ async fn final_clip(
     Some(Some(grow(rect, MARGIN)))
 }
 
+/// The element's box as the note recorded it, in page CSS pixels at the
+/// note's preset: how a selector matching several elements finds the one meant.
 pub(crate) fn recorded_box(target: &Target) -> adb::ClipRect {
     clip_of(target, 0.0)
 }

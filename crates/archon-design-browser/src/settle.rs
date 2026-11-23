@@ -126,8 +126,8 @@ impl Browser {
     }
 
     /// Whether two pictures show the same thing: the same proportions and, at
-    /// one common size, no more than a thousandth of their pixels differing
-    /// visibly. The browser decodes them (a PNG and a JPEG compare), so an
+    /// one common size, no more than a few dozen pixels (a fifty-thousandth)
+    /// differing visibly. The browser decodes them (a PNG and a JPEG compare), so an
     /// encoder's noise or a different scale does not count as a change.
     pub async fn pictures_match(
         &self,

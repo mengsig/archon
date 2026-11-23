@@ -394,43 +394,51 @@ async fn the_operators_sketch_is_not_replaced_by_a_retaken_before_picture() {
     );
 }
 
-/// While the session finishes its pictures are frozen: a retake sent then is
-/// refused, not run against the pictures Finish is taking.
+/// While the session finishes its pictures are frozen. A retake that is
+/// already waiting for the item lock when Finish takes it (and moves the
+/// session to Finishing) is refused when it gets the lock: it must not run
+/// against the pictures Finish just took.
 #[tokio::test]
-async fn a_retake_during_finish_is_refused() {
+async fn a_retake_waiting_through_finish_is_refused() {
     let f = Fixture::new().await;
     pick(&f, "k1", "Make the save button green").await;
     let commit = commit_for(&f, "D1");
     message(done(&f, "D1", &commit, Vec::new(), None).await);
-    {
-        let mut store = f.h.ctx.store.lock().await;
-        let current = store.design_session(&f.session).unwrap().unwrap();
-        store
-            .design_session_transition(
-                &f.session,
-                archon_core::design::SessionState::Live,
-                archon_core::design::SessionState::Finishing,
-                Some(archon_queue::store::FinishRecord {
-                    capture: "capture-1".into(),
-                    head: commit.clone(),
-                    note_version: current.note_version,
-                    choices: None,
-                }),
-                false,
-            )
-            .unwrap();
-    }
-    refused(
-        &done(
-            &f,
-            "D1",
-            &commit,
-            Vec::new(),
-            Some("Only the hover changed"),
-        )
-        .await,
-        DesignRefusal::Finishing,
+
+    let lock = f.h.ctx.design.item_lock_for_tests(&f.item);
+    let guard = lock.lock().await;
+    let retake = done(
+        &f,
+        "D1",
+        &commit,
+        Vec::new(),
+        Some("Only the hover changed"),
     );
+    let finish = async {
+        // The retake has read the session (Live) and waits for the lock.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        {
+            let mut store = f.h.ctx.store.lock().await;
+            let current = store.design_session(&f.session).unwrap().unwrap();
+            store
+                .design_session_transition(
+                    &f.session,
+                    archon_core::design::SessionState::Live,
+                    archon_core::design::SessionState::Finishing,
+                    Some(archon_queue::store::FinishRecord {
+                        capture: "capture-1".into(),
+                        head: commit.clone(),
+                        note_version: current.note_version,
+                        choices: None,
+                    }),
+                    false,
+                )
+                .unwrap();
+        }
+        drop(guard);
+    };
+    let (reply, ()) = tokio::join!(retake, finish);
+    refused(&reply, DesignRefusal::Finishing);
     assert!(
         note(&f, "D1").await.after_asset.is_none(),
         "the frozen pictures are as they were"

@@ -1141,3 +1141,41 @@ fn spend_migration_links_only_unambiguous_history_and_keeps_the_ledger() {
     assert_eq!(store.spend_totals(at, false).unwrap(), (15.0, 15.0));
     assert_eq!(store.spend_for_item(&item.id, false).unwrap(), 11.0);
 }
+
+#[test]
+fn a_store_at_next_v25_upgrades_to_v26_and_keeps_its_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db_path(&dir);
+    let mut store = Store::open(&path).unwrap();
+    let (items, _, _) = populate(&mut store);
+    drop(store);
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "DROP INDEX items_by_duplicate_candidate; DELETE FROM schema_migrations WHERE version = 26;",
+    )
+    .unwrap();
+    assert_eq!(schema_versions(&path).last(), Some(&25));
+    let stage_spend_tables: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('stage_spend', 'stage_spend_windows')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stage_spend_tables, 2);
+    drop(conn);
+
+    let store = Store::open(&path).unwrap();
+    assert_eq!(schema_versions(&path).last(), Some(&26));
+    assert_eq!(all_items(&store).len(), items.len());
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let index: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'items_by_duplicate_candidate'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(index, 1);
+}

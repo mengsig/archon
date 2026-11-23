@@ -14,6 +14,7 @@ mod relay;
 mod repo_hosts;
 mod reports;
 mod requests;
+mod state;
 mod undo;
 
 use std::collections::HashMap;

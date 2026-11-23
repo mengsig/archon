@@ -19,7 +19,7 @@ use archon_core::run::{OperatorGate, PipelineRun, StageRun, StageState};
 use archon_queue::Store;
 use sha2::{Digest, Sha256};
 
-use super::design_page::{self, Card, CommitFacts, Page, Pic};
+use super::design_page::{self, Card, CommitFacts, Outcome, Page, Pic};
 use super::intent::{Pending, key};
 use crate::context::DaemonContext;
 use crate::design::WorktreeRef;
@@ -355,6 +355,19 @@ fn status_of(
     }
 }
 
+/// What `note` came to, for the page's counts.
+fn outcome_of(note: &DesignNote, undone: bool, superseded_by: Option<&str>) -> Outcome {
+    if undone || superseded_by.is_some() {
+        return Outcome::Replaced;
+    }
+    match note.status {
+        NoteStatus::Done if note.no_change => Outcome::NoChange,
+        NoteStatus::Done => Outcome::Changed,
+        NoteStatus::Failed | NoteStatus::Cancelled => Outcome::Trouble,
+        _ => Outcome::Open,
+    }
+}
+
 /// A picture's bytes. A missing file leaves the card without it: the page
 /// says so, and the gate is never blocked by a picture it only displays.
 fn read_pic(path: &Path, label: String, caption: String) -> Option<Pic> {
@@ -446,9 +459,12 @@ fn page_cards(
             Some(c) => commit_of(ctx, worktree, c),
             None => (None, None),
         };
-        let status = status_of(note, undone.contains_key(&note.id), by.as_deref());
+        let is_undone = undone.contains_key(&note.id);
+        let status = status_of(note, is_undone, by.as_deref());
+        let outcome = outcome_of(note, is_undone, by.as_deref());
         let facts = (commit, commit_note);
-        cards.push(card_of(ctx, store, note, ledger, draft, status, facts)?);
+        let state = (status, outcome);
+        cards.push(card_of(ctx, store, note, ledger, draft, state, facts)?);
     }
     Ok(cards)
 }
@@ -460,7 +476,7 @@ fn card_of(
     note: &DesignNote,
     ledger: Option<&LedgerNote>,
     draft: &ApprovedIntent,
-    status: (String, &'static str),
+    state: ((String, &'static str), Outcome),
     facts: (Option<CommitFacts>, Option<String>),
 ) -> Result<Card, ArchonError> {
     let after = ledger.and_then(|l| l.picture.as_ref()).and_then(|p| {
@@ -489,7 +505,9 @@ fn card_of(
             .iter()
             .find(|r| r.id == note.id)
             .map(|r| r.kind.clone()),
-        status,
+        status: state.0,
+        outcome: state.1,
+        unchanged: archon_core::design::no_visible_change(note).map(str::to_owned),
         target: describe_target(note.target.as_ref(), note.kind),
         reply: note
             .thread
@@ -976,6 +994,7 @@ mod tests {
             viewport: viewport(),
             styles: BTreeMap::new(),
             region: false,
+            steps: Box::default(),
         };
         assert_eq!(
             describe_target(Some(&target), NoteKind::Change).unwrap(),
@@ -1010,5 +1029,26 @@ mod tests {
         assert_eq!(status_of(&n, false, None).0, "Cancelled");
         assert_eq!(status_of(&n, true, None).0, "Undone");
         assert_eq!(status_of(&n, false, Some("D3")).0, "Superseded by D3");
+    }
+
+    #[test]
+    fn every_note_is_exactly_one_outcome_for_the_summary() {
+        let mut n = dnote(1);
+        n.commit = Some("a".repeat(40));
+        assert_eq!(outcome_of(&n, false, None), Outcome::Changed);
+        // Its commit may be unreadable; that does not make it a no-change note.
+        n.commit = None;
+        assert_eq!(outcome_of(&n, false, None), Outcome::Changed);
+        assert_eq!(outcome_of(&n, true, None), Outcome::Replaced, "undone");
+        assert_eq!(outcome_of(&n, false, Some("D3")), Outcome::Replaced);
+        n.no_change = true;
+        assert_eq!(outcome_of(&n, false, None), Outcome::NoChange);
+        assert_eq!(outcome_of(&n, true, None), Outcome::Replaced);
+        n.status = NoteStatus::Failed;
+        assert_eq!(outcome_of(&n, false, None), Outcome::Trouble);
+        n.status = NoteStatus::Cancelled;
+        assert_eq!(outcome_of(&n, false, None), Outcome::Trouble);
+        n.status = NoteStatus::Working;
+        assert_eq!(outcome_of(&n, false, None), Outcome::Open);
     }
 }

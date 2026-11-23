@@ -24,6 +24,23 @@ pub(crate) async fn fake_browser_slow_shots(
     answer: impl Fn(&str, &Value) -> Option<Value> + Send + 'static,
     shot_delay: Option<std::time::Duration>,
 ) -> (Browser, Log) {
+    fake_browser_with(answer, shot_delay, None).await
+}
+
+/// Like [`fake_browser`], but a `Page.reload` or `Page.navigate` is followed by
+/// the page's load event only after `load_after`.
+pub(crate) async fn fake_browser_loading(
+    answer: impl Fn(&str, &Value) -> Option<Value> + Send + 'static,
+    load_after: std::time::Duration,
+) -> (Browser, Log) {
+    fake_browser_with(answer, None, Some(load_after)).await
+}
+
+async fn fake_browser_with(
+    answer: impl Fn(&str, &Value) -> Option<Value> + Send + 'static,
+    shot_delay: Option<std::time::Duration>,
+    load_after: Option<std::time::Duration>,
+) -> (Browser, Log) {
     let (a_w, mut peer_r) = duplex(1 << 22);
     let (peer_w, a_r) = duplex(1 << 22);
     let peer_w = Arc::new(tokio::sync::Mutex::new(peer_w));
@@ -55,6 +72,15 @@ pub(crate) async fn fake_browser_slow_shots(
                     let mut ev = serde_json::to_vec(&json!({"method": "Target.targetCreated", "params": {"targetInfo": {"targetId": "T1", "type": "page", "url": "about:blank"}}})).unwrap();
                     ev.push(0);
                     out.extend(ev);
+                }
+                if let (Some(d), "Page.reload" | "Page.navigate") = (load_after, method.as_str()) {
+                    let w = peer_w.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(d).await;
+                        let mut ev = serde_json::to_vec(&json!({"method": "Page.loadEventFired", "sessionId": "S1", "params": {}})).unwrap();
+                        ev.push(0);
+                        let _ = w.lock().await.write_all(&ev).await;
+                    });
                 }
                 if let (Some(d), "Page.captureScreenshot") = (shot_delay, method.as_str()) {
                     let (w, l) = (peer_w.clone(), l2.clone());

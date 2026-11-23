@@ -525,6 +525,37 @@ fn a_session_holds_at_most_200_notes() {
 }
 
 #[test]
+fn a_retaken_before_picture_replaces_the_old_one_and_survives_a_reload() {
+    let (mut store, _repo, items) = seeded(1);
+    let item = &items[0].id;
+    let session = live(&mut store, item);
+    let (note, _) = store
+        .design_note_add(new_note(item, &session, "k1"))
+        .unwrap();
+    assert_eq!(note.before_asset, None);
+    let first = store
+        .design_asset_put(asset(item, "b1", AssetSource::Capture, 10))
+        .unwrap();
+    let second = store
+        .design_asset_put(asset(item, "b2", AssetSource::Capture, 20))
+        .unwrap();
+    for kept in [&first, &second] {
+        store
+            .design_note_change(
+                item,
+                &note.id,
+                NoteChange::Before {
+                    asset: kept.id.clone(),
+                },
+            )
+            .unwrap();
+        let read = store.design_note(item, &note.id).unwrap().unwrap();
+        assert_eq!(read.before_asset.as_ref(), Some(&kept.id));
+        assert_eq!(read.after_asset, None, "only the before picture moves");
+    }
+}
+
+#[test]
 fn assets_dedupe_by_item_hash_and_source_and_are_swept() {
     let (mut store, _repo, items) = seeded(2);
     let item = &items[0].id;

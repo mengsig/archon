@@ -298,11 +298,12 @@ impl DesignService {
             .map_or(note.viewport.preset, |t| t.viewport.preset);
         let (_, viewport) = to_adb_viewport(preset);
         let _ = browser.set_viewport(viewport).await;
-        // A page note done with its own page (a new screen) is pictured
-        // there, as its after picture recorded, not on whatever page the
-        // preview shows at Finish.
-        let shown = match (&note.target, &note.after_asset) {
-            (None, Some(after)) => ctx
+        // What the after picture recorded: a page note done with its own page
+        // (a new screen) is pictured there, not on whatever page the preview
+        // shows at Finish, and a state the agent reached with steps is
+        // reached again.
+        let shown = match &note.after_asset {
+            Some(after) => ctx
                 .store
                 .lock()
                 .await
@@ -310,8 +311,9 @@ impl DesignService {
                 .ok()
                 .flatten()
                 .and_then(|a| a.target),
-            _ => None,
+            None => None,
         };
+        let steps = shown.as_ref().map(|t| t.steps.clone()).unwrap_or_default();
         // A page note with no page of its own stays on the page as shown
         // (its query and fragment too) unless an earlier picture moved it.
         let page = note
@@ -328,15 +330,20 @@ impl DesignService {
         };
         if let (Some(url), Some(path)) = (row.preview_url.as_deref(), path) {
             let origin = origin_of(url);
-            let _ = browser.navigate(&format!("{origin}{path}")).await;
             let _ = browser
-                .wait_network_idle(
-                    std::time::Duration::from_millis(500),
-                    std::time::Duration::from_secs(8),
+                .navigate_settled(
+                    &format!("{origin}{path}"),
+                    std::time::Duration::from_secs(10),
                 )
                 .await;
         }
+        if let Some(url) = row.preview_url.as_deref()
+            && let Err(why) = super::state::replay_steps(&*browser, &origin_of(url), &steps).await
+        {
+            tracing::info!(note = %note.id, why, "design: the final picture's state was not reached");
+        }
         let clip = match note.target.as_ref() {
+            _ if !steps.is_empty() => None,
             Some(target) if target.region => Some(clip_of(target, 0.0)),
             Some(target) => match target.selector.as_deref() {
                 Some(selector) => match browser
@@ -355,9 +362,52 @@ impl DesignService {
         let Ok(picture) = browser.capture(clip, 2.0).await else {
             return;
         };
+        self.note_unchanged_final(ctx, &*browser, note, &picture)
+            .await;
         if let Err(error) = self.keep_final(ctx, note, &picture, head).await {
             tracing::info!(%error, "design: a final picture was not kept");
         }
+    }
+
+    /// A done note with no after picture whose final picture matches its
+    /// before picture shows no change: say so on the note, once, so no screen
+    /// offers the two as a comparison.
+    async fn note_unchanged_final(
+        &self,
+        ctx: &DaemonContext,
+        browser: &dyn super::browser::PreviewBrowser,
+        note: &DesignNote,
+        picture: &adb::Picture,
+    ) {
+        let changed_code =
+            note.kind != NoteKind::Revert && note.commit.is_some() && !note.no_change;
+        if !changed_code
+            || note.after_asset.is_some()
+            || archon_core::design::no_visible_change(note).is_some()
+            || !self.matches_before(ctx, browser, note, picture).await
+        {
+            return;
+        }
+        let said = note
+            .thread
+            .iter()
+            .rev()
+            .find(|e| e.from == archon_core::design::ReplyAuthor::Agent)
+            .map_or("the agent gave no explanation", |e| e.text.as_str());
+        let entry = archon_core::design::ThreadEntry {
+            at: archon_core::now(),
+            from: archon_core::design::ReplyAuthor::Archon,
+            text: format!("{}: {said}", archon_core::design::NO_VISIBLE_CHANGE),
+        };
+        let noted = ctx.store.lock().await.design_note_change(
+            &note.item,
+            &note.id,
+            NoteChange::Thread(entry),
+        );
+        if let Err(error) = noted {
+            tracing::info!(%error, "design: the no-visible-change notice was not kept");
+        }
+        self.emit_note(ctx, &note.item, &note.id).await;
     }
 
     async fn keep_final(

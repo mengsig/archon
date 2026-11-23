@@ -171,6 +171,7 @@ fn target_named(name: &str) -> archon_core::design::Target {
         },
         styles: BTreeMap::new(),
         region: false,
+        steps: Box::default(),
     }
 }
 

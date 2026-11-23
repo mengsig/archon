@@ -80,6 +80,7 @@ pub async fn report(
         commit,
         no_change: false,
         path: None,
+        steps: Vec::new(),
         caller: Some(f.agent.clone()),
     })
     .await
@@ -339,6 +340,7 @@ async fn only_the_stage_agent_may_report() {
             commit: None,
             no_change: false,
             path: None,
+            steps: Vec::new(),
             caller: None,
         })
         .await;
@@ -354,6 +356,7 @@ async fn only_the_stage_agent_may_report() {
             commit: None,
             no_change: false,
             path: None,
+            steps: Vec::new(),
             caller: Some(archon_core::aether_ids::AetherAgentId::parse("agt_stranger").unwrap()),
         })
         .await;
@@ -1402,6 +1405,7 @@ async fn a_page_note_alone_is_pictured_as_shown_without_moving_the_preview() {
         commit: Some(commit),
         no_change: false,
         path: None,
+        steps: Vec::new(),
         caller: Some(f.agent.clone()),
     })
     .await
@@ -1435,6 +1439,7 @@ async fn a_page_note_done_with_a_path_is_pictured_on_that_page() {
             commit,
             no_change: false,
             path: Some(path.into()),
+            steps: Vec::new(),
             caller: Some(f.agent.clone()),
         })
     };
@@ -1448,6 +1453,7 @@ async fn a_page_note_done_with_a_path_is_pictured_on_that_page() {
             commit: None,
             no_change: true,
             path: Some("/settings/new".into()),
+            steps: Vec::new(),
             caller: Some(f.agent.clone()),
         })
         .await;
@@ -1499,6 +1505,7 @@ async fn a_page_note_done_with_a_path_is_pictured_on_that_page() {
         commit: Some(commit),
         no_change: false,
         path: None,
+        steps: Vec::new(),
         caller: Some(f.agent.clone()),
     })
     .await

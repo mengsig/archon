@@ -71,6 +71,37 @@ pub trait PreviewBrowser: Send + Sync {
         accept: bool,
         text: Option<String>,
     ) -> Result<(), adb::BrowserError>;
+    /// Reload, wait until the page has loaded, then until it has settled (no
+    /// request in flight, no pixel still moving). `false` when `max` passed.
+    async fn reload_settled(&self, max: Duration) -> Result<bool, adb::BrowserError> {
+        self.reload().await?;
+        self.wait_settled(max).await
+    }
+    /// Navigate, wait until the page has loaded, then until it has settled.
+    async fn navigate_settled(&self, url: &str, max: Duration) -> Result<bool, adb::BrowserError> {
+        self.navigate(url).await?;
+        self.wait_settled(max).await
+    }
+    /// Wait until the page has stopped changing; `false` when `max` passed.
+    async fn wait_settled(&self, max: Duration) -> Result<bool, adb::BrowserError> {
+        self.wait_network_idle(Duration::from_millis(400), max)
+            .await
+    }
+    /// The centre of the element `selector` matches, scrolled into view.
+    async fn center_of(&self, selector: &str) -> Result<Option<(f64, f64)>, adb::BrowserError> {
+        Ok(self
+            .resolve_selector(selector, None)
+            .await?
+            .map(|r| (r.x + r.w / 2.0, r.y + r.h / 2.0)))
+    }
+    /// Whether two pictures, each `(mime, bytes)`, show the same thing.
+    async fn pictures_match(
+        &self,
+        a: (&str, &[u8]),
+        b: (&str, &[u8]),
+    ) -> Result<bool, adb::BrowserError> {
+        Ok(a.1 == b.1)
+    }
     fn events(&self) -> broadcast::Receiver<adb::BrowserEvent>;
     fn rss_bytes(&self) -> Option<u64>;
     async fn close(&self);
@@ -221,6 +252,25 @@ impl PreviewBrowser for Real {
         text: Option<String>,
     ) -> Result<(), adb::BrowserError> {
         self.get()?.answer_dialog(accept, text).await
+    }
+    async fn reload_settled(&self, max: Duration) -> Result<bool, adb::BrowserError> {
+        self.get()?.reload_settled(max).await
+    }
+    async fn navigate_settled(&self, url: &str, max: Duration) -> Result<bool, adb::BrowserError> {
+        self.get()?.navigate_settled(url, max).await
+    }
+    async fn wait_settled(&self, max: Duration) -> Result<bool, adb::BrowserError> {
+        self.get()?.wait_settled(max).await
+    }
+    async fn center_of(&self, selector: &str) -> Result<Option<(f64, f64)>, adb::BrowserError> {
+        self.get()?.center_of(selector).await
+    }
+    async fn pictures_match(
+        &self,
+        a: (&str, &[u8]),
+        b: (&str, &[u8]),
+    ) -> Result<bool, adb::BrowserError> {
+        self.get()?.pictures_match(a, b).await
     }
     fn events(&self) -> broadcast::Receiver<adb::BrowserEvent> {
         match self.get() {

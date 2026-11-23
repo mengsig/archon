@@ -181,6 +181,31 @@ review still holds, and its card shows it; clear it there to bring the note
 back. A replacement lapses when its replacing note is undone, so the
 replaced note counts again.
 
+## Pictures of a change
+
+When the agent reports a note done, archond waits for the preview to settle
+before it takes the after picture: it reloads the page, waits for the load
+event and for the network and the pixels to stop moving, then crops the same
+element at its new box.
+
+A change that shows only in a state of the page (a dialog a button opens, a
+hovered menu) is reached with `steps` on `design_note`: `open` a path, `click`
+or `hover` a CSS selector, or `wait`. With `status: "working"`, sent before the
+agent edits, the steps take the note's before picture in that state on the old
+code; with `done` they are replayed from a fresh load for the after picture
+(the whole view), and Finish replays them for the final picture. A second
+`done` for the same commit, with other `steps`, retakes the after picture of a
+done note; a revert note, an undone or superseded note, a note reported with no
+change, a different commit, or a session that is finishing is refused with the
+reason.
+
+Archon compares the after picture with the before picture (decoded and scaled
+to one size, so a different scale or encoder is not a change). When they match,
+no comparison is offered: the agent is asked to retake the picture in the right
+state, and if it still matches the note shows "No visible change was captured"
+with the agent's `reply` as the explanation, in the design screen and on the
+gate page.
+
 ## Finishing and approving
 
 1. **Finish** is available when no note is in progress or waiting for an

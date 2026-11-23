@@ -318,6 +318,7 @@ fn upload_target(asset: &DesignAsset) -> Target {
         },
         styles: Default::default(),
         region: true,
+        steps: Box::default(),
     }
 }
 

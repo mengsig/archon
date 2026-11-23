@@ -190,7 +190,11 @@ impl Shared {
         let _ = self.call("Emulation.resetPageScaleFactor", json!({})).await;
     }
 
-    async fn capture(&self, clip: Option<ClipRect>, dpr: f64) -> Result<Picture, BrowserError> {
+    pub(crate) async fn capture(
+        &self,
+        clip: Option<ClipRect>,
+        dpr: f64,
+    ) -> Result<Picture, BrowserError> {
         // One screenshot at a time: the stream's polling loop (scale 1) must
         // not race a final picture (scale 2). See `Shared::shot`.
         let _one_at_a_time = self.shot.lock().await;

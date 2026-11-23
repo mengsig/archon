@@ -91,6 +91,10 @@ pub enum NoteChange {
         commit: String,
     },
     Thread(ThreadEntry),
+    /// The before picture, retaken in the state the agent named.
+    Before {
+        asset: DesignAssetId,
+    },
     After {
         asset: DesignAssetId,
         captured_commit: String,
@@ -952,6 +956,7 @@ impl Store {
                 note.commit = Some(commit);
             }
             NoteChange::Thread(entry) => note.thread.push(entry),
+            NoteChange::Before { asset } => note.before_asset = Some(asset),
             NoteChange::After {
                 asset,
                 captured_commit,
@@ -975,7 +980,7 @@ impl Store {
             "UPDATE design_notes SET text = ?3, status = ?4, fail_reason = ?5, base_commit = ?6,
                  commit_sha = ?7, no_change = ?8, superseded_by = ?9, reply_thread_json = ?10,
                  delivery = ?11, after_asset = ?12, final_asset = ?13, final_included = ?14,
-                 captured_commit = ?15, updated_at = ?16
+                 captured_commit = ?15, updated_at = ?16, before_asset = ?17
              WHERE item = ?1 AND id = ?2",
             params![
                 item.as_str(),
@@ -994,6 +999,7 @@ impl Store {
                 note.final_included,
                 note.captured_commit,
                 at,
+                note.before_asset.as_ref().map(|a| a.0.clone()),
             ],
         )
         .ctx("update design note")?;

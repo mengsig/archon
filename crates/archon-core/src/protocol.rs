@@ -971,6 +971,12 @@ pub enum Request {
         /// there.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         path: Option<String>,
+        /// The steps that put the preview in the state that shows the change
+        /// (open a dialog, hover a menu). With `working` they take the
+        /// note's before picture in that state; with `done` they are
+        /// replayed for the after picture, and a repeated `done` retakes it.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        steps: Vec<crate::design::UiStep>,
         /// Aether's out-of-band MCP caller identity, never a tool argument.
         caller: Option<AetherAgentId>,
     },

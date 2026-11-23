@@ -4452,6 +4452,13 @@
             },
             "status": {
               "$ref": "#/$defs/AgentNoteStatus"
+            },
+            "steps": {
+              "description": "The steps that put the preview in the state that shows the change\n(open a dialog, hover a menu). With `working` they take the\nnote's before picture in that state; with `done` they are\nreplayed for the after picture, and a repeated `done` retakes it.",
+              "items": {
+                "$ref": "#/$defs/UiStep"
+              },
+              "type": "array"
             }
           },
           "required": [
@@ -18001,6 +18008,13 @@
             },
             "status": {
               "$ref": "#/$defs/AgentNoteStatus"
+            },
+            "steps": {
+              "description": "The steps that put the preview in the state that shows the change\n(open a dialog, hover a menu). With `working` they take the\nnote's before picture in that state; with `done` they are\nreplayed for the after picture, and a repeated `done` retakes it.",
+              "items": {
+                "$ref": "#/$defs/UiStep"
+              },
+              "type": "array"
             }
           },
           "required": [
@@ -19750,6 +19764,13 @@
             "null"
           ]
         },
+        "steps": {
+          "description": "The steps that put the preview in the state this picture shows (a\ndialog the button opens, a hovered menu); empty for the page as loaded.",
+          "items": {
+            "$ref": "#/$defs/UiStep"
+          },
+          "type": "array"
+        },
         "styles": {
           "additionalProperties": {
             "type": "string"
@@ -20412,6 +20433,89 @@
         "github"
       ],
       "type": "string"
+    },
+    "UiStep": {
+      "description": "One step that drives the preview into the state that shows a change. The\nagent names the steps; the before and after pictures replay them on a\nfresh load of the note's page.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Go to an app path.",
+          "properties": {
+            "do": {
+              "const": "open",
+              "type": "string"
+            },
+            "path": {
+              "description": "The path, like `/settings`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "do",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Click the element a CSS selector matches.",
+          "properties": {
+            "do": {
+              "const": "click",
+              "type": "string"
+            },
+            "selector": {
+              "description": "The selector.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "do",
+            "selector"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Move the pointer over the element a CSS selector matches.",
+          "properties": {
+            "do": {
+              "const": "hover",
+              "type": "string"
+            },
+            "selector": {
+              "description": "The selector.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "do",
+            "selector"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Wait for an animation or a request.",
+          "properties": {
+            "do": {
+              "const": "wait",
+              "type": "string"
+            },
+            "ms": {
+              "description": "Milliseconds.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "do",
+            "ms"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "UpgradeRequest": {
       "description": "An operator's upgrade: drain, install what is named, restart archond\nand, in dedicated mode, Archon's own aetherd. With neither program\nnamed it is a drained restart.",

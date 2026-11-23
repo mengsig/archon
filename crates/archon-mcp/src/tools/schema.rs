@@ -92,7 +92,11 @@ fn design_note() -> ToolDefinition {
          `Archon-Note: <id>` and pass `commit`; pass `no_change: true` when nothing needed \
          changing. `needs_reply` asks the operator a question in `reply`; `failed` and \
          `cancelled` leave the tree at the commit the note started from. For a page note whose \
-         change shows on its own page (a new screen), pass that page's `path` with `done`.",
+         change shows on its own page (a new screen), pass that page's `path` with `done`. \
+         For a change seen only in a state (a dialog, a hovered menu), pass `steps` to reach \
+         it: with `working` they retake the before picture there, with `done` the after one. If \
+         the pictures match, say in `reply` what changed and report `done` again with better \
+         `steps`.",
         object(
             json!({
                 "id": {"type": "string", "description": "The note's id, e.g. D3."},
@@ -100,7 +104,9 @@ fn design_note() -> ToolDefinition {
                 "reply": {"type": "string", "minLength": 1, "description": "A question for the operator, or a short explanation."},
                 "commit": {"type": "string", "description": "The full commit id, for `done`."},
                 "no_change": {"type": "boolean"},
-                "path": {"type": "string", "minLength": 1, "description": "For `done` on a page note (one with no element, such as a New screen sketch): the app path that shows the change, e.g. /settings. The operator's preview goes there and the pictures are taken there."}
+                "path": {"type": "string", "minLength": 1, "description": "For `done` on a page note (one with no element, such as a New screen sketch): the app path that shows the change, e.g. /settings. The operator's preview goes there and the pictures are taken there."},
+                "steps": {"type": "array", "description": "From a fresh load to the state that shows the change: {\"do\":\"open\",\"path\"}, {\"do\":\"click\" or \"hover\",\"selector\"}, {\"do\":\"wait\",\"ms\"}.",
+                    "items": {"type": "object", "properties": {"do": {"enum": ["open", "click", "hover", "wait"]}}, "required": ["do"]}}
             }),
             &["id", "status"],
         ),

@@ -253,20 +253,19 @@ pub(crate) async fn handle(
             commit,
             no_change,
             path,
+            steps,
             caller,
         } => {
-            service
-                .note_report(
-                    ctx,
-                    &id,
-                    status,
-                    reply,
-                    commit,
-                    no_change,
-                    path,
-                    caller.as_ref(),
-                )
-                .await
+            let report = super::reports::NoteReport {
+                id,
+                status,
+                reply,
+                commit,
+                no_change,
+                path,
+                steps,
+            };
+            service.note_report(ctx, report, caller.as_ref()).await
         }
         other => Err(ArchonError::Invalid(format!(
             "not a design request: {other:?}"
@@ -357,6 +356,7 @@ impl DesignService {
             viewport,
             styles: found.styles.clone(),
             region: false,
+            steps: Box::default(),
         };
         self.emit(
             &row.id,
@@ -407,6 +407,7 @@ impl DesignService {
             viewport,
             styles: Default::default(),
             region: true,
+            steps: Box::default(),
         };
         self.crop(ctx, &row.item, browser, target, "region".into())
             .await

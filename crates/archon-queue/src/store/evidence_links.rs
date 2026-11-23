@@ -111,6 +111,7 @@ impl<'a> Links<'a> {
                 fixups.insert(item.id.clone());
             }
         }
+        debug_assert!(fixups.is_disjoint(reverts));
     }
 
     fn is_fixup(
@@ -204,5 +205,6 @@ pub(super) fn utc_bounds(range: &DayRange) -> Result<(String, String), ArchonErr
         .until
         .checked_add_days(Days::new(2))
         .ok_or_else(|| ArchonError::Invalid("evidence range is too late".into()))?;
+    debug_assert!(start < end);
     Ok((format!("{start}T00:00:00"), format!("{end}T00:00:00")))
 }

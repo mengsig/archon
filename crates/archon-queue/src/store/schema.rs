@@ -1470,6 +1470,7 @@ mod tests {
             "DROP TABLE run_pull_requests; DROP TABLE merge_requests; DROP TABLE tracked_requests;
              DROP TABLE spend_pruned; DROP TABLE item_transitions; DROP TABLE changes;
              DROP TABLE github_links; DROP TABLE github_objects; DROP TABLE github_outbox;
+             DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;
              DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster;
              ALTER TABLE lessons DROP COLUMN cluster;
              DELETE FROM schema_migrations WHERE version >= 12",

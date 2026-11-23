@@ -126,6 +126,42 @@ fn first_attempt_outcomes_exclude_retries_and_infrastructure_failures() {
     assert_eq!(row.review_findings, None);
 }
 
+#[test]
+fn legacy_unknown_stage_kinds_do_not_bias_first_attempts() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "legacy"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    for n in 0..4 {
+        let mut stage = running_stage(&run, n, n);
+        stage.stage_id = "implement".into();
+        stage.kind = None;
+        stage.attempt = 1;
+        stage.started_at = t(100);
+        stage.finished_at = Some(t(120));
+        stage.state = if n == 3 {
+            StageState::Failed {
+                error: "failed".into(),
+            }
+        } else {
+            StageState::Completed
+        };
+        store.upsert_stage_run(&stage).unwrap();
+    }
+    let evidence = report(&store, Default::default(), range(0, 1000));
+    assert_eq!(
+        (
+            evidence.rows[0].first_attempt_passed,
+            evidence.rows[0].first_attempt_verdicts
+        ),
+        (0, 0)
+    );
+    assert!(
+        evidence
+            .text()
+            .contains("first_attempt_stage_pass=0/0 (unknown)")
+    );
+}
+
 fn record_work_and_failed_review(store: &mut Store, run: &PipelineRun) {
     use archon_core::catalog::StageKind;
     let mut work = running_stage(run, 0, 0);
@@ -178,6 +214,47 @@ fn insert_outside_link(
     store.insert_item(&outside, None).unwrap();
 }
 
+fn insert_other_targets(
+    store: &mut Store,
+    repo: &archon_core::repo::Repo,
+    pr: &archon_core::pull_request::PullRequestRef,
+) {
+    use archon_core::pull_request::{OntoTarget, PullRequestRef};
+    let mut same_pr = item(Some(repo), "same pr");
+    same_pr.created_at = t(250);
+    same_pr.onto = Some(onto_fixture(
+        OntoTarget::Pr(pr.number),
+        pr.clone(),
+        "different",
+    ));
+    store.insert_item(&same_pr, None).unwrap();
+    let mut same_branch = item(Some(repo), "same branch");
+    same_branch.created_at = t(260);
+    let other_pr = PullRequestRef::from_url("https://github.com/o/r/pull/3").unwrap();
+    same_branch.onto = Some(onto_fixture(
+        OntoTarget::Branch("archon/x".into()),
+        other_pr,
+        "archon/x",
+    ));
+    store.insert_item(&same_branch, None).unwrap();
+    let mut read_only = item(Some(repo), "read only");
+    read_only.created_at = t(270);
+    let mut target = onto_fixture(OntoTarget::Pr(pr.number), pr.clone(), "different");
+    target.review_only = true;
+    read_only.onto = Some(target);
+    store.insert_item(&read_only, None).unwrap();
+    let other_repo = common::repo("other-link-fixture");
+    store.insert_repo(&other_repo).unwrap();
+    let mut cross_repo = item(Some(&other_repo), "other repo");
+    cross_repo.created_at = t(280);
+    cross_repo.onto = Some(onto_fixture(
+        OntoTarget::Pr(pr.number),
+        pr.clone(),
+        "archon/x",
+    ));
+    store.insert_item(&cross_repo, None).unwrap();
+}
+
 #[test]
 fn linked_fixups_and_reverts_use_recorded_targets_and_review_timing() {
     use archon_core::pull_request::{OntoTarget, PullRequestRef};
@@ -224,7 +301,8 @@ fn linked_fixups_and_reverts_use_recorded_targets_and_review_timing() {
     let mut unrelated = item(Some(&repo), "Revert unrelated");
     unrelated.created_at = t(240);
     store.insert_item(&unrelated, None).unwrap();
-    insert_outside_link(&mut store, &repo, &owner.id, pr);
+    insert_outside_link(&mut store, &repo, &owner.id, pr.clone());
+    insert_other_targets(&mut store, &repo, &pr);
 
     let query = ModelEvidenceQuery {
         stage: Some("implement".into()),
@@ -232,7 +310,7 @@ fn linked_fixups_and_reverts_use_recorded_targets_and_review_timing() {
     };
     let evidence = report(&store, query, range(0, 1000));
     assert_eq!(evidence.rows.len(), 1);
-    assert_eq!(evidence.rows[0].fix_up_items, Some(2));
+    assert_eq!(evidence.rows[0].fix_up_items, Some(4));
     assert_eq!(evidence.rows[0].revert_items, Some(2));
 }
 

@@ -138,7 +138,7 @@ const EVIDENCE_SQL: &str =
          ),
          beneath(root, agent) AS (
              SELECT st.aether_agent, d.agent FROM selected st
-             JOIN delegated_agents d ON d.parent = st.aether_agent
+             CROSS JOIN delegated_agents d ON d.parent = st.aether_agent
              UNION
              SELECT b.root, d.agent FROM beneath b JOIN delegated_agents d ON d.parent = b.agent
          ),
@@ -153,6 +153,45 @@ const EVIDENCE_SQL: &str =
          LEFT JOIN spend s ON s.agent = st.aether_agent
          LEFT JOIN delegated d ON d.root = st.aether_agent
          LEFT JOIN run_pull_requests p ON p.run = st.run";
+
+#[cfg(test)]
+mod snapshot_plan_tests {
+    use super::*;
+
+    #[test]
+    fn selected_attempts_drive_indexed_descendant_lookup() {
+        let store = super::super::Store::open_in_memory().unwrap();
+        let sql = format!("EXPLAIN QUERY PLAN {EVIDENCE_SQL}");
+        let mut statement = store.conn.prepare(&sql).unwrap();
+        let plan: Vec<String> = statement
+            .query_map(
+                params![
+                    None::<String>,
+                    None::<String>,
+                    None::<String>,
+                    "2026-01-01",
+                    "2026-01-02",
+                    "2025-12-31",
+                    "2026-01-04"
+                ],
+                |row| row.get(3),
+            )
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert!(
+            plan.iter()
+                .any(|line| line.contains("stage_runs_by_started_at")),
+            "{plan:?}"
+        );
+        assert!(
+            plan.iter()
+                .any(|line| line.contains("delegated_agents_by_parent")),
+            "{plan:?}"
+        );
+        assert!(!plan.iter().any(|line| line == "SCAN d"), "{plan:?}");
+    }
+}
 
 /// One row of `read`: a stage run, its item, and the charges on both sides.
 fn attempt(row: &rusqlite::Row<'_>) -> Result<Attempt, ArchonError> {
@@ -395,6 +434,7 @@ impl Samples {
             self.first_attempt_verdicts += 1;
             self.first_attempt_passed += usize::from(passed);
         }
+        debug_assert!(self.first_attempt_passed <= self.first_attempt_verdicts);
         if let Some(count) = sample.review_findings {
             *self.review_findings.get_or_insert(0) += count;
         }
@@ -465,6 +505,7 @@ fn sample(
     if stage.state != StageState::Completed {
         let first_attempt = (stage.attempt == 1
             && !stage.infrastructure_failure
+            && (stage.kind.is_some() || stage.only_reviews == Some(true))
             && matches!(stage.state, StageState::Failed { .. }))
         .then_some(false);
         return Ok(Sample {
@@ -491,11 +532,7 @@ fn sample(
         .last()
         .map_or(0.0, |s| s.cost_before_usd.min(cost));
     let minutes = elapsed_minutes(stage)?;
-    let is_verdict = matches!(
-        stage.kind,
-        Some(archon_core::catalog::StageKind::Review | archon_core::catalog::StageKind::Test)
-    ) || stage.only_reviews == Some(true)
-        || is_verdict_stage(&attempt.item, stage)?;
+    let is_verdict = is_verdict_stage(&attempt.item, stage)?;
     let verdict = match is_verdict {
         true => stage
             .verdict_reading()
@@ -508,7 +545,7 @@ fn sample(
             minutes,
             verdict,
         }),
-        first_attempt: first_attempt(stage, is_verdict, verdict),
+        first_attempt: first_attempt(stage, is_verdict),
         review_findings: review_findings(stage),
     })
 }
@@ -527,10 +564,26 @@ fn elapsed_minutes(stage: &StageRun) -> Result<Option<f64>, ArchonError> {
     Ok(Some(elapsed.num_milliseconds() as f64 / 60_000.0))
 }
 
-fn first_attempt(stage: &StageRun, is_verdict: bool, verdict: Option<Scored>) -> Option<bool> {
-    if stage.attempt != 1 || stage.infrastructure_failure {
+fn first_attempt(stage: &StageRun, is_verdict: bool) -> Option<bool> {
+    if stage.attempt != 1
+        || stage.infrastructure_failure
+        || (stage.kind.is_none() && stage.only_reviews != Some(true))
+    {
         return None;
     }
+    let is_verdict = is_verdict
+        || matches!(
+            stage.kind,
+            Some(archon_core::catalog::StageKind::Review | archon_core::catalog::StageKind::Test)
+        )
+        || stage.only_reviews == Some(true);
+    let verdict = is_verdict
+        .then(|| {
+            stage
+                .verdict_reading()
+                .map(|(verdict, note)| Scored::of(verdict, note))
+        })
+        .flatten();
     match verdict {
         Some(Scored::Passed) => Some(true),
         Some(Scored::Failed) => Some(false),

@@ -80,3 +80,59 @@ fn simultaneous_enqueues_link_inside_the_write_transaction() {
             || second.supersedes.as_ref() == Some(&first.id)
     );
 }
+
+#[test]
+fn matches_cancelled_and_failed_but_not_succeeded_items() {
+    use archon_core::queue::QueueState;
+    use common::{settle_run, start, t};
+    let mut store = store();
+    let repo = repo("states");
+    store.insert_repo(&repo).unwrap();
+    let cancelled = store
+        .insert_item(&item(Some(&repo), "cancelled work"), None)
+        .unwrap();
+    store
+        .transition_item(&cancelled.id, QueueState::Cancelled { reason: None }, t(2))
+        .unwrap();
+    let retry = store
+        .insert_item(&item(Some(&repo), "cancelled work"), None)
+        .unwrap();
+    assert_eq!(retry.supersedes, Some(cancelled.id));
+    let failed = store
+        .insert_item(&item(Some(&repo), "failed work"), None)
+        .unwrap();
+    store
+        .transition_item(&failed.id, QueueState::Dispatching, t(2))
+        .unwrap();
+    store
+        .transition_item(
+            &failed.id,
+            QueueState::Failed {
+                run: None,
+                error: "failed".into(),
+            },
+            t(3),
+        )
+        .unwrap();
+    let retry = store
+        .insert_item(&item(Some(&repo), "failed work"), None)
+        .unwrap();
+    assert_eq!(retry.supersedes, Some(failed.id));
+    let succeeded = store
+        .insert_item(&item(Some(&repo), "successful work"), None)
+        .unwrap();
+    let run = start(&mut store, &succeeded.id);
+    settle_run(
+        &mut store,
+        &run,
+        QueueState::Succeeded {
+            run: run.id.clone(),
+            summary: "done".into(),
+        },
+        t(20),
+    );
+    let again = store
+        .insert_item(&item(Some(&repo), "successful work"), None)
+        .unwrap();
+    assert_eq!(again.supersedes, None);
+}

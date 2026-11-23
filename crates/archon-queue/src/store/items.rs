@@ -560,7 +560,7 @@ fn supersedes(conn: &Connection, item: &QueueItem) -> Result<Option<QueueItemId>
     assert!(!title.is_empty(), "new items have a title");
     let mut stmt = conn
         .prepare(
-            "SELECT id, json_extract(data, '$.title') FROM items WHERE repo = ?1 AND state != 'succeeded' ORDER BY rowid DESC",
+            "SELECT id, CASE WHEN json_valid(data) THEN json_extract(data, '$.title') END FROM items INDEXED BY items_by_duplicate_candidate WHERE repo = ?1 AND state != 'succeeded' ORDER BY seq DESC",
         )
         .ctx("prepare near-duplicate lookup")?;
     let mut rows = stmt

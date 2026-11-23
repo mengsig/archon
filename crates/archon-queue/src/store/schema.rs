@@ -787,14 +787,21 @@ ALTER TABLE outcomes ADD COLUMN class_source TEXT
 ALTER TABLE outcomes ADD COLUMN failure_class_163 TEXT;
 "#;
 
+/// Keep candidate titles in insertion order without decoding every item during enqueue.
+const V25: &str = r#"
+CREATE INDEX items_by_duplicate_candidate ON items (
+    repo, seq DESC, id, CASE WHEN json_valid(data) THEN json_extract(data, '$.title') END
+) WHERE state != 'succeeded';
+"#;
+
 /// The migration after whose SQL stored failure classes are recomputed.
 const RECLASSIFY_VERSION: usize = 24;
 
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24,
+    V22, V23, V24, V25,
 ];
-const _: () = assert!(RECLASSIFY_VERSION == MIGRATIONS.len());
+const _: () = assert!(RECLASSIFY_VERSION <= MIGRATIONS.len());
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
 /// WAL mode; in-memory databases report `memory` and stay that way.
@@ -1451,6 +1458,7 @@ mod tests {
              DROP TABLE spend_pruned; DROP TABLE item_transitions; DROP TABLE changes;
              DROP TABLE github_links; DROP TABLE github_objects; DROP TABLE github_outbox;
              DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster;
+             DROP INDEX items_by_duplicate_candidate;
              ALTER TABLE lessons DROP COLUMN cluster;
              DELETE FROM schema_migrations WHERE version >= 12",
         )

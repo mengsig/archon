@@ -58,10 +58,11 @@ for your answer to a numbered question.
 
 ```text
 you:     For foo, use base branch next and the adaptive pipeline by default.
-archon:  Q3: Approve operator authority change?
-         Before: …
-         Requested change: …
-         Reply yes or no, or /answer N yes.
+archon:  Q3: Change repository "foo"?
+         - Base branch: main -> next
+         - Default pipeline: not set -> adaptive
+         Requested in chat.
+         Reply yes or no (or /answer N yes).
 you:     /answer 3 yes
 archon:  Applied: foo now forks from next, default pipeline adaptive.
 ```
@@ -71,7 +72,7 @@ merge, tools) each item carries under a ceiling only you can raise:
 
 ```text
 you:     Let foo merge its own pull requests once checks pass.
-archon:  Q4: Approve operator authority change? …
+archon:  Q4: Change repository "foo"? …
 you:     /answer 4 yes
 ```
 

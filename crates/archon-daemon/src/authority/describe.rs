@@ -116,10 +116,14 @@ fn describe(action: &Request, before: &Value) -> (String, Vec<String>) {
         }
         "pause" | "resume" => {
             let verb = if cmd == "pause" { "Pause" } else { "Resume" };
-            let target = fields.get("0").or_else(|| fields.get("target"));
-            let title = match target.and_then(|t| t.get("scope").or(Some(t))) {
-                Some(t) => format!("{verb} {}?", target_text(t)),
-                None => format!("{verb} dispatch?"),
+            let name = fields.get("name").and_then(Value::as_str).unwrap_or("");
+            let title = match fields.get("scope").and_then(Value::as_str) {
+                Some("repo") => format!("{verb} repository \"{name}\"?"),
+                Some("pipeline") => format!("{verb} pipeline \"{name}\"?"),
+                _ if fields.get("hard") == Some(&Value::Bool(true)) => {
+                    format!("{verb} all dispatch, including running stage agents in Aether (hard)?")
+                }
+                _ => format!("{verb} all dispatch?"),
             };
             (title, Vec::new())
         }
@@ -133,19 +137,32 @@ fn describe(action: &Request, before: &Value) -> (String, Vec<String>) {
                 .remove("action")
                 .and_then(|a| a.as_str().map(|s| s.replace('_', " ")))
                 .unwrap_or_default();
-            (
-                format!("Change the GitHub watcher ({what})?"),
-                list(&change, &[]),
-            )
+            let mut lines = list(&change, &[]);
+            for (key, note) in [
+                (
+                    "allowed_users",
+                    "Allowed users: cleared (every collaborator with write access may dispatch)",
+                ),
+                (
+                    "operator_users",
+                    "Operator users: cleared (every GitHub request is external)",
+                ),
+                ("repository", "Applies to: the whole watcher"),
+            ] {
+                if change.get(key) == Some(&Value::Null) {
+                    lines.push(note.to_owned());
+                }
+            }
+            (format!("Change the GitHub watcher ({what})?"), lines)
         }
         "set_directive" => ("Record a standing directive?".to_owned(), list(fields, &[])),
-        "clear_directive" => (
-            match fields.get("directive").filter(|v| !v.is_null()) {
-                Some(_) => "Clear a standing directive?".to_owned(),
-                None => "Clear every standing directive?".to_owned(),
-            },
-            Vec::new(),
-        ),
+        "clear_directive" => match fields.get("directive").filter(|v| !v.is_null()) {
+            Some(id) => (
+                "Clear a standing directive?".to_owned(),
+                directive_text(before, id).into_iter().collect(),
+            ),
+            None => ("Clear every standing directive?".to_owned(), Vec::new()),
+        },
         other => (
             format!("Run \"{}\"?", other.replace('_', " ")),
             list(fields, &[]),
@@ -153,15 +170,21 @@ fn describe(action: &Request, before: &Value) -> (String, Vec<String>) {
     }
 }
 
-fn target_text(target: &Value) -> String {
-    match target {
-        Value::Object(map) => match map.get("name").and_then(Value::as_str) {
-            Some(name) => name.to_owned(),
-            None if map.get("hard") == Some(&Value::Bool(true)) => "all dispatch (hard)".to_owned(),
-            None => "all dispatch".to_owned(),
-        },
-        other => plain("", other),
-    }
+/// The text of the directive `id` in the observed directive list, if found.
+fn directive_text(before: &Value, id: &Value) -> Option<String> {
+    let items: Vec<&Value> = match before {
+        Value::Array(items) => items.iter().collect(),
+        Value::Object(map) => map
+            .values()
+            .flat_map(|v| v.as_array().into_iter().flatten())
+            .collect(),
+        _ => return None,
+    };
+    items
+        .into_iter()
+        .find(|d| d.get("id") == Some(id))
+        .and_then(|d| d.get("text").and_then(Value::as_str))
+        .map(|text| format!("Directive: {text}"))
 }
 
 /// Repository patch fields, each against the stored repository.
@@ -193,7 +216,16 @@ fn patch_lines(patch: &Value, before: &Value) -> Vec<String> {
                 if change == "keep" {
                     continue;
                 }
-                let old = before.pointer(&format!("/tiers/{tier}")).cloned();
+                let path = match tier.as_str() {
+                    "fast_check" => "/tiers/checks/fast".to_owned(),
+                    "full_check" => "/tiers/checks/full".to_owned(),
+                    "release_hook" => "/tiers/checks/release".to_owned(),
+                    "confirmed_release_check" | "confirmed_fast_check" | "confirmed_full_check" => {
+                        format!("/{tier}")
+                    }
+                    other => format!("/tiers/{other}"),
+                };
+                let old = before.pointer(&path).cloned();
                 lines.push(line(&format!("Tier {}", label(tier)), tier, old, change));
             }
             continue;
@@ -298,7 +330,18 @@ fn plain(key: &str, value: &Value) -> String {
         Value::String(s) if key == "ship" && s == "pr" => "pull request".to_owned(),
         Value::String(s) if key == "ship" && s == "local" => "local branch only".to_owned(),
         Value::String(s) => s.clone(),
-        Value::Number(n) => n.to_string(),
+        Value::Number(n) => match (key, n.as_f64(), n.as_u64()) {
+            (k, Some(f), _) if k.starts_with("budget_usd") => {
+                archon_core::queue::format_budget_usd(f)
+            }
+            ("max_parallel_agents" | "max_per_repo" | "max_active_runs", _, Some(u)) => {
+                archon_core::queue::format_limit(u as u32)
+            }
+            _ => n.to_string(),
+        },
+        Value::Object(map) if map.is_empty() && key == "max_per_pipeline" => {
+            "no per-pipeline limits".to_owned()
+        }
         Value::Array(items) if items.is_empty() => "none".to_owned(),
         Value::Array(items) => items
             .iter()
@@ -447,5 +490,67 @@ mod tests {
 
         assert_eq!(plain("api_token", &json!("abc")), "(hidden)");
         assert_eq!(plain("x", &json!({"a_b": true})), "a b yes");
+    }
+
+    #[test]
+    fn resume_names_its_target_and_tiers_read_the_stored_checks() {
+        let resume =
+            |v: Value| question(&serde_json::from_value(v).unwrap(), &Value::Null, &chat());
+        assert!(
+            resume(json!({"cmd":"resume","scope":"global","hard":true})).starts_with(
+                "Resume all dispatch, including running stage agents in Aether (hard)?"
+            )
+        );
+        assert!(
+            resume(json!({"cmd":"resume","scope":"repo","name":"archon"}))
+                .starts_with("Resume repository \"archon\"?")
+        );
+        assert!(
+            resume(json!({"cmd":"pause","scope":"pipeline","name":"fast"}))
+                .starts_with("Pause pipeline \"fast\"?")
+        );
+
+        let mut before = repo_before();
+        before["tiers"] = json!({"checks":{"fast":"make ci"}});
+        before["confirmed_fast_check"] = json!("make ci");
+        let action: Request = serde_json::from_value(json!({"cmd":"repo_update","repo":"archon",
+            "patch":{"tiers":{"fast_check":{"set":"make quick"},"confirmed_fast_check":"clear"}}}))
+        .unwrap();
+        let text = question(&action, &before, &chat());
+        assert!(
+            text.contains("- Tier Fast check: make ci -> make quick"),
+            "{text}"
+        );
+        assert!(
+            text.contains("- Tier Confirmed fast check: make ci -> not set"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn zero_caps_read_as_unlimited_and_watcher_clearing_is_said() {
+        let old = archon_core::queue::Caps {
+            max_per_repo: 2,
+            budget_usd_total: 100.0,
+            ..Default::default()
+        };
+        let new = archon_core::queue::Caps {
+            max_per_repo: 0,
+            budget_usd_total: 0.0,
+            ..old.clone()
+        };
+        let before = json!({"effective":{"caps":old}});
+        let text = question(&Request::SetCaps { caps: new }, &before, &chat());
+        assert!(text.contains("- Max per repo: 2 -> unlimited"), "{text}");
+        assert!(
+            text.contains("- Budget usd total: $100.00 -> unlimited"),
+            "{text}"
+        );
+
+        let allow: Request = serde_json::from_value(json!({"cmd":"configure_github_watcher",
+            "change":{"action":"allow","repository":"a/b","allowed_users":null}}))
+        .unwrap();
+        let text = question(&allow, &Value::Null, &chat());
+        assert!(text.contains("Allowed users: cleared"), "{text}");
     }
 }

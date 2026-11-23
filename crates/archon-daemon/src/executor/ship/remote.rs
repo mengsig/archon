@@ -273,6 +273,12 @@ async fn create(
     if let Some(blocked) = needs_operator("opening the pull request", &said) {
         return Ok(Err(blocked));
     }
+    if !created.ok
+        && listed.is_empty()
+        && let Some(refusal) = create_refusal(request, &said)
+    {
+        return Ok(Err(refusal));
+    }
     let outcome = match created.ok {
         true => "succeeded",
         false => "failed",
@@ -282,6 +288,44 @@ async fn create(
         listed.len(),
         request.branch
     )))
+}
+
+fn create_refusal(request: Request<'_>, said: &str) -> Option<String> {
+    assert!(!request.branch.is_empty() && !request.base.is_empty());
+    assert_ne!(request.branch, request.base);
+    let lower = said.to_lowercase();
+    let base = lower.contains("base ref must be a branch");
+    let head = lower.contains("head ref must be a branch");
+    let action = if base && head {
+        format!(
+            "check that base branch `{}` exists and head branch `{}` was pushed to GitHub",
+            request.base, request.branch
+        )
+    } else if base {
+        format!("check that base branch `{}` exists on GitHub", request.base)
+    } else if head {
+        format!(
+            "check that head branch `{}` was pushed to GitHub",
+            request.branch
+        )
+    } else if lower.contains("no commits between") {
+        format!(
+            "add commits to `{}` that are not in `{}`",
+            request.branch, request.base
+        )
+    } else if lower.contains("base sha can't be blank") {
+        format!("check that base branch `{}` exists on GitHub", request.base)
+    } else if lower.contains("head sha can't be blank") {
+        format!(
+            "check that head branch `{}` was pushed to GitHub",
+            request.branch
+        )
+    } else {
+        return None;
+    };
+    Some(format!(
+        "GitHub refused to open the pull request: {said}. {action}, then retry the item"
+    ))
 }
 
 /// Point the pull request at `url` to `base`, the branch its change is for.

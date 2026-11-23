@@ -8852,6 +8852,29 @@
           "minimum": 0,
           "type": "integer"
         },
+        "first_attempt_passed": {
+          "default": 0,
+          "description": "First attempts that completed successfully; review/test stages use recorded verdicts.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "first_attempt_verdicts": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fix_up_items": {
+          "default": null,
+          "description": "Later same-PR/branch items or dependencies queued after a failed review; absent if unlinked.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "host_context": {
           "$ref": "#/$defs/HostContext",
           "default": "full"
@@ -8881,6 +8904,26 @@
           "format": "uint",
           "minimum": 0,
           "type": "integer"
+        },
+        "revert_items": {
+          "default": null,
+          "description": "Linked later items titled Revert or tagged revert; absent if unlinked.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "review_findings": {
+          "default": null,
+          "description": "Recorded findings on review attempts; absent when no findings array was recorded.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "stage": {
           "type": "string"

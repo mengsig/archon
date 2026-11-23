@@ -15,6 +15,7 @@ mod codec;
 mod cost;
 mod delegated;
 mod directives;
+mod evidence_links;
 mod feed;
 mod gates;
 mod github_links;

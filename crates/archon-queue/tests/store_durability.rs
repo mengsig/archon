@@ -224,6 +224,7 @@ fn recovery_after_a_crash_mid_dispatch() {
 
 /// Takes a store back to before V10, for tests that replay earlier migrations.
 const UNDO_V10: &str = "
+    DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;
     DROP TABLE stage_spend; DROP TABLE stage_spend_windows; ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
     DROP TABLE lesson_trials; DROP TABLE github_outbox; DROP TABLE github_objects; DROP TABLE github_links; DROP TABLE item_transitions; DROP TABLE changes;
     DROP TABLE spend_pruned; DROP TABLE tracked_requests; DROP TABLE run_pull_requests; DROP TABLE merge_requests;
@@ -253,7 +254,7 @@ fn migrations_apply_once_and_a_newer_store_is_refused() {
         schema_versions(&path),
         vec![
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25
+            25, 26
         ]
     );
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -327,7 +328,7 @@ fn concurrent_first_opens_migrate_once() {
         schema_versions(&path),
         vec![
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25
+            25, 26
         ]
     );
 }
@@ -605,7 +606,7 @@ fn v9_keeps_an_earlier_provider_reported_total_as_the_floor() {
     drop(conn);
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(schema_versions(&path).last(), Some(&25));
+    assert_eq!(schema_versions(&path).last(), Some(&26));
     for n in [1, 2] {
         let settled = SpendRow {
             cost_complete: Some(true),
@@ -1130,9 +1131,9 @@ fn spend_migration_links_only_unambiguous_history_and_keeps_the_ledger() {
 
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute_batch(
-        "DROP TABLE stage_spend; DROP TABLE stage_spend_windows;
+        "DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at; DROP TABLE stage_spend; DROP TABLE stage_spend_windows;
          ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
-         DELETE FROM schema_migrations WHERE version = 25;",
+         DELETE FROM schema_migrations WHERE version >= 25;",
     )
     .unwrap();
     drop(conn);

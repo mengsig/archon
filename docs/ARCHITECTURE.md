@@ -2478,6 +2478,17 @@ latest agent ledger totals, whatever the budgets count, falling back to stored s
 no ledger row. Completed n below five is marked as a small sample. Output is
 limited to 60 groups and states the omitted count. This evidence recommends
 nothing and introduces no persistent cache, background job, price list or storage table.
+Each model row also shows first-attempt stage success (recorded review/test verdicts
+for verdict stages, successful completion for work), and recorded review findings.
+Rates are not controlled for task difficulty. Later items in the same window count
+as observed fix-ups when they target the same PR or branch, or depend on the item
+and were queued after its failed review. Linked items titled Revert or tagged
+`revert` count as reverts instead. Counts are unknown when no link establishes the
+signal; they cannot account for unlinked work. Links use recorded item, PR and
+branch identities. An ordinary dependency alone does not imply a fix-up; it can
+link an explicitly titled or tagged revert. Review-only items are excluded.
+A linked item is credited to each recorded work group of its owner. Cancelled and
+timed-out first attempts and attempts with unknown legacy kinds are unscored.
 Stage kinds come from the run's frozen pipeline spec when it is still available,
 otherwise from the current catalog. If neither definition resolves (including an
 unregistered repository), the kind is unknown: attempts, cost and minutes still

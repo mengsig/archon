@@ -46,6 +46,275 @@ fn report(store: &Store, query: ModelEvidenceQuery, range: DayRange) -> ModelEvi
 }
 
 #[test]
+fn first_attempts_and_recorded_review_findings_are_reported() {
+    use archon_core::catalog::StageKind;
+    let mut store = store();
+    let item = store.insert_item(&item(None, "quality"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let mut review = running_stage(&run, 0, 0);
+    review.stage_id = "review".into();
+    review.kind = Some(StageKind::Review);
+    review.attempt = 1;
+    review.started_at = t(100);
+    review.finished_at = Some(t(120));
+    review.state = StageState::Completed;
+    review.verdict = Some(Verdict::Pass);
+    review.structured = Some(serde_json::json!({"findings": [{"title": "one"}, {"title": "two"}]}));
+    store.upsert_stage_run(&review).unwrap();
+    let evidence = report(&store, Default::default(), range(0, 1000));
+    let row = &evidence.rows[0];
+    assert_eq!(
+        (row.first_attempt_passed, row.first_attempt_verdicts),
+        (1, 1)
+    );
+    assert_eq!(row.review_findings, Some(2));
+    assert_eq!((row.fix_up_items, row.revert_items), (None, None));
+
+    review.structured = Some(serde_json::json!({"findings": []}));
+    store.upsert_stage_run(&review).unwrap();
+    let evidence = report(&store, Default::default(), range(0, 1000));
+    assert_eq!(evidence.rows[0].review_findings, Some(0));
+    review.structured = None;
+    review.verdict = None;
+    store.upsert_stage_run(&review).unwrap();
+    let evidence = report(&store, Default::default(), range(0, 1000));
+    assert_eq!(evidence.rows[0].review_findings, None);
+    assert_eq!(evidence.rows[0].first_attempt_verdicts, 0);
+}
+
+#[test]
+fn first_attempt_outcomes_exclude_retries_and_infrastructure_failures() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "attempts"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    for (n, attempt_number, state, infra) in [
+        (0, 1, StageState::Completed, false),
+        (
+            1,
+            1,
+            StageState::Failed {
+                error: "failed".into(),
+            },
+            false,
+        ),
+        (2, 2, StageState::Completed, false),
+        (
+            3,
+            1,
+            StageState::Failed {
+                error: "offline".into(),
+            },
+            true,
+        ),
+    ] {
+        let mut stage = running_stage(&run, n, n);
+        stage.stage_id = "implement".into();
+        stage.kind = Some(archon_core::catalog::StageKind::Work);
+        stage.attempt = attempt_number;
+        stage.started_at = t(100);
+        stage.finished_at = Some(t(120));
+        stage.state = state;
+        stage.infrastructure_failure = infra;
+        store.upsert_stage_run(&stage).unwrap();
+    }
+    let evidence = report(&store, Default::default(), range(0, 1000));
+    let row = &evidence.rows[0];
+    assert_eq!(
+        (row.first_attempt_passed, row.first_attempt_verdicts),
+        (1, 2)
+    );
+    assert_eq!(row.review_findings, None);
+}
+
+#[test]
+fn legacy_unknown_stage_kinds_do_not_bias_first_attempts() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "legacy"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    for n in 0..4 {
+        let mut stage = running_stage(&run, n, n);
+        stage.stage_id = "implement".into();
+        stage.kind = None;
+        stage.attempt = 1;
+        stage.started_at = t(100);
+        stage.finished_at = Some(t(120));
+        stage.state = if n == 3 {
+            StageState::Failed {
+                error: "failed".into(),
+            }
+        } else {
+            StageState::Completed
+        };
+        store.upsert_stage_run(&stage).unwrap();
+    }
+    let evidence = report(&store, Default::default(), range(0, 1000));
+    assert_eq!(
+        (
+            evidence.rows[0].first_attempt_passed,
+            evidence.rows[0].first_attempt_verdicts
+        ),
+        (0, 0)
+    );
+    assert!(
+        evidence
+            .text()
+            .contains("first_attempt_stage_pass=0/0 (unknown)")
+    );
+}
+
+fn record_work_and_failed_review(store: &mut Store, run: &PipelineRun) {
+    use archon_core::catalog::StageKind;
+    let mut work = running_stage(run, 0, 0);
+    work.stage_id = "implement".into();
+    work.kind = Some(StageKind::Work);
+    work.started_at = t(100);
+    work.finished_at = Some(t(110));
+    work.state = StageState::Completed;
+    store.upsert_stage_run(&work).unwrap();
+    let mut review = running_stage(run, 1, 1);
+    review.stage_id = "review".into();
+    review.kind = Some(StageKind::Review);
+    review.started_at = t(120);
+    review.finished_at = Some(t(140));
+    review.state = StageState::Completed;
+    review.verdict = Some(Verdict::Fail);
+    store.upsert_stage_run(&review).unwrap();
+}
+
+fn onto_fixture(
+    target: archon_core::pull_request::OntoTarget,
+    pr: archon_core::pull_request::PullRequestRef,
+    branch: &str,
+) -> Box<archon_core::pull_request::OntoPullRequest> {
+    Box::new(archon_core::pull_request::OntoPullRequest {
+        target,
+        pr,
+        node_id: None,
+        head_repository: "o/r".into(),
+        head_ref: branch.into(),
+        base_ref: "main".into(),
+        head_sha: "a".repeat(40),
+        review_only: false,
+    })
+}
+
+fn insert_outside_link(
+    store: &mut Store,
+    repo: &archon_core::repo::Repo,
+    owner: &archon_core::id::QueueItemId,
+    pr: archon_core::pull_request::PullRequestRef,
+) {
+    let mut outside = item(Some(repo), "outside window");
+    outside.created_at = t(172_800);
+    outside.onto = Some(onto_fixture(
+        archon_core::pull_request::OntoTarget::Item(owner.clone()),
+        pr,
+        "archon/x",
+    ));
+    store.insert_item(&outside, None).unwrap();
+}
+
+fn insert_other_targets(
+    store: &mut Store,
+    repo: &archon_core::repo::Repo,
+    pr: &archon_core::pull_request::PullRequestRef,
+) {
+    use archon_core::pull_request::{OntoTarget, PullRequestRef};
+    let mut same_pr = item(Some(repo), "same pr");
+    same_pr.created_at = t(250);
+    same_pr.onto = Some(onto_fixture(
+        OntoTarget::Pr(pr.number),
+        pr.clone(),
+        "different",
+    ));
+    store.insert_item(&same_pr, None).unwrap();
+    let mut same_branch = item(Some(repo), "same branch");
+    same_branch.created_at = t(260);
+    let other_pr = PullRequestRef::from_url("https://github.com/o/r/pull/3").unwrap();
+    same_branch.onto = Some(onto_fixture(
+        OntoTarget::Branch("archon/x".into()),
+        other_pr,
+        "archon/x",
+    ));
+    store.insert_item(&same_branch, None).unwrap();
+    let mut read_only = item(Some(repo), "read only");
+    read_only.created_at = t(270);
+    let mut target = onto_fixture(OntoTarget::Pr(pr.number), pr.clone(), "different");
+    target.review_only = true;
+    read_only.onto = Some(target);
+    store.insert_item(&read_only, None).unwrap();
+    let other_repo = common::repo("other-link-fixture");
+    store.insert_repo(&other_repo).unwrap();
+    let mut cross_repo = item(Some(&other_repo), "other repo");
+    cross_repo.created_at = t(280);
+    cross_repo.onto = Some(onto_fixture(
+        OntoTarget::Pr(pr.number),
+        pr.clone(),
+        "archon/x",
+    ));
+    store.insert_item(&cross_repo, None).unwrap();
+}
+
+#[test]
+fn linked_fixups_and_reverts_use_recorded_targets_and_review_timing() {
+    use archon_core::pull_request::{OntoTarget, PullRequestRef};
+    let mut store = store();
+    let repo = repo("link-fixture");
+    store.insert_repo(&repo).unwrap();
+    let owner = store
+        .insert_item(&item(Some(&repo), "owner"), None)
+        .unwrap();
+    let run = start(&mut store, &owner.id);
+    let pr = PullRequestRef::from_url("https://github.com/o/r/pull/1").unwrap();
+    store.record_run_pull_request(&run.id, &pr, None).unwrap();
+    record_work_and_failed_review(&mut store, &run);
+    let mut same_pr = item(Some(&repo), "follow up");
+    same_pr.created_at = t(200);
+    same_pr.onto = Some(onto_fixture(
+        OntoTarget::Item(owner.id.clone()),
+        pr.clone(),
+        "archon/x",
+    ));
+    store.insert_item(&same_pr, None).unwrap();
+    let mut dependent = item(Some(&repo), "address review");
+    dependent.created_at = t(210);
+    dependent.dependencies.push(owner.id.clone());
+    store.insert_item(&dependent, None).unwrap();
+    let mut too_early = item(Some(&repo), "ordinary dependency");
+    too_early.created_at = t(130);
+    too_early.dependencies.push(owner.id.clone());
+    store.insert_item(&too_early, None).unwrap();
+    let mut revert = item(Some(&repo), "Revert change");
+    revert.created_at = t(220);
+    let other_pr = PullRequestRef::from_url("https://github.com/o/r/pull/2").unwrap();
+    revert.onto = Some(onto_fixture(
+        OntoTarget::Branch("archon/x".into()),
+        other_pr,
+        "archon/x",
+    ));
+    store.insert_item(&revert, None).unwrap();
+    let mut tagged = item(Some(&repo), "undo");
+    tagged.created_at = t(230);
+    tagged.tags.push("revert".into());
+    tagged.dependencies.push(owner.id.clone());
+    store.insert_item(&tagged, None).unwrap();
+    let mut unrelated = item(Some(&repo), "Revert unrelated");
+    unrelated.created_at = t(240);
+    store.insert_item(&unrelated, None).unwrap();
+    insert_outside_link(&mut store, &repo, &owner.id, pr.clone());
+    insert_other_targets(&mut store, &repo, &pr);
+
+    let query = ModelEvidenceQuery {
+        stage: Some("implement".into()),
+        ..Default::default()
+    };
+    let evidence = report(&store, query, range(0, 1000));
+    assert_eq!(evidence.rows.len(), 1);
+    assert_eq!(evidence.rows[0].fix_up_items, Some(4));
+    assert_eq!(evidence.rows[0].revert_items, Some(2));
+}
+
+#[test]
 fn model_evidence_keeps_a_recorded_alias_apart_from_its_current_target() {
     use archon_core::model_tier::{CatalogModel, ModelCatalog};
     let mut store = store();

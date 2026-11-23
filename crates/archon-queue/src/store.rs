@@ -52,6 +52,7 @@ mod settings;
 mod snapshot;
 mod spend;
 pub mod stacks;
+mod stage_spend;
 mod tracked;
 pub use tracked::{Claim, TrackedRequest};
 
@@ -243,6 +244,13 @@ impl Store {
     /// writer. Unlike [`Self::open_read_only`] it is never immutable. It
     /// shares this store's learning config and model catalog.
     pub fn open_reader(&self, path: &Path) -> Result<Self, ArchonError> {
+        let mut reader = Self::open_live_reader(path)?;
+        reader.learned = std::sync::Arc::clone(&self.learned);
+        Ok(reader)
+    }
+
+    /// Open a read-only connection that can share a WAL with a live writer.
+    pub fn open_live_reader(path: &Path) -> Result<Self, ArchonError> {
         use rusqlite::OpenFlags;
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = rusqlite::Connection::open_with_flags(path, flags)
@@ -251,7 +259,7 @@ impl Store {
         schema::check_wal(&conn)?;
         Ok(Self {
             conn,
-            learned: std::sync::Arc::clone(&self.learned),
+            learned: Default::default(),
             lock: None,
         })
     }
@@ -814,7 +822,32 @@ impl Store {
     /// Charge the agent's growth: usage events carry absolute totals. A replayed
     /// (older) row is ignored, and only a provider-settled total lowers a charge.
     pub fn record_spend(&mut self, row: &SpendRow) -> Result<(), ArchonError> {
-        spend::record(&mut self.conn, row)
+        spend::record(&mut self.conn, row, false)
+    }
+    /// Record usage of the orchestrator or one of its non-pipeline helpers.
+    pub fn record_orchestration_spend(&mut self, row: &SpendRow) -> Result<(), ArchonError> {
+        spend::record(&mut self.conn, row, true)
+    }
+    /// Spend rows without a stage or with an unassigned historical balance.
+    pub fn unlinked_spend(&self) -> Result<Vec<AetherAgentId>, ArchonError> {
+        stage_spend::unlinked(&self.conn)
+    }
+    /// Set the spend boundary before a kept agent is told to resume or wake.
+    pub fn bind_kept_spend(
+        &mut self,
+        stage: &StageRunId,
+        agent: &AetherAgentId,
+        at: &Timestamp,
+    ) -> Result<(), ArchonError> {
+        stage_spend::bind_kept(&mut self.conn, stage, agent, at)
+    }
+    /// Bind a late create reply even if its attempt was already settled.
+    pub fn bind_spawned_spend(
+        &mut self,
+        stage: &StageRunId,
+        agent: &AetherAgentId,
+    ) -> Result<(), ArchonError> {
+        stage_spend::bind_spawned(&mut self.conn, stage, agent)
     }
     pub fn spend_for_item(&self, item: &QueueItemId, estimates: bool) -> Result<f64, ArchonError> {
         spend::for_item(&self.conn, item, estimates)
@@ -857,7 +890,7 @@ impl Store {
         model: &archon_core::model::ModelRef,
         effort: Option<archon_core::model::Effort>,
     ) -> Result<(), ArchonError> {
-        delegated::record(&self.conn, agent, parent, model, effort)
+        delegated::record(&mut self.conn, agent, parent, model, effort)
     }
     /// The agent that delegated to `agent`, as [`Self::record_delegated`] stored it.
     pub fn delegated_parent(

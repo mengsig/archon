@@ -201,3 +201,39 @@ fn daemon_start_checks_gh_and_notifies_the_operator() {
         }
     }
 }
+
+#[test]
+fn doctor_reports_unlinked_spend_on_the_configured_store() {
+    use archon_queue::{Store, store::SpendRow};
+
+    let env = set_up(DEDICATED);
+    let mut store = Store::open(&env.path("data/archon.db")).unwrap();
+    let (_, clean) = doctor(&env);
+    assert_eq!(level_of(&clean, "spend links"), "ok");
+    assert!(
+        clean
+            .iter()
+            .any(|c| c["detail"] == "no unlinked spend rows")
+    );
+
+    let row = SpendRow {
+        agent: archon_core::aether_ids::AetherAgentId::parse("agt_unlinked").unwrap(),
+        item: None,
+        cost_usd: 1.0,
+        cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: Some(true),
+        estimated_cost_usd: 0.0,
+        input_tokens: 1,
+        output_tokens: 1,
+        at: archon_core::now(),
+    };
+    store.record_spend(&row).unwrap();
+    let (_, dirty) = doctor(&env);
+    assert_eq!(level_of(&dirty, "spend links"), "warn");
+    assert!(
+        dirty
+            .iter()
+            .any(|c| c["detail"] == "1 unlinked spend rows: agt_unlinked"),
+        "{dirty:?}"
+    );
+}

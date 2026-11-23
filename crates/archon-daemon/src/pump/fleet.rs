@@ -355,8 +355,21 @@ async fn record_usage(
     agent: &AetherAgentId,
     usage: &UsageTotals,
 ) -> Result<(), ArchonError> {
-    let Some(owner) = owner(ctx, agent).await? else {
-        return retired_orchestrator_usage(ctx, event, agent, usage).await;
+    let owner = match owner(ctx, agent).await? {
+        Some(owner) => owner,
+        None => {
+            let durable = {
+                let store = ctx.store.lock().await;
+                store
+                    .agent_run(agent)?
+                    .map(|run| store.run(&run))
+                    .transpose()?
+            };
+            let Some(run) = durable else {
+                return retired_orchestrator_usage(ctx, event, agent, usage).await;
+            };
+            Owner::StageAgent { item: run.item }
+        }
     };
     let item = item_of(ctx, &owner).await?;
     record_spend(ctx, event, agent, item.clone(), usage).await?;
@@ -428,7 +441,12 @@ pub(super) async fn record_spend(
         output_tokens: usage.output_tokens,
         at: event.at,
     };
-    ctx.store.lock().await.record_spend(&row)
+    let mut store = ctx.store.lock().await;
+    if row.item.is_none() {
+        store.record_orchestration_spend(&row)
+    } else {
+        store.record_spend(&row)
+    }
 }
 
 async fn question_asked(

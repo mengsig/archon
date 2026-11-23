@@ -72,16 +72,22 @@ fn current(conn: &Connection, row: &SpendRow) -> Result<Option<Charged>, ArchonE
     .ctx("read spend row")
 }
 
-fn upsert_latest(conn: &Connection, row: &SpendRow, settled: f64) -> Result<(), ArchonError> {
+fn upsert_latest(
+    conn: &Connection,
+    row: &SpendRow,
+    settled: f64,
+    orchestration: bool,
+) -> Result<(), ArchonError> {
     conn.execute(
         "INSERT INTO spend (agent, item, cost_usd, estimated_cost_usd, input_tokens,
-                            output_tokens, at, cost_basis, settled_cost_usd)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                            output_tokens, at, cost_basis, settled_cost_usd, orchestration)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
          ON CONFLICT (agent) DO UPDATE SET item = excluded.item,
              cost_usd = excluded.cost_usd, estimated_cost_usd = excluded.estimated_cost_usd,
              input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens,
              at = excluded.at, cost_basis = excluded.cost_basis,
-             settled_cost_usd = excluded.settled_cost_usd",
+             settled_cost_usd = excluded.settled_cost_usd,
+             orchestration = excluded.orchestration",
         params![
             row.agent.as_str(),
             row.item.as_ref().map(QueueItemId::as_str),
@@ -92,6 +98,7 @@ fn upsert_latest(conn: &Connection, row: &SpendRow, settled: f64) -> Result<(), 
             ts(&row.at),
             row.cost_basis.name(),
             settled,
+            orchestration,
         ],
     )
     .ctx("write spend row")?;
@@ -247,8 +254,16 @@ fn charge(row: &SpendRow, held: &Charged) -> Charge {
 
 /// Charges the agent's growth since its last row. An older row is a replayed event
 /// and changes nothing, as does the same row again; only a settled total lowers it.
-pub(super) fn record(conn: &mut Connection, row: &SpendRow) -> Result<(), ArchonError> {
+pub(super) fn record(
+    conn: &mut Connection,
+    row: &SpendRow,
+    orchestration: bool,
+) -> Result<(), ArchonError> {
     check_row(row)?;
+    assert!(
+        !orchestration || row.item.is_none(),
+        "overhead belongs to no item"
+    );
     let tx = write_tx(conn)?;
     if let Some(item) = &row.item {
         super::items::load(&tx, item)?;
@@ -268,7 +283,10 @@ pub(super) fn record(conn: &mut Connection, row: &SpendRow) -> Result<(), Archon
         },
     };
     let charge = charge(row, &held);
-    upsert_latest(&tx, &charge.kept, charge.settled)?;
+    upsert_latest(&tx, &charge.kept, charge.settled, orchestration)?;
+    if !orchestration {
+        super::stage_spend::record(&tx, &charge.kept, charge.cost, charge.estimate)?;
+    }
     add_to_day(&tx, &charge.kept, charge.cost.max(0.0), charge.estimate)?;
     if charge.cost < 0.0 {
         take_from_days(&tx, &row.agent, -charge.cost)?;
@@ -355,16 +373,15 @@ pub(super) fn link_run(
     run: &PipelineRunId,
 ) -> Result<(), ArchonError> {
     super::runs::load(conn, run)?;
-    if let Some(owned) = agent_run(conn, agent)? {
-        if owned != *run {
-            return Err(ArchonError::Invalid(format!(
-                "agent {agent} already belongs to run {owned}"
-            )));
-        }
-        return Ok(());
+    if let Some(owned) = agent_run(conn, agent)?
+        && owned != *run
+    {
+        return Err(ArchonError::Invalid(format!(
+            "agent {agent} already belongs to run {owned}"
+        )));
     }
     conn.execute(
-        "INSERT INTO agent_runs (agent, run) VALUES (?1, ?2)",
+        "INSERT INTO agent_runs (agent, run) VALUES (?1, ?2) ON CONFLICT (agent) DO NOTHING",
         params![agent.as_str(), run.as_str()],
     )
     .ctx("link agent to run")?;

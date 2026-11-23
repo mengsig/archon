@@ -9,7 +9,7 @@ use archon_core::model::{Effort, ModelRef};
 use archon_core::protocol::DelegatedAgent;
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::codec::SqlContext;
+use super::codec::{SqlContext, write_tx};
 
 /// Every agent beneath a root, a row per pair; `UNION` ends a cycle a
 /// corrupted table could hold.
@@ -22,14 +22,15 @@ pub(super) const BENEATH: &str = "beneath(root, agent) AS (
 /// Record that `parent` delegated to `agent`. An effort already known is
 /// kept when `effort` is `None`; an agent keeps the parent it was given.
 pub(super) fn record(
-    conn: &Connection,
+    conn: &mut Connection,
     agent: &AetherAgentId,
     parent: &AetherAgentId,
     model: &ModelRef,
     effort: Option<Effort>,
 ) -> Result<(), ArchonError> {
     assert_ne!(agent, parent, "an agent is not its own parent");
-    let known: Option<String> = conn
+    let tx = write_tx(conn)?;
+    let known: Option<String> = tx
         .query_row(
             "SELECT parent FROM delegated_agents WHERE agent = ?1",
             [agent.as_str()],
@@ -46,7 +47,7 @@ pub(super) fn record(
             known.unwrap_or_default()
         )));
     }
-    conn.execute(
+    tx.execute(
         "INSERT INTO delegated_agents (agent, parent, model, effort) VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(agent) DO UPDATE SET
              model = excluded.model, effort = COALESCE(excluded.effort, effort)",
@@ -58,7 +59,13 @@ pub(super) fn record(
         ],
     )
     .ctx("record delegated agent")?;
-    Ok(())
+    if let Some(run) = super::spend::agent_run(&tx, parent)? {
+        super::spend::link_run(&tx, agent, &run)?;
+    }
+    if known.is_none() {
+        super::stage_spend::claim_unambiguous(&tx, agent)?;
+    }
+    tx.commit().ctx("commit delegated agent")
 }
 
 /// The agent that delegated to `agent`; `None` for one never recorded.

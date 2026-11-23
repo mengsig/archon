@@ -285,6 +285,7 @@ async fn takes_over(
             drop(store);
             return ctx.backend.is_live(agent).await;
         }
+        store.bind_kept_spend(&stage.id, agent, &archon_core::now())?;
         let asked = std::mem::replace(&mut spawn.wake_asked, true);
         spawn::save_spawn(&mut store, &stage.id, &spawn)?;
         asked
@@ -335,7 +336,13 @@ pub(super) async fn hand_over(
     };
     let key = stage.id.as_str();
     let handed = match ctx.backend.update_agent(agent, update).await {
-        Ok(()) => ctx.backend.send_message(agent, &kept.message, key).await,
+        Ok(()) => {
+            ctx.store
+                .lock()
+                .await
+                .bind_kept_spend(&stage.id, agent, &archon_core::now())?;
+            ctx.backend.send_message(agent, &kept.message, key).await
+        }
         Err(error) => Err(error),
     };
     let refusal = match handed {

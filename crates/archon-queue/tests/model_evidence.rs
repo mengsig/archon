@@ -745,3 +745,60 @@ fn sized_attempts_are_grouped_for_display_and_routing_reads_none_of_it() {
     let unsized_report: serde_json::Value = serde_json::to_value(&plain).unwrap();
     assert!(unsized_report.get("sizing").is_none(), "{unsized_report}");
 }
+
+#[test]
+fn a_kept_agents_usage_is_split_at_the_resume_request_before_its_reply() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "kept"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let mut first = running_stage(&run, 0, 3);
+    first.started_at = t(100);
+    let lead = first.aether_agent.clone().unwrap();
+    let usage = |cost_usd, at| SpendRow {
+        agent: lead.clone(),
+        item: Some(item.id.clone()),
+        cost_usd,
+        cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: Some(true),
+        estimated_cost_usd: 0.0,
+        input_tokens: 1,
+        output_tokens: 1,
+        at: t(at),
+    };
+    store.upsert_stage_run(&first).unwrap();
+    store.record_spend(&usage(1.0, 110)).unwrap();
+    first.state = StageState::Completed;
+    first.finished_at = Some(t(120));
+    store.upsert_stage_run(&first).unwrap();
+
+    let mut kept = common::stage(&run, 0);
+    kept.attempt = 2;
+    kept.started_at = t(130);
+    store.upsert_stage_run(&kept).unwrap();
+    store.bind_kept_spend(&kept.id, &lead, &t(140)).unwrap();
+    store.bind_kept_spend(&kept.id, &lead, &t(150)).unwrap();
+    // The older usage was delayed. The first usage of the repair wins the
+    // race with the resume reply, and can be replayed without a double charge.
+    store.record_spend(&usage(1.25, 135)).unwrap();
+    let estimate = SpendRow {
+        cost_basis: archon_core::cost::CostBasis::ListPrice,
+        cost_complete: Some(false),
+        ..usage(4.25, 145)
+    };
+    store.record_spend(&estimate).unwrap();
+    for _ in 0..2 {
+        store.record_spend(&usage(3.25, 146)).unwrap();
+    }
+    kept.aether_agent = Some(lead);
+    kept.state = StageState::Completed;
+    kept.finished_at = Some(t(160));
+    store.upsert_stage_run(&kept).unwrap();
+
+    let evidence = report(&store, Default::default(), range(0, 0));
+    let row = &evidence.rows[0];
+    assert_eq!(row.completed, 2);
+    assert_eq!(row.median_cost_usd, Some(1.625));
+    assert_eq!(row.p90_cost_usd, Some(2.0));
+    assert_eq!(store.spend_for_item(&item.id, false).unwrap(), 3.25);
+    assert!(store.unlinked_spend().unwrap().is_empty());
+}

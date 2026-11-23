@@ -1562,27 +1562,38 @@ async fn children_delegated_before_their_stage_is_recorded_are_policed_at_every_
         None,
         "a stage agent is not a watched child, so its settle still waits for its spawn"
     );
-    let still = harness.ctx.store.lock().await.stage_run(&stage.id).unwrap();
+    assert_pre_reply_spend(&harness, stage, &item).await;
+}
+
+async fn assert_pre_reply_spend(harness: &Harness, stage: StageRun, item: &QueueItemId) {
+    let mut store = harness.ctx.store.lock().await;
+    let still = store.stage_run(&stage.id).unwrap();
     assert_eq!(still.state, StageState::Spawning);
-    let spent = harness
-        .ctx
-        .store
-        .lock()
-        .await
-        .spend_for_item(&item, true)
-        .unwrap();
-    assert!(
-        (spent - 3.75).abs() < 1e-9,
-        "the whole subtree is billed: {spent}"
-    );
-    let store = harness.ctx.store.lock().await;
+    assert_eq!(store.spend_for_item(item, true).unwrap(), 3.75);
     assert_eq!(store.spend_for_run(&stage.run, true).unwrap(), 3.75);
     assert_eq!(
         store
             .agent_run(&archon_core::aether_ids::AetherAgentId::parse(GREAT_GRANDCHILD).unwrap())
             .unwrap(),
-        Some(stage.run)
+        Some(stage.run.clone())
     );
+
+    let mut acknowledged = stage;
+    acknowledged.aether_agent = Some(archon_core::aether_ids::AetherAgentId::parse(STAGE).unwrap());
+    acknowledged.state = StageState::Completed;
+    let now = archon_core::now();
+    acknowledged.finished_at = Some(now);
+    store.upsert_stage_run(&acknowledged).unwrap();
+    let day = now.with_timezone(&chrono::Local).date_naive();
+    let range = archon_core::cost::DayRange {
+        since: day,
+        until: day,
+    };
+    let evidence = store
+        .model_evidence(&Default::default(), &range, true, |_, _| Ok(false))
+        .unwrap();
+    assert_eq!(evidence.rows[0].median_cost_usd, Some(3.75));
+    assert!(store.unlinked_spend().unwrap().is_empty());
 }
 
 /// A child already gone when its effort is read is still Archon's, and

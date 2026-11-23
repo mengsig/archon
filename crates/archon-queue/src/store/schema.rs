@@ -787,14 +787,17 @@ ALTER TABLE outcomes ADD COLUMN class_source TEXT
 ALTER TABLE outcomes ADD COLUMN failure_class_163 TEXT;
 "#;
 
+/// Version 25: attribute cumulative spend deltas to concrete stage runs.
+const V25: &str = include_str!("schema/stage_spend.sql");
+
 /// The migration after whose SQL stored failure classes are recomputed.
 const RECLASSIFY_VERSION: usize = 24;
 
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24,
+    V22, V23, V24, V25,
 ];
-const _: () = assert!(RECLASSIFY_VERSION == MIGRATIONS.len());
+const _: () = assert!(RECLASSIFY_VERSION <= MIGRATIONS.len());
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
 /// WAL mode; in-memory databases report `memory` and stay that way.
@@ -1452,6 +1455,8 @@ mod tests {
              DROP TABLE github_links; DROP TABLE github_objects; DROP TABLE github_outbox;
              DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster;
              ALTER TABLE lessons DROP COLUMN cluster;
+             DROP TABLE stage_spend; DROP TABLE stage_spend_windows;
+             ALTER TABLE spend DROP COLUMN orchestration;
              DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();

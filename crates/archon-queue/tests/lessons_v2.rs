@@ -500,7 +500,7 @@ fn a_distilled_lesson_names_its_distilling_run() {
 #[test]
 fn a_distilled_duplicate_does_not_turn_the_existing_lesson_into_a_rewrite() {
     let store = store();
-    let previous = active(&store, "Check file permissions before starting the service");
+    let previous = active(&store, "Compare desktop labels at smaller window sizes");
     let existing = active(
         &store,
         "Run the migration tests before shipping a schema change",

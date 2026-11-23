@@ -194,6 +194,7 @@ impl Store {
         fix.dependencies.clear();
         fix.initiative = None;
         fix.origin = None;
+        fix.supersedes = None;
         fix.state = QueueState::Queued;
         fix.created_at = archon_core::now();
         fix.updated_at = fix.created_at;
@@ -264,6 +265,7 @@ impl Store {
         fix.dependencies.clear();
         fix.initiative = None;
         fix.origin = None;
+        fix.supersedes = None;
         fix.fresh_retries = 0;
         fix.state = QueueState::Queued;
         fix.created_at = archon_core::now();

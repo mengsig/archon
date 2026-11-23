@@ -1520,6 +1520,9 @@ pub enum DeviceRole {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DaemonStatus {
+    /// Counts of retained work units; absent on older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_units: Option<WorkUnitCounts>,
     /// Read-time explanations for queued, blocked and operator-waiting
     /// items: the page `StatusQuery` asked for.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1634,6 +1637,15 @@ pub struct DaemonStatus {
     pub github_outbox: Vec<GithubOutboxPending>,
     #[serde(default)]
     pub github_outbox_pending: u64,
+}
+
+/// Retained supersession components, active while any member is active.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WorkUnitCounts {
+    pub active: u64,
+    pub finished: u64,
+    /// Distinct referenced items no longer retained; counts may be too high.
+    pub missing_targets: u64,
 }
 
 /// The most pending GitHub comments `status` lists.
@@ -2672,6 +2684,7 @@ mod tests {
             stage_timeouts: BTreeMap::new(),
             autonomy: Default::default(),
             origin: None,
+            supersedes: None,
             fresh_retries: 0,
             routed_provider: None,
             provider_switch: None,

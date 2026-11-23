@@ -32,6 +32,23 @@ async fn item_count(h: &Harness) -> usize {
     }
 }
 
+#[tokio::test]
+async fn status_counts_superseded_work_as_one_unit() {
+    let h = Harness::new().await;
+    let first = h.enqueue("superseded status work").await;
+    let second = h.enqueue("superseded status work").await;
+    assert_eq!(second.supersedes.as_ref(), Some(&first.id));
+    let Reply::Status(status) = h.cli(Request::Status(Default::default())).await.unwrap() else {
+        panic!("expected status");
+    };
+    let units = status.work_units.expect("work-unit counts are present");
+    assert_eq!(
+        (units.active, units.finished, units.missing_targets),
+        (1, 0, 0)
+    );
+    assert_eq!(status.queued_items, 2, "queue rows are counted separately");
+}
+
 /// A budget set on an item is acknowledged as unenforced only while budgets
 /// are off; the item keeps it either way.
 #[tokio::test]

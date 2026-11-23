@@ -618,3 +618,45 @@ fn the_wal_is_cut_back_after_many_writes_and_at_restart() {
     );
     drop(idle);
 }
+
+#[test]
+fn supersession_targets_stay_until_their_successors_are_pruned() {
+    let mut store = store();
+    let repo = repo("supersession");
+    store.insert_repo(&repo).unwrap();
+    let first = settle(&mut store, &item(Some(&repo), "first"), 81, 0.0, 10, 20);
+    let mut next = item(Some(&repo), "second");
+    next.supersedes = Some(first.id.clone());
+    let second = settle(&mut store, &next, 82, 0.0, 10, 20);
+    let mut last = item(Some(&repo), "third");
+    last.supersedes = Some(second.id.clone());
+    let last = store.insert_item(&last, None).unwrap();
+    assert_eq!(
+        store
+            .prune_history(cutoff(), 1, |_, _| false)
+            .unwrap()
+            .items,
+        0
+    );
+    assert!(store.item(&first.id).is_ok());
+    assert!(store.item(&second.id).is_ok());
+    store
+        .transition_item(
+            &last.id,
+            QueueState::Cancelled {
+                reason: Some("done".into()),
+            },
+            t(25),
+        )
+        .unwrap();
+    for id in [&last.id, &second.id, &first.id] {
+        assert_eq!(
+            store
+                .prune_history(cutoff(), 1, |_, _| false)
+                .unwrap()
+                .items,
+            1
+        );
+        assert!(gone(store.item(id)));
+    }
+}

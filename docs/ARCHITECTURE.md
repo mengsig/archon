@@ -1548,25 +1548,27 @@ in a new worktree off the base branch (§13).
   archond moves it to 30 min from now, in Aether (the lead and every live
   agent beneath it whose deadline is lower, one by one when Aether cannot
   update a subtree) and in the stored request, and
-  never times it out while held. A reviewer Aether itself blocks as
-  `exhausted` (quota or usage limit) is cancelled after 3 minutes, and its
-  lead is told to delegate the review on another allowed provider or fail
-  its task. The check runs every 30 seconds on its own worker
-  (`executor::quota_wait::watch`), apart from dispatch. Each time it starts
+  never times it out while held. When Aether reports a reviewer blocked on
+  quota or a usage limit for 3 minutes, archond looks for a model named in
+  the stage's review contract or delegation policy on another provider with
+  confirmed headroom. It switches the existing reviewer to that model and
+  rechecks its eligibility before releasing the hold on the next sweep.
+  The reviewer keeps its scope, instructions and task ID,
+  so the lead keeps waiting for the same task. The review check attributes
+  the verdict to the model running when the task completed, using its
+  recorded execution history when available.
+  If archond cannot find an eligible model, it reports the
+  block to the lead once per wait and keeps checking. The sweep runs every
+  30 seconds on its own worker (`executor::quota_wait::watch`), apart from
+  dispatch. Each time it starts
   a check of every running stage as a task of its own and waits for none,
   so no stage delays another's check; a stage whose last check still runs
   is passed over. A check waits at most 10 seconds for each request to
   Aether (20 for the listing of a stage's agents, which is two); an
   unanswered read keeps the wait as recorded and is asked again next time.
-  A check that stops nothing ends within one period, so the worst case is
-  3 minutes, two periods and the 50 seconds of requests up to the cancel:
-  within 5 minutes of the block first being seen. A wait recorded ahead of
-  the clock counts from now and is saved so. The reviewer's own block
-  is read again with one `get_agent` right before the cancel, which carries
-  that hint as its reason; the lead is messaged once the cancel is
-  accepted. Known limitation: Aether has no conditional cancel, so a
-  reviewer whose quota returns within the one round trip between that read
-  and the cancel is still cancelled, and its lead re-plans the review.
+  A check with no wait due for intervention finishes within one period.
+  A wait recorded ahead of the clock starts over at the next observation.
+  Archond rechecks the reviewer's block before reporting or intervening.
   When any agent of a running stage's tree gets a new child, every live
   agent beneath the lead with a deadline below the stored one is raised to
   it. The read and the raise run under the stage's steering lock, as every
@@ -2476,6 +2478,17 @@ latest agent ledger totals, whatever the budgets count, falling back to stored s
 no ledger row. Completed n below five is marked as a small sample. Output is
 limited to 60 groups and states the omitted count. This evidence recommends
 nothing and introduces no persistent cache, background job, price list or storage table.
+Each model row also shows first-attempt stage success (recorded review/test verdicts
+for verdict stages, successful completion for work), and recorded review findings.
+Rates are not controlled for task difficulty. Later items in the same window count
+as observed fix-ups when they target the same PR or branch, or depend on the item
+and were queued after its failed review. Linked items titled Revert or tagged
+`revert` count as reverts instead. Counts are unknown when no link establishes the
+signal; they cannot account for unlinked work. Links use recorded item, PR and
+branch identities. An ordinary dependency alone does not imply a fix-up; it can
+link an explicitly titled or tagged revert. Review-only items are excluded.
+A linked item is credited to each recorded work group of its owner. Cancelled and
+timed-out first attempts and attempts with unknown legacy kinds are unscored.
 Stage kinds come from the run's frozen pipeline spec when it is still available,
 otherwise from the current catalog. If neither definition resolves (including an
 unregistered repository), the kind is unknown: attempts, cost and minutes still
@@ -5286,7 +5299,7 @@ own gate reasons, and keeps only the validated totals. See
 | Orchestrator turn hung (a model request or tool call that never answers; mail queues unread behind it) | `supervisor::watch_stalls`, every 30 s. It keeps nothing in memory: each check reads the orchestrator's turn from Aether's events (`archon_aether::turn::read`, paging back until it has the turn's start and the newest `inbox.consumed`) and the last nudge and last interrupt from `kv.orchestrator_stall_marks`, and applies one rule, `supervisor::due`. So an `archond` that restarts mid-silence carries on where it was. Progress is any tool, message, usage, inbox-read or turn event of the orchestrator itself, tool events Archon's own stream lacks included; delivered mail and a child's events are not progress. Operator mail is an unread inbox item whose sender is the operator (chat, or a GitHub request with operator standing); Archon's own notes are sent as `archon` triggers, so they are never mail, and an operator message is mail whatever its text. A silence is due when operator mail has been unread for 3 minutes, the turn has made no progress for 3 minutes, and every open tool call (calls may run in parallel) is past its bound, counted from when it was requested: a foreground call's declared timeout, capped at the 10-minute foreground cap, plus 1 minute, and 4 minutes for a call that declares none. Without mail it is due after 30 minutes of no progress. A turn whose start lies beyond the 10,000 newest events read, as when children's events fill the pages, is not judged: a call may be open that was not seen. | Nudge the turn and store the time; a stall without mail also posts a `Blocker`. If the turn makes no progress in the 2 minutes after the nudge, read it once more, and leave it alone if it moved: no note, and no interrupt counted. Otherwise send it a note naming every open call, none left out, then `interrupt` it, as Esc would, so Aether delivers the note and the queued inbox in a fresh turn, and tell the operator; an `interrupt` that fails or finds no turn is a `Blocker` naming `archon orchestrator restart`, and is tried again 5 minutes later. A nudge counts only for the silence it was sent in, so every interrupt follows a nudge of its own. An orchestrator is interrupted at most once in 5 minutes, by the stored time, with no cap on how often. |
 | `archon` MCP server died in Aether (after a redeploy, say) | `mcp_servers` reports it `failed`: at every connect to Aether and every 60 s (`supervisor::MCP_CHECK_INTERVAL`). | `refresh` it, then restart the orchestrator so it gets the tools back. Both back off like revivals, and 3 failures in a row post one `Blocker` (below). |
 | Orchestrator replaced while its delegated children run | Any path above that puts a new agent in charge. | The children end. Aether's `cancel` takes an agent's live descendants along; a failure does not, and neither does Aether's `restart`. So every agent that stops being the orchestrator is written to `kv.orchestrator_retired`, with the sweep it is owed, before its successor is stored, and Archon sends `cancel` for it, which Aether applies to the subtree of an agent already stopped. An adoption retires every agent between the stored orchestrator and the adopted one, each with children of its own; a manual restart and a relink follow the same chain first, so they act on the agent in charge rather than on one Aether already replaced. A background task makes the owed sweeps from `archond`'s start on: at once when one becomes owed or Aether reconnects, then with the revival backoff while it fails. A sweep is done only when Aether answers its `cancel`, no longer knows the agent, or reports it ended. Its first failure and its later success are each a `System` entry. A sweep holds no lifecycle lock, so it never delays the orchestrator in charge, which is never swept. A record that cannot be read is reset with a `Blocker` that quotes it, rather than stopping the orchestrator. Records stay through the 7-day event retention, so a retired agent's late events and its children's spend are still Archon's, and are then pruned unless a sweep is still owed. The new agent does not know what was delegated. A `wake` in place keeps the children. |
-| archond's delivery of a run fails | `git push` or `gh` exits non-zero or times out, or a check of the run worktree does not hold (§8.7). | A check that does not hold, a remote branch with other commits, or several open pull requests fail the item as `stage ship: <what to change>`; missing access, a missing `origin` or a branch rule as `stage ship: BLOCKED: …`, which is a `Blocker`. Anything else is tried again by the sweep after 15 s, doubling, five times in all, then fails the item with the last error. A retry of the item delivers the same branch: nothing is forced, and the open pull request is reused. |
+| archond's delivery of a run fails | `git push` or `gh` exits non-zero or times out, or a check of the run worktree does not hold (§8.7). | A check that does not hold, a remote branch with other commits, several open pull requests, or a PR creation rejected for an invalid base, missing head, or no commits fail the item as `stage ship: <what to change>`; missing access, a missing `origin` or a branch rule as `stage ship: BLOCKED: …`, which is a `Blocker`. Anything else is tried again by the sweep after 15 s, doubling, five times in all, then fails the item with the last error. A retry of the item delivers the same branch: nothing is forced, and the open pull request is reused. |
 | `archond` stops while it delivers a run | Startup: the run is `running` at its last stage and every stage passed. | The resumed driver asks for the delivery again and the sweep makes it. With `kv.ship:<run>` written, the outcome is replayed and nothing is delivered; without it the checks, the push and the pull request lookup run again, which push nothing `origin` has and find the pull request GitHub lists, so no second one is opened. |
 | A delegating stage agent settles while its children run | The stage's settle: its stored request has `leaf: false`. | `kv.descendant_stop:<stage run>` is written with the settle. No agent of that run is created (next stage or replacement), and archond does not deliver the run (§8.7), until Archon has cancelled the settled agent and Aether holds no agent beneath it in a non-terminal state; the agent is first left to end its own turn, up to 60 s. The cancel is sent once; the check is repeated each dispatcher pass and after a restart. Agents still running 120 s after the cancel are named in one `Blocker` and the run keeps waiting; a refused cancel fails the run with a `Blocker` (§6.3). |
 | Aether names no caller on Archon's tools | An unnamed call that changes Archon reaches `archond`. | One `Blocker` with the fix; such calls are accepted only from an orchestrator that cannot delegate, and new generations start without `delegate`, until the orchestrator makes a named call of any kind (§11). In dedicated mode the registration is repaired and Archon's `aetherd` restarted by the next command (§4.7). |
@@ -5415,7 +5428,7 @@ retired yet, a steer, agent stop or archive still owed to a stage run, a build d
 release still owed, an open gate, an open
 question, an open merge request, an operator correction, a live initiative,
 a report record, a distillation whose lessons are not applied, a dependency,
-stack or restack fix of a kept item (a fix and its owner go together), or what gc finds through the item still on disk:
+stack, supersession link or restack fix of a kept item (a fix and its owner go together), or what gc finds through the item still on disk:
 a run workspace, a flat copy a fresh retry set aside beside it, or the
 item's published artifacts. So does an item with spend
 on or after the cutoff's local day, so the daily and window budgets count
@@ -6190,9 +6203,8 @@ not the record's agent. V24 logs
 the run and goes on, and never stops the migration for one, nor for an outcome
 filed under an empty run key, which keeps its class. Nor for a lesson: one V24
 cannot recount (its row, its use or its epoch is unreadable, or it holds what
-no lesson holds) keeps its stored counts, and the lesson clusters stay as they
-were when any stored lesson is unfit to write back or holds the record of
-another lesson. An outcome also keeps the pull request it reviewed,
+no lesson holds) keeps its stored counts. V24 preserves lesson state,
+confidence and clusters. An outcome also keeps the pull request it reviewed,
 `review_pr`, so pruning the item does not lose the report's pull request counts.
 It is kept only when a reviewer's verdict is on record for the run: a review
 stage's pass or fail, the pass or fail of the `review` a stage's result carries
@@ -6283,12 +6295,16 @@ returns an error for invalid stored text instead of panicking. All rendered advi
 retains the explicit untrusted, never-authority framing. Operator lessons are active
 and confirmed. Orchestrator lessons require a source item, inherit its repository,
 and start Proposed with at most 0.15 weight; a confirming clean win or operator
-acceptance activates them. Distilled lessons await acceptance. Six lessons at most
+acceptance activates them. The source item's latest known failure class is
+stored with the lesson. Distilled lessons await acceptance. Six lessons at most
 fit a 1,200-byte stage section, frozen per run. Operator text and pins take precedence.
 
-Confidence decays with a 30-day half-life since last use. Retraction requires at
-least five scored uses and a raw Wilson lower bound below 0.3, never merely age.
-Pins prevent automatic decay and retraction. Maintenance writes only changed rows,
+Confidence decays with a 30-day half-life since last use. Live scoring and
+maintenance retire learned advice whose scored win rate is at or below its
+baseline after `retire_min_uses` scored uses. The baseline uses the same lesson's
+scored holdout arm once that arm reaches the sample floor, and 50% until then.
+Pins prevent confidence decay. Pinned and operator lessons are exempt from
+automatic retirement. Maintenance writes only changed rows,
 outside the run-start and list paths. Orchestrator advice is frozen per generation;
 retention keeps the current generation and nine recent snapshots.
 

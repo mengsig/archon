@@ -225,7 +225,14 @@ async fn reviewers(
     } = chosen;
     Ok(match checked {
         Checked::Held(held, head, fork) => {
-            let found = found((&picked, &carried), (held, head), verdicts, corrections);
+            let found = found(
+                ctx,
+                (&picked, &carried),
+                (held, head),
+                verdicts,
+                corrections,
+            )
+            .await?;
             Ok(Found { fork, ..found })
         }
         Checked::Refused(why) if !corrections.is_empty() => {
@@ -358,10 +365,9 @@ async fn carried_reads(
                 }
             };
             carried.reads.push((child.agent.to_string(), verdict));
-            carried.reviewers.push(Reviewer {
-                model: child.model.to_string(),
-                agent: child.agent.to_string(),
-            });
+            carried
+                .reviewers
+                .push(attributed_reviewer(ctx, child).await?);
         }
     }
     assert_eq!(
@@ -537,12 +543,13 @@ fn tallied_fail(head: String, report: Option<record::Report>) -> Verdict {
 
 /// The `picked` reviewers `held` counts at `head` (its passes, and the
 /// whole-change fails they answered), and the earlier ones it added.
-fn found(
+async fn found(
+    ctx: &DaemonContext,
     (picked, carried): (&[&Descendant], &Carried),
     (held, head): (Held, String),
     reads: Vec<Read>,
     corrections: Vec<String>,
-) -> Found {
+) -> Result<Found, ArchonError> {
     assert!(!held.passes.is_empty(), "a review that holds has a pass");
     assert!(is_commit_id(&head), "held to a full commit id");
     let mut counted: Vec<usize> = held.passes.into_iter().chain(held.answered).collect();
@@ -552,17 +559,19 @@ fn found(
         counted.iter().all(|i| *i < picked.len()),
         "only a named read counts, by its index among those picked"
     );
-    let named = counted.into_iter().map(|i| Reviewer {
-        model: picked[i].model.to_string(),
-        agent: picked[i].agent.to_string(),
-    });
+    let named = futures_util::future::try_join_all(
+        counted
+            .into_iter()
+            .map(|i| attributed_reviewer(ctx, picked[i])),
+    )
+    .await?;
     let earlier_runs = held.carried.iter().map(|agent| {
         let reviewer = carried.reviewers.iter().find(|r| r.agent == *agent);
         reviewer
             .cloned()
             .expect("a counted carried read names its reviewer")
     });
-    let reviewers: Vec<Reviewer> = named.chain(earlier_runs).collect();
+    let reviewers: Vec<Reviewer> = named.into_iter().chain(earlier_runs).collect();
     assert!(
         reviewers
             .iter()
@@ -570,14 +579,30 @@ fn found(
             .all(|(i, r)| reviewers[..i].iter().all(|o| o.agent != r.agent)),
         "each reviewer is recorded once"
     );
-    Found {
+    Ok(Found {
         reviewers,
         head,
         fork: None,
         implicit: held.implicit,
         reads,
         corrections,
-    }
+    })
+}
+
+async fn attributed_reviewer(
+    ctx: &DaemonContext,
+    child: &Descendant,
+) -> Result<Reviewer, ArchonError> {
+    assert_eq!(child.state, DescendantState::Completed);
+    let task = child
+        .task
+        .as_ref()
+        .expect("a counted reviewer completed its task");
+    let actual = ctx.backend.review_model(&child.agent, task).await?;
+    Ok(Reviewer {
+        model: actual.as_ref().unwrap_or(&child.model).to_string(),
+        agent: child.agent.to_string(),
+    })
 }
 
 /// The reviewers `named` as the lead's children, the ids it mistyped resolved

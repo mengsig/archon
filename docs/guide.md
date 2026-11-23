@@ -209,16 +209,14 @@ pipeline lines also leave out runs a stage ended with `BLOCKED:` or
 `ESCALATE:`, counted in `blocked=` and `escalated=` instead. A run's failure
 class comes from its stage records (the stage that ended it timed out, failed
 on infrastructure, hit a cost cap, or held a review that did not pass), never
-from words in its error. Five or
-more scored uses can retract a lesson whose raw Wilson lower bound (z = 1.96)
-drops below 0.3, and that bound is strict: 2 wins in 5 retract, and so do 3
-wins in 5 (bound 0.23); 4 wins in 5 (0.38) keep the lesson. For example, a
-lesson given to five runs of which two succeed, one is cancelled, one hits
-its budget cap and one times out has 2 scored uses and 2 wins and stays
-active. When scoring activates or retracts a lesson by itself, the feed says
-so and the lesson's `updated_at` moves. Confidence decays since last use; age
-alone never retracts a winning lesson. Pinning prevents automatic retraction
-and decay; `pin --unpin` releases the pin.
+from words in its error. The Wilson lower bound determines confidence, which
+decays since last use. After 20 scored uses by default, a learned lesson at or
+below its baseline retires. The baseline uses that lesson's held-out win rate
+once there are enough samples, and 50% until then. Pinned and operator-accepted
+lessons are exempt. The feed records automatic activation and retirement.
+`archon lessons` shows retired advice with the baseline and sample floor that
+triggered the decision. `archon lessons accept <id>` restores it. Earlier
+retractions are listed with `archon lessons --all`.
 
 Archon does not turn outcomes into Aether memories. A failed or corrected run
 asks the orchestrator to record a lesson; Aether's memory holds only what an
@@ -233,6 +231,7 @@ penalized. Run-level retry, gate and GitHub observations remain visible as audit
 history and can revoke lesson wins.
 
 The orchestrator's lessons require a source item and stay scoped to its repository.
+Archon records the item's latest known failure class when it records the advice.
 They begin Proposed with low weight until a confirming win or your acceptance.
 Distilled proposals wait for `archon lessons accept`. Lessons are one plain sentence
 without markup, links, external paths or instruction overrides. Use `lessons --all`

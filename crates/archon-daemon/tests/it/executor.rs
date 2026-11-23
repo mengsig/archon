@@ -1003,6 +1003,20 @@ async fn an_infra_failure_from_a_rate_limit_waits_before_its_retry() {
         serde_json::from_str(&store.kv_get(&key).unwrap().unwrap()).unwrap()
     };
     let until: Timestamp = serde_json::from_value(spawn["not_before"].clone()).unwrap();
+    let timing_key = format!(
+        "{}{id}",
+        archon_queue::store::keys::STAGE_DEFERRED_UNTIL_PREFIX,
+        id = held.id
+    );
+    let recorded = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .kv_get(&timing_key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(recorded.parse::<Timestamp>().unwrap(), until);
     let deadline: Timestamp = serde_json::from_value(spawn["request"]["deadline"].clone()).unwrap();
     let left = deadline - until;
     assert!(

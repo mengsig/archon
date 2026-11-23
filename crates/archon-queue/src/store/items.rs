@@ -57,6 +57,9 @@ fn request_value(item: &QueueItem, asked: &Asked) -> serde_json::Value {
     if !item.stage_timeouts.is_empty() {
         value["stage_timeouts"] = serde_json::json!(item.stage_timeouts);
     }
+    if let Some(supersedes) = &item.supersedes {
+        value["supersedes"] = serde_json::json!(supersedes);
+    }
     if let Some(intent) = &item.intent {
         value["intent"] = serde_json::json!(intent);
     }
@@ -494,18 +497,10 @@ fn insert_requested_in(
         check_replay(key, (&first, &stored), asked_item, request, asked)?;
         return load(tx, &first);
     }
-    let item = &*as_stored(item);
-    if exists(tx, &item.id)? {
-        return Err(ArchonError::Invalid(format!(
-            "queue item {} already exists",
-            item.id
-        )));
-    }
-    if let Some(repo) = &item.repo
-        && !repos::exists(tx, repo)?
-    {
-        return Err(ArchonError::NotFound(format!("repository {repo}")));
-    }
+    let mut stored = as_stored(item).into_owned();
+    check_identity(tx, &stored)?;
+    stored.supersedes = supersedes(tx, &stored)?;
+    let item = &stored;
     check_dependencies(tx, &item.id, &item.dependencies)?;
     tx.execute(
         "INSERT INTO items (id, repo, pipeline, priority, state, tags, idempotency_key,
@@ -532,6 +527,62 @@ fn insert_requested_in(
     super::changes::record_dependencies(tx, &item.id, &[], &item.dependencies)?;
     super::github_links::record_origin(tx, item)?;
     Ok(item.clone())
+}
+
+fn check_identity(tx: &Connection, item: &QueueItem) -> Result<(), ArchonError> {
+    assert!(
+        !tx.is_autocommit(),
+        "identity is checked inside the insertion transaction"
+    );
+    if exists(tx, &item.id)? {
+        return Err(ArchonError::Invalid(format!(
+            "queue item {} already exists",
+            item.id
+        )));
+    }
+    if let Some(repo) = &item.repo
+        && !repos::exists(tx, repo)?
+    {
+        return Err(ArchonError::NotFound(format!("repository {repo}")));
+    }
+    Ok(())
+}
+
+fn supersedes(conn: &Connection, item: &QueueItem) -> Result<Option<QueueItemId>, ArchonError> {
+    assert!(
+        !conn.is_autocommit(),
+        "duplicate detection holds the write transaction"
+    );
+    if let Some(id) = &item.supersedes {
+        let prior = load(conn, id)?;
+        if item.repo.is_none() || prior.repo != item.repo {
+            return Err(ArchonError::Invalid(
+                "superseded item must belong to the same repository".into(),
+            ));
+        }
+        return Ok(Some(id.clone()));
+    }
+    let Some(repo) = &item.repo else {
+        return Ok(None);
+    };
+    let title = item.title.trim().to_lowercase();
+    assert!(!title.is_empty(), "new items have a title");
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, CASE WHEN json_valid(data) THEN json_extract(data, '$.title') END FROM items INDEXED BY items_by_duplicate_candidate WHERE repo = ?1 AND state != 'succeeded' ORDER BY seq DESC",
+        )
+        .ctx("prepare near-duplicate lookup")?;
+    let mut rows = stmt
+        .query([repo.as_str()])
+        .ctx("find near-duplicate items")?;
+    while let Some(row) = rows.next().ctx("read near-duplicate candidate")? {
+        let id: String = row.get(0).ctx("read candidate id")?;
+        let prior: String = row.get(1).ctx("read candidate title")?;
+        if strsim::normalized_levenshtein(&title, &prior.trim().to_lowercase()) >= 0.9 {
+            return Ok(Some(QueueItemId::parse(&id)?));
+        }
+    }
+    Ok(None)
 }
 
 /// `Running` names the item's live run; `Succeeded` and `Failed` name one
@@ -598,9 +649,10 @@ pub(super) fn transition(
     id: &QueueItemId,
     next: QueueState,
     at: Timestamp,
+    min_uses: u32,
 ) -> Result<QueueItem, ArchonError> {
     let tx = write_tx(conn)?;
-    let item = transition_in(&tx, id, next, at)?;
+    let item = transition_in(&tx, id, next, at, min_uses)?;
     tx.commit().ctx("commit item transition")?;
     Ok(item)
 }
@@ -611,6 +663,7 @@ pub(super) fn transition_in(
     id: &QueueItemId,
     next: QueueState,
     at: Timestamp,
+    min_uses: u32,
 ) -> Result<QueueItem, ArchonError> {
     let mut item = load(tx, id)?;
     let before = item.state.clone();
@@ -624,7 +677,12 @@ pub(super) fn transition_in(
     if let QueueState::Succeeded { run, .. } = &before
         && item.state == QueueState::Queued
     {
-        super::outcomes::correct(tx, run, archon_core::outcome::Correction::RetryAfterDone)?;
+        super::outcomes::correct(
+            tx,
+            run,
+            archon_core::outcome::Correction::RetryAfterDone,
+            min_uses,
+        )?;
     }
     if before.is_terminal()
         && item.state == QueueState::Queued

@@ -346,8 +346,7 @@ async fn assign_roles(
     progress(ctx, run, text).await
 }
 
-/// Whether the gate decides `stage`'s completed `outcome` as its agent sent
-/// it: a stated failure, or no `structured`, of a stage that owes a record.
+/// Whether the driver decides a completed outcome as sent, before verification.
 fn decided_as_sent(
     driver: &archon_pipeline::RunDriver,
     stage: &StageRun,
@@ -364,8 +363,7 @@ fn decided_as_sent(
     driver.decides_as_sent(&stage.stage_id, summary, structured.as_ref())
 }
 
-/// Persist a completed `outcome` unverified, for the gate to decide as sent:
-/// it fails or repairs it and passes neither, so nothing unverified ships.
+/// Persist a completed outcome for the driver to fail, loop or repair as sent.
 async fn settle_as_sent(
     ctx: &DaemonContext,
     seen: &StageRun,
@@ -1461,13 +1459,22 @@ async fn queue_spawns(
             .all(|s| s.stage_id == first.stage_id && s.attempt == first.attempt),
         "a driver emits one stage group at a time"
     );
+    assert!(
+        spawns
+            .iter()
+            .all(|s| s.carried_slots == first.carried_slots)
+    );
     let now_in = RunState::Running {
         stage_id: first.stage_id.clone(),
         attempt: first.attempt,
     };
-    if run.state != now_in {
-        run.state = now_in;
-        ctx.store.lock().await.update_run(&run)?;
+    if run.state != now_in || !first.carried_slots.is_empty() {
+        let mut store = ctx.store.lock().await;
+        swarm::record_carry(&mut store, &run.id, first)?;
+        if run.state != now_in {
+            run.state = now_in;
+            store.update_run(&run)?;
+        }
     }
     let queue = table.pending.entry(run.id.clone()).or_default();
     for plan in spawns {

@@ -128,6 +128,11 @@ case "$1 $2" in
     printf '%s' "$8" > "$state/title"
     cat > "$state/body"
     cp "$state/body" "$state/body-$number"
+    if [ -f "$state/create-refusal" ]; then
+        cat "$state/create-refusal" >&2
+        rm "$state/create-refusal"
+        exit 1
+    fi
     if [ -f "$state/lose-create-reply" ]; then
         rm "$state/lose-create-reply"
         echo "HTTP 502: Bad Gateway" | tee "$state/fail-pr-list" >&2
@@ -233,6 +238,10 @@ impl FakeGh {
     pub fn fail_next(&self, command: &str, stderr: &str) {
         let file = format!("fail-{}", command.replace(' ', "-"));
         std::fs::write(self.state.join(file), stderr).expect("failure");
+    }
+
+    pub fn refuse_after_create(&self, stderr: &str) {
+        std::fs::write(self.state.join("create-refusal"), stderr).expect("failure");
     }
 
     /// Every later `pr view` of `baseRefOid` fails, as an old `gh` that does not know the field.

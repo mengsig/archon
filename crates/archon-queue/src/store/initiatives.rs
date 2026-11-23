@@ -123,6 +123,7 @@ impl Store {
     }
 
     pub fn retry_initiative(&mut self, id: &InitiativeId) -> Result<InitiativeDetail, ArchonError> {
+        let min_uses = self.learning_config()?.retire_min_uses;
         let tx = write_tx(&mut self.conn)?;
         let mut current = detail(&tx, id)?;
         if !matches!(
@@ -142,8 +143,13 @@ impl Store {
                     | QueueState::Cancelled { .. }
                     | QueueState::Blocked { .. }
             ) {
-                *item =
-                    items::transition_in(&tx, &item.id, QueueState::Queued, archon_core::now())?;
+                *item = items::transition_in(
+                    &tx,
+                    &item.id,
+                    QueueState::Queued,
+                    archon_core::now(),
+                    min_uses,
+                )?;
             }
         }
         assert!(

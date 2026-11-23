@@ -45,6 +45,7 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
     let (held_news, held_news_due) = triggers::held_news_status(ctx).await?;
     let (github_outbox, github_outbox_pending) = crate::github::outbox::pending(ctx).await?;
     let status = DaemonStatus {
+        work_units: Some(counts.work_units),
         waiting_items: waiting.items,
         waiting_total: count(waiting.total),
         waiting_next_offset: waiting.next_offset.map(count),
@@ -102,6 +103,7 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
 
 /// What `status` counts in the store, under one lock.
 struct StoreCounts {
+    work_units: archon_core::protocol::WorkUnitCounts,
     snapshot: archon_queue::dispatch::DispatchSnapshot,
     blocked: usize,
     open_questions: usize,
@@ -126,6 +128,7 @@ impl StoreCounts {
             ..ItemQuery::default()
         })?;
         Ok(Self {
+            work_units: store.work_unit_counts()?,
             snapshot,
             blocked: blocked.len(),
             open_questions: store.questions(true)?.len(),

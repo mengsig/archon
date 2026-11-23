@@ -15,6 +15,7 @@ mod codec;
 mod cost;
 mod delegated;
 mod directives;
+mod evidence_links;
 mod feed;
 mod gates;
 mod github_links;
@@ -38,11 +39,13 @@ mod outcomes;
 mod pull_requests;
 mod repos;
 mod retention;
+mod work_units;
 pub use retention::HistoryPruned;
 pub use schema::WAL_SIZE_LIMIT;
 mod run_edits;
 mod run_plans;
 mod run_reviews;
+mod stage_timing;
 pub use run_reviews::RunReview;
 mod runs;
 pub use runs::UnreadableRun;
@@ -52,6 +55,7 @@ mod settings;
 mod snapshot;
 mod spend;
 pub mod stacks;
+mod stage_spend;
 mod tracked;
 pub use tracked::{Claim, TrackedRequest};
 
@@ -90,6 +94,10 @@ pub mod keys {
     pub const CURSOR_ORCHESTRATOR: &str = "aether_cursor_orchestrator";
     pub const CURSOR_FLEET: &str = "aether_cursor_fleet";
     pub const AETHER_INSTANCE: &str = "aether_instance_id";
+    /// A stage run's reserved spawn request.
+    pub const STAGE_SPAWN_PREFIX: &str = "spawn_request:";
+    /// A delayed stage run's earliest working time, kept with its history.
+    pub const STAGE_DEFERRED_UNTIL_PREFIX: &str = "stage_deferred_until:";
     /// The last feed seq mirrored to Aether's notification center.
     pub const CURSOR_NOTIFICATION_CENTER: &str = "notification_center_feed_cursor";
     /// Prefix: + question id → the notification whose answer was refused.
@@ -243,6 +251,13 @@ impl Store {
     /// writer. Unlike [`Self::open_read_only`] it is never immutable. It
     /// shares this store's learning config and model catalog.
     pub fn open_reader(&self, path: &Path) -> Result<Self, ArchonError> {
+        let mut reader = Self::open_live_reader(path)?;
+        reader.learned = std::sync::Arc::clone(&self.learned);
+        Ok(reader)
+    }
+
+    /// Open a read-only connection that can share a WAL with a live writer.
+    pub fn open_live_reader(path: &Path) -> Result<Self, ArchonError> {
         use rusqlite::OpenFlags;
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = rusqlite::Connection::open_with_flags(path, flags)
@@ -251,7 +266,7 @@ impl Store {
         schema::check_wal(&conn)?;
         Ok(Self {
             conn,
-            learned: std::sync::Arc::clone(&self.learned),
+            learned: Default::default(),
             lock: None,
         })
     }
@@ -436,7 +451,8 @@ impl Store {
         next: QueueState,
         at: Timestamp,
     ) -> Result<QueueItem, ArchonError> {
-        items::transition(&mut self.conn, id, next, at)
+        let min_uses = self.learning_config()?.retire_min_uses;
+        items::transition(&mut self.conn, id, next, at, min_uses)
     }
     /// Non-state fields only; repository, pipeline and `created_at` are
     /// fixed. Changed dependencies are checked like on insert.
@@ -500,7 +516,7 @@ impl Store {
         next: QueueState,
         at: Timestamp,
     ) -> Result<FinishedRun, ArchonError> {
-        runs::finish(&mut self.conn, run, None, next, at)
+        self.finish_run_with_plan(run, None, next, at)
     }
     /// [`Store::finish_run`], keeping `plan` as the plan the run finished
     /// with in the same transaction; with none, any earlier one is dropped.
@@ -511,7 +527,8 @@ impl Store {
         next: QueueState,
         at: Timestamp,
     ) -> Result<FinishedRun, ArchonError> {
-        runs::finish(&mut self.conn, run, plan, next, at)
+        let min_uses = self.learning_config()?.retire_min_uses;
+        runs::finish(&mut self.conn, run, plan, next, at, min_uses)
     }
     pub fn run(&self, id: &PipelineRunId) -> Result<PipelineRun, ArchonError> {
         runs::load(&self.conn, id)
@@ -714,7 +731,8 @@ impl Store {
     }
     /// Identity and subject are fixed; a decision or withdrawal is final.
     pub fn update_gate(&mut self, gate: &OperatorGate) -> Result<(), ArchonError> {
-        gates::update(&mut self.conn, gate)
+        let min_uses = self.learning_config()?.retire_min_uses;
+        gates::update(&mut self.conn, gate, min_uses)
     }
     pub fn gate(
         &self,
@@ -825,7 +843,42 @@ impl Store {
     /// Charge the agent's growth: usage events carry absolute totals. A replayed
     /// (older) row is ignored, and only a provider-settled total lowers a charge.
     pub fn record_spend(&mut self, row: &SpendRow) -> Result<(), ArchonError> {
-        spend::record(&mut self.conn, row)
+        spend::record(&mut self.conn, row, false, None)
+    }
+    /// Charge an event of the fleet or orchestrator stream in Aether's order.
+    pub fn record_spend_event(&mut self, row: &SpendRow, seq: u64) -> Result<(), ArchonError> {
+        assert!(seq > 0, "Aether event sequences are one-based");
+        spend::record(&mut self.conn, row, row.item.is_none(), Some(seq))
+    }
+    /// Spend rows without a stage or with an unassigned historical balance.
+    pub fn unlinked_spend(&self) -> Result<Vec<AetherAgentId>, ArchonError> {
+        stage_spend::unlinked(&self.conn)
+    }
+    /// Check whether a retry already has a spend boundary.
+    pub fn has_stage_spend_window(
+        &self,
+        stage: &StageRunId,
+        agent: &AetherAgentId,
+    ) -> Result<bool, ArchonError> {
+        stage_spend::has_window(&self.conn, stage, agent)
+    }
+    /// Set the spend boundary before a kept agent is told to resume or wake.
+    pub fn bind_kept_spend(
+        &mut self,
+        stage: &StageRunId,
+        agent: &AetherAgentId,
+        at: &Timestamp,
+        after_seq: Option<u64>,
+    ) -> Result<(), ArchonError> {
+        stage_spend::bind_kept(&mut self.conn, stage, agent, at, after_seq)
+    }
+    /// Bind a late create reply even if its attempt was already settled.
+    pub fn bind_spawned_spend(
+        &mut self,
+        stage: &StageRunId,
+        agent: &AetherAgentId,
+    ) -> Result<(), ArchonError> {
+        stage_spend::bind_spawned(&mut self.conn, stage, agent)
     }
     pub fn spend_for_item(&self, item: &QueueItemId, estimates: bool) -> Result<f64, ArchonError> {
         spend::for_item(&self.conn, item, estimates)
@@ -868,7 +921,18 @@ impl Store {
         model: &archon_core::model::ModelRef,
         effort: Option<archon_core::model::Effort>,
     ) -> Result<(), ArchonError> {
-        delegated::record(&self.conn, agent, parent, model, effort)
+        delegated::record(&mut self.conn, agent, parent, model, effort, None)
+    }
+    /// The delegation's creation event, which fixes its stage across lead handoffs.
+    pub fn record_delegation_event(
+        &mut self,
+        agent: &AetherAgentId,
+        parent: &AetherAgentId,
+        model: &archon_core::model::ModelRef,
+        seq: u64,
+    ) -> Result<(), ArchonError> {
+        assert!(seq > 0, "Aether event sequences are one-based");
+        delegated::record(&mut self.conn, agent, parent, model, None, Some(seq))
     }
     /// The agent that delegated to `agent`, as [`Self::record_delegated`] stored it.
     pub fn delegated_parent(
@@ -911,6 +975,16 @@ impl Store {
         estimates: bool,
     ) -> Result<ModelEvidenceSnapshot, ArchonError> {
         model_evidence::read(&self.conn, query, range, estimates)
+    }
+
+    /// Nearest-rank p90 of recent completed stage runs in the same cohort.
+    pub fn stage_p90_seconds(
+        &self,
+        pipeline: &str,
+        stage: &str,
+        effort: archon_core::model::Effort,
+    ) -> Result<Option<u64>, ArchonError> {
+        stage_timing::p90(&self.conn, pipeline, stage, effort)
     }
 
     /// Spend over the local days of `range` grouped `by`, counted as the

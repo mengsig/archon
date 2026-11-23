@@ -2,14 +2,17 @@
 //! later team stage takes its roles from passes, Archon reads the plan it
 //! committed, checks it, and records the roles it gives the team stage.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use archon_core::error::ArchonError;
+use archon_core::id::PipelineRunId;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
 use archon_core::steer::RunEdit;
 use archon_pipeline::swarm::{self, PLAN_FILE, SwarmPlan};
 use archon_pipeline::{PipelineSpec, SpawnPlan};
+use archon_queue::Store;
 
 use crate::context::DaemonContext;
 use crate::resolve::RepoEnv;
@@ -17,6 +20,60 @@ use crate::worktree;
 
 /// Between a refused planner's stage id and the problems, in its failure.
 const PASSED_BUT: &str = " passed, but ";
+
+fn carry_key(run: &PipelineRunId, stage: &str, attempt: u32) -> String {
+    format!("swarm_carry:{run}:{stage}:{attempt}")
+}
+
+pub(super) fn record_carry(
+    store: &mut Store,
+    run: &PipelineRunId,
+    plan: &SpawnPlan,
+) -> Result<(), ArchonError> {
+    if plan.carried_slots.is_empty() {
+        return Ok(());
+    }
+    assert!(
+        plan.carried_slots
+            .values()
+            .all(|&source| source > 0 && source < plan.attempt)
+    );
+    assert!(plan.carried_slots.keys().all(|&slot| slot < plan.fan_count));
+    assert!(!plan.carried_slots.contains_key(&plan.fan_index));
+    let key = carry_key(run, &plan.stage_id, plan.attempt);
+    let record = serde_json::to_string(&plan.carried_slots)?;
+    match store.kv_get(&key)? {
+        Some(previous) if previous == record => Ok(()),
+        Some(_) => Err(ArchonError::Corrupt(format!(
+            "{key}: carry sources changed on replay"
+        ))),
+        None => store.kv_set(&key, &record),
+    }
+}
+
+pub(crate) fn carried_slots(
+    store: &Store,
+    run: &PipelineRunId,
+    stage: &str,
+    attempt: u32,
+) -> Result<BTreeMap<u32, u32>, ArchonError> {
+    let key = carry_key(run, stage, attempt);
+    let Some(raw) = store.kv_get(&key)? else {
+        return Ok(BTreeMap::new());
+    };
+    let sources: BTreeMap<u32, u32> = serde_json::from_str(&raw)
+        .map_err(|error| ArchonError::Corrupt(format!("{key}: {error}")))?;
+    if sources.is_empty()
+        || sources
+            .values()
+            .any(|&source| source == 0 || source >= attempt)
+    {
+        return Err(ArchonError::Corrupt(format!(
+            "{key}: invalid source attempts"
+        )));
+    }
+    Ok(sources)
+}
 
 /// Whether `error` is the failure of a planner whose plan Archon refused.
 pub(super) fn is_refusal(error: &str) -> bool {

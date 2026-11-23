@@ -37,11 +37,15 @@ export function mountQueue(view, ctx) {
   const render = () => {
     const state = store.get();
     const items = state.summaries ?? [];
-    summary.replaceChildren(...[[items.filter((s) => !isTerminal(s)).length, 'active'], [items.filter(waitsOnOperator).length, 'need you'], [items.filter(isTerminal).length, 'finished']]
-      .map(([count, label]) => h('span', {}, h('strong', { text: String(count) }), label)));
+    const units = state.status?.work_units;
+    const counts = summaryCounts(units, items);
+    counts.push([items.filter(waitsOnOperator).length, 'loaded items need you']);
+    const warning = units?.missing_targets ? [h('span', { text: 'Work-unit counts unavailable: older links are missing.' })] : [];
+    summary.replaceChildren(...counts.map(([count, label]) => h('span', {}, h('strong', { text: String(count) }), label)), ...warning,
+      h('span', { text: 'Filters count item rows.' }));
     renderQueue({ state, chips, selects, list, status, ctx });
   };
-  const off = store.watch((s) => [s.summaries, s.repos, s.errors.summaries, s.errors.repos], render);
+  const off = store.watch((s) => [s.summaries, s.repos, s.status, s.errors.summaries, s.errors.repos], render);
   search.addEventListener('input', () => { viewState.query = search.value; render(); });
   for (const [key, select] of Object.entries(selects)) {
     select.addEventListener('change', () => { viewState[key] = select.value; render(); });
@@ -54,6 +58,12 @@ export function mountQueue(view, ctx) {
   });
   const ticker = setInterval(render, AGE_TICK_MS);
   return () => { off(); clearInterval(ticker); };
+}
+
+export function summaryCounts(units, items) {
+  if (units?.missing_targets) return [];
+  if (units) return [[units.active, 'retained active work units'], [units.finished, 'retained finished work units']];
+  return [[items.filter((s) => !isTerminal(s)).length, 'loaded active items'], [items.filter(isTerminal).length, 'loaded finished items']];
 }
 
 function renderQueue({ state, chips, selects, list, status, ctx }) {

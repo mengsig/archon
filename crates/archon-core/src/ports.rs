@@ -390,6 +390,12 @@ pub trait AgentBackend: Send + Sync {
     /// `!is_live`: a state Archon does not know, or none, is `false`.
     async fn is_stopped(&self, agent: &AetherAgentId) -> Result<bool, ArchonError>;
 
+    /// The Aether event log head before asking a kept agent to act again.
+    /// A backend without an event log returns `None`.
+    async fn event_watermark(&self) -> Result<Option<u64>, ArchonError> {
+        Ok(None)
+    }
+
     /// Revive the failed `agent` in place, with its transcript and session;
     /// `Err` when Aether refuses, as it does for an agent that did not fail.
     async fn wake(&self, agent: &AetherAgentId) -> Result<(), ArchonError>;
@@ -490,6 +496,15 @@ pub trait AgentBackend: Send + Sync {
 
     /// `None` while the task is still open; the settled outcome otherwise.
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError>;
+
+    /// Model that settled a review task, when the execution history is available.
+    async fn review_model(
+        &self,
+        _agent: &AetherAgentId,
+        _task: &AetherTaskId,
+    ) -> Result<Option<ModelRef>, ArchonError> {
+        Ok(None)
+    }
 
     /// Put `content` in `to`'s inbox. Safe to retry with the same
     /// `idempotency_key` and content: Aether delivers it once.

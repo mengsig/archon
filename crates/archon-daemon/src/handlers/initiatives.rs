@@ -115,6 +115,7 @@ async fn prepare_member(
         autonomy: resolved.autonomy,
         origin: None,
         stage_timeouts: Default::default(),
+        supersedes: None,
         fresh_retries: 0,
         routed_provider,
         provider_switch: None,

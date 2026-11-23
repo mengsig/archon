@@ -107,12 +107,29 @@ pub(crate) fn evaluate(
             summary: joined_summary(stage, members),
         };
     }
+    failed_group(stage, attempt, members, passes)
+}
+
+fn failed_group(
+    stage: &StageSpec,
+    attempt: u32,
+    members: &[&StageRun],
+    passes: usize,
+) -> GroupResult {
+    let total = members.len();
+    assert!(passes < total, "a failed gate has non-passing members");
+    assert!(members.iter().all(|m| m.state.is_terminal()));
     let headline = match stage.gate {
         Gate::None if stage.kind == StageKind::Team => team_headline(stage, members),
-        Gate::None => format!("{} of {total} agent(s) did not complete", total - passes),
+        Gate::None => format!(
+            "{} of {total} did not pass: {}",
+            total - passes,
+            failure_counts(stage, members)
+        ),
         gate => format!(
-            "gate {} failed: {passes} of {total} passed",
-            gate_name(gate)
+            "gate {} failed: {passes} of {total} passed: {}",
+            gate_name(gate),
+            failure_counts(stage, members)
         ),
     };
     // Bold labels, not headings: feedback is embedded at any heading depth.
@@ -125,6 +142,32 @@ pub(crate) fn evaluate(
         headline,
         report: clip(&report, MAX_FEEDBACK_CHARS),
     }
+}
+
+fn failure_counts(stage: &StageSpec, members: &[&StageRun]) -> String {
+    assert!(members.iter().all(|m| m.state.is_terminal()));
+    let mut counts = [0usize; 4];
+    for member in members.iter().filter(|m| !member_passes(stage, m)) {
+        let index = match member.state {
+            StageState::Failed { .. } => 0,
+            StageState::Cancelled => 1,
+            StageState::TimedOut => 2,
+            StageState::Completed => 3,
+            StageState::Spawning | StageState::Running => unreachable!("terminal members"),
+        };
+        counts[index] += 1;
+    }
+    assert!(
+        counts.iter().sum::<usize>() > 0,
+        "a failed gate has non-passing members"
+    );
+    counts
+        .into_iter()
+        .zip(["failed", "cancelled", "timed out", "failing verdict"])
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, label)| format!("{count} {label}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The strict stage's scenario shortfall, when its passing member has one.
@@ -176,7 +219,11 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     };
     // A stated failure is refused on its merits, whatever its gate or record.
     if decided_since_repairs(member) && states_failure(member) {
-        return failed(archon_core::run::STATED_FAILURE.to_owned());
+        let mut headline = archon_core::run::STATED_FAILURE.to_owned();
+        if owed.review.is_some_and(|duty| duty.reviewers > 0) {
+            headline.push_str(" (review was owed)");
+        }
+        return failed(headline);
     }
     // A review-only lead's verdict is the run's: anything but pass never merges.
     if let Some(note) = unpassed_review(member, owed) {

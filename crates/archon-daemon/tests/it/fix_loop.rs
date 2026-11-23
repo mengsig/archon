@@ -12,7 +12,7 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelPlan};
 use archon_core::ports::{DescendantState, resumed_reply_outcome};
-use archon_core::protocol::Request;
+use archon_core::protocol::{Reply, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{PipelineRun, RecordRepair, StageOutcome, StageRun, StageState};
 use archon_core::steer::Steer;
@@ -275,6 +275,48 @@ async fn a_review_stage_records_its_verdict_and_the_next_attempts_resolution() {
     assert_eq!(finding["found_in"]["stage"], first.id.as_str());
     assert_eq!(finding["resolved_in"]["stage"], second.id.as_str());
     assert_eq!(finding["resolved_in"]["number"], 2);
+}
+
+#[tokio::test]
+async fn evidence_counts_each_turn_of_the_kept_implementer_once() {
+    let h = harness().await;
+    let (item, first) = implemented(&h, "charge the repair").await;
+    let lead = agent(&first);
+    let usage = |cost_usd| archon_queue::store::SpendRow {
+        agent: lead.clone(),
+        item: Some(item.id.clone()),
+        cost_usd,
+        cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: Some(true),
+        estimated_cost_usd: 0.0,
+        input_tokens: 1,
+        output_tokens: 1,
+        at: archon_core::now(),
+    };
+    h.ctx.store.lock().await.record_spend(&usage(1.25)).unwrap();
+    let fix = sent_back(&h).await;
+    assert_eq!(agent(&fix), lead);
+    h.ctx.store.lock().await.record_spend(&usage(3.25)).unwrap();
+    answers(&h, &fix, "applied the findings").await;
+
+    let query = archon_core::model_evidence::ModelEvidenceQuery {
+        stage: Some("implement".into()),
+        ..Default::default()
+    };
+    let Reply::ModelEvidence(evidence) = h.cli(Request::ModelEvidence(query)).await.unwrap() else {
+        panic!("model evidence reply");
+    };
+    assert_eq!(evidence.rows[0].median_cost_usd, Some(1.625));
+    assert_eq!(evidence.rows[0].p90_cost_usd, Some(2.0));
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .unlinked_spend()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

@@ -62,8 +62,21 @@ pub(in crate::store) fn failure_class(
     if let Some(class) = stated_stop(stage_id, error, &ending) {
         return class;
     }
-    if gate_said(error, stage_id, REVIEW_NOT_ON_RECORD) {
+    if gate_said(error, stage_id, REVIEW_NOT_ON_RECORD)
+        || gate_said(
+            error,
+            stage_id,
+            &format!("{STATED_FAILURE} (review was owed)"),
+        )
+    {
         return FailureClass::Review;
+    }
+    if gate_said(
+        error,
+        stage_id,
+        "the ship record archond delivers is not on record",
+    ) {
+        return FailureClass::Ship;
     }
     judged_class(stage_id, &ending, failed_reviews)
 }

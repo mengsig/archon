@@ -2672,6 +2672,7 @@ mod tests {
             stage_timeouts: BTreeMap::new(),
             autonomy: Default::default(),
             origin: None,
+            supersedes: None,
             fresh_retries: 0,
             routed_provider: None,
             provider_switch: None,

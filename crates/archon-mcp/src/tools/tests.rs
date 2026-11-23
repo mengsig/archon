@@ -827,6 +827,7 @@ pub(super) fn item(state: QueueState) -> QueueItem {
         autonomy: Default::default(),
         origin: None,
         stage_timeouts: Default::default(),
+        supersedes: None,
         fresh_retries: 0,
         routed_provider: None,
         provider_switch: None,
@@ -856,6 +857,18 @@ fn rendered_items_carry_their_id_state_and_reason() {
     );
     assert!(text.contains("dependency failed"), "{text}");
     assert_eq!(render("list_queue", &Reply::Items(vec![])), "No items.");
+}
+
+#[test]
+fn enqueue_and_get_item_show_the_superseded_item() {
+    let mut queued = item(QueueState::Queued);
+    let prior = QueueItemId::new();
+    queued.supersedes = Some(prior.clone());
+    for tool in ["enqueue", "get_item"] {
+        let text = render(tool, &Reply::Item(queued.clone()));
+        assert!(text.contains(&format!("supersedes {prior}")), "{text}");
+        assert!(text.contains(queued.id.as_str()), "{text}");
+    }
 }
 
 #[test]

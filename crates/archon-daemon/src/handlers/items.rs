@@ -120,6 +120,7 @@ fn unplanned_item(
         stage_timeouts: req.stage_timeouts.clone(),
         autonomy: resolved.autonomy,
         origin: req.origin.clone(),
+        supersedes: None,
         fresh_retries: 0,
         routed_provider: None,
         provider_switch: None,

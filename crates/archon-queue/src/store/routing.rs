@@ -52,6 +52,7 @@ impl Store {
                 item.state.kind()
             )));
         }
+        let min_uses = self.learning_config()?.retire_min_uses;
         let tx = write_tx(&mut self.conn)?;
         items::update_in(&tx, item)?;
         let next = shape
@@ -69,7 +70,7 @@ impl Store {
         }
         settings::kv_set(&tx, history.0, history.1)?;
         let stored = if revive {
-            items::requeue_in(&tx, &item.id, at)?
+            items::requeue_in(&tx, &item.id, at, min_uses)?
         } else {
             item.clone()
         };
@@ -85,10 +86,11 @@ impl Store {
         item: &QueueItem,
         at: Timestamp,
     ) -> Result<QueueItem, ArchonError> {
+        let min_uses = self.learning_config()?.retire_min_uses;
         let tx = write_tx(&mut self.conn)?;
         items::update_in(&tx, item)?;
         observe_requeue(&tx, item, None)?;
-        let queued = items::requeue_in(&tx, &item.id, at)?;
+        let queued = items::requeue_in(&tx, &item.id, at, min_uses)?;
         assert_eq!(queued.id, item.id);
         assert_eq!(queued.state, QueueState::Queued);
         tx.commit().ctx("commit item retry")?;

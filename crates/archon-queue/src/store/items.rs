@@ -758,9 +758,10 @@ pub(super) fn requeue_in(
     tx: &Connection,
     id: &QueueItemId,
     at: Timestamp,
+    min_uses: u32,
 ) -> Result<QueueItem, ArchonError> {
     assert!(!tx.is_autocommit(), "requeueing holds a write transaction");
-    let queued = transition_in(tx, id, QueueState::Queued, at)?;
+    let queued = transition_in(tx, id, QueueState::Queued, at, min_uses)?;
     assert_eq!(queued.state, QueueState::Queued);
     for dependent in dependents(tx, id)? {
         let item = load(tx, &dependent)?;
@@ -775,7 +776,7 @@ pub(super) fn requeue_in(
             );
         }
         if !broken {
-            transition_in(tx, &dependent, QueueState::Queued, at)?;
+            transition_in(tx, &dependent, QueueState::Queued, at, min_uses)?;
         }
     }
     Ok(queued)

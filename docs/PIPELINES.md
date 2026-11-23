@@ -1389,11 +1389,12 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   invariant, or adds scope: one new child reads only the fix, given the
   open findings, whatever the level; only the first whole-change read takes
   three where the level asks for three. Follow-ups (non-blocking findings)
-  are listed in the `pr.body` and left. A delta reviewer fails only on a
-  defect in the commits it was given or an open finding left unfixed; a new
-  finding in code a pass already read is a follow-up. Archon stops the stage
-  after three failed rounds and escalates; only an unresolved blocking
-  finding, a failed check or a review that did not run fails the stage. A
+  are listed in the `pr.body` and left. A re-review confirms the previous
+  round's open findings by ID and reviews the new delta. A real blocker
+  anywhere fails. At three failed rounds, finish committing fixes for every
+  open blocker with `Review-Fix: <id>` trailers and wait for Archon to request
+  one final confirmation. Large finding lists are linked from the handoff.
+  Missing fixes, a failed confirmation, or early completion escalates. A
   retry on the same branch keeps the earlier runs' reviews while the branch
   holds their heads, so its new lead owes only the whole reads they lack and
   a delta review of its own commits; a

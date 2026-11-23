@@ -13,8 +13,8 @@ use archon_core::run::{StageOutcome, StageRun, StageState};
 use archon_queue::Store;
 
 use super::{
-    FollowUp, descendants, forewarn, held, load_spawn, resume, run_follow_up, run_node, settle,
-    ship, siblings, stall, team,
+    FollowUp, descendants, forewarn, held, load_spawn, resume, review, run_follow_up, run_node,
+    settle, ship, siblings, stall, team,
 };
 use crate::context::DaemonContext;
 
@@ -58,7 +58,26 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
     forewarn::sweep(ctx, &stages.running, now).await?;
     let stalled = settle_stalled(ctx, &stages.running, now, &mut follow).await;
     run_follow_up(ctx, follow).await?;
-    stalled
+    let fixes = sweep_review_fixes(ctx, &stages.waiting_for_fixes).await;
+    stalled.and(fixes)
+}
+
+async fn sweep_review_fixes(ctx: &DaemonContext, stages: &[StageRun]) -> Result<(), ArchonError> {
+    let mut first_error = None;
+    for stage in stages {
+        assert_eq!(stage.state, StageState::Running);
+        assert!(stage.aether_agent.is_some(), "a review has a running lead");
+        let result = match review::revisit_fix_wait(ctx, stage).await {
+            Ok(Some(capped)) => super::stop_capped_review(ctx, capped).await,
+            Ok(None) => Ok(()),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = result {
+            tracing::warn!(stage = %stage.id, %error, "checking for committed review fixes failed");
+            first_error.get_or_insert(error);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 #[derive(Default)]
@@ -66,6 +85,7 @@ struct LiveStages {
     running: Vec<StageRun>,
     expired: Vec<StageRun>,
     nearing: Vec<StageRun>,
+    waiting_for_fixes: Vec<StageRun>,
 }
 
 fn scan_stages(
@@ -127,6 +147,9 @@ fn scan_stages(
         if stage.state == StageState::Running {
             if deadline.is_some_and(|d| held::near(d, now)) {
                 stages.nearing.push(stage.clone());
+            }
+            if review::review_fix_waiting(store, &stage.id)? {
+                stages.waiting_for_fixes.push(stage.clone());
             }
             stages.running.push(stage);
         }
@@ -311,6 +334,9 @@ pub(super) async fn time_out(
     let stage = ctx.store.lock().await.stage_run(id)?;
     if stage.state != StageState::Running {
         return Ok(FollowUp::default());
+    }
+    if let Some(capped) = review::capped_on_failure(ctx, id).await? {
+        return stop_review_loop(ctx, id, &capped.reason).await;
     }
     let reason = "stage deadline passed";
     match (&stage.aether_agent, &stage.aether_task) {

@@ -17,7 +17,7 @@ use crate::template;
 /// What stands in for the summary of a stage a steer passed over.
 pub(crate) const SKIPPED_SUMMARY: &str = "(This stage was skipped by a steer and left no result.)";
 
-/// The line a swarm integrator's error sends tasks back with.
+/// A header for displaying worker feedback. Scheduling uses structured slots.
 pub(crate) const REDISPATCH_PREFIX: &str = "REDISPATCH:";
 
 /// What a planned team's worker is told when the integrator failed without it.
@@ -115,8 +115,7 @@ pub(crate) fn operator_feedback(subject: GateSubject, feedback: &str) -> String 
     )
 }
 
-/// The `feedback` a stage sees. A planned team's workers see the integrator's
-/// error from its `REDISPATCH:` line on, never its report of other tasks.
+/// A planned team's workers see only the feedback from its `REDISPATCH:` header.
 pub(crate) fn stage_feedback(stage: &StageSpec, feedback: &str) -> String {
     if stage.roles_from.is_none() || feedback.trim().is_empty() {
         return feedback.to_owned();

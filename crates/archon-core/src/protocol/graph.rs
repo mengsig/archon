@@ -213,13 +213,24 @@ pub struct StageSettings {
     pub model: ModelSource,
     /// `override` when an effort differs from the stage's default effort.
     pub effort: SettingSource,
-    /// Minutes each new agent of the stage may run; absent for a reviewers
+    /// Configured minutes for the stage; absent for a reviewers
     /// key, whose reviewers run within their stage's limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_minutes: Option<u32>,
     /// Where `timeout_minutes` comes from; absent with it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<SettingSource>,
+    /// Learned overrides for the listed fan-out slots on the next attempt.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub learned_timeouts: Vec<LearnedStageTimeout>,
+}
+
+/// A timeout sourced from the p90 of completed stage runs at the slot's effort.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LearnedStageTimeout {
+    pub fan_index: usize,
+    pub timeout_minutes: u32,
+    pub p90_seconds: u64,
 }
 
 #[cfg(test)]

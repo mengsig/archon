@@ -763,6 +763,13 @@ impl AgentBackend for AetherBackend {
         Ok(defaults.network_default)
     }
 
+    async fn event_watermark(&self) -> Result<Option<u64>, ArchonError> {
+        let client = self.link.client()?;
+        // A live-only subscription reports the global head even after history is pruned.
+        let checkpoint = client.subscribe(None, EventQuery::default()).await?;
+        Ok(Some(checkpoint.last_seq))
+    }
+
     async fn is_live(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
         match self.link.client()?.get_agent(agent).await {
             Ok(found) => Ok(agent_is_live(&found)),

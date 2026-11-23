@@ -2,7 +2,7 @@
 //! latest by default), or a stage's whole summary and structured output,
 //! paged (§11).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
@@ -14,6 +14,7 @@ use archon_core::run::{PipelineRun, StageRun, StageState};
 use archon_queue::Store;
 
 use crate::context::DaemonContext;
+use crate::executor::swarm;
 
 pub(super) async fn get(ctx: &DaemonContext, query: &StageQuery) -> Result<Reply, ArchonError> {
     query.check().map_err(ArchonError::Invalid)?;
@@ -25,7 +26,7 @@ pub(super) async fn get(ctx: &DaemonContext, query: &StageQuery) -> Result<Reply
     let all = store.stage_runs(&run.id)?;
     let picked = match &query.stage {
         None => all,
-        Some(stage) => pick(all, stage, &run, query)?,
+        Some(stage) => pick(&store, all, stage, &run, query)?,
     };
     // Stage costs come from the spend ledger, as in `GetItem`.
     let mut costed = Vec::with_capacity(picked.len());
@@ -83,6 +84,7 @@ fn chosen_run(
 /// in one slot or all of them. Nothing matching is `NotFound`, naming what
 /// does exist.
 fn pick(
+    store: &Store,
     all: Vec<StageRun>,
     stage: &str,
     run: &PipelineRun,
@@ -103,16 +105,14 @@ fn pick(
     let attempts: BTreeSet<u32> = of_stage.iter().map(|s| s.attempt).collect();
     let latest = *attempts.last().expect("the stage ran at least once");
     let attempt = query.attempt.unwrap_or(latest);
-    if !attempts.contains(&attempt) {
+    let carried = swarm::carried_slots(store, &run.id, stage, attempt)?;
+    if !attempts.contains(&attempt) && carried.is_empty() {
         return Err(ArchonError::NotFound(format!(
             "attempt {attempt} of stage {stage:?} (attempts: {})",
             joined(attempts)
         )));
     }
-    let of_attempt: Vec<StageRun> = of_stage
-        .into_iter()
-        .filter(|s| s.attempt == attempt)
-        .collect();
+    let of_attempt = attempt_results(&carried, of_stage, run, stage, attempt)?;
     let Some(slot) = query.slot else {
         return Ok(of_attempt);
     };
@@ -129,6 +129,41 @@ fn pick(
         .collect();
     assert!(!picked.is_empty(), "the slot was found above");
     Ok(picked)
+}
+
+/// Carry references keep the original attempt and charge alongside the output.
+fn attempt_results(
+    carried: &BTreeMap<u32, u32>,
+    of_stage: Vec<StageRun>,
+    run: &PipelineRun,
+    stage: &str,
+    attempt: u32,
+) -> Result<Vec<StageRun>, ArchonError> {
+    assert!(
+        of_stage
+            .iter()
+            .all(|s| s.stage_id == stage && s.run == run.id)
+    );
+    let mut results = Vec::new();
+    for (slot, source) in carried {
+        let prior = of_stage
+            .iter()
+            .filter(|s| s.attempt == *source && s.fan_index == *slot)
+            .max_by_key(|s| (s.started_at, &s.id));
+        let Some(prior) = prior.filter(|s| s.state == StageState::Completed) else {
+            return Err(ArchonError::Corrupt(format!(
+                "run {} stage {stage:?} has no completed slot {slot} in carried attempt {source}",
+                run.id
+            )));
+        };
+        results.push(prior.clone());
+    }
+    assert_eq!(results.len(), carried.len());
+    results.extend(of_stage.into_iter().filter(|s| s.attempt == attempt));
+    if !carried.is_empty() {
+        results.sort_by_key(|s| s.fan_index);
+    }
+    Ok(results)
 }
 
 /// Set `stage`'s cost to what the ledger charged its agent and every agent beneath it

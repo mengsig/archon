@@ -141,71 +141,68 @@ fn v24_goes_on_over_a_lesson_it_cannot_recount() {
     assert_eq!(standing(&conn, &whole), (1, "active".to_owned()));
 }
 
-/// Five failed reviews 1.6.3 left unscored retract the lesson they used, so
-/// V24 recomputes the lesson clusters of a store holding a lesson unfit for it.
-#[test]
-fn v24_goes_on_when_the_lesson_clusters_cannot_be_recomputed() {
-    let whys = [
-        "a twin holding more wins than uses",
-        "a lesson row that is no JSON",
-    ];
-    for why in whys {
-        let mut conn = v23_store();
-        let losing = lesson(&conn, 0);
-        let runs: Vec<PipelineRun> = (0..5).map(|_| budget_run(&conn)).collect();
-        for run in &runs {
-            use_and_trial(&conn, &losing, run, None);
-        }
-        // Two lessons of one text join a cluster, so consolidation writes both.
-        let (unfit, _twin) = (lesson(&conn, 0), lesson(&conn, 0));
-        if why == whys[0] {
-            let mut won_more = lesson_json(&conn, &unfit);
-            won_more["wins"] = serde_json::json!(3);
-            set_lesson_data(&conn, &unfit, &won_more.to_string());
-        } else {
-            set_lesson_data(&conn, &unfit, &"not json");
-        }
-
-        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len(), "{why}");
-
-        assert_eq!(
-            standing(&conn, &losing),
-            (5, "retracted".to_owned()),
-            "{why}: the lesson is still rescored"
-        );
-        for run in &runs {
-            assert_eq!(columns(&conn, run).1, some("recomputed"), "{why}");
-        }
+fn failed_review_uses(conn: &Connection, lesson: &LessonId, count: u32) {
+    assert_eq!(standing(conn, lesson), (0, "active".to_owned()));
+    for _ in 0..count {
+        let run = budget_run(conn);
+        use_and_trial(conn, lesson, &run, None);
+        assert_eq!(lesson_score(conn, &run), (None, 0));
     }
 }
 
-/// A lesson row whose record names another lesson would be written over that
-/// one: the clusters stay as they were, and every stored lesson with them.
+#[test]
+fn v24_recounts_an_accepted_lesson_without_retiring_it() {
+    let mut conn = v23_store();
+    let accepted = lesson(&conn, 0);
+    let mut before = lesson_json(&conn, &accepted);
+    before["confirmed_at"] = before["created_at"].clone();
+    set_lesson_data(&conn, &accepted, &before.to_string());
+    failed_review_uses(&conn, &accepted, 20);
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(standing(&conn, &accepted), (20, "active".to_owned()));
+    before["uses"] = serde_json::json!(20);
+    assert_eq!(lesson_json(&conn, &accepted), before);
+}
+
+#[test]
+fn v24_recounts_a_lesson_below_the_retirement_sample_floor() {
+    let mut conn = v23_store();
+    let losing = lesson(&conn, 0);
+    assert!(archon_core::config::LearningConfig::default().retire_min_uses > 5);
+    let mut before = lesson_json(&conn, &losing);
+    before["source"] = serde_json::json!("orchestrator");
+    set_lesson_data(&conn, &losing, &before.to_string());
+    conn.execute(
+        "UPDATE lessons SET source = 'orchestrator' WHERE id = ?1",
+        [losing.as_str()],
+    )
+    .unwrap();
+    failed_review_uses(&conn, &losing, 5);
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(standing(&conn, &losing), (5, "active".to_owned()));
+    before["uses"] = serde_json::json!(5);
+    assert_eq!(lesson_json(&conn, &losing), before);
+}
+
 #[test]
 fn v24_never_writes_a_lesson_over_the_one_its_record_names() {
     let mut conn = v23_store();
-    let losing = lesson(&conn, 0);
-    let runs: Vec<PipelineRun> = (0..5).map(|_| budget_run(&conn)).collect();
-    for run in &runs {
-        use_and_trial(&conn, &losing, run, None);
-    }
-    // The misnamed lesson and its twin share a text, so consolidation writes both.
-    let (misnamed, _twin, other) = (lesson(&conn, 0), lesson(&conn, 0), lesson(&conn, 0));
-    let mut unrelated = lesson_json(&conn, &other);
-    unrelated["text"] = serde_json::json!("squash merges need a linear history");
-    set_lesson_data(&conn, &other, &unrelated.to_string());
+    let (run, misnamed) = used_lesson(&conn);
+    let other = lesson(&conn, 0);
+    let unrelated = lesson_json(&conn, &other);
     let mut names_other = lesson_json(&conn, &misnamed);
     names_other["id"] = serde_json::json!(other.as_str());
     set_lesson_data(&conn, &misnamed, &names_other.to_string());
 
     assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
 
-    assert_eq!(lesson_json(&conn, &other), unrelated, "it is not replaced");
+    assert_eq!(lesson_json(&conn, &other), unrelated);
     assert_eq!(lesson_json(&conn, &misnamed), names_other);
-    assert_eq!(standing(&conn, &losing), (5, "retracted".to_owned()));
-    for run in &runs {
-        assert_eq!(columns(&conn, run).1, some("recomputed"));
-    }
+    assert_eq!(use_won(&conn, &run), Some(false));
 }
 
 #[test]

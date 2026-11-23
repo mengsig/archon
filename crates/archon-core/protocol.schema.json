@@ -4647,6 +4647,10 @@
             "null"
           ]
         },
+        "learned_stage_timeouts": {
+          "default": false,
+          "type": "boolean"
+        },
         "sources": {
           "additionalProperties": {
             "$ref": "#/$defs/SettingSource"
@@ -4946,6 +4950,45 @@
         "message"
       ],
       "type": "object"
+    },
+    "FailureClass": {
+      "description": "Why a failed run failed, as far as the daemon can tell.",
+      "oneOf": [
+        {
+          "enum": [
+            "budget",
+            "timeout",
+            "ship",
+            "other"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "review",
+          "description": "Review rounds ran out without a passing verdict.",
+          "type": "string"
+        },
+        {
+          "const": "verification",
+          "description": "Tests or checks kept failing.",
+          "type": "string"
+        },
+        {
+          "const": "infrastructure",
+          "description": "The agent backend or the machine, not the work.",
+          "type": "string"
+        },
+        {
+          "const": "escalated",
+          "description": "A stage said the task needs another pipeline (`ESCALATE:`).",
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "A stage said only the operator can unblock it (`BLOCKED:`).",
+          "type": "string"
+        }
+      ]
     },
     "FeedEntry": {
       "description": "One line of the operator chat. Persisted so `archon chat` can replay.\nTagged `entry` because the wrapped `Notification` already has a `kind`.",
@@ -7215,6 +7258,32 @@
       ],
       "type": "object"
     },
+    "LearnedStageTimeout": {
+      "description": "A timeout sourced from the p90 of completed stage runs at the slot's effort.",
+      "properties": {
+        "fan_index": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "p90_seconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timeout_minutes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "fan_index",
+        "timeout_minutes",
+        "p90_seconds"
+      ],
+      "type": "object"
+    },
     "LearningWhy": {
       "description": "`archon learning why <item>`: every correction of the item's runs.",
       "properties": {
@@ -7264,6 +7333,17 @@
           "format": "date-time",
           "type": "string"
         },
+        "failure_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FailureClass"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Failure observed on the source item when the lesson was recorded."
+        },
         "id": {
           "$ref": "#/$defs/LessonId"
         },
@@ -7299,6 +7379,17 @@
             "$ref": "#/$defs/LessonRef"
           },
           "type": "array"
+        },
+        "retirement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LessonRetirement"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The policy that triggered automatic retraction."
         },
         "scope": {
           "$ref": "#/$defs/LessonScope"
@@ -7531,6 +7622,24 @@
         }
       ]
     },
+    "LessonRetirement": {
+      "properties": {
+        "baseline": {
+          "format": "double",
+          "type": "number"
+        },
+        "min_uses": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "min_uses",
+        "baseline"
+      ],
+      "type": "object"
+    },
     "LessonScope": {
       "description": "Where a lesson applies; all `None` is everywhere.",
       "properties": {
@@ -7637,6 +7746,15 @@
           },
           "default": {},
           "type": "object"
+        },
+        "retire_min_uses": {
+          "description": "Effective sample floor while the daemon is running.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "retracted": {
           "format": "uint64",
@@ -8771,6 +8889,29 @@
           "minimum": 0,
           "type": "integer"
         },
+        "first_attempt_passed": {
+          "default": 0,
+          "description": "First attempts that completed successfully; review/test stages use recorded verdicts.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "first_attempt_verdicts": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fix_up_items": {
+          "default": null,
+          "description": "Later same-PR/branch items or dependencies queued after a failed review; absent if unlinked.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "host_context": {
           "$ref": "#/$defs/HostContext",
           "default": "full"
@@ -8800,6 +8941,26 @@
           "format": "uint",
           "minimum": 0,
           "type": "integer"
+        },
+        "revert_items": {
+          "default": null,
+          "description": "Linked later items titled Revert or tagged revert; absent if unlinked.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "review_findings": {
+          "default": null,
+          "description": "Recorded findings on review attempts; absent when no findings array was recorded.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "stage": {
           "type": "string"
@@ -16485,6 +16646,13 @@
           "description": "A stage id, or `<stage>.review` for the reviewers that stage delegates.",
           "type": "string"
         },
+        "learned_timeouts": {
+          "description": "Learned overrides for the listed fan-out slots on the next attempt.",
+          "items": {
+            "$ref": "#/$defs/LearnedStageTimeout"
+          },
+          "type": "array"
+        },
         "model": {
           "$ref": "#/$defs/ModelSource",
           "description": "`tier` when every choice came from a tier, else `exact`."
@@ -16501,7 +16669,7 @@
           "description": "Where `timeout_minutes` comes from; absent with it."
         },
         "timeout_minutes": {
-          "description": "Minutes each new agent of the stage may run; absent for a reviewers\nkey, whose reviewers run within their stage's limit.",
+          "description": "Configured minutes for the stage; absent for a reviewers\nkey, whose reviewers run within their stage's limit.",
           "format": "uint32",
           "minimum": 0,
           "type": [

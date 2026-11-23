@@ -787,19 +787,28 @@ ALTER TABLE outcomes ADD COLUMN class_source TEXT
 ALTER TABLE outcomes ADD COLUMN failure_class_163 TEXT;
 "#;
 
-/// Keep candidate titles in insertion order without decoding every item during enqueue.
-const V25: &str = r#"
-CREATE INDEX items_by_duplicate_candidate ON items (
-    repo, seq DESC, id, CASE WHEN json_valid(data) THEN json_extract(data, '$.title') END
-) WHERE state != 'succeeded';
-"#;
+/// Version 25: attribute cumulative spend deltas to concrete stage runs.
+const V25: &str = include_str!("schema/stage_spend.sql");
 
 /// The migration after whose SQL stored failure classes are recomputed.
 const RECLASSIFY_VERSION: usize = 24;
 
+/// Version 26: bound evidence's candidate item snapshot by creation time.
+const V26: &str = "
+CREATE INDEX IF NOT EXISTS items_by_created_at ON items (created_at);
+CREATE INDEX IF NOT EXISTS stage_runs_by_started_at ON stage_runs (started_at);
+";
+
+/// Keep candidate titles in insertion order without decoding every item during enqueue.
+const V27: &str = r#"
+CREATE INDEX IF NOT EXISTS items_by_duplicate_candidate ON items (
+    repo, seq DESC, id, CASE WHEN json_valid(data) THEN json_extract(data, '$.title') END
+) WHERE state != 'succeeded';
+"#;
+
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25,
+    V22, V23, V24, V25, V26, V27,
 ];
 // Later migrations must preserve the tables read by V24 reclassification.
 const _: () = assert!(RECLASSIFY_VERSION <= MIGRATIONS.len());
@@ -950,6 +959,49 @@ fn enable_wal(conn: &Connection) -> Result<String, ArchonError> {
     }
 }
 
+/// A branch build recorded version 25 for the evidence indexes, now version 26.
+/// Forget that row so the real version 25 (stage spend) is applied.
+fn forget_branch_only_v25(tx: &Connection) -> Result<(), ArchonError> {
+    let has_stage_spend: bool = tx
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'stage_spend')",
+            [],
+            |row| row.get(0),
+        )
+        .ctx("look for stage_spend")?;
+    if has_stage_spend {
+        return Ok(());
+    }
+    tx.execute("DELETE FROM schema_migrations WHERE version = 25", [])
+        .ctx("forget branch-only version 25")?;
+    Ok(())
+}
+
+/// A branch build recorded version 26 for the duplicate-candidate index, now version 27.
+/// Forget that row so the real version 26 (evidence indexes) is applied.
+fn forget_branch_only_v26(tx: &Connection) -> Result<(), ArchonError> {
+    let has_evidence_index: bool = tx
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'items_by_created_at')",
+            [],
+            |row| row.get(0),
+        )
+        .ctx("look for the evidence indexes")?;
+    let newest: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )
+        .ctx("read newest version")?;
+    if has_evidence_index || newest != 26 {
+        return Ok(());
+    }
+    tx.execute("DELETE FROM schema_migrations WHERE version = 26", [])
+        .ctx("forget branch-only version 26")?;
+    Ok(())
+}
+
 /// Apply every migration newer than the store's version, each with its
 /// version row, in one write transaction. Returns the resulting version.
 pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
@@ -961,6 +1013,8 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
     )
     .ctx("create schema_migrations")?;
     let tx = write_tx(conn)?;
+    forget_branch_only_v25(&tx)?;
+    forget_branch_only_v26(&tx)?;
     let current: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
@@ -1244,6 +1298,65 @@ mod tests {
         assert_eq!(question_number(&conn, "q_open"), 2);
     }
 
+    #[test]
+    fn a_branch_built_v25_store_gains_stage_spend_and_keeps_its_indexes() {
+        let mut conn = v2_store();
+        migrate(&mut conn).unwrap();
+        conn.execute_batch("DROP TABLE stage_spend; DROP TABLE stage_spend_windows; ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq; DROP INDEX items_by_duplicate_candidate; DELETE FROM schema_migrations WHERE version >= 26;").unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+        let versions: Vec<i64> = applied_versions(&conn).iter().map(|(v, _)| *v).collect();
+        assert_eq!(versions, (1..=MIGRATIONS.len() as i64).collect::<Vec<_>>());
+        conn.prepare("SELECT 1 FROM stage_spend").unwrap();
+    }
+
+    #[test]
+    fn v24_upgrade_adds_the_evidence_item_time_index() {
+        let mut conn = v2_store();
+        migrate(&mut conn).unwrap();
+        conn.execute_batch("DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at; DROP INDEX items_by_duplicate_candidate; DELETE FROM schema_migrations WHERE version >= 26;").unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+        let plan: String = conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT data FROM items WHERE created_at >= ?1 AND created_at < ?2",
+            ["2026-01-01", "2026-02-01"], |row| row.get(3),
+        ).unwrap();
+        assert!(plan.contains("items_by_created_at"), "{plan}");
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+    }
+
+    #[test]
+    fn a_v26_store_from_next_gains_the_duplicate_candidate_index() {
+        let mut conn = v2_store();
+        migrate(&mut conn).unwrap();
+        conn.execute_batch("DROP INDEX items_by_duplicate_candidate; DELETE FROM schema_migrations WHERE version = 27;").unwrap();
+        assert_eq!(applied_versions(&conn).last().unwrap().0, 26);
+        assert_eq!(migrate(&mut conn).unwrap(), 27);
+        let found: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'items_by_duplicate_candidate'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(found, 1);
+    }
+
+    #[test]
+    fn a_branch_built_v26_store_gains_the_evidence_indexes_and_v27() {
+        let mut conn = v2_store();
+        migrate(&mut conn).unwrap();
+        conn.execute_batch("DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at; DELETE FROM schema_migrations WHERE version = 27;").unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+        let versions: Vec<i64> = applied_versions(&conn).iter().map(|(v, _)| *v).collect();
+        assert_eq!(versions, (1..=MIGRATIONS.len() as i64).collect::<Vec<_>>());
+        conn.prepare("SELECT 1 FROM sqlite_master WHERE name = 'items_by_created_at'")
+            .unwrap();
+        let found: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'items_by_created_at'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(found, 1);
+    }
+
     fn insert_run(conn: &Connection, run: &str, item: &str) {
         conn.execute(
             "INSERT INTO runs (id, item, pipeline, terminal, started_at, data)
@@ -1458,9 +1571,12 @@ mod tests {
             "DROP TABLE run_pull_requests; DROP TABLE merge_requests; DROP TABLE tracked_requests;
              DROP TABLE spend_pruned; DROP TABLE item_transitions; DROP TABLE changes;
              DROP TABLE github_links; DROP TABLE github_objects; DROP TABLE github_outbox;
+             DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;
              DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster;
              DROP INDEX items_by_duplicate_candidate;
              ALTER TABLE lessons DROP COLUMN cluster;
+             DROP TABLE stage_spend; DROP TABLE stage_spend_windows;
+             ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
              DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();

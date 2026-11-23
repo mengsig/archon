@@ -211,12 +211,10 @@ commit that reviewer read and its findings).
 archond logs, per class, the old count, the new count and the rows left on the
 1.6.3 class. When a recomputed class changes whether a run is scored, V24
 rescores the run's lesson uses and holdout trials and recounts the lessons it
-used, so lesson confidence and holdout lift follow the new classes. A lesson
-V24 cannot recount (its row, its use or its epoch is unreadable, or it holds
-what no lesson holds) keeps its stored counts, and the lesson clusters stay as
-they were when any stored lesson is unfit to write back or holds the record of
-another lesson: neither stops the
-migration, and archond logs each. V24 also
+used. It preserves lesson state, confidence, and clusters. A lesson V24
+cannot recount (its row, use, or epoch is unreadable, or its record is
+invalid) keeps its stored counts, and archond logs the skip. Live scoring
+and maintenance apply the configured retirement policy after startup. V24 also
 stores, in each outcome whose item is still stored and whose run holds a
 recorded reviewer verdict (a review stage's pass or fail, the pass or fail of
 the review a stage's result carries, read as the gate reads it, or a

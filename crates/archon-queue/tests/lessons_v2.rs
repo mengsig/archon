@@ -4,7 +4,8 @@ use archon_core::config::LearningConfig;
 use archon_core::id::QueueItemId;
 use archon_core::lesson::{
     CONTRACT_LESSON_BYTES, CONTRACT_LESSON_NOTICE, CONTRACT_LESSONS, HOLDOUT_MIN_SAMPLES, Lesson,
-    LessonKind, LessonRef, LessonRefKind, LessonScope, LessonSource, LessonState, held_out,
+    LessonKind, LessonPatch, LessonRef, LessonRefKind, LessonScope, LessonSource, LessonState,
+    held_out,
 };
 use archon_core::pull_request::PullRequestRef;
 use archon_core::queue::{QueueItem, QueueState};
@@ -121,6 +122,34 @@ fn a_held_out_lesson_is_never_given_to_its_item_and_a_rerun_agrees() {
         (1, 1, LessonState::Active),
         "held-out runs never count for or against the lesson"
     );
+}
+
+#[test]
+fn a_lesson_retires_against_its_measured_holdout_baseline() {
+    let mut store = store();
+    store
+        .configure_learning(&LearningConfig {
+            holdout_rate: RATE,
+            retire_min_uses: 4,
+            ..Default::default()
+        })
+        .unwrap();
+    let lesson = active(&store, "Check migrations against old stores");
+    let (held, given) = items_in_both_arms(&mut store, &lesson, 4);
+    for (n, item) in given.iter().enumerate() {
+        assert_eq!(run_once(&mut store, &item.id, Some(n < 3)).len(), 1);
+    }
+    assert_eq!(store.lesson(&lesson.id).unwrap().state, LessonState::Active);
+    for item in &held {
+        assert!(run_once(&mut store, &item.id, Some(true)).is_empty());
+    }
+
+    store.refresh_lessons(archon_core::now()).unwrap();
+
+    let retired = store.lesson(&lesson.id).unwrap();
+    assert_eq!((retired.uses, retired.wins), (4, 3));
+    assert_eq!(retired.state, LessonState::Retracted);
+    assert_eq!(retired.retirement.unwrap().baseline, 1.0);
 }
 
 #[test]
@@ -293,16 +322,22 @@ fn the_injection_budget_is_unchanged() {
 }
 
 #[test]
-fn near_duplicates_cluster_and_a_contract_carries_one_of_them() {
+fn a_contract_carries_one_of_the_lessons_in_an_existing_cluster() {
     let mut store = store();
     let first = active(
         &store,
         "Run the migration tests before shipping a schema change",
     );
-    let second = active(
-        &store,
-        "Run the migration tests before you ship a schema change",
-    );
+    let second = active(&store, "Use fresh schema fixtures for upgrade tests");
+    let second = store
+        .update_lesson(
+            &second.id,
+            LessonPatch {
+                text: Some("Run the migration tests before you ship a schema change".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
     let other = active(&store, "Check the web bundle before a release");
     let key = first.id.clone().min(second.id.clone());
     for id in [&first.id, &second.id] {
@@ -320,7 +355,7 @@ fn near_duplicates_cluster_and_a_contract_carries_one_of_them() {
 }
 
 #[test]
-fn clustering_never_raises_a_proposed_lesson() {
+fn a_near_duplicate_never_replaces_accepted_advice() {
     let mut store = store();
     let alpha = repo("alpha");
     store.insert_repo(&alpha).unwrap();
@@ -328,39 +363,59 @@ fn clustering_never_raises_a_proposed_lesson() {
         repo: Some(alpha.id.clone()),
         pipeline: None,
     };
-    let accepted = draft(
+    let accepted = store
+        .record_lesson(draft(
+            scope.clone(),
+            "Run the migration tests before shipping a schema change",
+            LessonSource::Operator,
+            LessonState::Active,
+        ))
+        .unwrap();
+    let text = "Run the migration tests before you ship a schema change";
+    let repeat = draft(
         scope.clone(),
-        "Run the migration tests before shipping a schema change",
-        LessonSource::Operator,
-        LessonState::Active,
-    );
-    let accepted = store.record_lesson(accepted).unwrap();
-    let proposed = draft(
-        scope,
-        "Run the migration tests before you ship a schema change",
+        text,
         LessonSource::Orchestrator,
         LessonState::Proposed,
     );
-    let proposed = store.record_lesson(proposed).unwrap();
-    assert!(proposed.cluster.is_some());
-    assert_eq!(
-        proposed.cluster,
-        store.lesson(&accepted.id).unwrap().cluster
+    assert_ne!(repeat.text, accepted.text);
+    assert_eq!(store.record_lesson(repeat).unwrap(), accepted);
+
+    let operator = draft(scope, text, LessonSource::Operator, LessonState::Active);
+    let error = store.record_lesson(operator).unwrap_err();
+    assert!(error.to_string().contains(accepted.id.as_str()), "{error}");
+    assert_eq!(store.lessons(&Default::default()).unwrap(), [accepted]);
+
+    let global = draft(
+        LessonScope::default(),
+        text,
+        LessonSource::Operator,
+        LessonState::Active,
     );
-    assert_eq!(
-        (proposed.state, proposed.source),
-        (LessonState::Proposed, LessonSource::Orchestrator)
+    assert_eq!(store.record_lesson(global.clone()).unwrap().id, global.id);
+}
+
+fn capture_timeout(store: &mut Store, run: &archon_core::run::PipelineRun) {
+    let mut timed_out = stage(run, 0);
+    timed_out.state = archon_core::run::StageState::TimedOut;
+    timed_out.finished_at = Some(t(25));
+    store.upsert_stage_run(&timed_out).unwrap();
+    settle_run(
+        store,
+        run,
+        QueueState::Failed {
+            run: Some(run.id.clone()),
+            error: "work stopped".into(),
+        },
+        t(30),
     );
-    store.refresh_lessons(archon_core::now()).unwrap();
-    let after = store.lesson(&proposed.id).unwrap();
-    assert_eq!(
-        (after.state, after.confidence),
-        (proposed.state, proposed.confidence)
-    );
+    store
+        .capture_outcome(&store.run(&run.id).unwrap(), None, true)
+        .unwrap();
 }
 
 #[test]
-fn a_lesson_keeps_its_item_run_and_pull_request_and_a_repeat_adds_support() {
+fn a_lesson_keeps_its_failure_and_provenance_when_near_duplicates_add_support() {
     let mut store = store();
     let alpha = repo("alpha");
     store.insert_repo(&alpha).unwrap();
@@ -370,6 +425,7 @@ fn a_lesson_keeps_its_item_run_and_pull_request_and_a_repeat_adds_support() {
     let run = start(&mut store, &first.id);
     let pr = PullRequestRef::from_url("https://github.com/acme/alpha/pull/7").unwrap();
     store.record_run_pull_request(&run.id, &pr, None).unwrap();
+    capture_timeout(&mut store, &run);
     let scope = LessonScope {
         repo: Some(alpha.id.clone()),
         pipeline: None,
@@ -383,6 +439,10 @@ fn a_lesson_keeps_its_item_run_and_pull_request_and_a_repeat_adds_support() {
     );
     lesson.item = Some(first.id.clone());
     let recorded = store.record_lesson(lesson).unwrap();
+    assert_eq!(
+        recorded.failure_class,
+        Some(archon_core::outcome::FailureClass::Timeout)
+    );
     let kinds: Vec<_> = recorded.refs.iter().map(|r| r.kind).collect();
     assert_eq!(
         kinds,
@@ -396,13 +456,16 @@ fn a_lesson_keeps_its_item_run_and_pull_request_and_a_repeat_adds_support() {
         .unwrap();
     let mut repeat = draft(
         scope,
-        text,
+        "Check migrations against the old stores",
         LessonSource::Orchestrator,
         LessonState::Proposed,
     );
     repeat.item = Some(second.id.clone());
     let repeated = store.record_lesson(repeat).unwrap();
     assert_eq!(repeated.id, recorded.id);
+    assert_eq!(repeated.failure_class, recorded.failure_class);
+    assert_eq!(repeated.item, recorded.item);
+    assert_eq!(repeated.text, recorded.text);
     assert_eq!(repeated.support, 2);
     assert_eq!(
         (repeated.state, repeated.confidence),
@@ -432,6 +495,86 @@ fn a_distilled_lesson_names_its_distilling_run() {
     };
     assert_eq!(stored.refs, vec![expected]);
     assert_eq!(stored.support, 0, "a run is not an independent item");
+}
+
+#[test]
+fn a_distilled_duplicate_does_not_turn_the_existing_lesson_into_a_rewrite() {
+    let store = store();
+    let previous = active(&store, "Compare desktop labels at smaller window sizes");
+    let existing = active(
+        &store,
+        "Run the migration tests before shipping a schema change",
+    );
+    let incoming = draft(
+        LessonScope::default(),
+        "Run the migration tests before you ship a schema change",
+        LessonSource::Distilled,
+        LessonState::Proposed,
+    );
+    let run = archon_core::id::PipelineRunId::new();
+    store
+        .apply_distillation(&run, vec![(incoming, Some(previous.id))], None)
+        .unwrap();
+
+    let lessons = store.lessons(&Default::default()).unwrap();
+    assert_eq!(lessons.len(), 2);
+    let repeated = store.lesson(&existing.id).unwrap();
+    assert_eq!(repeated.state, existing.state);
+    assert!(
+        repeated
+            .refs
+            .iter()
+            .any(|reference| reference.value == run.as_str())
+    );
+    assert!(store.kv_prefix("learning/rewrite/").unwrap().is_empty());
+}
+
+#[test]
+fn a_distilled_lesson_links_to_a_failed_item_in_its_own_repository() {
+    let mut store = store();
+    let alpha = repo("alpha");
+    let beta = repo("beta");
+    store.insert_repo(&alpha).unwrap();
+    store.insert_repo(&beta).unwrap();
+    let failed = store
+        .insert_item(&item(Some(&alpha), "failed"), None)
+        .unwrap();
+    let run = start(&mut store, &failed.id);
+    capture_timeout(&mut store, &run);
+    let distilling = archon_core::id::PipelineRunId::new();
+    let mut lesson = draft(
+        LessonScope {
+            repo: Some(beta.id),
+            pipeline: None,
+        },
+        "Limit the work in each scheduled check",
+        LessonSource::Distilled,
+        LessonState::Proposed,
+    );
+    lesson.item = Some(failed.id.clone());
+    let error = store
+        .apply_distillation(&distilling, vec![(lesson.clone(), None)], None)
+        .unwrap_err();
+    assert!(error.to_string().contains(failed.id.as_str()), "{error}");
+    assert!(store.lessons(&Default::default()).unwrap().is_empty());
+
+    lesson.scope.repo = Some(alpha.id);
+    store
+        .apply_distillation(&distilling, vec![(lesson.clone(), None)], None)
+        .unwrap();
+
+    let recorded = store.lesson(&lesson.id).unwrap();
+    assert_eq!(recorded.item, Some(failed.id));
+    assert_eq!(
+        recorded.failure_class,
+        Some(archon_core::outcome::FailureClass::Timeout)
+    );
+    assert!(
+        recorded
+            .refs
+            .iter()
+            .any(|reference| reference.value == distilling.as_str())
+    );
 }
 
 #[test]
@@ -539,7 +682,9 @@ fn existing_lessons_migrate_unchanged() {
     drop(Store::open(&path).unwrap());
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute_batch(
-        "DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster; DROP INDEX items_by_duplicate_candidate;
+        "DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;
+         DROP TABLE stage_spend; DROP TABLE stage_spend_windows; ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
+         DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster; DROP INDEX items_by_duplicate_candidate;
          ALTER TABLE lessons DROP COLUMN cluster;
          ALTER TABLE outcomes DROP COLUMN class_source; ALTER TABLE outcomes DROP COLUMN failure_class_163;
          DELETE FROM schema_migrations WHERE version >= 23;",
@@ -580,5 +725,5 @@ fn existing_lessons_migrate_unchanged() {
     );
     assert_eq!(clusters, vec![vec![rusqlite::types::Value::Integer(0)]]);
     let latest = rows(&conn, "SELECT MAX(version) FROM schema_migrations");
-    assert_eq!(latest, vec![vec![rusqlite::types::Value::Integer(25)]]);
+    assert_eq!(latest, vec![vec![rusqlite::types::Value::Integer(27)]]);
 }

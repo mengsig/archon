@@ -958,9 +958,9 @@ attempt reported. It is a digest of at most 1,200 characters per stage and
 already shows through `{{previous.<id>.summary}}` is not repeated there.
 A team stage with `roles_from` gets none: its workers see their own task
 only, so the plan's and their peers' reports stay out, and so does a
-proposal's direction, which the planner carries into the tasks. Of the
-feedback that sends them back, they see the integrator's error from its
-`REDISPATCH:` line on; without one, they are told to change nothing.
+proposal's direction, which the planner carries into the tasks. Workers
+that are sent back see the integrator's retry feedback. A failure without
+structured slots supplies feedback through the legacy `REDISPATCH:` header.
 So a prompt needs `{{previous.*}}` only where the full summary matters;
 the next stage is not left to rediscover what changed, where, how it was
 verified and what is still open. That is what a stage summary should say.
@@ -1446,9 +1446,14 @@ are coupled, `direct` or `adaptive` costs less.
 3. `integrate` (work, tier `strong`) runs every task's acceptance
    commands, the plan's checks and the repository's fast checks on the
    merged change. A task whose own part is wrong goes back to its worker:
-   the integrator fails with `REDISPATCH: <task ids>` and what to fix,
-   `on_fail` returns to `build`, and the workers not named finish at
-   once. That happens at most twice; on the third attempt the integrator
+   the integrator calls `complete_task` with a fail verdict and
+   `redo_slots` in its structured result. The list contains distinct
+   zero-based indexes in the plan's `tasks` array. The summary says what
+   to fix. `on_fail` returns to `build`, which runs and merges only those
+   slots and carries forward the other workers' results. Stage output
+   for the new attempt includes carried results with their original
+   attempt numbers. Omitting the list runs the whole team again.
+   This happens at most twice. On the third attempt the integrator
    fixes what remains itself or fails. It never commits the plan file, delegates the reviewers the item's review level asks for
    (`[pipeline.review] level = "standard"` on `integrate`), and returns
    the ship record; archond ships it.

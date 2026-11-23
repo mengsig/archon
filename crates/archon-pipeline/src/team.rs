@@ -81,8 +81,8 @@ pub struct RoleBranch {
     pub branch: String,
 }
 
-/// Merge every role's branch of one passed team attempt onto the run
-/// branch, `--no-ff`, in roles order.
+/// Merge the branches run in a passed team attempt onto the run branch,
+/// `--no-ff`, in roles order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergePlan {
     pub stage_id: String,

@@ -109,6 +109,12 @@ pub struct Lesson {
     /// The item whose outcome prompted it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item: Option<QueueItemId>,
+    /// Failure observed on the source item when the lesson was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_class: Option<crate::outcome::FailureClass>,
+    /// The policy that triggered automatic retraction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retirement: Option<LessonRetirement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub superseded_by: Option<LessonId>,
     pub created_at: Timestamp,
@@ -128,6 +134,12 @@ pub struct Lesson {
     /// id; only display and injection dedupe read it, never scoring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cluster: Option<LessonId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LessonRetirement {
+    pub min_uses: u32,
+    pub baseline: f64,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -221,6 +233,8 @@ impl Lesson {
             confidence: 0.0,
             source,
             item: None,
+            failure_class: None,
+            retirement: None,
             superseded_by: None,
             created_at: at,
             updated_at: at,
@@ -407,6 +421,9 @@ pub struct LessonStats {
     pub proposed: u64,
     pub active: u64,
     pub retracted: u64,
+    /// Effective sample floor while the daemon is running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retire_min_uses: Option<u32>,
     /// Pooled routing evidence; an item uses its own matching context.
     pub routes: Vec<LearnedRoute>,
     #[serde(default)]

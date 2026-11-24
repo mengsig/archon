@@ -369,7 +369,7 @@ mod tests {
                 let result = blocked.check_frame_tree(&child_tree(url, origin)).map(drop);
                 assert!(matches!(result, Err(BrowserError::Containment(_))));
                 assert_eq!(
-                    blocked.reason().as_deref(),
+                    blocked.reason(),
                     Some("a subframe document was outside the preview origin")
                 );
             }
@@ -385,7 +385,7 @@ mod tests {
             Err(BrowserError::Containment(_))
         ));
         assert_eq!(
-            guard.reason().as_deref(),
+            guard.reason(),
             Some("a main-frame document was outside the preview origin")
         );
     }
@@ -404,7 +404,7 @@ mod tests {
                 Err(BrowserError::Containment(_))
             ));
             assert_eq!(
-                guard.reason().as_deref(),
+                guard.reason(),
                 Some("a subframe storage origin was outside the preview origin")
             );
         }
@@ -419,7 +419,7 @@ mod tests {
             Err(BrowserError::Containment(_))
         ));
         assert_eq!(
-            guard.reason().as_deref(),
+            guard.reason(),
             Some("Chromium could not verify a subframe storage origin")
         );
     }

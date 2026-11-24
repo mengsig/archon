@@ -9,10 +9,10 @@ import { initialState, reduce, isLive, currentPath, followsNewSession, presetMis
 import { createDesignStream } from './stream.js';
 import { createStage } from './overlay.js';
 import { createComposer } from './composer.js';
-import { createNotesPanel } from './notes.js';
+import { createNotesPanel, openUnsentDrafts } from './notes.js';
 import { createInputBatcher, textEvent } from './input.js';
 import { escapeKeyEvents, shortcutFor, isTextTarget, stepDepth } from './keymap.js';
-import { createNoteOutbox, newClientKey } from './outbox.js';
+import { blockedDraftReason, createNoteOutbox, newClientKey, retryableNoteError } from './outbox.js';
 import { createThumbs } from './thumbs.js';
 import { createTreePanel } from './tree.js';
 import { createViewer } from './viewer.js';
@@ -51,6 +51,8 @@ export function mountDesign(view, ctx) {
   let presetSent = null; // `${session}|${preset}` of the last preset request, so a mismatch re-sends once
   let follower = null; // the poll that waits for the item's next session
   const outbox = createNoteOutbox({ item });
+  let sendingNotes = 0;
+  let blockedDrafts = [];
   const iterations = () => Boolean(ctx.store.get().designIterations);
   const thumbs = createThumbs(ctx, item);
   let tab = 'notes'; // 'notes' | 'tree'
@@ -102,6 +104,9 @@ export function mountDesign(view, ctx) {
       stream.refresh();
     },
   });
+  const draftButton = h('button', { class: 'button button-plain button-small', type: 'button', hidden: true,
+    'aria-haspopup': 'dialog', onclick: () => openUnsentDrafts(blockedDrafts) }, 'Unsent drafts');
+  top.element.append(draftButton);
   const modes = buildModeBar({ onMode: (m) => setMode(m), onNewScreen: () => newScreen() });
   const bottom = buildBottomBar({ onMode: (m) => setMode(m), onNotes: () => { sheetHeight = sheetHeight === 'peek' ? 'half' : 'peek'; render(); } });
   const phase = buildPhasePanel({
@@ -225,16 +230,9 @@ export function mountDesign(view, ctx) {
       notes.select(note.id);
       return true;
     }
-    const entry = outbox.add({ ...noteFields({ session: session(), clientKey: undefined, text, asset: null, sendPicture: false, sendDetails: false, details: '', refs, follows: base.id }), client_key: undefined, session: undefined });
-    try {
-      const note = await ctx.design.noteAdd({ ...entry, session: session() });
-      outbox.remove(entry.client_key);
-      dispatch({ type: 'event', event: { event: 'note', ...note } });
-      notes.select(note.id);
-    } catch (err) {
-      if (err.code === 'disconnected' || err.code === 'timeout') toast('Saved on this device. It will be sent when the connection is back.', { tone: 'amber' });
-      else { outbox.remove(entry.client_key); if (err?.code === 'gone') refuse(err); throw err; }
-    } finally { notes.setPending(outbox.pending()); }
+    const fields = noteFields({ session: session(), text, asset: null, sendPicture: false, sendDetails: false, details: '', refs, follows: base.id });
+    const note = await submitNote(fields);
+    if (note && session() === fields.session) notes.select(note.id);
     return true;
   }
 
@@ -336,41 +334,91 @@ export function mountDesign(view, ctx) {
 
   async function sendNote({ text, asset, sendPicture, sendDetails, details, refs }) {
     if (composer.busy) return;
-    const fields = noteFields({ session: session(), clientKey: undefined, text, asset, sendPicture, sendDetails, details, refs: iterations() ? refs : [] });
-    const entry = outbox.add({ ...fields, client_key: undefined, session: undefined });
+    const fields = noteFields({ session: session(), text, asset, sendPicture, sendDetails, details, refs: iterations() ? refs : [] });
     composer.setBusy(true);
     try {
-      const note = await ctx.design.noteAdd({ ...entry, session: session() });
-      outbox.remove(entry.client_key);
-      dispatch({ type: 'event', event: { event: 'note', ...note } });
+      const note = await submitNote(fields);
       composer.reset();
       stage.setSelection(null);
       dispatch({ type: 'selection', selection: null });
       collapseSheet(true);
-      notes.select(note.id);
+      if (note && session() === fields.session) notes.select(note.id);
     } catch (err) {
-      if (err.code === 'disconnected' || err.code === 'timeout') {
-        composer.reset();
-        toast('Saved on this device. It will be sent when the connection is back.', { tone: 'amber' });
-      } else { outbox.remove(entry.client_key); composer.setError(designErrorText(err)); if (err?.code === 'gone') refuse(err); }
-    } finally { composer.setBusy(false); notes.setPending(outbox.pending()); }
+      composer.setError(designErrorText(err));
+    } finally { composer.setBusy(false); }
+  }
+
+  const canSendDraft = (id) => viewCurrent && state.connection === 'open' &&
+    state.session?.state === 'live' && session() === id;
+  function savedDraft(entry) {
+    if (!outbox.pending().some((draft) => draft.client_key === entry.client_key)) {
+      throw new Error('This device could not save the draft. Keep this note open and try again.');
+    }
+    toast('Saved on this device. It can only be sent to its original design session.', { tone: 'amber' });
+  }
+
+  async function submitNote(fields) {
+    const entry = outbox.add(fields);
+    if (!canSendDraft(entry.session)) {
+      renderDrafts();
+      savedDraft(entry);
+      return null;
+    }
+    sendingNotes += 1;
+    try {
+      const note = await ctx.design.noteAdd(entry);
+      outbox.remove(entry.client_key);
+      if (session() === entry.session) dispatch({ type: 'event', event: { event: 'note', ...note } });
+      return note;
+    } catch (err) {
+      if (err?.code === 'gone') {
+        outbox.markEnded(entry.client_key);
+        if (session() === entry.session) refuse(err);
+      } else if (!retryableNoteError(err)) {
+        outbox.remove(entry.client_key);
+        throw err;
+      }
+      savedDraft(entry);
+      return null;
+    } finally {
+      sendingNotes -= 1;
+      renderDrafts();
+    }
+  }
+
+  function renderDrafts() {
+    const waiting = [];
+    const blocked = [];
+    const phase = state.session?.state ?? (viewCurrent ? 'ended' : null);
+    for (const entry of operator ? outbox.pending() : []) {
+      const reason = blockedDraftReason(entry, session(), phase);
+      if (reason) blocked.push({ entry, reason });
+      else waiting.push(entry);
+    }
+    blockedDrafts = blocked;
+    draftButton.hidden = blocked.length === 0;
+    notes.setPending(waiting);
+    return waiting;
   }
   let lastFlushAt = -Infinity;
   let lastFlushSession = null;
   const FLUSH_EVERY_MS = 5000;
-  const flushOutbox = () => {
-    // A note being sent right now sits in the outbox too; flushing then would send it twice.
-    if (!viewCurrent || state.connection !== 'open' || state.session?.state !== 'live' || composer.busy) return;
-    if (!outbox.pending().length) return;
+  const flushOutbox = (waiting) => {
+    const id = session();
+    if (!canSendDraft(id) || sendingNotes || !waiting.length) return;
     // On reconnect or session change at once; otherwise at most once per few seconds.
-    const fresh = session() !== lastFlushSession;
+    const fresh = id !== lastFlushSession;
     const now = Date.now();
     if (!fresh && now - lastFlushAt < FLUSH_EVERY_MS) return;
-    lastFlushAt = now; lastFlushSession = session();
-    outbox.flush((f) => ctx.design.noteAdd(f), session(), {
-      onSent: (_e, note) => dispatch({ type: 'event', event: { event: 'note', ...note } }),
-      onRefused: (_e, err) => toast(`A note typed offline was not sent: ${designErrorText(err)}`, { tone: 'red' }),
-    }).then(() => notes.setPending(outbox.pending()));
+    lastFlushAt = now; lastFlushSession = id;
+    outbox.flush((f) => ctx.design.noteAdd(f), id, {
+      canSend: () => canSendDraft(id),
+      onSent: (_e, note) => { if (session() === id) dispatch({ type: 'event', event: { event: 'note', ...note } }); },
+      onRefused: (_e, err) => {
+        if (err?.code === 'gone' && session() === id) refuse(err);
+        toast(`A note typed offline was not sent: ${designErrorText(err)}`, { tone: 'red' });
+      },
+    }).then(renderDrafts);
   };
 
   let dialogOpen = false;
@@ -451,7 +499,8 @@ export function mountDesign(view, ctx) {
     root.dataset.phase = p.kind;
     root.dataset.preset = state.preset;
     root.dataset.mode = state.mode;
-    if (state.loaded && ctx.canOperate && state.session?.state === 'live') flushOutbox();
+    const waiting = renderDrafts();
+    if (operator) flushOutbox(waiting);
     // The daemon may not have applied the preset the session says it has: a frame at another size re-sends it, once.
     if (operator && state.session?.state === 'live' && presetMismatch(state) && presetSent !== `${session()}|${state.preset}`) {
       presetSent = `${session()}|${state.preset}`;

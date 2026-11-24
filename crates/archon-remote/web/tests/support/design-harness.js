@@ -157,6 +157,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
     if (cmd?.startsWith('subscribe_') && cmd !== 'subscribe_design') return reply(ws, req, 'subscribed', { id: 9, last_seq: 0 });
     if (!cmd?.startsWith('design_') && cmd !== 'subscribe_design') return refuse(ws, req, 'unsupported', `${cmd} is not part of this stand-in`);
     if (cmd === 'design_get') {
+      if (state.designGetError) return refuse(ws, req, state.designGetError.code, state.designGetError.message);
       if (role !== 'operator') return reply(ws, req, 'design_summary', { state: 'live', note_count: state.notes.length });
       return reply(ws, req, 'design_state', { item: ITEM, session: session(), notes: state.notes.map(view), browser: { status: 'running' }, finish_blocker: null, images_used: state.imagesUsed ?? 1, images_max: 128, stage_deadline: null });
     }
@@ -174,13 +175,19 @@ function createDaemon({ appPage, fixtureApp, role }) {
       case 'design_resolve': return reply(ws, req, 'design_resolved', { target: await target(), label: 'button "Buy now"', asset: 'da_pending', data_url: PIXEL });
       case 'design_region': return reply(ws, req, 'design_resolved', { target: { ...(await target()), selector: null, role_name: null, box: msg.box, region: true }, label: 'Region', asset: 'da_region', data_url: PIXEL });
       case 'design_note_add': {
+        if (state.onNextNoteAdd) {
+          const drop = state.onNextNoteAdd;
+          state.onNextNoteAdd = null;
+          return drop(ws);
+        }
+        if (msg.session !== state.sessionId) return refuse(ws, req, 'gone', 'This design session has ended.');
         if (state.sessionState === 'finishing') return refuse(ws, req, 'finishing', 'finishing');
         // Resolve first, then look up and insert with no await between, as
         // archond's one transaction does: a resent client_key finds its note.
         const resolved = await target();
         const known = state.notes.find((n) => n.client_key === msg.client_key);
         if (known) return reply(ws, req, 'design_note', view(known));
-        const n = note({ number: nextNumber(), client_key: msg.client_key, text: msg.text, details_text: msg.details_text, send_picture: msg.send_picture, target: resolved, follows: msg.follows ?? null, refs: msg.refs ?? [] });
+        const n = note({ number: nextNumber(), session: msg.session, client_key: msg.client_key, text: msg.text, details_text: msg.details_text, send_picture: msg.send_picture, target: resolved, follows: msg.follows ?? null, refs: msg.refs ?? [] });
         state.notes.unshift(n);
         reply(ws, req, 'design_note', view(n));
         later(async () => {

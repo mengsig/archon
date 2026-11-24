@@ -3,7 +3,7 @@
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { reconcile } from '../../ui/list.js';
-import { confirmSheet } from '../../ui/sheet.js';
+import { confirmSheet, openSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
 import { noteLook, noteActions, failText, shortSha, sessionLabel, earlierText, notesHeading } from './state.js';
 import { openCompare } from './compare.js';
@@ -33,6 +33,21 @@ export function refLinks(text, refs, onLink) {
     h('button', { class: 'ref-link', type: 'button', 'aria-label': `Show ${id} in the tree`, onclick: () => onLink(id) }, id)]));
 }
 
+export function openUnsentDrafts(drafts) {
+  const list = h('ul', { class: 'note-list', 'aria-label': 'Unsent drafts' });
+  for (const { entry, reason } of drafts) {
+    list.append(h('li', { class: 'note' },
+      h('p', { class: 'note-hint', text: reason }),
+      h('label', {}, 'Note text', h('textarea', { class: 'input textarea', readonly: true, rows: 3, value: entry.text })),
+      entry.details_text ? h('label', {}, 'Note details', h('textarea', { class: 'input textarea', readonly: true, rows: 3, value: entry.details_text })) : null,
+      entry.follows ? h('p', { class: 'note-hint', text: `Follow-up on ${entry.follows}` }) : null,
+      entry.refs?.length ? h('p', { class: 'note-hint', text: `References: ${entry.refs.join(' ')}` }) : null));
+  }
+  return openSheet({ title: 'Unsent drafts', content: h('div', { class: 'note-list' },
+    h('p', { class: 'note-hint', text: 'These drafts stay on this device. Select and copy the text to reuse it in a new note.' }),
+    list) });
+}
+
 export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage, iterations = () => false, thumbs = null, onLink = () => {}, onFollowUp = async () => {} }) {
   const list = h('ul', { class: 'note-list', 'aria-label': 'Notes' });
   const empty = emptyNotes();
@@ -41,6 +56,7 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage, iterat
   const title = h('h2', { class: 'notes-title', id: 'design-notes-title', text: 'Notes' });
   const el = h('section', { class: 'notes', 'aria-labelledby': 'design-notes-title' }, h('div', { class: 'notes-head' }, title, add), pending, list, empty);
   let selected = null;
+  let pendingSignature = '[]';
 
   const act = async (fn, okText) => {
     try {
@@ -200,12 +216,15 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage, iterat
     element: el, render,
     // Notes typed while offline that have not reached the daemon yet.
     setPending(entries) {
+      const signature = JSON.stringify(entries);
+      if (signature === pendingSignature) return;
+      pendingSignature = signature;
       pending.replaceChildren(...entries.map((e) => h('li', { class: 'note note-unsent' },
         h('div', { class: 'note-head' }, h('span', { class: 'chip tone-amber note-chip' }, icon('clock', { size: 14 }), h('span', { class: 'chip-text', text: 'Waiting to send' }))),
         e.follows ? h('p', { class: 'note-tag', text: `Follow-up on ${e.follows}` }) : null,
         h('p', { class: 'note-text', text: e.text }),
         e.refs?.length ? h('p', { class: 'note-hint note-refs', text: `References: ${e.refs.join(' ')}` }) : null)));
-      render();
+      empty.hidden = getState().notes.length > 0 || pending.children.length > 0;
     },
     select(id) {
       selected = id;

@@ -334,6 +334,86 @@ test.describe('end states', () => {
 test.describe('robustness and accessibility', () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
+  test('offline draft across a replacement session', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    const { daemon } = harness;
+    const storageKey = `archon.design.outbox.${ITEM}`;
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      await page.getByRole('button', { name: 'Note on the whole page' }).click();
+      const draft = 'Move the checkout button below the total';
+      await page.getByLabel('What should change').fill(draft);
+      daemon.state.onNextNoteAdd = (ws) => {
+        ws.close();
+        daemon.startNewSession();
+      };
+      await page.getByLabel('What should change').press('Enter');
+      const adds = () => daemon.state.requests.filter((r) => r.cmd === 'design_note_add');
+      await expect.poll(() => daemon.state.requests.some((r) => r.cmd === 'subscribe_design' && r.session === 'ds_SECOND')).toBe(true);
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      expect(adds().map((r) => r.session)).toEqual(['ds_FIXTURE']);
+      expect(daemon.state.notes).toEqual([]);
+      const recover = page.getByRole('button', { name: 'Unsent drafts' });
+      await expect(recover).toBeVisible();
+      await page.evaluate((key) => {
+        const saved = JSON.parse(localStorage.getItem(key));
+        saved.push({ client_key: 'web-legacy', text: 'Keep the totals visible', details_text: 'The old sidebar had a summary.' });
+        localStorage.setItem(key, JSON.stringify(saved));
+      }, storageKey);
+      await page.reload();
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      await recover.focus();
+      await recover.press('Enter');
+      const dialog = page.getByRole('dialog', { name: 'Unsent drafts' });
+      const cards = dialog.getByRole('listitem');
+      await expect(cards).toHaveCount(2);
+      const [earlier, legacy] = await cards.all();
+      await expect(earlier).toContainText('This draft belongs to an earlier design session.');
+      const words = earlier.getByRole('textbox', { name: 'Note text' });
+      await expect(words).toHaveValue(draft);
+      await words.press('ControlOrMeta+a');
+      expect(await words.evaluate((el) => el.value.slice(el.selectionStart, el.selectionEnd))).toBe(draft);
+      await expect(legacy).toContainText('The original design session is unknown.');
+      await expect(legacy.getByRole('textbox', { name: 'Note text' })).toHaveValue('Keep the totals visible');
+      await expect(legacy.getByRole('textbox', { name: 'Note details' })).toHaveValue('The old sidebar had a summary.');
+      await page.screenshot({ path: `${EVIDENCE}/offline-replacement-after.png`, animations: 'disabled' });
+      await page.keyboard.press('Escape');
+      await expect(recover).toBeFocused();
+      expect(adds().map((r) => r.session)).toEqual(['ds_FIXTURE']);
+    } finally { await harness.stop(); }
+  });
+
+  test('drafts are recoverable when the initial session read fails and after the session ends', async ({ browser, page }) => {
+    const harness = await startHarness(browser);
+    const { daemon } = harness;
+    const draft = { session: 'ds_FIXTURE', client_key: 'web-recovery', text: 'Move the checkout button below the total' };
+    try {
+      daemon.state.designGetError = { code: 'unavailable', message: 'The design session is temporarily unavailable.' };
+      await page.addInitScript(({ key, draft }) => localStorage.setItem(key, JSON.stringify([draft])),
+        { key: `archon.design.outbox.${ITEM}`, draft });
+      await harness.install(page);
+      await page.goto(`${harness.baseURL}/#/design/${ITEM}`);
+      await expect.poll(() => daemon.state.requests.some((r) => r.cmd === 'design_get')).toBe(true);
+
+      const recover = page.getByRole('button', { name: 'Unsent drafts' });
+      const dialog = page.getByRole('dialog', { name: 'Unsent drafts' });
+      await recover.click();
+      await expect(dialog).toContainText('Waiting to verify the original design session.');
+      await expect(dialog.getByRole('textbox', { name: 'Note text' })).toHaveValue(draft.text);
+      await dialog.getByRole('button', { name: 'Close' }).click();
+      await expect(dialog).toBeHidden();
+
+      daemon.state.designGetError = null;
+      daemon.endSession('revised');
+      await page.reload();
+      await expect(page.getByRole('heading', { name: 'Changes requested' })).toBeVisible();
+      await recover.click();
+      await expect(dialog).toContainText('The original design session has ended.');
+      await expect(dialog.getByRole('textbox', { name: 'Note text' })).toHaveValue(draft.text);
+      expect(daemon.state.requests.filter((r) => r.cmd === 'design_note_add')).toEqual([]);
+    } finally { await harness.stop(); }
+  });
+
   test('T-E5: preview down and back, a browser that keeps crashing, a dropped socket sends a note once', async ({ browser, page }) => {
     const harness = await open(browser, page);
     try {

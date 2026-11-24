@@ -511,74 +511,21 @@ impl DesignService {
         reason: &str,
         _held: tokio::sync::OwnedMutexGuard<()>,
     ) -> Result<(), ArchonError> {
-        {
+        let reason = {
             let mut store = ctx.store.lock().await;
-            // Re-read under the lock: another end may have won the race. A
-            // row ended in the store alone (a newer session superseded it)
-            // still lets go of what this daemon holds for it.
-            match store.design_session(&session.id)? {
-                Some(row) if row.state != SessionState::Ended => {}
-                found => {
-                    drop(store);
-                    // Streams hear the reason the session really ended with
-                    // (an approval, say), never a later caller's.
-                    let reason = found
-                        .and_then(|row| row.end_reason)
-                        .unwrap_or_else(|| reason.to_owned());
-                    if let Some(rt) = self.existing_runtime(&session.id) {
-                        let _ = rt.events.send(DesignEvent::Ended {
-                            reason: reason.clone(),
-                        });
-                        self.close_session_browser(&session.id, &reason).await;
-                        self.spawn_start_queued();
-                    }
-                    self.wts
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .remove(&session.id);
-                    return Ok(());
-                }
-            }
-            // Notes the agent never settled stay on record as not delivered.
-            for note in store.design_notes(&session.item)? {
-                if note.session != session.id {
-                    continue;
-                }
-                match note.status {
-                    NoteStatus::Queued => {
-                        store.design_note_change(
-                            &session.item,
-                            &note.id,
-                            status_change(
-                                NoteStatus::Cancelled,
-                                Some(archon_core::design::FailReason::NotDelivered),
-                            ),
-                        )?;
-                    }
-                    NoteStatus::Sent | NoteStatus::Working | NoteStatus::NeedsReply
-                        if note.kind != NoteKind::Revert =>
-                    {
-                        store.design_note_change(
-                            &session.item,
-                            &note.id,
-                            status_change(
-                                NoteStatus::Failed,
-                                Some(archon_core::design::FailReason::NotDelivered),
-                            ),
-                        )?;
-                    }
-                    _ => {}
-                }
-            }
-            store.design_session_end(&session.id, reason)?;
-            store.kv_delete(&archon_queue::store::keys::design_owed(&session.id))?;
-        }
+            let row = match store.design_session_end(&session.id, reason)? {
+                Some(ended) => Some(ended),
+                None => store.design_session(&session.id)?,
+            };
+            row.and_then(|s| s.end_reason)
+                .unwrap_or_else(|| reason.to_owned())
+        };
         if let Some(rt) = self.existing_runtime(&session.id) {
             let _ = rt.events.send(DesignEvent::Ended {
                 reason: reason.to_owned(),
             });
         }
-        self.close_session_browser(&session.id, reason).await;
+        self.close_session_browser(&session.id, &reason).await;
         // A slot is free: start a queued session's browser, off this path,
         // which may hold the run table.
         self.spawn_start_queued();

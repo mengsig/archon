@@ -426,12 +426,24 @@ fn now() -> String {
 }
 
 fn end_session(tx: &Connection, id: &DesignSessionId, reason: &str) -> Result<(), ArchonError> {
+    let at = now();
+    let changed = tx
+        .execute(
+            "UPDATE design_notes
+         SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE 'failed' END,
+             fail_reason = 'not_delivered', no_change = 0, updated_at = ?2
+         WHERE session = ?1 AND (status = 'queued' OR
+               (kind <> 'revert' AND status IN ('sent', 'working', 'needs_reply')))",
+            params![id.as_str(), at],
+        )
+        .ctx("settle undelivered design notes")?;
     tx.execute(
-        "UPDATE design_sessions SET state = 'ended', ended_at = ?2, end_reason = ?3
-         WHERE id = ?1 AND state <> 'ended'",
-        params![id.as_str(), now(), reason],
+        "UPDATE design_sessions SET state = 'ended', ended_at = ?2, end_reason = ?3,
+             note_version = note_version + ?4 WHERE id = ?1 AND state <> 'ended'",
+        params![id.as_str(), at, reason, changed],
     )
     .ctx("end design session")?;
+    settings::kv_delete(tx, &keys::design_owed(id))?;
     Ok(())
 }
 

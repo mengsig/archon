@@ -207,6 +207,37 @@ fn numbers_are_monotonic_across_sessions_and_replays_are_idempotent() {
 }
 
 #[test]
+fn superseding_a_session_settles_notes_and_clears_owed_work() {
+    let (mut store, _, items) = seeded(1);
+    let item = &items[0].id;
+    let session = live(&mut store, item);
+    let sent = add(&mut store, item, &session, "sent");
+    send(&mut store, item, &sent).unwrap();
+    let queued = add(&mut store, item, &session, "queued");
+    let key = keys::design_owed(&session);
+    store.kv_set(&key, "notice").unwrap();
+    let initial = store.design_session(&session).unwrap().unwrap();
+    live(&mut store, item);
+    assert_eq!(
+        store
+            .design_session(&session)
+            .unwrap()
+            .unwrap()
+            .note_version,
+        initial.note_version + 2
+    );
+    assert!(store.kv_get(&key).unwrap().is_none());
+    for (id, status) in [(sent, NoteStatus::Failed), (queued, NoteStatus::Cancelled)] {
+        let note = store.design_note(item, &id).unwrap().unwrap();
+        assert_eq!(note.status, status);
+        assert_eq!(
+            note.fail_reason,
+            Some(archon_core::design::FailReason::NotDelivered)
+        );
+    }
+}
+
+#[test]
 fn two_handles_on_one_database_never_duplicate_a_number() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("archon.db");

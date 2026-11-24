@@ -24,33 +24,48 @@ pub fn check_rules(checks: &Checks, fast: FastCheck<'_>) -> String {
     if checks.is_empty() && fast.integration.is_none() {
         return String::new();
     }
-    let rule = match (checks.fast.as_deref(), fast.integration) {
-        (Some(template), _) => fast_rule(template, fast),
-        (None, Some(branch)) => integration_rule(branch),
-        (None, None) => "Run only the checks your change affects.".to_owned(),
-    };
+    let mut rules = Vec::with_capacity(5);
+    if let Some(template) = checks.fast.as_deref() {
+        rules.push(fast_rule(template, fast));
+    }
+    if let Some(branch) = fast.integration {
+        rules.push(integration_rule(branch));
+    }
+    if rules.is_empty() {
+        rules.push("Run only the checks your change affects.".to_owned());
+    }
     let full = match checks.full.as_deref() {
         Some(full) => format!(" (`{full}`)"),
         None => String::new(),
     };
+    rules.push(format!(
+        "Do not run the full suite{full}: it runs on the integration branch after merges, \
+         off this item's path."
+    ));
+    if fast.integration.is_some() {
+        rules.extend(INTEGRATION_LIMITS.iter().map(|rule| (*rule).to_owned()));
+    }
     assert!(
-        !rule.contains('\n') && !full.contains('\n'),
-        "validated: one-line commands"
+        rules.iter().all(|rule| !rule.contains('\n')),
+        "validated: one-line commands and branch names"
     );
-    format!(
-        "\n## Checks\n\n\
-         - {rule}\n\
-         - Do not run the full suite{full}: it runs on the integration branch after \
-         merges, off this item's path. Run it only for a release pull request (the \
-         integration branch into the release branch), release preparation, or when the \
-         brief asks for it.\n\
-         - Reviewers do not rerun the full suite: they read the checks' evidence and run \
-         only the focused checks the review needs. Tell each reviewer so.\n"
-    )
+    let bullets: String = rules.iter().map(|rule| format!("- {rule}\n")).collect();
+    format!("\n## Checks\n\n{bullets}")
 }
 
-/// The fast checks of a change for the integration branch `branch` where the
-/// repository names no fast check command.
+/// What a change for an integration branch adds: when the full suite still
+/// runs, the tree its evidence names, and what its reviewers run.
+const INTEGRATION_LIMITS: [&str; 3] = [
+    "Run the full suite only for a release pull request (the integration branch into \
+     the release branch), release preparation, or when the brief asks for it.",
+    "Report the `git rev-parse HEAD^{tree}` of your last fast checks in place of a full \
+     check.",
+    "Reviewers do not rerun the full suite: they read the checks' evidence and run only \
+     the focused checks the review needs. Tell each reviewer so.",
+];
+
+/// The fast checks of a change for the integration branch `branch`, beside
+/// any fast check command the repository names.
 fn integration_rule(branch: &str) -> String {
     assert!(!branch.trim().is_empty(), "a branch has a name");
     assert!(
@@ -156,8 +171,9 @@ mod tests {
             "(such as `sh scripts/ci-slot.sh <command>`)",
             "the format check, the linter, and the tests of the crates or packages your change touches",
             "Do not run the full suite:",
-            "Run it only for a release pull request",
+            "Run the full suite only for a release pull request",
             "release preparation, or when the brief asks for it",
+            "of your last fast checks in place of a full check",
             "Reviewers do not rerun the full suite: they read the checks' evidence",
         ] {
             assert!(flat.contains(said), "missing {said:?} in {text}");
@@ -168,13 +184,25 @@ mod tests {
             "{configured}"
         );
         assert!(
-            !configured.contains("integration branch `next`:"),
-            "{configured}"
+            configured.contains("integration branch `next`: run fast checks"),
+            "a configured command keeps the format, lint and slot rule: {configured}"
         );
         assert!(
             configured.contains("Reviewers do not rerun"),
             "{configured}"
         );
+        let elsewhere = check_rules(
+            &checks(Some("make quick"), Some("make ci")),
+            FastCheck::default(),
+        );
+        for integration_only in [
+            "integration branch `",
+            "only for a release pull request",
+            "in place of a full check",
+            "Reviewers do not rerun",
+        ] {
+            assert!(!elsewhere.contains(integration_only), "{elsewhere}");
+        }
     }
 
     #[test]

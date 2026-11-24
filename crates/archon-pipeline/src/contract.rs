@@ -1062,9 +1062,9 @@ const WORK_RULES: &str = "\n## Work stage\n\n\
 list what changed and why, the files touched, the exact verification commands you ran \
 with their results, and any known gaps.\n\
 - Run checks in the foreground or wait on them: never end your turn while one runs.\n\
-- Report the `git rev-parse HEAD^{tree}` of your last full or fast check. A passing \
-check of a tree holds for any later head with that tree. After a passing check, a \
-later diff of only prose or raster images that no build or test reads needs only the \
+- Report the `git rev-parse HEAD^{tree}` of your last full check. A passing check of \
+a tree holds for any later head with that tree. After a passing full check, a later \
+diff of only prose or raster images that no build or test reads needs only the \
 repository's link and notice checks.\n";
 
 /// Whether a stage of `kind` builds the run's change: a team role, or the
@@ -1589,7 +1589,7 @@ mod tests {
         }
         assert!(!work.contains("must print the same tree"));
         assert!(
-            work.contains("Report the `git rev-parse HEAD^{tree}` of your last full or fast check"),
+            work.contains("Report the `git rev-parse HEAD^{tree}` of your last full check"),
             "a later stage may rely on a check bound to the tree: {work}"
         );
         let work = work.split_whitespace().collect::<Vec<_>>().join(" ");

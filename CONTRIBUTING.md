@@ -73,6 +73,9 @@ Aether's `scripts/ci_slot.sh`:
 - `CI_TEST_THREADS` (default 4) sets `NEXTEST_TEST_THREADS` and
   `RUST_TEST_THREADS` for the command, unless they are already set.
 
+The priority and thread settings also hold without a slot (`CI_HOST_SLOTS=0`
+or no `flock`); only the memory wait needs one.
+
 Any command can take a slot: `sh scripts/ci-slot.sh cargo test -p archon-pipeline`.
 
 Archon's phone app is served by archond. Its unit and Playwright tests live

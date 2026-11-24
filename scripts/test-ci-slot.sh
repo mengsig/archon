@@ -272,6 +272,30 @@ threads=$(env -u RUST_TEST_THREADS NEXTEST_TEST_THREADS=9 "$shell" "$slot" sh -c
 threads=$(env -u NEXTEST_TEST_THREADS RUST_TEST_THREADS=7 "$shell" "$slot" sh -c "$show_threads" 2>/dev/null)
 [ "$threads" = "4 7" ] || fail "caller RUST_TEST_THREADS not kept: '$threads'"
 
+# Without a slot (none asked for, or no flock) the command keeps the priority and thread policy.
+wrapped='systemd-run --user --scope --quiet -p CPUWeight=20 -p IOWeight=20 -p MemoryHigh=6G -- nice -n 19 ionice -c 3 true'
+: > "$LP_LOG"
+CI_HOST_SLOTS=0 PATH="$lpbin:$PATH" CI_LOW_PRIORITY=1 "$shell" "$slot" true 2>/dev/null
+grep -q -- "$wrapped" "$LP_LOG" || fail "zero slots skipped low priority: $(cat "$LP_LOG")"
+threads=$(env -u NEXTEST_TEST_THREADS -u RUST_TEST_THREADS CI_HOST_SLOTS=0 "$shell" "$slot" sh -c "$show_threads" 2>/dev/null)
+[ "$threads" = "4 4" ] || fail "zero slots left test threads '$threads'"
+status=0
+CI_HOST_SLOTS=0 "$shell" "$slot" sh -c 'exit 6' 2>/dev/null || status=$?
+[ "$status" -eq 6 ] || fail "zero slots lost the exit status: $status"
+noflock="$testdir/noflock-bin"
+mkdir "$noflock"
+cp "$lpbin"/* "$noflock"/
+ln -s "$(command -v sh)" "$noflock/sh"
+printf '#!/bin/sh\nexit 0\n' > "$noflock/true"
+chmod +x "$noflock/true"
+shell_path=$(command -v "$shell")
+: > "$LP_LOG"
+PATH="$noflock" CI_LOW_PRIORITY=1 "$shell_path" "$slot" true 2>"$testdir/noflock.err" || fail "no-flock run failed: $(cat "$testdir/noflock.err")"
+grep -q 'no flock on PATH' "$testdir/noflock.err" || fail "no-flock run was not announced"
+grep -q -- "$wrapped" "$LP_LOG" || fail "no-flock run skipped low priority: $(cat "$LP_LOG")"
+threads=$(env -u NEXTEST_TEST_THREADS -u RUST_TEST_THREADS PATH="$noflock" "$shell_path" "$slot" sh -c "$show_threads" 2>/dev/null)
+[ "$threads" = "4 4" ] || fail "no-flock run left test threads '$threads'"
+
 # Memory wait against a fake meminfo.
 printf 'MemAvailable: %s kB\n' 8388608 > "$testdir/meminfo"
 export CI_SLOT_MEMINFO="$testdir/meminfo" CI_SLOT_MEM_POLL_SECS=1

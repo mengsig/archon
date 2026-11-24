@@ -369,7 +369,7 @@ async fn an_item_for_a_base_branch_short_of_the_release_branch_runs_fast_checks(
         "{said}"
     );
     assert!(
-        said.contains("Run it only for a release pull request"),
+        said.contains("Run the full suite only for a release pull request"),
         "{said}"
     );
 }

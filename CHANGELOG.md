@@ -11,6 +11,19 @@
   blocking fail, a whole-change read after an amend or rebase, or the
   replacement of one that counts for nothing). Leads paste the reviewer
   verdict JSON verbatim, and the reviewer adds its `risk` call to that JSON.
+- Items whose pull request is for an integration branch (such as `next`)
+  run fast checks, not the full suite. Their stage contract now says so even
+  where the repository names no check: format, lint and the tests of the
+  crates or packages the change touches, through the CI slot script; the
+  full suite only for a release pull request, release preparation or a brief
+  that asks; and reviewers read that evidence rather than rerun the full
+  suite. Release and stacked changes keep the default checks.
+- `scripts/ci-slot.sh` keeps CI light on a shared machine, as Aether's
+  `scripts/ci_slot.sh` does: in its slot it waits for `CI_MIN_FREE_GIB` of
+  free memory (default 6, for at most `CI_MEM_WAIT_MAX_MIN`, default 30),
+  runs the command in a low-priority systemd user scope (`CPUWeight=20`,
+  `IOWeight=20`, `MemoryHigh=$CI_MEMORY_HIGH`, default `6G`) under `nice`
+  and `ionice`, and caps test threads at `CI_TEST_THREADS` (default 4).
 - A stage whose contract asks for no verdict, such as `direct`'s
   `implement`, no longer records `verdict_note = missing_verdict_line` when
   it settles under its run's driver.

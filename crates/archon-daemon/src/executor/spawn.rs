@@ -740,9 +740,11 @@ fn run_sections(
     let env = RepoEnv::new(repo.cloned())?;
     let tiers = env.tiers()?;
     let (affected, gated) = fast_check_now(store, run, &env, &tiers, mode)?;
+    let integration = integration_now(store, run, &env, &tiers, mode)?;
     let fast = contract::FastCheck {
         affected: affected.as_ref(),
         gated,
+        integration: integration.as_deref(),
     };
     let checks = contract::check_rules(&tiers.checks, fast);
     let cache = build_cache_section(ctx, &env, &item.id);
@@ -788,6 +790,32 @@ fn fast_check_now(
         Err(error) => {
             tracing::warn!(run = %run.id, %error, "the change's packages are unknown; the contract omits them");
             Ok((None, gated))
+        }
+    }
+}
+
+/// The integration branch the run's pull request is for, when it is one
+/// (see [`fast_check::integration_target`]). Unknown reads as none, so the
+/// contract keeps its default checks.
+fn integration_now(
+    store: &Store,
+    run: &PipelineRun,
+    env: &RepoEnv,
+    tiers: &RepoTiers,
+    mode: WorkspaceMode,
+) -> Result<Option<String>, ArchonError> {
+    if mode != WorkspaceMode::Worktree || env.repo.is_none() {
+        return Ok(None);
+    }
+    assert!(run.workspace.is_absolute(), "run workspaces are absolute");
+    let vars = super::recover::load_run_vars(store, &run.id)?;
+    let target = super::ship::base_of(store, run, &vars)?;
+    let fork_base = env.fork_base(tiers);
+    match fast_check::integration_target(&run.workspace, &target, tiers, fork_base.as_deref()) {
+        Ok(found) => Ok(found),
+        Err(error) => {
+            tracing::warn!(run = %run.id, %error, "the release branch is unread; the contract keeps its default checks");
+            Ok(None)
         }
     }
 }

@@ -49,8 +49,8 @@ read again.
    for on the committed change with `wait: false`: each a fresh leaf that
    shares your workspace and only reads. Several work alone, on different
    models where the policy allows, and never see each other's findings. While
-   they read, run the project's build, lint/format and full test suite once,
-   and follow your contract's `wait_for` rule. Run it in the foreground or
+   they read, run the project's build, lint/format and full test suite once
+   (the fast checks where your Checks section says so), and follow your contract's `wait_for` rule. Run it in the foreground or
    wait on it: never end your turn while a check runs. With no reviewer
    asked for, that run is the whole of this step. Hand a reviewer this and
    nothing more:

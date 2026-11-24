@@ -348,6 +348,32 @@ async fn a_broken_repo_file_is_refused_naming_it() {
     assert!(said.contains("repo.toml"), "{said}");
 }
 
+/// An item for a base branch short of the existing release branch runs fast
+/// checks: its contract says so though the repository names no check.
+#[tokio::test]
+async fn an_item_for_a_base_branch_short_of_the_release_branch_runs_fast_checks() {
+    let (h, _gh) = delivering().await;
+    git(&h.repo, &["branch", "next"]);
+    let patch = RepoPatch {
+        base_branch: Clearable::Set("next".into()),
+        ..RepoPatch::default()
+    };
+    update(&h, patch).await;
+    let item = enqueue(&h, "for next").await;
+    h.dispatch().await;
+    let lead = requests_of(&h, &item).remove(0);
+    let said = &lead.instructions;
+    assert!(said.contains(CHECKS), "{said}");
+    assert!(
+        said.contains("pull request is for the integration branch `next`"),
+        "{said}"
+    );
+    assert!(
+        said.contains("Run it only for a release pull request"),
+        "{said}"
+    );
+}
+
 /// Without tiers an item forks from the base branch and its contract has
 /// no Checks section, as before.
 #[tokio::test]

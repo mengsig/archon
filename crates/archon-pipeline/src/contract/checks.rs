@@ -12,31 +12,56 @@ pub struct FastCheck<'a> {
     pub affected: Option<&'a Affected>,
     /// Archon runs the check again before the change ships.
     pub gated: bool,
+    /// The integration branch the change's pull request is for; `None` for
+    /// a release, a stacked change or one Archon could not place.
+    pub integration: Option<&'a str>,
 }
 
 /// The contract's Checks section. Empty when the repository names neither
-/// check, so a repository without tiers reads as before.
+/// check and the change is not for an integration branch, so such a
+/// repository reads as before.
 pub fn check_rules(checks: &Checks, fast: FastCheck<'_>) -> String {
-    if checks.is_empty() {
+    if checks.is_empty() && fast.integration.is_none() {
         return String::new();
     }
-    let fast = match checks.fast.as_deref() {
-        Some(template) => fast_rule(template, fast),
-        None => "Run only the checks your change affects.".to_owned(),
+    let rule = match (checks.fast.as_deref(), fast.integration) {
+        (Some(template), _) => fast_rule(template, fast),
+        (None, Some(branch)) => integration_rule(branch),
+        (None, None) => "Run only the checks your change affects.".to_owned(),
     };
     let full = match checks.full.as_deref() {
         Some(full) => format!(" (`{full}`)"),
         None => String::new(),
     };
     assert!(
-        !fast.contains('\n') && !full.contains('\n'),
+        !rule.contains('\n') && !full.contains('\n'),
         "validated: one-line commands"
     );
     format!(
         "\n## Checks\n\n\
-         - {fast}\n\
+         - {rule}\n\
          - Do not run the full suite{full}: it runs on the integration branch after \
-         merges, off this item's path.\n"
+         merges, off this item's path. Run it only for a release pull request (the \
+         integration branch into the release branch), release preparation, or when the \
+         brief asks for it.\n\
+         - Reviewers do not rerun the full suite: they read the checks' evidence and run \
+         only the focused checks the review needs. Tell each reviewer so.\n"
+    )
+}
+
+/// The fast checks of a change for the integration branch `branch` where the
+/// repository names no fast check command.
+fn integration_rule(branch: &str) -> String {
+    assert!(!branch.trim().is_empty(), "a branch has a name");
+    assert!(
+        !branch.contains(['`', '\n']),
+        "validated: a plain branch name"
+    );
+    format!(
+        "This change's pull request is for the integration branch `{branch}`: run fast \
+         checks, through the repository's CI slot script where it has one (such as `sh \
+         scripts/ci-slot.sh <command>`): the format check, the linter, and the tests of the \
+         crates or packages your change touches. Name each command among the checks you ran."
     )
 }
 
@@ -119,6 +144,40 @@ mod tests {
     }
 
     #[test]
+    fn a_change_for_the_integration_branch_runs_fast_checks_and_leaves_the_full_suite() {
+        let fast = FastCheck {
+            integration: Some("next"),
+            ..FastCheck::default()
+        };
+        let text = check_rules(&Checks::default(), fast);
+        let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        for said in [
+            "pull request is for the integration branch `next`",
+            "(such as `sh scripts/ci-slot.sh <command>`)",
+            "the format check, the linter, and the tests of the crates or packages your change touches",
+            "Do not run the full suite:",
+            "Run it only for a release pull request",
+            "release preparation, or when the brief asks for it",
+            "Reviewers do not rerun the full suite: they read the checks' evidence",
+        ] {
+            assert!(flat.contains(said), "missing {said:?} in {text}");
+        }
+        let configured = check_rules(&checks(Some("make quick"), Some("make ci")), fast);
+        assert!(
+            configured.contains("fast check: `make quick`"),
+            "{configured}"
+        );
+        assert!(
+            !configured.contains("integration branch `next`:"),
+            "{configured}"
+        );
+        assert!(
+            configured.contains("Reviewers do not rerun"),
+            "{configured}"
+        );
+    }
+
+    #[test]
     fn a_repository_without_checks_gets_no_section() {
         assert_eq!(check_rules(&Checks::default(), FastCheck::default()), "");
         let full_only = check_rules(&checks(None, Some("make ci")), FastCheck::default());
@@ -136,6 +195,7 @@ mod tests {
         let fast = FastCheck {
             affected: Some(&affected),
             gated: true,
+            integration: None,
         };
         let text = check_rules(&checks(Some(template), None), fast);
         assert!(
@@ -151,6 +211,7 @@ mod tests {
         let fast = FastCheck {
             affected: Some(&whole),
             gated: false,
+            integration: None,
         };
         let text = check_rules(&checks(Some(template), None), fast);
         assert!(
@@ -162,6 +223,7 @@ mod tests {
         let fast = FastCheck {
             affected: Some(&none),
             gated: false,
+            integration: None,
         };
         let text = check_rules(&checks(Some(template), None), fast);
         assert!(text.contains("as committed now affects none"), "{text}");
@@ -169,6 +231,7 @@ mod tests {
         let fast = FastCheck {
             affected: Some(&hostile),
             gated: false,
+            integration: None,
         };
         let text = check_rules(&checks(Some(template), None), fast);
         assert!(text.contains("It cannot run for the change"), "{text}");

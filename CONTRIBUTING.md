@@ -58,6 +58,23 @@ runs the same checks without one. Without `flock` (util-linux) it runs
 without a slot and says so. GitHub CI runs one job per runner and is
 unaffected.
 
+The slot also keeps a run light on a shared machine, with the same knobs as
+Aether's `scripts/ci_slot.sh`:
+
+- `CI_MIN_FREE_GIB` (default 6; 0 disables): once it holds a slot, it waits
+  until `MemAvailable` in `/proc/meminfo` reaches this many GiB, saying so
+  once and then every 60 seconds. After `CI_MEM_WAIT_MAX_MIN` minutes
+  (default 30) it runs anyway with a warning.
+- The command runs at low priority: in a `systemd-run --user --scope` with
+  `CPUWeight=20`, `IOWeight=20` and `MemoryHigh=$CI_MEMORY_HIGH` (default
+  `6G`), under `nice -n 19` and `ionice -c 3` where they exist. Without
+  `systemd-run --user` it says so and uses only `nice` and `ionice`.
+  `CI_LOW_PRIORITY=0` runs the command as is.
+- `CI_TEST_THREADS` (default 4) sets `NEXTEST_TEST_THREADS` and
+  `RUST_TEST_THREADS` for the command, unless they are already set.
+
+Any command can take a slot: `sh scripts/ci-slot.sh cargo test -p archon-pipeline`.
+
 Archon's phone app is served by archond. Its unit and Playwright tests live
 in `crates/archon-remote/web`; see its [README](crates/archon-remote/web/README.md)
 for browser checks and screenshot generation. `crates/archon-remote/tests/listener.rs`
@@ -75,9 +92,16 @@ request from `next` into `main`, which must pass before anything reaches
 The trade-off: a merge into `next` can break the tests, which the push run
 reports within minutes and before any release. In exchange each fix merges
 without a full suite run, the slowest job CI has, and `next` is tested
-once per merge rather than once per pull request update. So run
-`make ci` yourself before you open a pull request into `next`, and fix a
-red push run on `next` before you merge anything else.
+once per merge rather than once per pull request update. So before you
+open a pull request into `next`, run the fast checks through the slot:
+`cargo fmt --all -- --check`, clippy, and the tests of the crates you
+touched (`sh scripts/ci-slot.sh cargo test -p <crate>`). Run the full
+`make ci` for the pull request from `next` into `main`, when you prepare a
+release, or when a change's brief asks for it. Fix a red push run on `next`
+before you merge anything else. Archon's stage agents follow the same rule:
+an item whose pull request is for an integration branch is told to run fast
+checks, and its reviewers read that evidence rather than rerun the full
+suite.
 
 More on the layout, the benchmark and local installs is in
 [`docs/development.md`](docs/development.md).

@@ -147,4 +147,3 @@ def run(arm, model, label, parallel='1', only=''):
 if __name__ == '__main__':
     os.umask(0o077)
     raise SystemExit(run(*sys.argv[1:]))
-

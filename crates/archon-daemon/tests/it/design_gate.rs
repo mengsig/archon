@@ -553,7 +553,7 @@ async fn a_build_past_design_recovers_when_design_is_turned_off() {
     approve(&h, &open_proposal(&h, &item.id).await).await;
     let before = h.running().await;
     assert_eq!(before.len(), 1);
-    assert_ne!(before[0].stage_id, session.stage_id);
+    assert_eq!(before[0].stage_id, "implement");
 
     let mut config = h.ctx.config.clone();
     config.design.enabled = false;
@@ -572,8 +572,8 @@ async fn a_design_gate_recovers_but_its_revision_needs_design_enabled() {
     let mut h = Harness::with_config(live_config()).await;
     let item = enqueue(&h, live(), None).await.unwrap();
     let (run, session) = designing(&h, &item).await;
-    let head = common::git(&run.workspace, &["rev-parse", "HEAD"]);
-    confirm(&h, &session, &head, &[], &[]).await;
+    let (_, head) = done_note(&h, &session, &run, "make it green", b"green").await;
+    confirm(&h, &session, &head, &["D1"], &[]).await;
     h.settle_running(forged).await;
     h.dispatch().await;
     let gate = open_proposal(&h, &item.id).await;

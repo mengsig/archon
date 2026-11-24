@@ -2,6 +2,8 @@
 //! binding can claim usage that arrived before the create reply. For a kept
 //! agent, the next window opens before it is told to start the new turn.
 
+use std::collections::BTreeMap;
+
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
@@ -185,6 +187,52 @@ fn stage_for(
     )
     .optional()
     .ctx("find stage for usage")
+}
+
+/// What each agent beneath `root` was charged on `stage`, by the attribution model
+/// evidence reads: `None` when its usage went to other stages. Agents whose ledger
+/// total is not fully attributed are left out, as only their handoff spans place them.
+pub(super) fn delegated_on_stage(
+    conn: &Connection,
+    root: &AetherAgentId,
+    stage: &StageRunId,
+    estimates: bool,
+) -> Result<BTreeMap<AetherAgentId, Option<f64>>, ArchonError> {
+    let mut statement = conn
+        .prepare_cached(
+            "WITH RECURSIVE subtree(agent) AS (
+                 SELECT ?1
+                 UNION
+                 SELECT d.agent FROM delegated_agents d JOIN subtree t ON d.parent = t.agent
+             )
+             SELECT s.agent, SUM(CASE WHEN x.stage = ?2
+                    THEN x.cost_usd + CASE WHEN ?3 THEN x.estimated_cost_usd ELSE 0 END END)
+             FROM subtree t JOIN spend s ON s.agent = t.agent JOIN stage_spend x ON x.agent = s.agent
+             WHERE s.agent <> ?1 AND s.orchestration = 0
+             GROUP BY s.agent
+             HAVING ABS(MAX(s.cost_usd) - SUM(x.cost_usd)) <= 1e-9
+                AND ABS(MAX(s.estimated_cost_usd) - SUM(x.estimated_cost_usd)) <= 1e-9",
+        )
+        .ctx("prepare delegated stage spend")?;
+    let rows = statement
+        .query_map(params![root.as_str(), stage.as_str(), estimates], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<f64>>(1)?))
+        })
+        .ctx("query delegated stage spend")?;
+    let mut charged = BTreeMap::new();
+    for row in rows {
+        let (raw, cost) = row.ctx("read delegated stage spend")?;
+        let agent = AetherAgentId::parse(&raw)
+            .map_err(|e| ArchonError::Store(format!("delegated spender {raw:?}: {e}")))?;
+        if cost.is_some_and(|cost| !cost.is_finite() || cost < 0.0) {
+            return Err(ArchonError::Store(format!(
+                "agent {agent} holds the invalid stage charge {cost:?}"
+            )));
+        }
+        charged.insert(agent, cost);
+    }
+    assert!(!charged.contains_key(root), "a root is not beneath itself");
+    Ok(charged)
 }
 
 pub(super) fn has_window(

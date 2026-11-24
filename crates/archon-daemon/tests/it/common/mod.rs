@@ -803,6 +803,8 @@ pub struct FakeBackend {
 #[derive(Default)]
 struct FakeState {
     host_context_supported: bool,
+    /// The last Aether event sequence a kept agent's spend window opens after.
+    event_watermark: Option<u64>,
     /// Aether's `[network] default` is `denied`; `allowed`, as Aether
     /// ships, until a test says otherwise.
     network_denied: bool,
@@ -1507,6 +1509,12 @@ impl FakeBackend {
     pub fn descendant_checks(&self) -> Vec<AetherAgentId> {
         self.state().descendant_checks.clone()
     }
+
+    /// Aether's event head is `seq`, as a kept agent's resume reads it.
+    pub fn set_event_watermark(&self, seq: u64) {
+        assert!(seq > 0, "Aether event sequences are one-based");
+        self.state().event_watermark = Some(seq);
+    }
 }
 
 /// A plain enqueue of `title` into `pipeline` of the repository `repo`.
@@ -1538,6 +1546,9 @@ pub fn enqueue_request(
 
 #[async_trait]
 impl AgentBackend for FakeBackend {
+    async fn event_watermark(&self) -> Result<Option<u64>, ArchonError> {
+        Ok(self.state().event_watermark)
+    }
     async fn find_spawn(
         &self,
         request: &SpawnRequest,

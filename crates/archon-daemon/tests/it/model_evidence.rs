@@ -623,3 +623,111 @@ allow_delegation = true
     let row = report.rows.iter().find(|r| r.stage == "review").unwrap();
     assert_eq!((row.completed, row.passed, row.verdicts), (1, 0, 1));
 }
+
+/// Charge `agent` a running total of `usd` with Aether event `seq`.
+async fn usage(h: &Harness, agent: &archon_core::aether_ids::AetherAgentId, usd: f64, seq: u64) {
+    let mut wire = archon_aether::fake::event(
+        Some(agent.as_str()),
+        None,
+        serde_json::json!({
+            "type": "agent.usage_updated", "total": {"cost_usd": usd, "cost_basis": "provider_reported"}
+        }),
+    );
+    wire["seq"] = serde_json::json!(seq);
+    wire["at"] = serde_json::json!(archon_core::now());
+    let event = archon_aether::events::parse_event(wire).unwrap();
+    archon_daemon::pump::handle_fleet_event(&h.ctx, &event)
+        .await
+        .unwrap();
+}
+
+/// A delegate's usage that lands after its lead was kept for a fix stays with
+/// the attempt that delegated it, in the stage view as in model evidence.
+#[tokio::test]
+async fn late_delegate_usage_stays_with_its_attempt_in_both_views() {
+    let h = Harness::new().await;
+    let item = h.enqueue("a lead that delegates, then a fix").await;
+    h.dispatch().await;
+    let lead = h.running().await.remove(0).aether_agent.unwrap();
+    let parse = |raw| archon_core::aether_ids::AetherAgentId::parse(raw).unwrap();
+    let (early, late) = (parse("agt_early"), parse("agt_late"));
+    let model = common::MODEL.parse().unwrap();
+    let delegated = |child, seq| {
+        let (h, lead, model) = (&h, &lead, &model);
+        async move {
+            let mut store = h.ctx.store.lock().await;
+            store
+                .record_delegation_event(child, lead, model, seq)
+                .unwrap();
+        }
+    };
+    delegated(&early, 5).await;
+    usage(&h, &lead, 0.25, 6).await;
+    usage(&h, &early, 0.5, 7).await;
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    h.settle_running(|s| match s.fan_index {
+        0 => common::verdict(false),
+        _ => common::verdict(true),
+    })
+    .await;
+    h.backend.set_event_watermark(20);
+    h.dispatch().await;
+    let fix = h.running().await.remove(0);
+    assert_eq!((fix.attempt, fix.aether_agent.as_ref()), (2, Some(&lead)));
+    // The early delegate reports after the hand-off; a new one works for the fix.
+    usage(&h, &early, 1.5, 21).await;
+    usage(&h, &lead, 1.0, 22).await;
+    delegated(&late, 23).await;
+    usage(&h, &late, 0.125, 24).await;
+    h.settle_running(|_| completed("fixed")).await;
+
+    let query = archon_core::protocol::StageQuery {
+        item: item.id.clone(),
+        run: None,
+        stage: None,
+        attempt: None,
+        slot: None,
+        offset: 0,
+        limit: None,
+    };
+    let Reply::StageDetail(detail) = h.cli(Request::GetStage(query)).await.unwrap() else {
+        panic!("stage detail");
+    };
+    let viewed: Vec<(u32, f64, Vec<_>)> = detail
+        .stages
+        .iter()
+        .filter(|s| s.stage_id == "implement")
+        .map(|s| {
+            let split = s.delegation.as_ref().expect("the lead delegated");
+            let agents = split.agents.iter().map(|a| (a.agent.clone(), a.cost_usd));
+            (s.attempt, s.cost_usd, agents.collect())
+        })
+        .collect();
+    let expected = [
+        (1, 1.75, vec![(early.clone(), 1.5)]),
+        (2, 0.875, vec![(late.clone(), 0.125)]),
+    ];
+    assert_eq!(
+        viewed, expected,
+        "each delegate on the attempt that made it"
+    );
+    let spent = h.ctx.store.lock().await.spend_for_item(&item.id, false);
+    assert_eq!(spent.unwrap(), 2.625, "the item total is unchanged");
+
+    let report = evidence(&h).await;
+    let row = report.rows.iter().find(|r| r.stage == "implement").unwrap();
+    assert_eq!(row.completed, 2, "{row:?}");
+    // With two attempts, p90 is the dearer and the median their mean.
+    assert_eq!(row.p90_cost_usd, Some(1.75));
+    assert_eq!(row.median_cost_usd, Some((1.75 + 0.875) / 2.0));
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .unlinked_spend()
+            .unwrap()
+            .is_empty()
+    );
+}

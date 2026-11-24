@@ -84,8 +84,9 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   const changes = (card) => {
     const list = reviewChanges(card, state.notes).filter((c) => c.note);
     if (!list.length) return null;
+    // A card of one change already names it in its head.
     return h('ol', { class: 'finish-changes', 'aria-label': `Changes in ${card.note}` }, list.map((c) => h('li', { class: ['finish-change', c.setAside && 'is-aside'] },
-      h('p', { class: 'finish-change-title' }, h('strong', { text: c.id }), ` ${c.text}`, c.setAside ? ' (set aside)' : ''),
+      list.length > 1 ? h('p', { class: 'finish-change-title' }, h('strong', { text: c.id }), ` ${c.text}`, c.setAside ? ' (set aside)' : '') : null,
       h('div', { class: 'finish-change-pics' }, picture(c.note, c.before, compareLayout(c.note).beforeWord), picture(c.note, c.after, 'After')))));
   };
   let busy = false;

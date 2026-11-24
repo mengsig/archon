@@ -844,6 +844,8 @@ test.describe('iterations (desktop)', () => {
       await expect(changes.getByRole('img', { name: 'After picture of D7' })).toBeVisible();
       await expect(changes.locator('figcaption')).toHaveText(['Your sketch', 'After', 'Your sketch', 'After', 'Your sketch', 'After']);
       await expect(review.getByRole('list', { name: 'Changes in D5' }).getByRole('listitem')).toHaveCount(1);
+      await expect(review.getByRole('list', { name: 'Changes in D5' }).locator('.finish-change-title')).toHaveCount(0); // the card's head names it
+      await expect(review.getByRole('list', { name: 'Changes in D5' }).getByRole('img')).toHaveCount(2);
     } finally { await harness.stop(); }
   });
 

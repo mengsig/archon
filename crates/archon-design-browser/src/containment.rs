@@ -278,7 +278,18 @@ impl Containment {
         }
     }
 
-    pub(crate) fn verify_storage_origin(&self, result: &Value) -> Result<(), BrowserError> {
+    pub(crate) fn verify_storage_origin(
+        &self,
+        reply: Result<Value, BrowserError>,
+    ) -> Result<(), BrowserError> {
+        let result = match reply {
+            Ok(result) => result,
+            Err(error @ BrowserError::Protocol(_)) => {
+                tracing::debug!(%error, "Chromium did not verify a preview subframe storage origin");
+                return Err(self.stop("Chromium could not verify a subframe storage origin"));
+            }
+            Err(error) => return Err(error),
+        };
         let authority = nonempty(&result["storageKey"])
             .and_then(|key| key.strip_prefix("http://"))
             .and_then(|key| key.strip_suffix('/'))
@@ -308,12 +319,12 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn inherited_documents_with_verified_origin_are_allowed_in_the_frame_tree() {
-        let origin = "http://127.0.0.1:3000";
-        let policy = Policy::new(origin, Arc::new(crate::testutil::AcceptUpstream)).unwrap();
+    const ORIGIN: &str = "http://127.0.0.1:3000";
+
+    fn preview_guard() -> Containment {
+        let policy = Policy::new(ORIGIN, Arc::new(crate::testutil::AcceptUpstream)).unwrap();
         let (events, _) = broadcast::channel(8);
-        let guard = Containment {
+        Containment {
             target: "main".into(),
             session: "session".into(),
             policy: Arc::new(policy),
@@ -321,17 +332,95 @@ mod tests {
             events,
             relay: Default::default(),
             state: Mutex::default(),
-        };
-        let tree = json!({
-            "frame": {"id":"main", "loaderId":"main-loader", "url":origin, "securityOrigin":origin},
-            "childFrames": [
-                {"frame": {"id":"blank", "parentId":"main", "loaderId":"blank-loader",
-                           "url":"about:blank", "securityOrigin":origin}},
-                {"frame": {"id":"inline", "parentId":"main", "loaderId":"inline-loader",
-                           "url":"about:srcdoc", "securityOrigin":origin}}
-            ]
-        });
-        assert!(guard.check_frame_tree(&tree).unwrap().is_empty());
-        assert!(guard.reason().is_none());
+        }
+    }
+
+    fn child_tree(url: &str, origin: &str) -> Value {
+        json!({
+            "frame": {"id":"main", "loaderId":"main-loader", "url":ORIGIN, "securityOrigin":ORIGIN},
+            "childFrames": [{"frame": {
+                "id":"child", "parentId":"main", "loaderId":"child-loader",
+                "url":url, "securityOrigin":origin
+            }}]
+        })
+    }
+
+    #[test]
+    fn inherited_children_require_verified_frame_or_storage_origins() {
+        for url in ["about:blank", "about:srcdoc"] {
+            let guard = preview_guard();
+            assert!(
+                guard
+                    .check_frame_tree(&child_tree(url, ORIGIN))
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(
+                guard.check_frame_tree(&child_tree(url, "://")).unwrap(),
+                ["child"]
+            );
+            guard
+                .verify_storage_origin(Ok(json!({"storageKey":"http://127.0.0.1:3000/"})))
+                .unwrap();
+            assert!(guard.reason().is_none());
+
+            for origin in ["http://127.0.0.1:4000", "null"] {
+                let blocked = preview_guard();
+                let result = blocked.check_frame_tree(&child_tree(url, origin)).map(drop);
+                assert!(matches!(result, Err(BrowserError::Containment(_))));
+                assert_eq!(
+                    blocked.reason().as_deref(),
+                    Some("a subframe document was outside the preview origin")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_inherited_url_cannot_replace_the_main_document() {
+        let guard = preview_guard();
+        let tree = json!({"frame": {"id":"main", "loaderId":"loader", "url":"about:srcdoc", "securityOrigin":ORIGIN}});
+        assert!(matches!(
+            guard.check_frame_tree(&tree),
+            Err(BrowserError::Containment(_))
+        ));
+        assert_eq!(
+            guard.reason().as_deref(),
+            Some("a main-frame document was outside the preview origin")
+        );
+    }
+
+    #[test]
+    fn invalid_subframe_storage_keys_stop_disclosure() {
+        for result in [
+            json!({"storageKey":"http://127.0.0.1:4000/"}),
+            json!({"storageKey":"http://127.0.0.1:3000/^0https://other.test"}),
+            json!({"storageKey":"null"}),
+            json!({}),
+        ] {
+            let guard = preview_guard();
+            assert!(matches!(
+                guard.verify_storage_origin(Ok(result)),
+                Err(BrowserError::Containment(_))
+            ));
+            assert_eq!(
+                guard.reason().as_deref(),
+                Some("a subframe storage origin was outside the preview origin")
+            );
+        }
+    }
+
+    #[test]
+    fn a_refused_storage_key_query_stops_disclosure() {
+        let guard = preview_guard();
+        let error = BrowserError::Protocol("Storage.getStorageKeyForFrame refused".into());
+        assert!(matches!(
+            guard.verify_storage_origin(Err(error)),
+            Err(BrowserError::Containment(_))
+        ));
+        assert_eq!(
+            guard.reason().as_deref(),
+            Some("Chromium could not verify a subframe storage origin")
+        );
     }
 }

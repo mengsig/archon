@@ -521,12 +521,12 @@ async fn whole_page_pictures_at_2x_are_not_tiled_while_the_stream_runs() {
 
 #[tokio::test]
 async fn js_navigation_to_a_blob_stops_before_disclosure() {
-    assert_disclosure_stops("location.assign(fixture())", "main-frame document").await;
+    assert_disclosure_stops("location.assign(fixture())", &["main-frame document"]).await;
 }
 
 #[tokio::test]
 async fn js_popup_stops_before_disclosure() {
-    assert_disclosure_stops("window.open(fixture(), '_blank')", "new window").await;
+    assert_disclosure_stops("window.open(fixture(), '_blank')", &["new window"]).await;
 }
 
 #[tokio::test]
@@ -536,7 +536,7 @@ async fn opaque_subframe_stops_before_disclosure() {
          child.style = 'position:fixed;inset:0;width:100%;height:100%;border:0';
          child.src = 'data:text/html,' + encodeURIComponent(otherDocument);
          document.body.append(child)",
-        "subframe",
+        &["subframe"],
     )
     .await;
 }
@@ -589,7 +589,12 @@ async fn sandboxed_srcdoc_subframe_stops_before_disclosure() {
          child.sandbox = '';
          child.srcdoc = otherDocument;
          document.body.append(child)",
-        "subframe",
+        &[
+            "Chromium created an isolated subframe",
+            "a subframe document was outside the preview origin",
+            "a subframe storage origin was outside the preview origin",
+            "Chromium could not verify a subframe storage origin",
+        ],
     )
     .await;
 }
@@ -601,7 +606,7 @@ async fn sandboxed_http_subframe_stops_before_disclosure() {
          child.style = 'position:fixed;inset:0;width:100%;height:100%;border:0';
          child.src = '/opaque';
          document.body.append(child)",
-        "subframe",
+        &["subframe"],
     )
     .await;
 }
@@ -674,7 +679,7 @@ async fn open_disclosure_fixture(
     Some((root, browser))
 }
 
-async fn assert_disclosure_stops(script: &'static str, expected_reason: &str) {
+async fn assert_disclosure_stops(script: &'static str, expected_reasons: &[&str]) {
     let Some((binary, path_env)) = browser_options() else {
         return;
     };
@@ -718,7 +723,7 @@ async fn assert_disclosure_stops(script: &'static str, expected_reason: &str) {
     .await
     .expect("disclosures did not stop");
 
-    assert_containment_reported(&browser, &mut events, expected_reason).await;
+    assert_containment_reported(&browser, &mut events, expected_reasons).await;
     assert!(feed.next().await.is_none());
     assert_preview_process_stopped(browser.pid().unwrap()).await;
     browser.close().await.unwrap();
@@ -727,12 +732,12 @@ async fn assert_disclosure_stops(script: &'static str, expected_reason: &str) {
 async fn assert_containment_reported(
     browser: &Browser,
     events: &mut tokio::sync::broadcast::Receiver<BrowserEvent>,
-    expected: &str,
+    expected: &[&str],
 ) {
     let reason = browser
         .containment_reason()
         .expect("missing containment reason");
-    assert!(reason.contains(expected), "{reason}");
+    assert!(expected.iter().any(|why| reason.contains(why)), "{reason}");
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {
             match events.recv().await.unwrap() {

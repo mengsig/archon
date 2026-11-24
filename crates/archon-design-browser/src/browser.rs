@@ -263,14 +263,7 @@ impl Shared {
                 )
                 .await;
             drop(guard.confirm(epoch)?);
-            match reply {
-                Ok(result) => guard.verify_storage_origin(&result)?,
-                Err(error @ BrowserError::Protocol(_)) => {
-                    tracing::debug!(%error, "Chromium did not verify a preview subframe storage origin");
-                    return Err(guard.stop("Chromium could not verify a subframe storage origin"));
-                }
-                Err(error) => return Err(error),
-            }
+            guard.verify_storage_origin(reply)?;
         }
         Ok(tree)
     }

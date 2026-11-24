@@ -170,6 +170,25 @@ pub(crate) async fn handle(
             "design sessions are turned off".into(),
         ));
     }
+    let preview_session = match &request {
+        Request::DesignInput { session, .. }
+        | Request::DesignReload { session }
+        | Request::DesignDialogAnswer { session, .. }
+        | Request::DesignResolve { session, .. }
+        | Request::DesignRegion { session, .. } => Some(session),
+        _ => None,
+    };
+    let _preview_guard = if let Some(id) = preview_session {
+        let row = service.current(ctx, id).await?;
+        let held = service.item_lock(&row.item).lock_owned().await;
+        let current = service.current(ctx, id).await?;
+        if current.state == archon_core::design::SessionState::Confirmed {
+            return Err(super::finishing());
+        }
+        Some(held)
+    } else {
+        None
+    };
     match request {
         Request::DesignGet { item } => service.state_view(ctx, &item).await,
         Request::SubscribeDesign { .. } => Err(ArchonError::Invalid(
@@ -205,10 +224,7 @@ pub(crate) async fn handle(
             service.set_viewport(ctx, &session, preset).await
         }
         Request::DesignReload { session } => {
-            let row = service.current(ctx, &session).await?;
-            if let Some(browser) = service.ensure_browser(ctx, &row.id).await? {
-                browser.reload().await.map_err(unavailable)?;
-            }
+            service.reload_preview(ctx, &session).await?;
             Ok(Reply::DesignDone)
         }
         Request::DesignTellAgent { session } => service.tell_agent(ctx, &session).await,

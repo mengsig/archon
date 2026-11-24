@@ -26,7 +26,7 @@ ever reaches your browser: only pictures and JSON.
 - [Using it from a phone](#using-it-from-a-phone)
 - [When something goes wrong](#when-something-goes-wrong)
 - [Limits](#limits)
-- [Security model](#security-model)
+- [Security](#security)
 - [Troubleshooting](#troubleshooting)
 
 ## Turning it on
@@ -354,52 +354,56 @@ once only.
 | "The agent is wrapping up. Approve, Ask for changes and Reject appear here in a moment." | You confirmed; the approval question opens once the agent has stopped the app. |
 | "Reviewed in an earlier session; kept as it was" | A note from before an "Ask for changes". Its picture was confirmed then and goes into the approval as it is; it is not captured or confirmed again. |
 | "A design session is running. Only the operator's devices see the live preview." | You are on an observer device. |
-| "File pickers aren't available in the preview yet" | The app opened a file picker. Downloads are denied; pop-ups are closed with an offer to open a loopback one in the preview. |
+| "File pickers aren't available in the preview yet" | The app opened a file picker. Downloads are denied. Opening a new window ends the preview. |
 | "worktree moved after Finish: expected 3f9c2a1; restore it and complete again" | A commit was made after you confirmed. The agent must reset to the finish commit and complete again. |
 | "choose live when creating the item" | `proposal` cannot change to or from `live` later. |
 | "design sessions turned off" | `[design] enabled` is false; the stage fails. |
 
-`alert`, `confirm` and `prompt` dialogs of the app appear in the Archon screen
-with OK and Cancel, so the page never hangs.
+`alert`, `confirm` and `prompt` dialogs show their type and action buttons in Archon. Their page-provided
+text and suggested answers stay inside Chromium.
 
 ## Limits
 
 - At most `max_sessions` live browsers (default 2).
-- 10 frames a second; 64 input events a request; 60 input requests and 10
+- The live preview captures up to 4 verified frames per second. Each request
+  carries up to 64 input events. The daemon accepts 60 input requests and 10
   resolves a second.
-- Notes up to 4,000 characters, replies up to 2,000; 200 notes and 200 MiB of
-  pictures per item, follow-ups included.
+- Notes up to 4,000 characters, replies up to 2,000; 200 notes per session, including follow-ups. Each
+  item can keep up to 200 MiB of pictures.
 - 20 versions per chain; 5 references per note; 3 referenced pictures per
   message to the agent.
 - Every frame and picture is at most 768 KiB as sent; pictures are re-encoded
   until they fit.
 - The browser is capped at 1 GiB of JavaScript heap, restarts if its memory
-  stays above 2 GiB for 30 seconds, and after 5 crashes in 10 minutes shows
-  **Restart preview** and stops retrying.
+  stays above 2 GiB for 30 seconds, and after exhausting 5 automatic restarts in 10 minutes stops retrying.
+  Select **Reload** to restart the preview.
 - The stage waits up to 240 minutes in total.
 - With 128 reference images allowed per item, the screen warns 8 before the
   cap on active visual notes.
 - At most 4 subscriptions per connection, shared with feeds.
 
-## Security model
+## Security
 
-- The app and your browser never share an origin: you see JPEG or PNG bytes and
-  JSON from archond over the authenticated connection, nothing from the app.
-- The headless Chromium is a child of archond with a cleared environment (no
-  Archon, Aether, Git or cloud variables), a fresh temporary profile that is
-  deleted when the session ends, its sandbox on, and a debugging pipe instead
-  of a port, so no other local process can drive it.
-- The preview uses the registered dev-server origin for requests.
-- Only operator devices see the preview and act. Observers see a one-line
-  status. Every note, undo, finish and answer is logged with the device.
-- What reaches a model: only what you reviewed on screen. Live frames and after
-  pictures go to you only. Page-derived text is fenced as untrusted data.
-- archond checks and reverts commits with its own sealed git, so no hook, filter
-  or merge driver the repository names runs as archond.
-- The agent has no handle on the browser and cannot change what you see.
+Live design is opt-in. The preview runs the item’s own dev server in a fresh
+temporary Chromium profile with no saved credentials or extensions. The
+daemon clears the child environment, uses a private debugging pipe, denies
+downloads and sensitive permissions, and deletes the profile on close.
+Chromium’s platform sandbox is on by default.
 
-Not covered: what the agent sees through its own tools in the worktree, as
-always.
+A session proxy checks the destination and the process serving each connection
+before forwarding traffic. Serve fonts, styles and other assets through the
+registered dev-server origin. The daemon refuses an off-origin redirect.
+A page can briefly commit an off-origin document inside Chromium before
+detection. The driver checks main and child documents before releasing pixels
+or DOM data, discards the result if navigation intervened, and ends the
+session on an unexpected document or popup. The off-origin content is never
+shown or forwarded. The session records why the preview stopped.
+
+Only paired operators can see the preview and act on it. Observers receive a
+status summary. Live frames go to the operator. Notes can send selected
+pictures and reviewed details to the stage agent. Archon labels page-derived
+details and pictures as untrusted data. Git verification and undo use the
+daemon’s sealed Git environment.
 
 ## Troubleshooting
 

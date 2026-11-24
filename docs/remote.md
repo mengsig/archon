@@ -255,8 +255,10 @@ stamps no role, or a device Aether paired as an observer, confers nothing.
 
 Protocol 25 adds [live design sessions](design-sessions.md) behind the
 `welcome` feature `design_sessions`, advertised only when `[design] enabled`
-is true and every request below is served. A protocol 23 or 24 app does not see
-the feature and shows `proposal = live` as plain text.
+is true and the client negotiated protocol 25 or newer. Protocol 23 and 24
+clients receive ordinary item views. For compatibility their typed proposal
+and stage fields use the existing `lavish` and `propose` values for a live
+design item.
 
 Protocol 26 adds the feature `design_iterations` (follow-ups, references and
 the iteration tree): `design_note_add` takes optional `follows` and `refs`,

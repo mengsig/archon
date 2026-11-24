@@ -104,6 +104,9 @@ pub trait PreviewBrowser: Send + Sync {
     ) -> Result<bool, adb::BrowserError> {
         Ok(a.1 == b.1)
     }
+    fn containment_reason(&self) -> Option<String> {
+        None
+    }
     fn events(&self) -> broadcast::Receiver<adb::BrowserEvent>;
     fn rss_bytes(&self) -> Option<u64>;
     async fn close(&self);
@@ -321,6 +324,11 @@ impl PreviewBrowser for Real {
     ) -> Result<bool, adb::BrowserError> {
         self.get()?.pictures_match(a, b).await
     }
+    fn containment_reason(&self) -> Option<String> {
+        self.get()
+            .ok()
+            .and_then(|browser| browser.containment_reason())
+    }
     fn events(&self) -> broadcast::Receiver<adb::BrowserEvent> {
         match self.get() {
             Ok(browser) => browser.events(),
@@ -350,7 +358,11 @@ impl PreviewBrowser for Real {
                 }
             }
         }
-        tracing::warn!("a preview browser call did not end; the browser is dropped");
+        if let Some((pid, started)) = arc.pid().zip(arc.started_at())
+            && let Err(error) = adb::kill_if_matches(pid, started)
+        {
+            tracing::error!(%error, pid, "failed to terminate a busy preview browser");
+        }
     }
 }
 
@@ -387,7 +399,10 @@ pub(crate) struct RtState {
     pub browser: Option<Arc<dyn PreviewBrowser>>,
     pub status: BrowserStatus,
     pub subscribers: u32,
-    pub screencast: bool,
+    frame_seq: u64,
+    containment: Option<String>,
+    feeder: Option<tokio::task::JoinHandle<()>>,
+    monitor: Option<tokio::task::JoinHandle<()>>,
     pub last_sub_gone: Option<Instant>,
     pub crashes: VecDeque<Instant>,
     pub last_url: Option<String>,
@@ -396,7 +411,6 @@ pub(crate) struct RtState {
     pub pending_input: Option<Instant>,
     pub input_window: (Instant, u32),
     pub resolve_window: (Instant, u32),
-    pub tasks: Vec<tokio::task::JoinHandle<()>>,
     /// A launch holds this session's slot before its browser exists.
     pub launching: bool,
     /// Health probes missed in a row; one slow answer is not "down".
@@ -410,7 +424,10 @@ impl Default for RtState {
             browser: None,
             status: BrowserStatus::Idle,
             subscribers: 0,
-            screencast: false,
+            frame_seq: 0,
+            containment: None,
+            feeder: None,
+            monitor: None,
             last_sub_gone: None,
             crashes: VecDeque::new(),
             last_url: None,
@@ -419,7 +436,6 @@ impl Default for RtState {
             pending_input: None,
             input_window: (now, 0),
             resolve_window: (now, 0),
-            tasks: Vec::new(),
             launching: false,
             probe_misses: 0,
         }
@@ -533,6 +549,14 @@ impl DesignService {
             .join(session.as_str())
     }
 
+    fn remove_profile(&self, session: &DesignSessionId) {
+        if let Err(error) = std::fs::remove_dir_all(self.profile_dir(session))
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, %session, "profile cleanup deferred to daemon startup");
+        }
+    }
+
     /// The session's browser, launched now if it is not running: lazily, on an
     /// operator's subscribe or capture. `Ok(None)` when none can run (no
     /// preview yet, no slot, no browser on the host); the status says why.
@@ -548,7 +572,15 @@ impl DesignService {
                 "the daemon is shutting down".into(),
             ));
         }
+        if let Some(reason) = rt.st().containment.clone() {
+            return Err(ArchonError::Forbidden(reason));
+        }
         if let Some(browser) = rt.browser() {
+            if let Some(reason) = browser.containment_reason() {
+                return Err(ArchonError::Forbidden(format!(
+                    "{CONTAINMENT_END}: {reason}"
+                )));
+            }
             return Ok(Some(browser));
         }
         let row = {
@@ -596,6 +628,14 @@ impl DesignService {
         }
         match launched {
             Ok(browser) => Ok(Some(browser)),
+            Err(adb::BrowserError::Containment(reason)) => {
+                rt.st().containment = Some(format!("{CONTAINMENT_END}: {reason}"));
+                drop(_gate);
+                end_for_containment(ctx, session, &rt, &reason).await;
+                Err(ArchonError::Forbidden(format!(
+                    "{CONTAINMENT_END}: {reason}"
+                )))
+            }
             Err(adb::BrowserError::NotFound { hint }) => {
                 self.set_status(&rt, session, BrowserStatus::Missing { hint });
                 Ok(None)
@@ -611,6 +651,35 @@ impl DesignService {
                 )))
             }
         }
+    }
+
+    pub(super) async fn reload_preview(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSessionId,
+    ) -> Result<(), ArchonError> {
+        let rt = self.runtime(session);
+        {
+            let _gate = rt.gate.lock().await;
+            let mut state = rt.st();
+            if state.status == BrowserStatus::CrashedTooOften {
+                state.crashes.clear();
+                state.status = BrowserStatus::Idle;
+            }
+        }
+        let browser = self.ensure_browser(ctx, session).await?.ok_or_else(|| {
+            ArchonError::Unavailable(
+                "the preview browser is unavailable or waiting for a slot".into(),
+            )
+        })?;
+        browser
+            .reload()
+            .await
+            .map_err(|err| ArchonError::Unavailable(format!("reload preview: {err}")))?;
+        if rt.st().subscribers > 0 {
+            self.subscriber_joined(ctx, session).await?;
+        }
+        Ok(())
     }
 
     async fn verify_registered_preview(
@@ -633,8 +702,9 @@ impl DesignService {
     ) -> Result<Arc<dyn PreviewBrowser>, adb::BrowserError> {
         let factory = self.factory();
         let binary = factory.binary(self.cfg.browser.as_deref())?;
-        let profile = self.profile_dir(&row.id);
-        match std::fs::remove_dir_all(&profile) {
+        let root = self.profile_dir(&row.id);
+        let profile = root.join(ulid::Ulid::generate().to_string());
+        match std::fs::remove_dir_all(&root) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
                 return Err(adb::BrowserError::Launch(format!(
                     "remove stale preview profile: {error}"
@@ -663,9 +733,8 @@ impl DesignService {
             session: &row.id,
         };
         let browser = factory.launch(spec, &registration).await?;
-        if let Err(error) = browser.navigate(url).await {
-            tracing::info!(%error, url, "the first navigation of the preview failed");
-        }
+        let events = browser.events();
+        let navigation = browser.navigate(url).await;
         let pid = browser.pid();
         {
             let mut state = rt.st();
@@ -679,7 +748,13 @@ impl DesignService {
         }
         tracing::info!(session = %row.id, ?pid, sandbox = !row.sandbox_off, device = ?super::current_device_label(), "design: browser started");
         self.emit_session(ctx, &row.id).await;
-        self.spawn_monitor(ctx, row.id.clone());
+        self.spawn_monitor(ctx, row.id.clone(), events);
+        if let Some(reason) = browser.containment_reason() {
+            return Err(adb::BrowserError::Containment(reason));
+        }
+        if let Err(error) = navigation {
+            return Err(error);
+        }
         Ok(browser)
     }
 
@@ -694,30 +769,47 @@ impl DesignService {
         ctx: &DaemonContext,
         session: &DesignSessionId,
     ) -> Result<(), ArchonError> {
-        let browser = self.ensure_browser(ctx, session).await?;
-        let rt = self.runtime(session);
-        let start = {
-            let mut st = rt.st();
-            st.last_sub_gone = None;
-            !st.screencast && browser.is_some()
+        let Some(browser) = self.ensure_browser(ctx, session).await? else {
+            return Ok(());
         };
-        if let (true, Some(browser)) = (start, browser) {
-            match browser.start_screencast().await {
-                Ok(mut feed) => {
-                    rt.st().screencast = true;
-                    let sender = rt.frames.clone();
-                    let task = tokio::spawn(async move {
-                        while let Some(frame) = feed.next().await {
-                            let seq = frame.seq;
-                            sender.send_replace(Some(Arc::new(frame)));
-                            feed.ack(seq);
-                        }
-                    });
-                    rt.st().tasks.push(task);
-                }
-                Err(error) => tracing::warn!(%error, "the screencast did not start"),
+        let rt = self.runtime(session);
+        let _gate = rt.gate.lock().await;
+        if !rt
+            .browser()
+            .is_some_and(|current| Arc::ptr_eq(&current, &browser))
+        {
+            return Ok(());
+        }
+        {
+            let mut state = rt.st();
+            state.last_sub_gone = None;
+            if state.subscribers == 0 || state.feeder.as_ref().is_some_and(|f| !f.is_finished()) {
+                return Ok(());
             }
         }
+        let mut feed = browser.start_screencast().await.map_err(|error| {
+            ArchonError::Unavailable(format!("the preview stream did not start: {error}"))
+        })?;
+        let runtime = Arc::clone(&rt);
+        let task = tokio::spawn(async move {
+            while let Some(mut frame) = feed.next().await {
+                let original_seq = frame.seq;
+                let mut state = runtime.st();
+                if !state
+                    .browser
+                    .as_ref()
+                    .is_some_and(|b| Arc::ptr_eq(b, &browser))
+                    || browser.containment_reason().is_some()
+                {
+                    break;
+                }
+                state.frame_seq = original_seq.max(state.frame_seq.saturating_add(1));
+                frame.seq = state.frame_seq;
+                runtime.frames.send_replace(Some(Arc::new(frame)));
+                feed.ack(original_seq);
+            }
+        });
+        rt.st().feeder = Some(task);
         Ok(())
     }
 
@@ -784,16 +876,14 @@ impl DesignService {
     /// sender, and must still get its later state and its end.
     pub(crate) async fn stop_browser(&self, session: &DesignSessionId, reason: &str, forget: bool) {
         let Some(rt) = self.existing_runtime(session) else {
-            let _ = std::fs::remove_dir_all(self.profile_dir(session));
+            self.remove_profile(session);
             return;
         };
         let _gate = rt.gate.lock().await;
         let (browser, counters) = {
             let mut st = rt.st();
-            for task in st.tasks.drain(..) {
-                task.abort();
-            }
-            st.screencast = false;
+            stop_tasks(&mut st);
+            rt.frames.send_replace(None);
             let counters = std::mem::take(&mut st.counters);
             st.status = BrowserStatus::Idle;
             // A relaunched browser starts its preview probe afresh: misses
@@ -805,7 +895,7 @@ impl DesignService {
             browser.close().await;
             tracing::info!(%session, reason, "design: browser stopped");
         }
-        let _ = std::fs::remove_dir_all(self.profile_dir(session));
+        self.remove_profile(session);
         let mut lat = counters.latencies_ms.clone();
         lat.sort_unstable();
         let pct = |p: usize| {
@@ -832,93 +922,69 @@ impl DesignService {
         }
     }
 
-    fn spawn_monitor(&self, ctx: &DaemonContext, session: DesignSessionId) {
-        let Some(arc) = self.arc() else {
-            return;
-        };
-        let _ = ctx;
+    fn spawn_monitor(
+        &self,
+        ctx: &DaemonContext,
+        session: DesignSessionId,
+        events: broadcast::Receiver<adb::BrowserEvent>,
+    ) {
+        let ctx = ctx.arc();
         let rt = self.runtime(&session);
-        // Subscribe now, so an event right after the launch is not missed.
-        let Some(events) = rt.browser().map(|b| b.events()) else {
-            return;
-        };
-        let task = tokio::spawn(async move {
-            monitor(arc, session, events).await;
-        });
-        rt.st().tasks.push(task);
+        rt.st().monitor = Some(tokio::spawn(async move {
+            monitor(ctx, session, events).await;
+        }));
     }
 
-    /// Relaunch after a crash (fresh profile, the last URL), within the budget.
-    pub(crate) async fn relaunch(
+    async fn relaunch(
         &self,
         ctx: &DaemonContext,
         session: &DesignSessionId,
-        crash: bool,
     ) -> Result<(), ArchonError> {
         let rt = self.runtime(session);
-        {
-            let mut st = rt.st();
-            if crash {
-                let now = Instant::now();
-                while st
-                    .crashes
-                    .front()
-                    .is_some_and(|at| now.duration_since(*at) > CRASH_WINDOW)
-                {
-                    st.crashes.pop_front();
-                }
-                st.crashes.push_back(now);
-                st.counters.crashes += 1;
-                if st.crashes.len() > MAX_CRASHES {
-                    st.status = BrowserStatus::CrashedTooOften;
-                }
-            }
-        }
-        let old = {
+        let gave_up = {
             let _gate = rt.gate.lock().await;
             let (gave_up, old) = {
                 let mut st = rt.st();
-                st.screencast = false;
-                if st.status == BrowserStatus::CrashedTooOften {
-                    (true, st.browser.take())
-                } else {
-                    st.rss_over_since = None;
-                    (false, st.browser.take())
+                let now = Instant::now();
+                st.crashes
+                    .retain(|at| now.duration_since(*at) <= CRASH_WINDOW);
+                st.crashes.push_back(now);
+                st.counters.crashes += 1;
+                let gave_up = st.crashes.len() > MAX_CRASHES;
+                if gave_up {
+                    st.status = BrowserStatus::CrashedTooOften;
                 }
+                st.rss_over_since = None;
+                st.probe_misses = 0;
+                stop_tasks(&mut st);
+                rt.frames.send_replace(None);
+                (gave_up, st.browser.take())
             };
-            if gave_up {
-                if let Some(old) = old {
-                    old.close().await;
-                }
-                self.emit_session(ctx, session).await;
-                self.spawn_start_queued();
-                return Ok(());
+            if let Some(old) = old {
+                old.close().await;
             }
-            old
+            gave_up
         };
-        if let Some(old) = old {
-            old.close().await;
-        }
-        let want_frames = rt.st().subscribers > 0;
-        let browser = self.ensure_browser(ctx, session).await?;
-        if let (true, Some(browser)) = (want_frames, browser) {
-            // Re-attach the feeder to the new screencast.
-            let mut feed = browser
-                .start_screencast()
-                .await
-                .map_err(|e| ArchonError::Unavailable(e.to_string()))?;
-            rt.st().screencast = true;
-            let sender = rt.frames.clone();
-            let task = tokio::spawn(async move {
-                while let Some(frame) = feed.next().await {
-                    let seq = frame.seq;
-                    sender.send_replace(Some(Arc::new(frame)));
-                    feed.ack(seq);
-                }
-            });
-            rt.st().tasks.push(task);
+        if gave_up {
+            self.emit_session(ctx, session).await;
+            self.spawn_start_queued();
+        } else if rt.st().subscribers > 0 {
+            self.subscriber_joined(ctx, session).await?;
+        } else {
+            self.ensure_browser(ctx, session).await?;
         }
         Ok(())
+    }
+}
+
+fn stop_tasks(state: &mut RtState) {
+    for task in [state.feeder.take(), state.monitor.take()]
+        .into_iter()
+        .flatten()
+    {
+        if Some(task.id()) != tokio::task::try_id() {
+            task.abort();
+        }
     }
 }
 
@@ -934,11 +1000,23 @@ async fn monitor(
     let mut tick = tokio::time::interval(Duration::from_secs(3));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
+        if let Some(reason) = rt.browser().and_then(|b| b.containment_reason()) {
+            end_for_containment(&ctx, &session, &rt, &reason).await;
+            return;
+        }
         tokio::select! {
             event = events.recv() => match event {
+                Ok(adb::BrowserEvent::ContainmentStopped { reason }) => {
+                    end_for_containment(&ctx, &session, &rt, &reason).await;
+                    return;
+                }
                 Ok(adb::BrowserEvent::Crashed | adb::BrowserEvent::Exited) => {
+                    if let Some(reason) = rt.browser().and_then(|b| b.containment_reason()) {
+                        end_for_containment(&ctx, &session, &rt, &reason).await;
+                        return;
+                    }
                     tracing::warn!(%session, "design: the preview browser crashed");
-                    if let Err(error) = service.relaunch(&ctx, &session, true).await {
+                    if let Err(error) = service.relaunch(&ctx, &session).await {
                         tracing::warn!(%error, "relaunching the preview browser failed");
                     }
                     return;
@@ -949,16 +1027,13 @@ async fn monitor(
                 Ok(adb::BrowserEvent::BlockedHost { host }) => {
                     let hosts = {
                         let mut st = rt.st();
-                        st.counters.blocked.insert(host);
+                        if st.counters.blocked.len() >= 64 || !st.counters.blocked.insert(host) { continue; }
                         st.counters.blocked.iter().cloned().collect::<Vec<_>>()
                     };
                     let _ = rt.events.send(DesignEvent::BlockedHosts { hosts });
                 }
-                Ok(adb::BrowserEvent::PopupClosed { url }) => {
-                    let message = match archon_core::design::validate_preview_url(&url) {
-                        Ok(_) => format!("A pop-up was closed. Open {url} here instead?"),
-                        Err(_) => "A pop-up was closed.".to_owned(),
-                    };
+                Ok(adb::BrowserEvent::PopupClosed { .. }) => {
+                    let message = "A pop-up was closed.".to_owned();
                     let _ = rt.events.send(DesignEvent::Toast { message });
                 }
                 Ok(adb::BrowserEvent::FileChooserRefused) => {
@@ -966,11 +1041,11 @@ async fn monitor(
                         message: "File pickers aren't available in the preview yet".into(),
                     });
                 }
-                Ok(adb::BrowserEvent::NavigationFailed { url, .. }) => {
-                    service.mark_degraded(&ctx, &session, true, Some(&url)).await;
+                Ok(adb::BrowserEvent::NavigationFailed { .. }) => {
+                    service.record_health(&ctx, &session, true).await;
                 }
                 Ok(adb::BrowserEvent::Loaded { .. }) => {
-                    service.mark_degraded(&ctx, &session, false, None).await;
+                    service.record_health(&ctx, &session, false).await;
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => return,
@@ -984,7 +1059,37 @@ async fn monitor(
     }
 }
 
+pub(super) const CONTAINMENT_END: &str = "Preview stopped for containment";
+
+async fn end_for_containment(
+    ctx: &DaemonContext,
+    session: &DesignSessionId,
+    rt: &Runtime,
+    reason: &str,
+) {
+    rt.frames.send_replace(None);
+    let reason = format!("{CONTAINMENT_END}: {reason}");
+    rt.st().containment = Some(reason.clone());
+    tracing::warn!(%session, %reason, "design: preview terminated");
+    let result = async {
+        let Some(row) = ctx.store.lock().await.design_session(session)? else {
+            return Ok(());
+        };
+        ctx.design.end_session(ctx, &row, &reason).await
+    }
+    .await;
+    if let Err(error) = result {
+        tracing::error!(%session, %error, "failed to record the containment stop");
+    }
+}
+
 impl DesignService {
+    async fn record_health(&self, ctx: &DaemonContext, session: &DesignSessionId, degraded: bool) {
+        if let Err(error) = self.mark_degraded(ctx, session, degraded).await {
+            tracing::warn!(%error, %session, "recording preview health failed");
+        }
+    }
+
     /// One monitor tick; false when the monitor should end.
     async fn tick(
         &self,
@@ -994,7 +1099,7 @@ impl DesignService {
     ) -> bool {
         let (browser, idle) = {
             let st = rt.st();
-            let idle = st.screencast
+            let idle = st.feeder.is_some()
                 && st.subscribers == 0
                 && st.last_sub_gone.is_some_and(|at| at.elapsed() >= IDLE_STOP);
             (st.browser.clone(), idle)
@@ -1003,12 +1108,20 @@ impl DesignService {
             return false;
         };
         if idle {
-            let _ = browser.stop_screencast().await;
-            rt.st().screencast = false;
+            let _gate = rt.gate.lock().await;
+            if rt.st().subscribers == 0 {
+                if let Err(error) = browser.stop_screencast().await {
+                    tracing::warn!(%error, %session, "stopping the idle preview stream failed");
+                }
+                if let Some(feeder) = rt.st().feeder.take() {
+                    feeder.abort();
+                }
+            }
         }
+        let rss = browser.rss_bytes();
         let restart = {
             let mut st = rt.st();
-            match browser.rss_bytes() {
+            match rss {
                 Some(rss) if rss > RSS_LIMIT => {
                     let since = *st.rss_over_since.get_or_insert_with(Instant::now);
                     since.elapsed() >= RSS_HOLD
@@ -1021,7 +1134,7 @@ impl DesignService {
         };
         if restart {
             tracing::warn!(%session, "design: the preview browser used over 2 GiB for 30 s; restarting it");
-            if let Err(error) = self.relaunch(ctx, session, false).await {
+            if let Err(error) = self.relaunch(ctx, session).await {
                 tracing::warn!(%error, "restarting the preview browser failed");
             }
             return false;
@@ -1034,11 +1147,15 @@ impl DesignService {
             // in a row (about 3 s apart) mean the preview is down.
             let down = {
                 let mut st = rt.st();
-                st.probe_misses = if reachable { 0 } else { st.probe_misses + 1 };
+                st.probe_misses = if reachable {
+                    0
+                } else {
+                    st.probe_misses.saturating_add(1)
+                };
                 st.probe_misses >= PROBE_MISSES_DOWN
             };
             if reachable || down {
-                self.mark_degraded(ctx, session, down, Some(&url)).await;
+                self.record_health(ctx, session, down).await;
             }
         }
         true

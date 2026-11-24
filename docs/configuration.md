@@ -234,8 +234,8 @@ Set it to `false` to retry such items by hand with `retry_item`.
 acceptance when no permitted, connected model apart from every builder can
 judge it. Approved reference images need a vision model. Off, the strongest
 permitted model judges it, and readiness says `acceptance: not independent`,
-as it does for a pinned `intent-acceptance` model that shares a builder's model
-or vendor. On, the run is refused instead, and so is such a pin.
+including a live design item's pinned judge when it shares a builder's model
+or vendor. Turning this setting on refuses these runs.
 
 ```toml
 [review]                       # reviewers with no explicit <stage>.review plan

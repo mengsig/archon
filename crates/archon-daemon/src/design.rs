@@ -402,7 +402,13 @@ impl DesignService {
                 "the design stage attempt is no longer active".into(),
             ));
         }
-        if let Some(found) = self.session_of(&store, run, stage_id, attempt)?
+        let previous = self.session_of(&store, run, stage_id, attempt)?;
+        if let Some(reason) = previous.as_ref().and_then(|s| s.end_reason.as_deref())
+            && reason.starts_with(browser::CONTAINMENT_END)
+        {
+            return Err(ArchonError::Forbidden(reason.to_owned()));
+        }
+        if let Some(found) = previous
             && found.state != SessionState::Ended
         {
             // A fresh agent replaced the attempt's (a refused or lost agent
@@ -575,9 +581,7 @@ impl DesignService {
         self.close_session_browser(&session.id, reason).await;
         // A slot is free: start a queued session's browser, off this path,
         // which may hold the run table.
-        if let Some(arc) = self.arc() {
-            tokio::spawn(async move { arc.design.start_queued(&arc).await });
-        }
+        self.spawn_start_queued();
         self.wts
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -954,40 +958,32 @@ impl DesignService {
         ctx: &DaemonContext,
         session: &DesignSessionId,
         degraded: bool,
-        _url: Option<&str>,
-    ) {
-        let row = ctx
-            .store
-            .lock()
-            .await
-            .design_session(session)
-            .ok()
-            .flatten();
-        let Some(row) = row else {
-            return;
-        };
-        if row.degraded == degraded || row.state == SessionState::Ended {
-            return;
-        }
-        {
+    ) -> Result<(), ArchonError> {
+        let row = {
             let mut store = ctx.store.lock().await;
-            let patch = archon_queue::store::SessionPatch {
-                degraded: Some(degraded),
-                ..Default::default()
+            let Some(row) = store.design_session(session)? else {
+                return Ok(());
             };
-            if store.design_session_patch(session, patch).is_err() {
-                return;
+            if row.degraded == degraded || row.state == SessionState::Ended {
+                return Ok(());
             }
-        }
+            store.design_session_patch(
+                session,
+                archon_queue::store::SessionPatch {
+                    degraded: Some(degraded),
+                    ..Default::default()
+                },
+            )?;
+            row
+        };
         self.emit_session(ctx, session).await;
         if degraded && matches!(row.state, SessionState::Live | SessionState::Starting) {
             let incident = archon_core::now().timestamp_millis();
             let key = format!("design:{session}:preview:{incident}");
             let text = "The registered preview server is unreachable. Check the server in this item’s worktree.".to_owned();
-            if let Err(error) = self.owe(ctx, &row, key, text, None).await {
-                tracing::warn!(%error, "the preview-unreachable message was not queued");
-            }
+            self.owe(ctx, &row, key, text, None).await?;
         }
+        Ok(())
     }
 }
 
@@ -1005,7 +1001,7 @@ pub(crate) fn status_change(
 
 /// The first seven characters of a commit id.
 pub(crate) fn short(sha: &str) -> &str {
-    &sha[..sha.len().min(7)]
+    sha.get(..7).unwrap_or(sha)
 }
 
 /// A URL's path, without query or fragment.

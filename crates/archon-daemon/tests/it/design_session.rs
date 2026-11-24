@@ -971,6 +971,66 @@ mod stream {
     }
 
     #[tokio::test]
+    async fn a_relaunched_browser_advances_the_open_stream_sequence() {
+        let f = Fixture::new().await;
+        let (mut rx, task) = subscribe(&f, 1);
+        until("initial feed", || {
+            f.factory.browser(0).calls(|c| c.screencasts_started == 1)
+        })
+        .await;
+        f.factory.browser(0).frame(10);
+        assert_eq!(frame_seq(&mut rx).await, 10);
+        f.factory.browser(0).crash();
+        until("replacement feed", || {
+            f.factory.launched() == 2 && f.factory.browser(1).calls(|c| c.screencasts_started == 1)
+        })
+        .await;
+        f.factory.browser(1).frame(1);
+        assert_eq!(frame_seq(&mut rx).await, 11);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn containment_ends_the_attempt_without_a_crash_relaunch() {
+        let f = Fixture::new().await;
+        let (mut rx, task) = subscribe(&f, 1);
+        until("initial feed", || {
+            f.factory.browser(0).calls(|c| c.screencasts_started == 1)
+        })
+        .await;
+        f.factory.browser(0).stop_for_containment();
+        let reason = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let DesignEvent::Ended { reason } = event(&mut rx).await {
+                    break reason;
+                }
+            }
+        })
+        .await
+        .expect("containment promptly closes the stream");
+        assert!(reason.contains("containment"));
+        task.await.unwrap();
+        let row =
+            f.h.ctx
+                .store
+                .lock()
+                .await
+                .design_session(&f.session)
+                .unwrap()
+                .unwrap();
+        assert_eq!(row.end_reason.as_deref(), Some(reason.as_str()));
+        let retry = f
+            .as_agent(Request::DesignPreview {
+                url: crate::common::design::PREVIEW.into(),
+                caller: Some(f.agent.clone()),
+            })
+            .await
+            .expect_err("a stopped attempt cannot reopen its preview");
+        assert!(retry.to_string().contains("containment"));
+        assert_eq!(f.factory.launched(), 1);
+    }
+
+    #[tokio::test]
     async fn late_subscribers_get_the_current_frame_and_cleanup_survives_an_abort() {
         let f = Fixture::new().await;
         let service = f.h.ctx.design.clone();

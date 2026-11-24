@@ -39,6 +39,7 @@ pub struct FakeBrowser {
     feed: Mutex<Option<mpsc::UnboundedSender<adb::Frame>>>,
     resolved: Mutex<Option<adb::Resolved>>,
     rss: Mutex<u64>,
+    containment: Mutex<Option<String>>,
     /// The pictures the next captures return, first first; then the stock one.
     pictures: Mutex<std::collections::VecDeque<Vec<u8>>>,
     /// No selector matches anything on the page.
@@ -54,6 +55,7 @@ impl FakeBrowser {
             feed: Mutex::default(),
             resolved: Mutex::default(),
             rss: Mutex::new(100 * 1024 * 1024),
+            containment: Mutex::default(),
             pictures: Mutex::default(),
             no_elements: Mutex::default(),
             pid,
@@ -63,6 +65,14 @@ impl FakeBrowser {
     /// The page crashed.
     pub fn crash(&self) {
         let _ = self.events.send(adb::BrowserEvent::Crashed);
+    }
+
+    pub fn stop_for_containment(&self) {
+        let reason = "a document left the preview origin".to_owned();
+        *self.containment.lock().unwrap() = Some(reason.clone());
+        let _ = self
+            .events
+            .send(adb::BrowserEvent::ContainmentStopped { reason });
     }
 
     /// Push a frame to the screencast.
@@ -117,6 +127,10 @@ impl FrameFeed for Feed {
 
 #[async_trait::async_trait]
 impl PreviewBrowser for FakeBrowser {
+    fn containment_reason(&self) -> Option<String> {
+        self.containment.lock().unwrap().clone()
+    }
+
     fn pid(&self) -> Option<u32> {
         Some(self.pid)
     }

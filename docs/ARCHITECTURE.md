@@ -5740,8 +5740,8 @@ before, and a restart rebuilds the driver past the same proposal. A fresh
 retry (its new branch lacks the proposal page), a brief the operator
 amended, and a proposal that was revised, rejected, left undecided or never
 gated all propose again. An automatic repair (`auto_repair`) amends the brief with
-the refusal it repairs, and carries the run's brief fingerprint across that
-amendment only when the fingerprint still matched the brief before it: the
+the refusal it repairs. For live design items it carries the run's brief
+fingerprint across that amendment only when the fingerprint still matched the brief before it: the
 repaired run starts past an approved proposal (an approved live design is
 not designed again), while an amendment the operator made in between still
 proposes again.

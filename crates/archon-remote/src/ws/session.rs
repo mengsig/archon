@@ -4,10 +4,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use archon_core::design::DesignSessionId;
 use archon_core::error::ArchonError;
 use archon_core::protocol::{
-    ClientFeatures, ClientFrame, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request,
-    ServerFrame, WelcomeDevice, negotiate,
+    ClientFeatures, ClientFrame, ErrorCode, ErrorReply, Reply, Request, ServerFrame, WelcomeDevice,
+    negotiate,
 };
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -19,7 +20,7 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role, WebSocketConfig};
 
 use crate::sessions::Registration;
-use crate::{Backend, ChangeSubscription, FeedSubscription};
+use crate::{Backend, ChangeSubscription, DesignSubscription, FeedSubscription};
 
 /// The largest message a device may send; the app sends small requests.
 pub const MAX_MESSAGE: usize = 1024 * 1024;
@@ -160,7 +161,7 @@ where
         welcome.device.is_none(),
         "only the listener knows the device"
     );
-    if welcome.protocol_version == PROTOCOL_VERSION {
+    if welcome.protocol_version >= archon_core::protocol::FIRST_FEATURE_PROTOCOL_VERSION {
         welcome.device = Some(session.device.clone());
     }
     session.features = ClientFeatures::declared(&declared);
@@ -292,6 +293,9 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
     if let Request::SubscribeChanges { after } = request {
         return subscribe(session, id, Stream::Changes, after);
     }
+    if let Request::SubscribeDesign { session: design } = request {
+        return subscribe(session, id, Stream::Design(design), None);
+    }
     let Ok(permit) = session.in_flight.clone().try_acquire_owned() else {
         let message =
             format!("at most {MAX_IN_FLIGHT} requests may be in flight; wait for a reply");
@@ -313,10 +317,11 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
 }
 
 /// What a subscription streams.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Stream {
     Feed { verbose: bool },
     Changes,
+    Design(DesignSessionId),
 }
 
 fn subscribe(
@@ -345,6 +350,18 @@ fn subscribe(
             };
             session.tasks.spawn(async move {
                 backend.feed(subscription, outbox).await;
+                drop(live);
+            });
+        }
+        Stream::Design(design) => {
+            let subscription = DesignSubscription {
+                id: sub,
+                request: id,
+                session: design,
+                device: session.device.clone(),
+            };
+            session.tasks.spawn(async move {
+                backend.design(subscription, outbox).await;
                 drop(live);
             });
         }

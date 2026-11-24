@@ -165,9 +165,17 @@ function renderDetail(ctx, detail, state, { reload, artifacts, panels }) {
     h('div', { class: 'item-hero' },
       chip(look, 'chip-large'),
       h('p', { class: 'item-hero-meta', text: [repoName ?? 'no repository', summary?.switched_to ?? item.pipeline, shortId(item.id)].join(' · ') })),
+    designEntry(ctx, detail),
     outcomeCallout(detail, ctx.canOperate),
     itemActions(ctx, detail, { reload, repoName }),
   ];
+}
+
+// A live design item shows a Design chip and a way into its screen, where the host serves design sessions.
+function designEntry(ctx, detail) {
+  if (!ctx.store.get().designEnabled || !detail.stages?.some((s) => s.stage_id === 'design')) return null;
+  return h('div', { class: 'item-design' }, chip({ label: 'Design', tone: 'accent' }),
+    h('a', { class: 'button button-plain button-small', href: `#/design/${detail.item.id}` }, 'Open design'));
 }
 
 function outcomeCallout(detail, canOperate) {

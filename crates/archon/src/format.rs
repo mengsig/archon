@@ -1805,7 +1805,7 @@ pub(crate) mod tests {
         let text = autonomy(&view);
         assert!(text.starts_with("autonomy (repo api)\ndefault: review=standard"));
         assert!(
-            text.contains("\nceiling (values each knob allows): review=strict|standard|none, proposal=lavish|off,"),
+            text.contains("\nceiling (values each knob allows): review=strict|standard|none, proposal=lavish|live|off,"),
             "the ceiling lists what it allows: {text}"
         );
         assert!(

@@ -212,23 +212,34 @@ fn validate_pairs(
                 "visual pair references must belong to the requirement and be unique",
             ));
         }
+        // A theme or state is owed only where the reference records one: a
+        // live-design picture records its viewport alone.
         if pair.built.trim().is_empty()
             || pair.viewport.width == 0
             || pair.viewport.height == 0
-            || pair.theme.trim().is_empty()
-            || pair.state.trim().is_empty()
+            || (image.theme.is_some() && pair.theme.trim().is_empty())
+            || (image.state.is_some() && pair.state.trim().is_empty())
         {
             return Err(results_refused(
-                "visual pairs need a built image, viewport, theme and state",
+                "visual pairs need a built image, a viewport, and the theme and state \
+                 the reference records",
             ));
         }
-        if image.viewport.as_ref().is_some_and(|v| v != &pair.viewport)
-            || image.theme.as_ref().is_some_and(|t| t != &pair.theme)
-            || image.state.as_ref().is_some_and(|s| s != &pair.state)
-        {
+        let differ = context_differences(image, pair);
+        if !differ.is_empty() {
             return Err(results_refused(&format!(
-                "{} reference and built viewport/theme/state differ",
-                result.id
+                "{} reference and built {} differ: {}",
+                result.id,
+                differ
+                    .iter()
+                    .map(|(what, _)| *what)
+                    .collect::<Vec<_>>()
+                    .join("/"),
+                differ
+                    .iter()
+                    .map(|(_, how)| how.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ")
             )));
         }
     }
@@ -241,6 +252,38 @@ fn validate_pairs(
     assert!(seen.len() <= requirement.images.len());
     assert_eq!(seen.len(), result.visual_pairs.len());
     Ok(())
+}
+
+/// Where `pair` was taken in other conditions than its reference records,
+/// each as (what, the reference's value against the built one), so a refusal
+/// names exactly what to retake.
+fn context_differences(
+    image: &archon_core::intent::ReferenceImage,
+    pair: &archon_core::acceptance::VisualPair,
+) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    if let Some(v) = image.viewport.as_ref().filter(|v| **v != pair.viewport) {
+        out.push((
+            "viewport",
+            format!(
+                "the reference is {}x{}, the built image {}x{}",
+                v.width, v.height, pair.viewport.width, pair.viewport.height
+            ),
+        ));
+    }
+    if let Some(t) = image.theme.as_ref().filter(|t| **t != pair.theme) {
+        out.push((
+            "theme",
+            format!("the reference theme is {t:?}, the built {:?}", pair.theme),
+        ));
+    }
+    if let Some(s) = image.state.as_ref().filter(|s| **s != pair.state) {
+        out.push((
+            "state",
+            format!("the reference state is {s:?}, the built {:?}", pair.state),
+        ));
+    }
+    out
 }
 
 pub fn judge(
@@ -531,6 +574,48 @@ mod tests {
             build_results(&intent, &binding, Some(&data)).is_ok(),
             "runtime must authorize the deviation separately"
         );
+    }
+
+    /// A live-design picture records its viewport alone: a pair with no (or
+    /// a `null`) theme and state passes at that viewport, and one at another
+    /// viewport is refused naming both sizes, never as a type error.
+    #[test]
+    fn a_viewport_only_reference_owes_only_its_viewport() {
+        let (mut intent, binding) = fixture();
+        intent.images[0].theme = None;
+        intent.images[0].state = None;
+        let mut data = implemented();
+        let pair = &mut data["requirement_results"][0]["visual_pairs"][0];
+        pair["theme"] = Value::Null;
+        pair["state"] = Value::Null;
+        let results = build_results(&intent, &binding, Some(&data)).unwrap();
+        assert_eq!(results[0].visual_pairs[0].theme, "");
+        let pair = &mut data["requirement_results"][0]["visual_pairs"][0];
+        pair.as_object_mut().unwrap().remove("theme");
+        pair.as_object_mut().unwrap().remove("state");
+        assert!(build_results(&intent, &binding, Some(&data)).is_ok());
+        data["requirement_results"][0]["visual_pairs"][0]["viewport"] =
+            json!({"width": 390, "height": 844});
+        let error = build_results(&intent, &binding, Some(&data))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("R1 reference and built viewport differ: the reference is 1200x800, the built image 390x844"),
+            "{error}"
+        );
+        // A reference that records a theme still owes it: a null is refused
+        // as a missing theme, which a repair can answer.
+        let (intent, binding) = fixture();
+        let mut data = implemented();
+        data["requirement_results"][0]["visual_pairs"][0]["theme"] = Value::Null;
+        let Err(ArchonError::Invalid(error)) = build_results(&intent, &binding, Some(&data)) else {
+            panic!("a null theme is refused where the reference records one")
+        };
+        assert!(
+            error.contains("the theme and state the reference records"),
+            "{error}"
+        );
+        assert!(error.starts_with(RESULTS_REFUSED), "{error}");
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::sync::{Arc, Weak};
 
 use archon_core::error::ArchonError;
 use archon_core::protocol::{Reply, Request, ServerFrame, WelcomeDevice, feature};
-use archon_remote::{Backend, ChangeSubscription, FeedSubscription};
+use archon_remote::{Backend, ChangeSubscription, DesignSubscription, FeedSubscription};
 use tokio::sync::mpsc;
 
 use crate::context::DaemonContext;
@@ -43,7 +43,21 @@ impl Backend for DaemonBackend {
     }
 
     fn features(&self) -> Vec<&'static str> {
-        crate::handlers::features()
+        let mut features = crate::handlers::features();
+        // Advertised only once every request it covers is served.
+        if self.context().is_ok_and(|ctx| ctx.design.enabled()) {
+            features.push(feature::DESIGN_SESSIONS);
+            features.push(feature::DESIGN_ITERATIONS);
+        }
+        features
+    }
+
+    async fn design(&self, subscription: DesignSubscription, frames: mpsc::Sender<ServerFrame>) {
+        let Ok(ctx) = self.context() else {
+            return;
+        };
+        tracing::info!(device = %subscription.device.id, name = %subscription.device.name, role = ?subscription.device.role, session = %subscription.session, "design: stream opened");
+        crate::design::stream(ctx, subscription, frames).await;
     }
 
     async fn feed(&self, subscription: FeedSubscription, frames: mpsc::Sender<ServerFrame>) {
@@ -66,12 +80,28 @@ impl Backend for DaemonBackend {
     }
 }
 
+/// Requests a live preview sends many times a second; logging each at INFO
+/// would drown the log (frame acks alone are about 1.5 a second).
+fn is_high_rate(command: &str) -> bool {
+    matches!(
+        command,
+        "design_frame_ack" | "design_input" | "design_resolve" | "design_region"
+    )
+}
+
 /// Every change a device asks for names the device and its role in the log.
 fn log_change(device: &WelcomeDevice, command: &str, result: &Result<Reply, ArchonError>) {
     let role = device.role;
+    let quiet = is_high_rate(command);
     match result {
+        Ok(_) if quiet => {
+            tracing::debug!(device = %device.id, name = %device.name, ?role, command, "a paired device's request applied")
+        }
         Ok(_) => {
             tracing::info!(device = %device.id, name = %device.name, ?role, command, "a paired device's request applied")
+        }
+        Err(error) if quiet => {
+            tracing::debug!(device = %device.id, name = %device.name, ?role, command, %error, "a paired device's request refused")
         }
         Err(error) => {
             tracing::info!(device = %device.id, name = %device.name, ?role, command, %error, "a paired device's request refused")
@@ -84,4 +114,29 @@ pub(crate) async fn start(ctx: &Arc<DaemonContext>) {
     ctx.remote
         .attach(Arc::new(DaemonBackend(Arc::downgrade(ctx))));
     ctx.remote.restore().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_high_rate;
+
+    #[test]
+    fn per_frame_requests_log_quietly() {
+        for c in [
+            "design_frame_ack",
+            "design_input",
+            "design_resolve",
+            "design_region",
+        ] {
+            assert!(is_high_rate(c), "{c}");
+        }
+        for c in [
+            "design_note_add",
+            "design_finish_confirm",
+            "remote_pair",
+            "say",
+        ] {
+            assert!(!is_high_rate(c), "{c}");
+        }
+    }
 }

@@ -1,4 +1,4 @@
-import { entryKey, echoedLine } from '../../core/conversation.js';
+import { entryKey, echoedLine, stripRelayMark } from '../../core/conversation.js';
 
 // Chat lines sent from here, until the orchestrator reads them and the
 // conversation shows them. The outcome of each send (offline, refused) stays
@@ -8,7 +8,9 @@ export function addPending(store, text) {
   const { conversation } = store.get();
   if (!Array.isArray(conversation)) throw new TypeError('addPending needs the conversation in the store');
   const after = conversation.at(-1)?.seq ?? 0;
-  const entry = { localId: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text, after, status: 'sending', error: null };
+  // The feed's last seq too: a command's line and archond's answer to it come after.
+  const feedAfter = store.get().feed?.at(-1)?.seq ?? 0;
+  const entry = { localId: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text, after, feedAfter, status: 'sending', error: null };
   store.set({ outbox: [...store.get().outbox, entry] });
   return entry.localId;
 }
@@ -50,4 +52,36 @@ export function matchEchoes(store, fresh) {
     changed = true;
   }
   if (changed) store.set({ outbox, chatNotes });
+}
+
+// What leads archond's feed line for a command's result when the orchestrator
+// could not show it (crates/archon-daemon/src/operator_commands.rs); its
+// refusals start "Operator command" too.
+export const COMMAND_RESULT_LABEL = 'Operator command: ';
+
+// archond's answer to a command sent from here, read from its feed, for while
+// the conversation cannot show it (the orchestrator is offline): the lines it
+// wrote after the command's own, up to its result. Null until the result is
+// there, or for a line that is not a command.
+export function commandOutcome(feed, pending) {
+  const text = String(pending?.text ?? '').trim();
+  if (!text.startsWith('/') || !Array.isArray(feed)) return null;
+  const at = feed.findIndex((item) => item.seq > (pending.feedAfter ?? 0) && item.entry?.entry === 'operator'
+    && stripRelayMark(String(item.entry.text ?? '')).trim() === text);
+  if (at < 0) return null;
+  const lines = [];
+  for (const item of feed.slice(at + 1)) {
+    const entry = item.entry ?? {};
+    if (entry.entry === 'operator') return null;
+    if (entry.entry !== 'system') continue;
+    const line = String(entry.text ?? '').trim();
+    if (line.startsWith('Operator command')) {
+      // "Operator command: <result>", or a refusal that says so itself.
+      const result = line.startsWith(COMMAND_RESULT_LABEL) ? line.slice(COMMAND_RESULT_LABEL.length).trim() : line;
+      const question = /\bQ(\d+)\b/.exec(/^Awaiting your confirmation/.test(result) ? result : '')?.[0] ?? null;
+      return { lines: [...lines, result].filter(Boolean), question };
+    }
+    lines.push(line);
+  }
+  return null;
 }

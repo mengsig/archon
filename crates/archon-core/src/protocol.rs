@@ -72,19 +72,40 @@ use crate::timing_report::{TimingQuery, TimingReport};
 /// 24: the unified frontend's wire (CONTRACTS.md §1.3): `hello` features, a
 /// `welcome` with the accepted range and features, the change stream, task
 /// graph, run plans and GitHub links; `archon-web` may still speak 23.
-pub const PROTOCOL_VERSION: u32 = 24;
+/// 25: live design sessions (`design_*` requests, `subscribe_design`, the
+/// `design` frame); an older archond knows none of them.
+/// 26: design iterations (feature `design_iterations`): `design_note_add`
+/// may carry `follows` and `refs`, `design_note_continue_from` and
+/// `design_history`; note views and finish cards gain defaulted fields, so
+/// a client at 23 to 25 reads follow-ups as plain notes.
+pub const PROTOCOL_VERSION: u32 = 26;
 
 /// The oldest protocol archond accepts from `archon-web`; every other client
 /// ships in archond's own binary and must match exactly.
 pub const MIN_WEB_PROTOCOL_VERSION: u32 = 23;
 
+/// The first protocol with `hello` features and a named device.
+pub const FIRST_FEATURE_PROTOCOL_VERSION: u32 = 24;
+
 pub mod changes;
 pub mod compat;
+pub mod design;
 pub mod github_links;
 pub mod graph;
 pub mod schema;
 #[cfg(test)]
 mod v24_tests;
+#[cfg(test)]
+mod v25_tests;
+#[cfg(test)]
+mod v26_tests;
+
+use crate::design::{DesignAssetId, DesignSessionId, Rect, SessionState, ViewportPreset};
+pub use design::{
+    AgentNoteStatus, BrowserStatus, DesignAssetView, DesignEvent, DesignFinishView, DesignNoteView,
+    DesignResolvedView, DesignStateView, FinishCard, FinishHistoryEntry, InputEvent, KeyAction,
+    MouseAction, MouseButton, TouchAction, TouchPoint,
+};
 
 pub use changes::{
     Change, ChangeSubject, HistoryRange, ItemTransition, QueueStateKind, RunStateKind,
@@ -113,8 +134,10 @@ pub mod feature {
     pub const GITHUB_IMPORT: &str = "github_import";
     pub const DEVICE_ROLES: &str = "device_roles";
     pub const ENQUEUE_ADVICE: &str = "enqueue_advice";
-    /// Every feature protocol 24 defines.
-    pub const ALL: [&str; 10] = [
+    pub const DESIGN_SESSIONS: &str = "design_sessions";
+    pub const DESIGN_ITERATIONS: &str = "design_iterations";
+    /// Every feature protocol 26 defines.
+    pub const ALL: [&str; 12] = [
         CHANGES,
         TASK_GRAPH,
         RUN_PLAN,
@@ -125,6 +148,8 @@ pub mod feature {
         GITHUB_IMPORT,
         DEVICE_ROLES,
         ENQUEUE_ADVICE,
+        DESIGN_SESSIONS,
+        DESIGN_ITERATIONS,
     ];
 }
 
@@ -172,10 +197,19 @@ pub fn negotiate(
         features.iter().all(|f| feature::ALL.contains(f)),
         "archond advertises only features protocol {PROTOCOL_VERSION} defines: {features:?}"
     );
-    let features = match protocol_version == PROTOCOL_VERSION {
-        true => features.iter().map(|f| (*f).to_owned()).collect(),
-        false => Vec::new(),
+    // A client knows the features of its own protocol and none of a later
+    // one's: 24 none of 25's design sessions, 25 none of 26's iterations.
+    let later: &[&str] = match protocol_version {
+        PROTOCOL_VERSION => &[],
+        25 => &[feature::DESIGN_ITERATIONS],
+        FIRST_FEATURE_PROTOCOL_VERSION => &[feature::DESIGN_SESSIONS, feature::DESIGN_ITERATIONS],
+        _ => &feature::ALL,
     };
+    let features = features
+        .iter()
+        .filter(|f| !later.contains(f))
+        .map(|f| (*f).to_owned())
+        .collect();
     Ok(Welcome {
         protocol_version,
         daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -227,7 +261,7 @@ pub struct ClientFrame {
 #[serde(tag = "frame", rename_all = "snake_case")]
 #[expect(
     clippy::large_enum_variant,
-    reason = "most frames are replies; boxing them would allocate once per reply"
+    reason = "a design event is the common frame on a design subscription; boxing it would allocate per frame"
 )]
 pub enum ServerFrame {
     /// `id: 0` is the daemon explaining why it is closing the connection.
@@ -243,6 +277,11 @@ pub enum ServerFrame {
     Change {
         sub: u64,
         change: Change,
+    },
+    /// One event of a `subscribe_design` subscription.
+    Design {
+        sub: u64,
+        event: DesignEvent,
     },
 }
 
@@ -794,6 +833,197 @@ pub enum Request {
     },
     /// Every repository watch.
     RepoWatches,
+    /// An item's design session and notes; an observer gets only the summary.
+    DesignGet {
+        item: QueueItemId,
+    },
+    /// Stream a design session's frames and events as `design` frames.
+    SubscribeDesign {
+        session: DesignSessionId,
+    },
+    /// One stored design picture.
+    DesignAsset {
+        item: QueueItemId,
+        id: DesignAssetId,
+    },
+    /// Flow control: the last frame the client has drawn.
+    DesignFrameAck {
+        sub: u64,
+        seq: u64,
+    },
+    /// Pointer, wheel, key, text and touch events for the preview.
+    DesignInput {
+        session: DesignSessionId,
+        events: Vec<InputEvent>,
+    },
+    /// The element under a point, with its `depth`th parent.
+    DesignResolve {
+        session: DesignSessionId,
+        x: f64,
+        y: f64,
+        depth: i32,
+        select: bool,
+    },
+    /// A region the operator drew.
+    DesignRegion {
+        session: DesignSessionId,
+        #[serde(rename = "box")]
+        rect: Rect,
+    },
+    /// A picture the operator supplied or sketched.
+    DesignUpload {
+        session: DesignSessionId,
+        media_type: String,
+        /// Base64.
+        data: String,
+        name: Option<String>,
+        /// Stroke JSON of a sketch.
+        sketch: Option<String>,
+        base: Option<DesignAssetId>,
+        #[serde(default)]
+        blank: bool,
+    },
+    /// Resize the preview to a preset.
+    DesignViewport {
+        session: DesignSessionId,
+        preset: ViewportPreset,
+    },
+    /// Reload the preview page.
+    DesignReload {
+        session: DesignSessionId,
+    },
+    /// Tell the agent again where the preview is.
+    DesignTellAgent {
+        session: DesignSessionId,
+    },
+    /// Answer the page's JavaScript dialog.
+    DesignDialogAnswer {
+        session: DesignSessionId,
+        accept: bool,
+        text: Option<String>,
+    },
+    /// Add a note to the session's queue.
+    DesignNoteAdd {
+        session: DesignSessionId,
+        client_key: String,
+        text: String,
+        asset: Option<DesignAssetId>,
+        send_picture: bool,
+        details_text: Option<String>,
+        /// For a follow-up, the version of its chain it continues from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        follows: Option<String>,
+        /// Earlier notes it references.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        refs: Vec<String>,
+    },
+    /// Continue a chain from one of its versions: revert the newer versions
+    /// in the code, newest first, then queue the follow-up `text` if given.
+    DesignNoteContinueFrom {
+        item: QueueItemId,
+        id: String,
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        client_key: Option<String>,
+        #[serde(default)]
+        refs: Vec<String>,
+    },
+    /// Change a queued note's text.
+    DesignNoteEdit {
+        item: QueueItemId,
+        id: String,
+        text: String,
+    },
+    /// Cancel a queued note.
+    DesignNoteCancel {
+        item: QueueItemId,
+        id: String,
+    },
+    /// Answer a note that needs a reply.
+    DesignNoteReply {
+        item: QueueItemId,
+        id: String,
+        text: String,
+    },
+    /// Drop a note that needs a reply.
+    DesignNoteDrop {
+        item: QueueItemId,
+        id: String,
+    },
+    /// Queue an undo of a done note.
+    DesignNoteUndo {
+        item: QueueItemId,
+        id: String,
+    },
+    /// Send a failed or cancelled note again.
+    DesignNoteResend {
+        item: QueueItemId,
+        id: String,
+    },
+    /// Begin Finish: `live` to `finishing` and the final capture.
+    DesignFinishCapture {
+        session: DesignSessionId,
+        #[serde(default)]
+        cancel_queued: bool,
+        #[serde(default)]
+        recapture: bool,
+    },
+    /// Capture the current frame for one note's final picture.
+    DesignFinalCapture {
+        session: DesignSessionId,
+        capture: String,
+        note: String,
+    },
+    /// Confirm Finish with the operator's choices.
+    DesignFinishConfirm {
+        session: DesignSessionId,
+        capture: String,
+        include: BTreeMap<String, bool>,
+        superseded: BTreeMap<String, Option<String>>,
+        #[serde(default)]
+        confirm_no_change: bool,
+    },
+    /// Back to editing: `finishing` to `live`.
+    DesignFinishCancel {
+        session: DesignSessionId,
+    },
+    /// A stage agent (re)points the preview at its dev server.
+    DesignPreview {
+        url: String,
+        /// Aether's out-of-band MCP caller identity, never a tool argument.
+        caller: Option<AetherAgentId>,
+    },
+    /// A stage agent reports a note's status.
+    DesignNoteReport {
+        id: String,
+        status: AgentNoteStatus,
+        reply: Option<String>,
+        commit: Option<String>,
+        #[serde(default)]
+        no_change: bool,
+        /// For a done page note (no element picked, such as a New screen
+        /// sketch): the app path that shows the change, e.g. `/settings`.
+        /// The preview goes there and the after and final pictures are taken
+        /// there.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        /// The steps that put the preview in the state that shows the change
+        /// (open a dialog, hover a menu). With `working` they take the
+        /// note's before picture in that state; with `done` they are
+        /// replayed for the after picture, and a repeated `done` retakes it.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        steps: Vec<crate::design::UiStep>,
+        /// Aether's out-of-band MCP caller identity, never a tool argument.
+        caller: Option<AetherAgentId>,
+    },
+    /// A stage agent reads the history of a note's chain, or every chain.
+    DesignHistory {
+        #[serde(default)]
+        id: Option<String>,
+        /// Aether's out-of-band MCP caller identity, never a tool argument.
+        caller: Option<AetherAgentId>,
+    },
 }
 
 /// Who may make a request and whether it changes Archon.
@@ -858,8 +1088,12 @@ impl Request {
             | Self::ItemLinks { .. }
             | Self::IssueItems { .. }
             | Self::ListGithubObjects { .. }
-            | Self::RepoWatches => Read,
-            Self::CheckUpdates | Self::RemoteStatus => OperatorRead,
+            | Self::RepoWatches
+            | Self::DesignGet { .. } => Read,
+            Self::CheckUpdates
+            | Self::RemoteStatus
+            | Self::SubscribeDesign { .. }
+            | Self::DesignAsset { .. } => OperatorRead,
             Self::OperatorCommand { .. }
             | Self::UndoAuthority { .. }
             | Self::Shutdown
@@ -883,6 +1117,27 @@ impl Request {
             | Self::ConfigureRemote { .. }
             | Self::RemotePair { .. }
             | Self::RemoteRevoke { .. }
+            | Self::DesignFrameAck { .. }
+            | Self::DesignInput { .. }
+            | Self::DesignResolve { .. }
+            | Self::DesignRegion { .. }
+            | Self::DesignUpload { .. }
+            | Self::DesignViewport { .. }
+            | Self::DesignReload { .. }
+            | Self::DesignTellAgent { .. }
+            | Self::DesignDialogAnswer { .. }
+            | Self::DesignNoteAdd { .. }
+            | Self::DesignNoteEdit { .. }
+            | Self::DesignNoteCancel { .. }
+            | Self::DesignNoteReply { .. }
+            | Self::DesignNoteDrop { .. }
+            | Self::DesignNoteUndo { .. }
+            | Self::DesignNoteContinueFrom { .. }
+            | Self::DesignNoteResend { .. }
+            | Self::DesignFinishCapture { .. }
+            | Self::DesignFinalCapture { .. }
+            | Self::DesignFinishConfirm { .. }
+            | Self::DesignFinishCancel { .. }
             | Self::Answer { .. } => OperatorChange,
             Self::SetDirective {
                 clarifications: crate::autonomy::ClarificationPolicy::Proceed,
@@ -896,6 +1151,9 @@ impl Request {
             | Self::Resume(_)
             | Self::MessageOrchestrator { .. }
             | Self::PublishArtifact { .. }
+            | Self::DesignPreview { .. }
+            | Self::DesignNoteReport { .. }
+            | Self::DesignHistory { .. }
             | Self::SubmitVerdict { .. }
             | Self::ApproveIntent(_)
             | Self::Enqueue(_)
@@ -1050,6 +1308,7 @@ impl TiersPatch {
                 full: self.full_check.apply(current.checks.full),
                 release: self.release_hook.apply(current.checks.release),
             },
+            design: current.design,
         }
     }
 }
@@ -1328,6 +1587,27 @@ pub enum Reply {
         synced_at: Option<Timestamp>,
     },
     RepoWatches(Vec<github_links::RepoWatchView>),
+    /// An item's design session and notes.
+    DesignState(DesignStateView),
+    /// What an observer sees of a design session.
+    DesignSummary {
+        state: Option<SessionState>,
+        note_count: u32,
+    },
+    /// What a click resolved to.
+    DesignResolved(DesignResolvedView),
+    /// One note.
+    DesignNote(Box<DesignNoteView>),
+    /// The Finish review.
+    DesignFinish(DesignFinishView),
+    /// One stored picture.
+    DesignAsset(DesignAssetView),
+    /// A design request that returns nothing.
+    DesignDone,
+    /// The text a stage agent's design tool shows.
+    DesignAgent {
+        message: String,
+    },
 }
 
 /// What one gc pass did (ARCHITECTURE §13.2). Paths are real paths.
@@ -2494,6 +2774,16 @@ pub enum ErrorCode {
     /// archond is recovering its runs after a start; retry once it is done.
     Recovering,
     Internal,
+    /// The design session is over or was replaced.
+    Gone,
+    /// The note belongs to an earlier session.
+    ReadOnly,
+    /// The session is finishing; notes are frozen.
+    Finishing,
+    /// The page or notes changed since the capture.
+    Stale,
+    /// Another device acted first.
+    Conflict,
     /// A change cursor older than what is kept: `{"history_expired":
     /// {"first_seq":..,"last_seq":..}}`. Read a fresh snapshot.
     HistoryExpired(HistoryRange),
@@ -2526,6 +2816,7 @@ impl From<&ArchonError> for ErrorReply {
             | ArchonError::Io { .. }
             | ArchonError::Protocol(_) => ErrorCode::Internal,
             ArchonError::HistoryExpired { kept, .. } => ErrorCode::HistoryExpired(*kept),
+            ArchonError::Design { code, .. } => code.error_code(),
         };
         Self {
             code,

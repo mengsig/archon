@@ -21,6 +21,7 @@ archon-mcp = { path = "crates/archon-mcp" }
 archon-lavish = { path = "crates/archon-lavish" }
 archon-daemon = { path = "crates/archon-daemon" }
 archon-remote = { path = "crates/archon-remote" }
+archon-design-browser = { path = "crates/archon-design-browser" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.92"

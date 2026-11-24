@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Added
+
+- Live design sessions. `proposal = live` (also `archon queue add --proposal
+  live`, the New item switch and chat) inserts a first `design` stage in place
+  of `propose`. The agent runs the app's dev server and archond shows it in a
+  sandboxed headless Chromium streamed as pictures to the web app, where you
+  point at elements, comment, compare before and after, undo, and approve a
+  ledger Archon builds from its own records. Needs `[design] enabled = true`
+  and Chrome or Chromium (`archon doctor` checks). Protocol 25 adds the design
+  requests, events and the `design_sessions` feature. See
+  [docs/design-sessions.md](docs/design-sessions.md).
+- Design follow-ups, references and an iteration tree. Any note can be
+  followed up with a new note that continues it; a note can reference up to
+  5 earlier ones; the Tree tab shows each chain with its versions, older
+  versions can be viewed as pictures, and **Continue from this version**
+  undoes the newer versions with new revert commits. Finish shows one card
+  per chain with its history. The agent gets the MCP read tool
+  `design_history`. Protocol 26 adds the `design_iterations` feature; store
+  schema 29 adds the design tables and 30 adds `follows` and `refs` to design
+  notes. A store from a build of this work's own branch, which recorded them
+  as 25 and 26, upgrades in place and keeps its design records.
+
 ### Changed
 
 - Stage leads take fewer turns on a small, passing change. The stage
@@ -30,6 +52,21 @@
 
 ### Fixed
 
+- Approved-intent acceptance honours the model the orchestrator or operator
+  pinned for `intent-acceptance` (when policy permits it and it can see the
+  images) and skips a judge whose provider is out of quota, so a spent
+  provider no longer fails the item. A retry after a usage-limit failure
+  moves to the next eligible judge. A pin that shares a builder's model or
+  vendor is labelled `acceptance: not independent`, and refused under
+  `[review] independent_acceptance = true`.
+
+- The review page at a live design session's approval gate is now a
+  decision page: a summary with the answers on top, one card per note with
+  its before and after pictures side by side, the commit and files changed
+  and its status, and the full brief folded at the end. A note whose after
+  picture was captured always shows it and binds it to the approved intent,
+  and a picture is called withheld only when you switched it off: a card that
+  had no picture when the review opened no longer counts as switched off.
 - The bench's archon arm no longer voids a trial when the orchestrator
   delegates a helper: Aether lists the helper's events (its creation, task
   and turns) among the orchestrator's, and the harness now skips every event

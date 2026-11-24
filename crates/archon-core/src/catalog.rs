@@ -29,6 +29,10 @@ pub enum PipelineSource {
 pub enum StageKind {
     /// Writes a proposal page and changes nothing; at most one, first.
     Propose,
+    /// A live design session: the agent stays up, edits one note at a time and
+    /// commits each; replaces `propose` when `proposal = live`. At most one,
+    /// first, and no fan-out of its own.
+    Design,
     Work,
     Review,
     Test,
@@ -178,5 +182,15 @@ mod tests {
         let other = Path::new("/wt/demo/qi_01ARZ3NDEKTSV4RRFFQ69G5FAW/snapshot");
         assert!(!is_snapshot_of(other, &item), "another item's snapshot");
         assert!(!is_snapshot_of(Path::new("/snapshot"), &item));
+    }
+
+    #[test]
+    fn a_design_stage_has_no_fan_out_or_gate_of_its_own() {
+        assert!(!StageKind::Design.allows_fan_out());
+        assert!(!StageKind::Design.allows_gate());
+        assert_eq!(
+            serde_json::to_string(&StageKind::Design).unwrap(),
+            "\"design\""
+        );
     }
 }

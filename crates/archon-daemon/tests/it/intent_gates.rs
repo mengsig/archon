@@ -11,7 +11,7 @@ use archon_core::intent::{ApprovedIntent, IntentBinding};
 use archon_core::model::Effort;
 use archon_core::protocol::{Reply, Request};
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::run::{RecordRepair, StageOutcome, StageState};
+use archon_core::run::{RecordRepair, StageOutcome, StageRun, StageState};
 use archon_queue::store::keys;
 use serde_json::json;
 use sha2::Digest;
@@ -551,4 +551,235 @@ async fn a_validation_only_acceptance_stage_owes_and_repairs_its_results() {
         }
     }
     assert_eq!(readiness(&h, &item).await, AcceptanceStatus::Passed);
+}
+
+/// Another model of the builder's vendor, and one of another vendor.
+const SAME_VENDOR: &str = "claude-code/opus-pin";
+const OTHER_VENDOR: &str = "codex/gpt-6-luna";
+
+/// A ledger item whose plan pins `pin` for acceptance, Aether listing every
+/// model of `vision` with vision, run until its review is the one running.
+async fn pinned_at_review(
+    config: Config,
+    pin: &str,
+    vision: &[&str],
+) -> (Harness, FakeAether, QueueItem) {
+    let mut plan = common::plan();
+    plan.0.insert(
+        "intent-acceptance".into(),
+        vec![common::choice(pin, Effort::High)],
+    );
+    let (h, fake, item) = fixture_in(config, (common::PIPELINE, None, plan), false, vision).await;
+    settle(&h, evidence(&h, &item, "implemented").await).await;
+    assert!(h.running().await.iter().all(|s| s.stage_id == "review"));
+    (h, fake, item)
+}
+
+/// Aether's reading that each of `providers` has no usage left.
+fn spent_providers(h: &Harness, providers: &[&str]) {
+    reading(h, &providers.iter().map(|p| (*p, 0)).collect::<Vec<_>>());
+}
+
+/// Aether's reading of each provider's remaining usage, in percent.
+fn reading(h: &Harness, providers: &[(&str, u64)]) {
+    use archon_core::quota::{ProviderHeadroom, QuotaWindow};
+    let headroom = |remaining_percent| ProviderHeadroom {
+        windows: vec![QuotaWindow {
+            name: "5h".into(),
+            window_minutes: Some(300),
+            remaining_percent,
+            resets_at: Some(archon_core::now() + chrono::TimeDelta::hours(2)),
+            resets_in_seconds: None,
+        }],
+        observed_at: Some(archon_core::now()),
+        age_seconds: Some(0),
+        stale: false,
+    };
+    h.ctx.quota.set_reading(archon_daemon::quota::Reading {
+        read_at: archon_core::now(),
+        providers: providers
+            .iter()
+            .map(|(p, left)| ((*p).to_owned(), headroom(*left)))
+            .collect(),
+    });
+}
+
+fn no_repair() -> Config {
+    let mut config = Config::default();
+    config.review.auto_repair = false;
+    config
+}
+
+#[tokio::test]
+async fn a_pinned_acceptance_model_judges_and_is_labelled_when_it_shares_the_builder_s_vendor() {
+    let vision = [common::MODEL, common::REVIEW_MODEL, SAME_VENDOR];
+    let (h, _fake, item) = pinned_at_review(no_repair(), SAME_VENDOR, &vision).await;
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    let running = h.running().await;
+    assert_eq!(running.len(), 1, "{:?}", h.state(&item.id).await);
+    assert_eq!(running[0].stage_id, "intent-acceptance");
+    assert_eq!(
+        running[0].choice.model.to_string(),
+        SAME_VENDOR,
+        "the pin, not another vendor's model"
+    );
+    assert_eq!(running[0].choice.effort, Effort::High);
+    settle(&h, judgment(&h, &item, "pass").await).await;
+    let Reply::ItemDetail(detail) = h
+        .cli(Request::GetItem {
+            item: item.id.clone(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("detail")
+    };
+    let record = detail.acceptance.record.expect("acceptance on record");
+    assert_eq!(record.model.to_string(), SAME_VENDOR);
+    assert!(!record.independent, "the builder's vendor is labelled");
+}
+
+#[tokio::test]
+async fn independent_acceptance_refuses_a_pin_that_shares_the_builder_s_vendor() {
+    let mut config = no_repair();
+    config.review.independent_acceptance = true;
+    let vision = [common::MODEL, common::REVIEW_MODEL, SAME_VENDOR];
+    let (h, _fake, item) = pinned_at_review(config, SAME_VENDOR, &vision).await;
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("the strict knob refuses the pin")
+    };
+    assert!(error.contains("plan pins"), "{error}");
+    assert!(error.contains(SAME_VENDOR), "{error}");
+}
+
+#[tokio::test]
+async fn independent_acceptance_keeps_a_pin_of_another_vendor() {
+    let mut config = no_repair();
+    config.review.independent_acceptance = true;
+    let vision = [common::MODEL, common::REVIEW_MODEL, OTHER_VENDOR];
+    let (h, _fake, _item) = pinned_at_review(config, OTHER_VENDOR, &vision).await;
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    let running = h.running().await;
+    assert_eq!(running[0].choice.model.to_string(), OTHER_VENDOR);
+}
+
+#[tokio::test]
+async fn a_judge_whose_provider_is_out_of_quota_is_skipped() {
+    let vision = [common::MODEL, common::REVIEW_MODEL, SAME_VENDOR];
+    let (h, _fake, item) = pinned_at_review(no_repair(), common::REVIEW_MODEL, &vision).await;
+    spent_providers(&h, &["codex"]);
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    let running = h.running().await;
+    assert_eq!(running.len(), 1, "{:?}", h.state(&item.id).await);
+    assert_eq!(running[0].stage_id, "intent-acceptance");
+    assert_eq!(
+        running[0].choice.model.to_string(),
+        SAME_VENDOR,
+        "the pin's provider has no usage left"
+    );
+}
+
+#[tokio::test]
+async fn an_acceptance_retry_leaves_the_provider_that_hit_its_usage_limit() {
+    let vision = [common::MODEL, common::REVIEW_MODEL, SAME_VENDOR];
+    let (h, _fake, item) = pinned_at_review(no_repair(), common::REVIEW_MODEL, &vision).await;
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    let first = h.running().await;
+    assert_eq!(first[0].stage_id, "intent-acceptance");
+    assert_eq!(first[0].choice.model.to_string(), common::REVIEW_MODEL);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "usage limit reached; try again at Nov 24th 4:07 PM".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    let retry = h.running().await;
+    assert_eq!(retry.len(), 1, "{:?}", h.state(&item.id).await);
+    assert_eq!(retry[0].stage_id, "intent-acceptance");
+    assert_eq!(retry[0].choice.model.to_string(), SAME_VENDOR);
+}
+
+#[tokio::test]
+async fn acceptance_with_every_judge_out_of_quota_fails_with_a_clear_error() {
+    let vision = [common::MODEL, common::REVIEW_MODEL];
+    let (h, _fake, item) = pinned_at_review(no_repair(), common::REVIEW_MODEL, &vision).await;
+    spent_providers(&h, &["codex", "claude-code"]);
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("no judge can run: {:?}", h.state(&item.id).await)
+    };
+    assert!(error.contains("no eligible acceptance judge"), "{error}");
+    assert!(error.contains("out of quota"), "{error}");
+    assert!(
+        error.contains("codex") && error.contains("claude-code"),
+        "{error}"
+    );
+}
+
+const USAGE_LIMIT: &str = "usage limit reached; try again at Nov 24th 4:07 PM";
+
+/// Fail the running acceptance attempt on a usage limit and dispatch the
+/// retry: the stage that runs now, which is a new attempt, not the failed one.
+async fn retry_after_usage_limit(h: &Harness) -> Vec<StageRun> {
+    let failed: Vec<_> = h.running().await.iter().map(|s| s.id.clone()).collect();
+    h.settle_running(|_| StageOutcome::Failed {
+        error: USAGE_LIMIT.into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    let retry: Vec<_> = h
+        .running()
+        .await
+        .into_iter()
+        .filter(|s| s.stage_id == "intent-acceptance")
+        .collect();
+    assert!(
+        retry.iter().all(|s| !failed.contains(&s.id)),
+        "a new attempt runs, not the failed one"
+    );
+    retry
+}
+
+#[tokio::test]
+async fn a_lone_judge_that_hit_its_usage_limit_is_retried() {
+    let vision = [common::MODEL, common::REVIEW_MODEL];
+    let (h, _fake, _item) = pinned_at_review(no_repair(), common::REVIEW_MODEL, &vision).await;
+    // The reading shows the builder's provider spent: codex is the only judge.
+    spent_providers(&h, &["claude-code"]);
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    assert_eq!(
+        h.running().await[0].choice.model.to_string(),
+        common::REVIEW_MODEL
+    );
+    let retry = retry_after_usage_limit(&h).await;
+    assert_eq!(
+        retry.len(),
+        1,
+        "no other judge can run, so the lone one does"
+    );
+    assert_eq!(retry[0].choice.model.to_string(), common::REVIEW_MODEL);
+}
+
+#[tokio::test]
+async fn a_quota_reading_overrides_the_failure_history() {
+    let vision = [common::MODEL, common::REVIEW_MODEL, SAME_VENDOR];
+    let (h, _fake, item) = pinned_at_review(no_repair(), common::REVIEW_MODEL, &vision).await;
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    assert_eq!(
+        h.running().await[0].choice.model.to_string(),
+        common::REVIEW_MODEL
+    );
+    // As the attempt fails Aether reads usage left on codex; without the
+    // reading the failure would move the retry to the other provider, as in
+    // the test above.
+    reading(&h, &[("codex", 80)]);
+    let retry = retry_after_usage_limit(&h).await;
+    assert_eq!(retry.len(), 1, "{:?}", h.state(&item.id).await);
+    assert_eq!(
+        retry[0].choice.model.to_string(),
+        common::REVIEW_MODEL,
+        "the reading shows usage left, so the failure does not move the judge"
+    );
 }

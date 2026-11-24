@@ -6,7 +6,7 @@ import { icon } from '../../ui/icons.js';
 import { reconcile } from '../../ui/list.js';
 import { screenHeader, errorNote, loadErrorNotes, describeError } from '../../ui/components.js';
 import { entryKey } from '../../core/conversation.js';
-import { addPending, settlePending, removePending } from './outbox.js';
+import { addPending, settlePending, removePending, commandOutcome } from './outbox.js';
 import { conversationEntry, pendingEntry, dayKey } from './entries.js';
 
 const NEAR_BOTTOM_PX = 120;
@@ -31,7 +31,7 @@ export function mountChat(view, ctx) {
     if (nearBottom) scrollToEnd();
   };
   const offs = [
-    ctx.store.watch((s) => [s.conversation, s.outbox, s.chatNotes, s.errors.conversation, s.errors.status], render),
+    ctx.store.watch((s) => [s.conversation, s.outbox, s.chatNotes, s.errors.conversation, s.errors.status, s.feed, orchestratorOffline(s)], render),
     ctx.store.watch((s) => [s.status, s.connection.state], () => renderPresence(subtitle, ctx.store.get())),
     trackKeyboard(),
   ];
@@ -44,7 +44,9 @@ function scrollToEnd() {
 }
 
 function renderTranscript(ctx, transcript) {
-  const { conversation, outbox, chatNotes } = ctx.store.get();
+  const state = ctx.store.get();
+  const { conversation, outbox, chatNotes } = state;
+  const offline = orchestratorOffline(state);
   const rows = [];
   let lastDay = null;
   for (const entry of conversation) {
@@ -54,18 +56,23 @@ function renderTranscript(ctx, transcript) {
     const key = `c-${entryKey(entry)}`;
     rows.push({ kind: 'entry', key, entry, note: chatNotes[entryKey(entry)] ?? null });
   }
-  for (const pending of outbox) rows.push({ kind: 'pending', key: `p-${pending.localId}`, pending });
+  for (const pending of outbox) rows.push({ kind: 'pending', key: `p-${pending.localId}`, pending, outcome: commandOutcome(state.feed, pending), offline });
   reconcile(transcript, rows, {
     key: (row) => row.key,
-    signature: (row) => JSON.stringify([row.note, row.pending]),
+    signature: (row) => JSON.stringify([row.note, row.pending, row.outcome, row.offline]),
     render: (row) => {
-      if (row.kind === 'pending') return pendingEntry(row.pending, { retry: () => resend(ctx, row.pending), discard: () => removePending(ctx.store, row.pending.localId) });
+      if (row.kind === 'pending') return pendingEntry(row.pending, { outcome: row.outcome, offline: row.offline, retry: () => resend(ctx, row.pending), discard: () => removePending(ctx.store, row.pending.localId) });
       if (row.kind === 'day') return h('li', { class: 'day-divider', text: new Date(row.at).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) });
       return conversationEntry(row.entry, row.note);
     },
   });
   const empty = ctx.canOperate ? 'Say hello. The orchestrator reads every line you send here.' : 'No conversation yet.';
   if (rows.length === 0) transcript.replaceChildren(h('li', { class: 'transcript-empty', text: empty }));
+}
+
+// The conversation cannot show what happens to a line: the orchestrator is offline.
+function orchestratorOffline(state) {
+  return state.status?.aether?.state === 'disconnected' || Boolean(state.errors?.conversation);
 }
 
 function renderPresence(subtitle, state) {

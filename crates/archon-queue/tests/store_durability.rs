@@ -227,6 +227,7 @@ const UNDO_V10: &str = "
     DROP TABLE queue_reason_intervals;
     DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;
     DROP TABLE stage_spend; DROP TABLE stage_spend_windows; ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
+    DROP TABLE design_sessions; DROP TABLE design_notes; DROP TABLE design_assets;
     DROP INDEX items_by_duplicate_candidate; DROP TABLE lesson_trials; DROP TABLE github_outbox; DROP TABLE github_objects; DROP TABLE github_links; DROP TABLE item_transitions; DROP TABLE changes;
     DROP TABLE spend_pruned; DROP TABLE tracked_requests; DROP TABLE run_pull_requests; DROP TABLE merge_requests;
     DROP TABLE operator_feedback;
@@ -255,7 +256,7 @@ fn migrations_apply_once_and_a_newer_store_is_refused() {
         schema_versions(&path),
         vec![
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26, 27, 28
+            25, 26, 27, 28, 29, 30
         ]
     );
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -329,7 +330,7 @@ fn concurrent_first_opens_migrate_once() {
         schema_versions(&path),
         vec![
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26, 27, 28
+            25, 26, 27, 28, 29, 30
         ]
     );
 }
@@ -607,7 +608,7 @@ fn v9_keeps_an_earlier_provider_reported_total_as_the_floor() {
     drop(conn);
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(schema_versions(&path).last(), Some(&28));
+    assert_eq!(schema_versions(&path).last(), Some(&30));
     for n in [1, 2] {
         let settled = SpendRow {
             cost_complete: Some(true),
@@ -1173,7 +1174,7 @@ fn a_store_at_next_v26_upgrades_to_v27_and_keeps_its_data() {
     drop(conn);
 
     let store = Store::open(&path).unwrap();
-    assert_eq!(schema_versions(&path).last(), Some(&28));
+    assert_eq!(schema_versions(&path).last(), Some(&30));
     assert_eq!(all_items(&store).len(), items.len());
     let conn = rusqlite::Connection::open(&path).unwrap();
     let index: i64 = conn

@@ -24,6 +24,8 @@ pub(crate) fn note_line(
     assert!(!text.trim().is_empty(), "a result says something");
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let line = match (has_level, level) {
+        // A bare "Applied." would only repeat the leading word.
+        (false, Some(NoteLevel::Applied)) if text == "Applied." => format!("Applied: {label}"),
         (true, _) | (false, None) => format!("{label}: {text}"),
         (false, Some(NoteLevel::Applied)) => format!("Applied: {label}: {text}"),
         (false, Some(NoteLevel::Refused)) => format!("Refused: {label}: {text}"),
@@ -172,6 +174,8 @@ mod tests {
         assert_eq!(refused, "Refused: /answer Q5: already answered");
         let applied = note_line("/answer Q5", Some(NoteLevel::Applied), "answered", false);
         assert_eq!(applied, "Applied: /answer Q5: answered");
+        let bare = note_line("/archon apply", Some(NoteLevel::Applied), "Applied.", false);
+        assert_eq!(bare, "Applied: /archon apply", "the word is not said twice");
         let plain = note_line("/status", None, "all\nquiet", false);
         assert_eq!(plain, "/status: all quiet", "an answer has no word");
     }

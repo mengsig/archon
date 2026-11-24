@@ -809,9 +809,101 @@ CREATE INDEX IF NOT EXISTS items_by_duplicate_candidate ON items (
 /// Version 28: observed queue-reason intervals and pull request event times.
 const V28: &str = include_str!("schema/timing.sql");
 
+/// Version 29 (Live Design Sessions): sessions, their notes and pictures. Additive;
+/// the counter `design_seq:<item>` lives in `kv`. No foreign key to `items`, so
+/// retention never waits on them: `design_item_delete` removes an item's rows.
+const V29: &str = r#"
+CREATE TABLE IF NOT EXISTS design_sessions (
+    id                  TEXT PRIMARY KEY,
+    item                TEXT NOT NULL,
+    run                 TEXT NOT NULL,
+    stage_id            TEXT NOT NULL,
+    attempt             INTEGER NOT NULL,
+    state               TEXT NOT NULL
+        CHECK (state IN ('starting', 'live', 'finishing', 'confirmed', 'ended')),
+    degraded            INTEGER NOT NULL DEFAULT 0 CHECK (degraded IN (0, 1)),
+    note_version        INTEGER NOT NULL DEFAULT 0,
+    finish_capture      TEXT,
+    finish_head         TEXT,
+    finish_choices_json TEXT,
+    preview_url         TEXT,
+    browser_pid         INTEGER,
+    browser_started_at  INTEGER,
+    viewport_preset     TEXT NOT NULL,
+    sandbox_off         INTEGER NOT NULL DEFAULT 0 CHECK (sandbox_off IN (0, 1)),
+    agent               TEXT,
+    created_at          TEXT NOT NULL,
+    ended_at            TEXT,
+    end_reason          TEXT
+);
+CREATE INDEX IF NOT EXISTS design_sessions_by_item ON design_sessions (item);
+CREATE INDEX IF NOT EXISTS design_sessions_by_state ON design_sessions (state);
+
+CREATE TABLE IF NOT EXISTS design_notes (
+    item              TEXT NOT NULL,
+    id                TEXT NOT NULL,
+    number            INTEGER NOT NULL,
+    session           TEXT NOT NULL,
+    kind              TEXT NOT NULL CHECK (kind IN ('change', 'revert', 'page')),
+    text              TEXT NOT NULL,
+    details_text      TEXT,
+    send_picture      INTEGER NOT NULL CHECK (send_picture IN (0, 1)),
+    target_json       TEXT,
+    viewport_json     TEXT NOT NULL,
+    status            TEXT NOT NULL CHECK (status IN
+        ('queued', 'sent', 'working', 'needs_reply', 'done', 'failed', 'cancelled')),
+    fail_reason       TEXT,
+    base_commit       TEXT,
+    commit_sha        TEXT,
+    no_change         INTEGER NOT NULL DEFAULT 0 CHECK (no_change IN (0, 1)),
+    reverts           TEXT,
+    resent_from       TEXT,
+    superseded_by     TEXT,
+    reply_thread_json TEXT NOT NULL,
+    client_key        TEXT NOT NULL,
+    delivery          INTEGER NOT NULL DEFAULT 0,
+    before_asset      TEXT,
+    after_asset       TEXT,
+    final_asset       TEXT,
+    final_included    INTEGER CHECK (final_included IN (0, 1)),
+    captured_commit   TEXT,
+    created_by_device TEXT,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    PRIMARY KEY (item, id),
+    UNIQUE (item, client_key)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS design_notes_by_session ON design_notes (item, session);
+
+CREATE TABLE IF NOT EXISTS design_assets (
+    id         TEXT PRIMARY KEY,
+    item       TEXT NOT NULL,
+    sha256     TEXT NOT NULL,
+    mime       TEXT NOT NULL,
+    bytes      INTEGER NOT NULL,
+    width      INTEGER NOT NULL,
+    height     INTEGER NOT NULL,
+    path       TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    target_json TEXT,
+    note       TEXT,
+    commit_sha TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (item, sha256, source)
+);
+CREATE INDEX IF NOT EXISTS design_assets_by_item ON design_assets (item);
+"#;
+
+/// Version 30 (design iterations): a follow-up names the version it
+/// continues from, and a note the earlier notes it references. Additive.
+const V30: &str = r#"
+ALTER TABLE design_notes ADD COLUMN follows TEXT;
+ALTER TABLE design_notes ADD COLUMN refs_json TEXT NOT NULL DEFAULT '[]';
+"#;
+
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30,
 ];
 // Later migrations must preserve the tables read by V24 reclassification.
 const _: () = assert!(RECLASSIFY_VERSION <= MIGRATIONS.len());
@@ -1005,6 +1097,20 @@ fn forget_branch_only_v26(tx: &Connection) -> Result<(), ArchonError> {
     Ok(())
 }
 
+/// The migration that adds `design_notes.follows`. A design-branch build
+/// recorded the design tables as versions 25 and 26, which the forget steps
+/// above drop; V29 is idempotent, and V30 is skipped when its columns exist.
+const DESIGN_FOLLOWS_VERSION: usize = 30;
+
+fn design_follows_present(tx: &Connection) -> Result<bool, ArchonError> {
+    tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('design_notes') WHERE name = 'follows')",
+        [],
+        |row| row.get(0),
+    )
+    .ctx("look for design_notes.follows")
+}
+
 /// Apply every migration newer than the store's version, each with its
 /// version row, in one write transaction. Returns the resulting version.
 pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
@@ -1037,8 +1143,12 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
     let now = ts(&archon_core::now());
     for (index, sql) in MIGRATIONS.iter().enumerate().skip(current) {
         let version = index + 1;
-        tx.execute_batch(sql)
-            .ctx(&format!("apply migration {version}"))?;
+        if version == DESIGN_FOLLOWS_VERSION && design_follows_present(&tx)? {
+            // A design-branch build already added these columns under another number.
+        } else {
+            tx.execute_batch(sql)
+                .ctx(&format!("apply migration {version}"))?;
+        }
         if version == RECLASSIFY_VERSION {
             super::outcomes::reclassify::reclassify(&tx)?;
             super::outcomes::reclassify::freeze_review_prs(&tx)?;
@@ -1332,6 +1442,52 @@ mod tests {
         assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
     }
 
+    /// A design-branch build recorded the design tables as version 25 (and
+    /// the iteration columns as 26); upgrading keeps their rows and applies
+    /// every migration of this build once.
+    #[test]
+    fn a_design_branch_store_upgrades_and_keeps_its_design_rows() {
+        for with_follows in [false, true] {
+            let mut conn = v2_store();
+            migrate(&mut conn).unwrap();
+            conn.execute_batch(include_str!("../../tests/common/undo_timing.sql"))
+                .unwrap();
+            conn.execute_batch(
+                "DROP TABLE stage_spend; DROP TABLE stage_spend_windows;
+                 ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
+                 DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;
+                 DROP INDEX items_by_duplicate_candidate;
+                 INSERT INTO design_assets VALUES ('da_1', 'qi_1', 'abc', 'image/png', 1, 1, 1,
+                     'a.png', 'note', NULL, NULL, NULL, '2026-11-23T00:00:00Z');
+                 DELETE FROM schema_migrations WHERE version >= 25;
+                 INSERT INTO schema_migrations VALUES (25, '2026-11-23T00:00:00Z');",
+            )
+            .unwrap();
+            if with_follows {
+                conn.execute_batch(
+                    "INSERT INTO schema_migrations VALUES (26, '2026-11-23T00:00:00Z');",
+                )
+                .unwrap();
+            } else {
+                conn.execute_batch(
+                    "ALTER TABLE design_notes DROP COLUMN follows;
+                     ALTER TABLE design_notes DROP COLUMN refs_json;",
+                )
+                .unwrap();
+            }
+            assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+            let versions: Vec<i64> = applied_versions(&conn).iter().map(|(v, _)| *v).collect();
+            assert_eq!(versions, (1..=MIGRATIONS.len() as i64).collect::<Vec<_>>());
+            conn.prepare("SELECT 1 FROM stage_spend").unwrap();
+            conn.prepare("SELECT follows, refs_json FROM design_notes")
+                .unwrap();
+            let kept: i64 = conn
+                .query_row("SELECT COUNT(*) FROM design_assets", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(kept, 1);
+        }
+    }
+
     #[test]
     fn a_v26_store_from_next_gains_the_duplicate_candidate_index() {
         let mut conn = v2_store();
@@ -1590,6 +1746,7 @@ mod tests {
              ALTER TABLE lessons DROP COLUMN cluster;
              DROP TABLE stage_spend; DROP TABLE stage_spend_windows;
              ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
+             DROP TABLE design_sessions; DROP TABLE design_notes; DROP TABLE design_assets;
              DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();

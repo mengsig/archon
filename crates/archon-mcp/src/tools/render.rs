@@ -105,6 +105,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::ArtifactPage(page) => artifacts::page(page),
         Reply::VerdictCheck(check) => check.message(),
         Reply::RequestStatus(status) => tracked::status(status),
+        Reply::DesignAgent { message } => message.clone(),
         // Replies without a prose view retain their complete wire representation.
         _ => serde_json::to_string(reply)
             .unwrap_or_else(|e| format!("(reply could not be encoded: {e})")),

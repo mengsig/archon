@@ -31,6 +31,7 @@ export function openNewItem(ctx) {
       segmented({ label: 'Priority', options: PRIORITIES, value: draft.priority, onChange: (v) => { draft.priority = v; } })),
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Review' }),
       segmented({ label: 'Review level', options: REVIEWS, value: draft.review, onChange: (v) => { draft.review = v; } })),
+    designSwitch(ctx, draft),
     error, h('div', { class: 'sheet-actions' }, submit));
 
   let offRepos = () => {};
@@ -44,6 +45,17 @@ export function openNewItem(ctx) {
   });
   const { repos, errors } = ctx.store.get();
   if (repos === null || errors.repos) ctx.refresh.one('repos');
+}
+
+// Offered only where the host serves design sessions: proposal = live.
+function designSwitch(ctx, draft) {
+  if (!ctx.store.get().designEnabled) return null;
+  const input = h('input', { class: 'switch-input', type: 'checkbox', role: 'switch', 'aria-label': 'Design it live' });
+  input.addEventListener('change', () => { draft.designLive = input.checked; });
+  return h('label', { class: 'switch-row' },
+    h('span', { class: 'switch-text' }, h('span', { class: 'row-label', text: 'Design it live' }),
+      h('span', { class: 'row-hint', text: 'Point at the running app and watch the agent change it, then approve the result.' })),
+    h('span', { class: 'switch' }, input, h('span', { class: 'switch-track', 'aria-hidden': 'true' })));
 }
 
 // The repository list follows the store while the sheet is open: a load that

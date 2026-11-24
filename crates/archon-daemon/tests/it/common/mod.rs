@@ -4,6 +4,7 @@
 
 pub mod catalog;
 pub mod delivery;
+pub mod design;
 pub mod fake_ops;
 pub mod team;
 pub mod team_worktree;
@@ -272,8 +273,9 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         let disk = fake_disk(&free_bytes);
         let ops = Arc::new(fake_ops::FakeOps::default());
         let ctx = context(&root, config, aether, backend, lavish, disk, &ops);
+        let ctx = bound(ctx);
         let harness = Self {
-            ctx: Arc::new(ctx),
+            ctx,
             backend: fake,
             catalog_server,
             repo,
@@ -479,7 +481,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
             link.replace(Some(client)).unwrap();
         }
         let ctx = context(&root, config, link, backend, lavish, disk, &self.ops);
-        self.ctx = Arc::new(ctx);
+        self.ctx = bound(ctx);
     }
 
     /// The effort rule `request`'s stored spawn records as issued.
@@ -576,6 +578,18 @@ pub fn without_host_docker(mut config: Config) -> Config {
     config
 }
 
+/// The context in an `Arc`, with the design service bound to it when design
+/// sessions are on. Unbound, the context has no weak reference, so tests that
+/// edit it in place through `Arc::get_mut` keep working; only design stages
+/// reach `DaemonContext::arc`.
+pub fn bound(ctx: DaemonContext) -> Arc<DaemonContext> {
+    let ctx = Arc::new(ctx);
+    if ctx.design.enabled() {
+        ctx.design.bind(&ctx);
+    }
+    ctx
+}
+
 /// Build a context like `archon_daemon::run` does, rooted at `root`.
 pub fn context(
     root: &Path,
@@ -612,7 +626,12 @@ pub fn context(
     let dispatch = Arc::new(Notify::new());
     let remote =
         archon_remote::Remote::open(Default::default(), &paths.data_dir, "test").expect("remote");
+    let design = Arc::new(archon_daemon::design::DesignService::new(
+        &config.design,
+        paths.data_dir.clone(),
+    ));
     DaemonContext {
+        design,
         storage: Default::default(),
         status_probes: Default::default(),
         quota: Default::default(),
@@ -887,6 +906,8 @@ struct FakeState {
     delivered: Vec<(String, AetherAgentId, String)>,
     /// Every `send_message` call's key, including repeats and refused ones.
     message_calls: Vec<String>,
+    /// The images each keyed message carried (the latest call's).
+    attachments: BTreeMap<String, Vec<archon_core::attachment::ImageAttachment>>,
     message_failures: VecDeque<ArchonError>,
     /// Agents a stage agent delegated to, as Aether holds them.
     delegated: Vec<Descendant>,
@@ -1356,6 +1377,15 @@ impl FakeBackend {
         let (_, to, content) = state.delivered.iter().find(told).expect("a resume message");
         assert_eq!(Some(to), stage.aether_agent.as_ref(), "sent to its agent");
         content.clone()
+    }
+
+    /// The images the message under `key` carried.
+    pub fn message_attachments(&self, key: &str) -> Vec<archon_core::attachment::ImageAttachment> {
+        self.state()
+            .attachments
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Every `send_message` call's idempotency key, including repeats.
@@ -2026,6 +2056,17 @@ impl AgentBackend for FakeBackend {
         content: &str,
         idempotency_key: &str,
     ) -> Result<(), ArchonError> {
+        self.send_message_with_attachments(to, content, idempotency_key, &[])
+            .await
+    }
+
+    async fn send_message_with_attachments(
+        &self,
+        to: &AetherAgentId,
+        content: &str,
+        idempotency_key: &str,
+        attachments: &[archon_core::attachment::ImageAttachment],
+    ) -> Result<(), ArchonError> {
         // A real call leaves the task, so deliveries to one stage interleave.
         tokio::task::yield_now().await;
         let hold = {
@@ -2043,6 +2084,9 @@ impl AgentBackend for FakeBackend {
         }
         let mut state = self.state();
         state.message_calls.push(idempotency_key.to_owned());
+        state
+            .attachments
+            .insert(idempotency_key.to_owned(), attachments.to_vec());
         if let Some(error) = state.message_failures.pop_front() {
             return Err(error);
         }

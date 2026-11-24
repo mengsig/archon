@@ -14,6 +14,7 @@ pub use changes::{KEEP_DAYS as CHANGES_KEEP_DAYS, KEEP_ROWS as CHANGES_KEEP_ROWS
 mod codec;
 mod cost;
 mod delegated;
+mod design;
 mod directives;
 mod evidence_links;
 mod feed;
@@ -85,6 +86,7 @@ use archon_core::steer::RunEdit;
 use crate::data_lock::DataLock;
 use crate::dispatch::DispatchSnapshot;
 
+pub use design::{FinishRecord, NewDesignNote, NewDesignSession, NoteChange, SessionPatch};
 pub use model_evidence::ModelEvidenceSnapshot;
 pub use model_evidence::{CohortEvidence, RouteEvidence, RouteQuery, preferred_route};
 pub use operator_feedback::CorrectionFacts;
@@ -93,6 +95,7 @@ pub use run_edits::RecordedEdit;
 
 /// Well-known `kv` keys.
 pub mod keys {
+    pub use super::design::keys::{design_owed, design_seq};
     use archon_core::id::QueueItemId;
 
     pub const ORCHESTRATOR_AGENT: &str = "orchestrator_agent";
@@ -776,6 +779,44 @@ impl Store {
         at: Timestamp,
     ) -> Result<Vec<FeedItem>, ArchonError> {
         gates::close_withdrawn_questions(&mut self.conn, at)
+    }
+    /// Close the questions still open about a cancelled item, each with a
+    /// feed answer, which is returned for broadcasting: nobody acts on
+    /// their answers any more. Gate questions close with their gates.
+    pub fn close_cancelled_item_questions(
+        &mut self,
+        at: Timestamp,
+    ) -> Result<Vec<FeedItem>, ArchonError> {
+        let mut stale = Vec::new();
+        for question in feed::list(&self.conn, true)? {
+            let Some(item) = &question.item else { continue };
+            let cancelled = match self.item(item) {
+                Ok(found) => matches!(
+                    found.state,
+                    archon_core::queue::QueueState::Cancelled { .. }
+                ),
+                Err(_) => false,
+            };
+            if cancelled && gates::by_question(&self.conn, &question.id)?.is_none() {
+                stale.push(question.id);
+            }
+        }
+        if stale.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tx = codec::write_tx(&mut self.conn)?;
+        let mut answers = Vec::new();
+        for id in &stale {
+            answers.extend(feed::close_withdrawn(
+                &tx,
+                id,
+                "the item was cancelled",
+                at,
+            )?);
+        }
+        use codec::SqlContext;
+        tx.commit().ctx("commit cancelled items' questions")?;
+        Ok(answers)
     }
     /// Close the questions still open on decided gates, each with a feed
     /// answer, which is returned for broadcasting.

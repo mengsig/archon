@@ -124,6 +124,7 @@ impl Client {
                 ServerFrame::Reply { id: got, result } => panic!("stray reply {got}: {result:?}"),
                 ServerFrame::Feed { item, .. } => feed.push(item),
                 ServerFrame::Change { change, .. } => panic!("stray change {change:?}"),
+                ServerFrame::Design { event, .. } => panic!("stray design event {event:?}"),
             }
         }
     }

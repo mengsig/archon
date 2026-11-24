@@ -18,6 +18,7 @@ archon-aether = { workspace = true }
 archon-client = { workspace = true }
 archon-core = { workspace = true }
 archon-daemon = { workspace = true }
+archon-design-browser = { workspace = true }
 archon-mcp = { workspace = true }
 archon-pipeline = { workspace = true }
 archon-queue = { workspace = true }

@@ -4,10 +4,11 @@ use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;
 use archon_core::intent::{ApprovedIntent, IntentSource, ReferenceImage};
 use archon_core::model::ModelRef;
+use archon_core::plan_origin::{Authority, PlanSource};
 use archon_core::ports::SpawnRequest;
 use archon_core::queue::QueueItem;
 use archon_core::reference::{Reference, ReferenceKind};
-use archon_core::run::{PipelineRun, StageRun};
+use archon_core::run::{PipelineRun, StageRun, StageState};
 use archon_pipeline::{SpawnPlan, acceptance::STAGE};
 use archon_queue::Store;
 
@@ -70,7 +71,7 @@ pub(in crate::executor) fn attach(
     };
     if reports {
         let binding = item.intent.as_deref().expect("intent found");
-        let owed = results_owed(&record.selected_requirements(binding)?)?;
+        let owed = results_owed(&record.selected_requirements(binding)?, &record.images)?;
         request.instructions.push_str(&owed);
     }
     let record = materialize(&request.workspace, record)?;
@@ -137,24 +138,36 @@ fn attach_references(
     Ok(())
 }
 
-/// Place the acceptance stage of `plans` on the model that judges the ledger:
+/// Place the acceptance stage of `plans` on the model that judges the ledger.
+/// A model the item's plan pins for it (named by the operator or the
+/// orchestrator) judges as given while policy permits it, the catalog lists it
+/// and it can see the images; unless `[review] independent_acceptance` holds,
+/// sharing a builder's model or vendor only labels the record. Without a pin:
 /// independent of every builder where one is permitted and connected, else,
-/// unless `[review] independent_acceptance` holds, the strongest one, labelled.
-/// A `woken` judge the catalog and policy still accept keeps judging.
+/// unless that knob holds, the strongest one, labelled. Either way a judge
+/// whose provider is out of quota is skipped. A `woken` judge the catalog and
+/// policy still accept keeps judging. `failed` is the attempt being replaced,
+/// not yet stored.
 pub(in crate::executor) fn select_model(
     ctx: &DaemonContext,
     store: &mut Store,
     item: &QueueItem,
     run: &PipelineRun,
     plans: &mut [SpawnPlan],
-    woken: Option<&ModelRef>,
+    (woken, failed): (Option<&ModelRef>, Option<&StageRun>),
 ) -> Result<(), ArchonError> {
-    if !plans.iter().any(|p| p.stage_id == STAGE) {
+    let Some(first) = plans.iter().find(|p| p.stage_id == STAGE) else {
         return Ok(());
-    }
+    };
+    let pin = pinned(item, first);
     super::records::invalidate(store, &item.id)?;
     let visual = super::intent(store, item)?.is_some_and(|r| !r.images.is_empty());
-    let builders = builder_models(&store.stage_runs(&run.id)?);
+    let mut stages = store.stage_runs(&run.id)?;
+    if let Some(failed) = failed {
+        stages.retain(|s| s.id != failed.id);
+        stages.push(failed.clone());
+    }
+    let builders = builder_models(&stages);
     let repo = item
         .repo
         .as_ref()
@@ -165,15 +178,53 @@ pub(in crate::executor) fn select_model(
     let catalog = store.model_catalog();
     let judges = |m: &ModelRef| policy.permits_model(m) && (!visual || vision.contains(m));
     let permitted = judge_pool(&catalog, judges, &builders);
+    let out_of_quota = Quota::of(crate::quota::standing(ctx), &stages);
+    // A provider the reading shows spent is never used. One the latest attempt
+    // failed on, with no reading to say otherwise, is only passed over while
+    // another judge can run: a lone provider is retried, as it always was.
+    let usable: Vec<_> = permitted
+        .iter()
+        .copied()
+        .filter(|m| !out_of_quota.spent(&m.model))
+        .collect();
+    let moved: Vec<_> = usable
+        .iter()
+        .copied()
+        .filter(|m| !out_of_quota.failed_on(&m.model))
+        .collect();
+    let eligible = if moved.is_empty() { usable } else { moved };
     let still_judges = |judge: &&ModelRef| {
         catalog.check(judge).is_ok_and(|listed| listed == **judge)
             && policy.permits_model(judge)
             && (!visual || vision.contains(judge))
+            && eligible.iter().any(|m| m.model == **judge)
     };
-    let model = match woken.filter(still_judges) {
+    let pinned_judge = match pin.as_ref().and_then(|m| catalog.check(m).ok()) {
+        Some(model) if eligible.iter().any(|m| m.model == model) => Some(model),
+        _ => None,
+    };
+    if let (Some(model), true) = (&pinned_judge, ctx.config.review.independent_acceptance)
+        && shares_builder(model, &builders)
+    {
+        return Err(ArchonError::Invalid(format!(
+            "independent acceptance needs a model different from every builder in model and \
+             vendor, but the plan pins `{model}` for {STAGE} ([review] independent_acceptance = true)"
+        )));
+    }
+    if let (Some(pin), None) = (&pin, &pinned_judge) {
+        tracing::info!(item = %item.id, model = %pin, "the pinned acceptance model cannot judge now; another is selected");
+    }
+    let model = match woken.filter(still_judges).or(pinned_judge.as_ref()) {
         Some(judge) => judge.clone(),
+        None if eligible.is_empty() && !permitted.is_empty() => {
+            return Err(ArchonError::Invalid(format!(
+                "no eligible acceptance judge: every permitted, connected model's provider is out \
+                 of quota ({})",
+                out_of_quota.names(permitted.iter().map(|m| &m.model))
+            )));
+        }
         None => judge_model(
-            &permitted,
+            &eligible,
             &builders,
             visual,
             ctx.config.review.independent_acceptance,
@@ -191,6 +242,78 @@ pub(in crate::executor) fn select_model(
     assert!(!visual || vision.contains(&model));
     assert!(policy.permits_model(&model));
     Ok(())
+}
+
+/// The model the item's plan pins for the acceptance stage `plan`: one the
+/// operator or the orchestrator named, not one the daemon filled in.
+fn pinned(item: &QueueItem, plan: &SpawnPlan) -> Option<ModelRef> {
+    let slots = item.model_plan.choices_for(STAGE)?;
+    let slot = plan.fan_index as usize % slots.len().max(1);
+    let origin = item.model_plan.origin(&item.id, STAGE, slot);
+    let named = origin.model.source == PlanSource::Explicit
+        && matches!(
+            origin.model.by,
+            Authority::Operator | Authority::Orchestrator
+        );
+    named.then(|| slots[slot].model.clone())
+}
+
+/// Providers a judge should not run on now. `spent` is what Aether's trusted
+/// reading shows has no usage left, and holds whatever else is known; `failed`
+/// is the provider the run's latest acceptance attempt ended on for a usage
+/// limit, which only steers the choice while another judge is eligible and a
+/// reading that shows the provider with usage left overrides.
+struct Quota {
+    reading: Option<std::collections::BTreeMap<String, bool>>,
+    failed: Option<String>,
+}
+
+impl Quota {
+    fn of(reading: Option<std::collections::BTreeMap<String, bool>>, stages: &[StageRun]) -> Self {
+        let failed = stages
+            .iter()
+            .filter(|s| s.stage_id == STAGE)
+            .max_by_key(|s| (s.started_at, s.attempt))
+            .filter(|s| match &s.state {
+                StageState::Failed { error } => crate::executor::failure_class::is_quota(error),
+                _ => false,
+            })
+            .map(|s| s.current_choice().model.provider.clone());
+        Self { reading, failed }
+    }
+
+    /// The reading shows `model`'s provider with no usage left.
+    fn spent(&self, model: &ModelRef) -> bool {
+        let known = self.reading.as_ref().and_then(|r| r.get(&model.provider));
+        known.copied().unwrap_or(false)
+    }
+
+    /// The latest acceptance attempt failed on `model`'s provider's usage
+    /// limit, and no trusted reading says the provider has usage left.
+    fn failed_on(&self, model: &ModelRef) -> bool {
+        let known = self
+            .reading
+            .as_ref()
+            .is_some_and(|r| r.contains_key(&model.provider));
+        !known && self.failed.as_deref() == Some(model.provider.as_str())
+    }
+
+    fn names<'m>(&self, models: impl Iterator<Item = &'m ModelRef>) -> String {
+        let mut names: Vec<&str> = models
+            .filter(|m| self.spent(m))
+            .map(|m| m.provider.as_str())
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names.join(", ")
+    }
+}
+
+/// Whether `model` is a builder's or of a builder's vendor.
+pub(super) fn shares_builder(model: &ModelRef, builders: &[ModelRef]) -> bool {
+    builders
+        .iter()
+        .any(|b| b == model || vendor(&b.provider) == vendor(&model.provider))
 }
 
 /// The model apart from every builder that prefers another vendor and then
@@ -289,9 +412,9 @@ pub(super) fn builder_models(stages: &[StageRun]) -> Vec<ModelRef> {
         .collect()
 }
 
-/// Whether the acceptance `stage` judged apart from every builder. Refused
-/// when it could not see the approved images, or under the strict knob when
-/// it was not independent.
+/// Whether the acceptance `stage` judged apart from every builder, in model
+/// and vendor. Refused when it could not see the approved images, or under
+/// the strict knob when it ran on a builder's model.
 pub(super) async fn check_judge(
     ctx: &DaemonContext,
     run: &PipelineRun,
@@ -302,8 +425,8 @@ pub(super) async fn check_judge(
         let store = ctx.store.lock().await;
         (store.stage_runs(&run.id)?, vision_models(&store)?)
     };
-    let independent = !builder_models(&stages).contains(&stage.choice.model);
-    if !independent && ctx.config.review.independent_acceptance {
+    let builders = builder_models(&stages);
+    if builders.contains(&stage.choice.model) && ctx.config.review.independent_acceptance {
         return Err(ArchonError::Invalid(
             "acceptance must use a different model from the builder".into(),
         ));
@@ -315,7 +438,7 @@ pub(super) async fn check_judge(
     }
     assert_eq!(stage.stage_id, STAGE);
     assert!(stage.aether_agent.is_some());
-    Ok(independent)
+    Ok(!shares_builder(&stage.choice.model, &builders))
 }
 
 const RULES: &str = r#"
@@ -349,8 +472,14 @@ needs acceptance again, even when its tree is unchanged.
 
 /// The section telling the stage that finishes the build exactly which
 /// `requirement_results` its result must carry, one skeleton entry per id.
+/// The skeleton names each reference's recorded viewport, theme and state
+/// exactly, which the gate compares with the built image's: the builder
+/// takes its picture in those conditions and copies them. Where a reference
+/// records none, the skeleton keeps a placeholder (`null` for a theme or
+/// state, which the gate then accepts).
 pub(in crate::executor) fn results_owed(
     selected: &[&archon_core::intent::Requirement],
+    images: &[archon_core::intent::ReferenceImage],
 ) -> Result<String, ArchonError> {
     assert!(
         !selected.is_empty(),
@@ -362,11 +491,22 @@ pub(in crate::executor) fn results_owed(
             let pairs: Vec<_> = r
                 .images
                 .iter()
-                .map(|image| {
+                .map(|id| {
+                    let image = images.iter().find(|i| &i.id == id);
+                    let viewport = match image.and_then(|i| i.viewport.as_ref()) {
+                        Some(v) => serde_json::json!({"width": v.width, "height": v.height}),
+                        None => serde_json::json!({"width": "<px>", "height": "<px>"}),
+                    };
+                    let recorded = |value: Option<&String>| match (image, value) {
+                        (_, Some(value)) => serde_json::json!(value),
+                        (Some(_), None) => serde_json::Value::Null,
+                        (None, None) => serde_json::json!("<as the reference>"),
+                    };
                     serde_json::json!({
-                        "reference": image, "built": "<workspace path of the built image>",
-                        "viewport": {"width": "<px>", "height": "<px>"},
-                        "theme": "<theme>", "state": "<state>"
+                        "reference": id, "built": "<workspace path of the built image>",
+                        "viewport": viewport,
+                        "theme": recorded(image.and_then(|i| i.theme.as_ref())),
+                        "state": recorded(image.and_then(|i| i.state.as_ref())),
                     })
                 })
                 .collect();
@@ -383,7 +523,10 @@ pub(in crate::executor) fn results_owed(
          `deviation` (give the reason in `evidence`) or `blocked` (fails the build), never \
          `pass` or `fail`. `evidence` is never empty. A \
          visual requirement keeps one `visual_pairs` entry per reference image; every other \
-         keeps `[]`.\n\n```json\n{shape}\n```\n"
+         keeps `[]`. Take each built image at the `viewport`, `theme` and `state` shown \
+         (its reference's) and keep those values as they are: the gate refuses a pair taken \
+         in other conditions. A `null` theme or state means the reference records none.\n\n\
+         ```json\n{shape}\n```\n"
     );
     assert!(selected.iter().all(|r| text.contains(&r.id)));
     assert!(text.contains("\"requirement_results\""));

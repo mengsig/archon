@@ -109,14 +109,21 @@ pub(super) struct Poll {
     pub html: PathBuf,
     /// Its parent is an `archon daemon`.
     pub by_archond: bool,
+    /// The pid of its parent.
+    pub parent: Option<u32>,
 }
 
 /// `lavish-axi poll` processes of Archon's beyond one per report archond
 /// follows: started by archond, or polling a page under its data directory.
 pub(super) async fn check_lavish_polls(data_dir: &Path, archond: &Archond) -> Check {
+    let daemon = archond
+        .as_ref()
+        .ok()
+        .and_then(Option::as_ref)
+        .map(|client| client.welcome().pid);
     let polls: Vec<Poll> = running_polls()
         .into_iter()
-        .filter(|poll| poll.by_archond || poll.html.starts_with(data_dir))
+        .filter(|poll| is_ours(poll, daemon, data_dir))
         .collect();
     if polls.is_empty() {
         return check("lavish polls", Level::Ok, "none running");
@@ -138,6 +145,14 @@ pub(super) async fn check_lavish_polls(data_dir: &Path, archond: &Archond) -> Ch
         pids.join(" ")
     );
     check("lavish polls", Level::Warn, detail)
+}
+
+/// Whether a poll belongs to this instance: it polls a page under this data
+/// directory, or this instance's own archond (`daemon`, by pid) started it.
+/// Another instance's archond and its polls are not ours to report.
+pub(super) fn is_ours(poll: &Poll, daemon: Option<u32>, data_dir: &Path) -> bool {
+    poll.html.starts_with(data_dir)
+        || (poll.by_archond && daemon.is_some() && poll.parent == daemon)
 }
 
 /// The pages of the open reports archond follows; empty when it is not
@@ -209,11 +224,13 @@ fn running_polls() -> Vec<Poll> {
         let Some(html) = polled_page(&cmdline(pid)) else {
             continue;
         };
-        let by_archond = parent_of(pid).is_some_and(|parent| is_archond(&cmdline(parent)));
+        let parent = parent_of(pid);
+        let by_archond = parent.is_some_and(|parent| is_archond(&cmdline(parent)));
         polls.push(Poll {
             pid,
             html,
             by_archond,
+            parent,
         });
     }
     polls
@@ -272,6 +289,7 @@ mod tests {
             pid,
             html: PathBuf::from(html),
             by_archond: true,
+            parent: Some(1),
         };
         let polls = [
             poll(30, "/d/live.html"),
@@ -295,6 +313,22 @@ mod tests {
             vec![5],
             "archond's own is kept"
         );
+    }
+
+    #[test]
+    fn another_instances_polls_are_not_ours() {
+        let poll = |html: &str, by_archond, parent| Poll {
+            pid: 9,
+            html: PathBuf::from(html),
+            by_archond,
+            parent: Some(parent),
+        };
+        let data = Path::new("/mine");
+        assert!(is_ours(&poll("/mine/p.html", false, 5), Some(1), data));
+        assert!(is_ours(&poll("/other/p.html", true, 1), Some(1), data));
+        assert!(!is_ours(&poll("/other/p.html", true, 2), Some(1), data));
+        assert!(!is_ours(&poll("/other/p.html", true, 1), None, data));
+        assert!(!is_ours(&poll("/other/p.html", false, 1), Some(1), data));
     }
 
     #[test]

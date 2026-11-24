@@ -54,6 +54,44 @@ pub enum ArchonError {
         message: String,
         kept: crate::protocol::HistoryRange,
     },
+    /// A design request refused for a reason the operator's screen acts on.
+    #[error("{message}")]
+    Design {
+        code: DesignRefusal,
+        message: String,
+    },
+}
+
+/// Why a design request was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesignRefusal {
+    /// The session is over or was replaced.
+    Gone,
+    /// The note belongs to an earlier session.
+    ReadOnly,
+    /// The session is finishing.
+    Finishing,
+    /// The capture is out of date.
+    Stale,
+    /// Another device acted first.
+    Conflict,
+    /// The note is not the caller's to report.
+    NotYours,
+}
+
+impl DesignRefusal {
+    /// The wire error code of this refusal.
+    pub fn error_code(self) -> crate::protocol::ErrorCode {
+        use crate::protocol::ErrorCode;
+        match self {
+            Self::Gone => ErrorCode::Gone,
+            Self::ReadOnly => ErrorCode::ReadOnly,
+            Self::Finishing => ErrorCode::Finishing,
+            Self::Stale => ErrorCode::Stale,
+            Self::Conflict => ErrorCode::Conflict,
+            Self::NotYours => ErrorCode::Forbidden,
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, ArchonError>;
@@ -100,6 +138,10 @@ impl ArchonError {
             Self::HistoryExpired { message, kept } => Self::HistoryExpired {
                 message: add(message),
                 kept,
+            },
+            Self::Design { code, message } => Self::Design {
+                code,
+                message: add(message),
             },
         }
     }

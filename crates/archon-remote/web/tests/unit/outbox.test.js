@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createStore } from '../../src/core/store.js';
 import { WEB_RELAY_MARK, OPERATOR_POST_LABEL } from '../../src/core/conversation.js';
-import { addPending, settlePending, matchEchoes, removePending } from '../../src/features/chat/outbox.js';
+import { addPending, settlePending, matchEchoes, removePending, commandOutcome } from '../../src/features/chat/outbox.js';
 
 const store = (conversation = []) => createStore({ conversation, outbox: [], chatNotes: {} });
 const operator = (seq, text, part = 0) => ({ seq, part, at: '2026-11-13T10:00:00Z', kind: 'operator', important: true, text });
@@ -74,4 +74,32 @@ test('a send outcome that arrives after the echo lands on the entry', () => {
   assert.equal(s.get().chatNotes['8-0'].status, 'offline');
   removePending(s, id);
   assert.throws(() => matchEchoes(s, null), TypeError);
+});
+
+const fed = (seq, entry) => ({ seq, at: '2026-11-13T10:00:00Z', entry });
+const setLine = '/archon apply {"cmd":"set_directive","text":"docs only"}';
+
+test("a command's answer from archond's feed shows while the orchestrator is offline", () => {
+  const s = createStore({ conversation: [], outbox: [], chatNotes: {}, feed: [fed(4, { entry: 'system', text: 'old line' })] });
+  addPending(s, setLine);
+  const pending = s.get().outbox[0];
+  assert.equal(pending.feedAfter, 4);
+  const feed = [...s.get().feed,
+    fed(5, { entry: 'operator', text: setLine, local: true }),
+    fed(6, { entry: 'authority', action: 'set_directive', result: 'requested' }),
+    fed(7, { entry: 'system', text: 'Directive dir_1 in force: docs only' }),
+    fed(8, { entry: 'system', text: 'Operator command: Applied.' })];
+  assert.equal(commandOutcome(feed.slice(0, 4), pending), null, 'not until the result is there');
+  assert.deepEqual(commandOutcome(feed, pending), { lines: ['Directive dir_1 in force: docs only', 'Applied.'], question: null });
+});
+
+test('a command waiting for confirmation names its question; a refusal and plain lines', () => {
+  const pending = { text: '/archon set max_parallel_agents=40', feedAfter: 0 };
+  const asked = [fed(1, { entry: 'operator', text: pending.text }), fed(2, { entry: 'system', text: 'Operator command: Awaiting your confirmation as Q7; nothing changed yet.' })];
+  assert.deepEqual(commandOutcome(asked, pending), { lines: ['Awaiting your confirmation as Q7; nothing changed yet.'], question: 'Q7' });
+  const refused = [fed(1, { entry: 'operator', text: pending.text }), fed(2, { entry: 'system', text: 'Operator command refused: no such gate' })];
+  assert.deepEqual(commandOutcome(refused, pending), { lines: ['Operator command refused: no such gate'], question: null });
+  // An echo from before the send, or a line that is not a command, has no answer here.
+  assert.equal(commandOutcome(asked, { ...pending, feedAfter: 1 }), null);
+  assert.equal(commandOutcome([fed(1, { entry: 'operator', text: 'hello' }), fed(2, { entry: 'system', text: 'Operator command: Applied.' })], { text: 'hello', feedAfter: 0 }), null);
 });

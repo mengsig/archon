@@ -12,6 +12,8 @@ pub mod archive;
 pub mod coordination;
 mod dependencies;
 mod descendants;
+pub(crate) mod design_ledger;
+pub(crate) mod design_page;
 mod discard;
 pub(crate) mod engine_wait;
 mod failure_class;
@@ -92,10 +94,10 @@ pub(crate) use roster::prune_settled_rosters;
 pub(crate) use run_node::recover_message_node;
 pub(crate) use run_node::{is_node_agent, node_run, prune_retired_node_agents};
 pub(crate) use ship::{prune_finished_ships, shipped_commit, withdraw_owed_merge};
-pub(crate) use spawn::reserved_models;
 pub(crate) use spawn::{
     StoredSpawn, issuing_spawn, load_spawn, prune_settled_requests, runs_awaiting_spawn,
 };
+pub(crate) use spawn::{design_started, reserved_models};
 pub use stall::Activity;
 pub(crate) use start::held_by_stack;
 pub(crate) use sweep::sweep_live_stages;
@@ -530,6 +532,7 @@ pub(crate) async fn check_item_budget(
             return Ok(());
         };
         let stage = archon_core::run::BUDGET_STAGE.to_owned();
+        settle::end_designs(ctx, &run.id).await;
         finish::fail_run(ctx, &mut table, run, stage, error, true).await?
     };
     run_follow_up(ctx, follow).await
@@ -542,6 +545,16 @@ pub async fn cancel_item(
     id: &QueueItemId,
     reason: &str,
 ) -> Result<QueueItem, ArchonError> {
+    let live_run = {
+        let store = ctx.store.lock().await;
+        match store.item(id)?.state {
+            archon_core::queue::QueueState::Running { run } => Some(run),
+            _ => None,
+        }
+    };
+    if let Some(run) = &live_run {
+        settle::end_designs(ctx, run).await;
+    }
     let (follow, item) = {
         let mut table = ctx.runs.lock().await;
         let follow = finish::cancel_item(ctx, &mut table, id, reason).await?;

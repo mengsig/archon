@@ -74,9 +74,18 @@ pub(super) async fn open(
             .gate(&fresh.run, &fresh.stage_id, fresh.attempt)?
             .is_none()
     {
-        let original =
-            page.ok_or_else(|| ArchonError::Invalid("proposal needs a review page".into()))?;
-        let rendered = super::intent::prepare(ctx, &mut store, &run, &fresh, &stages, &original)?;
+        let designed = stages.iter().any(|s| {
+            s.stage_id == fresh.stage_id
+                && s.attempt == fresh.attempt
+                && s.kind == Some(archon_core::catalog::StageKind::Design)
+        });
+        let rendered = if designed {
+            super::design_ledger::prepare(ctx, &mut store, &run, &fresh, &stages)?
+        } else {
+            let original =
+                page.ok_or_else(|| ArchonError::Invalid("proposal needs a review page".into()))?;
+            super::intent::prepare(ctx, &mut store, &run, &fresh, &stages, &original)?
+        };
         fresh.page = Some(rendered.display().to_string());
     }
     let gate = store.open_gate(&fresh)?;
@@ -100,7 +109,9 @@ pub(super) async fn open(
 fn requires_intent(store: &Store, gate: &OperatorGate) -> Result<bool, ArchonError> {
     let item = store.item(&gate.item)?;
     assert_eq!(item.id, gate.item);
-    Ok(item.intent.is_some() || item.model_plan.0.contains_key("intent-acceptance"))
+    Ok(item.intent.is_some()
+        || item.model_plan.0.contains_key("intent-acceptance")
+        || item.autonomy.proposal == archon_core::autonomy::ProposalMode::Live)
 }
 
 /// An open gate needs asking until its question is recorded and still open;
@@ -207,7 +218,8 @@ async fn show_selected_page(
     let Some(page) = &gate.page else {
         return Ok((None, "no page was written; the summary is below".to_owned()));
     };
-    if let Err(why) = pages::inside_workspace(workspace, page) {
+    let ledger = super::design_ledger::is_ledger_page(ctx, Path::new(page));
+    if !ledger && let Err(why) = pages::inside_workspace(workspace, page) {
         crate::feed::system(ctx, format!("Gate report {page} was not published: {why}")).await?;
         return Ok((None, format!("{page} (not published: {why})")));
     }
@@ -325,6 +337,7 @@ pub(super) async fn decide(
         Some(&run.id),
     )
     .await?;
+    super::proposal::design_decided(ctx, &gate, &all, &decision).await;
     let actions = match table.drivers.get_mut(&run.id) {
         Some(driver) => {
             driver.on_operator_decision(&gate.stage_id, gate.attempt, decision, &all)?
@@ -346,6 +359,7 @@ pub(crate) async fn close_settled_questions(ctx: &DaemonContext) -> Result<(), A
         let mut store = ctx.store.lock().await;
         let mut answers = store.close_withdrawn_questions(now)?;
         answers.extend(store.close_decided_questions(now)?);
+        answers.extend(store.close_cancelled_item_questions(now)?);
         answers
     };
     if answers.is_empty() {

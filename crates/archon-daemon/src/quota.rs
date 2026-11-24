@@ -270,6 +270,20 @@ pub(crate) fn spent(ctx: &DaemonContext) -> Option<BTreeMap<String, Option<Times
     Some(spent)
 }
 
+/// Each provider the last trusted reading reports, and whether it has no
+/// usage left at all; `None` without a trusted reading.
+pub(crate) fn standing(ctx: &DaemonContext) -> Option<BTreeMap<String, bool>> {
+    let (reading, now) = trusted(ctx)?;
+    Some(
+        (reading.providers.iter())
+            .map(|(provider, headroom)| {
+                let left = archon_core::quota::provider_headroom(headroom, 0, reading.read_at, now);
+                (provider.clone(), left.is_some_and(|l| l.exhausted()))
+            })
+            .collect(),
+    )
+}
+
 /// Each provider's window pace by the last trusted reading; empty without
 /// one, so stale or missing data never warns.
 pub(crate) fn paces(ctx: &DaemonContext) -> BTreeMap<String, Vec<WindowPace>> {

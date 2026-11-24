@@ -85,6 +85,7 @@ dependencies = [
  "archon-client",
  "archon-core",
  "archon-daemon",
+ "archon-design-browser",
  "archon-mcp",
  "archon-pipeline",
  "archon-queue",
@@ -175,6 +176,7 @@ dependencies = [
  "archon-aether",
  "archon-client",
  "archon-core",
+ "archon-design-browser",
  "archon-lavish",
  "archon-pipeline",
  "archon-queue",
@@ -194,6 +196,18 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+]
+
+[[package]]
+name = "archon-design-browser"
+version = "1.6.4"
+dependencies = [
+ "base64",
+ "rustix",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

@@ -166,3 +166,10 @@ export function githubRefUrl(reference) {
   const kind = reference.kind === 'issue' ? 'issues' : 'pull';
   return `https://${reference.host}/${reference.repo}/${kind}/${reference.number}`;
 }
+
+// The sidebar's version line: the running daemon's own, from its status, else
+// from the session it paired with; never the web app's built-in number.
+export function hostVersionLabel(state) {
+  const version = state?.status?.daemon_version || state?.session?.daemon_version;
+  return typeof version === 'string' && version ? `Archon ${version}` : 'Archon';
+}

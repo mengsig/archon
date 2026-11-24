@@ -12,12 +12,18 @@ use crate::spec::{PipelineSpec, StageSpec};
 
 pub const PROPOSE_STAGE: &str = "propose";
 pub const REPORT_STAGE: &str = "report";
+/// The stage `proposal = live` inserts first instead of `propose`.
+pub const DESIGN_STAGE_ID: &str = "design";
 /// File names of the shared prompts inside a run's frozen snapshot.
 pub const PROPOSE_PROMPT: &str = "archon-propose.md";
 pub const REPORT_PROMPT: &str = "archon-report.md";
+pub const DESIGN_PROMPT: &str = "archon-design.md";
 const PROPOSE_TEMPLATE: &str = include_str!("../../../pipelines/_shared/propose.md");
 const REPORT_TEMPLATE: &str = include_str!("../../../pipelines/_shared/report.md");
+const DESIGN_TEMPLATE: &str = include_str!("../../../pipelines/_shared/design-live.md");
 const INSERTED_TIMEOUT_MINUTES: u32 = 45;
+/// A live design session waits on the operator between notes.
+const DESIGN_TIMEOUT_MINUTES: u32 = 240;
 
 /// Whether the pipeline delivers a change: archond ships it, or it has a
 /// ship stage.
@@ -79,10 +85,16 @@ pub fn chosen_review(
     level.lower(gated_review_level(spec))
 }
 
-/// The pipeline's propose stage, which is always first when present.
+/// The pipeline's proposal stage, which is always first when present: the
+/// `propose` stage, or the live `design` stage that stands in for it.
 pub fn propose_stage(spec: &PipelineSpec) -> Option<&StageSpec> {
     let first = spec.file.stages.first()?;
-    (first.kind == StageKind::Propose).then_some(first)
+    matches!(first.kind, StageKind::Propose | StageKind::Design).then_some(first)
+}
+
+/// The pipeline's live design stage, when its first stage is one.
+pub fn design_stage(spec: &PipelineSpec) -> Option<&StageSpec> {
+    propose_stage(spec).filter(|s| s.kind == StageKind::Design)
 }
 
 /// The change report: the last report stage before the ship stage.
@@ -101,11 +113,21 @@ pub fn augment(spec: &PipelineSpec, autonomy: &Autonomy) -> Result<PipelineSpec,
     if let Some(review) = &mut out.file.pipeline.review {
         review.level = autonomy.review;
     }
-    let wants_proposal = autonomy.proposal == ProposalMode::Lavish;
-    if wants_proposal && propose_stage(spec).is_none() {
-        require_ship(spec, "proposal")?;
-        let stage = inserted(PROPOSE_STAGE, StageKind::Propose, PROPOSE_PROMPT);
-        insert(&mut out, 0, stage, PROPOSE_TEMPLATE)?;
+    if propose_stage(spec).is_none() {
+        match autonomy.proposal {
+            ProposalMode::Lavish => {
+                require_ship(spec, "proposal")?;
+                let stage = inserted(PROPOSE_STAGE, StageKind::Propose, PROPOSE_PROMPT);
+                insert(&mut out, 0, stage, PROPOSE_TEMPLATE)?;
+            }
+            ProposalMode::Live => {
+                require_ship(spec, "proposal")?;
+                let mut stage = inserted(DESIGN_STAGE_ID, StageKind::Design, DESIGN_PROMPT);
+                stage.timeout_minutes = DESIGN_TIMEOUT_MINUTES;
+                insert(&mut out, 0, stage, DESIGN_TEMPLATE)?;
+            }
+            ProposalMode::Off => {}
+        }
     }
     if autonomy.report != ReportMode::Off && change_report_stage(spec).is_none() {
         require_ship(spec, "report")?;
@@ -180,7 +202,7 @@ fn insert(
 /// The stages whose passing output waits for the operator.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OperatorGates {
-    /// The propose stage, when `proposal = lavish`.
+    /// The propose stage (`proposal = lavish`) or the design stage (`live`).
     pub proposal: Option<String>,
     /// The change report stage, when `report = before-pr`.
     pub report: Option<String>,
@@ -190,7 +212,7 @@ impl OperatorGates {
     /// Gates for an augmented `spec`; knobs whose stage is missing gate
     /// nothing, as [`augment`] has refused those already.
     pub fn for_run(spec: &PipelineSpec, autonomy: &Autonomy) -> Self {
-        let proposal = (autonomy.proposal == ProposalMode::Lavish)
+        let proposal = (autonomy.proposal != ProposalMode::Off)
             .then(|| propose_stage(spec).map(|s| s.id.clone()))
             .flatten();
         let report = (autonomy.report == ReportMode::BeforePr)

@@ -224,10 +224,11 @@ counts.
 
 V25 attributes spend to stage runs. V26 adds indexes for evidence snapshots.
 V27 adds an index for near-duplicate enqueue detection. V28 records queue-reason
-intervals and pull request event times.
+intervals and pull request event times. V29 adds the live design session
+tables, and V30 adds follow-ups and references to design notes.
 
 **Downgrading the binary is not supported after V25 has run.** The schema
-check of an older archond refuses a newer store ("store schema version 28 is
+check of an older archond refuses a newer store ("store schema version 30 is
 newer than this archon supports (24); upgrade archon"), so no older daemon can
 read the upgraded store. Before the update, stop archond and copy `archon.db`
 and any `archon.db-wal`. Going back means stopping archond, installing the

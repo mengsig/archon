@@ -1,6 +1,7 @@
 // Runs the unit and browser tests, installing what they need first. Without
 // a browser it skips (exit 0) locally, but fails loudly when CI is set.
 //   ARCHON_BIN=/path/to/archon node scripts/e2e.js [playwright args…]
+import './require-node.js';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';

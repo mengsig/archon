@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { prUrlOf, namesItem } from '../../src/core/format.js';
+import { prUrlOf, namesItem, hostVersionLabel } from '../../src/core/format.js';
 
 const stage = (state, prUrl) => ({ state: { state }, structured: prUrl ? { pr_url: prUrl } : null });
 
@@ -35,4 +35,10 @@ test('GitHub references become explicit safe links, never URL-shaped repository 
   assert.equal(githubRefUrl({ host: 'github.com', repo: 'mengsig/archon', number: 428, kind: 'pull_request' }), 'https://github.com/mengsig/archon/pull/428');
   assert.equal(githubRefUrl({ host: 'javascript:alert(1)', repo: 'x/y', number: 1 }), null);
   assert.equal(githubRefUrl({ host: 'github.com', repo: '../evil?x', number: 1 }), null);
+});
+
+test('the sidebar shows the running daemon version, not the app one', () => {
+  assert.equal(hostVersionLabel({ status: { daemon_version: '1.6.4' }, session: { daemon_version: '1.6.3' } }), 'Archon 1.6.4');
+  assert.equal(hostVersionLabel({ status: null, session: { daemon_version: '1.6.4' } }), 'Archon 1.6.4');
+  assert.equal(hostVersionLabel({ status: null, session: {} }), 'Archon');
 });

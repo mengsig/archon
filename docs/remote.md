@@ -29,6 +29,7 @@ autonomy ceiling, shared mode) apply unchanged.
 - [HTTP endpoints](#http-endpoints)
 - [The WebSocket](#the-websocket)
 - [What a device may do](#what-a-device-may-do)
+- [Design sessions](#design-sessions)
 - [Revoking and switching off](#revoking-and-switching-off)
 - [Commands](#commands)
 
@@ -179,9 +180,9 @@ invisible, bidirectional and private-use characters are refused.
 `GET /ws` upgrades to a WebSocket with the subprotocol `archon` (version
 13 only). It carries archond's own protocol
 ([ARCHITECTURE §10](ARCHITECTURE.md)), one JSON frame per text message: the
-first message must be `hello` with protocol 23 or 24 (archond's own is
-24), and archond answers `welcome`, which names the device and its role at
-24. After that each `{"req": N, "cmd": …}` is
+first message must be `hello` with protocol 23 to 26 (archond's own is
+26), and archond answers `welcome`, which names the device and its role from
+25. After that each `{"req": N, "cmd": …}` is
 answered by a `reply` frame with the same id, and `subscribe_feed` streams
 `feed` frames, as on the Unix socket.
 
@@ -249,6 +250,77 @@ A device Aether paired (Aether's own app) is Aether's business: its chat
 line is an operator's line for Archon only when Aether's session stamps the
 device's operator role on it (`origin.role: "operator"`). An Aether that
 stamps no role, or a device Aether paired as an observer, confers nothing.
+
+## Design sessions
+
+Protocol 25 adds [live design sessions](design-sessions.md) behind the
+`welcome` feature `design_sessions`, advertised only when `[design] enabled`
+is true and every request below is served. A protocol 23 or 24 app does not see
+the feature and shows `proposal = live` as plain text.
+
+Protocol 26 adds the feature `design_iterations` (follow-ups, references and
+the iteration tree): `design_note_add` takes optional `follows` and `refs`,
+`design_note_continue_from {item, id, text?, client_key?, refs?}` sets a
+chain's newer versions aside and queues a follow-up, and note views carry
+`follows`, `refs`, `chain`, `version`, `versions` and `set_aside`. Each new
+field has a default, so a 25 app keeps working.
+
+Requests. `design_get` is a read, so observers may send it (they get only
+`{state, note_count}`); everything else is an operator change and is logged
+like other device changes at the info level, except the high-rate
+`design_frame_ack`, `design_input`, `design_resolve` and `design_region`,
+which are logged at debug and counted per session in the end-of-session log.
+
+| Request | Effect |
+| --- | --- |
+| `design_get {item}` | Replies `design_state {item, session, notes, …}`; an observer gets `design_summary {state, note_count}` only. |
+| `subscribe_design {session}` | Replies `subscribed {id}` and streams `design` frames carrying `sub: id`; counts toward the 4 subscriptions. |
+| `design_frame_ack {sub, seq}` | Flow control; the next frame is sent only after it. |
+| `design_input {session, events}` | `mouse`, `wheel`, `key`, `text` and `touch` events in CSS pixels; at most 64 per request, 60 requests a second. |
+| `design_resolve {session, x, y, depth, select}` / `design_region {session, box}` | The element under a point, or a region; with `select` also captures the crop as a pending picture. |
+| `design_viewport {session, preset}` / `design_reload {session}` | Viewport preset, reload. |
+| `design_upload {session, media_type, data, name?, sketch?, base?, blank}` | Stores a picture (base64 `data`) as a pending asset. |
+| `design_tell_agent {session}` / `design_dialog_answer {session, accept, text?}` | Tell the agent again that the preview is down; answer the page's JavaScript dialog. |
+| `design_note_add {session, client_key, text, asset?, send_picture, details_text?}` | Adds a note; a repeated `client_key` returns the same note. Text up to 4,000 characters. |
+| `design_note_edit`, `design_note_cancel {item, id}` | Queued notes of the current session. |
+| `design_note_reply {item, id, text}` | Answers a note that needs a reply; up to 2,000 characters. |
+| `design_note_drop {item, id}` / `design_note_resend {item, id}` | Drop a note that failed, or send it again. |
+| `design_note_undo {item, id}` | Queues Archon's own revert of a done note. |
+| `design_finish_capture {session, cancel_queued, recapture}` / `design_final_capture {session, capture, note}` | Freeze the session and take final pictures; capture one note's. |
+| `design_finish_confirm {session, capture, include, superseded, confirm_no_change}` | Confirm the choices; the agent then wraps up. |
+| `design_finish_cancel {session}` | Back to editing. |
+| `design_asset {item, id}` | One stored picture as a `data:` URL. |
+
+Approval uses the existing `answer` request.
+
+Events on a `design` subscription, each a frame with `event` naming its kind:
+`frame {seq, jpeg_b64, w, h, at}`, `selection {box, label}`,
+`session {state, degraded, preview_path, commit, browser, note_version}`,
+`note {…}` (a note view), `blocked_hosts {hosts}`, `agent_progress {line}`,
+`dialog {kind, message, default_prompt}`, `toast {message}` and
+`ended {reason}`. Every frame or reply is at most 768 KiB as JSON, which stays
+under the 1 MiB message limit.
+
+Session `state` is one of `starting`, `live`, `finishing`, `confirmed` or
+`ended`. `degraded: true` means the preview's app does not answer (the screen
+shows "Preview down"); Archon checks every few seconds and clears it when the
+page loads or answers again. `browser` is an object tagged by `status`: `idle`,
+`starting`, `running`, `queued_for_slot`, `missing {hint}`,
+`sandbox_unavailable {hint}`, `crashed_too_often` or `unsandboxed`. The browser
+is closed when the operator confirms Finish, while the session stays
+`confirmed` until the gate is answered.
+
+Error codes specific to these requests:
+
+| Code | Meaning |
+| --- | --- |
+| `gone` | The session ended or was superseded. |
+| `forbidden` | An observer sent a change. |
+| `finishing` | The session is frozen for Finish; notes, edits, replies and undos wait. |
+| `read_only` | An earlier session's note cannot be edited, cancelled, answered or dropped. |
+| `stale` | At Confirm, HEAD or the notes changed since the capture; capture again. |
+| `conflict` | Another device confirmed or cancelled first. |
+| `not_yours` | An agent tool call named a note that is not its own to report. |
 
 ## Revoking and switching off
 

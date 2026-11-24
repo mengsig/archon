@@ -15,6 +15,7 @@ import { coalesce } from './core/live-query.js';
 import { APP_VERSION } from './version.js';
 import { deviceGuard, sessionChecker } from './core/session-watch.js';
 import { sessionSignal } from './core/session-signal.js';
+import { designCommands, createDesignHub, hasDesign, hasIterations } from './core/design.js';
 import { retryDelay, STREAM_BACKOFF } from './core/backoff.js';
 
 const REFRESH_DEBOUNCE_MS = 350;
@@ -28,11 +29,13 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
   if (typeof onDeviceChanged !== 'function') throw new TypeError('the app reports a changed device');
   const store = createStore({
     session, connection: { state: 'connecting' }, summaries: null, questions: null, status: null,
-    cost: null, repos: null, reports: null, feed: [], conversation: [], outbox: [], chatNotes: {}, errors: {}, sessionUnsure: false,
+    cost: null, repos: null, reports: null, feed: [], conversation: [], outbox: [], chatNotes: {}, errors: {}, sessionUnsure: false, designEnabled: false, designIterations: false,
   });
   let transport = null;
   const request = (cmd, fields, options) => transport.request(cmd, fields, options);
   const cmds = daemonCommands(request);
+  const design = designCommands(request);
+  const designHub = createDesignHub();
   const feed = createFeed({ request });
   const changes = createChanges({ request });
   const refresh = createLoaders(store, cmds);
@@ -54,10 +57,11 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
   const feedSync = streamSyncer({ name: 'feed', sync: () => feed.sync(), store, isOpen });
   const changesSync = streamSyncer({ name: 'changes', sync: () => changes.sync(welcome), store, isOpen });
   const conversation = openConversation({ request, isOpen, store });
-  transport = openTransport({ session, feed, changes, store, onReady: (welcomed) => {
+  transport = openTransport({ session, feed, changes, designHub, store, onReady: (welcomed) => {
     if (welcomed?.reply !== 'welcome' || !welcomed.data) throw new TypeError(`hello answered ${welcomed?.reply}`);
     if (welcomed.data.device) guard(welcomed.data.device);
     welcome = welcomed.data;
+    store.set({ designEnabled: hasDesign(welcome), designIterations: hasIterations(welcome) });
     feedSync.start();
     changesSync.start();
     conversation.run();
@@ -83,7 +87,7 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
   }
 
   return {
-    store, cmds, feed, changes, refresh,
+    store, cmds, design, designHub, feed, changes, refresh,
     // An app is built for one device and role; a change of either remounts it.
     canOperate: canOperate(session.device),
     resyncFeed: () => feedSync.run(),
@@ -137,7 +141,7 @@ function openConversation({ request, isOpen, store }) {
   });
 }
 
-function openTransport({ session, feed, changes, store, onReady }) {
+function openTransport({ session, feed, changes, designHub, store, onReady }) {
   const setError = (name, err) => store.set({ errors: { ...store.get().errors, [name]: err } });
   return createTransport({
     url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${BASE}/ws`,
@@ -145,6 +149,7 @@ function openTransport({ session, feed, changes, store, onReady }) {
       features: ['onto_edges', 'model_catalog_wait'] },
     onFeed: (item) => feed.push(item),
     onChange: (change) => changes.push(change),
+    onDesign: (sub, event) => designHub.push(sub, event),
     onReady,
     onState: (state, info) => store.set({ connection: { state, ...info } }),
     onProtocolError: (err) => setError('protocol', err),

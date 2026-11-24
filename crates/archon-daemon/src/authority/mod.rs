@@ -3,6 +3,7 @@
 mod actions;
 pub(crate) mod commands;
 mod confirmations;
+mod describe;
 pub(crate) mod evidence;
 mod history;
 pub(crate) mod item_grants;

@@ -18,10 +18,17 @@ pub trait Knob: Copy + Eq + std::fmt::Debug + 'static {
 
     fn as_str(self) -> &'static str;
 
+    /// The value this one ranks as: itself, unless it is an alias that is
+    /// exactly as autonomous as another value (`live` is as `lavish`).
+    fn ranks_as(self) -> Self {
+        self
+    }
+
     fn rank(self) -> usize {
+        let base = self.ranks_as();
         Self::ORDER
             .iter()
-            .position(|v| *v == self)
+            .position(|v| *v == base)
             .expect("ORDER lists every value")
     }
 
@@ -55,11 +62,17 @@ fn names<K: Knob>(values: &[K]) -> Vec<&'static str> {
 
 /// The values allowed under `max`, least autonomous first.
 fn allowed_up_to<K: Knob>(max: K) -> Vec<&'static str> {
-    names(&K::ORDER[..=max.rank()])
+    let limit = max.rank();
+    K::ORDER
+        .iter()
+        .filter(|v| v.rank() <= limit)
+        .map(|v| v.as_str())
+        .collect()
 }
 
 macro_rules! knob {
-    ($(#[$doc:meta])* $name:ident, $label:literal, [$($variant:ident = $text:literal),+ $(,)?]) => {
+    ($(#[$doc:meta])* $name:ident, $label:literal, [$($variant:ident = $text:literal),+ $(,)?]
+     $(, ranks_as [$($alias:ident => $of:ident),+ $(,)?])?) => {
         $(#[$doc])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
         #[serde(rename_all = "kebab-case")]
@@ -76,6 +89,15 @@ macro_rules! knob {
                     $(Self::$variant => $text),+
                 }
             }
+
+            $(
+                fn ranks_as(self) -> Self {
+                    match self {
+                        $(Self::$alias => Self::$of,)+
+                        other => other,
+                    }
+                }
+            )?
         }
 
         impl std::fmt::Display for $name {
@@ -99,8 +121,11 @@ knob!(
     ReviewLevel, "review", [Strict = "strict", Standard = "standard", None = "none"]
 );
 knob!(
-    /// Whether a proposal is written and approved before implementing.
-    ProposalMode, "proposal", [Lavish = "lavish", Off = "off"]
+    /// Whether a proposal is written and approved before implementing:
+    /// `lavish` as a page, `live` as a live design session with the operator.
+    /// `live` is no more autonomous than `lavish`, so it ranks as it.
+    ProposalMode, "proposal", [Lavish = "lavish", Live = "live", Off = "off"],
+    ranks_as [Live => Lavish]
 );
 knob!(
     /// Whether a change report is written before shipping, and whether the
@@ -559,11 +584,48 @@ mod tests {
         assert!(ReportMode::Off.rank() > ReportMode::WithPr.rank());
         assert!(ReportMode::WithPr.rank() > ReportMode::BeforePr.rank());
         assert!(ProposalMode::Off.rank() > ProposalMode::Lavish.rank());
+        assert_eq!(ProposalMode::Live.rank(), ProposalMode::Lavish.rank());
+        assert!(ProposalMode::Off.rank() > ProposalMode::Live.rank());
         assert!(MergeMode::Auto.rank() > MergeMode::Manual.rank());
         assert!(ToolsMode::Yolo.rank() > ToolsMode::Guarded.rank());
         assert_eq!(
             ReportMode::WithPr.lower(ReportMode::Off),
             ReportMode::WithPr
+        );
+    }
+
+    #[test]
+    fn live_is_never_above_a_ceiling_that_allows_lavish() {
+        let ceiling = Autonomy {
+            proposal: ProposalMode::Lavish,
+            ..Autonomy::default_ceiling()
+        };
+        let live = Autonomy {
+            proposal: ProposalMode::Live,
+            ..Autonomy::default()
+        };
+        assert!(live.excess(ceiling).is_empty());
+        let off = Autonomy {
+            proposal: ProposalMode::Off,
+            ..Autonomy::default()
+        };
+        assert_eq!(
+            off.excess(ceiling)[0].to_string(),
+            "proposal=off (allowed: lavish, live)"
+        );
+        let strictest = Autonomy {
+            proposal: ProposalMode::Lavish,
+            ..Autonomy::default_ceiling()
+        };
+        assert_eq!("live".parse::<ProposalMode>().unwrap(), ProposalMode::Live);
+        assert_eq!(
+            ProposalMode::Live.lower(ProposalMode::Off),
+            ProposalMode::Live
+        );
+        assert!(
+            strictest
+                .describe_allowed()
+                .contains("proposal=lavish|live")
         );
     }
 
@@ -594,7 +656,7 @@ mod tests {
         assert!(Autonomy::default().excess(ceiling).is_empty());
         assert_eq!(
             ceiling.describe_allowed(),
-            "review=strict|standard|none, proposal=lavish|off, report=before-pr|with-pr|off, \
+            "review=strict|standard|none, proposal=lavish|live|off, report=before-pr|with-pr|off, \
              merge=manual, tools=guarded|yolo"
         );
     }

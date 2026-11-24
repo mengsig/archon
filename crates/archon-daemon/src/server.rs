@@ -230,11 +230,12 @@ async fn change_frames(
     ctx: Arc<DaemonContext>,
     sub: handlers::changes::ChangeSubscription,
     outbox: Outbox,
+    features: ClientFeatures,
 ) {
     let (frames, mut queued) = mpsc::channel::<ServerFrame>(OUTBOX_FRAMES);
     let forward = async move {
         while let Some(frame) = queued.recv().await {
-            if !send(&outbox, frame).await {
+            if !send(&outbox, features.adapt(frame)).await {
                 return;
             }
         }
@@ -332,7 +333,7 @@ async fn session(
     outbox: Outbox,
     stop: &watch::Sender<bool>,
 ) -> Result<(), ArchonError> {
-    let Some((client, features)) = handshake(reader, &outbox).await? else {
+    let Some((client, version, features)) = handshake(reader, &outbox).await? else {
         return Ok(());
     };
     let mut subscriptions = 0u64;
@@ -343,6 +344,14 @@ async fn session(
             Some(None) => continue,
             None => return Ok(()),
         };
+        if let Some(error) = frame.request.design_protocol_refusal(version) {
+            let refused = ServerFrame::Reply {
+                id: frame.id,
+                result: Err(error),
+            };
+            send(&outbox, refused).await;
+            continue;
+        }
         match frame.request {
             Request::SubscribeFeed { after, verbose } => {
                 subscriptions += 1;
@@ -361,7 +370,7 @@ async fn session(
                     request: frame.id,
                     after,
                 };
-                feeds.spawn(change_frames(ctx.clone(), sub, outbox.clone()));
+                feeds.spawn(change_frames(ctx.clone(), sub, outbox.clone(), features));
             }
             Request::Shutdown => return shutdown(ctx, client, frame.id, &outbox, stop).await,
             request => {
@@ -369,11 +378,7 @@ async fn session(
                 tokio::spawn(async move {
                     let request = features.adapt_request(request);
                     let result = handlers::handle(&ctx, client, request).await;
-                    send(
-                        &outbox,
-                        reply(frame.id, result.map(|r| features.adapt_reply(r))),
-                    )
-                    .await
+                    send(&outbox, features.adapt(reply(frame.id, result))).await
                 });
             }
         }
@@ -413,7 +418,7 @@ async fn shutdown(
 async fn handshake(
     reader: &mut BufReader<OwnedReadHalf>,
     outbox: &Outbox,
-) -> Result<Option<(ClientKind, ClientFeatures)>, ArchonError> {
+) -> Result<Option<(ClientKind, u32, ClientFeatures)>, ArchonError> {
     let Some(Some(frame)) = read_client_frame(reader, outbox).await? else {
         return Ok(None);
     };
@@ -450,7 +455,11 @@ async fn handshake(
     };
     send(outbox, reply(frame.id, Ok(Reply::Welcome(welcome)))).await;
     tracing::debug!(?client, %client_version, ?declared, "client connected");
-    Ok(Some((client, ClientFeatures::declared(&declared))))
+    Ok(Some((
+        client,
+        protocol_version,
+        ClientFeatures::for_protocol(protocol_version, &declared),
+    )))
 }
 
 async fn refuse(outbox: &Outbox, code: ErrorCode, message: String) {

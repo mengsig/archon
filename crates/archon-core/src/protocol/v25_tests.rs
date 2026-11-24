@@ -124,6 +124,7 @@ fn every_design_request_round_trips_with_its_wire_name_and_class() {
         let request: Request =
             serde_json::from_value(wire.clone()).unwrap_or_else(|e| panic!("{wire}: {e}"));
         assert_eq!(request.class(), class, "{wire}");
+        assert_eq!(request.required_design_protocol(), Some(25), "{wire}");
         assert_eq!(serde_json::to_value(&request).unwrap(), wire);
         let framed = ClientFrame { id: 7, request };
         let text = serde_json::to_string(&framed).unwrap();

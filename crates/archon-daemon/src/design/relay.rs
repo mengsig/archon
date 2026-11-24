@@ -18,38 +18,10 @@ const FRAME_GAP: Duration = Duration::from_millis(100);
 /// How long a frame waits for the previous one's ack before the next goes.
 const ACK_WAIT: Duration = Duration::from_secs(2);
 
-pub(crate) struct AckState {
-    pub acked: watch::Sender<u64>,
-}
-
-impl super::DesignService {
-    /// `design_frame_ack`: late acks of a gone stream are ignored.
-    pub(crate) fn frame_ack(&self, sub: u64, seq: u64) {
-        let Some(device) = super::current_device() else {
-            return;
-        };
-        let state = self
-            .acks
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&(device.id, sub))
-            .cloned();
-        if let Some(state) = state {
-            state.acked.send_if_modified(|current| {
-                if seq > *current {
-                    *current = seq;
-                    true
-                } else {
-                    false
-                }
-            });
-        }
-    }
-}
-
 pub async fn stream(
     ctx: Arc<DaemonContext>,
     sub: DesignSubscription,
+    mut acked: watch::Receiver<u64>,
     frames: mpsc::Sender<ServerFrame>,
 ) {
     let service = ctx.design.clone();
@@ -73,6 +45,11 @@ pub async fn stream(
             return;
         }
     };
+    assert_eq!(
+        session.id, sub.session,
+        "the subscription opens its named session"
+    );
+    assert_eq!(sub.device.role, archon_core::protocol::DeviceRole::Operator);
     let subscribed = Reply::Subscribed {
         id: sub.id,
         last_seq: 0,
@@ -80,15 +57,11 @@ pub async fn stream(
     if frames.send(reply(Ok(subscribed))).await.is_err() {
         return;
     }
-    let (ack_tx, mut ack_rx) = watch::channel(0u64);
-    // Counted before any await; dropped, even when the task is aborted,
-    // it gives the subscriber back and removes the ack entry.
-    let _guard = Subscribed::new(
-        service.clone(),
-        session.id.clone(),
-        (sub.device.id.clone(), sub.id),
-        ack_tx,
-    );
+    service.subscriber_counted(&session.id);
+    let _guard = Subscribed {
+        service: service.clone(),
+        session: session.id.clone(),
+    };
     if let Err(error) = service.subscriber_joined(&ctx, &session.id).await {
         tracing::warn!(%error, session = %session.id, "design: the preview did not start for a subscriber");
         let _ = send(
@@ -100,45 +73,18 @@ pub async fn stream(
         )
         .await;
     }
-    run(&ctx, &sub, &session.id, &frames, &mut ack_rx).await;
+    run(&ctx, &sub, &session.id, &frames, &mut acked).await;
 }
 
-/// One attached subscriber: its count and its ack entry live as long as it.
+/// Give back the subscriber count even if the connection aborts this task.
 struct Subscribed {
     service: Arc<super::DesignService>,
     session: archon_core::design::DesignSessionId,
-    key: (String, u64),
-}
-
-impl Subscribed {
-    fn new(
-        service: Arc<super::DesignService>,
-        session: archon_core::design::DesignSessionId,
-        key: (String, u64),
-        ack: watch::Sender<u64>,
-    ) -> Self {
-        service
-            .acks
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(key.clone(), Arc::new(AckState { acked: ack }));
-        service.subscriber_counted(&session);
-        Self {
-            service,
-            session,
-            key,
-        }
-    }
 }
 
 impl Drop for Subscribed {
     fn drop(&mut self) {
         self.service.subscriber_left(&self.session);
-        self.service
-            .acks
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&self.key);
     }
 }
 

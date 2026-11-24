@@ -181,3 +181,81 @@ fn catalog_outages_reach_older_clients_with_a_known_reason_code() {
     assert!(old.to_string().contains("aether_disconnected"));
     assert_eq!(ClientFeatures::all().adapt(frame.clone()), frame);
 }
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum OldProposalMode {
+    Lavish,
+    Off,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum OldStageKind {
+    Propose,
+    Work,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OldRepoTiers {
+    integration_branch: String,
+}
+
+#[test]
+fn old_web_releases_decode_live_proposal_settings_and_repo_tiers() {
+    let repo: Repo = serde_json::from_value(json!({
+        "id": crate::id::RepoId::new(), "name": "example", "path": "/example",
+        "ship": "local", "added_at": at(), "autonomy_max": {"proposal": "live"},
+        "tiers": {"integration_branch": "next", "design": {"allow_hosts": ["static.example.com"]}}
+    }))
+    .unwrap();
+    let reply = Reply::Repo(repo);
+    for version in [23, 24] {
+        let old = data(&ClientFeatures::for_protocol(version, &[]).adapt_reply(reply.clone()));
+        let proposal =
+            serde_json::from_value::<OldProposalMode>(old["autonomy_max"]["proposal"].clone())
+                .unwrap();
+        let tiers = serde_json::from_value::<OldRepoTiers>(old["tiers"].clone()).unwrap();
+        assert_eq!(proposal, OldProposalMode::Lavish);
+        assert_eq!(tiers.integration_branch, "next");
+    }
+    for version in [25, 26] {
+        let current = ClientFeatures::for_protocol(version, &[]).adapt_reply(reply.clone());
+        assert_eq!(current, reply);
+        assert_eq!(data(&current)["autonomy_max"]["proposal"], "live");
+    }
+}
+
+#[test]
+fn an_old_run_plan_decodes_the_design_stage_as_a_proposal() {
+    let plan = serde_json::from_value(json!({
+        "run": crate::id::PipelineRunId::new(), "pipeline": "adaptive", "revision": "r1",
+        "edited": false, "stages": [
+            {"id": "design", "kind": "design", "fan_out": 1, "gate": "none", "timeout_minutes": 60, "max_loops": 0},
+            {"id": "work", "kind": "work", "fan_out": 1, "gate": "none", "timeout_minutes": 60, "max_loops": 0}
+        ]
+    })).unwrap();
+    let reply = Reply::RunPlan(plan);
+    let old = data(&ClientFeatures::for_protocol(24, &[]).adapt_reply(reply.clone()));
+    let kinds: Vec<OldStageKind> = old["stages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|stage| serde_json::from_value(stage["kind"].clone()).unwrap())
+        .collect();
+    assert_eq!(kinds, [OldStageKind::Propose, OldStageKind::Work]);
+    assert_eq!(old["stages"][0]["id"], "design");
+    let current = ClientFeatures::for_protocol(25, &[]).adapt_reply(reply.clone());
+    assert_eq!(current, reply);
+}
+
+#[test]
+fn protocol_23_does_not_receive_reply_variants_from_the_feature_handshake() {
+    let declared = [client_feature::ENQUEUE_ADVICE.to_owned()];
+    assert!(!ClientFeatures::for_protocol(23, &declared).enqueue_advice);
+    for version in 24..=26 {
+        assert!(ClientFeatures::for_protocol(version, &declared).enqueue_advice);
+        assert!(!ClientFeatures::for_protocol(version, &[]).enqueue_advice);
+    }
+}

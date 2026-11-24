@@ -26,7 +26,7 @@ use archon_core::design::DesignSessionId;
 use archon_core::error::ArchonError;
 use archon_core::protocol::{DeviceRole, Reply, Request, ServerFrame, WelcomeDevice};
 use archon_core::remote::{DeviceView, PairingCode, RemoteChange, RemoteConfig, RemoteView};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::devices::Device;
 use crate::pairing::{GuessLimit, Pairing};
@@ -55,9 +55,14 @@ pub trait Backend: Send + Sync + 'static {
     /// Send `subscribe_design`'s reply (`Ok(Reply::Subscribed {id, ..})`, `id`
     /// the subscription's, to
     /// `subscription.request`) and then its `design` frames to `frames`
-    /// until the session ends or `frames` closes. A backend without design
-    /// sessions refuses it.
-    async fn design(&self, subscription: DesignSubscription, frames: mpsc::Sender<ServerFrame>) {
+    /// until the session ends or `frames` closes. `acked` tracks the latest
+    /// acknowledgement from the connection that opened the subscription.
+    async fn design(
+        &self,
+        subscription: DesignSubscription,
+        _acked: watch::Receiver<u64>,
+        frames: mpsc::Sender<ServerFrame>,
+    ) {
         let refusal = ArchonError::Unavailable("this archond serves no design sessions".into());
         let frame = ServerFrame::Reply {
             id: subscription.request,

@@ -1,18 +1,19 @@
 //! One device's WebSocket session: frames in, replies and feed frames out,
 //! until the peer leaves, goes silent, or archond closes it.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use archon_core::design::DesignSessionId;
 use archon_core::error::ArchonError;
 use archon_core::protocol::{
-    ClientFeatures, ClientFrame, ErrorCode, ErrorReply, Reply, Request, ServerFrame, WelcomeDevice,
-    negotiate,
+    ClientFeatures, ClientFrame, ErrorCode, ErrorReply, FIRST_FEATURE_PROTOCOL_VERSION, Reply,
+    Request, ServerFrame, WelcomeDevice, negotiate,
 };
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::{Semaphore, mpsc, watch};
 use tokio::task::JoinSet;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
@@ -48,6 +49,7 @@ struct Session {
     shared: Arc<crate::Shared>,
     /// The paired device the session runs for; its role is fixed at pairing.
     device: WelcomeDevice,
+    protocol_version: u32,
     /// The later variants the device's `hello` declared it decodes.
     features: ClientFeatures,
     outbox: mpsc::Sender<ServerFrame>,
@@ -57,6 +59,7 @@ struct Session {
     subscriptions: u64,
     /// One permit per live subscription, given back when its stream ends.
     live_subscriptions: Arc<Semaphore>,
+    design_acks: BTreeMap<u64, watch::Sender<u64>>,
 }
 
 pub async fn carry<S>(
@@ -77,12 +80,14 @@ pub async fn carry<S>(
         backend,
         shared,
         device,
+        protocol_version: 0,
         features: ClientFeatures::default(),
         outbox,
         in_flight: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
         tasks: JoinSet::new(),
         subscriptions: 0,
         live_subscriptions: Arc::new(Semaphore::new(MAX_SUBSCRIPTIONS)),
+        design_acks: BTreeMap::new(),
     };
     let ended = match greet(&mut socket, &mut registration, &mut session).await {
         Ok(()) => run(&mut socket, &mut session, &mut frames, &mut registration).await,
@@ -161,10 +166,11 @@ where
         welcome.device.is_none(),
         "only the listener knows the device"
     );
-    if welcome.protocol_version >= archon_core::protocol::FIRST_FEATURE_PROTOCOL_VERSION {
+    if welcome.protocol_version >= FIRST_FEATURE_PROTOCOL_VERSION {
         welcome.device = Some(session.device.clone());
     }
-    session.features = ClientFeatures::declared(&declared);
+    session.protocol_version = welcome.protocol_version;
+    session.features = ClientFeatures::for_protocol(welcome.protocol_version, &declared);
     let reply = ServerFrame::Reply {
         id: frame.id,
         result: Ok(Reply::Welcome(welcome)),
@@ -287,6 +293,18 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
         let message = refusal.message(&crate::allow::command_name(&request));
         return queue(session, error_frame(id, ErrorCode::Forbidden, message));
     }
+    if let Some(error) = request.design_protocol_refusal(session.protocol_version) {
+        return queue(
+            session,
+            ServerFrame::Reply {
+                id,
+                result: Err(error),
+            },
+        );
+    }
+    if let Request::DesignFrameAck { sub, seq } = request {
+        return acknowledge_design(session, id, sub, seq);
+    }
     if let Request::SubscribeFeed { after, verbose } = request {
         return subscribe(session, id, Stream::Feed { verbose }, after);
     }
@@ -314,6 +332,31 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
         drop(permit);
     });
     Ok(())
+}
+
+fn acknowledge_design(session: &Session, id: u64, sub: u64, seq: u64) -> Result<(), Ended> {
+    assert!(session.protocol_version >= FIRST_FEATURE_PROTOCOL_VERSION);
+    assert_eq!(
+        session.device.role,
+        archon_core::protocol::DeviceRole::Operator
+    );
+    if let Some(sender) = session.design_acks.get(&sub) {
+        sender.send_if_modified(|last| {
+            if seq <= *last {
+                return false;
+            }
+            *last = seq;
+            true
+        });
+        tracing::debug!(device = %session.device.id, sub, seq, "design: frame acknowledged");
+    }
+    queue(
+        session,
+        ServerFrame::Reply {
+            id,
+            result: Ok(Reply::DesignDone),
+        },
+    )
 }
 
 /// What a subscription streams.
@@ -354,6 +397,10 @@ fn subscribe(
             });
         }
         Stream::Design(design) => {
+            session.design_acks.retain(|_, sender| !sender.is_closed());
+            let (ack, acked) = watch::channel(0);
+            let previous = session.design_acks.insert(sub, ack);
+            assert!(previous.is_none(), "subscription ids are never reused");
             let subscription = DesignSubscription {
                 id: sub,
                 request: id,
@@ -361,7 +408,7 @@ fn subscribe(
                 device: session.device.clone(),
             };
             session.tasks.spawn(async move {
-                backend.design(subscription, outbox).await;
+                backend.design(subscription, acked, outbox).await;
                 drop(live);
             });
         }

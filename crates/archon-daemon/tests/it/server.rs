@@ -51,9 +51,18 @@ impl Client {
 
     /// Connect and complete the handshake as `kind` declaring `features`.
     async fn declaring(socket: &std::path::Path, kind: ClientKind, features: &[&str]) -> Self {
+        Self::at_version(socket, kind, PROTOCOL_VERSION, features).await
+    }
+
+    async fn at_version(
+        socket: &Path,
+        kind: ClientKind,
+        protocol_version: u32,
+        features: &[&str],
+    ) -> Self {
         let mut client = Self::connect(socket).await;
         let hello = Request::Hello {
-            protocol_version: PROTOCOL_VERSION,
+            protocol_version,
             client: kind,
             client_version: "test".into(),
             features: features.iter().map(|f| (*f).to_owned()).collect(),
@@ -65,7 +74,7 @@ impl Client {
                 result: Ok(Reply::Welcome(welcome)),
             }) => {
                 assert_eq!(got, id);
-                assert_eq!(welcome.protocol_version, PROTOCOL_VERSION);
+                assert_eq!(welcome.protocol_version, protocol_version);
                 assert_eq!(welcome.pid, std::process::id());
             }
             other => panic!("expected welcome, got {other:?}"),
@@ -336,36 +345,42 @@ async fn first_reply(socket: &Path, client: ClientKind, version: u32) -> Result<
     }
 }
 
-/// `archon-web` may speak 23 or 24 and is told the range when it speaks
-/// 25, and is offered features only at 24; the CLI still needs an exact
-/// match, as one binary.
+/// Web clients accept a range. The CLI, MCP, and bench require parity.
 #[tokio::test]
-async fn the_web_app_speaks_23_or_24_and_the_cli_only_24() {
+async fn web_uses_protocol_23_to_26_and_bundled_clients_need_parity() {
     let h = Harness::new().await;
     let socket = h.ctx.paths.socket.clone();
     let (listener, _lock) = server::bind(&h.ctx).expect("bind");
     let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
-    for version in [MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION] {
+    for version in MIN_WEB_PROTOCOL_VERSION..=PROTOCOL_VERSION {
         match first_reply(&socket, ClientKind::ArchonWeb, version).await {
             Ok(Reply::Welcome(welcome)) => {
                 assert_eq!(welcome.protocol_version, version);
                 assert_eq!(welcome.min_protocol_version, MIN_WEB_PROTOCOL_VERSION);
                 let roles = welcome.features.iter().any(|f| f == feature::DEVICE_ROLES);
-                assert_eq!(roles, version == PROTOCOL_VERSION, "{:?}", welcome.features);
+                assert_eq!(roles, version >= 24, "{:?}", welcome.features);
             }
             other => panic!("archon-web {version}: {other:?}"),
         }
     }
     let refused = first_reply(&socket, ClientKind::ArchonWeb, PROTOCOL_VERSION + 1)
         .await
-        .expect_err("25 is refused");
+        .expect_err("the next version is refused");
     assert_eq!(refused.code, ErrorCode::Incompatible);
     let range = format!("accepts {MIN_WEB_PROTOCOL_VERSION} to {PROTOCOL_VERSION}");
     assert!(refused.message.contains(&range), "{}", refused.message);
-    let cli = first_reply(&socket, ClientKind::ArchonCli, MIN_WEB_PROTOCOL_VERSION)
-        .await
-        .expect_err("the CLI needs its own version");
-    assert_eq!(cli.code, ErrorCode::Incompatible);
+    for kind in [
+        ClientKind::ArchonCli,
+        ClientKind::ArchonMcp,
+        ClientKind::ArchonBench,
+    ] {
+        for version in MIN_WEB_PROTOCOL_VERSION..PROTOCOL_VERSION {
+            let refused = first_reply(&socket, kind, version)
+                .await
+                .expect_err("bundled clients need their own version");
+            assert_eq!(refused.code, ErrorCode::Incompatible);
+        }
+    }
     match first_reply(&socket, ClientKind::ArchonCli, PROTOCOL_VERSION).await {
         Ok(Reply::Welcome(welcome)) => {
             assert_eq!(welcome.min_protocol_version, PROTOCOL_VERSION);
@@ -383,6 +398,60 @@ async fn the_web_app_speaks_23_or_24_and_the_cli_only_24() {
             }
         }
         other => panic!("the CLI at {PROTOCOL_VERSION}: {other:?}"),
+    }
+    serving.abort();
+}
+
+#[tokio::test]
+async fn unix_web_clients_receive_design_summaries_from_protocol_25() {
+    let h = Harness::new().await;
+    let socket = h.ctx.paths.socket.clone();
+    let (listener, _lock) = server::bind(&h.ctx).expect("bind");
+    let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
+    let item = archon_core::id::QueueItemId::new();
+    for version in 23..=26 {
+        let mut client = Client::at_version(&socket, ClientKind::ArchonWeb, version, &[]).await;
+        let request = Request::DesignGet { item: item.clone() };
+        let reply = client.call(request, &mut Vec::new()).await;
+        if version < 25 {
+            assert_eq!(reply.unwrap_err().code, ErrorCode::Incompatible);
+        } else {
+            assert_eq!(
+                reply.unwrap(),
+                Reply::DesignSummary {
+                    state: None,
+                    note_count: 0
+                }
+            );
+        }
+    }
+    serving.abort();
+}
+
+#[tokio::test]
+async fn enqueue_advice_is_opt_in_on_the_unix_wire() {
+    use archon_core::protocol::client_feature;
+
+    let h = Harness::new().await;
+    let socket = h.ctx.paths.socket.clone();
+    let (listener, _lock) = server::bind(&h.ctx).expect("bind");
+    let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
+    for (declared, expected) in [
+        (&[][..], "item"),
+        (&[client_feature::ENQUEUE_ADVICE][..], "enqueue_advised"),
+    ] {
+        let mut client = Client::declaring(&socket, ClientKind::ArchonCli, declared).await;
+        let mut request = common::enqueue_request(
+            REPO_NAME,
+            "direct",
+            "Update account storage",
+            Default::default(),
+        );
+        request.brief = "Add a transactional database migration.".into();
+        request.autonomy.review = Some(archon_core::autonomy::ReviewLevel::None);
+        let reply = client.raw_call(Request::Enqueue(request)).await;
+        assert_eq!(reply["reply"], expected, "{reply}");
+        assert!(reply["data"]["id"].is_string(), "{reply}");
     }
     serving.abort();
 }

@@ -217,6 +217,10 @@ fn a_refusal_reads_as_the_daemons_own_error() {
         ArchonError::Forbidden("operator only".into()),
         ArchonError::InvalidTransition("item is done".into()),
         ArchonError::Unavailable("not connected to aetherd".into()),
+        ArchonError::Design {
+            code: archon_core::error::DesignRefusal::Stale,
+            message: "the page changed since capture".into(),
+        },
     ];
     for daemon_error in daemon_errors {
         let local = refusal_error(ErrorReply::from(&daemon_error));

@@ -7,7 +7,7 @@ use std::sync::{Arc, Weak};
 use archon_core::error::ArchonError;
 use archon_core::protocol::{Reply, Request, ServerFrame, WelcomeDevice, feature};
 use archon_remote::{Backend, ChangeSubscription, DesignSubscription, FeedSubscription};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::context::DaemonContext;
 
@@ -52,12 +52,17 @@ impl Backend for DaemonBackend {
         features
     }
 
-    async fn design(&self, subscription: DesignSubscription, frames: mpsc::Sender<ServerFrame>) {
+    async fn design(
+        &self,
+        subscription: DesignSubscription,
+        acked: watch::Receiver<u64>,
+        frames: mpsc::Sender<ServerFrame>,
+    ) {
         let Ok(ctx) = self.context() else {
             return;
         };
         tracing::info!(device = %subscription.device.id, name = %subscription.device.name, role = ?subscription.device.role, session = %subscription.session, "design: stream opened");
-        crate::design::stream(ctx, subscription, frames).await;
+        crate::design::stream(ctx, subscription, acked, frames).await;
     }
 
     async fn feed(&self, subscription: FeedSubscription, frames: mpsc::Sender<ServerFrame>) {
@@ -81,12 +86,9 @@ impl Backend for DaemonBackend {
 }
 
 /// Requests a live preview sends many times a second; logging each at INFO
-/// would drown the log (frame acks alone are about 1.5 a second).
+/// would drown the log.
 fn is_high_rate(command: &str) -> bool {
-    matches!(
-        command,
-        "design_frame_ack" | "design_input" | "design_resolve" | "design_region"
-    )
+    matches!(command, "design_input" | "design_resolve" | "design_region")
 }
 
 /// Every change a device asks for names the device and its role in the log.
@@ -122,12 +124,7 @@ mod tests {
 
     #[test]
     fn per_frame_requests_log_quietly() {
-        for c in [
-            "design_frame_ack",
-            "design_input",
-            "design_resolve",
-            "design_region",
-        ] {
+        for c in ["design_input", "design_resolve", "design_region"] {
             assert!(is_high_rate(c), "{c}");
         }
         for c in [

@@ -658,7 +658,11 @@ mod tests {
         let preview = json!({"url": "http://127.0.0.1:5173/"});
         let note = json!({"id": "D1", "status": "working"});
         let params = json!({"_meta": {"aether/agent_id": "agt_1"}});
-        for (tool, args) in [("design_preview", preview), ("design_note", note)] {
+        for (tool, args) in [
+            ("design_preview", preview),
+            ("design_note", note),
+            ("design_history", json!({"id": "D1"})),
+        ] {
             let refused = request_with_caller(tool, args.clone(), &json!({})).unwrap_err();
             assert!(
                 refused
@@ -670,6 +674,7 @@ mod tests {
                 request,
                 Request::DesignPreview { caller: Some(ref id), .. }
                     | Request::DesignNoteReport { caller: Some(ref id), .. }
+                    | Request::DesignHistory { caller: Some(ref id), .. }
                     if id.as_str() == "agt_1"
             ));
         }

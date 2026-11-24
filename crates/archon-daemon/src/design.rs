@@ -288,8 +288,6 @@ pub struct DesignService {
     wts: std::sync::Mutex<HashMap<DesignSessionId, WorktreeRef>>,
     item_locks: std::sync::Mutex<HashMap<QueueItemId, Arc<tokio::sync::Mutex<()>>>>,
     stopping: std::sync::atomic::AtomicBool,
-    /// Streams' flow control: (device, subscription) to the last frame acked.
-    pub(crate) acks: std::sync::Mutex<HashMap<(String, u64), Arc<relay::AckState>>>,
 }
 
 impl std::fmt::Debug for DesignService {
@@ -311,7 +309,6 @@ impl DesignService {
             wts: Default::default(),
             item_locks: Default::default(),
             stopping: Default::default(),
-            acks: Default::default(),
         }
     }
 

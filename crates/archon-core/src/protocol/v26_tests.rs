@@ -33,6 +33,7 @@ fn a_note_add_without_iterations_reads_as_before() {
         &request,
         Request::DesignNoteAdd { follows: None, refs, .. } if refs.is_empty()
     ));
+    assert_eq!(request.required_design_protocol(), Some(25));
     assert_eq!(
         serde_json::to_value(&request).unwrap(),
         old,
@@ -44,6 +45,7 @@ fn a_note_add_without_iterations_reads_as_before() {
     let request: Request = serde_json::from_value(new.clone()).unwrap();
     assert_eq!(serde_json::to_value(&request).unwrap(), new);
     assert_eq!(request.class(), RequestClass::OperatorChange);
+    assert_eq!(request.required_design_protocol(), Some(26));
 }
 
 #[test]
@@ -52,6 +54,7 @@ fn continue_from_and_history_have_their_classes() {
         "text": "bigger", "client_key": "c1", "refs": []});
     let request: Request = serde_json::from_value(wire.clone()).unwrap();
     assert_eq!(request.class(), RequestClass::OperatorChange);
+    assert_eq!(request.required_design_protocol(), Some(26));
     assert_eq!(serde_json::to_value(&request).unwrap(), wire);
     let short: Request = serde_json::from_value(
         json!({"cmd": "design_note_continue_from", "item": ITEM, "id": "D3"}),
@@ -69,6 +72,7 @@ fn continue_from_and_history_have_their_classes() {
         serde_json::from_value(json!({"cmd": "design_history", "caller": null})).unwrap();
     assert!(matches!(history, Request::DesignHistory { id: None, .. }));
     assert_eq!(history.class(), RequestClass::Change);
+    assert_eq!(history.required_design_protocol(), Some(26));
 }
 
 #[test]

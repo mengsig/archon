@@ -273,7 +273,7 @@ mod tests {
     }
 
     /// T-U6: every design request is classed; observers read only `design_get`;
-    /// the agent's two requests never reach a device.
+    /// agent tools are reserved for the stage agent's host connection.
     #[test]
     fn design_requests_are_classed_and_observers_only_read_the_summary() {
         let session = "ds_01M621D9ZBJPTMDTV26KKQNBE1";
@@ -292,6 +292,7 @@ mod tests {
             serde_json::json!({"cmd": "design_tell_agent", "session": session}),
             serde_json::json!({"cmd": "design_dialog_answer", "session": session, "accept": true, "text": null}),
             serde_json::json!({"cmd": "design_note_add", "session": session, "client_key": "k", "text": "t", "asset": null, "send_picture": false, "details_text": null}),
+            serde_json::json!({"cmd": "design_note_continue_from", "item": ITEM, "id": "D1"}),
             serde_json::json!({"cmd": "design_note_edit", "item": ITEM, "id": "D1", "text": "t"}),
             serde_json::json!({"cmd": "design_note_cancel", "item": ITEM, "id": "D1"}),
             serde_json::json!({"cmd": "design_note_reply", "item": ITEM, "id": "D1", "text": "t"}),
@@ -318,6 +319,7 @@ mod tests {
         for json in [
             serde_json::json!({"cmd": "design_preview", "url": "http://127.0.0.1:1/", "caller": null}),
             serde_json::json!({"cmd": "design_note_report", "id": "D1", "status": "done", "reply": null, "commit": null, "caller": null}),
+            serde_json::json!({"cmd": "design_history", "id": "D1", "caller": null}),
         ] {
             let request = parse(json.clone());
             for role in [DeviceRole::Operator, DeviceRole::Observer] {

@@ -176,10 +176,9 @@ pub(crate) async fn handle(
             "subscribe_design is served by the connection".into(),
         )),
         Request::DesignAsset { item, id } => service.asset_view(ctx, &item, &id).await,
-        Request::DesignFrameAck { sub, seq } => {
-            service.frame_ack(sub, seq);
-            Ok(Reply::DesignDone)
-        }
+        Request::DesignFrameAck { .. } => Err(ArchonError::Invalid(
+            "design_frame_ack is served by the design subscription's connection".into(),
+        )),
         Request::DesignInput { session, events } => service.input(ctx, &session, events).await,
         Request::DesignResolve {
             session,

@@ -77,7 +77,7 @@ use crate::timing_report::{TimingQuery, TimingReport};
 /// 26: design iterations (feature `design_iterations`): `design_note_add`
 /// may carry `follows` and `refs`, `design_note_continue_from` and
 /// `design_history`; note views and finish cards gain defaulted fields, so
-/// a client at 23 to 25 reads follow-ups as plain notes.
+/// a client at 25 reads follow-ups as plain notes.
 pub const PROTOCOL_VERSION: u32 = 26;
 
 /// The oldest protocol archond accepts from `archon-web`; every other client
@@ -86,6 +86,9 @@ pub const MIN_WEB_PROTOCOL_VERSION: u32 = 23;
 
 /// The first protocol with `hello` features and a named device.
 pub const FIRST_FEATURE_PROTOCOL_VERSION: u32 = 24;
+
+const DESIGN_PROTOCOL_VERSION: u32 = 25;
+const DESIGN_ITERATIONS_PROTOCOL_VERSION: u32 = 26;
 
 pub mod changes;
 pub mod compat;
@@ -164,8 +167,8 @@ pub fn accepted_protocols(client: ClientKind) -> std::ops::RangeInclusive<u32> {
 }
 
 /// archond's answer to a `hello`: the `welcome` at the client's version, or
-/// the `incompatible` refusal's message. `features` is what archond serves;
-/// a client below [`PROTOCOL_VERSION`] knows none of them and is sent none.
+/// the `incompatible` refusal's message. Only features served by archond
+/// and defined by the accepted version appear in the welcome.
 pub fn negotiate(
     client: ClientKind,
     protocol_version: u32,
@@ -197,17 +200,16 @@ pub fn negotiate(
         features.iter().all(|f| feature::ALL.contains(f)),
         "archond advertises only features protocol {PROTOCOL_VERSION} defines: {features:?}"
     );
-    // A client knows the features of its own protocol and none of a later
-    // one's: 24 none of 25's design sessions, 25 none of 26's iterations.
-    let later: &[&str] = match protocol_version {
-        PROTOCOL_VERSION => &[],
-        25 => &[feature::DESIGN_ITERATIONS],
-        FIRST_FEATURE_PROTOCOL_VERSION => &[feature::DESIGN_SESSIONS, feature::DESIGN_ITERATIONS],
-        _ => &feature::ALL,
-    };
     let features = features
         .iter()
-        .filter(|f| !later.contains(f))
+        .filter(|f| {
+            let introduced = match **f {
+                feature::DESIGN_SESSIONS => DESIGN_PROTOCOL_VERSION,
+                feature::DESIGN_ITERATIONS => DESIGN_ITERATIONS_PROTOCOL_VERSION,
+                _ => FIRST_FEATURE_PROTOCOL_VERSION,
+            };
+            protocol_version >= introduced
+        })
         .map(|f| (*f).to_owned())
         .collect();
     Ok(Welcome {
@@ -1043,6 +1045,61 @@ pub enum RequestClass {
 }
 
 impl Request {
+    /// The first protocol that understands this design operation.
+    pub fn required_design_protocol(&self) -> Option<u32> {
+        let mut request = self;
+        while let Self::ForAgent { request: inner, .. } | Self::Tracked { request: inner, .. } =
+            request
+        {
+            request = inner;
+        }
+        match request {
+            Self::DesignNoteContinueFrom { .. } | Self::DesignHistory { .. } => {
+                Some(DESIGN_ITERATIONS_PROTOCOL_VERSION)
+            }
+            Self::DesignNoteAdd { follows, refs, .. } if follows.is_some() || !refs.is_empty() => {
+                Some(DESIGN_ITERATIONS_PROTOCOL_VERSION)
+            }
+            Self::DesignGet { .. }
+            | Self::SubscribeDesign { .. }
+            | Self::DesignAsset { .. }
+            | Self::DesignFrameAck { .. }
+            | Self::DesignInput { .. }
+            | Self::DesignResolve { .. }
+            | Self::DesignRegion { .. }
+            | Self::DesignUpload { .. }
+            | Self::DesignViewport { .. }
+            | Self::DesignReload { .. }
+            | Self::DesignTellAgent { .. }
+            | Self::DesignDialogAnswer { .. }
+            | Self::DesignNoteAdd { .. }
+            | Self::DesignNoteEdit { .. }
+            | Self::DesignNoteCancel { .. }
+            | Self::DesignNoteReply { .. }
+            | Self::DesignNoteDrop { .. }
+            | Self::DesignNoteUndo { .. }
+            | Self::DesignNoteResend { .. }
+            | Self::DesignFinishCapture { .. }
+            | Self::DesignFinalCapture { .. }
+            | Self::DesignFinishConfirm { .. }
+            | Self::DesignFinishCancel { .. }
+            | Self::DesignPreview { .. }
+            | Self::DesignNoteReport { .. } => Some(DESIGN_PROTOCOL_VERSION),
+            _ => None,
+        }
+    }
+
+    /// A request using a design operation newer than the accepted protocol.
+    pub fn design_protocol_refusal(&self, version: u32) -> Option<ErrorReply> {
+        let required = self.required_design_protocol()?;
+        (version < required).then(|| ErrorReply {
+            code: ErrorCode::Incompatible,
+            message: format!(
+                "this request requires protocol {required}; this connection uses {version}"
+            ),
+        })
+    }
+
     /// The request's class. No arm is a wildcard, so a new request kind
     /// does not compile until it is classified here.
     pub fn class(&self) -> RequestClass {

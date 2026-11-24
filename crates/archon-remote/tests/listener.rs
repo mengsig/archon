@@ -9,8 +9,9 @@ use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::protocol::graph::TaskEdgeKind;
 use archon_core::protocol::{
-    Change, ChangeSubject, DeviceRole, MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION, QueueStateKind,
-    Reply, Request, ServerFrame, TaskEdge, TaskGraph, WelcomeDevice, client_feature, feature,
+    Change, ChangeSubject, DeviceRole, EnqueueNotice, MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION,
+    QueueStateKind, Reply, Request, ServerFrame, TaskEdge, TaskGraph, WelcomeDevice,
+    client_feature, feature,
 };
 use archon_core::remote::{RemoteChange, RemoteConfig};
 use archon_remote::{Backend, ChangeSubscription, FeedSubscription, Remote};
@@ -44,12 +45,13 @@ impl Backend for FakeArchond {
         self.asked.lock().unwrap().push(name);
         match request {
             Request::TaskGraph { .. } => Ok(Reply::TaskGraph(Box::new(onto_graph()))),
+            Request::Enqueue(request) => Ok(advised_enqueue(request)),
             _ => Ok(Reply::Ok),
         }
     }
 
     fn features(&self) -> Vec<&'static str> {
-        vec![feature::CHANGES]
+        vec![feature::CHANGES, feature::ENQUEUE_ADVICE]
     }
 
     async fn feed(&self, subscription: FeedSubscription, frames: mpsc::Sender<ServerFrame>) {
@@ -118,6 +120,22 @@ fn onto_graph() -> TaskGraph {
         initiatives: Vec::new(),
         as_of: 1,
         truncated: false,
+    }
+}
+
+fn advised_enqueue(request: archon_core::protocol::EnqueueRequest) -> Reply {
+    let at = archon_core::now();
+    let item = serde_json::from_value(serde_json::json!({
+        "id": QueueItemId::new(), "pipeline": "direct", "title": request.title,
+        "brief": request.brief, "priority": request.priority, "dependencies": [], "tags": [],
+        "model_plan": {}, "state": {"state": "queued"}, "created_at": at, "updated_at": at,
+        "budget_usd": request.budget_usd,
+    }))
+    .unwrap();
+    Reply::EnqueueAdvised {
+        item,
+        notices: vec![EnqueueNotice::DirectRisk],
+        budgets_off: request.budget_usd.is_some(),
     }
 }
 
@@ -511,16 +529,16 @@ async fn a_session_needs_the_cookie_and_a_forged_one_is_cleared() {
     );
 }
 
-/// The web app may speak 23, 24 or 25; 26 is refused with the range accepted.
+/// The web app may speak 23 to 26; 27 is refused with the range accepted.
 #[tokio::test]
 async fn the_web_app_connects_at_23_to_26_and_27_is_refused_with_the_range() {
     let listener = Listener::start().await;
     let cookie = listener.pair().await;
     for (version, features) in [
         (23, serde_json::json!([])),
-        (24, serde_json::json!(["changes"])),
-        (25, serde_json::json!(["changes"])),
-        (26, serde_json::json!(["changes"])),
+        (24, serde_json::json!(["changes", "enqueue_advice"])),
+        (25, serde_json::json!(["changes", "enqueue_advice"])),
+        (26, serde_json::json!(["changes", "enqueue_advice"])),
     ] {
         let mut socket = listener.upgrade(&cookie).await;
         let welcome = exchange(&mut socket, hello(version)).await;
@@ -725,6 +743,35 @@ async fn outcome(socket: &mut Socket, frame: serde_json::Value) -> String {
         Some(ok) => ok["reply"].as_str().unwrap().to_owned(),
         None => answer["result"]["Err"]["code"].as_str().unwrap().to_owned(),
     }
+}
+
+#[tokio::test]
+async fn enqueue_advice_negotiates_without_changing_device_authority() {
+    let listener = Listener::start().await;
+    let operator = listener.pair().await;
+    let observer = listener.pair_as(DeviceRole::Observer).await;
+    for (cookie, version, declares_advice, expected) in [
+        (&operator, 23, false, "item_budgets_off"),
+        (&operator, 24, false, "item_budgets_off"),
+        (&operator, 24, true, "enqueue_advised"),
+        (&operator, 25, true, "enqueue_advised"),
+        (&operator, 26, true, "enqueue_advised"),
+        (&observer, 26, true, "forbidden"),
+    ] {
+        let mut socket = listener.upgrade(cookie).await;
+        let mut greeting = hello(version);
+        if declares_advice {
+            greeting["features"] = serde_json::json!([client_feature::ENQUEUE_ADVICE]);
+        }
+        let welcome = exchange(&mut socket, greeting).await;
+        assert_eq!(welcome["result"]["Ok"]["data"]["protocol_version"], version);
+        let frame = serde_json::json!({
+            "req": 2, "cmd": "enqueue", "title": "Update storage", "brief": "Migrate records",
+            "budget_usd": 3.0,
+        });
+        assert_eq!(outcome(&mut socket, frame).await, expected);
+    }
+    assert_eq!(*listener.backend.asked.lock().unwrap(), ["enqueue"; 5]);
 }
 
 #[tokio::test]

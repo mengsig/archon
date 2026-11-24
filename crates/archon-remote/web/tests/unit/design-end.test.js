@@ -5,6 +5,19 @@ import {
   confirmedPreset, presetMismatch, pointerBlockedText, notesHeading, PRESET_SIZE, ledgerLede,
 } from '../../src/features/design/state.js';
 import { designErrorText } from '../../src/core/design.js';
+import { gateQuestionFor } from '../../src/features/design/finish.js';
+
+test('approval uses only the open proposal gate for the exact design attempt', () => {
+  const current = { run: 'r1', stage_id: 'design', attempt: 2 };
+  const gate = { item: 'i', ...current, subject: 'proposal', question: 'q1', decision: null, withdrawn: null };
+  const questions = [{ id: 'other', item: 'i', answer: null }, { id: 'q1', item: 'i', answer: null }];
+  assert.equal(gateQuestionFor(questions, [gate], current, 'i').id, 'q1');
+  for (const change of [{ run: 'r2' }, { stage_id: 'other' }, { attempt: 1 }, { subject: 'report' }, { withdrawn: 'ended' }, { decision: {} }]) {
+    assert.equal(gateQuestionFor(questions, [{ ...gate, ...change }], current, 'i'), null);
+  }
+  assert.equal(gateQuestionFor(questions, [gate, gate], current, 'i'), null);
+  assert.equal(gateQuestionFor(questions, [gate], {}, 'i'), null);
+});
 
 const session = (over = {}) => ({ id: 'ds_1', state: 'live', degraded: false, note_version: 3, viewport_preset: 'desktop', ...over });
 const view = (over = {}) => ({ session: session(), notes: [], browser: { status: 'running' }, ...over });

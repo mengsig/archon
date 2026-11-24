@@ -2,6 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { initialState, reduce, stagePhase, noteLook, noteActions, statusLine, imageCapWarning, failText, captionFor, currentPath } from '../../src/features/design/state.js';
 
+test('an initial load failure is visible instead of pretending there is no session', () => {
+  const failed = reduce(initialState('i'), { type: 'error', error: 'Connection failed.' });
+  assert.equal(stagePhase(failed).kind, 'error');
+  assert.equal(stagePhase(failed).text, 'Connection failed.');
+});
+
 const session = (over = {}) => ({ id: 'ds_1', state: 'live', degraded: false, note_version: 3, viewport_preset: 'desktop', ...over });
 const note = (n, over = {}) => ({ id: `D${n}`, number: n, status: 'queued', kind: 'change', read_only: false, updated_at: new Date().toISOString(), ...over });
 const view = (over = {}) => ({ session: session(), notes: [note(1), note(2)], browser: { status: 'running' }, finish_blocker: null, images_used: 1, images_max: 128, stage_deadline: null, ...over });

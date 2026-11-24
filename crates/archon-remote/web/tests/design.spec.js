@@ -44,7 +44,8 @@ test.describe('desktop', () => {
 
   test('T-E1: comment, send, watch it turn green, compare, undo, finish', async ({ browser, page }) => {
     const gate = { id: 'q_GATE', item: ITEM, number: 1, text: 'Approve the design?', options: ['approve', 'revise', 'reject'], asked_at: new Date().toISOString(), answer: null };
-    const harness = await open(browser, page, { questions: [gate] });
+    const unrelated = { ...gate, id: 'q_OTHER', number: 2, text: 'Unrelated question' };
+    const harness = await open(browser, page, { questions: [unrelated, gate] });
     try {
       const canvas = page.locator('.design-canvas');
       await expect(canvas).toBeVisible();
@@ -202,8 +203,8 @@ test.describe('desktop', () => {
     } finally { await harness.stop(); }
   });
 
-  test('finishing: a Superseded by edit left by clicking Approve as it is still sends that click', async ({ browser, page }) => {
-    const harness = await open(browser, page);
+  test('finishing: choose a replacement from current notes and confirm', async ({ browser, page }) => {
+    const harness = await open(browser, page, { notes: [seedNote({ number: 2, text: 'replace green' })] });
     try {
       await expect(page.locator('.design-canvas')).toBeVisible();
       doneNote(harness);
@@ -214,12 +215,12 @@ test.describe('desktop', () => {
       await expect(review.getByText('Approve the design as it is?')).toBeVisible();
       const confirms = () => harness.daemon.state.requests.filter((r) => r.cmd === 'design_finish_confirm').length;
       expect(confirms()).toBe(1);
-      // The edit's change event fires as the click blurs the field: the
-      // review relabels in place instead of redrawing under the pointer, so
-      // the click lands and, as the choice changed, asks Confirm again.
-      await review.getByLabel('D1 superseded by').fill('D9');
-      await review.getByRole('button', { name: 'Approve as it is' }).click();
+      const replacement = review.getByLabel('D1 superseded by');
+      await expect(replacement.locator('option')).toHaveText(['Not superseded', 'D2 · replace green']);
+      await replacement.selectOption('D2');
+      await review.getByRole('button', { name: 'Confirm', exact: true }).click();
       await expect.poll(confirms).toBe(2);
+      expect(harness.daemon.state.requests.filter((r) => r.cmd === 'design_finish_confirm').at(-1).superseded.D1).toBe('D2');
       await expect(review.getByText('Approve the design as it is?')).toBeVisible();
     } finally { await harness.stop(); }
   });
@@ -486,6 +487,7 @@ test.describe('hardening', () => {
       const queue = async (live) => {
         await page.getByRole('button', { name: 'New item', exact: true }).click();
         const sheet = page.getByRole('dialog', { name: 'New item' });
+        await expect(sheet.getByLabel('Title')).toBeFocused();
         await sheet.getByLabel('Title').fill(`Design ${live}`);
         await sheet.getByLabel('Brief').fill('Try the live design flow.');
         const toggle = sheet.getByRole('switch', { name: 'Design it live' });

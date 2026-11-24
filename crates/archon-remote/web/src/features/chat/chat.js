@@ -131,7 +131,7 @@ async function send(ctx, text) {
   const localId = addPending(ctx.store, text);
   requestAnimationFrame(scrollToEnd);
   try {
-    await ctx.cmds.say(text);
+    await ctx.cmds.say(text, localId);
     settlePending(ctx.store, localId, 'sent');
   } catch (err) {
     // Unavailable means archond kept the line but could not hand it on yet.

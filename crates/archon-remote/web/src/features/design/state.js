@@ -128,7 +128,7 @@ export function isLive(state) {
 // The one state that fills the stage; the banners and the status bar add to it.
 export function stagePhase(state, { operator = true, features = true } = {}) {
   if (!features) return { kind: 'unavailable', title: 'Live design is not available', text: 'This host does not offer design sessions. Update Archon on the host to use them.', tone: 'muted' };
-  if (state.error && !state.loaded) return { kind: 'error', title: 'Could not load the design session', text: state.error, tone: 'red' };
+  if (state.error && !state.view && !state.observer) return { kind: 'error', title: 'Could not load the design session', text: state.error, tone: 'red' };
   if (!state.loaded) return { kind: 'loading', title: 'Loading…', text: '', tone: 'muted' };
   if (!operator || state.observer) {
     return { kind: 'observer', title: 'A design session is running', text: 'Only the operator’s devices see the live preview.', tone: 'muted' };

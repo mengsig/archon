@@ -50,6 +50,16 @@ fn table() -> &'static [(&'static str, Asset)] {
 }
 
 fn asset(route: &str, bytes: &'static [u8]) -> Asset {
+    let bytes = if route == "/src/version.js" {
+        concat!(
+            "export const APP_VERSION = '",
+            env!("CARGO_PKG_VERSION"),
+            "';\n"
+        )
+        .as_bytes()
+    } else {
+        bytes
+    };
     let hash = Sha256::digest(bytes);
     let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
     Asset {
@@ -90,6 +100,20 @@ mod tests {
         );
         assert!(find("/missing.js").is_none());
         assert!(index.etag.starts_with('"') && index.etag.len() == 66);
+    }
+
+    #[test]
+    fn settings_and_hello_load_the_version_of_the_embedded_app() {
+        let module = find("/src/version.js").expect("version module is served");
+        assert!(module.content_type.starts_with("text/javascript"));
+        assert_eq!(
+            module.bytes,
+            format!(
+                "export const APP_VERSION = '{}';\n",
+                env!("CARGO_PKG_VERSION")
+            )
+            .as_bytes()
+        );
     }
 
     #[test]

@@ -147,14 +147,15 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   }
 
   function cardEl(card) {
-    const options = finish.cards.filter((c) => c.note !== card.note).map((c) => h('option', { value: c.note }));
-    const list = h('datalist', { id: `sup-${card.note}` }, options);
-    const sup = h('input', { class: 'input input-inline', type: 'text', list: `sup-${card.note}`, value: superseded.get(card.note) ?? '', placeholder: 'e.g. D5', 'aria-label': `${card.note} superseded by`, autocomplete: 'off' });
-    sup.addEventListener('input', () => superseded.set(card.note, sup.value));
+    const options = finish.cards.filter((c) => c.note !== card.note).map((c) => h('option', { value: c.note, text: `${c.note} · ${c.text}` }));
+    const previous = superseded.get(card.note) ?? '';
+    if (previous && !finish.cards.some((c) => c.note === previous)) options.push(h('option', { value: previous, text: `${previous} (previous selection)` }));
+    const sup = h('select', { class: 'input input-inline', 'aria-label': `${card.note} superseded by` }, h('option', { value: '', text: 'Not superseded' }), options);
+    sup.value = previous;
     // A changed choice may put a note back in force: ask Confirm again.
     // Relabelled in place: this fires on blur, and redrawing then would
     // replace the button the operator is clicking.
-    sup.addEventListener('change', () => { if (askNoChange) { askNoChange = false; relabel(); } });
+    sup.addEventListener('change', () => { superseded.set(card.note, sup.value); if (askNoChange) { askNoChange = false; relabel(); } });
     const inc = h('input', { class: 'switch-input', type: 'checkbox', role: 'switch', checked: included(card) !== false, 'aria-label': `Include picture for ${card.note}`, disabled: !card.data_url || card.earlier });
     inc.addEventListener('change', () => { chosen.set(card.note, inc.checked); askNoChange = false; draw(); });
     return h('li', { class: 'finish-card' },
@@ -170,7 +171,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
         h('button', { class: 'button button-plain button-small', type: 'button', onclick: () => run(() => capture(card)) }, 'Capture')) : null,
       card.left_history ? h('p', { class: 'note-hint', text: 'This note’s change is no longer in the code history, so there is no picture to include.' }) : null,
       h('label', { class: 'switch-row' }, h('span', { class: 'switch-text' }, h('span', { class: 'row-label', text: 'Include picture' })), h('span', { class: 'switch' }, inc, h('span', { class: 'switch-track', 'aria-hidden': 'true' }))),
-      h('label', { class: 'field-label', text: 'Superseded by' }, sup), list);
+      h('label', { class: 'field-label', text: 'Superseded by' }, sup));
   }
 
   let lede = null;
@@ -213,8 +214,12 @@ export function gateChoices(question) {
   ];
 }
 
-export function gateQuestionFor(state, item) {
-  return (state.questions ?? []).find((q) => q.item === item && !q.answer) ?? null;
+export function gateQuestionFor(questions, gates, session, item) {
+  if (!session?.run || !session.stage_id || !Number.isInteger(session.attempt)) return null;
+  const matches = (gates ?? []).filter((g) => g.item === item && g.run === session.run && g.stage_id === session.stage_id
+    && g.attempt === session.attempt && g.subject === 'proposal' && !g.decision && !g.withdrawn && g.question);
+  if (matches.length !== 1) return null;
+  return (questions ?? []).find((q) => q.id === matches[0].question && q.item === item && !q.answer) ?? null;
 }
 
 // The session's notes with their pictures, and the gate's three answers once the operator confirmed.
@@ -239,6 +244,25 @@ export function ledgerPanel(ctx, item, getState = () => null, onAnswered = () =>
   let busy = false;
   let shownGate = null;
   let seenQuestion = null; // the open question last seen, to notice it being answered
+  let gates = [];
+  let gateKey = null;
+  let gateGeneration = 0;
+  let alive = true;
+
+  async function loadGates(key) {
+    const generation = ++gateGeneration;
+    gates = [];
+    try {
+      const detail = await ctx.cmds.item(item);
+      if (!alive || generation !== gateGeneration) return;
+      gates = detail.gates ?? [];
+      error.textContent = '';
+    } catch (err) {
+      if (!alive || generation !== gateGeneration) return;
+      error.textContent = `Could not load the approval gate: ${designErrorText(err)}`;
+    }
+    if (gateKey === key) update();
+  }
 
   const picture = (id, label) => {
     const fig = h('figure', { class: 'ledger-pic' }, h('div', { class: 'ledger-pic-img' }, h('span', { class: 'muted', text: 'Loading…' })), h('figcaption', { class: 'cmp-caption', text: label }));
@@ -278,14 +302,17 @@ export function ledgerPanel(ctx, item, getState = () => null, onAnswered = () =>
     const show = Boolean(state?.session) && confirmed;
     box.hidden = !show;
     if (!show) return;
-    const q = ctx.canOperate && confirmed ? gateQuestionFor(ctx.store.get(), item) : null;
+    const questions = ctx.store.get().questions ?? [];
+    const key = JSON.stringify([state.session.id, state.session.run, state.session.stage_id, state.session.attempt, questions]);
+    if (ctx.canOperate && key !== gateKey) { gateKey = key; loadGates(key); }
+    const q = ctx.canOperate && confirmed ? gateQuestionFor(questions, gates, state.session, item) : null;
     // Answered from the inbox, chat or another device: the session ends with the decision.
     if (seenQuestion && !q) onAnswered();
     seenQuestion = q ? q.id : null;
     title.textContent = 'Waiting for your approval';
     lede.textContent = ledgerLede(q, ctx.canOperate);
     drawGate(q);
-    gate.hidden = !q;
+    gate.hidden = !q && !error.textContent;
     link.hidden = false;
     reconcile(rows, ledgerNotes(state.notes), { key: (n) => n.id, signature: (n) => JSON.stringify([n.status, n.text, n.undone_by, n.before_asset, n.after_asset, n.final_asset, n.final_included]), render: row });
     if (!rows.children.length) rows.replaceChildren(h('li', { class: 'ledger-empty muted', text: 'No notes were made in this session.' }));
@@ -293,5 +320,5 @@ export function ledgerPanel(ctx, item, getState = () => null, onAnswered = () =>
   };
   ctx.refresh.one('questions');
   const off = ctx.store.watch((s) => s.questions, update);
-  return { element: box, update, destroy: off };
+  return { element: box, update, destroy() { alive = false; gateGeneration += 1; off(); } };
 }

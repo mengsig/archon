@@ -56,7 +56,7 @@ const json = (res, body) => res.writeHead(200, { 'Content-Type': 'application/js
 function createDaemon({ appPage, fixtureApp, role }) {
   const state = { notes: [], seq: 0, ended: false, paused: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false, questions: [], summaries: [], sessionPatch: {}, sessionId: 'ds_FIXTURE', endReason: null };
   const now = () => new Date().toISOString();
-  const session = () => ({ id: state.sessionId, item: ITEM, state: state.sessionState, end_reason: state.endReason, degraded: false, note_version: state.version, viewport_preset: 'desktop', preview_url: 'http://127.0.0.1:5173/', sandbox_off: false, ...state.sessionPatch });
+  const session = () => ({ id: state.sessionId, item: ITEM, run: 'run_FIXTURE', stage_id: 'design', attempt: 1, state: state.sessionState, end_reason: state.endReason, degraded: false, note_version: state.version, viewport_preset: 'desktop', preview_url: 'http://127.0.0.1:5173/', sandbox_off: false, ...state.sessionPatch });
   const undoneBy = (n) => state.notes.find((x) => x.reverts === n.id && x.status === 'done')?.id ?? null;
   const rootOf = (n) => { let c = n; for (let i = 0; i < 50 && c.follows && state.notes.find((x) => x.id === c.follows); i += 1) c = state.notes.find((x) => x.id === c.follows); return c.id; };
   const chainOf = (n) => (n.kind === 'revert' ? null : (n.chain ?? rootOf(n)));
@@ -100,6 +100,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
     if (cmd === 'feed_history') return reply(ws, req, 'feed', []);
     if (cmd === 'list_item_summaries') return reply(ws, req, 'item_summaries', state.summaries);
     if (cmd === 'list_questions') return reply(ws, req, 'questions', state.questions);
+    if (cmd === 'get_item') return reply(ws, req, 'item_detail', { gates: state.questions.filter((q) => q.id === 'q_GATE').map((q) => ({ item: ITEM, run: 'run_FIXTURE', stage_id: 'design', attempt: 1, subject: 'proposal', question: q.id, decision: null, withdrawn: null })) });
     if (cmd === 'answer') {
       const q = state.questions.find((x) => x.id === msg.question);
       if (!q) return refuse(ws, req, 'not_found', 'no such question');

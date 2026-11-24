@@ -24,6 +24,13 @@ use super::state::{navigate_fresh, reload_fresh, replay_steps};
 use super::{Approval, DesignService, WorktreeRef, note_view, refuse};
 use crate::context::DaemonContext;
 
+struct ReviewNotes<'a> {
+    all: &'a [DesignNote],
+    candidates: &'a [DesignNote],
+    approved: &'a [String],
+    undone: BTreeMap<String, String>,
+}
+
 /// Margin around an element's final picture, in CSS pixels.
 const MARGIN: f64 = 24.0;
 const FINISH_BUDGET: Duration = Duration::from_secs(45);
@@ -987,7 +994,12 @@ impl DesignService {
         carried: Option<&FinishChoices>,
         choices: &mut FinishChoices,
     ) -> Result<(), ArchonError> {
-        let undone = undone_by(notes);
+        let review = ReviewNotes {
+            all: notes,
+            candidates,
+            approved,
+            undone: undone_by(notes),
+        };
         for (id, by) in &choices.superseded {
             if by.is_some() && approved.contains(id) {
                 return Err(ArchonError::Invalid(format!(
@@ -998,12 +1010,10 @@ impl DesignService {
             self.validate_replacement(
                 wt,
                 head,
-                (notes, &undone),
-                candidates,
+                &review,
                 id,
                 by.as_deref(),
                 carried_by == Some(by),
-                approved,
             )?;
         }
         choices
@@ -1028,20 +1038,18 @@ impl DesignService {
         &self,
         wt: &WorktreeRef,
         head: &str,
-        (notes, undone): (&[DesignNote], &BTreeMap<String, String>),
-        candidates: &[DesignNote],
+        review: &ReviewNotes<'_>,
         id: &str,
         by: Option<&str>,
         carried: bool,
-        approved: &[String],
     ) -> Result<(), ArchonError> {
-        let Some(source) = candidates.iter().find(|note| note.id == id) else {
+        let Some(source) = review.candidates.iter().find(|note| note.id == id) else {
             // Older clients send an empty choice for every card, including changes that left history.
             if by.is_none()
-                && let Some(note) = notes.iter().find(|note| note.id == id)
+                && let Some(note) = review.all.iter().find(|note| note.id == id)
                 && note.kind != NoteKind::Revert
                 && note.status == NoteStatus::Done
-                && !undone.contains_key(id)
+                && !review.undone.contains_key(id)
                 && self.left_history(wt, note, head)?
             {
                 return Ok(());
@@ -1051,17 +1059,20 @@ impl DesignService {
             )));
         };
         let Some(by) = by else { return Ok(()) };
-        if candidates
+        if review
+            .candidates
             .iter()
             .any(|note| note.id == by && note.number > source.number)
         {
             return Ok(());
         }
         if carried
-            && let Some(replacement) = notes
+            && let Some(replacement) = review
+                .all
                 .iter()
                 .find(|note| note.id == by && note.number > source.number)
-            && (approved.iter().any(|id| id == by) || !self.left_history(wt, replacement, head)?)
+            && (review.approved.iter().any(|id| id == by)
+                || !self.left_history(wt, replacement, head)?)
         {
             return Ok(());
         }

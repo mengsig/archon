@@ -758,9 +758,7 @@ impl DesignService {
         if let Some(reason) = browser.containment_reason() {
             return Err(adb::BrowserError::Containment(reason));
         }
-        if let Err(error) = navigation {
-            return Err(error);
-        }
+        navigation?;
         Ok(browser)
     }
 

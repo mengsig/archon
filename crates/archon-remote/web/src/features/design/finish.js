@@ -77,6 +77,12 @@ function renderFinalPicture(card, loadAsset) {
   return [h('p', { class: 'finish-final-label', text: 'Final picture' }), box];
 }
 
+// A capture can arrive before the note feed. The daemon allocates canonical D<number> IDs.
+function laterNote(candidate, source) {
+  if (!/^D[1-9]\d*$/.test(candidate) || !/^D[1-9]\d*$/.test(source)) return false;
+  return candidate.length > source.length || (candidate.length === source.length && candidate > source);
+}
+
 export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   let finish = initial;
   let message = '';
@@ -179,8 +185,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   }
 
   function cardEl(card) {
-    const numbers = new Map(state.notes.map((note) => [note.id, note.number]));
-    const later = finish.cards.filter((c) => !c.left_history && numbers.get(c.note) > numbers.get(card.note));
+    const later = finish.cards.filter((c) => !c.left_history && laterNote(c.note, card.note));
     const options = later.map((c) => h('option', { value: c.note, text: `${c.note} · ${c.text}` }));
     const previous = superseded.get(card.note) ?? '';
     if (previous && !later.some((c) => c.note === previous)) options.push(h('option', { value: previous, text: `${previous} (previous selection)` }));

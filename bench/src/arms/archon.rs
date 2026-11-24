@@ -289,6 +289,7 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
     let started = Instant::now();
     client
         .request(Request::Say {
+            command_id: None,
             text: input.task.file.prompt.clone(),
             images: Vec::new(),
         })
@@ -610,7 +611,7 @@ pub fn answer_text(feed: &[FeedItem], replies: &Replies, details: &[ItemDetail])
 
 fn feed_text(entry: &FeedEntry) -> Option<String> {
     match entry {
-        FeedEntry::Orchestrator { text } | FeedEntry::System { text } => Some(text.clone()),
+        FeedEntry::Orchestrator { text } | FeedEntry::System { text, .. } => Some(text.clone()),
         FeedEntry::Authority { action, result, .. } => Some(format!("{action}: {result}")),
         FeedEntry::Notification(n) => Some(n.text.clone()),
         FeedEntry::Question(q) => Some(q.text.clone()),

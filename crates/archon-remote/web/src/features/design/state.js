@@ -88,7 +88,7 @@ function reduceEvent(state, e) {
       return { ...state, selection: { box: e.box, label: e.label } };
     case 'session': {
       const session = state.session ? { ...state.session, state: e.state, degraded: e.degraded, note_version: e.note_version } : state.session;
-      const stale = e.note_version !== state.noteVersion && state.noteVersion !== 0;
+      const stale = e.note_version !== state.noteVersion && Boolean(state.session);
       return { ...state, session, previewCommit: e.commit ?? state.previewCommit, path: e.preview_path ?? state.path, browser: e.browser ?? state.browser, degraded: e.degraded, noteVersion: e.note_version, refresh: state.refresh || stale || !state.session || (e.state === 'ended' && !(e.end_reason ?? e.reason) && !state.ended),
         ended: e.state === 'ended' ? (e.end_reason ?? e.reason ?? state.ended ?? 'ended') : state.ended };
     }

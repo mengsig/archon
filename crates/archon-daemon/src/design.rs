@@ -912,50 +912,71 @@ impl DesignService {
         }
     }
 
-    pub(crate) async fn emit_session(&self, ctx: &DaemonContext, session: &DesignSessionId) {
+    async fn session_event(
+        &self,
+        ctx: &DaemonContext,
+        id: &DesignSessionId,
+    ) -> Result<DesignEvent, ArchonError> {
         let row = ctx
             .store
             .lock()
             .await
-            .design_session(session)
-            .ok()
-            .flatten();
-        let Some(row) = row else {
-            return;
-        };
-        let status = self
-            .existing_runtime(session)
+            .design_session(id)?
+            .ok_or_else(gone)?;
+        if row.state == SessionState::Ended {
+            return Ok(DesignEvent::Ended {
+                reason: row.end_reason.unwrap_or_else(|| "ended".into()),
+            });
+        }
+        let browser = self
+            .existing_runtime(id)
             .map(|rt| rt.st().status.clone())
             .unwrap_or(archon_core::protocol::BrowserStatus::Idle);
-        let preview_path = row.preview_url.as_deref().map(path_of);
-        self.emit(
-            session,
-            DesignEvent::Session {
-                state: row.state,
-                degraded: row.degraded,
-                preview_path,
-                commit: None,
-                browser: status,
-                note_version: row.note_version,
-            },
-        );
+        Ok(DesignEvent::Session {
+            state: row.state,
+            degraded: row.degraded,
+            preview_path: row.preview_url.as_deref().map(path_of),
+            commit: None,
+            browser,
+            note_version: row.note_version,
+        })
+    }
+
+    pub(crate) async fn emit_session(&self, ctx: &DaemonContext, session: &DesignSessionId) {
+        match self.session_event(ctx, session).await {
+            Ok(event) => self.emit(session, event),
+            Err(error) => {
+                tracing::warn!(%error, %session, "reading design state for subscribers failed")
+            }
+        }
     }
 
     pub(crate) async fn emit_note(&self, ctx: &DaemonContext, item: &QueueItemId, id: &str) {
-        let (note, session, all, approved) = {
+        let result = {
             let store = ctx.store.lock().await;
-            let note = store.design_note(item, id).ok().flatten();
-            let session = store.design_current_session(item).ok().flatten();
-            let all = store.design_notes(item).unwrap_or_default();
-            let approved = approved_ids(&store, item).unwrap_or_default();
-            (note, session, all, approved)
+            (|| -> Result<_, ArchonError> {
+                let Some(note) = store.design_note(item, id)? else {
+                    return Ok(None);
+                };
+                let Some(session) = store.design_current_session(item)? else {
+                    return Ok(None);
+                };
+                let all = store.design_notes(item)?;
+                let approved = approved_ids(&store, item)?;
+                let view = note_view(&note, &all, Some(&session), &approved);
+                Ok(Some((note.session, session.id, view)))
+            })()
         };
-        let (Some(note), Some(session)) = (note, session) else {
-            return;
-        };
-        let view = note_view(&note, &all, Some(&session), &approved);
-        self.emit(&note.session, DesignEvent::Note(view));
-        self.emit_session(ctx, &session.id).await;
+        match result {
+            Ok(Some((source, current, view))) => {
+                self.emit(&source, DesignEvent::Note(view));
+                self.emit_session(ctx, &current).await;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(%error, %item, note = id, "reading design note for subscribers failed")
+            }
+        }
     }
 
     pub(crate) async fn mark_degraded(

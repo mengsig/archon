@@ -62,6 +62,8 @@ pub async fn stream(
         service: service.clone(),
         session: session.id.clone(),
     };
+    let rt = service.runtime(&session.id);
+    let events = rt.events.subscribe();
     if let Err(error) = service.subscriber_joined(&ctx, &session.id).await {
         tracing::warn!(%error, session = %session.id, "design: the preview did not start for a subscriber");
         let _ = send(
@@ -73,7 +75,7 @@ pub async fn stream(
         )
         .await;
     }
-    run(&ctx, &sub, &session.id, &frames, &mut acked).await;
+    run(&ctx, &sub, rt, events, &frames, &mut acked).await;
 }
 
 /// Give back the subscriber count even if the connection aborts this task.
@@ -95,20 +97,38 @@ async fn send(frames: &mpsc::Sender<ServerFrame>, sub: u64, event: DesignEvent) 
         .map_err(|_| ())
 }
 
+async fn send_state(
+    ctx: &DaemonContext,
+    sub: &DesignSubscription,
+    frames: &mpsc::Sender<ServerFrame>,
+) -> bool {
+    let event = match ctx.design.session_event(ctx, &sub.session).await {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(%error, session = %sub.session, "cannot resume design stream");
+            DesignEvent::Ended {
+                reason: "The preview state could not be read. Reopen the item.".into(),
+            }
+        }
+    };
+    let ended = matches!(event, DesignEvent::Ended { .. });
+    send(frames, sub.id, event).await.is_ok() && !ended
+}
+
 async fn run(
     ctx: &Arc<DaemonContext>,
     sub: &DesignSubscription,
-    session: &archon_core::design::DesignSessionId,
+    rt: Arc<super::browser::Runtime>,
+    mut events: tokio::sync::broadcast::Receiver<DesignEvent>,
     frames: &mpsc::Sender<ServerFrame>,
     ack_rx: &mut watch::Receiver<u64>,
 ) {
-    let service = &ctx.design;
-    let rt = service.runtime(session);
-    let mut events = rt.events.subscribe();
     let mut live = rt.frames.subscribe();
     // Subscribing marks the current frame seen; a late joiner still gets it.
     live.mark_changed();
-    service.emit_session(ctx, session).await;
+    if !send_state(ctx, sub, frames).await {
+        return;
+    }
     let mut last_seq = 0u64;
     let mut last_sent = Instant::now() - FRAME_GAP;
     let mut pending_ack: Option<u64> = None;
@@ -176,7 +196,9 @@ async fn run(
                         return;
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    if !send_state(ctx, sub, frames).await { return; }
+                }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
             },
             _ = frames.closed() => return,

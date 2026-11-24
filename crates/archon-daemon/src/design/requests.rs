@@ -570,8 +570,8 @@ mod input_tests {
             y: 6.0,
             id: 1,
         };
-        assert!(validate_input(&touch(vec![finger.clone()]), 40, 60).is_ok());
-        assert!(validate_input(&touch(vec![finger.clone(), finger.clone()]), 40, 60).is_err());
+        assert!(validate_input(&touch(vec![finger]), 40, 60).is_ok());
+        assert!(validate_input(&touch(vec![finger, finger]), 40, 60).is_err());
         assert!(validate_input(&touch(vec![finger]), 1, 1).is_err());
     }
 

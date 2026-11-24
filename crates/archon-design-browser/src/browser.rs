@@ -226,11 +226,11 @@ impl Shared {
             return Ok((read.await?, None));
         };
         let epoch = guard.epoch()?;
-        let before = self.disclosure_tree(guard).await?;
+        let before = self.disclosure_tree(guard, epoch).await?;
         drop(guard.confirm(epoch)?);
 
         let result = read.await;
-        let after = self.disclosure_tree(guard).await?;
+        let after = self.disclosure_tree(guard, epoch).await?;
         let _confirmed = guard.confirm(epoch)?;
         if before != after {
             return Err(BrowserError::DisclosureUnavailable);
@@ -238,7 +238,11 @@ impl Shared {
         Ok((result?, Some(epoch)))
     }
 
-    async fn disclosure_tree(&self, guard: &Containment) -> Result<Value, BrowserError> {
+    async fn disclosure_tree(
+        &self,
+        guard: &Containment,
+        epoch: u64,
+    ) -> Result<Value, BrowserError> {
         let targets = self
             .cdp
             .call(None, "Target.getTargets", json!({}), CALL_TIMEOUT)
@@ -250,7 +254,24 @@ impl Shared {
             .get_mut("frameTree")
             .map(Value::take)
             .unwrap_or(Value::Null);
-        guard.verify_tree(&tree)?;
+        drop(guard.confirm(epoch)?);
+        for frame_id in guard.check_frame_tree(&tree)? {
+            let reply = self
+                .call(
+                    "Storage.getStorageKeyForFrame",
+                    json!({"frameId": frame_id}),
+                )
+                .await;
+            drop(guard.confirm(epoch)?);
+            match reply {
+                Ok(result) => guard.verify_storage_origin(&result)?,
+                Err(error @ BrowserError::Protocol(_)) => {
+                    tracing::debug!(%error, "Chromium did not verify a preview subframe storage origin");
+                    return Err(guard.stop("Chromium could not verify a subframe storage origin"));
+                }
+                Err(error) => return Err(error),
+            }
+        }
         Ok(tree)
     }
 
@@ -1114,7 +1135,7 @@ impl Browser {
             return Ok(sh.st.lock().unwrap().url.clone());
         };
         let epoch = guard.epoch()?;
-        let tree = sh.disclosure_tree(guard).await?;
+        let tree = sh.disclosure_tree(guard, epoch).await?;
         let _confirmed = guard.confirm(epoch)?;
         let frame = &tree["frame"];
         let url = frame["url"]

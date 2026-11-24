@@ -400,11 +400,19 @@ above either watchdog threshold between samples.
 A session proxy checks the destination and the process serving each connection
 before forwarding traffic. Serve fonts, styles and other assets through the
 registered dev-server origin. The daemon refuses an off-origin redirect.
+The proxy gives Chromium 10 seconds to send request headers and caps an HTTP
+request and response at 90 seconds total, including active transfers. Long-lived
+HTTP streams such as server-sent events must reconnect after that cutoff.
+Upgraded WebSocket traffic runs outside the HTTP deadline.
+
 A page can briefly commit an off-origin document inside Chromium before
 detection. The driver checks main and child documents before releasing pixels
-or DOM data, discards the result if navigation intervened, and ends the
-session on an unexpected document or popup. The off-origin content is never
-shown or forwarded. The session records why the preview stopped.
+or DOM data. It accepts child `about:blank` and `about:srcdoc` documents when
+Chromium verifies their origin matches the preview. If Chromium omits the
+origin from the frame report, the driver checks the frame's storage key.
+The driver discards the result if navigation intervened and ends the session
+on an unexpected document or popup. The off-origin content is never shown or
+forwarded. The session records why the preview stopped.
 
 Only paired operators can see the preview and act on it. Observers receive a
 status summary. Live frames go to the operator. Notes can send selected

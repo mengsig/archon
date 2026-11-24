@@ -542,6 +542,59 @@ async fn opaque_subframe_stops_before_disclosure() {
 }
 
 #[tokio::test]
+async fn same_origin_subframes_allow_disclosure() {
+    let Some((binary, path_env)) = browser_options() else {
+        return;
+    };
+    let port = serve(|request| match request.uri().path() {
+        "/child" => page_body("<!doctype html><p>HTTP child</p>"),
+        _ => page_body(
+            "<!doctype html>
+             <button id=status style='width:200px;height:60px'>Waiting for children</button>
+             <script>
+               const loaded = new Set();
+               function ready(frame, expected) {
+                 if (frame.contentWindow.location.href.endsWith(expected)) {
+                   loaded.add(expected);
+                 }
+                 if (loaded.size === 3) {
+                   document.getElementById('status').textContent = 'All children loaded';
+                 }
+               }
+             </script>
+             <iframe name=http src='/child' onload=\"ready(this, '/child')\"></iframe>
+             <iframe name=blank onload=\"ready(this, 'about:blank')\"></iframe>
+             <iframe name=inline srcdoc='<p>Inline child</p>' onload=\"ready(this, 'about:srcdoc')\"></iframe>",
+        ),
+    })
+    .await;
+    let Some((_root, browser)) = open_disclosure_fixture(binary, path_env, port).await else {
+        return;
+    };
+    let result = browser.resolve(40.0, 40.0, 0).await.unwrap();
+    assert_eq!(
+        result.role_name.as_deref(),
+        Some("button \"All children loaded\"")
+    );
+    let picture = browser.capture(None, 1.0).await.unwrap();
+    assert!(!picture.bytes.is_empty());
+    assert!(browser.containment_reason().is_none());
+    browser.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn sandboxed_srcdoc_subframe_stops_before_disclosure() {
+    assert_disclosure_stops(
+        "const child = document.createElement('iframe');
+         child.sandbox = '';
+         child.srcdoc = otherDocument;
+         document.body.append(child)",
+        "subframe",
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn sandboxed_http_subframe_stops_before_disclosure() {
     assert_disclosure_stops(
         "const child = document.createElement('iframe');
@@ -590,9 +643,9 @@ async fn disclosure_fixture(script: &'static str) -> u16 {
 async fn open_disclosure_fixture(
     binary: std::path::PathBuf,
     path_env: String,
-    script: &'static str,
+    port: u16,
 ) -> Option<(tempfile::TempDir, Browser)> {
-    let port = disclosure_fixture(script).await;
+    assert_ne!(port, 0);
     let preview_url = format!("http://127.0.0.1:{port}/");
     let root = tempfile::tempdir().unwrap();
     let spec = LaunchSpec {
@@ -625,7 +678,8 @@ async fn assert_disclosure_stops(script: &'static str, expected_reason: &str) {
     let Some((binary, path_env)) = browser_options() else {
         return;
     };
-    let Some((_root, browser)) = open_disclosure_fixture(binary, path_env, script).await else {
+    let port = disclosure_fixture(script).await;
+    let Some((_root, browser)) = open_disclosure_fixture(binary, path_env, port).await else {
         return;
     };
     let mut events = browser.events();

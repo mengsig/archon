@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use http::uri::Authority;
 use serde_json::Value;
 use tokio::sync::broadcast;
 
@@ -27,6 +28,12 @@ pub(crate) struct Containment {
     pub(crate) events: broadcast::Sender<BrowserEvent>,
     pub(crate) relay: Arc<RelayShared>,
     pub(crate) state: Mutex<DocumentState>,
+}
+
+enum FrameStatus<'a> {
+    Verified,
+    Unavailable,
+    NeedsStorageOrigin(&'a str),
 }
 
 impl Containment {
@@ -138,8 +145,12 @@ impl Containment {
             if state.main_frame.is_none() && id == self.target && url == "about:blank" {
                 return Ok(());
             }
-            state.main_frame.as_deref() == Some(id)
+            id == self.target || state.main_frame.as_deref() == Some(id)
         };
+        // Disclosure still requires Chromium to verify the committed origin.
+        if !main && can_inherit_origin(url) {
+            return Ok(());
+        }
         let reason = if main {
             "a main-frame document tried to navigate to an unsupported URL scheme"
         } else {
@@ -184,24 +195,36 @@ impl Containment {
         Ok(())
     }
 
-    /// False for a startup blank or Chromium's own failed-navigation page.
-    fn check_frame(&self, frame: &Value, main: bool) -> Result<bool, BrowserError> {
+    fn check_frame<'a>(
+        &self,
+        frame: &'a Value,
+        main: bool,
+    ) -> Result<FrameStatus<'a>, BrowserError> {
         let Some(url) = nonempty(&frame["url"]) else {
             return Err(self.stop("Chromium did not provide a preview document URL"));
         };
-        if nonempty(&frame["id"]).is_none() || nonempty(&frame["loaderId"]).is_none() {
+        let Some(id) = nonempty(&frame["id"]) else {
+            return Err(self.stop("Chromium did not identify a preview document"));
+        };
+        if nonempty(&frame["loaderId"]).is_none() {
             return Err(self.stop("Chromium did not identify a preview document"));
         }
         if url == "chrome-error://chromewebdata/"
             && nonempty(&frame["unreachableUrl"]).is_some_and(is_network_document)
         {
-            return Ok(false);
+            return Ok(FrameStatus::Unavailable);
         }
         if main && url == "about:blank" && self.state.lock().unwrap().main_frame.is_none() {
-            return Ok(false);
+            return Ok(FrameStatus::Unavailable);
         }
         let origin = &self.policy.origin;
-        if !origin.allows_navigation(url)
+        let inherited = !main && can_inherit_origin(url);
+        // Some Chromium versions report :// for inherited URLs in Page.Frame.
+        if inherited && frame["securityOrigin"] == "://" {
+            return Ok(FrameStatus::NeedsStorageOrigin(id));
+        }
+        let allowed_url = origin.allows_navigation(url) || inherited;
+        if !allowed_url
             || !nonempty(&frame["securityOrigin"])
                 .is_some_and(|value| origin.allows_navigation(value))
         {
@@ -213,14 +236,19 @@ impl Containment {
             return Err(self.stop(reason));
         }
         if main {
-            self.state.lock().unwrap().main_frame = frame["id"].as_str().map(str::to_owned);
+            self.state.lock().unwrap().main_frame = Some(id.to_owned());
         }
-        Ok(true)
+        Ok(FrameStatus::Verified)
     }
 
-    pub(crate) fn verify_tree(&self, tree: &Value) -> Result<(), BrowserError> {
+    /// Checks the tree and returns the frame IDs that still need storage-origin verification.
+    pub(crate) fn check_frame_tree<'a>(
+        &self,
+        tree: &'a Value,
+    ) -> Result<Vec<&'a str>, BrowserError> {
         let mut pending = vec![(tree, None)];
         let mut ready = true;
+        let mut needs_storage_origin = Vec::new();
         while let Some((branch, parent)) = pending.pop() {
             let frame = &branch["frame"];
             if !parent.map_or_else(
@@ -229,7 +257,11 @@ impl Containment {
             ) {
                 return Err(self.stop("Chromium reported an inconsistent preview frame tree"));
             }
-            ready &= self.check_frame(frame, parent.is_none())?;
+            match self.check_frame(frame, parent.is_none())? {
+                FrameStatus::Verified => {}
+                FrameStatus::Unavailable => ready = false,
+                FrameStatus::NeedsStorageOrigin(id) => needs_storage_origin.push(id),
+            }
             match branch.get("childFrames") {
                 Some(Value::Array(children)) => {
                     let parent = frame["id"].as_str();
@@ -240,9 +272,21 @@ impl Containment {
             }
         }
         if ready {
-            Ok(())
+            Ok(needs_storage_origin)
         } else {
             Err(BrowserError::DisclosureUnavailable)
+        }
+    }
+
+    pub(crate) fn verify_storage_origin(&self, result: &Value) -> Result<(), BrowserError> {
+        let authority = nonempty(&result["storageKey"])
+            .and_then(|key| key.strip_prefix("http://"))
+            .and_then(|key| key.strip_suffix('/'))
+            .and_then(|authority| Authority::try_from(authority).ok());
+        if authority.is_some_and(|authority| self.policy.origin.matches_authority(&authority)) {
+            Ok(())
+        } else {
+            Err(self.stop("a subframe storage origin was outside the preview origin"))
         }
     }
 }
@@ -251,6 +295,43 @@ fn is_network_document(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
 }
 
+fn can_inherit_origin(url: &str) -> bool {
+    matches!(url, "about:blank" | "about:srcdoc")
+}
+
 fn nonempty(value: &Value) -> Option<&str> {
     value.as_str().filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn inherited_documents_with_verified_origin_are_allowed_in_the_frame_tree() {
+        let origin = "http://127.0.0.1:3000";
+        let policy = Policy::new(origin, Arc::new(crate::testutil::AcceptUpstream)).unwrap();
+        let (events, _) = broadcast::channel(8);
+        let guard = Containment {
+            target: "main".into(),
+            session: "session".into(),
+            policy: Arc::new(policy),
+            process: (0, 0),
+            events,
+            relay: Default::default(),
+            state: Mutex::default(),
+        };
+        let tree = json!({
+            "frame": {"id":"main", "loaderId":"main-loader", "url":origin, "securityOrigin":origin},
+            "childFrames": [
+                {"frame": {"id":"blank", "parentId":"main", "loaderId":"blank-loader",
+                           "url":"about:blank", "securityOrigin":origin}},
+                {"frame": {"id":"inline", "parentId":"main", "loaderId":"inline-loader",
+                           "url":"about:srcdoc", "securityOrigin":origin}}
+            ]
+        });
+        assert!(guard.check_frame_tree(&tree).unwrap().is_empty());
+        assert!(guard.reason().is_none());
+    }
 }

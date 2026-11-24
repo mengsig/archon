@@ -470,6 +470,17 @@ async fn continuing_from_a_version_sets_the_newer_ones_aside() {
         panic!("{again:?}")
     };
     assert_eq!(same.note.id, follow.note.id);
+
+    let other_target = f
+        .operator(Request::DesignNoteContinueFrom {
+            item: f.item.clone(),
+            id: second,
+            text: Some("make it red".into()),
+            client_key: Some("c1".into()),
+            refs: Vec::new(),
+        })
+        .await;
+    assert!(matches!(other_target, Err(ArchonError::Invalid(_))));
 }
 
 /// R5: a revert that conflicts with another chain's later change fails with

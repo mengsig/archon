@@ -9,7 +9,7 @@ use archon_core::design::{
 use archon_core::error::{ArchonError, DesignRefusal};
 use archon_core::protocol::{AgentNoteStatus, Reply};
 use archon_design_browser as adb;
-use archon_queue::store::NoteChange;
+use archon_queue::store::{NoteChange, Store};
 
 use super::assets::NewAsset;
 use super::state::{AfterOutcome, AfterShot};
@@ -19,6 +19,56 @@ use crate::worktree::design_git::{self, NoteGit, Shape, Tidy};
 
 fn preview_authority(url: &str) -> Option<&str> {
     url.strip_prefix("http://")?.split(['/', '?', '#']).next()
+}
+
+fn denied() -> ArchonError {
+    ArchonError::Forbidden("only the agent of a running design stage may use design tools".into())
+}
+
+fn agent_stage(
+    store: &Store,
+    caller: &AetherAgentId,
+) -> Result<archon_core::run::StageRun, ArchonError> {
+    let stage = store.stage_run_by_agent(caller)?.ok_or_else(denied)?;
+    if stage.state != archon_core::run::StageState::Running
+        || stage.kind != Some(archon_core::catalog::StageKind::Design)
+    {
+        return Err(denied());
+    }
+    let run = store.run(&stage.run)?;
+    if run.state.is_terminal() || store.item(&run.item)?.state.is_terminal() {
+        return Err(denied());
+    }
+    Ok(stage)
+}
+
+fn matches_owner(
+    session: &DesignSession,
+    stage: &archon_core::run::StageRun,
+    caller: &AetherAgentId,
+) -> bool {
+    session.run == stage.run
+        && session.stage_id == stage.stage_id
+        && session.attempt == stage.attempt
+        && session.agent.as_ref() == Some(caller)
+}
+
+async fn bound_agent_session(
+    ctx: &DaemonContext,
+    expected: &DesignSession,
+    caller: Option<&AetherAgentId>,
+) -> Result<DesignSession, ArchonError> {
+    let caller = caller.ok_or_else(denied)?;
+    let store = ctx.store.lock().await;
+    let stage = agent_stage(&store, caller)?;
+    let session = store
+        .design_current_session(&expected.item)?
+        .filter(|s| s.id == expected.id)
+        .ok_or_else(super::gone)?;
+    if !matches_owner(&session, &stage, caller) {
+        return Err(denied());
+    }
+    Ok(session)
 }
 
 impl DesignService {
@@ -31,29 +81,13 @@ impl DesignService {
         let caller = caller.ok_or_else(|| {
             ArchonError::Forbidden("design tools are for the stage's agent".into())
         })?;
-        let denied = || {
-            ArchonError::Forbidden(
-                "only the agent of a running design stage may use design tools".into(),
-            )
-        };
         let (stage, run, repo) = {
             let store = ctx.store.lock().await;
-            let stage = store.stage_run_by_agent(caller)?.ok_or_else(denied)?;
-            if stage.state != archon_core::run::StageState::Running
-                || stage.kind != Some(archon_core::catalog::StageKind::Design)
-            {
-                return Err(denied());
-            }
+            let stage = agent_stage(&store, caller)?;
             let run = store.run(&stage.run)?;
             let item = store.item(&run.item)?;
-            if run.state.is_terminal() || item.state.is_terminal() {
-                return Err(denied());
-            }
             if let Some(session) = store.design_current_session(&item.id)?
-                && session.run == run.id
-                && session.stage_id == stage.stage_id
-                && session.attempt == stage.attempt
-                && session.agent.as_ref() == Some(caller)
+                && matches_owner(&session, &stage, caller)
             {
                 return Ok(session);
             }
@@ -78,7 +112,8 @@ impl DesignService {
                 wt,
             )
             .await?;
-        self.current(ctx, &id).await
+        let session = self.current(ctx, &id).await?;
+        bound_agent_session(ctx, &session, Some(caller)).await
     }
 
     pub(crate) async fn design_preview(
@@ -93,10 +128,7 @@ impl DesignService {
         self.factory().verify_server(&wt.worktree, &url).await?;
         let lock = self.item_lock(&session.item);
         let held = lock.lock().await;
-        let current = self.agent_session(ctx, caller).await?;
-        if session.id != current.id {
-            return Err(super::gone());
-        }
+        let current = bound_agent_session(ctx, &session, caller).await?;
         if !matches!(current.state, SessionState::Starting | SessionState::Live) {
             return Err(super::finishing());
         }
@@ -205,7 +237,8 @@ impl DesignService {
         let session = self.agent_session(ctx, caller).await?;
         let lock = self.item_lock(&session.item);
         let held = lock.lock().await;
-        let result = self.report_locked(ctx, &session, report).await;
+        let current = bound_agent_session(ctx, &session, caller).await?;
+        let result = self.report_locked(ctx, &current, report).await;
         drop(held);
         if result.is_ok() {
             self.pump(ctx, &session.item).await?;
@@ -221,18 +254,10 @@ impl DesignService {
     ) -> Result<Reply, ArchonError> {
         let item = &session.item;
         let id = report.id.as_str();
-        // The session may have moved on (Finish took its pictures) while this
-        // report waited for the item lock: judge the report by it as it is now.
-        let (note, all, session) = {
+        let (note, all) = {
             let store = ctx.store.lock().await;
-            let current = store.design_session(&session.id)?.ok_or_else(super::gone)?;
-            (
-                store.design_note(item, id)?,
-                store.design_notes(item)?,
-                current,
-            )
+            (store.design_note(item, id)?, store.design_notes(item)?)
         };
-        let session = &session;
         let note = note.ok_or_else(|| {
             refuse(
                 DesignRefusal::NotYours,
@@ -270,19 +295,28 @@ impl DesignService {
         let (item, id) = (&session.item, report.id.as_str());
         {
             let mut store = ctx.store.lock().await;
-            if let Some(text) = reply_text {
-                store.design_note_change(
-                    item,
-                    id,
-                    NoteChange::Thread(thread(ReplyAuthor::Agent, text)),
-                )?;
-            }
-            if note.status != NoteStatus::Working {
-                store.design_note_change(
-                    item,
-                    id,
-                    super::status_change(NoteStatus::Working, None),
-                )?;
+            let entry = reply_text.map(|text| thread(ReplyAuthor::Agent, text));
+            match (note.status, entry) {
+                (NoteStatus::Working, Some(entry)) => {
+                    store.design_note_change(item, id, NoteChange::Thread(entry))?;
+                }
+                (NoteStatus::Working, None) => {}
+                (_, Some(entry)) => {
+                    store.design_note_transition(
+                        item,
+                        id,
+                        super::status_change(NoteStatus::Working, None),
+                        Some(entry),
+                        None,
+                    )?;
+                }
+                (_, None) => {
+                    store.design_note_change(
+                        item,
+                        id,
+                        super::status_change(NoteStatus::Working, None),
+                    )?;
+                }
             }
         }
         let before = match report.steps.is_empty() {
@@ -381,25 +415,23 @@ impl DesignService {
             AgentNoteStatus::Cancelled => (NoteStatus::Cancelled, None),
             AgentNoteStatus::Working => unreachable!("handled by the caller"),
         };
-        {
-            let mut store = ctx.store.lock().await;
-            if let Some(text) = reply_text.clone() {
-                store.design_note_change(
-                    item,
-                    id,
-                    NoteChange::Thread(thread(ReplyAuthor::Agent, text)),
-                )?;
-            }
-            store.design_note_change(
+        let mut store = ctx.store.lock().await;
+        let change = NoteChange::Status {
+            to,
+            fail_reason: fail,
+            commit: done_commit,
+            no_change: report.no_change && status == AgentNoteStatus::Done,
+        };
+        if let Some(text) = reply_text {
+            store.design_note_transition(
                 item,
                 id,
-                NoteChange::Status {
-                    to,
-                    fail_reason: fail,
-                    commit: done_commit.clone(),
-                    no_change: report.no_change && status == AgentNoteStatus::Done,
-                },
+                change,
+                Some(thread(ReplyAuthor::Agent, text)),
+                None,
             )?;
+        } else {
+            store.design_note_change(item, id, change)?;
         }
         Ok(to)
     }
@@ -412,20 +444,14 @@ impl DesignService {
         why: String,
     ) -> Result<Reply, ArchonError> {
         tracing::info!(note = id, why, "design: history changed");
-        {
-            let mut store = ctx.store.lock().await;
-            let text = "The code history changed in a way Archon can't track; its edits may still show; add a note if something should change.".to_owned();
-            store.design_note_change(
-                item,
-                id,
-                NoteChange::Thread(thread(ReplyAuthor::Archon, text)),
-            )?;
-            store.design_note_change(
-                item,
-                id,
-                super::status_change(NoteStatus::Failed, Some(FailReason::HistoryChanged)),
-            )?;
-        }
+        let text = "The code history changed in a way Archon can't track; its edits may still show; add a note if something should change.".to_owned();
+        ctx.store.lock().await.design_note_transition(
+            item,
+            id,
+            super::status_change(NoteStatus::Failed, Some(FailReason::HistoryChanged)),
+            Some(thread(ReplyAuthor::Archon, text)),
+            None,
+        )?;
         self.emit_note(ctx, item, id).await;
         Ok(Reply::DesignAgent {
             message: format!("{id} not recorded: history changed"),

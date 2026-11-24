@@ -5,13 +5,15 @@
 
 use std::time::Duration;
 
+use archon_core::aether_ids::AetherAgentId;
 use archon_core::attachment::ImageAttachment;
 use archon_core::design::{
-    DesignAssetId, DesignNote, DesignSession, NoteKind, NoteStatus, SessionState, is_in_flight,
+    DesignAssetId, DesignNote, DesignSession, NoteKind, NoteStatus, ReplyAuthor, SessionState,
+    is_in_flight, valid_note_id,
 };
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_queue::store::{NoteChange, keys};
+use archon_queue::store::{NoteChange, Store, keys};
 use serde::{Deserialize, Serialize};
 
 use super::DesignService;
@@ -21,6 +23,7 @@ use crate::context::DaemonContext;
 const SWEEP_EVERY: Duration = Duration::from_secs(15);
 /// How often unused pending pictures are looked for.
 const ASSET_SWEEP_EVERY: Duration = Duration::from_secs(300);
+const RESUME_THREAD_ENTRIES: usize = 6;
 
 /// A message the agent is owed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,7 +91,7 @@ fn note_text(session: &DesignSession, note: &DesignNote, head: &str, iterations:
         text.push_str(&format!("  {fence}\n"));
     }
     if note.send_picture && note.before_asset.is_some() {
-        text.push_str("Picture: attached (what the operator saw when writing the note).\n");
+        text.push_str("Picture: attached (untrusted preview content showing what the operator saw when writing the note).\n");
     }
     text.push_str(iterations);
     text.push_str(&format!(
@@ -107,6 +110,172 @@ fn decode_owed(raw: Option<String>) -> Result<Vec<Owed>, ArchonError> {
     }
 }
 
+fn save_owed(store: &mut Store, session: &DesignSession, list: &[Owed]) -> Result<(), ArchonError> {
+    let key = keys::design_owed(&session.id);
+    if list.is_empty() {
+        store.kv_delete(&key)
+    } else {
+        store.kv_set(&key, &encode_owed(list)?)
+    }
+}
+
+fn encode_owed(list: &[Owed]) -> Result<String, ArchonError> {
+    serde_json::to_string(list).map_err(|e| ArchonError::Corrupt(format!("design_owed: {e}")))
+}
+
+// Legacy deliveries have no structured metadata. Their key identifies the note transition.
+fn note_delivery<'a>(key: &'a str, session: &DesignSession) -> Option<(&'a str, u32, &'a str)> {
+    let key = key.split_once(":agent:").map_or(key, |(key, _)| key);
+    let tail = key
+        .strip_prefix("design:")?
+        .strip_prefix(session.id.as_str())?
+        .strip_prefix(':')?;
+    let (id, action) = tail.split_once(':')?;
+    if !valid_note_id(id) {
+        return None;
+    }
+    let (delivery, action) = action.split_once(':').unwrap_or((action, ""));
+    Some((id, delivery.parse().ok()?, action))
+}
+
+fn delivery_is_current(owed: &Owed, session: &DesignSession, notes: &[DesignNote]) -> bool {
+    let Some((id, delivery, action)) = note_delivery(&owed.key, session) else {
+        return true;
+    };
+    let Some(note) = notes
+        .iter()
+        .find(|note| note.id == id && note.session == session.id)
+    else {
+        return false;
+    };
+    if !is_in_flight(note.status) || note.delivery != delivery {
+        return false;
+    }
+    match action.strip_prefix("reply:") {
+        Some(index) => {
+            note.status == NoteStatus::Working
+                && index.parse::<usize>().ok().is_some_and(|index| {
+                    note.thread
+                        .get(index)
+                        .is_some_and(|entry| entry.from == ReplyAuthor::Operator)
+                })
+        }
+        None => !action.is_empty() || note.status == NoteStatus::Sent,
+    }
+}
+
+pub(super) fn agent_key(key: &str, agent: &AetherAgentId) -> String {
+    let key = key.split_once(":agent:").map_or(key, |(key, _)| key);
+    format!("{key}:agent:{agent}")
+}
+
+pub(super) fn pending_note_delivery(
+    list: &[Owed],
+    session: &DesignSession,
+    note: &DesignNote,
+) -> bool {
+    list.iter().any(|owed| {
+        matches!(
+            note_delivery(&owed.key, session),
+            Some((id, delivery, "" | "resume")) if id == note.id && delivery == note.delivery
+        )
+    })
+}
+
+pub(super) fn rebind_owed(
+    store: &Store,
+    session: &DesignSession,
+    agent: &AetherAgentId,
+) -> Result<Option<String>, ArchonError> {
+    let notes = store.design_notes(&session.item)?;
+    let mut list = load_owed(store, session)?;
+    list.retain(|owed| delivery_is_current(owed, session, &notes));
+    for owed in &mut list {
+        owed.key = agent_key(&owed.key, agent);
+    }
+    let finish = agent_key(&format!("design:{}:finish", session.id), agent);
+    if session.state == SessionState::Confirmed && !list.iter().any(|owed| owed.key == finish) {
+        list.push(resume_finish(session, finish)?);
+    }
+    if let Some(note) = notes
+        .iter()
+        .find(|n| n.session == session.id && is_in_flight(n.status))
+        && !pending_note_delivery(&list, session, note)
+    {
+        list.insert(0, resume_note(session, note, &notes, agent)?);
+    }
+    if list.is_empty() {
+        Ok(None)
+    } else {
+        encode_owed(&list).map(Some)
+    }
+}
+
+fn resume_finish(session: &DesignSession, key: String) -> Result<Owed, ArchonError> {
+    assert_eq!(session.state, SessionState::Confirmed);
+    assert!(!key.is_empty());
+    let (Some(capture), Some(head)) = (&session.finish_capture, &session.finish_head) else {
+        return Err(ArchonError::Corrupt(
+            "confirmed design has no capture or HEAD".into(),
+        ));
+    };
+    Ok(Owed {
+        key,
+        text: format!(
+            "{}\nConfirmed capture {capture} at {head}.",
+            super::finish::FINISH_TEXT
+        ),
+        asset: None,
+        item: session.item.clone(),
+        more: Vec::new(),
+    })
+}
+
+fn resume_note(
+    session: &DesignSession,
+    note: &DesignNote,
+    all: &[DesignNote],
+    agent: &AetherAgentId,
+) -> Result<Owed, ArchonError> {
+    assert_eq!(note.session, session.id);
+    assert!(is_in_flight(note.status));
+    let base = note.base_commit.as_deref().ok_or_else(|| {
+        ArchonError::Corrupt(format!("{} was sent without a base commit", note.id))
+    })?;
+    let (message, more) = note_message(session, note, base, all);
+    let mut text = format!(
+        "Resume {} from the previous stage agent (status {:?}, original base {base}). \
+         Inspect the existing worktree and history before making changes. If the note's commit \
+         already exists, report it instead of committing again.\n",
+        note.id, note.status,
+    );
+    let start = note.thread.len().saturating_sub(RESUME_THREAD_ENTRIES);
+    for entry in &note.thread[start..] {
+        let fence = fence_for(&entry.text);
+        text.push_str(&format!(
+            "{:?} thread entry:\n{fence}\n{}\n{fence}\n",
+            entry.from, entry.text
+        ));
+    }
+    text.push_str(&message);
+    if note.status == NoteStatus::NeedsReply {
+        text.push_str("\nThe operator has not answered the last question yet. Wait for the answer before continuing.");
+    }
+    Ok(Owed {
+        key: agent_key(
+            &format!("design:{}:{}:{}:resume", session.id, note.id, note.delivery),
+            agent,
+        ),
+        text,
+        asset: note
+            .send_picture
+            .then(|| note.before_asset.clone())
+            .flatten(),
+        item: session.item.clone(),
+        more,
+    })
+}
+
 pub(super) fn queued_payload(
     store: &archon_queue::store::Store,
     session: &DesignSession,
@@ -114,11 +283,25 @@ pub(super) fn queued_payload(
 ) -> Result<String, ArchonError> {
     assert_eq!(owed.item, session.item);
     assert!(!owed.key.is_empty());
-    let mut list = decode_owed(store.kv_get(&keys::design_owed(&session.id))?)?;
+    let mut list = load_owed(store, session)?;
+    if !list.is_empty() {
+        let notes = store.design_notes(&session.item)?;
+        list.retain(|entry| delivery_is_current(entry, session, &notes));
+    }
     if list.iter().all(|o| o.key != owed.key) {
         list.push(owed);
     }
-    serde_json::to_string(&list).map_err(|e| ArchonError::Corrupt(format!("design_owed: {e}")))
+    encode_owed(&list)
+}
+
+fn load_owed(store: &Store, session: &DesignSession) -> Result<Vec<Owed>, ArchonError> {
+    let list = decode_owed(store.kv_get(&keys::design_owed(&session.id))?)?;
+    if list.iter().any(|owed| owed.item != session.item) {
+        return Err(ArchonError::Corrupt(
+            "design delivery belongs to a different item".into(),
+        ));
+    }
+    Ok(list)
 }
 
 impl DesignService {
@@ -131,46 +314,7 @@ impl DesignService {
         decode_owed(raw)
     }
 
-    /// Record a delivery as owed, without sending it.
-    pub(crate) async fn owe_queue(
-        &self,
-        ctx: &DaemonContext,
-        session: &DesignSession,
-        key: String,
-        text: String,
-        asset: Option<DesignAssetId>,
-    ) -> Result<(), ArchonError> {
-        self.owe_queue_with(ctx, session, key, text, asset, Vec::new())
-            .await
-    }
-
-    /// [`Self::owe_queue`] with referenced pictures attached after `asset`.
-    pub(crate) async fn owe_queue_with(
-        &self,
-        ctx: &DaemonContext,
-        session: &DesignSession,
-        key: String,
-        text: String,
-        asset: Option<DesignAssetId>,
-        more: Vec<DesignAssetId>,
-    ) -> Result<(), ArchonError> {
-        let mut store = ctx.store.lock().await;
-        let kv_key = keys::design_owed(&session.id);
-        let raw = queued_payload(
-            &store,
-            session,
-            Owed {
-                key,
-                text,
-                asset,
-                item: session.item.clone(),
-                more,
-            },
-        )?;
-        store.kv_set(&kv_key, &raw)
-    }
-
-    /// Owe a message and try to send it now.
+    /// Owe a preview notice and try to send it now.
     pub(crate) async fn owe(
         &self,
         ctx: &DaemonContext,
@@ -179,29 +323,78 @@ impl DesignService {
         text: String,
         asset: Option<DesignAssetId>,
     ) -> Result<(), ArchonError> {
-        self.owe_queue(ctx, session, key, text, asset).await?;
+        let lock = self.item_lock(&session.item);
+        let _held = lock.lock().await;
+        let session = match self.current_for_notes(ctx, &session.item).await {
+            Ok(current) if current.id == session.id => current,
+            Ok(_) | Err(ArchonError::Design { .. }) => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        self.owe_locked(ctx, &session, key, text, asset).await
+    }
+
+    pub(super) async fn owe_locked(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSession,
+        key: String,
+        text: String,
+        asset: Option<DesignAssetId>,
+    ) -> Result<(), ArchonError> {
+        {
+            let mut store = ctx.store.lock().await;
+            let raw = queued_payload(
+                &store,
+                session,
+                Owed {
+                    key,
+                    text,
+                    asset,
+                    item: session.item.clone(),
+                    more: Vec::new(),
+                },
+            )?;
+            store.kv_set(&keys::design_owed(&session.id), &raw)?;
+        }
         self.flush_owed(ctx, session).await
     }
 
-    /// Send what is owed, in order, until Aether refuses one.
+    /// Send in order under the item's lock (or during startup recovery).
     pub(crate) async fn flush_owed(
         &self,
         ctx: &DaemonContext,
         session: &DesignSession,
     ) -> Result<(), ArchonError> {
-        let Some(agent) = session.agent.clone() else {
-            return Ok(());
-        };
-        let rt = self.runtime(&session.id);
-        let _held = rt.delivery.lock().await;
-        let list = self.owed_list(ctx, &session.id).await?;
-        for owed in list {
-            if owed.item != session.item {
-                return Err(ArchonError::Corrupt(
-                    "design delivery belongs to a different item".into(),
-                ));
+        let runtime = self.runtime(&session.id);
+        let _delivery = runtime.delivery.lock().await;
+        let (agent, list) = {
+            let mut store = ctx.store.lock().await;
+            let Some(current) = store.design_current_session(&session.item)? else {
+                return Ok(());
+            };
+            if current.id != session.id || current.state == SessionState::Finishing {
+                return Ok(());
             }
+            let Some(agent) = current.agent.clone() else {
+                return Ok(());
+            };
+            let mut list = load_owed(&store, &current)?;
+            if list.is_empty() {
+                return Ok(());
+            }
+            let notes = store.design_notes(&current.item)?;
+            let before = list.len();
+            list.retain(|owed| delivery_is_current(owed, &current, &notes));
+            if list.len() != before {
+                save_owed(&mut store, &current, &list)?;
+            }
+            (agent, list)
+        };
+        for owed in list {
             let attachments = self.attachments_for(ctx, &owed).await?;
+            if !self.delivery_agent_is_current(ctx, session, &agent).await? {
+                break;
+            }
             match ctx
                 .backend
                 .send_message_with_attachments(&agent, &owed.text, &owed.key, &attachments)
@@ -209,16 +402,9 @@ impl DesignService {
             {
                 Ok(()) => {
                     let mut store = ctx.store.lock().await;
-                    let kv_key = keys::design_owed(&session.id);
-                    let mut left = decode_owed(store.kv_get(&kv_key)?)?;
+                    let mut left = load_owed(&store, session)?;
                     left.retain(|o| o.key != owed.key);
-                    if left.is_empty() {
-                        store.kv_delete(&kv_key)?;
-                    } else {
-                        let raw = serde_json::to_string(&left)
-                            .map_err(|e| ArchonError::Corrupt(format!("design_owed: {e}")))?;
-                        store.kv_set(&kv_key, &raw)?;
-                    }
+                    save_owed(&mut store, session, &left)?;
                 }
                 Err(error) => {
                     tracing::info!(%error, key = %owed.key, "design: delivery to the agent is owed; the sweep retries it");
@@ -227,6 +413,24 @@ impl DesignService {
             }
         }
         Ok(())
+    }
+
+    async fn delivery_agent_is_current(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSession,
+        agent: &AetherAgentId,
+    ) -> Result<bool, ArchonError> {
+        let store = ctx.store.lock().await;
+        let Some(stage) = store.stage_run_by_agent(agent)? else {
+            return Ok(false);
+        };
+        Ok(stage.run == session.run
+            && stage.stage_id == session.stage_id
+            && stage.attempt == session.attempt
+            && stage.state == archon_core::run::StageState::Running
+            && !store.run(&session.run)?.state.is_terminal()
+            && !store.item(&session.item)?.state.is_terminal())
     }
 
     async fn attachments_for(
@@ -303,6 +507,9 @@ impl DesignService {
                 tracing::info!(note = %note.id, session = %session.id, "design: the operator's change request was added late");
                 self.emit_note(ctx, item, &note.id).await;
             }
+            if session.state == SessionState::Confirmed {
+                return self.flush_owed(ctx, &session).await;
+            }
             if !matches!(session.state, SessionState::Starting | SessionState::Live) {
                 return Ok(());
             }
@@ -342,23 +549,17 @@ impl DesignService {
         note: &DesignNote,
         why: String,
     ) -> Result<(), ArchonError> {
-        {
-            let mut store = ctx.store.lock().await;
-            store.design_note_change(
-                &note.item,
-                &note.id,
-                NoteChange::Thread(archon_core::design::ThreadEntry {
-                    at: archon_core::now(),
-                    from: archon_core::design::ReplyAuthor::Archon,
-                    text: why,
-                }),
-            )?;
-            store.design_note_change(
-                &note.item,
-                &note.id,
-                super::status_change(NoteStatus::Cancelled, None),
-            )?;
-        }
+        ctx.store.lock().await.design_note_transition(
+            &note.item,
+            &note.id,
+            super::status_change(NoteStatus::Cancelled, None),
+            Some(archon_core::design::ThreadEntry {
+                at: archon_core::now(),
+                from: ReplyAuthor::Archon,
+                text: why,
+            }),
+            None,
+        )?;
         tracing::info!(note = %note.id, "design: queued note cancelled; what it waited for did not happen");
         self.emit_note(ctx, &note.item, &note.id).await;
         Ok(())
@@ -382,17 +583,28 @@ impl DesignService {
             .send_picture
             .then(|| note.before_asset.clone())
             .flatten();
-        self.owe_queue_with(ctx, session, key, text, asset, more)
-            .await?;
         {
             let mut store = ctx.store.lock().await;
-            store.design_note_change(
+            let raw = queued_payload(
+                &store,
+                session,
+                Owed {
+                    key,
+                    text,
+                    asset,
+                    item: note.item.clone(),
+                    more,
+                },
+            )?;
+            store.design_note_transition(
                 &note.item,
                 &note.id,
                 NoteChange::Sent {
                     base_commit: head,
                     delivery: 1,
                 },
+                None,
+                Some(&raw),
             )?;
         }
         tracing::info!(note = %note.id, session = %session.id, device = ?super::current_device_label(), "design: note sent");
@@ -422,12 +634,7 @@ pub async fn sweep(ctx: std::sync::Arc<DaemonContext>) -> Result<(), ArchonError
             ])?
         };
         for session in sessions {
-            if let Err(error) = ctx.design.flush_owed(&ctx, &session).await {
-                tracing::warn!(%error, session = %session.id, "design: resending owed deliveries failed");
-            }
-            if session.state != SessionState::Confirmed
-                && let Err(error) = ctx.design.pump(&ctx, &session.item).await
-            {
+            if let Err(error) = ctx.design.pump(&ctx, &session.item).await {
                 tracing::warn!(%error, session = %session.id, "design: the note queue did not move");
             }
         }

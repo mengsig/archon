@@ -379,6 +379,23 @@ impl DesignService {
         agent: &AetherAgentId,
         worktree: WorktreeRef,
     ) -> Result<DesignSessionId, ArchonError> {
+        let held = self.item_lock(item).lock_owned().await;
+        self.stage_started_locked(ctx, item, run, stage_id, attempt, agent, worktree, held)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn stage_started_locked(
+        &self,
+        ctx: &Arc<DaemonContext>,
+        item: &QueueItemId,
+        run: &RunId,
+        stage_id: &str,
+        attempt: u32,
+        agent: &AetherAgentId,
+        worktree: WorktreeRef,
+        _held: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<DesignSessionId, ArchonError> {
         if !self.enabled() {
             return Err(ArchonError::Invalid(
                 "design sessions are turned off ([design] enabled = false)".into(),
@@ -402,7 +419,24 @@ impl DesignService {
                 "the design stage attempt is no longer active".into(),
             ));
         }
-        let previous = self.session_of(&store, run, stage_id, attempt)?;
+        let id = self.bind_stage_session(&mut store, item, run, stage_id, attempt, agent)?;
+        self.wts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id.clone(), worktree);
+        Ok(id)
+    }
+
+    fn bind_stage_session(
+        &self,
+        store: &mut Store,
+        item: &QueueItemId,
+        run: &RunId,
+        stage_id: &str,
+        attempt: u32,
+        agent: &AetherAgentId,
+    ) -> Result<DesignSessionId, ArchonError> {
+        let previous = self.session_of(store, run, stage_id, attempt)?;
         if let Some(reason) = previous.as_ref().and_then(|s| s.end_reason.as_deref())
             && reason.starts_with(browser::CONTAINMENT_END)
         {
@@ -415,19 +449,10 @@ impl DesignService {
             // at the same attempt): the session, its tools and its owed
             // notes follow the agent now running.
             if found.agent.as_ref() != Some(agent) {
-                store.design_session_patch(
-                    &found.id,
-                    archon_queue::store::SessionPatch {
-                        agent: Some(agent.clone()),
-                        ..Default::default()
-                    },
-                )?;
+                let owed = delivery::rebind_owed(store, &found, agent)?;
+                store.design_session_rebind(&found, agent, owed.as_deref())?;
                 tracing::info!(session = %found.id, %agent, "design: session follows the attempt's new agent");
             }
-            self.wts
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(found.id.clone(), worktree);
             return Ok(found.id);
         }
         let session = store.design_session_create(archon_queue::store::NewDesignSession {
@@ -439,11 +464,6 @@ impl DesignService {
             sandbox_off: self.cfg.browser_sandbox == archon_core::config::BrowserSandbox::Off,
             agent: Some(agent.clone()),
         })?;
-        drop(store);
-        self.wts
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(session.id.clone(), worktree);
         tracing::info!(session = %session.id, %item, attempt, "design: session started");
         Ok(session.id)
     }

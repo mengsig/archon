@@ -136,6 +136,14 @@ impl Store {
             .ctx("delete design rows")?;
         }
         settings::kv_delete(&tx, &keys::design_seq(item))?;
+        tx.execute(
+            "DELETE FROM kv WHERE key >= ?1 AND key < ?2",
+            params![
+                keys::design_input(item, ""),
+                format!("design_input:{item};")
+            ],
+        )
+        .ctx("remove stored design note requests")?;
         tx.commit().ctx("commit design item delete")?;
         Ok(assets)
     }

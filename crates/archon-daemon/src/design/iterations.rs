@@ -11,13 +11,14 @@ use std::collections::BTreeMap;
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::design::{
-    ChainPlace, DesignAssetId, DesignNote, MAX_CHAIN_VERSIONS, MAX_NOTE_CHARS, MAX_REF_PICTURES,
-    MAX_REFS, NoteKind, NoteStatus, ReplyAuthor, chains, clean_text, is_in_flight, undone_by,
+    ChainPlace, DesignAssetId, DesignNote, DesignSession, MAX_CHAIN_VERSIONS, MAX_NOTE_CHARS,
+    MAX_REF_PICTURES, MAX_REFS, NoteKind, NoteStatus, ReplyAuthor, chains, clean_text,
+    is_in_flight, undone_by,
 };
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::protocol::Reply;
-use archon_queue::store::NewDesignNote;
+use archon_queue::store::{NewDesignNote, Store};
 
 use super::{DesignService, short};
 use crate::context::DaemonContext;
@@ -283,10 +284,220 @@ pub(crate) fn check_follows<'a>(
     Ok(parent)
 }
 
+struct ContinueInput<'a> {
+    id: &'a str,
+    text: Option<String>,
+    client_key: Option<String>,
+    refs: Vec<String>,
+}
+
+impl ContinueInput<'_> {
+    fn store(
+        self,
+        store: &mut Store,
+        session: &DesignSession,
+    ) -> Result<(Vec<String>, String), ArchonError> {
+        let notes = store.design_notes(&session.item)?;
+        let refs = if self.text.is_some() {
+            check_refs(self.refs, &notes)?
+        } else {
+            Vec::new()
+        };
+        let request = super::notes::request_fingerprint((self.id, &self.text, &refs))?;
+        if let Some(key) = &self.client_key
+            && let Some(reply) = continue_replay(
+                store,
+                session,
+                &notes,
+                &group_of(key),
+                self.id,
+                self.text.as_deref(),
+                &refs,
+                &request,
+            )?
+        {
+            return Ok((Vec::new(), reply));
+        }
+        let to_revert = reverts_for_continue(store, &session.item, self.id, &notes)?;
+        if to_revert.is_empty() && self.text.is_none() {
+            return Err(ArchonError::Invalid(format!(
+                "{} is already the newest version in the code",
+                self.id
+            )));
+        }
+        let group = self.client_key.as_deref().map(group_of).unwrap_or_else(|| {
+            group_of(&format!(
+                "\n{}:{}:{}",
+                self.id,
+                archon_core::now().timestamp_millis(),
+                notes.len()
+            ))
+        });
+        let device = super::current_device().map(|d| d.id);
+        let mut group_notes: Vec<_> = to_revert
+            .iter()
+            .map(|note| continue_revert(session, note, self.id, &group, device.clone()))
+            .collect();
+        let follow = self.text.is_some();
+        if let Some(text) = self.text {
+            let reverting: Vec<String> = to_revert.iter().map(|n| n.id.clone()).collect();
+            let parent = check_follows(self.id, &notes, &reverting)?;
+            group_notes.push(follow_up(
+                &session.item,
+                &session.id,
+                parent,
+                text,
+                format!("{group}follow"),
+                refs,
+                device,
+            ));
+        }
+        let queued: Vec<_> = store
+            .design_notes_add_group(
+                group_notes,
+                self.client_key.as_ref().map(|_| request.as_str()),
+            )?
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+        let reply = if follow {
+            queued.last().expect("the follow-up was queued").clone()
+        } else {
+            self.id.to_owned()
+        };
+        Ok((queued, reply))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn continue_replay(
+    store: &Store,
+    session: &DesignSession,
+    notes: &[DesignNote],
+    group: &str,
+    id: &str,
+    text: Option<&str>,
+    refs: &[String],
+    request: &str,
+) -> Result<Option<String>, ArchonError> {
+    assert!(group.starts_with(CONTINUE_PREFIX) && group.ends_with('|'));
+    assert!(!request.is_empty());
+    let mut earlier = notes
+        .iter()
+        .filter(|n| continue_group(&n.client_key) == Some(group));
+    let Some(first) = earlier.next() else {
+        return Ok(None);
+    };
+    let follow_key = format!("{group}follow");
+    let follow = std::iter::once(first)
+        .chain(earlier)
+        .find(|n| n.client_key == follow_key);
+    super::notes::require_matching_request(store, session, first, request, || {
+        match (text, follow) {
+            (Some(text), Some(note)) => {
+                note.follows.as_deref() == Some(id) && note.text == text && note.refs == refs
+            }
+            (None, None) => first.reverts.as_ref().is_some_and(|reverts| {
+                first.text == format!("Undo {reverts} (continue from {id})")
+            }),
+            _ => false,
+        }
+    })?;
+    Ok(Some(follow.map_or_else(|| id.to_owned(), |n| n.id.clone())))
+}
+
+fn reverts_for_continue<'a>(
+    store: &Store,
+    item: &QueueItemId,
+    id: &str,
+    notes: &'a [DesignNote],
+) -> Result<Vec<&'a DesignNote>, ArchonError> {
+    let target = notes
+        .iter()
+        .find(|n| n.id == id)
+        .ok_or_else(|| ArchonError::NotFound(format!("note {id}")))?;
+    if target.kind == NoteKind::Revert {
+        return Err(ArchonError::Invalid(
+            "an undo has no versions to continue".into(),
+        ));
+    }
+    let undone = undone_by(notes);
+    if target.status != NoteStatus::Done || undone.contains_key(id) {
+        return Err(ArchonError::Invalid(format!(
+            "{id} is not a version in the code; continue from a done version"
+        )));
+    }
+    let places = chains(notes);
+    let root = places.get(id).map_or(id, |p| p.root.as_str());
+    let chain = members(notes, &places, root);
+    let newer: Vec<_> = chain
+        .into_iter()
+        .filter(|n| n.number > target.number)
+        .collect();
+    if let Some(busy) = newer.iter().find(|n| is_in_flight(n.status)) {
+        return Err(ArchonError::Invalid(format!(
+            "{} is still with the agent; wait for it or drop it first",
+            busy.id
+        )));
+    }
+    if let Some(waiting) = newer.iter().find(|n| n.status == NoteStatus::Queued) {
+        return Err(ArchonError::Invalid(format!(
+            "{} is queued; cancel it first",
+            waiting.id
+        )));
+    }
+    let mut to_revert: Vec<_> = newer.into_iter().filter(|n| in_code(n, &undone)).collect();
+    to_revert.sort_by_key(|n| std::cmp::Reverse(n.number));
+    let approved = super::approved_ids(store, item)?;
+    for note in &to_revert {
+        assert_eq!(&note.item, item);
+        assert!(note.number > target.number);
+        if approved.contains(&note.id) {
+            return Err(ArchonError::Invalid(format!(
+                "{} was approved earlier and cannot be set aside; add a new note instead",
+                note.id
+            )));
+        }
+        if pending_revert(notes, &note.id) {
+            return Err(ArchonError::Invalid(format!(
+                "an undo of {} is already waiting",
+                note.id
+            )));
+        }
+    }
+    Ok(to_revert)
+}
+
+fn continue_revert(
+    session: &DesignSession,
+    note: &DesignNote,
+    from: &str,
+    group: &str,
+    device: Option<String>,
+) -> NewDesignNote {
+    assert_eq!(note.item, session.item);
+    assert_ne!(note.id, from);
+    NewDesignNote {
+        item: session.item.clone(),
+        session: session.id.clone(),
+        kind: NoteKind::Revert,
+        text: format!("Undo {} (continue from {from})", note.id),
+        details_text: None,
+        send_picture: false,
+        target: None,
+        viewport: note.viewport,
+        client_key: format!("{group}undo:{}", note.id),
+        reverts: Some(note.id.clone()),
+        resent_from: None,
+        follows: None,
+        refs: Vec::new(),
+        before_asset: None,
+        created_by_device: device,
+    }
+}
+
 impl DesignService {
-    /// `design_note_continue_from`: revert the newer versions of `id`'s
-    /// chain that are in the code, newest first, then queue the follow-up
-    /// `text` on `id` when given.
+    /// Queue reverts newest first and an optional follow-up as one Continue.
     pub(crate) async fn note_continue_from(
         &self,
         ctx: &DaemonContext,
@@ -296,168 +507,29 @@ impl DesignService {
         client_key: Option<String>,
         refs: Vec<String>,
     ) -> Result<Reply, ArchonError> {
-        let session = self.current_for_notes(ctx, item).await?;
-        let device = super::current_device().map(|d| d.id);
-        let text = text
-            .map(|t| clean_text(&t, MAX_NOTE_CHARS))
-            .filter(|t| !t.is_empty());
+        let expected = self.current_for_notes(ctx, item).await?;
         if let Some(key) = client_key.as_deref() {
             super::notes::validate_client_key(key)?;
         }
-        let (queued, reply_id) = {
-            let mut store = ctx.store.lock().await;
-            let notes = store.design_notes(item)?;
-            if let Some(key) = &client_key {
-                let group = group_of(key);
-                if notes
-                    .iter()
-                    .any(|n| continue_group(&n.client_key) == Some(group.as_str()))
-                {
-                    // A repeat of a continue already queued.
-                    let follow = format!("{group}follow");
-                    let reply = notes
-                        .iter()
-                        .find(|n| n.client_key == follow)
-                        .map_or_else(|| id.to_owned(), |n| n.id.clone());
-                    drop(store);
-                    return self.note_reply(ctx, item, &reply).await;
-                }
-            }
-            let target = notes
-                .iter()
-                .find(|n| n.id == id)
-                .ok_or_else(|| ArchonError::NotFound(format!("note {id}")))?;
-            if target.kind == NoteKind::Revert {
-                return Err(ArchonError::Invalid(
-                    "an undo has no versions to continue".into(),
-                ));
-            }
-            let undone = undone_by(&notes);
-            if target.status != NoteStatus::Done || undone.contains_key(id) {
-                return Err(ArchonError::Invalid(format!(
-                    "{id} is not a version in the code; continue from a done version"
-                )));
-            }
-            let places = chains(&notes);
-            let root = places
-                .get(id)
-                .map(|p| p.root.clone())
-                .unwrap_or_else(|| id.to_owned());
-            let chain = members(&notes, &places, &root);
-            let newer: Vec<&DesignNote> = chain
-                .iter()
-                .copied()
-                .filter(|n| n.number > target.number)
-                .collect();
-            if let Some(busy) = newer.iter().find(|n| is_in_flight(n.status)) {
-                return Err(ArchonError::Invalid(format!(
-                    "{} is still with the agent; wait for it or drop it first",
-                    busy.id
-                )));
-            }
-            if let Some(waiting) = newer.iter().find(|n| n.status == NoteStatus::Queued) {
-                return Err(ArchonError::Invalid(format!(
-                    "{} is queued; cancel it first",
-                    waiting.id
-                )));
-            }
-            let mut to_revert: Vec<&DesignNote> =
-                newer.into_iter().filter(|n| in_code(n, &undone)).collect();
-            to_revert.sort_by_key(|n| std::cmp::Reverse(n.number));
-            let approved = store
-                .item(item)?
-                .intent
-                .map(|binding| binding.requirements)
-                .unwrap_or_default();
-            for n in &to_revert {
-                if approved.contains(&n.id) {
-                    return Err(ArchonError::Invalid(format!(
-                        "{} was approved earlier and cannot be set aside; add a new note instead",
-                        n.id
-                    )));
-                }
-                let pending = notes.iter().any(|r| {
-                    r.kind == NoteKind::Revert
-                        && r.reverts.as_deref() == Some(n.id.as_str())
-                        && matches!(r.status, NoteStatus::Queued | NoteStatus::Working)
-                });
-                if pending {
-                    return Err(ArchonError::Invalid(format!(
-                        "an undo of {} is already waiting",
-                        n.id
-                    )));
-                }
-            }
-            if to_revert.is_empty() && text.is_none() {
-                return Err(ArchonError::Invalid(format!(
-                    "{id} is already the newest version in the code"
-                )));
-            }
-            let reverting: Vec<String> = to_revert.iter().map(|n| n.id.clone()).collect();
-            let (refs, parent) = match &text {
-                Some(_) => (
-                    check_refs(refs, &notes)?,
-                    Some(check_follows(id, &notes, &reverting)?.clone()),
-                ),
-                None => (Vec::new(), None),
-            };
-            let group = match &client_key {
-                Some(key) => group_of(key),
-                None => group_of(&format!(
-                    "{id}:{}:{}",
-                    archon_core::now().timestamp_millis(),
-                    notes.len()
-                )),
-            };
-            let mut group_notes = Vec::new();
-            for n in &to_revert {
-                group_notes.push(NewDesignNote {
-                    item: item.clone(),
-                    session: session.id.clone(),
-                    kind: NoteKind::Revert,
-                    text: format!("Undo {} (continue from {id})", n.id),
-                    details_text: None,
-                    send_picture: false,
-                    target: None,
-                    viewport: n.viewport,
-                    client_key: format!("{group}undo:{}", n.id),
-                    reverts: Some(n.id.clone()),
-                    resent_from: None,
-                    follows: None,
-                    refs: Vec::new(),
-                    before_asset: None,
-                    created_by_device: device.clone(),
-                });
-            }
-            let follow = text.is_some();
-            if let (Some(text), Some(parent)) = (text, parent) {
-                let new = follow_up(
-                    item,
-                    &session.id,
-                    &parent,
-                    text,
-                    format!("{group}follow"),
-                    refs,
-                    device.clone(),
-                );
-                group_notes.push(new);
-            }
-            let queued: Vec<_> = store
-                .design_notes_add_group(group_notes)?
-                .into_iter()
-                .map(|n| n.id)
-                .collect();
-            let reply_id = if follow {
-                queued.last().expect("the follow-up was queued").clone()
-            } else {
-                id.to_owned()
-            };
-            (queued, reply_id)
+        let input = ContinueInput {
+            id,
+            text: text
+                .map(|t| clean_text(&t, MAX_NOTE_CHARS))
+                .filter(|t| !t.is_empty()),
+            client_key,
+            refs,
         };
-        tracing::info!(note = id, ?queued, %item, device = ?super::current_device_label(), "design: continue from a version queued");
-        for queued_id in &queued {
-            self.emit_note(ctx, item, queued_id).await;
+        let lock = self.item_lock(item);
+        let held = lock.lock().await;
+        let session = self.exact_notes_session(ctx, &expected).await?;
+        let (queued, reply_id) = input.store(&mut *ctx.store.lock().await, &session)?;
+        if !queued.is_empty() {
+            tracing::info!(note = id, ?queued, %item, device = ?super::current_device_label(), "design: continue from a version queued");
+            for queued_id in &queued {
+                self.emit_note(ctx, item, queued_id).await;
+            }
         }
+        drop(held);
         self.pump(ctx, item).await?;
         self.note_reply(ctx, item, &reply_id).await
     }

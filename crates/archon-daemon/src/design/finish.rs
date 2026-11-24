@@ -37,7 +37,7 @@ const FINISH_BUDGET: Duration = Duration::from_secs(45);
 const MANUAL_BUDGET: Duration = Duration::from_secs(30);
 const RESTORE_BUDGET: Duration = Duration::from_secs(10);
 /// The finish message to the agent.
-const FINISH_TEXT: &str = "Finish: the operator confirmed the design. Stop the dev server without touching the worktree, then complete with a one-line summary.";
+pub(super) const FINISH_TEXT: &str = "Finish: the operator confirmed the design. Stop the dev server without touching the worktree, then complete with a one-line summary.";
 
 fn conflict() -> ArchonError {
     refuse(

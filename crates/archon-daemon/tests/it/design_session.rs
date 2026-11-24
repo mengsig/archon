@@ -211,6 +211,378 @@ async fn a_question_holds_the_queue_until_it_is_answered() {
     );
 }
 
+fn reject_owed_writes(f: &Fixture) -> rusqlite::Connection {
+    let db = rusqlite::Connection::open(&f.h.ctx.paths.store).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER reject_design_owed BEFORE INSERT ON kv
+         WHEN NEW.key GLOB 'design_owed:*'
+         BEGIN SELECT RAISE(ABORT, 'design outbox unavailable'); END;",
+    )
+    .unwrap();
+    db
+}
+
+fn add_request(f: &Fixture, key: &str, text: &str) -> Request {
+    Request::DesignNoteAdd {
+        session: f.session.clone(),
+        client_key: key.into(),
+        text: text.into(),
+        asset: None,
+        send_picture: false,
+        details_text: None,
+        follows: None,
+        refs: Vec::new(),
+    }
+}
+
+fn answer_request(f: &Fixture, text: &str) -> Request {
+    Request::DesignNoteReply {
+        item: f.item.clone(),
+        id: "D1".into(),
+        text: text.into(),
+    }
+}
+
+#[tokio::test]
+async fn a_failed_outbox_write_leaves_the_note_queued_for_the_same_first_delivery() {
+    let f = Fixture::new().await;
+    let db = reject_owed_writes(&f);
+    let result = f.operator(add_request(&f, "first", "Make it green")).await;
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("design outbox unavailable")
+    );
+    let queued = note(&f, "D1").await;
+    assert_eq!(queued.status, NoteStatus::Queued);
+    assert_eq!(queued.delivery, 0);
+    assert!(queued.base_commit.is_none());
+    assert!(f.h.backend.message_calls().is_empty());
+
+    db.execute_batch("DROP TRIGGER reject_design_owed").unwrap();
+    let sent = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        add(&f, "first", "Make it green"),
+    )
+    .await
+    .expect("the retried add releases the item lock before pumping");
+    assert_eq!(sent.id, queued.id);
+    assert_eq!(sent.status, NoteStatus::Sent);
+    assert_eq!(sent.delivery, 1);
+    assert_eq!(f.h.backend.message_calls(), [key(&f, "D1", 1)]);
+}
+
+#[tokio::test]
+async fn an_answer_and_its_notice_commit_together_and_only_one_answer_wins() {
+    let f = Fixture::new().await;
+    add(&f, "first", "Make it green").await;
+    report(
+        &f,
+        "D1",
+        AgentNoteStatus::NeedsReply,
+        None,
+        Some("Which green?"),
+    )
+    .await
+    .unwrap();
+    let before = note(&f, "D1").await;
+    let db = reject_owed_writes(&f);
+    let failed = f.operator(answer_request(&f, "uncommitted answer")).await;
+    assert!(
+        failed
+            .unwrap_err()
+            .to_string()
+            .contains("design outbox unavailable")
+    );
+    let after = note(&f, "D1").await;
+    assert_eq!(after.status, NoteStatus::NeedsReply);
+    assert_eq!(after.thread.len(), before.thread.len());
+
+    db.execute_batch("DROP TRIGGER reject_design_owed").unwrap();
+    let (first, other) = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        tokio::join!(
+            biased;
+            f.operator(answer_request(&f, "brand green")),
+            f.operator(answer_request(&f, "forest green")),
+        )
+    })
+    .await
+    .expect("competing answers finish");
+    first.expect("the first answer is accepted");
+    assert!(matches!(other, Err(ArchonError::Invalid(_))));
+    let working = note(&f, "D1").await;
+    assert_eq!(working.status, NoteStatus::Working);
+    assert_eq!(working.thread.len(), before.thread.len() + 1);
+    assert_eq!(working.thread.last().unwrap().text, "brand green");
+    let messages = f.h.backend.messages();
+    assert_eq!(messages.len(), 2);
+    assert!(messages[1].1.contains("brand green"));
+}
+
+#[tokio::test]
+async fn a_restart_and_tell_retry_the_same_owed_first_delivery() {
+    let mut f = Fixture::with_preview(design_config()).await;
+    let db = rusqlite::Connection::open(&f.h.ctx.paths.store).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER reject_design_ack BEFORE DELETE ON kv
+         WHEN OLD.key GLOB 'design_owed:*'
+         BEGIN SELECT RAISE(ABORT, 'design ack unavailable'); END;",
+    )
+    .unwrap();
+    let failed = f.operator(add_request(&f, "first", "Make it green")).await;
+    assert!(
+        failed
+            .unwrap_err()
+            .to_string()
+            .contains("design ack unavailable")
+    );
+    let first = note(&f, "D1").await;
+    assert_eq!(first.status, NoteStatus::Sent);
+    assert_eq!(
+        f.h.backend.messages().len(),
+        1,
+        "Aether accepted before the ack failed"
+    );
+    db.execute_batch("DROP TRIGGER reject_design_ack").unwrap();
+    drop(db);
+    f.h.restart();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        f.operator(Request::DesignTellAgent {
+            session: f.session.clone(),
+        }),
+    )
+    .await
+    .expect("tell releases its locks")
+    .expect("tell retries");
+    let retried = note(&f, "D1").await;
+    assert_eq!(retried.delivery, 1);
+    assert_eq!(retried.base_commit, first.base_commit);
+    let key = key(&f, "D1", 1);
+    assert_eq!(f.h.backend.message_calls(), [key.clone(), key]);
+    assert_eq!(f.h.backend.messages().len(), 1);
+}
+
+#[tokio::test]
+async fn a_cancelled_note_never_sends_a_legacy_uncommitted_delivery() {
+    let f = Fixture::new().await;
+    add(&f, "first", "Working").await;
+    let waiting = add(&f, "second", "Must not arrive").await;
+    assert_eq!(waiting.status, NoteStatus::Queued);
+    let kv = archon_queue::store::keys::design_owed(&f.session);
+    let stale = serde_json::json!([{
+        "key": key(&f, &waiting.id, 1),
+        "text": "Must not arrive",
+        "asset": null,
+        "item": f.item,
+    }]);
+    f.h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&kv, &stale.to_string())
+        .unwrap();
+    f.operator(Request::DesignNoteCancel {
+        item: f.item.clone(),
+        id: waiting.id.clone(),
+    })
+    .await
+    .expect("cancel the queued note");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        report(&f, "D1", AgentNoteStatus::Failed, None, None),
+    )
+    .await
+    .expect("the note pump completes")
+    .expect("the first note settles");
+    assert_eq!(note(&f, &waiting.id).await.status, NoteStatus::Cancelled);
+    assert!(f.h.ctx.store.lock().await.kv_get(&kv).unwrap().is_none());
+    assert!(
+        !f.h.backend
+            .message_calls()
+            .contains(&key(&f, &waiting.id, 1))
+    );
+}
+
+#[tokio::test]
+async fn a_note_key_retries_original_words_after_an_edit_but_rejects_a_different_request() {
+    let f = Fixture::new().await;
+    add(&f, "busy", "Working").await;
+    let queued = add(&f, "key", "Original").await;
+    f.operator(Request::DesignNoteEdit {
+        item: f.item.clone(),
+        id: queued.id.clone(),
+        text: "Edited".into(),
+    })
+    .await
+    .expect("edit the queued note");
+    let retry = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        add(&f, "key", "Original"),
+    )
+    .await
+    .expect("retry completes");
+    assert_eq!(retry.id, queued.id);
+    assert_eq!(retry.text, "Edited");
+    assert!(matches!(
+        f.operator(add_request(&f, "key", "Edited")).await,
+        Err(ArchonError::Invalid(_))
+    ));
+    assert_eq!(state(&f).await.notes.len(), 2);
+}
+
+async fn replace_agent(f: &Fixture) -> archon_core::aether_ids::AetherAgentId {
+    use archon_core::ports::AgentBackend;
+    use archon_core::run::StageState;
+    let mut request = f.h.backend.requests().pop().expect("stage was spawned");
+    request.idempotency_key.push_str(":replacement");
+    let replacement = f.h.backend.spawn(request).await.unwrap();
+    let mut store = f.h.ctx.store.lock().await;
+    let mut stage = store.stage_run_by_agent(&f.agent).unwrap().unwrap();
+    stage.state = StageState::Cancelled;
+    stage.finished_at = Some(archon_core::now());
+    store.upsert_stage_run(&stage).unwrap();
+    stage.id = archon_core::id::StageRunId::new();
+    stage.state = StageState::Running;
+    stage.finished_at = None;
+    stage.aether_agent = Some(replacement.agent.clone());
+    stage.aether_task = Some(replacement.task);
+    store.upsert_stage_run(&stage).unwrap();
+    drop(store);
+    let rebound = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        f.h.ctx.design.stage_started(
+            &f.h.ctx,
+            &f.item,
+            &f.run,
+            &f.stage_id,
+            f.attempt,
+            &replacement.agent,
+            f.worktree.clone(),
+        ),
+    )
+    .await
+    .expect("the replacement can bind")
+    .expect("stage rebinds");
+    assert_ne!(replacement.agent, f.agent);
+    assert_eq!(rebound, f.session);
+    replacement.agent
+}
+
+#[tokio::test]
+async fn a_rebound_agent_resumes_the_acknowledged_in_flight_note_with_its_thread() {
+    let f = Fixture::new().await;
+    add(&f, "first", "Make it green").await;
+    report(
+        &f,
+        "D1",
+        AgentNoteStatus::NeedsReply,
+        None,
+        Some("Which green?"),
+    )
+    .await
+    .unwrap();
+    let before = note(&f, "D1").await;
+    let head = f.head();
+    let replacement = replace_agent(&f).await;
+
+    let next = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        add(&f, "second", "Next change"),
+    )
+    .await
+    .expect("queue pumps to the new agent");
+    let after = note(&f, "D1").await;
+    assert_eq!(next.status, NoteStatus::Queued);
+    assert_eq!(after.status, NoteStatus::NeedsReply);
+    assert_eq!(after.thread.len(), before.thread.len());
+    assert_eq!(after.base_commit, before.base_commit);
+    assert_eq!(after.delivery, before.delivery);
+    assert_eq!(f.head(), head);
+    let messages = f.h.backend.messages();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[1].0, replacement);
+    assert!(messages[1].1.contains("Which green?"));
+    assert!(messages[1].1.contains("Wait for the answer"));
+    assert!(f.h.backend.message_calls()[1].ends_with(&format!(":agent:{replacement}")));
+}
+
+#[tokio::test]
+async fn an_owed_note_is_rekeyed_once_for_the_replacement_agent() {
+    let f = Fixture::new().await;
+    f.h.backend
+        .fail_next_message(ArchonError::Unavailable("offline".into()));
+    let before = add(&f, "first", "Make it green").await;
+    assert_eq!(before.status, NoteStatus::Sent);
+    assert!(f.h.backend.messages().is_empty());
+    let replacement = replace_agent(&f).await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        f.operator(Request::DesignTellAgent {
+            session: f.session.clone(),
+        }),
+    )
+    .await
+    .expect("tell finishes")
+    .expect("tell retries the original delivery");
+    let after = note(&f, "D1").await;
+    assert_eq!(after.delivery, 1);
+    assert_eq!(after.base_commit, before.base_commit);
+    assert_eq!(
+        f.h.backend.message_calls(),
+        [
+            key(&f, "D1", 1),
+            format!("{}:agent:{replacement}", key(&f, "D1", 1)),
+        ]
+    );
+    let messages = f.h.backend.messages();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].0, replacement);
+    assert!(messages[0].1.contains("Make it green"));
+}
+
+#[tokio::test]
+async fn an_add_waiting_through_finish_cannot_modify_the_session() {
+    use std::future::{Future, poll_fn};
+    use std::task::Poll;
+
+    let f = Fixture::new().await;
+    let lock = f.h.ctx.design.item_lock_for_tests(&f.item);
+    let held = lock.lock().await;
+    let mut waiting = std::pin::pin!(f.operator(add_request(&f, "key", "Do not add")));
+    poll_fn(|cx| {
+        assert!(waiting.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    {
+        let mut store = f.h.ctx.store.lock().await;
+        let current = store.design_session(&f.session).unwrap().unwrap();
+        store
+            .design_session_transition(
+                &f.session,
+                SessionState::Live,
+                SessionState::Finishing,
+                Some(archon_queue::store::FinishRecord {
+                    capture: "capture-1".into(),
+                    head: f.head(),
+                    note_version: current.note_version,
+                    choices: None,
+                }),
+                false,
+            )
+            .unwrap();
+    }
+    drop(held);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(3), waiting)
+        .await
+        .expect("waiting add finishes");
+    refused(&result, DesignRefusal::Finishing);
+    assert!(state(&f).await.notes.is_empty());
+    assert!(f.h.backend.messages().is_empty());
+}
+
 /// T-I4: when the stage ends, queued notes are cancelled, the session ends and
 /// the browser closes; the old session answers `gone`.
 #[tokio::test]
@@ -662,6 +1034,37 @@ async fn finish_and_confirm(f: &Fixture) -> archon_core::protocol::DesignFinishV
     .await
     .expect("confirmed");
     view
+}
+
+#[tokio::test]
+async fn a_confirmed_session_owes_finish_to_its_replacement_agent() {
+    let f = Fixture::new().await;
+    crate::design_undo::done_note(&f, "k1", "a.txt", "one\n").await;
+    let finish = finish_and_confirm(&f).await;
+    let key = archon_queue::store::keys::design_owed(&f.session);
+    assert!(f.h.ctx.store.lock().await.kv_get(&key).unwrap().is_none());
+    assert!(f.h.backend.messages().last().unwrap().1.contains("Finish:"));
+    let replacement = replace_agent(&f).await;
+    let store = f.h.ctx.store.lock().await;
+    let row = store.design_session(&f.session).unwrap().unwrap();
+    assert_eq!(row.agent.as_ref(), Some(&replacement));
+    assert_eq!(row.state, SessionState::Confirmed);
+    let owed: Vec<serde_json::Value> = serde_json::from_str(
+        &store
+            .kv_get(&key)
+            .unwrap()
+            .expect("the new agent is owed Finish"),
+    )
+    .unwrap();
+    assert_eq!(owed.len(), 1);
+    assert_eq!(
+        owed[0]["key"],
+        format!("design:{}:finish:agent:{replacement}", f.session)
+    );
+    let text = owed[0]["text"].as_str().unwrap();
+    assert!(text.contains("Stop the dev server without touching the worktree"));
+    assert!(text.contains(&finish.capture));
+    assert!(text.contains(row.finish_head.as_deref().unwrap()));
 }
 
 /// GATE: after Approve the screen said "This design session ended", and a

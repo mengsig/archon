@@ -40,6 +40,10 @@ pub mod keys {
     pub fn design_owed(session: &DesignSessionId) -> String {
         format!("design_owed:{session}")
     }
+    /// The original request for a client-keyed note or the first note of a Continue.
+    pub fn design_input(item: &QueueItemId, note: &str) -> String {
+        format!("design_input:{item}:{note}")
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -766,6 +770,63 @@ impl Store {
         tx.commit().ctx("commit applied design revert")
     }
 
+    /// Commit a note transition, its optional thread entry and its optional delivery together.
+    pub fn design_note_transition(
+        &mut self,
+        item: &QueueItemId,
+        id: &str,
+        change: NoteChange,
+        thread: Option<ThreadEntry>,
+        owed: Option<&str>,
+    ) -> Result<(), ArchonError> {
+        assert!(matches!(
+            change,
+            NoteChange::Sent { .. } | NoteChange::Redelivered { .. } | NoteChange::Status { .. }
+        ));
+        assert!(thread.is_some() || owed.is_some());
+        let tx = write_tx(&mut self.conn)?;
+        let updated = Self::change_note(&tx, item, id, change)?;
+        if let Some(entry) = thread {
+            Self::change_note(&tx, item, id, NoteChange::Thread(entry))?;
+        }
+        if let Some(raw) = owed {
+            settings::kv_set(&tx, &keys::design_owed(&updated.session), raw)?;
+        }
+        tx.commit().ctx("commit design note transition")
+    }
+
+    /// Replace the session's agent and its pending deliveries in the same write.
+    pub fn design_session_rebind(
+        &mut self,
+        expected: &DesignSession,
+        agent: &AetherAgentId,
+        owed: Option<&str>,
+    ) -> Result<(), ArchonError> {
+        assert_ne!(expected.agent.as_ref(), Some(agent));
+        assert_ne!(expected.state, SessionState::Ended);
+        let tx = write_tx(&mut self.conn)?;
+        let current = current_session(&tx, &expected.item)?
+            .filter(|row| row.id == expected.id && row.agent == expected.agent)
+            .ok_or_else(|| {
+                refuse(
+                    DesignRefusal::Gone,
+                    "the design session or its agent changed",
+                )
+            })?;
+        tx.execute(
+            "UPDATE design_sessions SET agent = ?2 WHERE id = ?1",
+            params![current.id.as_str(), agent.as_str()],
+        )
+        .ctx("rebind design session agent")?;
+        let key = keys::design_owed(&current.id);
+        if let Some(raw) = owed {
+            settings::kv_set(&tx, &key, raw)?;
+        } else {
+            settings::kv_delete(&tx, &key)?;
+        }
+        tx.commit().ctx("commit design session rebind")
+    }
+
     /// Replace a final picture and re-stamp the review in the same write.
     pub fn design_finish_restamp(
         &mut self,
@@ -844,11 +905,39 @@ impl Store {
         Ok(added)
     }
 
+    /// Add a client-keyed note and record its original request for later retries.
+    pub fn design_note_add_requested(
+        &mut self,
+        new: NewDesignNote,
+        request: &str,
+    ) -> Result<(DesignNote, bool), ArchonError> {
+        assert!(!new.client_key.is_empty());
+        assert!(!request.is_empty());
+        let tx = write_tx(&mut self.conn)?;
+        let (note, created) = insert_note(&tx, new)?;
+        if created {
+            settings::kv_set(&tx, &keys::design_input(&note.item, &note.id), request)?;
+        }
+        tx.commit().ctx("commit requested design note")?;
+        Ok((note, created))
+    }
+
+    pub fn design_note_input(
+        &self,
+        item: &QueueItemId,
+        id: &str,
+    ) -> Result<Option<String>, ArchonError> {
+        self.kv_get(&keys::design_input(item, id))
+    }
+
     /// Queue a Continue's reverts and follow-up together, including their sequence numbers.
     pub fn design_notes_add_group(
         &mut self,
         group: Vec<NewDesignNote>,
+        request: Option<&str>,
     ) -> Result<Vec<DesignNote>, ArchonError> {
+        assert!(!group.is_empty());
+        assert!(request.is_none_or(|value| !value.is_empty()));
         let tx = write_tx(&mut self.conn)?;
         let mut notes = Vec::with_capacity(group.len());
         for new in group {
@@ -859,6 +948,10 @@ impl Store {
                 ));
             }
             notes.push(note);
+        }
+        if let Some(request) = request {
+            let first = &notes[0];
+            settings::kv_set(&tx, &keys::design_input(&first.item, &first.id), request)?;
         }
         tx.commit().ctx("commit design continue group")?;
         Ok(notes)

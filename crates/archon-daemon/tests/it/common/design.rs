@@ -410,6 +410,19 @@ impl Fixture {
     }
 
     pub async fn with(config: Config) -> Self {
+        let fixture = Self::with_preview(config).await;
+        // The browser starts lazily, when the operator first looks (a
+        // subscribe or a capture); a reload is the same first look.
+        fixture
+            .operator(Request::DesignReload {
+                session: fixture.session.clone(),
+            })
+            .await
+            .expect("the operator's first look");
+        fixture
+    }
+
+    pub async fn with_preview(config: Config) -> Self {
         let h = Harness::with_config(config).await;
         let factory = Arc::new(FakeFactory::default());
         h.ctx.design.set_factory(factory.clone());
@@ -458,14 +471,6 @@ impl Fixture {
             })
             .await
             .expect("preview reported");
-        // The browser starts lazily, when the operator first looks (a
-        // subscribe or a capture); a reload is the same first look.
-        fixture
-            .operator(Request::DesignReload {
-                session: fixture.session.clone(),
-            })
-            .await
-            .expect("the operator's first look");
         fixture
     }
 

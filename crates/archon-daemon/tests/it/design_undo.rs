@@ -333,6 +333,12 @@ async fn recovered(f: &Fixture, id: &str) -> archon_core::design::DesignNote {
 /// be left in settles to one consistent state at the next start.
 #[tokio::test]
 async fn a_crashed_undo_settles_at_startup() {
+    tokio::time::timeout(std::time::Duration::from_secs(12), check_crashed_undo())
+        .await
+        .expect("the undo recovery cases complete");
+}
+
+async fn check_crashed_undo() {
     // Branch at the revert: the note is done with that commit.
     let f = Fixture::new().await;
     let (id, commit, revert) = undone(&f).await;

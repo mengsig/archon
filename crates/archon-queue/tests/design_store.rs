@@ -82,7 +82,11 @@ fn a_continue_with_an_invalid_followup_rolls_back_its_undos_and_sequence() {
     let undo = new_note(item, &session, "undo:one");
     let mut follow = new_note(item, &session, "follow");
     follow.text.clear();
-    assert!(store.design_notes_add_group(vec![undo, follow]).is_err());
+    assert!(
+        store
+            .design_notes_add_group(vec![undo, follow], None)
+            .is_err()
+    );
     assert!(store.design_notes(item).unwrap().is_empty());
     assert_eq!(add(&mut store, item, &session, "next"), "D1");
 }

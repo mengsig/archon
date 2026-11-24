@@ -2304,20 +2304,35 @@ pub(crate) async fn design_started(ctx: &DaemonContext, stage: &StageRun, agent:
         worktree: run.workspace.clone(),
         branch: run.branch.clone(),
     };
-    if let Err(error) = ctx
-        .design
-        .stage_started(
-            &ctx.arc(),
-            &run.item,
-            &run.id,
-            &stage.stage_id,
-            stage.attempt,
-            agent,
-            worktree,
-        )
-        .await
-    {
-        tracing::warn!(%error, stage = %stage.id, "design session did not start");
+    let lock = ctx.design.item_lock(&run.item);
+    let ctx = ctx.arc();
+    let agent = agent.clone();
+    let bind = async move |held| {
+        if let Err(error) = ctx
+            .design
+            .stage_started_locked(
+                &ctx,
+                &run.item,
+                &run.id,
+                &current.stage_id,
+                current.attempt,
+                &agent,
+                worktree,
+                held,
+            )
+            .await
+        {
+            tracing::warn!(%error, stage = %current.id, "design session did not start");
+        }
+    };
+    // Record holds the run table. A busy item must release its lock off that path.
+    match lock.clone().try_lock_owned() {
+        Ok(held) => bind(held).await,
+        Err(_) => {
+            tokio::spawn(async move {
+                bind(lock.lock_owned().await).await;
+            });
+        }
     }
 }
 

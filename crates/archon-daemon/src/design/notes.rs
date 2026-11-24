@@ -2,16 +2,17 @@
 //! again and tell the agent again.
 
 use archon_core::design::{
-    DesignAssetId, DesignNote, DesignSessionId, MAX_DETAILS_CHARS, MAX_NOTE_CHARS,
-    MAX_NOTES_PER_SESSION, MAX_REPLY_CHARS, NoteKind, NoteStatus, ReplyAuthor, ThreadEntry,
-    Viewport, clean_text, is_in_flight, undone_by,
+    DesignAssetId, DesignNote, DesignSession, DesignSessionId, MAX_DETAILS_CHARS, MAX_NOTE_CHARS,
+    MAX_REPLY_CHARS, NoteKind, NoteStatus, ReplyAuthor, SessionState, ThreadEntry, Viewport,
+    clean_text, is_in_flight, undone_by,
 };
 use archon_core::error::{ArchonError, DesignRefusal};
 use archon_core::id::QueueItemId;
 use archon_core::protocol::Reply;
-use archon_queue::store::{NewDesignNote, NoteChange};
+use archon_queue::store::{NewDesignNote, NoteChange, Store};
+use sha2::{Digest, Sha256};
 
-use super::delivery::note_message;
+use super::delivery::{Owed, agent_key, note_message, pending_note_delivery, queued_payload};
 use super::{DesignService, note_view, refuse, status_change};
 use crate::context::DaemonContext;
 
@@ -28,7 +29,240 @@ pub(super) fn validate_client_key(key: &str) -> Result<(), ArchonError> {
     Ok(())
 }
 
+pub(super) fn request_fingerprint(input: impl serde::Serialize) -> Result<String, ArchonError> {
+    let bytes = serde_json::to_vec(&input)
+        .map_err(|error| ArchonError::Corrupt(format!("encode design note request: {error}")))?;
+    Ok(Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+pub(super) fn require_matching_request(
+    store: &Store,
+    session: &DesignSession,
+    note: &DesignNote,
+    request: &str,
+    legacy_matches: impl FnOnce() -> bool,
+) -> Result<(), ArchonError> {
+    assert_eq!(note.item, session.item);
+    assert!(!note.client_key.is_empty());
+    let matches = note.session == session.id
+        && match store.design_note_input(&note.item, &note.id)? {
+            Some(saved) => saved == request,
+            None => legacy_matches(),
+        };
+    if !matches {
+        return Err(ArchonError::Invalid(
+            "this client key already belongs to a different design request".into(),
+        ));
+    }
+    Ok(())
+}
+
+struct AddInput {
+    client_key: String,
+    text: String,
+    asset: Option<DesignAssetId>,
+    send_picture: bool,
+    details: Option<String>,
+    follows: Option<String>,
+    refs: Vec<String>,
+}
+
+impl AddInput {
+    fn store(
+        mut self,
+        store: &mut Store,
+        session: &DesignSession,
+    ) -> Result<(DesignNote, bool), ArchonError> {
+        let existing = store.design_notes(&session.item)?;
+        self.refs = super::iterations::check_refs(std::mem::take(&mut self.refs), &existing)?;
+        let request = request_fingerprint((
+            &self.text,
+            &self.asset,
+            self.send_picture,
+            &self.details,
+            &self.follows,
+            &self.refs,
+        ))?;
+        if let Some(found) = existing.iter().find(|n| n.client_key == self.client_key) {
+            require_matching_request(store, session, found, &request, || {
+                found.text == self.text
+                    && found.details_text == self.details
+                    && found.follows == self.follows
+                    && found.refs == self.refs
+                    && (self.follows.is_some() && self.asset.is_none()
+                        || found.before_asset == self.asset
+                            && found.send_picture == (self.send_picture && self.asset.is_some()))
+            })?;
+            return Ok((found.clone(), false));
+        }
+        let parent = self
+            .follows
+            .as_deref()
+            .map(|id| super::iterations::check_follows(id, &existing, &[]))
+            .transpose()?;
+        let new = self.into_note(store, session, parent)?;
+        store.design_note_add_requested(new, &request)
+    }
+
+    fn into_note(
+        self,
+        store: &Store,
+        session: &DesignSession,
+        parent: Option<&DesignNote>,
+    ) -> Result<NewDesignNote, ArchonError> {
+        assert_eq!(parent.map(|n| n.id.as_str()), self.follows.as_deref());
+        assert!(parent.is_none_or(|n| n.item == session.item));
+        let device = super::current_device().map(|d| d.id);
+        match (parent, self.asset) {
+            (Some(parent), None) => {
+                let mut new = super::iterations::follow_up(
+                    &session.item,
+                    &session.id,
+                    parent,
+                    self.text,
+                    self.client_key,
+                    self.refs,
+                    device,
+                );
+                new.details_text = self.details;
+                Ok(new)
+            }
+            (parent, asset) => new_note(
+                store,
+                session,
+                NewDesignNote {
+                    item: session.item.clone(),
+                    session: session.id.clone(),
+                    kind: NoteKind::Page,
+                    text: self.text,
+                    details_text: self.details,
+                    send_picture: self.send_picture && asset.is_some(),
+                    target: None,
+                    viewport: session_viewport(session),
+                    client_key: self.client_key,
+                    reverts: None,
+                    resent_from: None,
+                    follows: parent.map(|p| p.id.clone()),
+                    refs: self.refs,
+                    before_asset: asset,
+                    created_by_device: device,
+                },
+            ),
+        }
+    }
+}
+
+fn session_viewport(session: &DesignSession) -> Viewport {
+    let (w, h) = session.viewport_preset.size();
+    Viewport {
+        w,
+        h,
+        preset: session.viewport_preset,
+    }
+}
+
+fn new_note(
+    store: &Store,
+    session: &DesignSession,
+    mut new: NewDesignNote,
+) -> Result<NewDesignNote, ArchonError> {
+    assert_eq!(new.session, session.id);
+    assert_eq!(new.item, session.item);
+    if let Some(id) = &new.before_asset {
+        let asset = store.design_asset(&session.item, id)?.ok_or_else(|| {
+            ArchonError::Invalid("that picture was not stored by Archon for this item".into())
+        })?;
+        if let Some(target) = asset.target {
+            new.kind = NoteKind::Change;
+            new.viewport = target.viewport;
+            new.target = Some(target);
+        }
+    }
+    Ok(new)
+}
+
+fn queue_undo(
+    store: &mut Store,
+    session: &DesignSession,
+    id: &str,
+) -> Result<DesignNote, ArchonError> {
+    let device = super::current_device().map(|d| d.id);
+    let item = &session.item;
+    let notes = store.design_notes(item)?;
+    let note = notes
+        .iter()
+        .find(|n| n.id == id)
+        .ok_or_else(|| ArchonError::NotFound(format!("note {id}")))?;
+    if note.kind == NoteKind::Revert {
+        return Err(ArchonError::Invalid("an undo cannot be undone".into()));
+    }
+    if note.status != NoteStatus::Done || note.commit.is_none() || note.no_change {
+        return Err(ArchonError::Invalid(format!("{id} has no change to undo")));
+    }
+    if undone_by(&notes).contains_key(id) {
+        return Err(ArchonError::Invalid(format!("{id} is already undone")));
+    }
+    let pending = notes.iter().any(|n| {
+        n.kind == NoteKind::Revert
+            && n.reverts.as_deref() == Some(id)
+            && matches!(n.status, NoteStatus::Queued | NoteStatus::Working)
+    });
+    if pending {
+        return Err(ArchonError::Invalid(format!(
+            "an undo of {id} is already waiting"
+        )));
+    }
+    let approved = store
+        .item(item)?
+        .intent
+        .is_some_and(|binding| binding.requirements.iter().any(|r| r == id));
+    if approved {
+        return Err(ArchonError::Invalid(format!(
+            "{id} was approved earlier; add a new note instead"
+        )));
+    }
+    let (revert, created) = store.design_note_add(NewDesignNote {
+        item: item.clone(),
+        session: session.id.clone(),
+        kind: NoteKind::Revert,
+        text: format!("Undo {id}"),
+        details_text: None,
+        send_picture: false,
+        target: None,
+        viewport: note.viewport,
+        client_key: format!("undo:{id}:{}", notes.len()),
+        reverts: Some(id.to_owned()),
+        resent_from: None,
+        follows: None,
+        refs: Vec::new(),
+        before_asset: None,
+        created_by_device: device,
+    })?;
+    assert!(created, "a new undo has a fresh generated key");
+    assert_eq!(revert.reverts.as_deref(), Some(id));
+    Ok(revert)
+}
+
 impl DesignService {
+    pub(super) async fn exact_notes_session(
+        &self,
+        ctx: &DaemonContext,
+        expected: &DesignSession,
+    ) -> Result<DesignSession, ArchonError> {
+        let current = self.current(ctx, &expected.id).await?;
+        assert_eq!(current.item, expected.item);
+        if matches!(
+            current.state,
+            SessionState::Finishing | SessionState::Confirmed
+        ) {
+            return Err(super::finishing());
+        }
+        Ok(current)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn note_add(
         &self,
@@ -42,95 +276,33 @@ impl DesignService {
         follows: Option<String>,
         refs: Vec<String>,
     ) -> Result<Reply, ArchonError> {
-        let row = self.current(ctx, session).await?;
-        let row = self.current_for_notes(ctx, &row.item).await.map(|_| row)?;
+        let expected = self.current(ctx, session).await?;
         let text = clean_text(&text, MAX_NOTE_CHARS);
         if text.is_empty() {
             return Err(ArchonError::Invalid("a note needs words".into()));
         }
         validate_client_key(&client_key)?;
-        let details = details_text
-            .map(|d| clean_text(&d, MAX_DETAILS_CHARS))
-            .filter(|d| !d.is_empty());
-        let device = super::current_device().map(|d| d.id);
-        let (note, created) = {
-            let mut store = ctx.store.lock().await;
-            let existing = store.design_notes(&row.item)?;
-            // A repeat of a note already added is answered as it stands,
-            // whatever happened to its chain since.
-            if let Some(found) = existing.iter().find(|n| n.client_key == client_key) {
-                let id = found.id.clone();
-                drop(store);
-                return self.note_reply(ctx, &row.item, &id).await;
-            }
-            if existing.iter().filter(|n| n.session == row.id).count() >= MAX_NOTES_PER_SESSION {
-                return Err(ArchonError::Invalid(format!(
-                    "a session holds at most {MAX_NOTES_PER_SESSION} notes"
-                )));
-            }
-            let refs = super::iterations::check_refs(refs, &existing)?;
-            let parent = match follows.as_deref() {
-                Some(follows) => {
-                    Some(super::iterations::check_follows(follows, &existing, &[])?.clone())
-                }
-                None => None,
-            };
-            if let (Some(parent), None) = (&parent, &asset) {
-                // A follow-up with no picture of its own points where its
-                // version did and starts from that version's picture.
-                let mut new = super::iterations::follow_up(
-                    &row.item, &row.id, parent, text, client_key, refs, device,
-                );
-                new.details_text = details;
-                store.design_note_add(new)?
-            } else {
-                // Only a picture this server stored for this item is accepted.
-                let stored = match &asset {
-                    Some(id) => Some(store.design_asset(&row.item, id)?.ok_or_else(|| {
-                        ArchonError::Invalid(
-                            "that picture was not stored by Archon for this item".into(),
-                        )
-                    })?),
-                    None => None,
-                };
-                let target = stored.as_ref().and_then(|a| a.target.clone());
-                let kind = if target.is_some() {
-                    NoteKind::Change
-                } else {
-                    NoteKind::Page
-                };
-                let viewport = target.as_ref().map(|t| t.viewport).unwrap_or_else(|| {
-                    let (w, h) = row.viewport_preset.size();
-                    Viewport {
-                        w,
-                        h,
-                        preset: row.viewport_preset,
-                    }
-                });
-                store.design_note_add(NewDesignNote {
-                    item: row.item.clone(),
-                    session: row.id.clone(),
-                    kind,
-                    text,
-                    details_text: details,
-                    send_picture: send_picture && stored.is_some(),
-                    target,
-                    viewport,
-                    client_key,
-                    reverts: None,
-                    resent_from: None,
-                    follows: parent.map(|p| p.id),
-                    refs,
-                    before_asset: stored.map(|a| a.id),
-                    created_by_device: device,
-                })?
-            }
+        let input = AddInput {
+            client_key,
+            text,
+            asset,
+            send_picture,
+            follows,
+            refs,
+            details: details_text
+                .map(|d| clean_text(&d, MAX_DETAILS_CHARS))
+                .filter(|d| !d.is_empty()),
         };
+        let lock = self.item_lock(&expected.item);
+        let held = lock.lock().await;
+        let session = self.exact_notes_session(ctx, &expected).await?;
+        let (note, created) = input.store(&mut *ctx.store.lock().await, &session)?;
         if created {
             tracing::info!(note = %note.id, item = %note.item, device = ?super::current_device_label(), "design: note added");
             self.emit_note(ctx, &note.item, &note.id).await;
-            self.pump(ctx, &note.item).await?;
         }
+        drop(held);
+        self.pump(ctx, &note.item).await?;
         self.note_reply(ctx, &note.item, &note.id).await
     }
 
@@ -240,6 +412,8 @@ impl DesignService {
         id: &str,
         text: String,
     ) -> Result<Reply, ArchonError> {
+        let lock = self.item_lock(item);
+        let _held = lock.lock().await;
         let (session, note) = self.own_note(ctx, item, id).await?;
         if note.status != NoteStatus::NeedsReply {
             return Err(ArchonError::Invalid(
@@ -257,26 +431,30 @@ impl DesignService {
             note.delivery,
             note.thread.len()
         );
-        self.owe_queue(
-            ctx,
-            &session,
-            key,
-            format!("Operator's answer on {id}: \"{text}\""),
-            None,
-        )
-        .await?;
         {
             let mut store = ctx.store.lock().await;
-            store.design_note_change(
+            let raw = queued_payload(
+                &store,
+                &session,
+                Owed {
+                    key,
+                    text: format!("Operator's answer on {id}: \"{text}\""),
+                    asset: None,
+                    item: item.clone(),
+                    more: Vec::new(),
+                },
+            )?;
+            store.design_note_transition(
                 item,
                 id,
-                NoteChange::Thread(ThreadEntry {
+                status_change(NoteStatus::Working, None),
+                Some(ThreadEntry {
                     at: archon_core::now(),
                     from: ReplyAuthor::Operator,
                     text,
                 }),
+                Some(&raw),
             )?;
-            store.design_note_change(item, id, status_change(NoteStatus::Working, None))?;
         }
         self.emit_note(ctx, item, id).await;
         self.flush_owed(ctx, &session).await?;
@@ -289,6 +467,8 @@ impl DesignService {
         item: &QueueItemId,
         id: &str,
     ) -> Result<Reply, ArchonError> {
+        let lock = self.item_lock(item);
+        let _held = lock.lock().await;
         let (session, note) = self.own_note(ctx, item, id).await?;
         if !is_in_flight(note.status) || note.kind == NoteKind::Revert {
             return Err(ArchonError::Invalid(
@@ -304,7 +484,11 @@ impl DesignService {
             ));
         }
         let key = format!("design:{}:{}:{}:drop", session.id, id, note.delivery);
-        self.owe(
+        let key = session
+            .agent
+            .as_ref()
+            .map_or(key.clone(), |agent| agent_key(&key, agent));
+        self.owe_locked(
             ctx,
             &session,
             key,
@@ -323,69 +507,14 @@ impl DesignService {
         item: &QueueItemId,
         id: &str,
     ) -> Result<Reply, ArchonError> {
-        let session = self.current_for_notes(ctx, item).await?;
-        let device = super::current_device().map(|d| d.id);
-        let revert = {
-            let mut store = ctx.store.lock().await;
-            let notes = store.design_notes(item)?;
-            let note = notes
-                .iter()
-                .find(|n| n.id == id)
-                .ok_or_else(|| ArchonError::NotFound(format!("note {id}")))?;
-            if note.kind == NoteKind::Revert {
-                return Err(ArchonError::Invalid("an undo cannot be undone".into()));
-            }
-            if note.status != NoteStatus::Done || note.commit.is_none() || note.no_change {
-                return Err(ArchonError::Invalid(format!("{id} has no change to undo")));
-            }
-            if undone_by(&notes).contains_key(id) {
-                return Err(ArchonError::Invalid(format!("{id} is already undone")));
-            }
-            let pending = notes.iter().any(|n| {
-                n.kind == NoteKind::Revert
-                    && n.reverts.as_deref() == Some(id)
-                    && matches!(n.status, NoteStatus::Queued | NoteStatus::Working)
-            });
-            if pending {
-                return Err(ArchonError::Invalid(format!(
-                    "an undo of {id} is already waiting"
-                )));
-            }
-            let approved = store
-                .item(item)?
-                .intent
-                .is_some_and(|binding| binding.requirements.iter().any(|r| r == id));
-            if approved {
-                return Err(ArchonError::Invalid(format!(
-                    "{id} was approved earlier; add a new note instead"
-                )));
-            }
-            let (_, created) = store.design_note_add(NewDesignNote {
-                item: item.clone(),
-                session: session.id.clone(),
-                kind: NoteKind::Revert,
-                text: format!("Undo {id}"),
-                details_text: None,
-                send_picture: false,
-                target: None,
-                viewport: note.viewport,
-                client_key: format!("undo:{id}:{}", notes.len()),
-                reverts: Some(id.to_owned()),
-                resent_from: None,
-                follows: None,
-                refs: Vec::new(),
-                before_asset: None,
-                created_by_device: device,
-            })?;
-            debug_assert!(created);
-            store
-                .design_notes(item)?
-                .into_iter()
-                .rfind(|n| n.reverts.as_deref() == Some(id))
-                .ok_or_else(|| ArchonError::Corrupt("the undo note was not stored".into()))?
-        };
+        let expected = self.current_for_notes(ctx, item).await?;
+        let lock = self.item_lock(item);
+        let held = lock.lock().await;
+        let session = self.exact_notes_session(ctx, &expected).await?;
+        let revert = queue_undo(&mut *ctx.store.lock().await, &session, id)?;
         tracing::info!(note = id, undo = %revert.id, %item, device = ?super::current_device_label(), "design: undo queued");
         self.emit_note(ctx, item, &revert.id).await;
+        drop(held);
         self.pump(ctx, item).await?;
         self.note_reply(ctx, item, &revert.id).await
     }
@@ -397,7 +526,10 @@ impl DesignService {
         item: &QueueItemId,
         id: &str,
     ) -> Result<Reply, ArchonError> {
-        let session = self.current_for_notes(ctx, item).await?;
+        let expected = self.current_for_notes(ctx, item).await?;
+        let lock = self.item_lock(item);
+        let held = lock.lock().await;
+        let session = self.exact_notes_session(ctx, &expected).await?;
         let device = super::current_device().map(|d| d.id);
         let created = {
             let mut store = ctx.store.lock().await;
@@ -440,6 +572,7 @@ impl DesignService {
             created
         };
         self.emit_note(ctx, item, &created.id).await;
+        drop(held);
         self.pump(ctx, item).await?;
         self.note_reply(ctx, item, &created.id).await
     }
@@ -451,32 +584,18 @@ impl DesignService {
         ctx: &DaemonContext,
         session_id: &DesignSessionId,
     ) -> Result<Reply, ArchonError> {
-        let session = self.current(ctx, session_id).await?;
-        let session = self
-            .current_for_notes(ctx, &session.item)
-            .await
-            .map(|_| session)?;
+        let expected = self.current(ctx, session_id).await?;
+        let lock = self.item_lock(&expected.item);
+        let _held = lock.lock().await;
+        let session = self.exact_notes_session(ctx, &expected).await?;
         let notes = ctx.store.lock().await.design_notes(&session.item)?;
         let sent = notes.iter().find(|n| {
             n.session == session.id && n.status == NoteStatus::Sent && n.kind != NoteKind::Revert
         });
         if let Some(note) = sent {
-            let delivery = note.delivery + 1;
-            let wt = self.worktree_of(ctx, &session).await?;
-            let head = self.head_of(&wt)?;
-            let key = format!("design:{}:{}:{}", session.id, note.id, delivery);
-            let (text, more) = note_message(&session, note, &head, &notes);
-            let asset = note
-                .send_picture
-                .then(|| note.before_asset.clone())
-                .flatten();
-            self.owe_queue_with(ctx, &session, key, text, asset, more)
-                .await?;
-            ctx.store.lock().await.design_note_change(
-                &session.item,
-                &note.id,
-                NoteChange::Redelivered { delivery },
-            )?;
+            if !pending_note_delivery(&self.owed_list(ctx, &session.id).await?, &session, note) {
+                self.redeliver(ctx, &session, note, &notes).await?;
+            }
             self.flush_owed(ctx, &session).await?;
             return Ok(Reply::DesignAgent {
                 message: format!("{} sent to the agent again", note.id),
@@ -489,7 +608,7 @@ impl DesignService {
                 session.id,
                 archon_core::now().timestamp_millis()
             );
-            self.owe(
+            self.owe_locked(
                 ctx,
                 &session,
                 key,
@@ -504,5 +623,47 @@ impl DesignService {
         Err(ArchonError::Invalid(
             "there is nothing to tell the agent".into(),
         ))
+    }
+    async fn redeliver(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSession,
+        note: &DesignNote,
+        notes: &[DesignNote],
+    ) -> Result<(), ArchonError> {
+        assert_eq!(note.session, session.id);
+        assert_eq!(note.status, NoteStatus::Sent);
+        let delivery = note.delivery.checked_add(1).ok_or_else(|| {
+            ArchonError::Corrupt(format!("{} exhausted its delivery sequence", note.id))
+        })?;
+        let base = note.base_commit.as_deref().ok_or_else(|| {
+            ArchonError::Corrupt(format!("{} was sent without a base commit", note.id))
+        })?;
+        let (text, more) = note_message(session, note, base, notes);
+        let mut store = ctx.store.lock().await;
+        let raw = queued_payload(
+            &store,
+            session,
+            Owed {
+                key: format!("design:{}:{}:{delivery}", session.id, note.id),
+                text,
+                asset: note
+                    .send_picture
+                    .then(|| note.before_asset.clone())
+                    .flatten(),
+                item: note.item.clone(),
+                more,
+            },
+        )?;
+        store.design_note_transition(
+            &note.item,
+            &note.id,
+            NoteChange::Redelivered { delivery },
+            None,
+            Some(&raw),
+        )?;
+        drop(store);
+        self.emit_note(ctx, &note.item, &note.id).await;
+        Ok(())
     }
 }

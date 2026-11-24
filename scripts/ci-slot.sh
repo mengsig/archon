@@ -148,7 +148,7 @@ show_status() {
 
 set_jobs() {
     [ "${CARGO_BUILD_JOBS+x}" ] && return
-    available=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+    available=$(mem_available_kb)
     cores=$(getconf _NPROCESSORS_ONLN)
     jobs=$((available / 1258291))
     [ "$jobs" -ge 2 ] || jobs=2

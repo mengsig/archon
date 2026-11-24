@@ -312,6 +312,29 @@ if grep -q '^systemd-run' "$LP_LOG"; then fail "systemd-run ran without timeout"
 threads=$(env -u NEXTEST_TEST_THREADS -u RUST_TEST_THREADS PATH="$noflock" "$shell_path" "$slot" sh -c "$show_threads" 2>/dev/null)
 [ "$threads" = "4 4" ] || fail "no-flock run left test threads '$threads'"
 
+# Job sizing against a fake meminfo, with a fixed CPU count.
+jobsbin="$testdir/jobs-bin"
+mkdir "$jobsbin"
+printf '#!/bin/sh\necho 8\n' > "$jobsbin/getconf"
+chmod +x "$jobsbin/getconf"
+# shellcheck disable=SC2016
+show_jobs='echo "$CARGO_BUILD_JOBS"'
+for sizing in '0 2' '3774873 3' '25165820 8'; do
+    available=${sizing% *}
+    expected=${sizing#* }
+    printf 'MemAvailable: %s kB\n' "$available" > "$testdir/jobs-meminfo"
+    jobs=$(env -u CARGO_BUILD_JOBS PATH="$jobsbin:$PATH" CI_SLOT_MEMINFO="$testdir/jobs-meminfo" CI_HOST_SLOTS=1 "$shell" "$slot" sh -c "$show_jobs" 2>"$testdir/jobs.err")
+    [ "$jobs" = "$expected" ] || fail "memory $available sized jobs as '$jobs', expected $expected"
+done
+printf 'MemTotal: 8388608 kB\n' > "$testdir/jobs-meminfo"
+if env -u CARGO_BUILD_JOBS CI_SLOT_MEMINFO="$testdir/jobs-meminfo" CI_HOST_SLOTS=1 "$shell" "$slot" touch "$testdir/missing-memory-ran" 2>"$testdir/jobs.err"; then
+    fail "missing MemAvailable silently sized jobs"
+fi
+grep -q 'no MemAvailable' "$testdir/jobs.err" || fail "missing memory error not reported"
+[ ! -e "$testdir/missing-memory-ran" ] || fail "command ran without memory sizing data"
+jobs=$(CI_SLOT_MEMINFO="$testdir/jobs-meminfo" CARGO_BUILD_JOBS=5 run_slot sh -c "$show_jobs")
+[ "$jobs" = 5 ] || fail "caller CARGO_BUILD_JOBS not kept: '$jobs'"
+
 # Memory wait against a fake meminfo.
 printf 'MemAvailable: %s kB\n' 8388608 > "$testdir/meminfo"
 export CI_SLOT_MEMINFO="$testdir/meminfo" CI_SLOT_MEM_POLL_SECS=1

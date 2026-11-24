@@ -108,7 +108,7 @@ async fn verify_build(
         unreachable!()
     };
     let binding = item.intent.as_deref().expect("intent required");
-    let results = archon_pipeline::acceptance::build_results(record, binding, structured.as_ref())?;
+    let results = requirement_results(item, record, structured.as_ref())?;
     let (head, tree) = records::head(&run.workspace).await?;
     let evidence = BuildEvidence {
         head,
@@ -139,7 +139,7 @@ async fn verify_acceptance(
     mut outcome: StageOutcome,
 ) -> Result<Option<StageOutcome>, ArchonError> {
     let binding = item.intent.as_deref().expect("intent required");
-    let evidence = build_evidence(ctx, run, record, binding, &outcome).await?;
+    let evidence = build_evidence(ctx, run, record, item, &outcome).await?;
     let (head, tree) = records::head(&run.workspace).await?;
     if evidence.head != head || evidence.tree != tree || evidence.intent != *binding {
         return Err(ArchonError::Invalid(
@@ -147,7 +147,13 @@ async fn verify_acceptance(
         ));
     }
     images::verify(&evidence.images)?;
-    let independent = spawn::check_judge(ctx, run, stage, !record.images.is_empty()).await?;
+    let independent = spawn::check_judge(
+        ctx,
+        run,
+        stage,
+        (!record.images.is_empty(), item.autonomy.proposal),
+    )
+    .await?;
     deviations::require_authorized(&*ctx.store.lock().await, run, &evidence)?;
     let StageOutcome::Completed { structured, .. } = &mut outcome else {
         unreachable!()
@@ -223,11 +229,23 @@ async fn record_judgment(
     Ok(())
 }
 
+fn requirement_results(
+    item: &QueueItem,
+    record: &ApprovedIntent,
+    structured: Option<&serde_json::Value>,
+) -> Result<Vec<RequirementResult>, ArchonError> {
+    let binding = item.intent.as_deref().expect("evidence requires a binding");
+    if item.autonomy.proposal == archon_core::autonomy::ProposalMode::Live {
+        return archon_pipeline::acceptance::build_live_results(record, binding, structured);
+    }
+    archon_pipeline::acceptance::build_results(record, binding, structured)
+}
+
 async fn build_evidence(
     ctx: &DaemonContext,
     run: &PipelineRun,
     record: &ApprovedIntent,
-    binding: &IntentBinding,
+    item: &QueueItem,
     outcome: &StageOutcome,
 ) -> Result<BuildEvidence, ArchonError> {
     let key = format!("intent_build:{}", run.id);
@@ -238,8 +256,7 @@ async fn build_evidence(
     let StageOutcome::Completed { structured, .. } = outcome else {
         unreachable!()
     };
-    let requirements =
-        archon_pipeline::acceptance::build_results(record, binding, structured.as_ref())?;
+    let requirements = requirement_results(item, record, structured.as_ref())?;
     let (head, tree) = records::head(&run.workspace).await?;
     let images = images::prove(record, &requirements, &run.workspace)?;
     assert!(!requirements.is_empty());
@@ -247,7 +264,11 @@ async fn build_evidence(
     Ok(BuildEvidence {
         head,
         tree,
-        intent: binding.clone(),
+        intent: item
+            .intent
+            .as_deref()
+            .expect("evidence requires a binding")
+            .clone(),
         requirements,
         images,
     })

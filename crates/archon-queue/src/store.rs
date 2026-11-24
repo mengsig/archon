@@ -780,10 +780,10 @@ impl Store {
     ) -> Result<Vec<FeedItem>, ArchonError> {
         gates::close_withdrawn_questions(&mut self.conn, at)
     }
-    /// Close the questions still open about a cancelled item, each with a
+    /// Close the questions still open about a cancelled live design item, each with a
     /// feed answer, which is returned for broadcasting: nobody acts on
     /// their answers any more. Gate questions close with their gates.
-    pub fn close_cancelled_item_questions(
+    pub fn close_cancelled_design_questions(
         &mut self,
         at: Timestamp,
     ) -> Result<Vec<FeedItem>, ArchonError> {
@@ -791,11 +791,15 @@ impl Store {
         for question in feed::list(&self.conn, true)? {
             let Some(item) = &question.item else { continue };
             let cancelled = match self.item(item) {
-                Ok(found) => matches!(
-                    found.state,
-                    archon_core::queue::QueueState::Cancelled { .. }
-                ),
-                Err(_) => false,
+                Ok(found) => {
+                    found.autonomy.proposal == archon_core::autonomy::ProposalMode::Live
+                        && matches!(
+                            found.state,
+                            archon_core::queue::QueueState::Cancelled { .. }
+                        )
+                }
+                Err(ArchonError::NotFound(_)) => false,
+                Err(error) => return Err(error),
             };
             if cancelled && gates::by_question(&self.conn, &question.id)?.is_none() {
                 stale.push(question.id);

@@ -491,16 +491,25 @@ fn recorded(outcome: StageOutcome, flagged: bool) -> StageOutcome {
 /// End every design session of `run` still open: a run that finishes or is
 /// cancelled while its proposal gate is open leaves a Confirmed session whose
 /// browser would otherwise keep running and hold a `max_sessions` slot.
-pub(crate) async fn end_designs(ctx: &DaemonContext, run: &archon_core::id::PipelineRunId) {
+pub(super) async fn end_designs(ctx: &DaemonContext, run: &PipelineRun) {
     let sessions = {
         let store = ctx.store.lock().await;
-        let Ok(run) = store.run(run) else { return };
-        match store.design_sessions(&run.item) {
+        let found = store.item(&run.item).and_then(|item| {
+            if item.autonomy.proposal == archon_core::autonomy::ProposalMode::Live {
+                store.design_sessions(&run.item)
+            } else {
+                Ok(Vec::new())
+            }
+        });
+        match found {
             Ok(all) => all
                 .into_iter()
                 .filter(|s| s.run == run.id && s.state != archon_core::design::SessionState::Ended)
                 .collect::<Vec<_>>(),
-            Err(_) => return,
+            Err(error) => {
+                tracing::warn!(%error, run = %run.id, "could not find the run's open design sessions");
+                return;
+            }
         }
     };
     for session in sessions {
@@ -1577,7 +1586,6 @@ async fn apply_decision(
     }
     if let Some(state) = finish_state {
         assert!(spawns.is_empty(), "a finishing driver spawns nothing");
-        end_designs(ctx, &run.id).await;
         return finish::finish_run(ctx, table, run, state, false).await;
     }
     if !spawns.is_empty() {
@@ -1675,7 +1683,6 @@ async fn open_gate(
                 stage_id,
                 error: format!("approved proposal cannot be frozen: {error}"),
             };
-            end_designs(ctx, &run.id).await;
             finish::finish_run(ctx, table, run, state, false).await
         }
         result => result,

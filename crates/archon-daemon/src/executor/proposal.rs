@@ -53,10 +53,10 @@ pub(super) fn save_start(
     store.kv_set(&proposal_key(run), &serde_json::to_string(proposal)?)
 }
 
-/// A repair's amendment (`repair.rs`) asks the build again for what a gate
+/// A live design repair's amendment (`repair.rs`) asks the build again for what a gate
 /// refused; it changes nothing the operator approved. So the latest run's
 /// brief fingerprint follows the amended brief, and the repaired run starts
-/// past that run's approved proposal (or its approved live design) as a plain
+/// past that run's approved live design as a plain
 /// retry does, instead of proposing again or opening a design session no one
 /// will finish. Only a fingerprint of `before` is moved: an operator's own
 /// amendment in between still proposes again.
@@ -168,20 +168,6 @@ pub(super) async fn design_decided(
         .await
     {
         tracing::warn!(%error, gate = %gate.stage_id, "design session did not hear the decision");
-    }
-    // The decision ends the session a completed stage left confirmed.
-    if let Err(error) = ctx
-        .design
-        .stage_settled(
-            &ctx.arc(),
-            &gate.run,
-            &gate.stage_id,
-            gate.attempt,
-            crate::design::StageEnd::Completed,
-        )
-        .await
-    {
-        tracing::warn!(%error, gate = %gate.stage_id, "design session did not end");
     }
 }
 

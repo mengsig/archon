@@ -29,7 +29,7 @@ fn live_config() -> Config {
     config
 }
 
-fn live() -> AutonomyPatch {
+pub(super) fn live() -> AutonomyPatch {
     AutonomyPatch {
         proposal: Some(ProposalMode::Live),
         ..AutonomyPatch::default()
@@ -56,7 +56,7 @@ async fn enqueue(
 }
 
 /// A live item with its design stage running, and the session it owns.
-async fn designing(h: &Harness, item: &QueueItem) -> (PipelineRun, DesignSession) {
+pub(super) async fn designing(h: &Harness, item: &QueueItem) -> (PipelineRun, DesignSession) {
     h.dispatch().await;
     let running = h.running().await;
     assert_eq!(
@@ -274,7 +274,7 @@ async fn note_with(
 }
 
 /// A done change note with its commit and final picture.
-async fn done_note(
+pub(super) async fn done_note(
     h: &Harness,
     session: &DesignSession,
     run: &PipelineRun,
@@ -291,7 +291,7 @@ async fn done_note(
 }
 
 /// Finish and confirm the session at `head`, with `superseded` choices.
-async fn confirm(
+pub(super) async fn confirm(
     h: &Harness,
     session: &DesignSession,
     head: &str,
@@ -346,7 +346,7 @@ async fn confirm_with(
 }
 
 /// The design stage completes with a forged `approved_intent` naming D9.
-fn forged(_: &archon_core::run::StageRun) -> StageOutcome {
+pub(super) fn forged(_: &archon_core::run::StageRun) -> StageOutcome {
     StageOutcome::Completed {
         summary: "done".into(),
         structured: Some(json!({"approved_intent": {
@@ -360,7 +360,7 @@ async fn gates(h: &Harness, item: &QueueItemId) -> Vec<OperatorGate> {
     h.ctx.store.lock().await.gates_for_item(item).unwrap()
 }
 
-async fn open_proposal(h: &Harness, item: &QueueItemId) -> OperatorGate {
+pub(super) async fn open_proposal(h: &Harness, item: &QueueItemId) -> OperatorGate {
     let open: Vec<_> = gates(h, item)
         .await
         .into_iter()
@@ -371,7 +371,7 @@ async fn open_proposal(h: &Harness, item: &QueueItemId) -> OperatorGate {
     open.into_iter().next().unwrap()
 }
 
-async fn approve(h: &Harness, gate: &OperatorGate) {
+pub(super) async fn approve(h: &Harness, gate: &OperatorGate) {
     let asked = gate.question.clone().expect("the gate was asked");
     h.cli(Request::Answer {
         chat: false,
@@ -383,7 +383,7 @@ async fn approve(h: &Harness, gate: &OperatorGate) {
     h.dispatch().await;
 }
 
-async fn intent_of(h: &Harness, item: &QueueItemId) -> ApprovedIntent {
+pub(super) async fn intent_of(h: &Harness, item: &QueueItemId) -> ApprovedIntent {
     let store = h.ctx.store.lock().await;
     let binding = store.item(item).unwrap().intent.expect("an intent");
     store
@@ -402,6 +402,80 @@ async fn live_is_refused_while_design_sessions_are_off() {
             .contains("design sessions are turned off; set [design] enabled = true"),
         "{refused}"
     );
+}
+
+fn custom_proposal(kind: &str) -> String {
+    common::REVIEWED_TOML
+        .replace("name = \"reviewed\"", "name = \"custom-proposal\"")
+        .replacen(
+            "[[stage]]",
+            &format!("[[stage]]\nid = \"custom-first\"\nkind = \"{kind}\"\nprompt = \"implement.md\"\n\n[[stage]]"),
+            1,
+        )
+}
+
+#[tokio::test]
+async fn custom_proposal_kind_must_agree_with_live_mode_and_enablement() {
+    for (kind, enabled, proposal, reason) in [
+        (
+            "design",
+            true,
+            ProposalMode::Off,
+            Some("needs proposal = live"),
+        ),
+        (
+            "design",
+            true,
+            ProposalMode::Lavish,
+            Some("needs proposal = live"),
+        ),
+        (
+            "design",
+            false,
+            ProposalMode::Live,
+            Some("design sessions are turned off"),
+        ),
+        (
+            "propose",
+            true,
+            ProposalMode::Live,
+            Some("declares a written propose stage"),
+        ),
+        ("design", true, ProposalMode::Live, None),
+    ] {
+        let mut config = live_config();
+        config.design.enabled = enabled;
+        let h = Harness::with_config(config).await;
+        h.add_pipeline("custom-proposal", &custom_proposal(kind));
+        let mut plan = common::plan();
+        plan.0.remove("ship");
+        plan.0.get_mut("review").unwrap().truncate(1);
+        plan.0
+            .insert("custom-first".into(), vec![plan.0["implement"][0].clone()]);
+        let mut request =
+            common::enqueue_request(common::REPO_NAME, "custom-proposal", "restyle", plan);
+        request.autonomy.proposal = Some(proposal);
+        let reply = h.cli(Request::Enqueue(request)).await;
+        if let Some(reason) = reason {
+            let refused = reply.unwrap_err().to_string();
+            assert!(refused.contains(reason), "{refused}");
+            assert!(h.backend.requests().is_empty());
+        } else {
+            let Reply::Item(item) = reply.unwrap() else {
+                panic!("enqueued item")
+            };
+            h.dispatch().await;
+            let running = h.running().await;
+            assert_eq!(running[0].stage_id, "custom-first");
+            assert!(item.model_plan.0.contains_key("intent-acceptance"));
+            let store = h.ctx.store.lock().await;
+            let session = store
+                .design_current_session(&item.id)
+                .unwrap()
+                .expect("custom session");
+            assert_eq!(session.stage_id, "custom-first");
+        }
+    }
 }
 
 #[tokio::test]
@@ -447,6 +521,12 @@ async fn a_fresh_live_item_is_approved_from_archonds_records_not_the_agents() {
     assert!(gate.report.is_some(), "the ledger page was published");
     let page = std::path::PathBuf::from(gate.page.clone().unwrap());
     assert!(page.starts_with(h.ctx.paths.data_dir.join("design").join("ledger")));
+    let directory = page.parent().unwrap();
+    assert_eq!(
+        std::fs::read_dir(directory).unwrap().count(),
+        1,
+        "publication snapshots only this page"
+    );
     let html = std::fs::read_to_string(&page).unwrap();
     assert!(html.contains("D1") && !html.contains("D9") && !html.contains("forged"));
     approve(&h, &gate).await;
@@ -664,7 +744,49 @@ async fn a_worktree_that_moved_after_finish_is_refused_until_it_is_restored() {
     open_proposal(&h, &item.id).await;
 }
 
-/// T-I10: an item with an earlier intent keeps it; the new note appends.
+#[tokio::test]
+async fn approving_a_live_gate_rechecks_the_tree_and_the_frozen_picture() {
+    let h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    let (_, head) = done_note(&h, &session, &run, "make it green", b"green").await;
+    confirm(&h, &session, &head, &["D1"], &[]).await;
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    let gate = open_proposal(&h, &item.id).await;
+    let accept = || {
+        archon_daemon::executor::decide_gate(
+            &h.ctx,
+            &gate,
+            archon_core::run::GateDecision::Approve { note: None },
+        )
+    };
+    commit(&run, "extra.txt", "after the gate opened");
+    let refused = accept().await.unwrap_err().to_string();
+    assert!(refused.contains("worktree moved after Finish"), "{refused}");
+    assert!(h.item(&item.id).await.intent.is_none());
+    common::git(&run.workspace, &["reset", "--hard", &head]);
+
+    let image = h
+        .ctx
+        .paths
+        .data_dir
+        .join("approved-intent-artifacts")
+        .join(format!("{}.png", green_picture_sha()));
+    let bytes = std::fs::read(&image).unwrap();
+    std::fs::write(&image, [PNG, b"red".as_slice()].concat()).unwrap();
+    let refused = accept().await.unwrap_err().to_string();
+    assert!(
+        refused.contains("D1-final changed after review"),
+        "{refused}"
+    );
+    assert!(open_proposal(&h, &item.id).await.is_open());
+    std::fs::write(&image, bytes).unwrap();
+    approve(&h, &gate).await;
+    assert_eq!(intent_of(&h, &item.id).await.images[0].id, "D1-final");
+}
+
+/// T-I10: the new note appends only to the requirements this item selected.
 #[tokio::test]
 async fn a_live_item_with_an_earlier_intent_appends_to_it() {
     let h = Harness::with_config(live_config()).await;
@@ -676,9 +798,15 @@ async fn a_live_item_with_an_earlier_intent_appends_to_it() {
         .collect::<String>();
     let earlier: ApprovedIntent = serde_json::from_value(json!({
         "id": "inbox1", "version": 1, "source": {"kind": "inbox", "seq": 3},
-        "operator_words": "Match the mockup", "artifacts": [],
-        "images": [{"id": "D1-final", "path": path, "sha256": hash}],
-        "requirements": [{"id": "D1", "text": "Match the mockup", "kind": "visual", "owner": "operator", "images": ["D1-final"]}]
+        "operator_words": "  Match the mockup\n", "artifacts": [],
+        "images": [
+            {"id": "D1-final", "path": path, "sha256": hash},
+            {"id": "unselected", "path": path, "sha256": hash},
+        ],
+        "requirements": [
+            {"id": "D1", "text": "Match the mockup", "kind": "visual", "owner": "operator", "images": ["D1-final"]},
+            {"id": "elsewhere", "text": "Another item", "kind": "visual", "owner": "operator", "images": ["unselected"]},
+        ]
     }))
     .unwrap();
     h.ctx
@@ -690,7 +818,7 @@ async fn a_live_item_with_an_earlier_intent_appends_to_it() {
     let binding = IntentBinding {
         id: earlier.id.clone(),
         version: 1,
-        requirements: vec![],
+        requirements: vec!["D1".into()],
     };
     let item = enqueue(&h, live(), Some(binding)).await.unwrap();
     let (run, session) = designing(&h, &item).await;
@@ -705,11 +833,16 @@ async fn a_live_item_with_an_earlier_intent_appends_to_it() {
     let gate = open_proposal(&h, &item.id).await;
     approve(&h, &gate).await;
     let intent = intent_of(&h, &item.id).await;
-    assert!(intent.operator_words.contains("Match the mockup"));
+    assert!(intent.operator_words.starts_with(&earlier.operator_words));
     let ids: Vec<_> = intent.requirements.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(ids, ["D1", "D2"]);
     assert!(intent.requirements.contains(&earlier.requirements[0]));
     assert!(intent.images.contains(&earlier.images[0]));
+    assert!(intent.images.iter().all(|image| image.id != "unselected"));
+    assert_eq!(
+        h.item(&item.id).await.intent.unwrap().requirements,
+        ["D1", "D2"]
+    );
 }
 
 /// A note an approval made a requirement stays bound through the approved

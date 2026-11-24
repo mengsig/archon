@@ -49,7 +49,7 @@ pub(super) async fn finish_run(
     assert!(state.is_terminal(), "finish_run needs a terminal state");
     // Every way a run ends (failure, budget, cancel, success) ends its open
     // design sessions, so no Confirmed session keeps its browser and slot.
-    super::settle::end_designs(ctx, &run.id).await;
+    super::settle::end_designs(ctx, &run).await;
     if matches!(state, RunState::Succeeded { .. }) {
         match super::acceptance::require_current(ctx, &run).await {
             Ok(_) => {}
@@ -444,7 +444,7 @@ pub(super) async fn announce(
         format!(
             "{}\n{}",
             outcome_text(item),
-            super::acceptance::readiness_text(&acceptance)
+            super::acceptance::readiness_text(&acceptance, item.autonomy.proposal)
         )
     } else {
         outcome_text(item)

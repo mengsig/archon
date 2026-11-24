@@ -113,6 +113,24 @@ pub fn augment(spec: &PipelineSpec, autonomy: &Autonomy) -> Result<PipelineSpec,
     if let Some(review) = &mut out.file.pipeline.review {
         review.level = autonomy.review;
     }
+    match (
+        autonomy.proposal,
+        propose_stage(spec).map(|stage| stage.kind),
+    ) {
+        (ProposalMode::Off | ProposalMode::Lavish, Some(StageKind::Design)) => {
+            return Err(ArchonError::Invalid(format!(
+                "pipeline {:?} declares a design stage and needs proposal = live",
+                spec.name()
+            )));
+        }
+        (ProposalMode::Live, Some(StageKind::Propose)) => {
+            return Err(ArchonError::Invalid(format!(
+                "pipeline {:?} declares a written propose stage; use a design stage or let                  proposal = live insert one",
+                spec.name()
+            )));
+        }
+        _ => {}
+    }
     if propose_stage(spec).is_none() {
         match autonomy.proposal {
             ProposalMode::Lavish => {
@@ -212,9 +230,12 @@ impl OperatorGates {
     /// Gates for an augmented `spec`; knobs whose stage is missing gate
     /// nothing, as [`augment`] has refused those already.
     pub fn for_run(spec: &PipelineSpec, autonomy: &Autonomy) -> Self {
-        let proposal = (autonomy.proposal != ProposalMode::Off)
-            .then(|| propose_stage(spec).map(|s| s.id.clone()))
-            .flatten();
+        let proposal = match autonomy.proposal {
+            ProposalMode::Off => None,
+            ProposalMode::Lavish => propose_stage(spec).filter(|s| s.kind == StageKind::Propose),
+            ProposalMode::Live => design_stage(spec),
+        }
+        .map(|s| s.id.clone());
         let report = (autonomy.report == ReportMode::BeforePr)
             .then(|| change_report_stage(spec).map(|s| s.id.clone()))
             .flatten();

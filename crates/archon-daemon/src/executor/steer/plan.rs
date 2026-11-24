@@ -570,6 +570,13 @@ fn abort(
     }
     let mut gone = removed(blueprint);
     gone.extend(passed_over(&blueprint.spec, index, &then));
+    if archon_pipeline::autonomy::design_stage(&blueprint.spec)
+        .is_some_and(|stage| gone.contains(&stage.id))
+    {
+        return Err(ArchonError::InvalidTransition(
+            "a live design proposal must be reviewed before continuing".into(),
+        ));
+    }
     refuse_unshipped(&blueprint.spec, &blueprint.spec, &gone)?;
     let knobs = blueprint.item.autonomy;
     blueprint.item.autonomy =

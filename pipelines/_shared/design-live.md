@@ -33,12 +33,14 @@ sessions are already in the code.
 ## How to work
 
 1. **Start the app.** Read the repository's contributor guidance, work out
-   its dev server command, and start it from the workspace under `setsid`.
-   Write its PID to `.archon/services/<name>.pid` (do not commit that file).
-   Use a loopback address.
+   its dev server command, and start it from the run worktree in its own
+   process group with `setsid`. Record the actual server PID in
+   `.archon/services/<name>.pid` before calling `design_preview`. Do not
+   commit the PID file. Use a loopback address.
 2. **Show it.** Call `design_preview` with the server's URL, for example
    `http://127.0.0.1:5173/`. Only `127.0.0.1`, `localhost` and `[::1]` are
-   accepted. If you restart the server, call `design_preview` again.
+   accepted. If you restart the server, update the PID file before calling
+   `design_preview` again.
 3. **Wait for notes.** Call `wait_for` and act on the message that arrives.
    Notes come one at a time; the next one is sent only after you report this
    one.

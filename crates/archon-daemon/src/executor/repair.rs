@@ -146,10 +146,13 @@ impl Repair {
             matches!(item.state, QueueState::Failed { .. }),
             "only the failed item is requeued"
         );
-        let before = item.brief.clone();
+        let before = (item.autonomy.proposal == archon_core::autonomy::ProposalMode::Live)
+            .then(|| item.brief.clone());
         item.amend_brief(&self.note(), now)?;
         store.update_item(&item)?;
-        super::proposal::carry_brief(store, &item.id, &before, &item.brief)?;
+        if let Some(before) = before {
+            super::proposal::carry_brief(store, &item.id, &before, &item.brief)?;
+        }
         store.transition_item(&item.id, QueueState::Queued, now)
     }
 }

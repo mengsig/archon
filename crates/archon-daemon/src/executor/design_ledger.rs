@@ -12,8 +12,8 @@ use archon_core::design::{
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::intent::{
-    ApprovedIntent, IntentArtifact, IntentSource, ReferenceImage, Requirement, RequirementKind,
-    Viewport as ImageViewport,
+    ApprovedIntent, IntentArtifact, IntentBinding, IntentSource, ReferenceImage, Requirement,
+    RequirementKind, Viewport as ImageViewport,
 };
 use archon_core::run::{OperatorGate, PipelineRun, StageRun, StageState};
 use archon_queue::Store;
@@ -46,6 +46,7 @@ pub(crate) struct LedgerNote {
 
 pub(crate) struct LedgerPicture {
     pub path: PathBuf,
+    pub sha256: String,
     pub viewport: Viewport,
     pub caption: String,
 }
@@ -104,7 +105,7 @@ pub(crate) fn build_draft(
         draft.validate()?;
         return Ok(draft);
     }
-    let mut words = vec![draft.operator_words.trim().to_owned()];
+    let mut words = vec![draft.operator_words.clone()];
     if !brief.is_empty() && !draft.operator_words.contains(brief) {
         words.push(brief.to_owned());
     }
@@ -137,13 +138,10 @@ pub(crate) fn build_draft(
                          ids are never overwritten"
                     )));
                 }
-                let bytes = std::fs::read(&picture.path).map_err(|e| {
-                    ArchonError::io(format!("read picture {}", picture.path.display()), e)
-                })?;
                 draft.images.push(ReferenceImage {
                     id: image_id.clone(),
                     path: picture.path.clone(),
-                    sha256: sha_hex(&bytes),
+                    sha256: picture.sha256.clone(),
                     // The viewport the picture was taken at is what the
                     // build must match. The session knows no theme or app
                     // state, so it records none: the caption ("captured
@@ -234,6 +232,7 @@ fn ledger_picture(
         .unwrap_or(head);
     LedgerPicture {
         path: ctx.design.asset_path(asset),
+        sha256: asset.sha256.clone(),
         // The viewport the picture was taken at: its target's preset, else
         // the note's (`capture_final`).
         viewport: preset_viewport(
@@ -292,9 +291,12 @@ fn ledger_notes(
         earlier.dedup_by_key(|n| n.number);
         let (asset, withheld) = chosen_picture(note, choices);
         let picture = match asset {
-            Some(id) => store
-                .design_asset(item, &id)?
-                .map(|asset| ledger_picture(ctx, note, &asset, &head)),
+            Some(id) => {
+                let asset = store.design_asset(item, &id)?.ok_or_else(|| {
+                    ArchonError::Corrupt(format!("design picture {id} for {} is missing", note.id))
+                })?;
+                Some(ledger_picture(ctx, note, &asset, &head))
+            }
             None => None,
         };
         out.push(LedgerNote {
@@ -489,23 +491,7 @@ fn card_of(
     state: ((String, &'static str), Outcome),
     facts: (Option<CommitFacts>, Option<String>),
 ) -> Result<Card, ArchonError> {
-    let after = ledger.and_then(|l| l.picture.as_ref()).and_then(|p| {
-        let caption = format!("{}, {}x{}", p.caption, p.viewport.w, p.viewport.h);
-        read_pic(&p.path, format!("{} after the change", note.id), caption)
-    });
-    let before = match &note.before_asset {
-        Some(id) => store.design_asset(&note.item, id)?.and_then(|a| {
-            let caption = format!(
-                "taken before the change, {}x{}, {}",
-                a.width,
-                a.height,
-                a.created_at.format("%Y-%m-%d %H:%M UTC")
-            );
-            let label = format!("{} before the change", note.id);
-            read_pic(&ctx.design.asset_path(&a), label, caption)
-        }),
-        None => None,
-    };
+    let (before, after) = card_pictures(ctx, store, note, ledger, draft)?;
     Ok(Card {
         id: note.id.clone(),
         text: note.text.clone(),
@@ -531,6 +517,51 @@ fn card_of(
         after,
         withheld: ledger.is_some_and(|l| l.withheld),
     })
+}
+
+fn card_pictures(
+    ctx: &DaemonContext,
+    store: &Store,
+    note: &DesignNote,
+    ledger: Option<&LedgerNote>,
+    draft: &ApprovedIntent,
+) -> Result<(Option<Pic>, Option<Pic>), ArchonError> {
+    let after = match ledger.and_then(|l| l.picture.as_ref()) {
+        Some(picture) => {
+            let id = format!("{}-final", note.id);
+            let reference = draft
+                .images
+                .iter()
+                .find(|image| image.id == id)
+                .expect("the ledger preserves the picture displayed on this card");
+            assert_eq!(reference.sha256, picture.sha256);
+            let caption = format!(
+                "{}, {}x{}",
+                picture.caption, picture.viewport.w, picture.viewport.h
+            );
+            read_pic(
+                &reference.path,
+                format!("{} after the change", note.id),
+                caption,
+            )
+        }
+        None => None,
+    };
+    let before = match &note.before_asset {
+        Some(id) => store.design_asset(&note.item, id)?.and_then(|a| {
+            let caption = format!(
+                "taken before the change, {}x{}, {}",
+                a.width,
+                a.height,
+                a.created_at.format("%Y-%m-%d %H:%M UTC")
+            );
+            let label = format!("{} before the change", note.id);
+            read_pic(&ctx.design.asset_path(&a), label, caption)
+        }),
+        None => None,
+    };
+    assert!(after.is_none() || ledger.is_some_and(|note| !note.withheld));
+    Ok((before, after))
 }
 
 /// The checks the run's stages reported (the latest to list any) and what the
@@ -614,15 +645,78 @@ pub(super) fn prepare(
             s.stage_id == gate.stage_id
                 && s.attempt == gate.attempt
                 && s.state == StageState::Completed
+                && s.kind == Some(archon_core::catalog::StageKind::Design)
         })
         .ok_or_else(|| ArchonError::NotFound("design stage".into()))?;
     let item = store.item(&run.item)?;
-    let base = match item.intent.as_deref() {
-        Some(binding) => Some(store.approved_intent(binding)?.ok_or_else(|| {
-            ArchonError::Corrupt(format!("approved intent {} is missing", binding.id))
-        })?),
-        None => None,
+    let base = item
+        .intent
+        .as_deref()
+        .map(|binding| bound_intent(store, binding))
+        .transpose()?;
+    let (session, worktree, head) = confirmed_worktree(ctx, store, run, gate)?;
+    let active = approvable_notes(ctx, store, &worktree, &item.id, &session, &head)?;
+    let notes = ledger_notes(ctx, store, &item.id, &session, &active)?;
+    // A finish with no change names its requirement after the item's
+    // counter, so it never takes an id an earlier note or session used.
+    let no_change = store.design_next_note_id(&item.id)?;
+    let mut record = build_draft(base.as_ref(), &item.brief, &notes, Some(&no_change))?;
+    freeze_references(ctx, run, gate, base.as_ref(), &mut record)?;
+    let cards = page_cards(ctx, store, &worktree, &session, &notes, &record)?;
+    let (checks, agent_summary) = reported(stages, gate);
+    let page_of = |with_before| Page {
+        title: &item.title,
+        brief: &item.brief,
+        draft: &record,
+        agent_summary: &agent_summary,
+        checks: &checks,
+        cards: &cards,
+        with_before,
     };
+    let (page, page_sha256, kept) = freeze_pages(ctx, gate, page_of)?;
+    record.artifacts.push(kept);
+    record.validate()?;
+    let saved = Pending {
+        record,
+        page: page.clone(),
+        page_sha256,
+        // The ledger's images are preserved with the approved intent, not beside the page.
+        linked_images: false,
+    };
+    store.kv_set(&key(gate), &serde_json::to_string(&saved)?)?;
+    Ok(page)
+}
+
+fn bound_intent(store: &Store, binding: &IntentBinding) -> Result<ApprovedIntent, ArchonError> {
+    let mut record = store.approved_intent(binding)?.ok_or_else(|| {
+        ArchonError::Corrupt(format!("approved intent {} is missing", binding.id))
+    })?;
+    let requirements = record
+        .selected_requirements(binding)?
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    let images: std::collections::HashSet<&str> = requirements
+        .iter()
+        .flat_map(|requirement| requirement.images.iter().map(String::as_str))
+        .collect();
+    record
+        .images
+        .retain(|image| images.contains(image.id.as_str()));
+    record.requirements = requirements;
+    assert_eq!(record.id, binding.id);
+    assert_eq!(record.version, binding.version);
+    Ok(record)
+}
+
+pub(super) fn confirmed_worktree(
+    ctx: &DaemonContext,
+    store: &Store,
+    run: &PipelineRun,
+    gate: &OperatorGate,
+) -> Result<(DesignSession, WorktreeRef, String), ArchonError> {
+    assert_eq!(gate.run, run.id);
+    assert_eq!(gate.item, run.item);
     let session = ctx
         .design
         .session_of(store, &run.id, &gate.stage_id, gate.attempt)?
@@ -633,12 +727,21 @@ pub(super) fn prepare(
         .clone()
         .ok_or_else(|| ArchonError::Corrupt("a confirmed session has no finish head".into()))?;
     let worktree = worktree_ref(store, run)?;
-    let active = approvable_notes(ctx, store, &worktree, &item.id, &session, &head)?;
-    let notes = ledger_notes(ctx, store, &item.id, &session, &active)?;
-    // A finish with no change names its requirement after the item's
-    // counter, so it never takes an id an earlier note or session used.
-    let no_change = store.design_next_note_id(&item.id)?;
-    let mut record = build_draft(base.as_ref(), &item.brief, &notes, Some(&no_change))?;
+    ctx.design
+        .worktree_at(&worktree, &head)?
+        .map_err(ArchonError::Invalid)?;
+    Ok((session, worktree, head))
+}
+
+fn freeze_references(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    gate: &OperatorGate,
+    base: Option<&ApprovedIntent>,
+    record: &mut ApprovedIntent,
+) -> Result<(), ArchonError> {
+    assert_eq!(gate.run, run.id);
+    assert_eq!(gate.item, run.item);
     let base_images: Vec<String> = base
         .iter()
         .flat_map(|i| i.images.iter().map(|image| image.id.clone()))
@@ -657,58 +760,48 @@ pub(super) fn prepare(
     {
         image.path = crate::handlers::intent::preserve(&destination, &image.path, &image.sha256)?;
     }
-    record.validate()?;
-    let cards = page_cards(ctx, store, &worktree, &session, &notes, &record)?;
-    let (checks, agent_summary) = reported(stages, gate);
-    let page_of = |with_before| Page {
-        title: &item.title,
-        brief: &item.brief,
-        draft: &record,
-        agent_summary: &agent_summary,
-        checks: &checks,
-        cards: &cards,
-        with_before,
-    };
-    // The operator sees the whole page; the copy kept with the approved
-    // intent leaves the before pictures out, as they are never sent to a
-    // later model.
-    let html = design_page::render(&page_of(true));
-    let kept_html = design_page::render(&page_of(false));
-    let directory = ctx.paths.data_dir.join("design").join("ledger");
-    std::fs::create_dir_all(&directory)
-        .map_err(|e| ArchonError::io("create the design ledger directory", e))?;
-    let page = directory.join(format!(
-        "{}-{}-{}.html",
-        run.id, gate.stage_id, gate.attempt
-    ));
-    crate::handlers::intent::save_bytes(&page, html.as_bytes())?;
-    let page_sha256 = sha_hex(html.as_bytes());
-    let kept = directory.join(format!(
-        "{}-{}-{}-kept.html",
-        run.id, gate.stage_id, gate.attempt
-    ));
-    crate::handlers::intent::save_bytes(&kept, kept_html.as_bytes())?;
-    let kept_sha256 = sha_hex(kept_html.as_bytes());
-    let preserved = crate::handlers::intent::preserve(&destination, &kept, &kept_sha256)?;
-    record.artifacts.push(IntentArtifact {
-        path: preserved,
-        sha256: kept_sha256,
-    });
-    record.validate()?;
-    let saved = Pending {
-        record,
-        page: page.clone(),
-        page_sha256,
-        // The ledger's images are preserved with the approved intent, not beside the page.
-        linked_images: false,
-    };
-    store.kv_set(&key(gate), &serde_json::to_string(&saved)?)?;
-    Ok(page)
+    record.validate()
 }
 
-/// Whether `page` is a ledger page archond wrote itself.
-pub(super) fn is_ledger_page(ctx: &DaemonContext, page: &Path) -> bool {
-    page.starts_with(ctx.paths.data_dir.join("design").join("ledger"))
+fn freeze_pages<'a>(
+    ctx: &DaemonContext,
+    gate: &OperatorGate,
+    page_of: impl Fn(bool) -> Page<'a>,
+) -> Result<(PathBuf, String, IntentArtifact), ArchonError> {
+    let directory = ctx
+        .paths
+        .data_dir
+        .join("design/ledger")
+        .join(format!("{}-{}-{}", gate.run, gate.stage_id, gate.attempt));
+    let destination = ctx.paths.data_dir.join("approved-intent-artifacts");
+    std::fs::create_dir_all(&directory)
+        .map_err(|e| ArchonError::io("create the design ledger directory", e))?;
+    std::fs::create_dir_all(&destination)
+        .map_err(|e| ArchonError::io("create intent artifact directory", e))?;
+    // The report snapshot copies the whole source directory.
+    let page = directory.join("index.html");
+    let html = design_page::render(&page_of(true));
+    let page_sha256 = sha_hex(html.as_bytes());
+    crate::handlers::intent::save_bytes(&page, html.as_bytes())?;
+    let kept_html = design_page::render(&page_of(false));
+    if kept_html.len() > 32 * 1024 * 1024 {
+        return Err(ArchonError::Invalid(
+            "the design ledger exceeds the 32 MiB intent artifact limit".into(),
+        ));
+    }
+    let kept_sha256 = sha_hex(kept_html.as_bytes());
+    let kept = destination.join(format!("{kept_sha256}.html"));
+    crate::handlers::intent::save_bytes(&kept, kept_html.as_bytes())?;
+    assert_eq!(page.parent(), Some(directory.as_path()));
+    assert_eq!(kept.parent(), Some(destination.as_path()));
+    Ok((
+        page,
+        page_sha256,
+        IntentArtifact {
+            path: kept,
+            sha256: kept_sha256,
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -729,9 +822,11 @@ mod tests {
 
     fn picture(dir: &Path, name: &str) -> LedgerPicture {
         let path = dir.join(name);
-        std::fs::write(&path, [PNG, name.as_bytes()].concat()).unwrap();
+        let bytes = [PNG, name.as_bytes()].concat();
+        std::fs::write(&path, &bytes).unwrap();
         LedgerPicture {
             path,
+            sha256: sha_hex(&bytes),
             viewport: viewport(),
             caption: "captured from the preview at commit 3f9c2a1 2026-11-21 10:00 UTC".into(),
         }

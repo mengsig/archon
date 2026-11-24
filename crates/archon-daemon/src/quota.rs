@@ -275,10 +275,13 @@ pub(crate) fn spent(ctx: &DaemonContext) -> Option<BTreeMap<String, Option<Times
 pub(crate) fn standing(ctx: &DaemonContext) -> Option<BTreeMap<String, bool>> {
     let (reading, now) = trusted(ctx)?;
     Some(
-        (reading.providers.iter())
-            .map(|(provider, headroom)| {
-                let left = archon_core::quota::provider_headroom(headroom, 0, reading.read_at, now);
-                (provider.clone(), left.is_some_and(|l| l.exhausted()))
+        reading
+            .providers
+            .iter()
+            .filter_map(|(provider, headroom)| {
+                let left =
+                    archon_core::quota::provider_headroom(headroom, 0, reading.read_at, now)?;
+                Some((provider.clone(), left.exhausted()))
             })
             .collect(),
     )

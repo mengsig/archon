@@ -104,16 +104,37 @@ pub fn build_results(
     binding: &IntentBinding,
     structured: Option<&Value>,
 ) -> Result<Vec<RequirementResult>, ArchonError> {
+    read_results(intent, binding, structured, false)
+}
+
+/// Live design pictures may record only their viewport.
+pub fn build_live_results(
+    intent: &ApprovedIntent,
+    binding: &IntentBinding,
+    structured: Option<&Value>,
+) -> Result<Vec<RequirementResult>, ArchonError> {
+    read_results(intent, binding, structured, true)
+}
+
+fn read_results(
+    intent: &ApprovedIntent,
+    binding: &IntentBinding,
+    structured: Option<&Value>,
+    live: bool,
+) -> Result<Vec<RequirementResult>, ArchonError> {
     let selected = intent.selected_requirements(binding)?;
     let value = structured
         .and_then(|s| s.get("requirement_results"))
         .ok_or_else(|| results_refused("missing; report every approved requirement"))?;
-    let results: Vec<RequirementResult> = serde_json::from_value(canonical_statuses(value))
-        .map_err(|e| {
-            results_refused(&format!(
-                "not a list of results: {e}; `status` is exactly one of {STATUSES}"
-            ))
-        })?;
+    let mut value = canonical_statuses(value);
+    if live {
+        fill_live_context(intent, &mut value);
+    }
+    let results: Vec<RequirementResult> = serde_json::from_value(value).map_err(|e| {
+        results_refused(&format!(
+            "not a list of results: {e}; `status` is exactly one of {STATUSES}"
+        ))
+    })?;
     let indexed = indexed_results(&results)?;
     if !exact_ids(
         selected.iter().map(|r| r.id.as_str()),
@@ -135,7 +156,7 @@ pub fn build_results(
                 result.id, result.evidence
             )));
         }
-        validate_pairs(intent, requirement, result)?;
+        validate_pairs(intent, requirement, result, live)?;
     }
     assert_eq!(results.len(), selected.len());
     assert!(results.iter().all(|r| !r.evidence.trim().is_empty()));
@@ -175,6 +196,37 @@ fn canonical_statuses(value: &Value) -> Value {
     Value::Array(canonical)
 }
 
+fn fill_live_context(intent: &ApprovedIntent, results: &mut Value) {
+    let Some(results) = results.as_array_mut() else {
+        return;
+    };
+    for result in results {
+        let Some(pairs) = result.get_mut("visual_pairs").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for pair in pairs {
+            let Some(fields) = pair.as_object_mut() else {
+                continue;
+            };
+            let reference = fields.get("reference").and_then(Value::as_str);
+            let Some(image) = intent
+                .images
+                .iter()
+                .find(|image| Some(image.id.as_str()) == reference)
+            else {
+                continue;
+            };
+            for (field, recorded) in [("theme", &image.theme), ("state", &image.state)] {
+                if fields.get(field).is_some_and(Value::is_null)
+                    || (recorded.is_none() && !fields.contains_key(field))
+                {
+                    fields.insert(field.into(), Value::String(String::new()));
+                }
+            }
+        }
+    }
+}
+
 fn indexed_results(
     results: &[RequirementResult],
 ) -> Result<BTreeMap<&str, &RequirementResult>, ArchonError> {
@@ -193,6 +245,7 @@ fn validate_pairs(
     intent: &ApprovedIntent,
     requirement: &Requirement,
     result: &RequirementResult,
+    live: bool,
 ) -> Result<(), ArchonError> {
     if requirement.kind == RequirementKind::Visual && requirement.images.is_empty() {
         return Err(invalid(&format!(
@@ -212,36 +265,7 @@ fn validate_pairs(
                 "visual pair references must belong to the requirement and be unique",
             ));
         }
-        // A theme or state is owed only where the reference records one: a
-        // live-design picture records its viewport alone.
-        if pair.built.trim().is_empty()
-            || pair.viewport.width == 0
-            || pair.viewport.height == 0
-            || (image.theme.is_some() && pair.theme.trim().is_empty())
-            || (image.state.is_some() && pair.state.trim().is_empty())
-        {
-            return Err(results_refused(
-                "visual pairs need a built image, a viewport, and the theme and state \
-                 the reference records",
-            ));
-        }
-        let differ = context_differences(image, pair);
-        if !differ.is_empty() {
-            return Err(results_refused(&format!(
-                "{} reference and built {} differ: {}",
-                result.id,
-                differ
-                    .iter()
-                    .map(|(what, _)| *what)
-                    .collect::<Vec<_>>()
-                    .join("/"),
-                differ
-                    .iter()
-                    .map(|(_, how)| how.as_str())
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            )));
-        }
+        validate_pair_context(image, pair, &result.id, live)?;
     }
     if requirement.kind == RequirementKind::Visual && seen.len() != requirement.images.len() {
         return Err(results_refused(&format!(
@@ -252,6 +276,41 @@ fn validate_pairs(
     assert!(seen.len() <= requirement.images.len());
     assert_eq!(seen.len(), result.visual_pairs.len());
     Ok(())
+}
+
+fn validate_pair_context(
+    image: &archon_core::intent::ReferenceImage,
+    pair: &archon_core::acceptance::VisualPair,
+    id: &str,
+    live: bool,
+) -> Result<(), ArchonError> {
+    if pair.built.trim().is_empty()
+        || pair.viewport.width == 0
+        || pair.viewport.height == 0
+        || ((!live || image.theme.is_some()) && pair.theme.trim().is_empty())
+        || ((!live || image.state.is_some()) && pair.state.trim().is_empty())
+    {
+        return Err(results_refused(if live {
+            "visual pairs need a built image, a viewport, and the theme and state the reference records"
+        } else {
+            "visual pairs need a built image, viewport, theme and state"
+        }));
+    }
+    let differ = context_differences(image, pair);
+    if differ.is_empty() {
+        return Ok(());
+    }
+    if !live {
+        return Err(results_refused(&format!(
+            "{id} reference and built viewport/theme/state differ"
+        )));
+    }
+    let (fields, values): (Vec<_>, Vec<_>) = differ.into_iter().unzip();
+    Err(results_refused(&format!(
+        "{id} reference and built {} differ: {}",
+        fields.join("/"),
+        values.join("; ")
+    )))
 }
 
 /// Where `pair` was taken in other conditions than its reference records,
@@ -588,15 +647,21 @@ mod tests {
         let pair = &mut data["requirement_results"][0]["visual_pairs"][0];
         pair["theme"] = Value::Null;
         pair["state"] = Value::Null;
-        let results = build_results(&intent, &binding, Some(&data)).unwrap();
+        assert!(build_results(&intent, &binding, Some(&data)).is_err());
+        let results = build_live_results(&intent, &binding, Some(&data)).unwrap();
         assert_eq!(results[0].visual_pairs[0].theme, "");
         let pair = &mut data["requirement_results"][0]["visual_pairs"][0];
         pair.as_object_mut().unwrap().remove("theme");
         pair.as_object_mut().unwrap().remove("state");
-        assert!(build_results(&intent, &binding, Some(&data)).is_ok());
+        assert!(build_live_results(&intent, &binding, Some(&data)).is_ok());
+        assert!(build_results(&intent, &binding, Some(&data)).is_err());
+        data["requirement_results"][0]["visual_pairs"][0]["theme"] = json!("");
+        data["requirement_results"][0]["visual_pairs"][0]["state"] = json!("");
+        assert!(build_results(&intent, &binding, Some(&data)).is_err());
+        assert!(build_live_results(&intent, &binding, Some(&data)).is_ok());
         data["requirement_results"][0]["visual_pairs"][0]["viewport"] =
             json!({"width": 390, "height": 844});
-        let error = build_results(&intent, &binding, Some(&data))
+        let error = build_live_results(&intent, &binding, Some(&data))
             .unwrap_err()
             .to_string();
         assert!(
@@ -608,7 +673,8 @@ mod tests {
         let (intent, binding) = fixture();
         let mut data = implemented();
         data["requirement_results"][0]["visual_pairs"][0]["theme"] = Value::Null;
-        let Err(ArchonError::Invalid(error)) = build_results(&intent, &binding, Some(&data)) else {
+        let Err(ArchonError::Invalid(error)) = build_live_results(&intent, &binding, Some(&data))
+        else {
             panic!("a null theme is refused where the reference records one")
         };
         assert!(

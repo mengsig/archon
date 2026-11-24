@@ -150,8 +150,7 @@ impl Budget {
         if self.used + encoded > self.limit {
             self.left_out += 1;
             return format!(
-                "<div class=\"missing\">{role} picture left out to keep this page small; it is \
-                 still part of the approved intent. {}</div>",
+                "<div class=\"missing\">{role} picture left out to keep this page small. {}</div>",
                 escape(&pic.caption)
             );
         }
@@ -361,7 +360,7 @@ fn render_within(page: &Page, limit: usize) -> String {
     if budget.left_out > 0 {
         warnings.push_str(&format!(
             "<p class=\"warn\">{} picture{} left out of this page to keep it under {} MiB. They \
-             are still part of the approved intent.</p>",
+             leave the approved references unchanged.</p>",
             budget.left_out,
             if budget.left_out == 1 { "" } else { "s" },
             limit / (1024 * 1024)

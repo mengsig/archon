@@ -1,5 +1,6 @@
 use crate::context::DaemonContext;
 use crate::resolve::RepoEnv;
+use archon_core::autonomy::ProposalMode;
 use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;
 use archon_core::intent::{ApprovedIntent, IntentSource, ReferenceImage};
@@ -71,7 +72,9 @@ pub(in crate::executor) fn attach(
     };
     if reports {
         let binding = item.intent.as_deref().expect("intent found");
-        let owed = results_owed(&record.selected_requirements(binding)?, &record.images)?;
+        let images =
+            (item.autonomy.proposal == ProposalMode::Live).then_some(record.images.as_slice());
+        let owed = results_owed(&record.selected_requirements(binding)?, images)?;
         request.instructions.push_str(&owed);
     }
     let record = materialize(&request.workspace, record)?;
@@ -159,11 +162,12 @@ pub(in crate::executor) fn select_model(
     let Some(first) = plans.iter().find(|p| p.stage_id == STAGE) else {
         return Ok(());
     };
-    let pin = pinned(item, first);
+    let live = item.autonomy.proposal == ProposalMode::Live;
+    let pin = live.then(|| pinned(item, first)).flatten();
     super::records::invalidate(store, &item.id)?;
     let visual = super::intent(store, item)?.is_some_and(|r| !r.images.is_empty());
     let mut stages = store.stage_runs(&run.id)?;
-    if let Some(failed) = failed {
+    if let Some(failed) = failed.filter(|_| live) {
         stages.retain(|s| s.id != failed.id);
         stages.push(failed.clone());
     }
@@ -178,7 +182,52 @@ pub(in crate::executor) fn select_model(
     let catalog = store.model_catalog();
     let judges = |m: &ModelRef| policy.permits_model(m) && (!visual || vision.contains(m));
     let permitted = judge_pool(&catalog, judges, &builders);
-    let out_of_quota = Quota::of(crate::quota::standing(ctx), &stages);
+    let strict = ctx.config.review.independent_acceptance;
+    let model = if live {
+        let quota = Quota::of(crate::quota::standing(ctx), &stages);
+        live_judge(
+            &catalog,
+            &permitted,
+            &builders,
+            (visual, strict),
+            (&quota, woken, pin.as_ref()),
+        )?
+    } else {
+        let still_judges = |judge: &&ModelRef| {
+            catalog.check(judge).is_ok_and(|listed| listed == **judge) && judges(judge)
+        };
+        match woken.filter(still_judges) {
+            Some(judge) => judge.clone(),
+            None => judge_model(&permitted, &builders, visual, strict)?,
+        }
+    };
+    assert!(!visual || vision.contains(&model));
+    assert!(policy.permits_model(&model));
+    set_judge(plans, &model, policy.max_effort);
+    Ok(())
+}
+
+fn set_judge(plans: &mut [SpawnPlan], model: &ModelRef, cap: Option<archon_core::model::Effort>) {
+    for plan in plans.iter_mut().filter(|p| p.stage_id == STAGE) {
+        plan.choice.model = model.clone();
+        if let Some(cap) = cap {
+            plan.choice.effort = plan.choice.effort.min(cap);
+        }
+        plan.choice.tier = None;
+        plan.allow_delegation = false;
+        plan.keep = false;
+        assert_eq!(&plan.choice.model, model);
+        assert!(cap.is_none_or(|cap| plan.choice.effort <= cap));
+    }
+}
+
+fn live_judge(
+    catalog: &archon_core::model_tier::ModelCatalog,
+    permitted: &[&archon_core::model_tier::CatalogModel],
+    builders: &[ModelRef],
+    (visual, strict): (bool, bool),
+    (out_of_quota, woken, pin): (&Quota, Option<&ModelRef>, Option<&ModelRef>),
+) -> Result<ModelRef, ArchonError> {
     // A provider the reading shows spent is never used. One the latest attempt
     // failed on, with no reading to say otherwise, is only passed over while
     // another judge can run: a lone provider is retried, as it always was.
@@ -195,53 +244,32 @@ pub(in crate::executor) fn select_model(
     let eligible = if moved.is_empty() { usable } else { moved };
     let still_judges = |judge: &&ModelRef| {
         catalog.check(judge).is_ok_and(|listed| listed == **judge)
-            && policy.permits_model(judge)
-            && (!visual || vision.contains(judge))
             && eligible.iter().any(|m| m.model == **judge)
     };
-    let pinned_judge = match pin.as_ref().and_then(|m| catalog.check(m).ok()) {
+    let pinned_judge = match pin.and_then(|m| catalog.check(m).ok()) {
         Some(model) if eligible.iter().any(|m| m.model == model) => Some(model),
         _ => None,
     };
-    if let (Some(model), true) = (&pinned_judge, ctx.config.review.independent_acceptance)
-        && shares_builder(model, &builders)
+    if let (Some(model), true) = (&pinned_judge, strict)
+        && shares_builder(model, builders)
     {
         return Err(ArchonError::Invalid(format!(
             "independent acceptance needs a model different from every builder in model and \
              vendor, but the plan pins `{model}` for {STAGE} ([review] independent_acceptance = true)"
         )));
     }
-    if let (Some(pin), None) = (&pin, &pinned_judge) {
-        tracing::info!(item = %item.id, model = %pin, "the pinned acceptance model cannot judge now; another is selected");
+    if let (Some(pin), None) = (pin, &pinned_judge) {
+        tracing::info!(model = %pin, "the pinned acceptance model cannot judge now; another is selected");
     }
-    let model = match woken.filter(still_judges).or(pinned_judge.as_ref()) {
-        Some(judge) => judge.clone(),
-        None if eligible.is_empty() && !permitted.is_empty() => {
-            return Err(ArchonError::Invalid(format!(
-                "no eligible acceptance judge: every permitted, connected model's provider is out \
+    match woken.filter(still_judges).or(pinned_judge.as_ref()) {
+        Some(judge) => Ok(judge.clone()),
+        None if eligible.is_empty() && !permitted.is_empty() => Err(ArchonError::Invalid(format!(
+            "no eligible acceptance judge: every permitted, connected model's provider is out \
                  of quota ({})",
-                out_of_quota.names(permitted.iter().map(|m| &m.model))
-            )));
-        }
-        None => judge_model(
-            &eligible,
-            &builders,
-            visual,
-            ctx.config.review.independent_acceptance,
-        )?,
-    };
-    for plan in plans.iter_mut().filter(|p| p.stage_id == STAGE) {
-        plan.choice.model = model.clone();
-        if let Some(cap) = policy.max_effort {
-            plan.choice.effort = plan.choice.effort.min(cap);
-        }
-        plan.choice.tier = None;
-        plan.allow_delegation = false;
-        plan.keep = false;
+            out_of_quota.names(permitted.iter().map(|m| &m.model))
+        ))),
+        None => judge_model(&eligible, builders, visual, strict),
     }
-    assert!(!visual || vision.contains(&model));
-    assert!(policy.permits_model(&model));
-    Ok(())
 }
 
 /// The model the item's plan pins for the acceptance stage `plan`: one the
@@ -412,6 +440,13 @@ pub(super) fn builder_models(stages: &[StageRun]) -> Vec<ModelRef> {
         .collect()
 }
 
+pub(super) fn independent(model: &ModelRef, builders: &[ModelRef], proposal: ProposalMode) -> bool {
+    if proposal == ProposalMode::Live {
+        return !shares_builder(model, builders);
+    }
+    !builders.contains(model)
+}
+
 /// Whether the acceptance `stage` judged apart from every builder, in model
 /// and vendor. Refused when it could not see the approved images, or under
 /// the strict knob when it ran on a builder's model.
@@ -419,7 +454,7 @@ pub(super) async fn check_judge(
     ctx: &DaemonContext,
     run: &PipelineRun,
     stage: &StageRun,
-    visual: bool,
+    (visual, proposal): (bool, ProposalMode),
 ) -> Result<bool, ArchonError> {
     let (stages, vision) = {
         let store = ctx.store.lock().await;
@@ -438,7 +473,7 @@ pub(super) async fn check_judge(
     }
     assert_eq!(stage.stage_id, STAGE);
     assert!(stage.aether_agent.is_some());
-    Ok(!shares_builder(&stage.choice.model, &builders))
+    Ok(independent(&stage.choice.model, &builders, proposal))
 }
 
 const RULES: &str = r#"
@@ -479,7 +514,7 @@ needs acceptance again, even when its tree is unchanged.
 /// state, which the gate then accepts).
 pub(in crate::executor) fn results_owed(
     selected: &[&archon_core::intent::Requirement],
-    images: &[archon_core::intent::ReferenceImage],
+    images: Option<&[ReferenceImage]>,
 ) -> Result<String, ArchonError> {
     assert!(
         !selected.is_empty(),
@@ -492,22 +527,10 @@ pub(in crate::executor) fn results_owed(
                 .images
                 .iter()
                 .map(|id| {
-                    let image = images.iter().find(|i| &i.id == id);
-                    let viewport = match image.and_then(|i| i.viewport.as_ref()) {
-                        Some(v) => serde_json::json!({"width": v.width, "height": v.height}),
-                        None => serde_json::json!({"width": "<px>", "height": "<px>"}),
-                    };
-                    let recorded = |value: Option<&String>| match (image, value) {
-                        (_, Some(value)) => serde_json::json!(value),
-                        (Some(_), None) => serde_json::Value::Null,
-                        (None, None) => serde_json::json!("<as the reference>"),
-                    };
-                    serde_json::json!({
-                        "reference": id, "built": "<workspace path of the built image>",
-                        "viewport": viewport,
-                        "theme": recorded(image.and_then(|i| i.theme.as_ref())),
-                        "state": recorded(image.and_then(|i| i.state.as_ref())),
-                    })
+                    result_pair(
+                        id,
+                        images.and_then(|images| images.iter().find(|i| &i.id == id)),
+                    )
                 })
                 .collect();
             serde_json::json!({"id": r.id, "status": "implemented",
@@ -515,6 +538,13 @@ pub(in crate::executor) fn results_owed(
         })
         .collect();
     let shape = serde_json::to_string_pretty(&serde_json::json!({"requirement_results": entries}))?;
+    let context = if images.is_some() {
+        " Take each built image at the `viewport`, `theme` and `state` shown \
+         (its reference's) and keep those values as they are: the gate refuses a pair taken \
+         in other conditions. A `null` theme or state means the reference records none."
+    } else {
+        ""
+    };
     let text = format!(
         "\n## Requirement results this stage owes\n\nThis stage reports the requirement results \
          of an approved intent. Archon refuses your result unless `complete_task`'s `structured` holds \
@@ -523,14 +553,33 @@ pub(in crate::executor) fn results_owed(
          `deviation` (give the reason in `evidence`) or `blocked` (fails the build), never \
          `pass` or `fail`. `evidence` is never empty. A \
          visual requirement keeps one `visual_pairs` entry per reference image; every other \
-         keeps `[]`. Take each built image at the `viewport`, `theme` and `state` shown \
-         (its reference's) and keep those values as they are: the gate refuses a pair taken \
-         in other conditions. A `null` theme or state means the reference records none.\n\n\
-         ```json\n{shape}\n```\n"
+         keeps `[]`.{context}\n\n```json\n{shape}\n```\n"
     );
     assert!(selected.iter().all(|r| text.contains(&r.id)));
     assert!(text.contains("\"requirement_results\""));
     Ok(text)
+}
+
+fn result_pair(id: &str, image: Option<&ReferenceImage>) -> serde_json::Value {
+    let viewport = match image.and_then(|i| i.viewport.as_ref()) {
+        Some(v) => serde_json::json!({"width": v.width, "height": v.height}),
+        None => serde_json::json!({"width": "<px>", "height": "<px>"}),
+    };
+    let (theme, state) = match image {
+        Some(image) => {
+            assert_eq!(image.id, id);
+            assert!(!image.path.as_os_str().is_empty());
+            (
+                serde_json::json!(image.theme),
+                serde_json::json!(image.state),
+            )
+        }
+        None => (serde_json::json!("<theme>"), serde_json::json!("<state>")),
+    };
+    serde_json::json!({
+        "reference": id, "built": "<workspace path of the built image>",
+        "viewport": viewport, "theme": theme, "state": state,
+    })
 }
 
 fn materialize(

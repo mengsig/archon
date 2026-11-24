@@ -560,7 +560,7 @@ const OTHER_VENDOR: &str = "codex/gpt-6-luna";
 /// A ledger item whose plan pins `pin` for acceptance, Aether listing every
 /// model of `vision` with vision, run until its review is the one running.
 async fn pinned_at_review(
-    config: Config,
+    mut config: Config,
     pin: &str,
     vision: &[&str],
 ) -> (Harness, FakeAether, QueueItem) {
@@ -569,9 +569,37 @@ async fn pinned_at_review(
         "intent-acceptance".into(),
         vec![common::choice(pin, Effort::High)],
     );
-    let (h, fake, item) = fixture_in(config, (common::PIPELINE, None, plan), false, vision).await;
-    settle(&h, evidence(&h, &item, "implemented").await).await;
-    assert!(h.running().await.iter().all(|s| s.stage_id == "review"));
+    use crate::design_gate as design;
+    config.design.enabled = true;
+    let h = Harness::with_config(config).await;
+    let fake = crate::intent_acceptance::models_listed(&h, vision).await;
+    let mut request = common::enqueue_request(common::REPO_NAME, common::PIPELINE, "pin", plan);
+    request.autonomy = design::live();
+    let Reply::Item(item) = h.cli(Request::Enqueue(request)).await.unwrap() else {
+        panic!("enqueued live item")
+    };
+    let (run, session) = design::designing(&h, &item).await;
+    let (_, head) = design::done_note(&h, &session, &run, "make it green", b"green").await;
+    design::confirm(&h, &session, &head, &["D1"], &[]).await;
+    h.settle_running(design::forged).await;
+    h.dispatch().await;
+    design::approve(&h, &design::open_proposal(&h, &item.id).await).await;
+    let item = h.item(&item.id).await;
+    std::fs::copy(
+        &crate::design_gate::intent_of(&h, &item.id).await.images[0].path,
+        run.workspace.join("built.png"),
+    )
+    .unwrap();
+    settle(
+        &h,
+        json!({"requirement_results": [{"id": "D1", "status": "implemented", "evidence": "green",
+        "visual_pairs": [{"reference": "D1-final", "built": "built.png",
+            "viewport": {"width": 1440, "height": 900}}]}]}),
+    )
+    .await;
+    let running = h.running().await;
+    assert!(!running.is_empty(), "{:?}", h.state(&item.id).await);
+    assert!(running.iter().all(|s| s.stage_id == "review"));
     (h, fake, item)
 }
 
@@ -611,6 +639,30 @@ fn no_repair() -> Config {
 }
 
 #[tokio::test]
+async fn ordinary_intent_keeps_its_original_build_contract_and_judge_choice() {
+    let mut plan = common::plan();
+    plan.0.insert(
+        "intent-acceptance".into(),
+        vec![common::choice(SAME_VENDOR, Effort::High)],
+    );
+    let vision = [common::MODEL, common::REVIEW_MODEL, SAME_VENDOR];
+    let (h, _fake, item) =
+        fixture_in(no_repair(), (common::PIPELINE, None, plan), false, &vision).await;
+    let prompt = h.backend.requests().pop().unwrap().instructions;
+    let (_, results) = prompt
+        .split_once("## Requirement results this stage owes")
+        .unwrap();
+    assert!(results.contains("\"width\": \"<px>\""), "{results}");
+    assert!(results.contains("\"theme\": \"<theme>\""), "{results}");
+    settle(&h, evidence(&h, &item, "implemented").await).await;
+    spent_providers(&h, &["codex"]);
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    let running = h.running().await;
+    assert_eq!(running[0].stage_id, "intent-acceptance");
+    assert_eq!(running[0].choice.model.to_string(), common::REVIEW_MODEL);
+}
+
+#[tokio::test]
 async fn a_pinned_acceptance_model_judges_and_is_labelled_when_it_shares_the_builder_s_vendor() {
     let vision = [common::MODEL, common::REVIEW_MODEL, SAME_VENDOR];
     let (h, _fake, item) = pinned_at_review(no_repair(), SAME_VENDOR, &vision).await;
@@ -624,7 +676,9 @@ async fn a_pinned_acceptance_model_judges_and_is_labelled_when_it_shares_the_bui
         "the pin, not another vendor's model"
     );
     assert_eq!(running[0].choice.effort, Effort::High);
-    settle(&h, judgment(&h, &item, "pass").await).await;
+    let mut verdict = judgment(&h, &item, "pass").await;
+    verdict["acceptance"]["requirements"][0]["id"] = json!("D1");
+    settle(&h, verdict).await;
     let Reply::ItemDetail(detail) = h
         .cli(Request::GetItem {
             item: item.id.clone(),

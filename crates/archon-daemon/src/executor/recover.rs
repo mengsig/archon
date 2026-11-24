@@ -551,6 +551,7 @@ pub(super) async fn driver_of(
         let approved = super::proposal::started_past(&store, &run.id)?;
         (store.gates_for_run(&run.id)?, approved)
     };
+    crate::knobs::check_live_design(ctx, &spec, item.autonomy.proposal)?;
     let operator_gates = OperatorGates::for_run(&spec, &item.autonomy);
     let experiments = crate::experiments::item_dir(&ctx.paths, &item.id);
     let driver = RunDriver::new(

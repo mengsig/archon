@@ -417,9 +417,15 @@ fn proposal_approval_freezes_record_binding_and_decision_together() {
 /// after the item is cancelled unless the settle pass closes it; a gate's
 /// question and other items' questions are left alone.
 #[test]
-fn a_cancelled_items_questions_are_closed() {
+fn only_a_cancelled_live_design_items_questions_are_closed() {
     let mut store = store();
-    let cancelled = store.insert_item(&item(None, "dropped"), None).unwrap();
+    let mut design = item(None, "dropped");
+    design.autonomy.proposal = archon_core::autonomy::ProposalMode::Live;
+    let cancelled = store.insert_item(&design, None).unwrap();
+    let ordinary = store.insert_item(&item(None, "ordinary"), None).unwrap();
+    store
+        .transition_item(&ordinary.id, QueueState::Cancelled { reason: None }, t(9))
+        .unwrap();
     let kept = store.insert_item(&item(None, "kept"), None).unwrap();
     let ask = |item: &archon_core::id::QueueItemId, at: i64| Question {
         id: QuestionId::new(),
@@ -435,22 +441,24 @@ fn a_cancelled_items_questions_are_closed() {
     };
     let stale = store.insert_question(&ask(&cancelled.id, 10)).unwrap();
     let other = store.insert_question(&ask(&kept.id, 11)).unwrap();
+    let ordinary = store.insert_question(&ask(&ordinary.id, 12)).unwrap();
     assert!(
         store
-            .close_cancelled_item_questions(t(20))
+            .close_cancelled_design_questions(t(20))
             .unwrap()
             .is_empty()
     );
     store
         .transition_item(&cancelled.id, QueueState::Cancelled { reason: None }, t(30))
         .unwrap();
-    let answers = store.close_cancelled_item_questions(t(40)).unwrap();
+    let answers = store.close_cancelled_design_questions(t(40)).unwrap();
     assert_eq!(answers.len(), 1);
     assert!(!store.question(&stale.id).unwrap().is_open());
     assert!(store.question(&other.id).unwrap().is_open());
+    assert!(store.question(&ordinary.id).unwrap().is_open());
     assert!(
         store
-            .close_cancelled_item_questions(t(50))
+            .close_cancelled_design_questions(t(50))
             .unwrap()
             .is_empty(),
         "once"

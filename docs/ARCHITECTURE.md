@@ -3720,6 +3720,18 @@ once the operator confirmed its exact text with `archon repo set
 from the registered repository's `HEAD` commit: an untracked or uncommitted
 copy neither confirms nor stops a check.
 
+An item whose pull request is for an integration branch gets the Checks
+section even where the repository names no check
+(`executor::fast_check::integration_target`): its target is the branch new
+work forks from (the integration branch, else the base branch) and not the
+release branch, which must exist unless `integration_branch` names the
+target. The contract then tells it to run fast checks through the
+repository's CI slot script (format, lint, and the tests of what it
+touches), to run the full suite only for a release pull request, release
+preparation or a brief that asks, to report its fast checks' tree, and to
+have reviewers read that evidence rather than rerun the full suite. A release or stacked change keeps the
+default checks.
+
 `archond` verifies the integration branch off the items' path
 (`archon_daemon::integration`): one worker reads each branch's head every
 `[integration] poll_every` (fetched from `origin` in `pr` mode) and, after

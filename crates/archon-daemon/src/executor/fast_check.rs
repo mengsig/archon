@@ -141,6 +141,33 @@ pub(crate) fn affected_by(tree: &Path, base: &str) -> Result<Affected, ArchonErr
     affected::affected(tree, &changed)
 }
 
+/// The integration branch a change whose pull request is for `target` lands
+/// on, read in the work tree `tree`: `target` when it is the branch new work
+/// forks from (`fork_base`) and not the release branch, which must exist
+/// unless the tiers name the integration branch. `None` for a release or a
+/// stacked change.
+pub(crate) fn integration_target(
+    tree: &Path,
+    target: &str,
+    tiers: &RepoTiers,
+    fork_base: Option<&str>,
+) -> Result<Option<String>, ArchonError> {
+    assert!(tree.is_absolute(), "run worktrees are absolute");
+    assert!(
+        !target.trim().is_empty(),
+        "a pull request has a base branch"
+    );
+    let release = tiers.release_branch();
+    if fork_base != Some(target) || target == release {
+        return Ok(None);
+    }
+    let named = tiers.integration_branch.as_deref() == Some(target);
+    if !named && base_refs(tree, release)?.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(target.to_owned()))
+}
+
 /// The refs `base` names: the local branch and `origin`'s, those that exist.
 fn base_refs(tree: &Path, base: &str) -> Result<Vec<String>, ArchonError> {
     let mut found = Vec::with_capacity(2);

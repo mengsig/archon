@@ -60,7 +60,8 @@ The workers report (claims to verify, not evidence):
    the exact base and head commits (`{{base_commit}}`
    and `git rev-parse HEAD`), the changed paths, the checks you ran with
    their results, and the risks you know of. While they read, run the
-   project's build, lint and full test suite once.
+   project's build, lint and full test suite once (the fast checks
+   where your Checks section says so).
 6. **Fix findings.** Only blocking findings, as your contract defines them,
    fail. Fix them in new commits, rerun the checks they affect, and
    re-review as your contract says: one new reviewer reads only the fix,

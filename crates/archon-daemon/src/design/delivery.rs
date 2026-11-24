@@ -299,12 +299,46 @@ impl DesignService {
                 return Ok(());
             };
             let next = (*next).clone();
+            if let Some(why) = super::iterations::stale_queued(&next, &notes) {
+                self.cancel_stale(ctx, &next, why).await?;
+                continue;
+            }
             if next.kind == NoteKind::Revert {
                 self.run_undo(ctx, &session, &next).await?;
                 continue;
             }
             return self.send_note(ctx, &session, &next, &notes).await;
         }
+    }
+
+    /// Cancel a queued note that must not run any more, saying why in its
+    /// thread.
+    async fn cancel_stale(
+        &self,
+        ctx: &DaemonContext,
+        note: &DesignNote,
+        why: String,
+    ) -> Result<(), ArchonError> {
+        {
+            let mut store = ctx.store.lock().await;
+            store.design_note_change(
+                &note.item,
+                &note.id,
+                NoteChange::Thread(archon_core::design::ThreadEntry {
+                    at: archon_core::now(),
+                    from: archon_core::design::ReplyAuthor::Archon,
+                    text: why,
+                }),
+            )?;
+            store.design_note_change(
+                &note.item,
+                &note.id,
+                super::status_change(NoteStatus::Cancelled, None),
+            )?;
+        }
+        tracing::info!(note = %note.id, "design: queued note cancelled; what it waited for did not happen");
+        self.emit_note(ctx, &note.item, &note.id).await;
+        Ok(())
     }
 
     async fn send_note(

@@ -17,7 +17,7 @@ export function nodeLine(note) {
   return `${note.follows ? '↳ follow-up: ' : ''}${words}${commit}`;
 }
 
-export function createTreePanel({ getState, thumbs, onSelect, getViewing, isPhone, actions, canAct = () => true }) {
+export function createTreePanel({ getState, thumbs, onSelect, getViewing, isPhone, actions, canAct = () => true, onLink = onSelect }) {
   const list = h('div', { class: 'tree-groups' });
   const empty = h('p', { class: 'list-status tree-empty', text: 'No notes yet. Every note and follow-up shows here as a node.' });
   const el = h('section', { class: 'tree', 'aria-label': 'Tree of notes' }, list, empty);
@@ -33,7 +33,10 @@ export function createTreePanel({ getState, thumbs, onSelect, getViewing, isPhon
           aside ? h('span', { class: 'chip tone-muted note-chip' }, h('span', { class: 'chip-text', text: 'Set aside' })) : null,
           chain.count > 1 && chain.current?.id === note.id ? h('span', { class: 'chip tone-accent note-chip' }, h('span', { class: 'chip-text', text: 'current' })) : null),
         h('span', { class: 'tree-node-line', text: nodeLine(note) })));
-    const li = h('li', { class: ['tree-node', `depth-${Math.min(depth, MAX_INDENT)}`, aside && 'is-aside', viewing && 'is-viewing'], dataset: { note: note.id } }, main);
+    // References sit beside the node's button, as links of their own.
+    const refs = note.refs?.length ? h('p', { class: 'tree-node-refs' }, 'like ', ...note.refs.flatMap((id, i) => [i ? ', ' : null,
+      h('button', { class: 'ref-link', type: 'button', 'aria-label': `Show ${id} in the tree`, onclick: () => onLink(id) }, id)])) : null;
+    const li = h('li', { class: ['tree-node', `depth-${Math.min(depth, MAX_INDENT)}`, aside && 'is-aside', viewing && 'is-viewing'], dataset: { note: note.id } }, main, refs);
     if (viewing && isPhone()) li.append(detail(chain, note));
     return li;
   }
@@ -57,7 +60,7 @@ export function createTreePanel({ getState, thumbs, onSelect, getViewing, isPhon
     const phone = isPhone();
     reconcile(list, chains, {
       key: (c) => c.id,
-      signature: (c) => JSON.stringify([canAct(), c.nodes.map(({ note: n, depth }) => [n.id, depth, n.status, n.text, n.commit, n.before_asset, n.after_asset, n.set_aside, n.undone_by, n.follows]), c.count, c.current?.id, viewing && c.versions.some((n) => n.id === viewing) ? viewing : null, phone]),
+      signature: (c) => JSON.stringify([canAct(), c.nodes.map(({ note: n, depth }) => [n.id, depth, n.status, n.text, n.commit, n.before_asset, n.after_asset, n.set_aside, n.undone_by, n.follows, n.refs]), c.count, c.current?.id, viewing && c.versions.some((n) => n.id === viewing) ? viewing : null, phone]),
       render: (c) => h('section', { class: 'tree-group', 'aria-label': `${c.id} ${c.label}` },
         h('h3', { class: 'tree-group-title', text: `${c.id} · ${c.label}` }),
         h('ul', { class: 'tree-nodes' }, c.nodes.map((n) => node(c, n)))),

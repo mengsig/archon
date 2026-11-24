@@ -154,5 +154,8 @@ async fn fail(
         &revert.id,
         super::status_change(NoteStatus::Failed, Some(reason)),
     )?;
+    drop(store);
+    // As a live failed undo does: the rest of its continue stops.
+    ctx.design.cancel_continue(ctx, revert).await;
     Ok(())
 }

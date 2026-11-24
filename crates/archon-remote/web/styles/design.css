@@ -262,6 +262,8 @@
 .tree-node.is-aside > .tree-node-main { opacity: .55; }
 .tree-node-body { display: grid; gap: 2px; min-width: 0; }
 .tree-node-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.tree-node-refs { margin: -4px 0 0; padding-left: calc(var(--space-2) + 66px); font-size: 13px; color: var(--text-2); }
+.tree-node.is-aside > .tree-node-refs { opacity: .55; }
 .tree-node-line { font-size: 13px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; }
 .tree-detail { display: grid; gap: var(--space-2); padding: var(--space-2); border-radius: var(--radius-s); background: var(--surface-2); }
 .tree-detail-title { margin: 0; font-size: 14px; }

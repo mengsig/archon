@@ -400,6 +400,15 @@ impl DesignService {
                     "only an undelivered note can be sent again".into(),
                 ));
             }
+            // The copy keeps its place in the chain and its references
+            // while they still hold.
+            let all = store.design_notes(item)?;
+            let follows = note.follows.as_deref().and_then(|parent| {
+                super::iterations::check_follows(parent, &all, &[])
+                    .ok()
+                    .map(|p| p.id.clone())
+            });
+            let refs = super::iterations::check_refs(note.refs.clone(), &all).unwrap_or_default();
             let (created, _) = store.design_note_add(NewDesignNote {
                 item: item.clone(),
                 session: session.id.clone(),
@@ -412,8 +421,8 @@ impl DesignService {
                 client_key: format!("resend:{id}:{}", session.id),
                 reverts: None,
                 resent_from: Some(id.to_owned()),
-                follows: None,
-                refs: Vec::new(),
+                follows,
+                refs,
                 before_asset: note.before_asset.clone(),
                 created_by_device: device,
             })?;

@@ -664,6 +664,11 @@ test.describe('iterations (desktop)', () => {
       await chain.getByRole('button', { name: 'Send follow-up' }).click();
       await expect.poll(() => sentOf(harness, 'design_note_add').length).toBe(1);
       expect(sentOf(harness, 'design_note_add')[0]).toMatchObject({ follows: 'D9', refs: ['D5', 'D3'] });
+      // After sending: D3, typed, is a link in the words; D5, only picked, has its own link.
+      const sentCard = chain.locator('.note').filter({ hasText: 'slightly darker, like D3' });
+      await expect(sentCard.locator('.note-text').getByRole('button', { name: 'Show D3 in the tree' })).toBeVisible();
+      await expect(sentCard.locator('.note-refs').getByRole('button', { name: 'Show D5 in the tree' })).toBeVisible();
+      await expect(sentCard.locator('.note-refs').getByRole('button', { name: 'Show D3 in the tree' })).toHaveCount(0);
       // D9's own text links D5; a link selects that node in the tree.
       await page.locator('#note-D9').getByRole('button', { name: 'Show D5 in the tree' }).click();
       await expect(page.getByRole('tab', { name: 'Tree' })).toHaveAttribute('aria-selected', 'true');
@@ -712,6 +717,10 @@ test.describe('iterations (desktop)', () => {
       await expect(node('D10').getByText('Queued')).toBeVisible();
       await expect(node('D3').locator('.thumb-img')).toBeVisible();
       await expect(node('D10').locator('.thumb-img')).toHaveCount(0);
+      // References are links beside the node; one selects its node.
+      await expect(node('D10').locator('.tree-node-refs').getByRole('button')).toHaveText(['D3', 'D5']);
+      await node('D9').getByRole('button', { name: 'Show D5 in the tree' }).click();
+      await expect(node('D5')).toHaveClass(/is-viewing/);
     } finally { await harness.stop(); }
   });
 

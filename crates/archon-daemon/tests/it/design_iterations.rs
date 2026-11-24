@@ -156,11 +156,220 @@ async fn references_reach_the_agent_and_are_limited() {
     );
     let unknown = add_follow(&f, "k3", "x", None, &["D99"]).await.unwrap_err();
     assert!(unknown.to_string().contains("no note D99"), "{unknown}");
-    let six: Vec<String> = (0..6).map(|n| format!("D{}", n + 1)).collect();
+    // Six notes that exist: the count is what refuses.
+    let mut six = vec![first.clone(), referencing.id.clone()];
+    for n in 0..4 {
+        six.push(
+            add_follow(&f, &format!("r{n}"), "another", None, &[])
+                .await
+                .expect("added")
+                .id,
+        );
+    }
     let refs: Vec<&str> = six.iter().map(String::as_str).collect();
-    // Unknown ids are refused before the count; with known ones the count
-    // is what refuses.
-    assert!(add_follow(&f, "k4", "x", None, &refs).await.is_err());
+    let too_many = add_follow(&f, "k4", "x", None, &refs).await.unwrap_err();
+    assert!(
+        too_many.to_string().contains("at most 5 earlier notes"),
+        "{too_many}"
+    );
+    let five = add_follow(&f, "k5", "x", None, &refs[..5])
+        .await
+        .expect("five references are fine");
+    assert_eq!(five.refs.len(), 5);
+}
+
+/// R8: a chain holds at most 20 versions.
+#[tokio::test]
+async fn a_chain_holds_at_most_twenty_versions() {
+    let f = Fixture::new().await;
+    let first = done(&f, "k1", "a.txt", "one\n", None).await;
+    // Queued follow-ups are versions too, and none is in the code yet.
+    for n in 2..=20 {
+        add_follow(&f, &format!("f{n}"), "again", Some(&first), &[])
+            .await
+            .unwrap_or_else(|e| panic!("version {n}: {e}"));
+    }
+    let refused = add_follow(&f, "f21", "again", Some(&first), &[])
+        .await
+        .unwrap_err();
+    assert!(
+        refused
+            .to_string()
+            .contains(&format!("{first} already has 20 versions")),
+        "{refused}"
+    );
+}
+
+/// The agent finishes `id` with a commit of its own file.
+async fn finish_busy(f: &Fixture, id: &str) {
+    let commit = f.commit(
+        "busy.txt",
+        "busy\n",
+        &format!("busy\n\nArchon-Note: {id}\n"),
+    );
+    report(f, id, AgentNoteStatus::Working, None, None)
+        .await
+        .unwrap();
+    report(f, id, AgentNoteStatus::Done, Some(commit), None)
+        .await
+        .unwrap();
+}
+
+/// The web's "Continue from here": the undos queue behind the agent's other
+/// note, and a follow-up sent meanwhile is accepted and runs after them.
+#[tokio::test]
+async fn a_follow_up_sent_while_its_undos_wait_runs_after_them() {
+    let f = Fixture::new().await;
+    let first = done(&f, "k1", "a.txt", "one\n", None).await;
+    let second = done(&f, "k2", "b.txt", "two\n", Some(&first)).await;
+    let busy = add_follow(&f, "k3", "something else", None, &[])
+        .await
+        .expect("added");
+    assert_eq!(view(&f, &busy.id).await.note.status, NoteStatus::Sent);
+    f.operator(Request::DesignNoteContinueFrom {
+        item: f.item.clone(),
+        id: first.clone(),
+        text: None,
+        client_key: Some("c1".into()),
+        refs: Vec::new(),
+    })
+    .await
+    .expect("continue queued");
+    let follow = add_follow(&f, "k4", "make it red", Some(&first), &[])
+        .await
+        .expect("accepted while the undo waits");
+    // A follow-up on the version being set aside is refused.
+    let refused = add_follow(&f, "k5", "x", Some(&second), &[])
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("undo of"), "{refused}");
+    finish_busy(&f, &busy.id).await;
+    settled(&f, &[&second]).await;
+    assert!(view(&f, &second).await.set_aside);
+    for _ in 0..100 {
+        if view(&f, &follow.id).await.note.status == NoteStatus::Sent {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(view(&f, &follow.id).await.note.status, NoteStatus::Sent);
+}
+
+/// A continue's undo left half-way by a restart fails at startup, and the
+/// rest of its continue is cancelled, as a live failed undo does.
+#[tokio::test]
+async fn recovery_stops_the_rest_of_a_continue() {
+    use archon_core::design::NoteKind;
+    use archon_queue::store::{NewDesignNote, NoteChange};
+    let f = Fixture::new().await;
+    let first = done(&f, "k1", "a.txt", "one\n", None).await;
+    let second = done(&f, "k2", "b.txt", "two\n", Some(&first)).await;
+    let third = done(&f, "k3", "c.txt", "three\n", Some(&second)).await;
+    let head = f.head();
+    // The notes a continue from the first version queues, stored as it
+    // stores them, and its first undo left Working by a crash before the
+    // branch moved.
+    let viewport = view(&f, &first).await.note.viewport;
+    let elsewhere = view(&f, &first).await.note.commit.unwrap();
+    let (r3, r2, follow) = {
+        let mut store = f.h.ctx.store.lock().await;
+        let mut add = |kind: NoteKind, key: &str, reverts: Option<&str>, follows: Option<&str>| {
+            store
+                .design_note_add(NewDesignNote {
+                    item: f.item.clone(),
+                    session: f.session.clone(),
+                    kind,
+                    text: "continue".into(),
+                    details_text: None,
+                    send_picture: false,
+                    target: None,
+                    viewport,
+                    client_key: key.into(),
+                    reverts: reverts.map(str::to_owned),
+                    resent_from: None,
+                    follows: follows.map(str::to_owned),
+                    refs: Vec::new(),
+                    before_asset: None,
+                    created_by_device: None,
+                })
+                .unwrap()
+                .0
+                .id
+        };
+        let r3 = add(NoteKind::Revert, "continue:c1|undo:3", Some(&third), None);
+        let r2 = add(NoteKind::Revert, "continue:c1|undo:2", Some(&second), None);
+        let follow = add(NoteKind::Page, "continue:c1|follow", None, Some(&first));
+        // A real commit the worktree does not match: nothing was applied.
+        let elsewhere = elsewhere.clone();
+        store
+            .design_note_change(
+                &f.item,
+                &r3,
+                NoteChange::RevertPrepared {
+                    base_commit: head.clone(),
+                    commit: elsewhere,
+                },
+            )
+            .unwrap();
+        (r3, r2, follow)
+    };
+    assert_eq!(view(&f, &r3).await.note.status, NoteStatus::Working);
+    archon_daemon::design::recover(&f.h.ctx)
+        .await
+        .expect("recovery");
+    assert_eq!(view(&f, &r3).await.note.status, NoteStatus::Failed);
+    assert_eq!(view(&f, &r2).await.note.status, NoteStatus::Cancelled);
+    assert_eq!(view(&f, &follow).await.note.status, NoteStatus::Cancelled);
+    // The next pump runs nothing of the continue.
+    let next = add_follow(&f, "k9", "something else", None, &[])
+        .await
+        .expect("added");
+    assert_eq!(view(&f, &next.id).await.note.status, NoteStatus::Sent);
+    assert_eq!(f.head(), head, "no undo ran");
+    assert!(!view(&f, &second).await.set_aside);
+    assert!(!view(&f, &third).await.set_aside);
+}
+
+/// Two undos where the newest conflicts: the older undo and the follow-up
+/// are cancelled and no commit is made.
+#[tokio::test]
+async fn a_conflict_cancels_every_later_note_of_the_continue() {
+    let f = Fixture::new().await;
+    let first = done(&f, "k1", "b.txt", "base\n", None).await;
+    let second = done(&f, "k2", "c.txt", "two\n", Some(&first)).await;
+    let third = done(&f, "k3", "a.txt", "three\n", Some(&second)).await;
+    done(&f, "k4", "a.txt", "four\n", None).await;
+    let before = f.head();
+    let reply = f
+        .operator(Request::DesignNoteContinueFrom {
+            item: f.item.clone(),
+            id: first.clone(),
+            text: Some("smaller".into()),
+            client_key: Some("c2".into()),
+            refs: Vec::new(),
+        })
+        .await
+        .expect("continue queued");
+    let Reply::DesignNote(follow) = reply else {
+        panic!("{reply:?}")
+    };
+    settled(&f, &[&third, &second]).await;
+    let notes = state(&f).await.notes;
+    let status_of_revert = |id: &str| {
+        notes
+            .iter()
+            .find(|n| n.note.reverts.as_deref() == Some(id))
+            .unwrap()
+            .note
+            .status
+    };
+    assert_eq!(status_of_revert(&third), NoteStatus::Failed);
+    assert_eq!(status_of_revert(&second), NoteStatus::Cancelled);
+    assert_eq!(
+        view(&f, &follow.note.id).await.note.status,
+        NoteStatus::Cancelled
+    );
+    assert_eq!(f.head(), before, "no commit was made");
 }
 
 /// A follow-up on a version with newer versions in the code is refused:

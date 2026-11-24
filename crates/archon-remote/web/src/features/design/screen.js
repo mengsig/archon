@@ -146,7 +146,7 @@ export function mountDesign(view, ctx) {
   const tabButtons = ['notes', 'tree'].map((name) => h('button', { class: 'design-tab', type: 'button', role: 'tab', id: `design-tab-${name}`, dataset: { tab: name }, onclick: () => setTab(name) }, name === 'notes' ? 'Notes' : 'Tree'));
   const tabs = h('div', { class: 'design-tabs', role: 'tablist', 'aria-label': 'Notes and tree', hidden: true }, tabButtons);
   const tree = createTreePanel({
-    getState: () => state, thumbs, onSelect: (id) => viewNode(id), getViewing: () => viewing, isPhone: () => layout === 'phone',
+    getState: () => state, thumbs, onSelect: (id) => viewNode(id), onLink: (id) => viewNode(id, { keep: true }), getViewing: () => viewing, isPhone: () => layout === 'phone',
     canAct: () => state.session?.state === 'live',
     actions: { compare: (n) => openCompare(ctx, n), followUp: (n) => followUpOn(n), continueFrom: (n) => continueFrom(n) },
   });

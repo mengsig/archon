@@ -23,6 +23,16 @@ export function linkedText(text, refs, onLink) {
     : p.text));
 }
 
+// A note's references its words do not already link, as links of their
+// own, so one picked from the list without typing its id still shows.
+export function refLinks(text, refs, onLink) {
+  const inText = new Set(linkParts(text ?? '', refs ?? []).map((p) => p.ref).filter(Boolean));
+  refs = (refs ?? []).filter((id) => !inText.has(id));
+  if (!refs.length) return null;
+  return h('p', { class: 'note-hint note-refs' }, 'References: ', ...refs.flatMap((id, i) => [i ? ' ' : null,
+    h('button', { class: 'ref-link', type: 'button', 'aria-label': `Show ${id} in the tree`, onclick: () => onLink(id) }, id)]));
+}
+
 export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage, iterations = () => false, thumbs = null, onLink = () => {}, onFollowUp = async () => {} }) {
   const list = h('ul', { class: 'note-list', 'aria-label': 'Notes' });
   const empty = emptyNotes();
@@ -61,6 +71,7 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage, iterat
       iterOn && note.follows ? h('span', { class: 'note-tag', text: `Follow-up on ${note.follows}` }) : null,
       iterOn && isSetAside(note) && note.kind !== 'revert' ? h('span', { class: 'chip tone-muted note-chip' }, h('span', { class: 'chip-text', text: 'Set aside' })) : null));
     li.append(h('p', { class: 'note-text' }, iterOn ? linkedText(note.text || (note.kind === 'revert' ? 'Reverse this change' : ''), note.refs ?? [], onLink) : (note.text || (note.kind === 'revert' ? 'Reverse this change' : ''))));
+    if (iterOn && note.refs?.length) li.append(refLinks(note.text, note.refs, onLink));
     if (note.read_only) li.append(h('p', { class: 'note-hint', text: earlierText(note, state.session?.id) }));
     if (note.undone_by) li.append(h('p', { class: 'note-hint', text: `Undone by ${note.undone_by}. It no longer counts.` }));
     if (note.no_change) li.append(h('p', { class: 'note-hint', text: 'Done, nothing to change.' }));
@@ -191,7 +202,8 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage, iterat
       pending.replaceChildren(...entries.map((e) => h('li', { class: 'note note-unsent' },
         h('div', { class: 'note-head' }, h('span', { class: 'chip tone-amber note-chip' }, icon('clock', { size: 14 }), h('span', { class: 'chip-text', text: 'Waiting to send' }))),
         e.follows ? h('p', { class: 'note-tag', text: `Follow-up on ${e.follows}` }) : null,
-        h('p', { class: 'note-text', text: e.text }))));
+        h('p', { class: 'note-text', text: e.text }),
+        e.refs?.length ? h('p', { class: 'note-hint note-refs', text: `References: ${e.refs.join(' ')}` }) : null)));
       render();
     },
     select(id) {

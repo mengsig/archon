@@ -125,6 +125,81 @@ fn in_code(note: &DesignNote, undone: &BTreeMap<String, String>) -> bool {
         && !undone.contains_key(&note.id)
 }
 
+/// Whether an undo of `id` is queued or running.
+fn pending_revert(all: &[DesignNote], id: &str) -> bool {
+    all.iter().any(|r| {
+        r.kind == NoteKind::Revert
+            && r.reverts.as_deref() == Some(id)
+            && matches!(r.status, NoteStatus::Queued | NoteStatus::Working)
+    })
+}
+
+/// The newer versions of `parent`'s chain still in the code, leaving out
+/// those an undo already queued or running sets aside: notes run in order,
+/// so a note queued after that undo finds them gone.
+fn newer_in_code(parent: &DesignNote, all: &[DesignNote]) -> Vec<String> {
+    let undone = undone_by(all);
+    let places = chains(all);
+    let root = places
+        .get(&parent.id)
+        .map(|p| p.root.clone())
+        .unwrap_or_else(|| parent.id.clone());
+    members(all, &places, &root)
+        .into_iter()
+        .filter(|n| n.number > parent.number && in_code(n, &undone) && !pending_revert(all, &n.id))
+        .map(|n| n.id.clone())
+        .collect()
+}
+
+/// Why a queued note must not reach the agent any more, if it must not: it
+/// belongs to a continue whose undo failed or was cancelled, or it follows a
+/// version whose newer versions an undo queued before it was to set aside,
+/// and that undo failed or was cancelled.
+pub(crate) fn stale_queued(note: &DesignNote, all: &[DesignNote]) -> Option<String> {
+    if let Some(group) = continue_group(&note.client_key) {
+        let stopped = all.iter().find(|n| {
+            n.id != note.id
+                && n.session == note.session
+                && n.kind == NoteKind::Revert
+                && continue_group(&n.client_key) == Some(group)
+                && matches!(n.status, NoteStatus::Failed | NoteStatus::Cancelled)
+        });
+        if let Some(stopped) = stopped {
+            return Some(format!(
+                "Not sent: {} did not finish, so this continue stopped.",
+                stopped.id
+            ));
+        }
+    }
+    if note.kind == NoteKind::Revert {
+        return None;
+    }
+    let parent = all
+        .iter()
+        .find(|n| Some(n.id.as_str()) == note.follows.as_deref())?;
+    // Only the versions an undo queued before this note was to set aside:
+    // a follow-up queued beside another one on the same version is fine.
+    let newer: Vec<String> = newer_in_code(parent, all)
+        .into_iter()
+        .filter(|id| {
+            all.iter().any(|r| {
+                r.kind == NoteKind::Revert
+                    && r.number < note.number
+                    && r.reverts.as_deref() == Some(id.as_str())
+                    && matches!(r.status, NoteStatus::Failed | NoteStatus::Cancelled)
+            })
+        })
+        .collect();
+    (!newer.is_empty()).then(|| {
+        format!(
+            "Not sent: {} has newer versions in the code ({}); continue from {} to set them aside first.",
+            parent.id,
+            newer.join(", "),
+            parent.id
+        )
+    })
+}
+
 /// The checked references of a new note: known, not a revert, no repeats,
 /// at most [`MAX_REFS`].
 pub(crate) fn check_refs(
@@ -190,12 +265,14 @@ pub(crate) fn check_follows<'a>(
             "{root} already has {MAX_CHAIN_VERSIONS} versions; add a new note instead"
         )));
     }
-    let newer: Vec<&str> = chain
-        .iter()
-        .filter(|n| {
-            n.number > parent.number && in_code(n, &undone) && !setting_aside.contains(&n.id)
-        })
-        .map(|n| n.id.as_str())
+    if pending_revert(all, follows) {
+        return Err(ArchonError::Invalid(format!(
+            "an undo of {follows} is waiting; follow up a version that stays in the code"
+        )));
+    }
+    let newer: Vec<String> = newer_in_code(parent, all)
+        .into_iter()
+        .filter(|id| !setting_aside.contains(id))
         .collect();
     if !newer.is_empty() {
         return Err(ArchonError::Invalid(format!(
@@ -394,7 +471,7 @@ impl DesignService {
                 n.id != revert.id
                     && n.session == revert.session
                     && n.status == NoteStatus::Queued
-                    && (n.client_key.starts_with(group))
+                    && continue_group(&n.client_key) == Some(group)
             }) {
                 if store
                     .design_note_change(
@@ -518,5 +595,120 @@ mod tests {
         assert_eq!(continue_group("k1"), None);
         assert_eq!(continue_group("continue:nobar"), None);
         assert_eq!(group_of("k1"), "continue:k1|");
+    }
+
+    fn note(number: u64) -> DesignNote {
+        let at = chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).unwrap();
+        DesignNote {
+            item: QueueItemId::new(),
+            id: archon_core::design::note_id(number),
+            number,
+            session: archon_core::design::DesignSessionId::new(),
+            kind: NoteKind::Change,
+            text: format!("note {number}"),
+            details_text: None,
+            send_picture: false,
+            target: None,
+            viewport: archon_core::design::Viewport {
+                w: 1,
+                h: 1,
+                preset: archon_core::design::ViewportPreset::Desktop,
+            },
+            status: NoteStatus::Done,
+            fail_reason: None,
+            base_commit: None,
+            commit: Some(format!("{number:040}")),
+            no_change: false,
+            reverts: None,
+            resent_from: None,
+            follows: None,
+            refs: Vec::new(),
+            superseded_by: None,
+            thread: vec![],
+            client_key: String::new(),
+            delivery: 0,
+            before_asset: None,
+            after_asset: Some(DesignAssetId::new()),
+            final_asset: None,
+            final_included: None,
+            captured_commit: None,
+            created_by_device: None,
+            created_at: at,
+            updated_at: at,
+        }
+    }
+
+    /// R8: four referenced notes with after pictures attach exactly three.
+    #[test]
+    fn at_most_three_referenced_pictures_are_attached() {
+        let mut all: Vec<DesignNote> = (1..=4).map(note).collect();
+        let mut new = note(5);
+        new.status = NoteStatus::Queued;
+        new.commit = None;
+        new.refs = all.iter().map(|n| n.id.clone()).collect();
+        all.push(new.clone());
+        let (text, pictures) = message_block(&new, &all);
+        assert_eq!(pictures.len(), MAX_REF_PICTURES);
+        let expected: Vec<DesignAssetId> = all[..3]
+            .iter()
+            .map(|n| n.after_asset.clone().unwrap())
+            .collect();
+        assert_eq!(pictures, expected, "the first three references, in order");
+        assert_eq!(text.matches("attached\n").count(), 3, "{text}");
+        assert!(text.contains("untrusted"), "{text}");
+        assert!(
+            text.contains("  - D4: "),
+            "the fourth is still described: {text}"
+        );
+    }
+
+    /// The pump's guard: a continue's notes stop once one of its undos
+    /// failed, and so does a follow-up that waited for an undo that failed.
+    #[test]
+    fn notes_left_after_a_failed_undo_are_stale() {
+        let first = note(1);
+        let mut second = note(2);
+        second.follows = Some("D1".into());
+        let mut revert = note(3);
+        revert.kind = NoteKind::Revert;
+        revert.reverts = Some("D2".into());
+        revert.status = NoteStatus::Failed;
+        revert.session = first.session.clone();
+        revert.client_key = "continue:c1|undo:D2".into();
+        let mut follow = note(4);
+        follow.status = NoteStatus::Queued;
+        follow.commit = None;
+        follow.follows = Some("D1".into());
+        follow.session = first.session.clone();
+        follow.client_key = "continue:c1|follow".into();
+        let mut all = vec![first, second, revert.clone(), follow.clone()];
+        assert!(
+            stale_queued(&follow, &all)
+                .unwrap()
+                .contains("D3 did not finish")
+        );
+        // A follow-up outside the group that waited for the same undo.
+        follow.client_key = "web-key".into();
+        all[3] = follow.clone();
+        assert!(
+            stale_queued(&follow, &all)
+                .unwrap()
+                .contains("newer versions")
+        );
+        // With the undo done, nothing is stale.
+        all[2].status = NoteStatus::Done;
+        all[2].commit = Some("f".repeat(40));
+        follow.client_key = "continue:c1|follow".into();
+        all[3] = follow.clone();
+        assert_eq!(stale_queued(&follow, &all), None);
+        // Two follow-ups queued on the same version both stay.
+        let mut beside = note(5);
+        beside.status = NoteStatus::Queued;
+        beside.commit = None;
+        beside.follows = Some("D2".into());
+        let mut other = note(6);
+        other.follows = Some("D2".into());
+        let all = vec![note(1), note(2), other, beside.clone()];
+        assert_eq!(stale_queued(&beside, &all), None);
     }
 }

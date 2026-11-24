@@ -195,7 +195,8 @@ still in the code.
 **References.** A note or follow-up can reference up to 5 earlier notes, picked
 from the list or typed as `@D3`. The agent's message gets a "Referenced
 changes" block with each one's words, commit and reply, marked as data, not
-instructions, and up to 3 of their after pictures.
+instructions, and up to 3 of their after pictures. Each card and tree node
+shows its references as links, including ones picked without typing the id.
 
 **Tree.** The **Tree** tab beside **Notes** shows every note as a node with its
 picture, status and short commit, grouped by chain. A follow-up of an older
@@ -208,10 +209,13 @@ shows pictures only: the live preview stays at the current code.
 version** undoes the chain's newer versions, newest first, with new revert
 commits through Undo (never a reset), marks them **Set aside**, and queues your
 follow-up on the chosen version. A newer version that is still queued or with
-the agent must be dropped or finished first. If a revert conflicts, the rest is
-cancelled and the card shows Undo's message. A follow-up on an older version
-whose newer versions are still in the code is refused with a pointer to
-Continue.
+the agent must be dropped or finished first. If a revert conflicts, or fails
+across a restart, the rest is cancelled and the card shows Undo's message; a
+follow-up that waited for that revert is cancelled too, never sent onto the
+code it meant to leave. A follow-up sent while the reverts still wait in line
+is accepted and runs after them. A follow-up on an older version whose newer
+versions are in the code with no undo waiting is refused with a pointer to
+Continue, as is one on a version an undo is about to set aside.
 
 **For the agent.** The read-only MCP tool `design_history` lists the chains of
 the session (or one chain, with `id`): each version's words, commit, reply,

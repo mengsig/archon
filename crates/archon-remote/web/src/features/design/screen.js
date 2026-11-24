@@ -12,7 +12,12 @@ import { createComposer } from './composer.js';
 import { createNotesPanel } from './notes.js';
 import { createInputBatcher, textEvent } from './input.js';
 import { escapeKeyEvents, shortcutFor, isTextTarget, stepDepth } from './keymap.js';
-import { createNoteOutbox } from './outbox.js';
+import { createNoteOutbox, newClientKey } from './outbox.js';
+import { createThumbs } from './thumbs.js';
+import { createTreePanel } from './tree.js';
+import { createViewer } from './viewer.js';
+import { buildChains, chainOfNote, olderInCode, followTarget, versionLabel } from './chains.js';
+import { openCompare } from './compare.js';
 import { noteFields } from './details.js';
 import { startFinish, resumeFinish, ledgerPanel } from './finish.js';
 import { openSketch } from './sketch.js';
@@ -45,6 +50,12 @@ export function mountDesign(view, ctx) {
   let presetSent = null; // `${session}|${preset}` of the last preset request, so a mismatch re-sends once
   let follower = null; // the poll that waits for the item's next session
   const outbox = createNoteOutbox({ item });
+  const iterations = () => Boolean(ctx.store.get().designIterations);
+  const thumbs = createThumbs(ctx, item);
+  let tab = 'notes'; // 'notes' | 'tree'
+  let viewing = null; // the version the comparison area shows, by note id
+  let wasViewing = false;
+  const continuedFrom = new Set(); // versions whose newer ones were already queued for undo
 
   const title = ctx.store.get().summaries?.find((s) => s.id === item)?.title ?? 'Design';
   const dispatch = (action) => {
@@ -120,8 +131,9 @@ export function mountDesign(view, ctx) {
     onSend: sendNote,
     onCancel: () => { composer.hide(); stage.setSelection(null); dispatch({ type: 'selection', selection: null }); collapseSheet(true); },
     onDepth: (by) => widen(by),
+    getNotes: () => state.notes, thumbs,
   });
-  const notes = createNotesPanel({ ctx, getState: () => state, onFocusNote: () => {}, onAddPage: () => { pick = null; depth = 0; stage.setSelection(null); dispatch({ type: 'selection', selection: null }); rememberScroll(); composer.show(null, { keepText: true }); raiseSheet(); } });
+  const notes = createNotesPanel({ ctx, getState: () => state, iterations, thumbs, onLink: (id) => { setTab('tree'); viewNode(id, { keep: true }); }, onFollowUp: sendFollowUp, onFocusNote: () => {}, onAddPage: () => { setTab('notes'); pick = null; depth = 0; stage.setSelection(null); dispatch({ type: 'selection', selection: null }); rememberScroll(); composer.show(null, { keepText: true }); raiseSheet(); } });
   // The decision ends the session at once; ask for it now and once more
   // shortly after, rather than waiting for the follower's next tick.
   let answeredTimer = null;
@@ -131,12 +143,77 @@ export function mountDesign(view, ctx) {
     answeredTimer = setTimeout(() => stream.refresh(), 1500);
   });
   const sheetToggle = h('button', { class: 'design-sheet-grab', type: 'button', 'aria-label': 'Resize the notes sheet', onclick: () => { sheetHeight = SHEET_HEIGHTS[(SHEET_HEIGHTS.indexOf(sheetHeight) + 1) % 3]; render(); } });
-  const side = h('aside', { class: 'design-side', 'aria-label': 'Notes' }, sheetToggle, notes.element, composer.element);
+  const tabButtons = ['notes', 'tree'].map((name) => h('button', { class: 'design-tab', type: 'button', role: 'tab', id: `design-tab-${name}`, dataset: { tab: name }, onclick: () => setTab(name) }, name === 'notes' ? 'Notes' : 'Tree'));
+  const tabs = h('div', { class: 'design-tabs', role: 'tablist', 'aria-label': 'Notes and tree', hidden: true }, tabButtons);
+  const tree = createTreePanel({
+    getState: () => state, thumbs, onSelect: (id) => viewNode(id), getViewing: () => viewing, isPhone: () => layout === 'phone',
+    canAct: () => state.session?.state === 'live',
+    actions: { compare: (n) => openCompare(ctx, n), followUp: (n) => followUpOn(n), continueFrom: (n) => continueFrom(n) },
+  });
+  tree.element.hidden = true;
+  const viewer = createViewer({ ctx, onBack: () => { viewing = null; render(); }, onContinue: (n) => continueFrom(n), onFollowUp: (n) => followUpOn(n) });
+  const side = h('aside', { class: 'design-side', 'aria-label': 'Notes' }, sheetToggle, tabs, notes.element, tree.element, composer.element);
   const stageWrap = h('div', { class: 'design-stagewrap' }, stage.element, phase.element, ledger.element, capture);
-  const main = h('div', { class: 'design-main' }, h('div', { class: 'design-stagecol' }, modes.element, stageWrap, typeForm, status.element), side);
+  const main = h('div', { class: 'design-main' }, h('div', { class: 'design-stagecol' }, viewer.element, modes.element, stageWrap, typeForm, status.element), side);
   const root = h('div', { class: 'design', dataset: { layout, notes: sheetHeight } }, top.element, main, bottom.element);
   view.append(root);
   stage.layer.setAttribute('role', 'img');
+
+  // ---- iterations: tabs, viewing a version, follow-ups ----
+  function setTab(name) { tab = name; render(); }
+  function viewNode(id, { keep = false } = {}) {
+    if (!state.notes.some((n) => n.id === id)) return;
+    viewing = viewing === id && layout === 'phone' && !keep ? null : id;
+    render();
+    // On a phone the detail opens inline under the node: bring it into view.
+    if (viewing && layout === 'phone') tree.element.querySelector('.tree-detail')?.scrollIntoView?.({ block: 'nearest' });
+  }
+  function followUpOn(note) {
+    tab = 'notes';
+    render();
+    notes.openFollow(note.id);
+    raiseSheet();
+  }
+  async function continueFrom(note) {
+    const chain = chainOfNote(buildChains(state.notes), note.id);
+    const newer = chain ? chain.versions.filter((n) => n.number > note.number && n.status === 'done' && !n.set_aside).map((n) => n.id) : [];
+    const ok = await confirmSheet({ title: `Continue from ${note.id}?`, message: `Archon reverses ${newer.length ? newer.join(', ') : 'the newer versions'} with new commits (nothing is erased) and marks ${newer.length > 1 ? 'them' : 'it'} Set aside. Then you can follow up on ${note.id}.`, confirmLabel: 'Continue from this version', cancelLabel: 'Keep as it is', tone: 'primary' });
+    if (!ok) return;
+    try {
+      const view = await ctx.design.noteContinueFrom(item, note.id, { text: null, clientKey: newClientKey(), refs: [] });
+      continuedFrom.add(note.id);
+      if (view?.id) dispatch({ type: 'event', event: { event: 'note', ...view } });
+      viewing = null;
+      followUpOn(note);
+    } catch (err) { refuse(err); }
+  }
+  // The follow-up box's Send: a plain note linked to its version, or (on an older version) the undo of the newer ones first.
+  async function sendFollowUp({ target, text, refs }) {
+    const chains = buildChains(state.notes);
+    const chain = chainOfNote(chains, target);
+    const base = chain?.versions.find((n) => n.id === target) ?? null;
+    if (!base) throw new Error('That note is no longer here.');
+    if (olderInCode(chain, base) && !continuedFrom.has(base.id)) {
+      const newer = chain.versions.filter((n) => n.number > base.number && n.status === 'done' && !n.set_aside).map((n) => n.id);
+      const ok = await confirmSheet({ title: `Follow up on ${base.id}?`, message: `${newer.join(', ')} will be undone first, with new commits, and set aside. Then your follow-up on ${base.id} is sent.`, confirmLabel: 'Undo and follow up', cancelLabel: 'Keep as it is', tone: 'primary' });
+      if (!ok) return false;
+      const note = await ctx.design.noteContinueFrom(item, base.id, { text, clientKey: newClientKey(), refs });
+      dispatch({ type: 'event', event: { event: 'note', ...note } });
+      notes.select(note.id);
+      return true;
+    }
+    const entry = outbox.add({ ...noteFields({ session: session(), clientKey: undefined, text, asset: null, sendPicture: false, sendDetails: false, details: '', refs, follows: base.id }), client_key: undefined, session: undefined });
+    try {
+      const note = await ctx.design.noteAdd({ ...entry, session: session() });
+      outbox.remove(entry.client_key);
+      dispatch({ type: 'event', event: { event: 'note', ...note } });
+      notes.select(note.id);
+    } catch (err) {
+      if (err.code === 'disconnected' || err.code === 'timeout') toast('Saved on this device. It will be sent when the connection is back.', { tone: 'amber' });
+      else { outbox.remove(entry.client_key); if (err?.code === 'gone') refuse(err); throw err; }
+    } finally { notes.setPending(outbox.pending()); }
+    return true;
+  }
 
   // ---- behaviour ----
   function setMode(mode) {
@@ -234,9 +311,9 @@ export function mountDesign(view, ctx) {
     raiseSheet();
   }
 
-  async function sendNote({ text, asset, sendPicture, sendDetails, details }) {
+  async function sendNote({ text, asset, sendPicture, sendDetails, details, refs }) {
     if (composer.busy) return;
-    const fields = noteFields({ session: session(), clientKey: undefined, text, asset, sendPicture, sendDetails, details });
+    const fields = noteFields({ session: session(), clientKey: undefined, text, asset, sendPicture, sendDetails, details, refs: iterations() ? refs : [] });
     const entry = outbox.add({ ...fields, client_key: undefined, session: undefined });
     composer.setBusy(true);
     try {
@@ -316,7 +393,23 @@ export function mountDesign(view, ctx) {
     stage.setSwitching(showStage && switching ? PRESET_SIZE[state.preset] : null, pointerBlockedText(state));
     typeForm.hidden = !(showStage && state.mode === 'interact');
     side.hidden = !operator || !state.session;
-    notes.element.hidden = false;
+    const iter = iterations() && operator;
+    tabs.hidden = !iter;
+    const treeTab = iter && tab === 'tree';
+    for (const b of tabButtons) { const on = b.dataset.tab === (treeTab ? 'tree' : 'notes'); b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
+    notes.element.hidden = treeTab;
+    tree.element.hidden = !treeTab;
+    composer.setRefsEnabled(iterations());
+    if (viewing && !state.notes.some((n) => n.id === viewing)) viewing = null;
+    const shown = iter && viewing ? state.notes.find((n) => n.id === viewing) : null;
+    const chain = shown ? chainOfNote(buildChains(state.notes), shown.id) : null;
+    const wide = layout !== 'phone';
+    if (shown && chain && wide) viewer.show(chain, shown, { act: state.session?.state === 'live' }); else viewer.hide();
+    const nowViewing = Boolean(shown && wide);
+    root.dataset.viewing = String(nowViewing);
+    if (wasViewing && !nowViewing) requestAnimationFrame(() => stage.resize());
+    wasViewing = nowViewing;
+    if (treeTab) tree.render();
     ledger.update();
     composer.setDisabled(finishing, finishing ? 'Finishing: press Back to editing to change anything' : '');
     stage.setSelection(state.selection?.box ?? null, state.selection?.label ?? '');

@@ -14,13 +14,22 @@ const PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS
 export const ITEM = 'qi_FIXTURE';
 const CSS_BASE = readFileSync(join(ROOT, 'tests/fixtures/design-app/style.css'), 'utf8');
 
-export async function startHarness(browser, { role = 'operator', questions = [], summaries = [], notes = [] } = {}) {
+// A finished note as the daemon reports it (for seeding a session); `fields` override.
+export function seedNote(fields) {
+  const at = new Date().toISOString();
+  const number = fields.number ?? Number(String(fields.id).slice(1));
+  return { item: ITEM, id: `D${number}`, number, session: 'ds_FIXTURE', kind: 'change', text: '', details_text: null, send_picture: false, target: null, viewport: { w: 800, h: 500, preset: 'desktop' },
+    status: 'done', fail_reason: null, base_commit: 'base0001', commit: `c${number}0000abcdef`, no_change: false, reverts: null, resent_from: null, superseded_by: null, thread: [], delivery: 0,
+    before_asset: `da_b${number}`, after_asset: `da_a${number}`, created_at: at, updated_at: at, follows: null, refs: [], ...fields };
+}
+
+export async function startHarness(browser, { role = 'operator', questions = [], summaries = [], notes = [], iterations = false } = {}) {
   const fixtureApp = await startFixtureApp();
   const appPage = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
   await appPage.goto(fixtureApp.url);
   const server = createServer((req, res) => {
     const path = req.url.split('?')[0];
-    if (path === '/api/session') return json(res, { device: { id: 'dev1', name: 'Test', role }, protocol_version: 25, daemon_version: 'test' });
+    if (path === '/api/session') return json(res, { device: { id: 'dev1', name: 'Test', role }, protocol_version: iterations ? 26 : 25, daemon_version: 'test' });
     if (path === '/api/health') return json(res, { ok: true });
     const file = join(ROOT, path === '/' ? 'index.html' : path.slice(1));
     if (!file.startsWith(ROOT) || /\/(tests|dev|node_modules)\//.test(file) || !existsSync(file)) { res.writeHead(404).end(); return; }
@@ -28,6 +37,7 @@ export async function startHarness(browser, { role = 'operator', questions = [],
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const daemon = createDaemon({ appPage, fixtureApp, role });
+  daemon.state.iterations = iterations;
   daemon.state.questions.push(...questions);
   daemon.state.summaries.push(...summaries);
   daemon.state.notes.push(...notes);
@@ -47,7 +57,18 @@ function createDaemon({ appPage, fixtureApp, role }) {
   const state = { notes: [], seq: 0, ended: false, paused: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false, questions: [], summaries: [], sessionPatch: {}, sessionId: 'ds_FIXTURE', endReason: null };
   const now = () => new Date().toISOString();
   const session = () => ({ id: state.sessionId, item: ITEM, state: state.sessionState, end_reason: state.endReason, degraded: false, note_version: state.version, viewport_preset: 'desktop', preview_url: 'http://127.0.0.1:5173/', sandbox_off: false, ...state.sessionPatch });
-  const view = (n) => ({ ...n, undone_by: state.notes.find((x) => x.reverts === n.id && x.status === 'done')?.id ?? null, read_only: false, approved: false, active: true });
+  const undoneBy = (n) => state.notes.find((x) => x.reverts === n.id && x.status === 'done')?.id ?? null;
+  const rootOf = (n) => { let c = n; for (let i = 0; i < 50 && c.follows && state.notes.find((x) => x.id === c.follows); i += 1) c = state.notes.find((x) => x.id === c.follows); return c.id; };
+  const chainOf = (n) => (n.kind === 'revert' ? null : (n.chain ?? rootOf(n)));
+  // The iteration fields of protocol 26, derived the way the daemon does.
+  const iter = (n) => {
+    if (!state.iterations) return {};
+    const chain = chainOf(n);
+    const mates = chain ? state.notes.filter((x) => chainOf(x) === chain).sort((a, b) => a.number - b.number) : [];
+    return { follows: n.follows ?? null, refs: n.refs ?? [], chain, version: chain ? mates.findIndex((x) => x.id === n.id) + 1 : 0, versions: mates.length, set_aside: Boolean(undoneBy(n)) };
+  };
+  const view = (n) => ({ ...n, undone_by: undoneBy(n), read_only: false, approved: false, active: true, ...iter(n) });
+  const nextNumber = () => Math.max(0, ...state.notes.map((n) => n.number)) + 1;
   const push = (ws, event) => ws.send(JSON.stringify({ frame: 'design', sub: 1, event }));
   const broadcast = (event) => state.connections.forEach((c) => c.subscribed && push(c.ws, event));
   const reply = (ws, id, reply, data) => ws.send(JSON.stringify({ frame: 'reply', id, result: { Ok: { reply, data } } }));
@@ -75,7 +96,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
     const { ws } = conn;
     const { req, cmd } = msg;
     state.requests.push(msg);
-    if (cmd === 'hello') return reply(ws, req, 'welcome', { protocol_version: 25, features: ['design_sessions'], device: { id: 'dev1', name: 'Test', role } });
+    if (cmd === 'hello') return reply(ws, req, 'welcome', { protocol_version: state.iterations ? 26 : 25, features: state.iterations ? ['design_sessions', 'design_iterations'] : ['design_sessions'], device: { id: 'dev1', name: 'Test', role } });
     if (cmd === 'feed_history') return reply(ws, req, 'feed', []);
     if (cmd === 'list_item_summaries') return reply(ws, req, 'item_summaries', state.summaries);
     if (cmd === 'list_questions') return reply(ws, req, 'questions', state.questions);
@@ -113,7 +134,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
         const resolved = await target();
         const known = state.notes.find((n) => n.client_key === msg.client_key);
         if (known) return reply(ws, req, 'design_note', view(known));
-        const n = note({ number: state.notes.length + 1, client_key: msg.client_key, text: msg.text, details_text: msg.details_text, send_picture: msg.send_picture, target: resolved });
+        const n = note({ number: nextNumber(), client_key: msg.client_key, text: msg.text, details_text: msg.details_text, send_picture: msg.send_picture, target: resolved, follows: msg.follows ?? null, refs: msg.refs ?? [] });
         state.notes.unshift(n);
         reply(ws, req, 'design_note', view(n));
         setTimeout(async () => {
@@ -123,11 +144,35 @@ function createDaemon({ appPage, fixtureApp, role }) {
         }, 200);
         return;
       }
+      // As archond: revert every newer version of the chain that is in the code (newest first), then the follow-up.
+      case 'design_note_continue_from': {
+        const base = state.notes.find((n) => n.id === msg.id);
+        if (!base) return refuse(ws, req, 'not_found', 'no such note');
+        if (state.refuseContinue) return refuse(ws, req, 'invalid_argument', state.refuseContinue);
+        const known = msg.client_key && state.notes.find((n) => n.client_key === msg.client_key);
+        if (known) return reply(ws, req, 'design_note', view(known));
+        const chain = chainOf(base);
+        const newer = state.notes.filter((n) => chainOf(n) === chain && n.number > base.number && n.status === 'done' && !undoneBy(n)).sort((a, b) => b.number - a.number);
+        const reverts = newer.map((orig) => { const r = note({ number: nextNumber(), kind: 'revert', reverts: orig.id, status: 'queued', client_key: `rev-${orig.id}`, text: '' }); state.notes.unshift(r); return r; });
+        let follow = null;
+        if (msg.text) { follow = note({ number: nextNumber(), client_key: msg.client_key, text: msg.text, follows: base.id, refs: msg.refs ?? [], target: null }); state.notes.unshift(follow); }
+        reply(ws, req, 'design_note', view(follow ?? base));
+        setTimeout(async () => {
+          for (const r of reverts) {
+            setNote(r, { status: 'working' });
+            if (state.conflictOn === r.reverts) { setNote(r, { status: 'failed', fail_reason: 'undo_conflict', thread: [{ at: now(), from: 'archon', text: 'Can’t undo automatically, later changes touch the same code; add a note describing what to change back.' }] }); if (follow) setNote(follow, { status: 'cancelled' }); return; }
+            setNote(r, { status: 'done', commit: `rev${r.number}0000` });
+            setNote(state.notes.find((n) => n.id === r.reverts), {});
+          }
+          if (follow) { setNote(follow, { status: 'working' }); setNote(follow, { status: 'done', commit: `f${follow.number}0000abcdef`, before_asset: 'da_b', after_asset: 'da_a', thread: [{ at: now(), from: 'agent', text: 'Follow-up done.' }] }); }
+        }, 100);
+        return;
+      }
       case 'design_upload': return reply(ws, req, 'design_resolved', { target: null, label: 'Your picture', asset: 'da_up', data_url: PIXEL });
       case 'design_asset': return reply(ws, req, 'design_asset', { id: msg.id, data_url: PIXEL, width: 1, height: 1, caption: 'captured from the preview at commit abc1234, 14:32' });
       case 'design_note_undo': {
         const original = state.notes.find((n) => n.id === msg.id);
-        const revert = note({ number: state.notes.length + 1, kind: 'revert', reverts: original.id, status: 'working', client_key: 'rev', text: '' });
+        const revert = note({ number: nextNumber(), kind: 'revert', reverts: original.id, status: 'working', client_key: 'rev', text: '' });
         state.notes.unshift(revert);
         reply(ws, req, 'design_note', view(revert));
         setTimeout(async () => { await recolor('#285dce'); setNote(revert, { status: 'done', commit: 'rev00001' }); setNote(original, {}); }, 100);
@@ -137,7 +182,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
         state.sessionState = 'finishing'; state.version += 1;
         broadcast({ event: 'session', state: 'finishing', degraded: false, preview_path: '/', commit: 'abc1234def', browser: { status: 'running' }, note_version: state.version });
         return reply(ws, req, 'design_finish', { capture: 'cap1', head: 'abc1234def', note_version: state.version, no_change_only: false,
-          cards: state.notes.filter((n) => n.status === 'done' && n.kind !== 'revert' && !view(n).undone_by).map((n) => ({ note: n.id, text: n.text, asset: 'da_f', data_url: PIXEL, caption: 'captured from the preview at commit abc1234', include: true, superseded_by: null, not_found: false, left_history: false })) });
+          cards: state.notes.filter((n) => n.status === 'done' && n.kind !== 'revert' && !view(n).undone_by && (!state.iterations || !state.notes.some((m) => m.status === 'done' && !undoneBy(m) && chainOf(m) === chainOf(n) && m.number > n.number))).map((n) => ({ note: n.id, text: n.text, history: state.iterations ? state.notes.filter((m) => chainOf(m) === chainOf(n) && m.number < n.number).sort((a, b) => a.number - b.number).map((m) => ({ note: m.id, text: m.text, set_aside: Boolean(undoneBy(m)) })) : undefined, asset: 'da_f', data_url: PIXEL, caption: 'captured from the preview at commit abc1234', include: true, superseded_by: null, not_found: false, left_history: false })) });
       case 'design_finish_cancel': state.sessionState = 'live'; return reply(ws, req, 'design_done', null);
       case 'design_finish_confirm':
         // As archond: approving with no note in force needs the operator's yes.

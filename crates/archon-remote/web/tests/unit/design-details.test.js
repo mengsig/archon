@@ -30,3 +30,9 @@ test('the note fields send exactly what the switches allow', () => {
   assert.equal(off.details_text, null);
   assert.equal(noteFields({ ...base, asset: null }).send_picture, false, 'no picture, nothing to send');
 });
+
+test('a follow-up and its references go into the note fields only when used', () => {
+  const base = { session: 'ds_1', clientKey: 'web-1', text: 'darker', asset: null, sendPicture: false, sendDetails: false, details: '' };
+  assert.deepEqual(Object.keys(noteFields(base)).sort(), ['asset', 'client_key', 'details_text', 'send_picture', 'session', 'text']);
+  assert.deepEqual(noteFields({ ...base, follows: 'D3', refs: ['D5', 'D7'] }), { session: 'ds_1', client_key: 'web-1', text: 'darker', asset: null, send_picture: false, details_text: null, refs: ['D5', 'D7'], follows: 'D3' });
+});

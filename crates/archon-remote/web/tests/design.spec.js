@@ -4,7 +4,7 @@
 // flows belongs to the daemon tasks' own e2e.
 import { test as base, expect } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { startHarness, ITEM } from './support/design-harness.js';
+import { startHarness, seedNote, ITEM } from './support/design-harness.js';
 import { guardConsole } from './support/console-guard.js';
 
 const test = base.extend({
@@ -590,6 +590,313 @@ test.describe('phone S3 and touch', () => {
       await expect.poll(() => harness.daemon.state.requests.find((r) => r.cmd === 'design_upload')?.blank).toBe(true);
       await expect(page.getByLabel('Details the agent will receive')).toHaveValue(/New screen sketch/);
       await expect(page.getByLabel('Details the agent will receive')).not.toHaveValue(/Region the operator drew/);
+    } finally { await harness.stop(); }
+  });
+});
+
+// ---- design iterations: follow-ups, references, the tree, viewing and continuing ----
+
+// D3 → D7 → D9 (D9 refers to D5); D5 with D6 set aside (undone by D11) and D8 working; D10 queued on the page.
+function iterationNotes() {
+  const at = (n, f = {}) => seedNote({ number: n, ...f });
+  return [
+    at(3, { text: 'Make the header taller', commit: '9ab02f1aaaa', thread: [{ at: '2026-01-01T00:00:00Z', from: 'agent', text: 'Header height 56 to 72px.' }] }),
+    at(5, { text: 'Green primary buttons', commit: '51aa7e0bbbb' }),
+    at(6, { text: 'rounder corners', follows: 'D5' }),
+    at(7, { text: 'bigger title', follows: 'D3', commit: '4c1e9a2cccc' }),
+    at(8, { text: 'outline style', follows: 'D5', status: 'working', commit: null, after_asset: null }),
+    at(9, { text: 'green, like D5', follows: 'D7', refs: ['D5'], commit: 'e71d0c3dddd' }),
+    at(10, { kind: 'page', text: 'Combine D3 and D5 on Settings', refs: ['D3', 'D5'], status: 'queued', commit: null, before_asset: null, after_asset: null }),
+    at(11, { kind: 'revert', reverts: 'D6', text: '', commit: 'rev00001' }),
+  ];
+}
+const sentOf = (harness, cmd) => harness.daemon.state.requests.filter((r) => r.cmd === cmd);
+
+test.describe('iterations (desktop)', () => {
+  test.use({ viewport: { width: 1280, height: 720 }, colorScheme: 'light' });
+
+  test('follow-up loop: send a follow-up, the agent replies in the same thread', async ({ browser, page }) => {
+    const harness = await open(browser, page, { iterations: true, notes: [seedNote({ number: 1, text: 'make it green' })] });
+    try {
+      const chain = page.locator('#chain-D1');
+      await expect(chain).toBeVisible();
+      await chain.getByRole('button', { name: 'Follow up' }).click();
+      const box = chain.getByLabel('Follow-up on D1');
+      await expect(chain.getByText('Follow up on D1 (newest)')).toBeVisible();
+      await box.fill('and make it bigger');
+      await chain.getByRole('button', { name: 'Send follow-up' }).click();
+      await expect.poll(() => sentOf(harness, 'design_note_add').length).toBe(1);
+      const sent = sentOf(harness, 'design_note_add')[0];
+      expect(sent).toMatchObject({ text: 'and make it bigger', follows: 'D1' });
+      expect(sent.client_key).toMatch(/^web-/);
+      await expect(chain.getByText('2 versions')).toBeVisible();
+      await expect(chain.locator('#note-D2').getByText('Made the button green.')).toBeVisible();
+      await expect(chain.locator('#note-D2').getByText('Follow-up on D1')).toBeVisible();
+      await expect(chain.getByLabel('Follow-up on D1')).toHaveCount(0); // the box closed after sending
+    } finally { await harness.stop(); }
+  });
+
+  test('references: the picker, @D autocomplete, chips, links, and the request carries refs', async ({ browser, page }) => {
+    const harness = await open(browser, page, { iterations: true, notes: iterationNotes() });
+    try {
+      const chain = page.locator('#chain-D3');
+      await chain.getByRole('button', { name: 'Follow up' }).click();
+      const box = chain.getByLabel(/Follow-up on D9/);
+      await box.fill('slightly darker');
+      await chain.getByRole('button', { name: '+ Reference a change' }).click();
+      const picker = chain.getByRole('list', { name: 'Earlier notes to reference' });
+      await expect(picker.getByRole('button')).toHaveCount(8 - 1); // every note but the revert
+      await picker.getByRole('button', { name: /^D5 / }).click();
+      await expect(chain.getByRole('button', { name: 'Remove reference D5' })).toHaveText('D5 ×');
+      await box.fill('slightly darker, like @D');
+      const mentions = chain.getByRole('listbox', { name: 'Notes matching what you typed' });
+      await expect(mentions.getByRole('option').first()).toContainText('D10');
+      await mentions.getByRole('option', { name: /^D3/ }).click();
+      await expect(box).toHaveValue('slightly darker, like D3 ');
+      await expect(chain.getByRole('button', { name: 'Remove reference D3' })).toBeVisible();
+      await chain.getByRole('button', { name: 'Remove reference D3' }).click();
+      await expect(chain.getByRole('button', { name: 'Remove reference D3' })).toHaveCount(0);
+      await box.fill('slightly darker, like @D3');
+      await expect(mentions).toBeVisible();
+      await page.keyboard.press('Enter'); // the open list takes Enter: nothing is sent
+      expect(sentOf(harness, 'design_note_add')).toHaveLength(0);
+      await expect(chain.getByRole('button', { name: 'Remove reference D3' })).toBeVisible();
+      await chain.getByRole('button', { name: 'Send follow-up' }).click();
+      await expect.poll(() => sentOf(harness, 'design_note_add').length).toBe(1);
+      expect(sentOf(harness, 'design_note_add')[0]).toMatchObject({ follows: 'D9', refs: ['D5', 'D3'] });
+      // D9's own text links D5; a link selects that node in the tree.
+      await page.locator('#note-D9').getByRole('button', { name: 'Show D5 in the tree' }).click();
+      await expect(page.getByRole('tab', { name: 'Tree' })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.locator('.tree-node[data-note="D5"]')).toHaveClass(/is-viewing/);
+      await expect.poll(() => harness.daemon.state.notes.some((n) => n.follows === 'D9' && n.status === 'done')).toBe(true);
+    } finally { await harness.stop(); }
+  });
+
+  test('a sixth reference is refused in plain words', async ({ browser, page }) => {
+    const notes = [1, 2, 3, 4, 5, 6, 7].map((n) => seedNote({ number: n, text: `note ${n}` }));
+    const harness = await open(browser, page, { iterations: true, notes });
+    try {
+      const chain = page.locator('#chain-D7');
+      await chain.getByRole('button', { name: 'Follow up' }).click();
+      await chain.getByRole('button', { name: '+ Reference a change' }).click();
+      for (const id of ['D1', 'D2', 'D3', 'D4', 'D5']) {
+        await chain.getByRole('list', { name: 'Earlier notes to reference' }).getByRole('button', { name: new RegExp(`^${id} `) }).click();
+        if (id !== 'D5') await chain.getByRole('button', { name: '+ Reference a change' }).click();
+      }
+      await chain.getByRole('button', { name: '+ Reference a change' }).click();
+      await chain.getByRole('list', { name: 'Earlier notes to reference' }).getByRole('button', { name: /^D6 / }).click();
+      await expect(chain.getByText('A note can refer to at most 5 earlier notes.')).toBeVisible();
+      await expect(chain.locator('.ref-chip')).toHaveCount(5);
+    } finally { await harness.stop(); }
+  });
+
+  test('tree: groups, nodes, branches, set-aside and current', async ({ browser, page }) => {
+    const harness = await open(browser, page, { iterations: true, notes: iterationNotes() });
+    try {
+      await page.getByRole('tab', { name: 'Tree' }).click();
+      await expect(page.locator('.tree-group-title')).toHaveText(['D10 · PAGE', 'D3 · HEADER', 'D5 · BUTTONS']);
+      const node = (id) => page.locator(`.tree-node[data-note="${id}"]`);
+      await expect(node('D3')).toHaveClass(/depth-0/);
+      await expect(node('D7')).toHaveClass(/depth-1/);
+      await expect(node('D9')).toHaveClass(/depth-2/);
+      await expect(node('D9').getByText('current')).toBeVisible();
+      await expect(node('D9')).toContainText('↳ follow-up: green, like D5 · e71d0c3');
+      await expect(node('D3')).toContainText('9ab02f1');
+      // A branch: D6 and D8 both continue D5.
+      await expect(node('D6')).toHaveClass(/depth-1/);
+      await expect(node('D8')).toHaveClass(/depth-1/);
+      await expect(node('D6')).toHaveClass(/is-aside/);
+      await expect(node('D6').getByText('Set aside')).toBeVisible();
+      await expect(node('D8')).not.toHaveClass(/is-aside/);
+      await expect(node('D8').getByText('Working')).toBeVisible();
+      await expect(node('D10').getByText('Queued')).toBeVisible();
+      await expect(node('D3').locator('.thumb-img')).toBeVisible();
+      await expect(node('D10').locator('.thumb-img')).toHaveCount(0);
+    } finally { await harness.stop(); }
+  });
+
+  test('viewing an older version: the bar, Compare with…, Back to current; the live preview is untouched', async ({ browser, page }) => {
+    const harness = await open(browser, page, { iterations: true, notes: iterationNotes() });
+    try {
+      await page.getByRole('tab', { name: 'Tree' }).click();
+      await page.locator('.tree-node[data-note="D7"] .tree-node-main').click();
+      const bar = page.locator('.viewer-bar');
+      await expect(bar).toContainText('Viewing D7 · version 2 of 3');
+      await expect(bar).toContainText('pictures at commit 4c1e9a2');
+      await expect(bar).toContainText('The live preview still shows the current version.');
+      await expect(page.locator('.design-viewer .cmp-img').first()).toBeVisible();
+      await expect(page.locator('.design-canvas')).toBeHidden();
+      await page.getByLabel('Compare with…').selectOption({ label: 'D9·v3 (current)' });
+      await expect(page.locator('.viewer-side .cmp-img')).toHaveCount(2);
+      await expect(page.locator('.viewer-side')).toContainText('After D7·v2');
+      await expect(page.locator('.viewer-side')).toContainText('After D9·v3');
+      await page.getByLabel('Compare with…').selectOption('');
+      await expect(page.locator('.viewer-side')).toHaveCount(0);
+      await expect(page.locator('.design-viewer .cmp-img')).toHaveCount(2); // this version's own before and after
+      await page.getByRole('button', { name: 'Back to current' }).click();
+      await expect(page.locator('.design-viewer')).toBeHidden();
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      // Viewing sent nothing that changes the preview or the code.
+      const changing = ['design_viewport', 'design_reload', 'design_note_undo', 'design_note_continue_from', 'design_note_add'];
+      expect(harness.daemon.state.requests.filter((r) => changing.includes(r.cmd))).toEqual([]);
+      // The newest version has nothing to continue from.
+      await page.locator('.tree-node[data-note="D9"] .tree-node-main').click();
+      await expect(page.locator('.design-viewer').getByRole('button', { name: 'Continue from this version' })).toBeHidden();
+      await expect(page.locator('.design-viewer').getByRole('button', { name: 'Follow up on this version' })).toBeVisible();
+    } finally { await harness.stop(); }
+  });
+
+  test('continue from an older version: confirm, reverts queue, the follow-up box opens on it', async ({ browser, page }) => {
+    const harness = await open(browser, page, { iterations: true, notes: iterationNotes() });
+    try {
+      await page.getByRole('tab', { name: 'Tree' }).click();
+      await page.locator('.tree-node[data-note="D3"] .tree-node-main').click();
+      await page.locator('.design-viewer').getByRole('button', { name: 'Continue from this version' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Continue from D3?' });
+      await expect(dialog).toContainText('D7, D9');
+      await dialog.getByRole('button', { name: 'Keep as it is' }).click();
+      await expect(dialog).toHaveCount(0);
+      expect(sentOf(harness, 'design_note_continue_from')).toHaveLength(0);
+      await page.locator('.design-viewer').getByRole('button', { name: 'Continue from this version' }).click();
+      await page.getByRole('dialog', { name: 'Continue from D3?' }).getByRole('button', { name: 'Continue from this version' }).click();
+      await expect.poll(() => sentOf(harness, 'design_note_continue_from').length).toBe(1);
+      expect(sentOf(harness, 'design_note_continue_from')[0]).toMatchObject({ id: 'D3', text: null, refs: [] });
+      // The follow-up box is open on D3, in the Notes tab; the newer versions were reverted and set aside.
+      await expect(page.getByRole('tab', { name: 'Notes' })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByLabel('Follow-up on D3')).toBeVisible();
+      await expect.poll(() => harness.daemon.state.notes.filter((n) => n.kind === 'revert' && n.reverts && n.status === 'done').map((n) => n.reverts).sort()).toEqual(['D6', 'D7', 'D9']);
+      await expect(page.locator('#note-D9').getByText('Set aside')).toBeVisible();
+      await page.getByLabel('Follow-up on D3').fill('make it blue');
+      await page.getByRole('button', { name: 'Send follow-up' }).click();
+      await expect.poll(() => sentOf(harness, 'design_note_add').length).toBe(1);
+      expect(sentOf(harness, 'design_note_add')[0]).toMatchObject({ follows: 'D3', text: 'make it blue' });
+      expect(sentOf(harness, 'design_note_continue_from')).toHaveLength(1);
+      await expect.poll(() => harness.daemon.state.notes.some((n) => n.follows === 'D3' && n.status === 'done')).toBe(true);
+    } finally { await harness.stop(); }
+  });
+
+  test('follow up on an older version: confirm, then design_note_continue_from carries the text', async ({ browser, page }) => {
+    const harness = await open(browser, page, { iterations: true, notes: iterationNotes() });
+    try {
+      await page.getByRole('tab', { name: 'Tree' }).click();
+      await page.locator('.tree-node[data-note="D7"] .tree-node-main').click();
+      await page.locator('.design-viewer').getByRole('button', { name: 'Follow up on this version' }).click();
+      await expect(page.getByText('Sending this first undoes D9')).toBeVisible();
+      await page.getByLabel('Follow-up on D7').fill('the title in blue');
+      await page.getByLabel('Follow-up on D7').press('Enter');
+      const dialog = page.getByRole('dialog', { name: 'Follow up on D7?' });
+      await dialog.getByRole('button', { name: 'Keep as it is' }).click();
+      await expect(dialog).toHaveCount(0);
+      expect(sentOf(harness, 'design_note_continue_from')).toHaveLength(0);
+      await expect(page.getByLabel('Follow-up on D7')).toHaveValue('the title in blue'); // kept for another try
+      await page.getByRole('button', { name: 'Send follow-up' }).click();
+      await page.getByRole('dialog', { name: 'Follow up on D7?' }).getByRole('button', { name: 'Undo and follow up' }).click();
+      await expect.poll(() => sentOf(harness, 'design_note_continue_from').length).toBe(1);
+      expect(sentOf(harness, 'design_note_continue_from')[0]).toMatchObject({ id: 'D7', text: 'the title in blue', refs: [] });
+      expect(sentOf(harness, 'design_note_add')).toHaveLength(0);
+      await expect(page.locator('#note-D12 .note-text, #note-D13 .note-text, #note-D14 .note-text').filter({ hasText: 'the title in blue' })).toBeVisible();
+    } finally { await harness.stop(); }
+  });
+
+  test('continuing from a version refused or in conflict shows the plain message', async ({ browser, page }) => {
+    const harness = await open(browser, page, { iterations: true, notes: iterationNotes() });
+    try {
+      harness.daemon.state.refuseContinue = 'invalid argument: this change has a version that cannot be undone';
+      await page.getByRole('tab', { name: 'Tree' }).click();
+      await page.locator('.tree-node[data-note="D3"] .tree-node-main').click();
+      await page.locator('.design-viewer').getByRole('button', { name: 'Continue from this version' }).click();
+      await page.getByRole('dialog').getByRole('button', { name: 'Continue from this version' }).click();
+      await expect(page.getByText('This change has a version that cannot be undone.')).toBeVisible();
+      harness.daemon.state.refuseContinue = null;
+      harness.daemon.state.conflictOn = 'D9';
+      await page.locator('.design-viewer').getByRole('button', { name: 'Follow up on this version' }).click();
+      await page.getByLabel('Follow-up on D3').fill('again');
+      await page.getByRole('button', { name: 'Send follow-up' }).click();
+      await page.getByRole('dialog').getByRole('button', { name: 'Undo and follow up' }).click();
+      await expect(page.getByText(/Can’t undo automatically/)).toBeVisible();
+    } finally { await harness.stop(); }
+  });
+
+  test('finish review shows one compact history line per chain card', async ({ browser, page }) => {
+    const harness = await open(browser, page, { iterations: true, notes: iterationNotes().filter((n) => n.id !== 'D10') });
+    try {
+      await page.getByRole('button', { name: 'Finish' }).click();
+      const review = page.getByRole('dialog', { name: 'Review before finishing' });
+      await expect(review.locator('.finish-card')).toHaveCount(2); // D9 (chain D3) and D5 (D6 is set aside, D8 is not done)
+      await expect(review.getByText('History: D3 Make the header taller › D7 bigger title')).toBeVisible();
+    } finally { await harness.stop(); }
+  });
+
+  test('an older host: no tabs, no follow-up, no references', async ({ browser, page }) => {
+    const harness = await open(browser, page, { iterations: false, notes: [seedNote({ number: 1, text: 'make it green' })] });
+    try {
+      await expect(page.locator('#note-D1')).toBeVisible();
+      await expect(page.getByRole('tab')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Follow up' })).toHaveCount(0);
+      await expect(page.locator('#chain-D1')).toHaveCount(0);
+    } finally { await harness.stop(); }
+  });
+});
+
+test.describe('iterations (phone)', () => {
+  test.use({ viewport: { width: 390, height: 844 }, colorScheme: 'light' });
+
+  test('the sheet: Tree tab, node detail inline, open compare, continue from here', async ({ browser, page }) => {
+    const harness = await open(browser, page, { iterations: true, notes: iterationNotes() });
+    try {
+      await page.getByRole('navigation', { name: 'Design modes' }).getByRole('button', { name: 'Notes', exact: true }).click();
+      await page.getByRole('tab', { name: 'Tree' }).click();
+      await page.locator('.tree-node[data-note="D7"] .tree-node-main').click();
+      const detail = page.getByRole('group', { name: 'Version D7' });
+      await expect(detail).toContainText('D7 · version 2 of 3');
+      await expect(detail).toContainText('4c1e9a2');
+      await expect(detail.getByText('Before', { exact: true })).toBeVisible();
+      await expect(detail.getByText('After', { exact: true })).toBeVisible();
+      await expect(page.locator('.design-viewer')).toBeHidden();
+      await detail.getByRole('button', { name: 'Open compare' }).click();
+      await expect(page.getByRole('dialog', { name: 'D7: before and after' })).toBeVisible();
+      await page.getByRole('dialog', { name: 'D7: before and after' }).getByRole('button', { name: 'Close' }).click();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      await page.locator('.tree-node[data-note="D3"] .tree-node-main').click();
+      await page.getByRole('group', { name: 'Version D3' }).getByRole('button', { name: 'Continue from here' }).click();
+      await page.getByRole('dialog', { name: 'Continue from D3?' }).getByRole('button', { name: 'Continue from this version' }).click();
+      await expect.poll(() => sentOf(harness, 'design_note_continue_from').length).toBe(1);
+      await expect(page.getByLabel('Follow-up on D3')).toBeVisible();
+    } finally { await harness.stop(); }
+  });
+});
+
+// The three states of the approved mock-ups, for the evidence folder.
+const SHOTS = process.env.DESIGN_SHOTS_DIR;
+test.describe('screenshots', () => {
+  test.skip(!SHOTS, 'set DESIGN_SHOTS_DIR to write the screenshots');
+  test.use({ colorScheme: 'light' });
+
+  test('desktop tree, desktop notes with the picker, phone tree', async ({ browser, page }) => {
+    const harness = await open(browser, page, { iterations: true, notes: iterationNotes() });
+    try {
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await page.getByRole('tab', { name: 'Tree' }).click();
+      await page.locator('.tree-node[data-note="D7"] .tree-node-main').click();
+      await expect(page.locator('.design-viewer .cmp-img').first()).toBeVisible();
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: `${SHOTS}/after-desktop-tree.png` });
+      await page.getByRole('button', { name: 'Back to current' }).click();
+      await page.getByRole('tab', { name: 'Notes' }).click();
+      const chain = page.locator('#chain-D3');
+      await chain.getByRole('button', { name: 'Follow up' }).click();
+      await chain.getByLabel(/Follow-up on D9/).fill('Slightly darker, like @D');
+      await chain.getByRole('listbox', { name: 'Notes matching what you typed' }).getByRole('option', { name: /^D5/ }).click();
+      await chain.getByRole('button', { name: '+ Reference a change' }).click();
+      await chain.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: `${SHOTS}/after-desktop-notes.png` });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.getByRole('navigation', { name: 'Design modes' }).getByRole('button', { name: 'Notes', exact: true }).click();
+      await page.getByRole('tab', { name: 'Tree' }).click();
+      await page.locator('.tree-node[data-note="D7"] .tree-node-main').click();
+      await page.waitForTimeout(700);
+      await page.screenshot({ path: `${SHOTS}/after-phone-tree.png` });
     } finally { await harness.stop(); }
   });
 });

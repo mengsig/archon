@@ -26,7 +26,7 @@ export function capText(text, max) {
 }
 
 // The fields of design_note_add for what the composer shows.
-export function noteFields({ session, clientKey, text, asset, sendPicture, sendDetails, details }) {
+export function noteFields({ session, clientKey, text, asset, sendPicture, sendDetails, details, refs = [], follows = null }) {
   return {
     session,
     client_key: clientKey,
@@ -34,5 +34,8 @@ export function noteFields({ session, clientKey, text, asset, sendPicture, sendD
     asset: asset ?? null,
     send_picture: Boolean(asset) && sendPicture,
     details_text: sendDetails && details.trim() ? capText(details.trim(), MAX_DETAILS_CHARS) : null,
+    // Only sent when used, so a daemon without design iterations sees the note it always did.
+    ...(refs.length ? { refs } : {}),
+    ...(follows ? { follows } : {}),
   };
 }

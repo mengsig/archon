@@ -3,6 +3,9 @@
 import { DaemonError } from './transport.js';
 
 export const DESIGN_FEATURE = 'design_sessions';
+export const ITERATIONS_FEATURE = 'design_iterations';
+export const MAX_REFS = 5;
+export const MAX_VERSIONS = 20;
 export const MAX_NOTE_CHARS = 4000;
 export const MAX_REPLY_CHARS = 2000;
 export const MAX_DETAILS_CHARS = 2000;
@@ -21,6 +24,10 @@ function expect(...kinds) {
 
 export function hasDesign(welcome) {
   return Array.isArray(welcome?.features) && welcome.features.includes(DESIGN_FEATURE);
+}
+
+export function hasIterations(welcome) {
+  return Array.isArray(welcome?.features) && welcome.features.includes(ITERATIONS_FEATURE);
 }
 
 export function designCommands(request) {
@@ -49,6 +56,8 @@ export function designCommands(request) {
     noteReply: (item, id, text) => request('design_note_reply', { item, id, text }).then(expect('design_note')),
     noteDrop: (item, id) => request('design_note_drop', { item, id }).then(expect('design_note')),
     noteUndo: (item, id) => request('design_note_undo', { item, id }).then(expect('design_note')),
+    // Reverts the chain's newer versions, then (with text) queues a follow-up on `id`.
+    noteContinueFrom: (item, id, { text = null, clientKey = null, refs = [] } = {}) => request('design_note_continue_from', { item, id, text, client_key: clientKey, refs }).then(expect('design_note')),
     noteResend: (item, id) => request('design_note_resend', { item, id }).then(expect('design_note')),
     finishCapture: (session, { cancelQueued = false, recapture = false } = {}) =>
       request('design_finish_capture', { session, cancel_queued: cancelQueued, recapture }, { timeoutMs: 60_000 }).then(expect('design_finish')),

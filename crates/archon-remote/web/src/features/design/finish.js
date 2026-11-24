@@ -6,6 +6,7 @@ import { toast } from '../../ui/toast.js';
 import { queuedNotes, imageCapWarning, ledgerLede, afterAssetOf, noVisibleChange } from './state.js';
 import { reconcile } from '../../ui/list.js';
 import { statusChip } from './notes.js';
+import { historyLine } from './chains.js';
 import { IMAGE_CAP_WARN_MARGIN, designErrorText } from '../../core/design.js';
 
 // The daemon's answer when Confirm would approve no note (the choices made
@@ -139,6 +140,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
     return h('li', { class: 'finish-card' },
       h('div', { class: 'finish-card-head' }, h('strong', { text: card.note }), card.earlier ? h('span', { class: 'note-tag', text: 'Earlier session' }) : null, card.superseded_by ? h('span', { class: 'note-tag', text: `Superseded by ${card.superseded_by}` }) : null),
       h('p', { class: 'note-text', text: card.text }),
+      historyLine(card.history) ? h('p', { class: 'note-hint finish-history', text: historyLine(card.history) }) : null,
       card.data_url ? h('img', { class: 'finish-img', src: card.data_url, alt: `Final picture for ${card.note}` }) : null,
       card.caption ? h('p', { class: 'cmp-caption', text: card.caption }) : null,
       card.not_found && !card.earlier ? h('div', { class: 'callout callout-amber', role: 'note' },

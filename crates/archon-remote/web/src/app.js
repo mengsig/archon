@@ -15,7 +15,7 @@ import { coalesce } from './core/live-query.js';
 import { APP_VERSION } from './version.js';
 import { deviceGuard, sessionChecker } from './core/session-watch.js';
 import { sessionSignal } from './core/session-signal.js';
-import { designCommands, createDesignHub, hasDesign } from './core/design.js';
+import { designCommands, createDesignHub, hasDesign, hasIterations } from './core/design.js';
 import { retryDelay, STREAM_BACKOFF } from './core/backoff.js';
 
 const REFRESH_DEBOUNCE_MS = 350;
@@ -29,7 +29,7 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
   if (typeof onDeviceChanged !== 'function') throw new TypeError('the app reports a changed device');
   const store = createStore({
     session, connection: { state: 'connecting' }, summaries: null, questions: null, status: null,
-    cost: null, repos: null, reports: null, feed: [], conversation: [], outbox: [], chatNotes: {}, errors: {}, sessionUnsure: false, designEnabled: false,
+    cost: null, repos: null, reports: null, feed: [], conversation: [], outbox: [], chatNotes: {}, errors: {}, sessionUnsure: false, designEnabled: false, designIterations: false,
   });
   let transport = null;
   const request = (cmd, fields, options) => transport.request(cmd, fields, options);
@@ -61,7 +61,7 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
     if (welcomed?.reply !== 'welcome' || !welcomed.data) throw new TypeError(`hello answered ${welcomed?.reply}`);
     if (welcomed.data.device) guard(welcomed.data.device);
     welcome = welcomed.data;
-    store.set({ designEnabled: hasDesign(welcome) });
+    store.set({ designEnabled: hasDesign(welcome), designIterations: hasIterations(welcome) });
     feedSync.start();
     changesSync.start();
     conversation.run();

@@ -125,6 +125,28 @@ Modules: `state.js` (reducer, `stagePhase`), `stream.js`, `input.js`,
 `finish.js`, `sketch.js`, `outbox.js`, `chrome.js`, `screen.js`; the wire
 commands and the stream hub are in `src/core/design.js`.
 
+### Design iterations
+
+When the welcome features also include `design_iterations` (protocol 26), a
+note can be followed up and the side panel gets a Notes / Tree switch; older
+hosts see none of it. A note and its follow-ups form a *chain* (a tree: a
+follow-up on an older version branches). Notes shows each chain as one thread
+with a follow-up box (`design_note_add` with `follows`, queued offline like any
+note) and a "+ Reference a change" picker or `@D` autocomplete (`refs`, at most
+5; a chain holds at most 20 versions). Tree shows every version as a node with
+a picture, status and short commit; selecting one shows its before/after
+pictures under a "Viewing …" bar (Back to current, Compare with…) while the live
+preview stays untouched. "Continue from this version" and a follow-up on an
+older version send `design_note_continue_from`, which reverts the newer
+versions first. Finish cards show a one-line history.
+
+Modules: `chains.js` (pure: chains and trees from note views, `@D` parsing,
+reference limits, the history line), `followup.js` (follow-up box, reference
+picker, mentions), `tree.js` (the Tree tab and the phone node detail),
+`viewer.js` (the desktop comparison area), `thumbs.js` (picture thumbnails).
+Set `DESIGN_SHOTS_DIR` to have `tests/design.spec.js` write the mock-up
+screenshots.
+
 Tests: `tests/unit/design-*.test.js`, and `tests/design.spec.js` (T-E1..T-E6),
 which runs against a stand-in host and a scripted WebSocket daemon
 (`tests/support/design-harness.js`) with the fixture app in

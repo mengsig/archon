@@ -709,9 +709,11 @@ async fn handle_queue(
         Request::Status(query) => control::status(ctx, query).await,
         Request::SetCaps { caps } => control::set_caps(ctx, caps).await,
         Request::Settings { repo } => settings::view(ctx, repo.as_ref()).await,
-        Request::SetSettings { repo, settings } => {
-            settings::set(ctx, repo.as_ref(), settings).await
-        }
+        Request::SetSettings {
+            repo,
+            settings,
+            legacy_proposals,
+        } => settings::set(ctx, repo.as_ref(), settings, legacy_proposals).await,
         Request::ResetSettings { repo } => settings::reset(ctx, repo.as_ref()).await,
         Request::ListPipelines { repo, pipeline } => {
             control::list_pipelines(ctx, repo.as_ref(), pipeline.as_deref()).await

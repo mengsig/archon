@@ -462,6 +462,9 @@ pub enum Request {
         #[serde(default)]
         repo: Option<RepoRef>,
         settings: crate::settings::OperatorSettings,
+        /// Set at negotiation for a client that sees live proposals as lavish.
+        #[serde(skip)]
+        legacy_proposals: bool,
     },
     /// Operator only: forget the overlay stored at one scope.
     ResetSettings {

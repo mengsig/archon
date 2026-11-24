@@ -124,7 +124,17 @@ impl ClientFeatures {
 
     /// `request` as this client means it: a client that never sees `onto`
     /// edges gets a component joined without them too.
-    pub fn adapt_request(self, request: Request) -> Request {
+    pub fn adapt_request(self, mut request: Request) -> Request {
+        let mut inner = &mut request;
+        while let Request::Tracked { request, .. } | Request::ForAgent { request, .. } = inner {
+            inner = request;
+        }
+        if let Request::SetSettings {
+            legacy_proposals, ..
+        } = inner
+        {
+            *legacy_proposals = self.legacy_design_types;
+        }
         match request {
             Request::TaskGraph { mut filter, limit } if !self.onto_edges => {
                 filter.without_onto = true;

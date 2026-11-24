@@ -26,7 +26,12 @@ async fn set(
     repo: Option<RepoRef>,
     settings: OperatorSettings,
 ) -> Result<Reply, ArchonError> {
-    h.cli(Request::SetSettings { repo, settings }).await
+    h.cli(Request::SetSettings {
+        repo,
+        settings,
+        legacy_proposals: false,
+    })
+    .await
 }
 
 fn enqueue(pipeline: Option<&str>, budget_usd: Option<f64>) -> Request {
@@ -48,6 +53,47 @@ fn enqueue(pipeline: Option<&str>, budget_usd: Option<f64>) -> Request {
         autonomy: Default::default(),
         origin: None,
     })
+}
+
+#[tokio::test]
+async fn a_legacy_settings_round_trip_preserves_the_scoped_live_proposals() {
+    use archon_core::autonomy::ProposalMode::{Lavish, Live};
+    use archon_core::protocol::ClientFeatures;
+
+    let h = Harness::new().await;
+    let live = AutonomyPatch {
+        proposal: Some(Live),
+        ..Default::default()
+    };
+    let original = OperatorSettings {
+        autonomy_default: live,
+        autonomy_max: live,
+        ..Default::default()
+    };
+    for (version, scope) in [(23, None), (24, repo())] {
+        let old = ClientFeatures::for_protocol(version, &[]);
+        let reply = set(&h, scope.clone(), original.clone()).await.unwrap();
+        let Reply::Settings(legacy) = old.adapt_reply(reply) else {
+            panic!("settings")
+        };
+        let mut overlay = legacy.scoped;
+        assert_eq!(overlay.autonomy_default.proposal, Some(Lavish));
+        assert_eq!(overlay.autonomy_max.proposal, Some(Lavish));
+        overlay.budget_usd_per_item = Some(5.0);
+        let change = Request::SetSettings {
+            repo: scope.clone(),
+            settings: overlay.clone(),
+            legacy_proposals: false,
+        };
+        h.cli(old.adapt_request(change)).await.unwrap();
+        let saved = view(&h, scope.clone()).await.scoped;
+        assert_eq!(saved.autonomy_default, live);
+        assert_eq!(saved.autonomy_max, live);
+        assert_eq!(saved.budget_usd_per_item, Some(5.0));
+
+        set(&h, scope.clone(), overlay.clone()).await.unwrap();
+        assert_eq!(view(&h, scope).await.scoped, overlay);
+    }
 }
 
 #[tokio::test]
@@ -244,6 +290,7 @@ async fn invalid_or_unauthorized_settings_change_nothing() {
         "{missing:?}"
     );
     let loosen = Request::SetSettings {
+        legacy_proposals: false,
         repo: None,
         settings: OperatorSettings {
             budgets_enabled: Some(false),

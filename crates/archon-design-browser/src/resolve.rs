@@ -157,6 +157,10 @@ pub(crate) fn assemble(
 impl Browser {
     /// Describe the element at `(x, y)`; `depth` > 0 walks to a parent, < 0 down the first-child chain.
     pub async fn resolve(&self, x: f64, y: f64, depth: i32) -> Result<Resolved, BrowserError> {
+        self.sh.disclose(self.read_element(x, y, depth)).await
+    }
+
+    async fn read_element(&self, x: f64, y: f64, depth: i32) -> Result<Resolved, BrowserError> {
         let sh = &self.sh;
         let n = sh
             .call(
@@ -244,6 +248,14 @@ impl Browser {
     /// one); then the match nearest `near`, the box recorded with it, wins,
     /// and without `near` the first.
     pub async fn resolve_selector(
+        &self,
+        selector: &str,
+        near: Option<ClipRect>,
+    ) -> Result<Option<ClipRect>, BrowserError> {
+        self.sh.disclose(self.read_selector(selector, near)).await
+    }
+
+    pub(crate) async fn read_selector(
         &self,
         selector: &str,
         near: Option<ClipRect>,

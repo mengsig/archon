@@ -518,3 +518,257 @@ async fn whole_page_pictures_at_2x_are_not_tiled_while_the_stream_runs() {
     };
     b.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn js_navigation_to_a_blob_stops_before_disclosure() {
+    assert_disclosure_stops("location.assign(fixture())", "main-frame document").await;
+}
+
+#[tokio::test]
+async fn js_popup_stops_before_disclosure() {
+    assert_disclosure_stops("window.open(fixture(), '_blank')", "new window").await;
+}
+
+#[tokio::test]
+async fn opaque_subframe_stops_before_disclosure() {
+    assert_disclosure_stops(
+        "const child = document.createElement('iframe');
+         child.style = 'position:fixed;inset:0;width:100%;height:100%;border:0';
+         child.src = 'data:text/html,' + encodeURIComponent(otherDocument);
+         document.body.append(child)",
+        "subframe",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn sandboxed_http_subframe_stops_before_disclosure() {
+    assert_disclosure_stops(
+        "const child = document.createElement('iframe');
+         child.style = 'position:fixed;inset:0;width:100%;height:100%;border:0';
+         child.src = '/opaque';
+         document.body.append(child)",
+        "subframe",
+    )
+    .await;
+}
+
+async fn disclosure_fixture(script: &'static str) -> u16 {
+    serve(move |request| {
+        if request.uri().path() == "/child" {
+            return page_body("<body style='background:lime'>Same-origin frame</body>
+                <script>history.replaceState({}, '', '#ready')</script>");
+        }
+        if request.uri().path() == "/opaque" {
+            let mut response = page_body("<body style='background:red'>Opaque origin</body>");
+            response.headers_mut().insert(
+                "content-security-policy",
+                http::HeaderValue::from_static("sandbox allow-scripts"),
+            );
+            return response;
+        }
+        page_body(format!(
+            "<!doctype html>
+             <body style='margin:0;background:blue;color:white'>
+             <div data-testid=preview style='padding:30px'>Registered preview</div>
+             <iframe src='/child' style='position:absolute;top:100px;left:100px'></iframe>
+             <script>
+               history.replaceState({{}}, '', '/?tab=design#ready');
+               const permissions = ['geolocation', 'clipboard-read', 'clipboard-write', 'notifications'];
+               Promise.all(permissions.map(name => navigator.permissions.query({{name}})))
+                 .then(results => document.querySelector('[data-testid=preview]').textContent =
+                     results.map(result => result.state).join(' '));
+               const otherDocument = '<body style=background:red><button id=outside>Outside preview</button>';
+               const fixture = () => URL.createObjectURL(new Blob([otherDocument], {{type:'text/html'}}));
+               document.addEventListener('click', () => {{ {script} }}, {{once:true}});
+             </script>"
+        ))
+    })
+    .await
+}
+
+async fn open_disclosure_fixture(
+    binary: std::path::PathBuf,
+    path_env: String,
+    script: &'static str,
+) -> Option<(tempfile::TempDir, Browser)> {
+    let port = disclosure_fixture(script).await;
+    let preview_url = format!("http://127.0.0.1:{port}/");
+    let root = tempfile::tempdir().unwrap();
+    let spec = LaunchSpec {
+        binary,
+        profile_dir: root.path().join("disclosure"),
+        sandbox: std::env::var("ARCHON_DESIGN_SANDBOX_OFF").as_deref() != Ok("1"),
+        preview_url: preview_url.clone(),
+        upstream_guard: TestUpstream::allowing(),
+        viewport: Viewport {
+            width: 460,
+            height: 320,
+            touch: false,
+            dpr: 1.0,
+        },
+        path_env,
+        lang: "C.UTF-8".into(),
+        tz: "UTC".into(),
+    };
+    let browser = launch(spec).await?;
+    assert!(
+        browser
+            .navigate_settled(&preview_url, Duration::from_secs(5))
+            .await
+            .unwrap()
+    );
+    Some((root, browser))
+}
+
+async fn assert_disclosure_stops(script: &'static str, expected_reason: &str) {
+    let Some((binary, path_env)) = browser_options() else {
+        return;
+    };
+    let Some((_root, browser)) = open_disclosure_fixture(binary, path_env, script).await else {
+        return;
+    };
+    let mut events = browser.events();
+    let mut feed = browser.start_screencast().await.unwrap().subscribe();
+    let baseline = browser.capture(None, 1.0).await.unwrap();
+    let main = browser.resolve(40.0, 40.0, 0).await.unwrap();
+    assert_eq!(main.selector.as_deref(), Some("[data-testid=\"preview\"]"));
+    assert_eq!(
+        main.role_name.as_deref(),
+        Some("div \"denied denied denied denied\"")
+    );
+    assert_eq!(
+        browser.current_location().await.unwrap(),
+        "/?tab=design#ready"
+    );
+    assert_eq!(browser.current_path().await.unwrap(), "/");
+    let frame = tokio::time::timeout(Duration::from_secs(5), feed.next())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(frame.jpeg, baseline.bytes);
+    feed.ack(frame.seq);
+
+    let (_, (), ()) = tokio::time::timeout(Duration::from_secs(8), async {
+        tokio::join!(
+            click_fixture(&browser),
+            check_racing_reads(&browser, &baseline.bytes, &main),
+            async {
+                while let Some(frame) = feed.next().await {
+                    assert_eq!(frame.jpeg, baseline.bytes, "unverified stream frame");
+                    feed.ack(frame.seq);
+                }
+            }
+        )
+    })
+    .await
+    .expect("disclosures did not stop");
+
+    assert_containment_reported(&browser, &mut events, expected_reason).await;
+    assert!(feed.next().await.is_none());
+    assert_preview_process_stopped(browser.pid().unwrap()).await;
+    browser.close().await.unwrap();
+}
+
+async fn assert_containment_reported(
+    browser: &Browser,
+    events: &mut tokio::sync::broadcast::Receiver<BrowserEvent>,
+    expected: &str,
+) {
+    let reason = browser
+        .containment_reason()
+        .expect("missing containment reason");
+    assert!(reason.contains(expected), "{reason}");
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            match events.recv().await.unwrap() {
+                BrowserEvent::ContainmentStopped { reason: reported } => {
+                    assert_eq!(reported, reason);
+                    break;
+                }
+                BrowserEvent::Exited => panic!("containment was reported as a crash"),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("missing containment event");
+    assert!(matches!(
+        browser.capture(None, 1.0).await,
+        Err(BrowserError::Containment(_))
+    ));
+    assert!(matches!(
+        browser.resolve(40.0, 40.0, 0).await,
+        Err(BrowserError::Containment(_))
+    ));
+}
+
+async fn assert_preview_process_stopped(pid: u32) {
+    let stat = format!("/proc/{pid}/stat");
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            match std::fs::read_to_string(&stat) {
+                Ok(stat) => {
+                    let (_, fields) = stat.rsplit_once(") ").expect("process stat fields");
+                    if fields.starts_with("Z ") {
+                        return;
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+                Err(error) => panic!("could not verify preview process exit: {error}"),
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("containment did not stop the preview process");
+}
+
+async fn click_fixture(browser: &Browser) {
+    let result = browser
+        .input(
+            &[MouseAction::Down, MouseAction::Up].map(|action| Input::Mouse {
+                action,
+                x: 40.0,
+                y: 40.0,
+                button: MouseButton::Left,
+                click_count: 1,
+                modifiers: 0,
+            }),
+        )
+        .await;
+    assert!(
+        matches!(result, Ok(()) | Err(BrowserError::Containment(_))),
+        "{result:?}"
+    );
+}
+
+async fn check_racing_reads(
+    browser: &Browser,
+    baseline: &[u8],
+    main: &archon_design_browser::Resolved,
+) {
+    while browser.containment_reason().is_none() {
+        let (picture, element) =
+            tokio::join!(browser.capture(None, 1.0), browser.resolve(40.0, 40.0, 0));
+        match picture {
+            Ok(picture) => assert_eq!(picture.bytes, baseline, "unverified screenshot"),
+            Err(
+                BrowserError::DisclosureUnavailable
+                | BrowserError::Containment(_)
+                | BrowserError::Closed,
+            ) => {}
+            Err(error) => panic!("capture: {error}"),
+        }
+        match element {
+            Ok(element) => assert_eq!(&element, main, "unverified DOM result"),
+            Err(
+                BrowserError::DisclosureUnavailable
+                | BrowserError::Containment(_)
+                | BrowserError::Closed,
+            ) => {}
+            Err(error) => panic!("resolve: {error}"),
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}

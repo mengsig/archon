@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -11,6 +11,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::BrowserError;
+use crate::containment::Containment;
 
 /// Largest frame accepted from the browser.
 pub(crate) const MAX_FRAME: usize = 64 * 1024 * 1024;
@@ -47,6 +48,7 @@ pub(crate) struct Cdp {
     events: broadcast::Sender<CdpEvent>,
     documents: broadcast::Sender<CdpEvent>,
     tasks: Vec<JoinHandle<()>>,
+    containment: Arc<OnceLock<Arc<Containment>>>,
 }
 
 fn fail_all(pending: &Pending, make: impl Fn() -> BrowserError) {
@@ -80,39 +82,29 @@ impl Cdp {
         let p = pending.clone();
         let ev = events.clone();
         let document_events = documents.clone();
+        let containment = Arc::new(OnceLock::<Arc<Containment>>::new());
+        let reader_containment = containment.clone();
         let rtask = tokio::spawn(async move {
-            let mut r = reader;
-            let mut buf: Vec<u8> = Vec::new();
-            let mut chunk = vec![0u8; 64 * 1024];
-            let mut fatal: Option<String> = None;
-            'outer: loop {
-                let n = match r.read(&mut chunk).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => n,
-                };
-                buf.extend_from_slice(&chunk[..n]);
-                let mut start = 0;
-                while let Some(off) = buf[start..].iter().position(|b| *b == 0) {
-                    let frame = &buf[start..start + off];
-                    start += off + 1;
-                    if frame.len() > max_frame {
-                        fatal = Some(format!("CDP frame larger than {max_frame} bytes refused"));
-                        break 'outer;
-                    }
-                    if frame.is_empty() {
-                        continue;
-                    }
-                    handle_frame(frame, &p, &ev, &document_events);
-                }
-                buf.drain(..start);
-                if buf.len() > max_frame {
-                    fatal = Some(format!("CDP frame larger than {max_frame} bytes refused"));
-                    break;
-                }
+            let result = read_messages(
+                reader,
+                max_frame,
+                &p,
+                &ev,
+                &document_events,
+                &reader_containment,
+            )
+            .await;
+            if let Some(guard) = reader_containment.get()
+                && matches!(&result, Err(BrowserError::Protocol(_)))
+            {
+                guard.stop("Chromium sent an unreadable document event stream");
             }
-            match fatal {
-                Some(m) => fail_all(&p, || BrowserError::Protocol(m.clone())),
-                None => fail_all(&p, || BrowserError::Closed),
+            if let Some(reason) = reader_containment.get().and_then(|guard| guard.reason()) {
+                fail_all(&p, || BrowserError::Containment(reason.into()));
+            } else if let Err(BrowserError::Protocol(reason)) = result {
+                fail_all(&p, || BrowserError::Protocol(reason.clone()));
+            } else {
+                fail_all(&p, || BrowserError::Closed);
             }
             let _ = ev.send(CdpEvent {
                 method: CLOSED_EVENT.into(),
@@ -128,7 +120,12 @@ impl Cdp {
             events,
             documents,
             tasks: vec![wtask, rtask],
+            containment,
         }
+    }
+
+    pub(crate) fn install_containment(&self, containment: Arc<Containment>) {
+        assert!(self.containment.set(containment).is_ok());
     }
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<CdpEvent> {
@@ -195,42 +192,111 @@ impl Drop for Cdp {
     }
 }
 
+async fn read_messages<R: AsyncRead + Unpin>(
+    mut reader: R,
+    max_frame: usize,
+    pending: &Pending,
+    events: &broadcast::Sender<CdpEvent>,
+    documents: &broadcast::Sender<CdpEvent>,
+    containment: &OnceLock<Arc<Containment>>,
+) -> Result<(), BrowserError> {
+    let mut partial = Vec::new();
+    let mut chunk = vec![0; 64 * 1024];
+    let too_large =
+        || BrowserError::Protocol(format!("CDP frame larger than {max_frame} bytes refused"));
+    loop {
+        let count = reader
+            .read(&mut chunk)
+            .await
+            .map_err(|error| BrowserError::Protocol(format!("read CDP pipe: {error}")))?;
+        if count == 0 {
+            return if partial.is_empty() {
+                Ok(())
+            } else {
+                Err(BrowserError::Protocol("incomplete CDP message".into()))
+            };
+        }
+
+        let mut unread = &chunk[..count];
+        while let Some(separator) = unread.iter().position(|byte| *byte == 0) {
+            let frame = &unread[..separator];
+            if partial.len() + frame.len() > max_frame {
+                return Err(too_large());
+            }
+            if partial.is_empty() {
+                if !frame.is_empty() {
+                    handle_frame(
+                        frame,
+                        pending,
+                        events,
+                        documents,
+                        containment.get().map(Arc::as_ref),
+                    )?;
+                }
+            } else {
+                partial.extend_from_slice(frame);
+                handle_frame(
+                    &partial,
+                    pending,
+                    events,
+                    documents,
+                    containment.get().map(Arc::as_ref),
+                )?;
+                partial.clear();
+            }
+            unread = &unread[separator + 1..];
+        }
+        if partial.len() + unread.len() > max_frame {
+            return Err(too_large());
+        }
+        partial.extend_from_slice(unread);
+    }
+}
+
 fn handle_frame(
     frame: &[u8],
     pending: &Pending,
     events: &broadcast::Sender<CdpEvent>,
     documents: &broadcast::Sender<CdpEvent>,
-) {
-    let Ok(v) = serde_json::from_slice::<Value>(frame) else {
-        return;
-    };
+    containment: Option<&Containment>,
+) -> Result<(), BrowserError> {
+    let mut v: serde_json::Map<String, Value> = serde_json::from_slice(frame)
+        .map_err(|error| BrowserError::Protocol(format!("invalid CDP message: {error}")))?;
     if let Some(id) = v.get("id").and_then(Value::as_u64) {
         let tx = pending.lock().unwrap().as_mut().and_then(|m| m.remove(&id));
         if let Some(tx) = tx {
-            let r = match v.get("error") {
+            let reply = match v.get("error") {
                 Some(e) => Err(BrowserError::Protocol(
                     e.get("message")
                         .and_then(Value::as_str)
                         .unwrap_or("CDP error")
                         .to_string(),
                 )),
-                None => Ok(v.get("result").cloned().unwrap_or(Value::Null)),
+                None => Ok(v.remove("result").unwrap_or(Value::Null)),
             };
-            let _ = tx.send(r);
+            let _ = tx.send(reply);
         }
-    } else if let Some(m) = v.get("method").and_then(Value::as_str) {
-        let destination = match m {
-            "Fetch.requestPaused" | "Page.frameNavigated" | "Page.navigatedWithinDocument" => {
-                documents
-            }
-            _ => events,
-        };
-        let _ = destination.send(CdpEvent {
-            method: m.to_string(),
-            params: v.get("params").cloned().unwrap_or(Value::Null),
-            session_id: v.get("sessionId").and_then(Value::as_str).map(String::from),
-        });
+        return Ok(());
     }
+    let Some(Value::String(method)) = v.remove("method") else {
+        return Err(BrowserError::Protocol(
+            "missing CDP message method and reply ID".into(),
+        ));
+    };
+    let event = CdpEvent {
+        method,
+        params: v.remove("params").unwrap_or(Value::Null),
+        session_id: v.get("sessionId").and_then(Value::as_str).map(String::from),
+    };
+    if let Some(containment) = containment {
+        containment.observe(&event)?;
+    }
+    let destination = match event.method.as_str() {
+        "Fetch.requestPaused" | "Page.frameNavigated" | "Page.navigatedWithinDocument" => documents,
+        _ => events,
+    };
+    let _ = destination.send(event);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -341,6 +407,56 @@ mod tests {
             .unwrap();
         assert_eq!(ev.recv().await.unwrap().method, "X.y");
         assert_eq!(ev2.recv().await.unwrap().method, "X.y");
+    }
+
+    #[tokio::test]
+    async fn same_document_violation_wins_over_a_following_disclosure_reply() {
+        let (cdp, mut input, mut output) = pair();
+        let cdp = Arc::new(cdp);
+        let policy = crate::proxy::Policy::new(
+            "http://127.0.0.1:3000/",
+            Arc::new(crate::testutil::AcceptUpstream),
+        )
+        .unwrap();
+        let (events, mut notifications) = broadcast::channel(8);
+        let guard = Arc::new(Containment {
+            target: "page".into(),
+            session: "S1".into(),
+            policy: Arc::new(policy),
+            process: (0, 0),
+            events,
+            relay: Default::default(),
+            state: Mutex::default(),
+        });
+        cdp.install_containment(guard.clone());
+
+        let reader = cdp.clone();
+        let call = tokio::spawn(async move {
+            reader
+                .call(Some("S1"), "Page.captureScreenshot", json!({}), T)
+                .await
+        });
+        let request = read_msg(&mut input).await;
+        let event = json!({
+            "method": "Page.navigatedWithinDocument",
+            "sessionId": "S1",
+            "params": {"frameId":"subframe","url":"about:blank#fixture"}
+        });
+        let response = json!({"id":request["id"],"result":{"data":"fixture"}});
+        output
+            .write_all(format!("{event}\0{response}\0").as_bytes())
+            .await
+            .unwrap();
+
+        let result = call.await.unwrap();
+        assert!(
+            matches!(result, Err(BrowserError::Containment(reported)) if Some(reported.as_str()) == guard.reason()),
+        );
+        assert!(matches!(
+            notifications.recv().await.unwrap(),
+            crate::BrowserEvent::ContainmentStopped { reason: reported }
+                if reported == "unexpected URL in a same-document navigation"
+        ));
     }
 
     #[tokio::test]

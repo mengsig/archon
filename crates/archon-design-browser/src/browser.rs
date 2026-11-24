@@ -18,10 +18,12 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use crate::cdp::{CLOSED_EVENT, Cdp, CdpEvent, MAX_FRAME};
+use crate::containment::Containment;
 use crate::launch::{
-    SHELL_SCRIPT, classify_stderr, kill_group, kill_if_matches, launch_args, launch_env,
-    process_start_time,
+    SHELL_SCRIPT, classify_stderr, kill_group, launch_args, launch_env, process_start_time,
+    write_profile_preferences,
 };
+use crate::origin::parse_url;
 use crate::proxy::{Policy, Proxy};
 use crate::relay::{FrameRelay, RelayShared};
 use crate::sanitize::clean;
@@ -68,9 +70,6 @@ struct State {
     last_net: Instant,
     blocked: HashSet<String>,
     viewport: Viewport,
-    /// Screencast degradation step: 0 q70, 1 q40, 2+ q40 at half width, quarter, ...
-    step: u32,
-    restarting: bool,
     poll: Option<JoinHandle<()>>,
 }
 
@@ -78,9 +77,7 @@ struct State {
 pub(crate) struct Shared {
     pub(crate) cdp: Cdp,
     pub(crate) session: String,
-    target_id: String,
-    policy: Option<Arc<Policy>>,
-    owned_process: Option<(u32, u64)>,
+    containment: Option<Arc<Containment>>,
     events: broadcast::Sender<BrowserEvent>,
     pub(crate) relay: Arc<RelayShared>,
     st: Mutex<State>,
@@ -132,7 +129,10 @@ fn b64(s: &str) -> Result<Vec<u8>, BrowserError> {
 }
 
 fn host_of(url: &str) -> Option<String> {
-    let rest = url.split_once("://")?.1;
+    let (scheme, rest) = url.split_once("://")?;
+    if !matches!(scheme, "http" | "https" | "ws" | "wss") {
+        return None;
+    }
     let auth = rest.split(['/', '?', '#']).next()?;
     let auth = auth.rsplit('@').next()?;
     let host = if let Some(r) = auth.strip_prefix('[') {
@@ -195,9 +195,63 @@ where
 
 impl Shared {
     pub(crate) async fn call(&self, method: &str, params: Value) -> Result<Value, BrowserError> {
-        self.cdp
+        self.check_containment()?;
+        let reply = self
+            .cdp
             .call(Some(&self.session), method, params, CALL_TIMEOUT)
-            .await
+            .await;
+        self.check_containment()?;
+        reply
+    }
+
+    fn check_containment(&self) -> Result<(), BrowserError> {
+        if let Some(guard) = &self.containment {
+            guard.epoch()?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn disclose<T>(
+        &self,
+        read: impl Future<Output = Result<T, BrowserError>>,
+    ) -> Result<T, BrowserError> {
+        self.verified_read(read).await.map(|(result, _)| result)
+    }
+
+    async fn verified_read<T>(
+        &self,
+        read: impl Future<Output = Result<T, BrowserError>>,
+    ) -> Result<(T, Option<u64>), BrowserError> {
+        let Some(guard) = &self.containment else {
+            return Ok((read.await?, None));
+        };
+        let epoch = guard.epoch()?;
+        let before = self.disclosure_tree(guard).await?;
+        drop(guard.confirm(epoch)?);
+
+        let result = read.await;
+        let after = self.disclosure_tree(guard).await?;
+        let _confirmed = guard.confirm(epoch)?;
+        if before != after {
+            return Err(BrowserError::DisclosureUnavailable);
+        }
+        Ok((result?, Some(epoch)))
+    }
+
+    async fn disclosure_tree(&self, guard: &Containment) -> Result<Value, BrowserError> {
+        let targets = self
+            .cdp
+            .call(None, "Target.getTargets", json!({}), CALL_TIMEOUT)
+            .await;
+        self.check_containment()?;
+        guard.verify_targets(&targets?)?;
+        let mut result = self.call("Page.getFrameTree", json!({})).await?;
+        let tree = result
+            .get_mut("frameTree")
+            .map(Value::take)
+            .unwrap_or(Value::Null);
+        guard.verify_tree(&tree)?;
+        Ok(tree)
     }
 
     fn emit(&self, e: BrowserEvent) {
@@ -236,6 +290,14 @@ impl Shared {
     }
 
     pub(crate) async fn capture(
+        &self,
+        clip: Option<ClipRect>,
+        dpr: f64,
+    ) -> Result<Picture, BrowserError> {
+        self.disclose(self.capture_picture(clip, dpr)).await
+    }
+
+    async fn capture_picture(
         &self,
         clip: Option<ClipRect>,
         dpr: f64,
@@ -296,53 +358,17 @@ impl Shared {
         })
     }
 
-    fn screencast_params(&self) -> Value {
-        let st = self.st.lock().unwrap();
-        let (q, f) = match st.step {
-            0 => (70, 1.0),
-            1 => (40, 1.0),
-            n => (40, 0.5f64.powi(n as i32 - 1)),
-        };
-        let w = (f64::from(st.viewport.width) * f).max(1.0).round();
-        let h = (f64::from(st.viewport.height) * f).max(1.0).round();
-        json!({"format": "jpeg", "quality": q, "maxWidth": w, "maxHeight": h, "everyNthFrame": 1})
-    }
-
-    async fn begin_screencast(&self) -> Result<(), BrowserError> {
-        self.call("Page.startScreencast", self.screencast_params())
-            .await
-            .map(|_| ())
-    }
-
-    fn degrade_screencast(self: &Arc<Self>) {
-        {
-            let mut st = self.st.lock().unwrap();
-            if st.restarting || st.poll.is_some() || st.step >= 8 {
-                return;
-            }
-            st.restarting = true;
-            st.step += 1;
-        }
-        let sh = self.clone();
-        tokio::spawn(async move {
-            let _ = sh.call("Page.stopScreencast", json!({})).await;
-            let _ = sh.begin_screencast().await;
-            sh.st.lock().unwrap().restarting = false;
-        });
-    }
-
     fn start_polling(self: &Arc<Self>) {
         let sh = self.clone();
         let h = tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_millis(250));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tick.tick().await;
-                match sh.capture(None, 1.0).await {
-                    Ok(p) => {
-                        sh.relay.push(p.bytes, p.width, p.height);
-                    }
-                    Err(BrowserError::Closed) => break,
-                    Err(_) => {}
+                match sh.poll_frame().await {
+                    Ok(()) | Err(BrowserError::DisclosureUnavailable) => {}
+                    Err(BrowserError::Closed | BrowserError::Containment(_)) => break,
+                    Err(error) => tracing::debug!(%error, "preview frame was withheld"),
                 }
             }
         });
@@ -351,106 +377,112 @@ impl Shared {
         }
     }
 
+    async fn poll_frame(&self) -> Result<(), BrowserError> {
+        let (picture, epoch) = self.verified_read(self.capture_picture(None, 1.0)).await?;
+        let _confirmed = match (&self.containment, epoch) {
+            (Some(guard), Some(epoch)) => Some(guard.confirm(epoch)?),
+            (None, None) => None,
+            _ => unreachable!("verified read returned a mismatched document epoch"),
+        };
+        self.relay
+            .push(picture.bytes, picture.width, picture.height);
+        Ok(())
+    }
+
     /// Returns true when the loop should stop.
     fn handle(self: &Arc<Self>, ev: CdpEvent) -> bool {
         if ev.method == CLOSED_EVENT {
-            self.emit(BrowserEvent::Exited);
+            self.relay.close();
+            if self.check_containment().is_ok() {
+                self.emit(BrowserEvent::Exited);
+            }
             return true;
         }
-        let p = &ev.params;
-        let ours = ev.session_id.as_deref() == Some(self.session.as_str());
+        if ev.session_id.as_deref() != Some(self.session.as_str()) {
+            return false;
+        }
+        let params = &ev.params;
         match ev.method.as_str() {
-            "Target.targetCreated" => {
-                let info = &p["targetInfo"];
-                let id = info["targetId"].as_str().unwrap_or_default();
-                if info["type"] == "page" && id != self.target_id {
-                    let url = clean(info["url"].as_str().unwrap_or_default());
-                    let sh = self.clone();
-                    let id = id.to_string();
-                    tokio::spawn(async move {
-                        let _ = sh
-                            .cdp
-                            .call(
-                                None,
-                                "Target.closeTarget",
-                                json!({"targetId": id}),
-                                CALL_TIMEOUT,
-                            )
-                            .await;
-                    });
-                    self.emit(BrowserEvent::PopupClosed { url });
+            "Inspector.targetCrashed" => self.emit(BrowserEvent::Crashed),
+            "Page.javascriptDialogOpening" => self.emit_dialog(params),
+            "Page.fileChooserOpened" => self.emit(BrowserEvent::FileChooserRefused),
+            "Page.frameNavigated" if params["frame"]["parentId"].is_null() => {
+                let frame = &params["frame"];
+                self.record_document(frame["id"].as_str(), frame["url"].as_str());
+            }
+            "Page.navigatedWithinDocument" => {
+                let frame = params["frameId"].as_str();
+                if self.st.lock().unwrap().main_frame.as_deref() == frame {
+                    self.record_document(frame, params["url"].as_str());
                 }
             }
-            "Inspector.targetCrashed" if ours => self.emit(BrowserEvent::Crashed),
-            "Page.javascriptDialogOpening" if ours => self.emit(BrowserEvent::Dialog {
-                kind: clean(p["type"].as_str().unwrap_or("alert")),
-                message: clean(p["message"].as_str().unwrap_or_default()),
-                default_prompt: p["defaultPrompt"]
-                    .as_str()
-                    .filter(|s| !s.is_empty())
-                    .map(clean),
-            }),
-            "Page.fileChooserOpened" if ours => self.emit(BrowserEvent::FileChooserRefused),
-            "Page.frameNavigated" if ours && p["frame"]["parentId"].is_null() => {
-                let frame = &p["frame"];
-                return self.record_document(frame["id"].as_str(), frame["url"].as_str());
-            }
-            "Page.navigatedWithinDocument" if ours => {
-                let frame = p["frameId"].as_str();
-                if self.policy.is_none() || self.st.lock().unwrap().main_frame.as_deref() == frame {
-                    return self.record_document(frame, p["url"].as_str());
-                }
-            }
-            "Page.loadEventFired" if ours => {
+            "Page.loadEventFired" => {
                 let url = clean(&self.st.lock().unwrap().url);
                 self.emit(BrowserEvent::Loaded { url });
             }
-            "Page.screencastFrame" if ours => self.on_frame(p),
-            "Network.requestWillBeSent" if ours => {
-                if let (Some(id), Some(url)) =
-                    (p["requestId"].as_str(), p["request"]["url"].as_str())
-                {
-                    let mut st = self.st.lock().unwrap();
-                    st.last_net = Instant::now();
-                    if st.reqs.len() < 4096 {
-                        st.reqs.insert(id.to_string(), url.to_string());
-                    }
+            "Network.requestWillBeSent" => self.on_request(params),
+            "Network.loadingFinished" => {
+                let mut state = self.st.lock().unwrap();
+                state.last_net = Instant::now();
+                if let Some(id) = params["requestId"].as_str() {
+                    state.reqs.remove(id);
                 }
             }
-            "Network.loadingFinished" if ours => {
-                let mut st = self.st.lock().unwrap();
-                st.last_net = Instant::now();
-                if let Some(id) = p["requestId"].as_str() {
-                    st.reqs.remove(id);
-                }
-            }
-            "Network.loadingFailed" if ours => self.on_failed(p),
+            "Network.loadingFailed" => self.on_failed(params),
             _ => {}
         }
         false
     }
 
-    fn record_document(&self, frame: Option<&str>, url: Option<&str>) -> bool {
-        let mut state = self.st.lock().unwrap();
-        let Some(url) = url else {
-            return false;
-        };
-        if let Some(policy) = &self.policy
-            && !policy.origin.allows_navigation(url)
-            && !(url == "about:blank" && state.url.is_empty())
-            && url != "chrome-error://chromewebdata/"
-        {
-            drop(state);
-            self.stop_for_policy("unexpected document URL");
-            return true;
+    fn emit_dialog(&self, params: &Value) {
+        let kind = match params["type"].as_str() {
+            Some("confirm") => "confirm",
+            Some("prompt") => "prompt",
+            Some("beforeunload") => "beforeunload",
+            _ => "alert",
         }
-        state.main_frame = frame.map(str::to_owned);
-        state.url = url.to_owned();
-        false
+        .into();
+        let (message, default_prompt) = if self.containment.is_some() {
+            ("The preview opened a dialog.".into(), None)
+        } else {
+            let message = clean(params["message"].as_str().unwrap_or_default());
+            let prompt = params["defaultPrompt"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(clean);
+            (message, prompt)
+        };
+        self.emit(BrowserEvent::Dialog {
+            kind,
+            message,
+            default_prompt,
+        });
+    }
+
+    fn on_request(&self, params: &Value) {
+        let (Some(id), Some(url)) = (
+            params["requestId"].as_str(),
+            params["request"]["url"].as_str(),
+        ) else {
+            return;
+        };
+        let mut state = self.st.lock().unwrap();
+        state.last_net = Instant::now();
+        if state.reqs.len() < 4096 {
+            state.reqs.insert(id.to_owned(), url.to_owned());
+        }
+    }
+
+    fn record_document(&self, frame: Option<&str>, url: Option<&str>) {
+        if let Some(url) = url {
+            let mut state = self.st.lock().unwrap();
+            state.main_frame = frame.map(str::to_owned);
+            state.url = url.to_owned();
+        }
     }
 
     async fn guard_document(&self, event: &CdpEvent) -> Result<(), BrowserError> {
-        let Some(policy) = &self.policy else {
+        let Some(guard) = &self.containment else {
             return Ok(());
         };
         let params = &event.params;
@@ -461,7 +493,7 @@ impl Shared {
         let url = params["request"]["url"]
             .as_str()
             .ok_or_else(|| BrowserError::Protocol("document request has no URL".into()))?;
-        let (method, args) = if policy.origin.allows_navigation(url) {
+        let (method, args) = if guard.policy.origin.allows_navigation(url) {
             ("Fetch.continueRequest", json!({"requestId": id}))
         } else {
             self.emit_blocked(url);
@@ -474,18 +506,11 @@ impl Shared {
         Ok(())
     }
 
-    fn stop_for_policy(&self, reason: &str) {
-        tracing::warn!(
-            reason,
-            "closing preview browser after document policy failure"
-        );
-        if let Some((pid, started_at)) = self.owned_process
-            && let Err(error) = kill_if_matches(pid, started_at)
-        {
-            tracing::error!(%error, pid, "failed to reap a blocked preview browser");
+    fn stop_for_policy(&self, reason: &'static str) {
+        if let Some(guard) = &self.containment {
+            guard.stop(reason);
         }
         self.cdp.abort();
-        self.emit(BrowserEvent::Exited);
     }
 
     fn emit_blocked(&self, url: &str) {
@@ -513,41 +538,18 @@ impl Shared {
             || err.contains("ERR_TUNNEL_CONNECTION_FAILED");
         if proxy_failure
             || self
-                .policy
+                .containment
                 .as_ref()
-                .is_some_and(|policy| !policy.origin.allows_network_url(&url))
+                .is_some_and(|guard| !guard.policy.origin.allows_network_url(&url))
         {
             self.emit_blocked(&url);
         }
-        if p["type"] == "Document" && p["canceled"] != true {
+        if p["type"] == "Document" && p["canceled"] != true && host_of(&url).is_some() {
             self.emit(BrowserEvent::NavigationFailed {
                 url: clean(&url),
                 error: clean(err),
             });
         }
-    }
-
-    fn on_frame(self: &Arc<Self>, p: &Value) {
-        if let Some(sid) = p["sessionId"].as_i64() {
-            let sh = self.clone();
-            tokio::spawn(async move {
-                let _ = sh
-                    .call("Page.screencastFrameAck", json!({"sessionId": sid}))
-                    .await;
-            });
-        }
-        let Ok(jpeg) = b64(p["data"].as_str().unwrap_or_default()) else {
-            return;
-        };
-        if jpeg.len() > MAX_IMAGE_BYTES {
-            self.degrade_screencast();
-            return;
-        }
-        let (w, h) = jpeg_dims(&jpeg).unwrap_or((
-            p["metadata"]["deviceWidth"].as_f64().unwrap_or(0.0) as u32,
-            p["metadata"]["deviceHeight"].as_f64().unwrap_or(0.0) as u32,
-        ));
-        self.relay.push(jpeg, w, h);
     }
 }
 
@@ -560,7 +562,7 @@ async fn handle_events(
         let event = tokio::select! {
             biased;
             result = documents.recv() => match result {
-                Err(broadcast::error::RecvError::Lagged(_)) if sh.policy.is_some() => {
+                Err(broadcast::error::RecvError::Lagged(_)) if sh.containment.is_some() => {
                     sh.stop_for_policy("lost document events");
                     return;
                 }
@@ -574,7 +576,10 @@ async fn handle_events(
                     && ev.session_id.as_deref() == Some(&sh.session) =>
             {
                 if let Err(error) = sh.guard_document(&ev).await {
-                    sh.stop_for_policy(&error.to_string());
+                    tracing::debug!(%error, "could not enforce the preview document request policy");
+                    sh.stop_for_policy(
+                        "Chromium could not enforce the preview document request policy",
+                    );
                     return;
                 }
             }
@@ -689,6 +694,13 @@ async fn configure_page(cdp: &Cdp, session: &str, confined: bool) -> Result<(), 
     .await?;
     if confined {
         cdp.call(
+            None,
+            "Browser.grantPermissions",
+            json!({"permissions": []}),
+            CALL_TIMEOUT,
+        )
+        .await?;
+        cdp.call(
             Some(session),
             "Fetch.enable",
             json!({"patterns": [{"resourceType": "Document"}]}),
@@ -697,6 +709,36 @@ async fn configure_page(cdp: &Cdp, session: &str, confined: bool) -> Result<(), 
         .await?;
     }
     Ok(())
+}
+
+async fn configure_target(
+    cdp: &Cdp,
+    target: &str,
+    session: &str,
+    owned: Option<OwnedSession>,
+    events: &broadcast::Sender<BrowserEvent>,
+    relay: &Arc<RelayShared>,
+) -> Result<Option<Arc<Containment>>, BrowserError> {
+    let containment = owned.map(|owned| {
+        Arc::new(Containment {
+            target: target.to_owned(),
+            session: session.to_owned(),
+            policy: owned.policy,
+            process: owned.process,
+            events: events.clone(),
+            relay: relay.clone(),
+            state: Mutex::default(),
+        })
+    });
+    if let Some(guard) = &containment {
+        cdp.install_containment(guard.clone());
+        let targets = cdp
+            .call(None, "Target.getTargets", json!({}), CALL_TIMEOUT)
+            .await?;
+        guard.verify_targets(&targets)?;
+    }
+    configure_page(cdp, session, containment.is_some()).await?;
+    Ok(containment)
 }
 
 impl Browser {
@@ -713,7 +755,7 @@ impl Browser {
     where
         F: Future<Output = Result<(), BrowserError>>,
     {
-        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        use std::os::unix::fs::DirBuilderExt;
         let io = |e: std::io::Error| BrowserError::Launch(e.to_string());
         let policy = Arc::new(Policy::new(&spec.preview_url, spec.upstream_guard.clone())?);
         let proxy = Proxy::start(policy.clone()).await.map_err(io)?;
@@ -721,11 +763,9 @@ impl Browser {
             fs::create_dir_all(parent).map_err(io)?;
         }
         fs::DirBuilder::new()
-            .recursive(true)
             .mode(0o700)
             .create(&spec.profile_dir)
             .map_err(io)?;
-        fs::set_permissions(&spec.profile_dir, fs::Permissions::from_mode(0o700)).map_err(io)?;
         Self::spawn(&spec, policy, proxy, record).await
     }
 
@@ -742,6 +782,9 @@ impl Browser {
             pid: None,
             profile: Some(spec.profile_dir.clone()),
         };
+        write_profile_preferences(&spec.profile_dir).map_err(|error| {
+            BrowserError::Launch(format!("create private browser preferences: {error}"))
+        })?;
         let mut cmd = Command::new("/bin/sh");
         cmd.arg("-c")
             .arg(SHELL_SCRIPT)
@@ -807,6 +850,7 @@ impl Browser {
         };
         match connected {
             Ok(Ok(browser)) => Ok(browser),
+            Ok(Err(error @ BrowserError::Containment(_))) => Err(error),
             Ok(Err(error)) => {
                 let _ = tokio::time::timeout(Duration::from_millis(300), stderr_task).await;
                 Err(launch_failure(&tail, error.to_string()))
@@ -842,26 +886,22 @@ impl Browser {
         let mut rx = cdp.subscribe();
         let documents = cdp.subscribe_documents();
         let (target_id, session) = attach_page(&cdp, &mut rx).await?;
-        let (policy, owned_process) = match owned {
-            Some(OwnedSession { policy, process }) => (Some(policy), Some(process)),
-            None => (None, None),
-        };
-        configure_page(&cdp, &session, policy.is_some()).await?;
+        let (events, _) = broadcast::channel(256);
+        let relay = Arc::new(RelayShared::default());
+        let containment =
+            configure_target(&cdp, &target_id, &session, owned, &events, &relay).await?;
         let vp = viewport.unwrap_or(Viewport {
             width: 1280,
             height: 800,
             touch: false,
             dpr: 1.0,
         });
-        let (events, _) = broadcast::channel(256);
         let sh = Arc::new(Shared {
             cdp,
             session,
-            target_id,
-            policy,
-            owned_process,
+            containment,
             events,
-            relay: Arc::new(RelayShared::default()),
+            relay,
             shot: tokio::sync::Mutex::new(()),
             st: Mutex::new(State {
                 url: String::new(),
@@ -870,8 +910,6 @@ impl Browser {
                 last_net: Instant::now(),
                 blocked: HashSet::new(),
                 viewport: vp,
-                step: 0,
-                restarting: false,
                 poll: None,
             }),
         });
@@ -903,11 +941,12 @@ impl Browser {
 
     /// Navigate the page.
     pub async fn navigate(&self, url: &str) -> Result<(), BrowserError> {
+        self.sh.check_containment()?;
         if self
             .sh
-            .policy
+            .containment
             .as_ref()
-            .is_some_and(|policy| !policy.origin.allows_navigation(url))
+            .is_some_and(|guard| !guard.policy.origin.allows_navigation(url))
         {
             return Err(BrowserError::Navigation {
                 url: clean(url),
@@ -928,8 +967,11 @@ impl Browser {
 
     /// Check whether the verified preview server responds to HTTP.
     pub async fn probe(&self, url: &str) -> bool {
-        match &self.sh.policy {
-            Some(policy) => policy.probe(url).await,
+        if self.sh.check_containment().is_err() {
+            return false;
+        }
+        match &self.sh.containment {
+            Some(guard) => guard.policy.probe(url).await,
             None => false,
         }
     }
@@ -1020,38 +1062,21 @@ impl Browser {
         Ok(())
     }
 
-    /// Start the screencast; falls back to polling at 4 fps if the browser refuses it.
+    /// Start delivering verified viewport captures at up to four frames per second.
     pub async fn start_screencast(&self) -> Result<FrameRelay, BrowserError> {
-        {
-            let mut st = self.sh.st.lock().unwrap();
-            st.step = 0;
-            st.restarting = false;
-            if let Some(h) = st.poll.take() {
-                h.abort();
-            }
-        }
-        if self.sh.begin_screencast().await.is_err() {
-            self.sh.start_polling();
-        }
+        self.sh.check_containment()?;
+        self.sh.start_polling();
         Ok(FrameRelay {
             shared: self.sh.relay.clone(),
         })
     }
 
-    /// Stop the screencast (or the polling fallback).
+    /// Stop polling for viewport captures.
     pub async fn stop_screencast(&self) -> Result<(), BrowserError> {
-        let poll = self.sh.st.lock().unwrap().poll.take();
-        match poll {
-            Some(h) => {
-                h.abort();
-                Ok(())
-            }
-            None => self
-                .sh
-                .call("Page.stopScreencast", json!({}))
-                .await
-                .map(|_| ()),
+        if let Some(task) = self.sh.st.lock().unwrap().poll.take() {
+            task.abort();
         }
+        Ok(())
     }
 
     /// A picture of the viewport or `clip`, at most 560 KiB.
@@ -1061,7 +1086,47 @@ impl Browser {
 
     /// Path of the current main-frame URL (no query, no fragment).
     pub async fn current_path(&self) -> Result<String, BrowserError> {
-        Ok(clean(&path_of(&self.sh.st.lock().unwrap().url)))
+        Ok(clean(&path_of(&self.read_location().await?)))
+    }
+
+    /// Current same-origin path, query and fragment for restoring a viewport.
+    pub async fn current_location(&self) -> Result<String, BrowserError> {
+        let url = self.read_location().await?;
+        let uri = parse_url(&url)
+            .filter(|uri| uri.authority().is_some() && uri.scheme_str() == Some("http"))
+            .ok_or(BrowserError::DisclosureUnavailable)?;
+        let mut location = uri.path().to_owned();
+        if let Some(query) = uri.query() {
+            location.push('?');
+            location.push_str(query);
+        }
+        if let Some((_, fragment)) = url.split_once('#') {
+            location.push('#');
+            location.push_str(fragment);
+        }
+        debug_assert!(location.starts_with('/'));
+        Ok(location)
+    }
+
+    async fn read_location(&self) -> Result<String, BrowserError> {
+        let sh = &self.sh;
+        let Some(guard) = &sh.containment else {
+            return Ok(sh.st.lock().unwrap().url.clone());
+        };
+        let epoch = guard.epoch()?;
+        let tree = sh.disclosure_tree(guard).await?;
+        let _confirmed = guard.confirm(epoch)?;
+        let frame = &tree["frame"];
+        let url = frame["url"]
+            .as_str()
+            .expect("validated main frame has a URL");
+        match frame.get("urlFragment") {
+            None => Ok(url.to_owned()),
+            Some(Value::String(fragment)) if fragment.starts_with('#') => {
+                Ok(format!("{url}{fragment}"))
+            }
+            _ => Err(BrowserError::DisclosureUnavailable),
+        }
     }
 
     /// Wait until no request has been in flight for `quiet`; false if `max` passes first.
@@ -1072,6 +1137,7 @@ impl Browser {
     ) -> Result<bool, BrowserError> {
         let deadline = Instant::now() + max;
         loop {
+            self.sh.check_containment()?;
             let (idle, since) = {
                 let st = self.sh.st.lock().unwrap();
                 (st.reqs.is_empty(), st.last_net.elapsed())
@@ -1105,6 +1171,11 @@ impl Browser {
             .call("Page.handleJavaScriptDialog", p)
             .await
             .map(|_| ())
+    }
+
+    /// The first containment failure, if the browser was stopped for one.
+    pub fn containment_reason(&self) -> Option<String> {
+        self.sh.containment.as_ref()?.reason().map(String::from)
     }
 
     /// Subscribe to browser events.
@@ -1254,6 +1325,8 @@ mod tests {
             Some("evil.example".into())
         );
         assert_eq!(host_of("http://[::1]:80/"), Some("[::1]".into()));
+        assert_eq!(host_of("data:text/html,http://fixture/"), None);
+        assert_eq!(host_of("blob:http://localhost:80/fixture"), None);
     }
 }
 

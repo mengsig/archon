@@ -6,6 +6,7 @@
 
 mod browser;
 mod cdp;
+mod containment;
 mod error;
 mod launch;
 mod origin;
@@ -230,6 +231,11 @@ pub enum BrowserEvent {
     Crashed,
     /// The browser process or pipe is gone.
     Exited,
+    /// A document policy failure stopped the browser.
+    ContainmentStopped {
+        /// Trusted explanation of the stop.
+        reason: String,
+    },
     /// A JavaScript dialog opened and waits for `answer_dialog`.
     Dialog {
         /// alert, confirm, prompt or beforeunload.

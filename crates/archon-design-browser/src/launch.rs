@@ -1,7 +1,9 @@
 //! Finding, launching and reaping the Chromium child.
 
 use std::fs;
+use std::io::Write;
 use std::net::SocketAddr;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -38,12 +40,16 @@ pub(crate) const SHELL_SCRIPT: &str = r#"IFS= read -r start && [ "$start" = STAR
 pub(crate) fn launch_args(spec: &LaunchSpec, proxy: SocketAddr) -> Vec<String> {
     let mut a: Vec<String> = vec![
         "--headless=new".into(),
+        "--ozone-platform=headless".into(),
         "--remote-debugging-pipe".into(),
         format!("--user-data-dir={}", spec.profile_dir.display()),
         "--no-first-run".into(),
         "--no-default-browser-check".into(),
         "--disable-extensions".into(),
+        "--disable-component-extensions-with-background-pages".into(),
         "--disable-sync".into(),
+        "--password-store=basic".into(),
+        "--disable-notifications".into(),
         "--disable-background-networking".into(),
         "--disable-component-update".into(),
         "--mute-audio".into(),
@@ -64,6 +70,26 @@ pub(crate) fn launch_args(spec: &LaunchSpec, proxy: SocketAddr) -> Vec<String> {
     }
     a.push("about:blank".into());
     a
+}
+
+pub(crate) fn write_profile_preferences(profile: &Path) -> std::io::Result<()> {
+    let default_profile = profile.join("Default");
+    fs::DirBuilder::new().mode(0o700).create(&default_profile)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(default_profile.join("Preferences"))?;
+    file.write_all(
+        br#"{
+        "credentials_enable_service": false,
+        "autofill": {"profile_enabled": false, "credit_card_enabled": false},
+        "profile": {
+            "password_manager_enabled": false,
+            "default_content_setting_values": {"clipboard": 2, "geolocation": 2, "notifications": 2}
+        }
+    }"#,
+    )
 }
 
 /// The child's whole environment.
@@ -300,7 +326,12 @@ mod tests {
         assert_eq!(on.last().unwrap(), "about:blank");
         for want in [
             "--headless=new",
+            "--ozone-platform=headless",
             "--remote-debugging-pipe",
+            "--disable-extensions",
+            "--disable-component-extensions-with-background-pages",
+            "--password-store=basic",
+            "--disable-notifications",
             "--user-data-dir=/tmp/p/ds_1",
             "--proxy-server=http://127.0.0.1:4242",
             "--js-flags=--max-old-space-size=1024",

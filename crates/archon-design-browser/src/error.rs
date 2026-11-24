@@ -24,6 +24,12 @@ pub enum BrowserError {
     /// The browser is gone.
     #[error("browser closed")]
     Closed,
+    /// A document policy failure stopped the browser.
+    #[error("preview containment stopped: {0}")]
+    Containment(String),
+    /// The page could not be verified for this read.
+    #[error("preview document changed or is not ready")]
+    DisclosureUnavailable,
     /// A call took too long.
     #[error("browser call timed out: {0}")]
     Timeout(String),

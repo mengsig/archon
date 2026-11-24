@@ -21,8 +21,12 @@ pub(crate) struct RelayShared {
 
 impl RelayShared {
     pub(crate) fn push(&self, jpeg: Vec<u8>, width: u32, height: u32) -> u64 {
+        let mut latest = self.latest.lock().unwrap();
+        if self.closed.load(Ordering::SeqCst) {
+            return self.seq();
+        }
         let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
-        *self.latest.lock().unwrap() = Some(Frame {
+        *latest = Some(Frame {
             seq,
             jpeg,
             width,
@@ -37,7 +41,9 @@ impl RelayShared {
     }
 
     pub(crate) fn close(&self) {
+        let mut latest = self.latest.lock().unwrap();
         self.closed.store(true, Ordering::SeqCst);
+        *latest = None;
         self.notify.notify_waiters();
     }
 
@@ -47,14 +53,14 @@ impl RelayShared {
             let notified = self.notify.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            if self.seq() > since {
-                return true;
-            }
             if self.closed.load(Ordering::SeqCst) {
                 return false;
             }
+            if self.seq() > since {
+                return true;
+            }
             if tokio::time::timeout_at(deadline, notified).await.is_err() {
-                return self.seq() > since;
+                return !self.closed.load(Ordering::SeqCst) && self.seq() > since;
             }
         }
     }
@@ -104,26 +110,29 @@ impl FrameSubscriber {
                 return None;
             }
             if self.in_flight.is_none() {
-                let frame = self
-                    .shared
-                    .latest
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .filter(|f| f.seq > self.last_seq)
-                    .cloned();
-                if let Some(f) = frame {
-                    let wait = self
-                        .last_release
-                        .map(|t| MIN_INTERVAL.saturating_sub(t.elapsed()))
-                        .unwrap_or_default();
-                    if wait.is_zero() {
-                        self.last_seq = f.seq;
-                        self.in_flight = Some(f.seq);
-                        self.last_release = Some(Instant::now());
-                        return Some(f);
+                let wait = {
+                    let latest = self.shared.latest.lock().unwrap();
+                    if let Some(frame) = latest.as_ref().filter(|frame| frame.seq > self.last_seq) {
+                        let wait = self
+                            .last_release
+                            .map(|t| MIN_INTERVAL.saturating_sub(t.elapsed()))
+                            .unwrap_or_default();
+                        if wait.is_zero() {
+                            self.last_seq = frame.seq;
+                            self.in_flight = Some(frame.seq);
+                            self.last_release = Some(Instant::now());
+                            return Some(frame.clone());
+                        }
+                        Some(wait)
+                    } else {
+                        None
                     }
-                    tokio::time::sleep(wait).await;
+                };
+                if let Some(wait) = wait {
+                    tokio::select! {
+                        _ = tokio::time::sleep(wait) => {}
+                        _ = &mut notified => {}
+                    }
                     continue;
                 }
             }

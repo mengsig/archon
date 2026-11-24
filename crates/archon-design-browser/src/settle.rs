@@ -81,11 +81,14 @@ impl Browser {
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             let quiet = self.wait_network_idle(SETTLE_QUIET, left).await?;
-            let look = self.sh.capture(None, 0.25).await?.bytes;
-            if quiet && last.as_deref() == Some(look.as_slice()) {
-                return Ok(true);
+            match self.sh.capture(None, 0.25).await {
+                Ok(picture) if quiet && last.as_deref() == Some(picture.bytes.as_slice()) => {
+                    return Ok(true);
+                }
+                Ok(picture) => last = Some(picture.bytes),
+                Err(BrowserError::DisclosureUnavailable) => last = None,
+                Err(error) => return Err(error),
             }
-            last = Some(look);
             if Instant::now() >= deadline {
                 return Ok(false);
             }
@@ -96,6 +99,10 @@ impl Browser {
     /// The centre of the element `selector` matches, in CSS px, after
     /// scrolling it into view; `None` when nothing matches or it has no box.
     pub async fn center_of(&self, selector: &str) -> Result<Option<(f64, f64)>, BrowserError> {
+        self.sh.disclose(self.read_center(selector)).await
+    }
+
+    async fn read_center(&self, selector: &str) -> Result<Option<(f64, f64)>, BrowserError> {
         let doc = self.sh.call("DOM.getDocument", json!({"depth": 0})).await?;
         let root = doc["root"]["nodeId"].as_i64().unwrap_or(1);
         let found = match self
@@ -120,7 +127,7 @@ impl Browser {
             .call("DOM.scrollIntoViewIfNeeded", json!({"nodeId": node}))
             .await;
         Ok(self
-            .resolve_selector(selector, None)
+            .read_selector(selector, None)
             .await?
             .map(|r| (r.x + r.w / 2.0, r.y + r.h / 2.0)))
     }
@@ -130,6 +137,14 @@ impl Browser {
     /// differing visibly. The browser decodes them (a PNG and a JPEG compare), so an
     /// encoder's noise or a different scale does not count as a change.
     pub async fn pictures_match(
+        &self,
+        a: (&str, &[u8]),
+        b: (&str, &[u8]),
+    ) -> Result<bool, BrowserError> {
+        self.sh.disclose(self.compare_pictures(a, b)).await
+    }
+
+    async fn compare_pictures(
         &self,
         a: (&str, &[u8]),
         b: (&str, &[u8]),
@@ -152,7 +167,8 @@ impl Browser {
             .or_else(|| r["exceptionDetails"]["text"].as_str())
         {
             return Err(BrowserError::Protocol(format!(
-                "comparing pictures failed: {why}"
+                "comparing pictures failed: {}",
+                crate::sanitize::clean(why)
             )));
         }
         let share = r["result"]["value"]
@@ -171,7 +187,12 @@ async fn wait_loaded(
         loop {
             match events.recv().await {
                 Ok(BrowserEvent::Loaded { .. }) => return true,
-                Ok(BrowserEvent::NavigationFailed { .. } | BrowserEvent::Crashed) => return false,
+                Ok(
+                    BrowserEvent::NavigationFailed { .. }
+                    | BrowserEvent::ContainmentStopped { .. }
+                    | BrowserEvent::Crashed
+                    | BrowserEvent::Exited,
+                ) => return false,
                 Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return false,
             }

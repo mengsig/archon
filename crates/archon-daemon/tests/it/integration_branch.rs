@@ -306,7 +306,7 @@ async fn a_committed_repo_file_is_read_and_the_registry_overrides_it() {
     assert!(lead.instructions.contains("fast check: `make quick`"));
     assert!(
         lead.instructions
-            .contains("Do not run the full suite (`make ci`)")
+            .contains("do not run the full suite (`make ci`) unless the brief asks for it")
     );
 
     let tiers = TiersPatch {
@@ -330,7 +330,7 @@ async fn a_committed_repo_file_is_read_and_the_registry_overrides_it() {
     assert!(lead.instructions.contains("fast check: `make fast`"));
     assert!(
         lead.instructions
-            .contains("Do not run the full suite (`make ci`)"),
+            .contains("do not run the full suite (`make ci`) unless the brief asks for it"),
         "the file's full check stays"
     );
 }

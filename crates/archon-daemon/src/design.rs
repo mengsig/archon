@@ -799,21 +799,25 @@ impl DesignService {
             branch: &wt.branch,
         };
         let mut candidates = Vec::new();
+        let mut in_code = std::collections::BTreeSet::new();
         for note in &notes {
             if note.kind == NoteKind::Revert
                 || note.status != NoteStatus::Done
                 || undone.contains_key(&note.id)
-                || approved.contains(&note.id)
             {
+                continue;
+            }
+            if approved.contains(&note.id) {
+                in_code.insert(note.id.as_str());
                 continue;
             }
             let Some(commit) = &note.commit else {
                 continue;
             };
-            if !design_git::contains(&g, commit, at)? {
-                continue;
+            if design_git::contains(&g, commit, at)? {
+                in_code.insert(note.id.as_str());
+                candidates.push(note);
             }
-            candidates.push(note);
         }
         // A chain of follow-ups stands as its newest version in the code:
         // the earlier ones are its history, never requirements of their own.
@@ -823,11 +827,12 @@ impl DesignService {
         Ok(candidates
             .into_iter()
             .filter(|note| {
-                let by = match choices.and_then(|c| c.superseded.get(&note.id)) {
-                    Some(chosen) => chosen.clone(),
-                    None => auto.get(&note.id).cloned(),
-                };
-                by.is_none()
+                let chosen = choices.and_then(|c| c.superseded.get(&note.id));
+                match chosen {
+                    Some(None) => true,
+                    Some(Some(by)) if in_code.contains(by.as_str()) => false,
+                    _ => !auto.contains_key(&note.id),
+                }
             })
             .cloned()
             .collect())

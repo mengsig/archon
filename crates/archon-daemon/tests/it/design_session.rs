@@ -564,6 +564,76 @@ async fn a_picture_taken_during_the_review_does_not_refuse_confirm() {
     .expect("confirmed after the picture");
 }
 
+#[tokio::test]
+async fn finish_requires_review_ids_and_a_later_eligible_replacement() {
+    let f = Fixture::new().await;
+    let (d1, _) = crate::design_undo::done_note(&f, "k1", "a.txt", "one\n").await;
+    let (d2, _) = crate::design_undo::done_note(&f, "k2", "b.txt", "two\n").await;
+    for (from, to) in [
+        (d1.as_str(), "D99"),
+        (d2.as_str(), d1.as_str()),
+        ("D99", d2.as_str()),
+    ] {
+        let (_, result) = confirm_with(&f, &[(from, to)], false).await;
+        assert!(matches!(result, Err(ArchonError::Invalid(_))), "{result:?}");
+        assert_eq!(
+            state(&f).await.session.unwrap().state,
+            SessionState::Finishing
+        );
+    }
+    let (_, result) = confirm_with(&f, &[(&d1, &d2)], false).await;
+    assert!(matches!(result, Ok(Reply::DesignDone)), "{result:?}");
+}
+
+#[tokio::test]
+async fn confirmation_keeps_picture_inclusion_and_the_undelivered_finish() {
+    let f = Fixture::new().await;
+    let (id, _) = crate::design_undo::done_note(&f, "k1", "a.txt", "one\n").await;
+    let review = finish_view(
+        f.operator(Request::DesignFinishCapture {
+            session: f.session.clone(),
+            cancel_queued: false,
+            recapture: false,
+        })
+        .await
+        .expect("capture"),
+    );
+    assert!(review.cards[0].asset.is_some());
+
+    f.h.backend
+        .fail_next_message(ArchonError::Unavailable("test outage".into()));
+    let result = f
+        .operator(Request::DesignFinishConfirm {
+            session: f.session.clone(),
+            capture: review.capture,
+            include: [(id.clone(), false)].into(),
+            superseded: Default::default(),
+            confirm_no_change: false,
+        })
+        .await;
+    assert!(matches!(result, Ok(Reply::DesignDone)), "{result:?}");
+    let store = f.h.ctx.store.lock().await;
+    assert_eq!(
+        store.design_session(&f.session).unwrap().unwrap().state,
+        SessionState::Confirmed
+    );
+    assert_eq!(
+        store
+            .design_note(&f.item, &id)
+            .unwrap()
+            .unwrap()
+            .final_included,
+        Some(false)
+    );
+    let key = archon_queue::store::keys::design_owed(&f.session);
+    let raw = store
+        .kv_get(&key)
+        .unwrap()
+        .expect("the Finish notice is owed");
+    let payload: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(payload[0]["key"], format!("design:{}:finish", f.session));
+}
+
 fn finish_view(reply: Reply) -> archon_core::protocol::DesignFinishView {
     match reply {
         Reply::DesignFinish(view) => view,
@@ -906,6 +976,33 @@ async fn undoing_a_carried_replacement_brings_the_replaced_note_back() {
         "D2 is undone and no longer counts"
     );
     confirmed.expect("D1 is approved again");
+}
+
+#[tokio::test]
+async fn a_carried_replacement_lapses_when_its_commit_leaves_history() {
+    let mut f = Fixture::new().await;
+    let (d1, first_commit) = crate::design_undo::done_note(&f, "k1", "a.txt", "one\n").await;
+    let (d2, _) = crate::design_undo::done_note(&f, "k2", "b.txt", "two\n").await;
+    let (_, first) = confirm_with(&f, &[(&d1, &d2)], false).await;
+    first.expect("confirmed with D1 replaced by D2");
+    f.h.ctx
+        .design
+        .gate_decided(&f.h.ctx, &f.run, &f.stage_id, f.attempt, "revised")
+        .await
+        .expect("decided");
+    crate::common::git(
+        &f.worktree.worktree,
+        &["reset", "--hard", "--quiet", &first_commit],
+    );
+    next_session(&mut f).await;
+
+    let (view, confirmed) = confirm_with(&f, &[], false).await;
+    let first = view.cards.iter().find(|card| card.note == d1).unwrap();
+    let second = view.cards.iter().find(|card| card.note == d2).unwrap();
+    assert!(!first.left_history);
+    assert_eq!(first.superseded_by, None);
+    assert!(second.left_history);
+    confirmed.expect("D1 remains in force");
 }
 
 mod stream {

@@ -7,6 +7,7 @@ use archon_core::design::{
 use archon_core::error::ArchonError;
 use archon_queue::store::NoteChange;
 
+use super::delivery::{Owed, queued_payload};
 use super::{DesignService, WorktreeRef};
 use crate::context::DaemonContext;
 use crate::executor::repo_identity;
@@ -194,7 +195,7 @@ impl DesignService {
     }
 
     /// The revert is in the code: the note is done, the agent is told.
-    pub(crate) async fn settle_revert_done(
+    async fn settle_revert_done(
         &self,
         ctx: &DaemonContext,
         session: &DesignSession,
@@ -203,16 +204,8 @@ impl DesignService {
         new: &str,
         wt: &WorktreeRef,
     ) -> Result<(), ArchonError> {
-        ctx.store.lock().await.design_note_change(
-            &revert.item,
-            &revert.id,
-            NoteChange::Status {
-                to: NoteStatus::Done,
-                fail_reason: None,
-                commit: Some(new.to_owned()),
-                no_change: false,
-            },
-        )?;
+        self.record_revert_done(ctx, session, revert, original_id, new)
+            .await?;
         tracing::info!(note = original_id, undo = %revert.id, commit = new, device = ?super::current_device_label(), "design: undone");
         self.emit_note(ctx, &revert.item, &revert.id).await;
         let mut for_picture = revert.clone();
@@ -222,30 +215,37 @@ impl DesignService {
             .await
             .design_note(&revert.item, original_id)?
             .and_then(|n| n.target);
-        self.after_picture(ctx, session, &for_picture, wt, Default::default())
-            .await;
+        if let super::state::AfterOutcome::StepFailed(why) = self
+            .after_picture(ctx, session, &for_picture, wt, Default::default())
+            .await
+        {
+            tracing::warn!(note = %revert.id, why, "design: the undo picture could not be taken");
+        }
         self.emit_note(ctx, &revert.item, &revert.id).await;
-        self.tell_undone(ctx, session, &revert.id, original_id, new)
-            .await;
         Ok(())
     }
 
-    /// Tell the agent an undo is in the code, keyed by the revert note so a
-    /// live undo and startup's settling of the same one send it once.
-    pub(crate) async fn tell_undone(
+    pub(super) async fn record_revert_done(
         &self,
         ctx: &DaemonContext,
         session: &DesignSession,
-        revert_id: &str,
+        revert: &DesignNote,
         original_id: &str,
         new: &str,
-    ) {
-        let key = format!("design:{}:{revert_id}:told", session.id);
-        let text = format!(
-            "Archon undid {original_id} with commit {new}; HEAD is now {new}; no action needed"
-        );
-        if let Err(error) = self.owe(ctx, session, key, text, None).await {
-            tracing::warn!(%error, "the undo notice was not queued");
-        }
+    ) -> Result<(), ArchonError> {
+        assert_eq!(revert.session, session.id);
+        assert_eq!(revert.reverts.as_deref(), Some(original_id));
+        let message = Owed {
+            key: format!("design:{}:{}:told", session.id, revert.id),
+            text: format!(
+                "Archon undid {original_id} with commit {new}; HEAD is now {new}; no action needed"
+            ),
+            asset: None,
+            item: session.item.clone(),
+            more: Vec::new(),
+        };
+        let mut store = ctx.store.lock().await;
+        let owed = queued_payload(&store, session, message)?;
+        store.design_revert_done(session, &revert.id, new, &owed)
     }
 }

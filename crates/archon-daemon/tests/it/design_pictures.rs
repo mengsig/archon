@@ -5,7 +5,7 @@
 
 use crate::common::design::{Fixture, jpeg};
 use crate::design_session::{note, refused, report, state};
-use archon_core::design::{DesignNote, NoteStatus, UiStep};
+use archon_core::design::{DesignNote, NoteStatus, SessionState, UiStep};
 use archon_core::error::{ArchonError, DesignRefusal};
 use archon_core::protocol::{AgentNoteStatus, DesignNoteView, Reply, Request};
 
@@ -139,6 +139,80 @@ async fn the_after_picture_waits_for_the_reload() {
     let done = note(&f, "D1").await;
     assert_eq!(done.status, NoteStatus::Done);
     assert!(done.after_asset.is_some(), "a different picture is kept");
+}
+
+#[tokio::test]
+async fn a_failed_reload_keeps_no_after_picture() {
+    let f = Fixture::new().await;
+    pick(&f, "k1", "Restyle the dialog").await;
+    let commit = commit_for(&f, "D1");
+    let browser = f.factory.browser(0);
+    let shots = browser.calls(|c| c.captures.len());
+    browser.fail_next_load();
+
+    let reply = message(done(&f, "D1", &commit, Vec::new(), None).await);
+    assert!(reply.contains("scripted load failure"), "{reply}");
+    assert_eq!(browser.calls(|c| c.captures.len()), shots);
+    let note = note(&f, "D1").await;
+    assert!(note.after_asset.is_none());
+    assert_eq!(note.status, NoteStatus::Done);
+}
+
+#[tokio::test]
+async fn finish_does_not_keep_a_picture_after_a_step_fails() {
+    let f = Fixture::new().await;
+    pick(&f, "k1", "Restyle the dialog").await;
+    let commit = commit_for(&f, "D1");
+    let browser = f.factory.browser(0);
+    browser.captures_return([jpeg(24, 24)]);
+    done(&f, "D1", &commit, vec![click("button.dialog")], None)
+        .await
+        .expect("done with an after picture");
+    assert!(note(&f, "D1").await.after_asset.is_some());
+    browser.finds_no_elements();
+    let shots = browser.calls(|c| c.captures.len());
+
+    let error = finish(&f, false).await.unwrap_err().to_string();
+    assert!(error.contains("D1") && error.contains("step 1"), "{error}");
+    assert!(error.contains("button.dialog"), "{error}");
+    assert_eq!(browser.calls(|c| c.captures.len()), shots);
+    assert!(note(&f, "D1").await.final_asset.is_none());
+    assert_eq!(state(&f).await.session.unwrap().state, SessionState::Live);
+}
+
+#[tokio::test]
+async fn recapture_clears_a_picture_of_an_element_that_is_now_gone() {
+    let f = Fixture::new().await;
+    pick(&f, "k1", "Make the button bigger").await;
+    let commit = commit_for(&f, "D1");
+    done(&f, "D1", &commit, Vec::new(), None)
+        .await
+        .expect("done");
+    let Reply::DesignFinish(first) = finish(&f, false).await.expect("first capture") else {
+        panic!("expected a Finish review");
+    };
+    assert!(first.cards[0].asset.is_some());
+    let browser = f.factory.browser(0);
+    let shots = browser.calls(|c| c.captures.len());
+    browser.finds_no_elements();
+
+    let Reply::DesignFinish(second) = finish(&f, true).await.expect("text-only review") else {
+        panic!("expected a Finish review");
+    };
+    assert_ne!(first.capture, second.capture);
+    assert!(second.cards[0].not_found);
+    assert!(second.cards[0].asset.is_none());
+    assert!(note(&f, "D1").await.final_asset.is_none());
+    assert_eq!(browser.calls(|c| c.captures.len()), shots);
+}
+
+async fn finish(f: &Fixture, recapture: bool) -> Result<Reply, ArchonError> {
+    f.operator(Request::DesignFinishCapture {
+        session: f.session.clone(),
+        cancel_queued: false,
+        recapture,
+    })
+    .await
 }
 
 /// The agent's steps open the state that shows the change; the before and the

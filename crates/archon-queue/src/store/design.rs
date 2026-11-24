@@ -700,14 +700,13 @@ impl Store {
         Ok(updated)
     }
 
-    /// Give a session under review a new capture id in place, in one write:
-    /// it stays Finishing, so no check that guards entering a review (an
-    /// owed message, say) can drop it back to Live halfway.
-    pub fn design_finish_restamp(
+    /// Commit the review, its current notes' inclusion, and the agent delivery together.
+    pub fn design_finish_confirm(
         &mut self,
         id: &DesignSessionId,
-        capture: &str,
-        head: &str,
+        record: FinishRecord,
+        inclusion: &[(String, bool)],
+        owed: &str,
     ) -> Result<DesignSession, ArchonError> {
         let tx = write_tx(&mut self.conn)?;
         let session = session_by_id(&tx, id)?
@@ -715,18 +714,130 @@ impl Store {
         if session.state != SessionState::Finishing {
             return Err(refuse(
                 DesignRefusal::Conflict,
-                format!(
-                    "the design session is {}, not finishing",
-                    enc(&session.state)
-                ),
+                "the design session is no longer finishing",
             ));
         }
+        if session.finish_capture.as_deref() != Some(&record.capture)
+            || session.finish_head.as_deref() != Some(&record.head)
+            || session.note_version != record.note_version
+        {
+            return Err(refuse(
+                DesignRefusal::Stale,
+                "the review changed; capture again",
+            ));
+        }
+        let choices = record
+            .choices
+            .as_ref()
+            .ok_or_else(|| ArchonError::Invalid("finish confirmation requires choices".into()))?;
+        for (note, include) in inclusion {
+            let updated = tx
+                .execute(
+                    "UPDATE design_notes SET final_included = ?3, updated_at = ?4
+                 WHERE session = ?1 AND id = ?2 AND status = 'done'",
+                    params![id.as_str(), note, include, now()],
+                )
+                .ctx("record final picture inclusion")?;
+            if updated != 1 {
+                return Err(ArchonError::Invalid(format!(
+                    "{note} is not a done note of {id}"
+                )));
+            }
+            bump(&tx, id)?;
+        }
         tx.execute(
-            "UPDATE design_sessions SET finish_capture = ?2, finish_head = ?3 WHERE id = ?1",
-            params![id.as_str(), capture, head],
+            "UPDATE design_sessions SET state = 'confirmed', finish_choices_json = ?2 WHERE id = ?1",
+            params![id.as_str(), to_json(choices, "finish choices")?],
+        ).ctx("confirm design session")?;
+        settings::kv_set(&tx, &keys::design_owed(id), owed)?;
+        let updated = session_by_id(&tx, id)?.expect("the session exists");
+        assert_eq!(updated.state, SessionState::Confirmed);
+        assert_eq!(updated.finish_capture, session.finish_capture);
+        tx.commit().ctx("commit design finish confirmation")?;
+        Ok(updated)
+    }
+
+    /// Record an applied revert and the delivery that tells its agent about the new HEAD.
+    pub fn design_revert_done(
+        &mut self,
+        session: &DesignSession,
+        id: &str,
+        commit: &str,
+        owed: &str,
+    ) -> Result<(), ArchonError> {
+        let tx = write_tx(&mut self.conn)?;
+        let note = note_by_id(&tx, &session.item, id)?
+            .ok_or_else(|| ArchonError::NotFound(format!("design revert {id}")))?;
+        if note.session != session.id
+            || note.kind != NoteKind::Revert
+            || note.commit.as_deref() != Some(commit)
+        {
+            return Err(ArchonError::Corrupt(format!(
+                "{id} does not match the prepared revert"
+            )));
+        }
+        let done = Self::change_note(
+            &tx,
+            &session.item,
+            id,
+            NoteChange::Status {
+                to: NoteStatus::Done,
+                fail_reason: None,
+                commit: None,
+                no_change: false,
+            },
+        )?;
+        assert_eq!(done.status, NoteStatus::Done);
+        assert_eq!(done.commit, note.commit);
+        settings::kv_set(&tx, &keys::design_owed(&session.id), owed)?;
+        tx.commit().ctx("commit applied design revert")
+    }
+
+    /// Replace a final picture and re-stamp the review in the same write.
+    pub fn design_finish_restamp(
+        &mut self,
+        expected: &DesignSession,
+        capture: &str,
+        note: &str,
+        asset: DesignAssetId,
+    ) -> Result<DesignSession, ArchonError> {
+        let tx = write_tx(&mut self.conn)?;
+        let id = &expected.id;
+        let session = session_by_id(&tx, id)?
+            .ok_or_else(|| ArchonError::NotFound(format!("design session {id}")))?;
+        if session.state != SessionState::Finishing {
+            return Err(refuse(
+                DesignRefusal::Conflict,
+                "the design session is no longer finishing",
+            ));
+        }
+        if session.finish_capture != expected.finish_capture
+            || session.finish_head != expected.finish_head
+            || session.note_version != expected.note_version
+        {
+            return Err(refuse(
+                DesignRefusal::Stale,
+                "the review changed; capture again",
+            ));
+        }
+        Self::change_note(
+            &tx,
+            &session.item,
+            note,
+            NoteChange::Final {
+                asset: Some(asset),
+                included: None,
+                captured_commit: session.finish_head,
+            },
+        )?;
+        tx.execute(
+            "UPDATE design_sessions SET finish_capture = ?2 WHERE id = ?1",
+            params![id.as_str(), capture],
         )
         .ctx("restamp design finish")?;
         let updated = session_by_id(&tx, id)?.expect("the session exists");
+        assert_eq!(updated.state, SessionState::Finishing);
+        assert_eq!(updated.note_version, expected.note_version + 1);
         tx.commit().ctx("commit design finish restamp")?;
         Ok(updated)
     }
@@ -815,9 +926,20 @@ impl Store {
         change: NoteChange,
     ) -> Result<DesignNote, ArchonError> {
         let tx = write_tx(&mut self.conn)?;
-        let mut note = note_by_id(&tx, item, id)?
+        let updated = Self::change_note(&tx, item, id, change)?;
+        tx.commit().ctx("commit design note change")?;
+        Ok(updated)
+    }
+
+    fn change_note(
+        tx: &Connection,
+        item: &QueueItemId,
+        id: &str,
+        change: NoteChange,
+    ) -> Result<DesignNote, ArchonError> {
+        let mut note = note_by_id(tx, item, id)?
             .ok_or_else(|| ArchonError::NotFound(format!("design note {id}")))?;
-        let current = current_session(&tx, item)?;
+        let current = current_session(tx, item)?;
         if current.as_ref().map(|s| &s.id) != Some(&note.session) {
             return Err(refuse(
                 DesignRefusal::ReadOnly,
@@ -854,7 +976,7 @@ impl Store {
                         enc(&note.status)
                     )));
                 }
-                if let Some(other) = others_in_flight(&tx)? {
+                if let Some(other) = others_in_flight(tx)? {
                     return Err(ArchonError::InvalidTransition(format!(
                         "{other} is still with the agent; {id} waits"
                     )));
@@ -886,7 +1008,7 @@ impl Store {
                 }
                 if note.status == NoteStatus::Queued
                     && is_in_flight(to)
-                    && let Some(other) = others_in_flight(&tx)?
+                    && let Some(other) = others_in_flight(tx)?
                 {
                     return Err(ArchonError::InvalidTransition(format!(
                         "{other} is still in flight; {id} waits"
@@ -912,7 +1034,7 @@ impl Store {
                         "{id} is not a revert waiting to run"
                     )));
                 }
-                if let Some(other) = others_in_flight(&tx)? {
+                if let Some(other) = others_in_flight(tx)? {
                     return Err(ArchonError::InvalidTransition(format!(
                         "{other} is still in flight; {id} waits"
                     )));
@@ -969,9 +1091,8 @@ impl Store {
             ],
         )
         .ctx("update design note")?;
-        bump(&tx, &note.session)?;
-        let updated = note_by_id(&tx, item, id)?.expect("the note exists");
-        tx.commit().ctx("commit design note change")?;
+        bump(tx, &note.session)?;
+        let updated = note_by_id(tx, item, id)?.expect("the note exists");
         Ok(updated)
     }
 

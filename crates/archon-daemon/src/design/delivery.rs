@@ -107,6 +107,20 @@ fn decode_owed(raw: Option<String>) -> Result<Vec<Owed>, ArchonError> {
     }
 }
 
+pub(super) fn queued_payload(
+    store: &archon_queue::store::Store,
+    session: &DesignSession,
+    owed: Owed,
+) -> Result<String, ArchonError> {
+    assert_eq!(owed.item, session.item);
+    assert!(!owed.key.is_empty());
+    let mut list = decode_owed(store.kv_get(&keys::design_owed(&session.id))?)?;
+    if list.iter().all(|o| o.key != owed.key) {
+        list.push(owed);
+    }
+    serde_json::to_string(&list).map_err(|e| ArchonError::Corrupt(format!("design_owed: {e}")))
+}
+
 impl DesignService {
     pub(crate) async fn owed_list(
         &self,
@@ -142,18 +156,17 @@ impl DesignService {
     ) -> Result<(), ArchonError> {
         let mut store = ctx.store.lock().await;
         let kv_key = keys::design_owed(&session.id);
-        let mut list = decode_owed(store.kv_get(&kv_key)?)?;
-        if list.iter().all(|o| o.key != key) {
-            list.push(Owed {
+        let raw = queued_payload(
+            &store,
+            session,
+            Owed {
                 key,
                 text,
                 asset,
                 item: session.item.clone(),
                 more,
-            });
-        }
-        let raw = serde_json::to_string(&list)
-            .map_err(|e| ArchonError::Corrupt(format!("design_owed: {e}")))?;
+            },
+        )?;
         store.kv_set(&kv_key, &raw)
     }
 
@@ -294,6 +307,9 @@ impl DesignService {
                 return Ok(());
             }
             self.flush_owed(ctx, &session).await?;
+            if self.has_owed(ctx, &session.id).await? {
+                return Ok(());
+            }
             let mine: Vec<&DesignNote> = notes.iter().filter(|n| n.session == session.id).collect();
             let busy = mine.iter().any(|n| {
                 is_in_flight(n.status)

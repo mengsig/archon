@@ -246,6 +246,7 @@ test.describe('desktop', () => {
       expect(confirms()).toBe(1);
       const replacement = review.getByLabel('D1 superseded by');
       await expect(replacement.locator('option')).toHaveText(['Not superseded', 'D2 · replace green']);
+      await expect(review.getByLabel('D2 superseded by').locator('option')).toHaveText(['Not superseded']);
       await replacement.selectOption('D2');
       await review.getByRole('button', { name: 'Confirm', exact: true }).click();
       await expect.poll(confirms).toBe(2);

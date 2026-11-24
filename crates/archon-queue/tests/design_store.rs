@@ -370,6 +370,67 @@ fn note_version_counts_every_insert_and_change() {
 }
 
 #[test]
+fn confirmation_rolls_back_inclusion_and_delivery_if_a_note_write_fails() {
+    let (mut store, _, items) = seeded(1);
+    let item = &items[0].id;
+    let session = live(&mut store, item);
+    let note = add(&mut store, item, &session, "k1");
+    send(&mut store, item, &note).unwrap();
+    status(&mut store, item, &note, NoteStatus::Done).unwrap();
+    let current = store.design_session(&session).unwrap().unwrap();
+    let mut record = FinishRecord {
+        capture: "capture".into(),
+        head: "head".into(),
+        note_version: current.note_version,
+        choices: None,
+    };
+    let review = store
+        .design_session_transition(
+            &session,
+            SessionState::Live,
+            SessionState::Finishing,
+            Some(record.clone()),
+            false,
+        )
+        .unwrap();
+    record.choices = Some(archon_core::design::FinishChoices {
+        include: Default::default(),
+        superseded: Default::default(),
+    });
+    let key = keys::design_owed(&session);
+    let allowed = (note.clone(), true);
+    let invalid = ("D99".to_owned(), true);
+    let error = store
+        .design_finish_confirm(
+            &session,
+            record.clone(),
+            &[allowed.clone(), invalid],
+            r#"[{"text":"Finish"}]"#,
+        )
+        .unwrap_err();
+
+    assert!(error.to_string().contains("D99"));
+    let after = store.design_session(&session).unwrap().unwrap();
+    assert_eq!(after.state, SessionState::Finishing);
+    assert_eq!(after.note_version, review.note_version);
+    assert_eq!(
+        store
+            .design_note(item, &note)
+            .unwrap()
+            .unwrap()
+            .final_included,
+        None
+    );
+    assert_eq!(store.kv_get(&key).unwrap(), None);
+
+    let confirmed = store
+        .design_finish_confirm(&session, record, &[allowed], r#"[{"text":"Finish"}]"#)
+        .unwrap();
+    assert_eq!(confirmed.state, SessionState::Confirmed);
+    assert!(store.kv_get(&key).unwrap().is_some());
+}
+
+#[test]
 fn finish_is_a_compare_and_set_with_the_operators_sentences() {
     let (mut store, _repo, items) = seeded(1);
     let item = &items[0].id;
@@ -610,8 +671,16 @@ fn assets_dedupe_by_item_hash_and_source_and_are_swept() {
     store.design_asset_delete(item, &other.id).unwrap();
     assert!(store.design_asset(item, &other.id).unwrap().is_none());
     // The capture still holds the bytes the deleted upload shared.
-    assert!(store.design_asset_sha_shared(item, "aa", &other.id).unwrap());
-    assert!(!store.design_asset_sha_shared(item, "bb", &other.id).unwrap());
+    assert!(
+        store
+            .design_asset_sha_shared(item, "aa", &other.id)
+            .unwrap()
+    );
+    assert!(
+        !store
+            .design_asset_sha_shared(item, "bb", &other.id)
+            .unwrap()
+    );
     // Deleting the item returns what remains and clears its counter.
     let gone = store.design_item_delete(item).unwrap();
     assert_eq!(gone.len(), 1);

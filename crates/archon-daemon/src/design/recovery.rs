@@ -90,7 +90,10 @@ async fn settle_working_revert(
     revert: &DesignNote,
 ) -> Result<(), ArchonError> {
     let service = &ctx.design;
-    let original = revert.reverts.clone().unwrap_or_default();
+    let original = revert
+        .reverts
+        .as_deref()
+        .ok_or_else(|| ArchonError::Corrupt("a revert note names its original".into()))?;
     let (Some(pre), Some(new)) = (revert.base_commit.clone(), revert.commit.clone()) else {
         return fail(
             ctx,
@@ -110,21 +113,10 @@ async fn settle_working_revert(
     };
     match design_git::reconcile_revert(&g, &pre, &new)? {
         Reconciled::Done | Reconciled::Completed => {
-            ctx.store.lock().await.design_note_change(
-                &revert.item,
-                &revert.id,
-                NoteChange::Status {
-                    to: NoteStatus::Done,
-                    fail_reason: None,
-                    commit: Some(new.clone()),
-                    no_change: false,
-                },
-            )?;
-            // As a live undo does: the agent learns HEAD moved under it.
             service
-                .tell_undone(ctx, session, &revert.id, &original, &new)
-                .await;
-            Ok(())
+                .record_revert_done(ctx, session, revert, original, &new)
+                .await?;
+            service.flush_owed(ctx, session).await
         }
         Reconciled::NotApplied => {
             fail(

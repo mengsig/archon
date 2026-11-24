@@ -89,7 +89,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   const superseded = new Map();
   const seed = () => {
     for (const c of finish.cards) {
-      if (!superseded.has(c.note)) superseded.set(c.note, c.superseded_by ?? '');
+      if (!c.left_history && !superseded.has(c.note)) superseded.set(c.note, c.superseded_by ?? '');
     }
   };
   seed();
@@ -179,9 +179,11 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   }
 
   function cardEl(card) {
-    const options = finish.cards.filter((c) => c.note !== card.note).map((c) => h('option', { value: c.note, text: `${c.note} · ${c.text}` }));
+    const numbers = new Map(state.notes.map((note) => [note.id, note.number]));
+    const later = finish.cards.filter((c) => !c.left_history && numbers.get(c.note) > numbers.get(card.note));
+    const options = later.map((c) => h('option', { value: c.note, text: `${c.note} · ${c.text}` }));
     const previous = superseded.get(card.note) ?? '';
-    if (previous && !finish.cards.some((c) => c.note === previous)) options.push(h('option', { value: previous, text: `${previous} (previous selection)` }));
+    if (previous && !later.some((c) => c.note === previous)) options.push(h('option', { value: previous, text: `${previous} (previous selection)` }));
     const sup = h('select', { class: 'input input-inline', 'aria-label': `${card.note} superseded by` }, h('option', { value: '', text: 'Not superseded' }), options);
     sup.value = previous;
     // A changed choice may put a note back in force: ask Confirm again.
@@ -202,7 +204,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
         h('button', { class: 'button button-plain button-small', type: 'button', onclick: () => run(() => capture(card)) }, 'Capture')) : null,
       card.left_history ? h('p', { class: 'note-hint', text: 'This note’s change is no longer in the code history, so there is no picture to include.' }) : null,
       h('label', { class: 'switch-row' }, h('span', { class: 'switch-text' }, h('span', { class: 'row-label', text: 'Include picture' })), h('span', { class: 'switch' }, inc, h('span', { class: 'switch-track', 'aria-hidden': 'true' }))),
-      h('label', { class: 'field-label', text: 'Superseded by' }, sup));
+      card.left_history ? null : h('label', { class: 'field-label', text: 'Superseded by' }, sup));
   }
 
   let lede = null;

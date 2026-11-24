@@ -57,6 +57,8 @@ async fn undo_reverts_the_commit_and_marks_the_note_undone() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
+    let lock = f.h.ctx.design.item_lock_for_tests(&f.item);
+    let _held = lock.lock().await;
     let view = state(&f).await;
     let revert = view
         .notes
@@ -77,6 +79,44 @@ async fn undo_reverts_the_commit_and_marks_the_note_undone() {
             .iter()
             .any(|(_, t)| t.contains("undid") && t.contains("no action needed")),
         "the agent is told, keyed, that nothing is asked of it"
+    );
+}
+
+#[tokio::test]
+async fn an_applied_undo_keeps_its_notice_through_a_delivery_failure() {
+    let f = Fixture::new().await;
+    let (id, commit) = done_note(&f, "k1", "a.txt", "one\n").await;
+    f.h.backend
+        .fail_next_message(archon_core::error::ArchonError::Unavailable(
+            "test outage".into(),
+        ));
+    undo(&f, &id).await.expect("undo queued");
+    for _ in 0..100 {
+        if state(&f).await.notes.iter().any(|n| {
+            n.note.kind == archon_core::design::NoteKind::Revert
+                && n.note.status == NoteStatus::Done
+        }) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let key = archon_queue::store::keys::design_owed(&f.session);
+    let store = f.h.ctx.store.lock().await;
+    let rows = store.design_notes(&f.item).unwrap();
+    let revert = rows
+        .iter()
+        .find(|n| n.reverts.as_deref() == Some(id.as_str()))
+        .unwrap();
+    assert_eq!(revert.status, NoteStatus::Done);
+    assert_ne!(f.head(), commit);
+    let raw = store
+        .kv_get(&key)
+        .unwrap()
+        .expect("the Undo notice is owed");
+    let payload: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(
+        payload[0]["key"],
+        format!("design:{}:{}:told", f.session, revert.id)
     );
 }
 
@@ -116,10 +156,7 @@ async fn an_undo_that_conflicts_changes_nothing() {
         .map(|t| t.text.clone())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(
-        text.contains("Can't undo automatically") || revert.status == NoteStatus::Failed,
-        "{text}"
-    );
+    assert!(text.contains("Can't undo automatically"), "{text}");
 }
 
 /// The branch cannot move (its ref is locked): `apply_revert` puts the files

@@ -68,7 +68,7 @@ pub(crate) enum AfterOutcome {
 /// Replay `steps` from the page loaded at `origin`. `Err` says which step
 /// failed and why, in words for the agent.
 pub(crate) async fn replay_steps(
-    browser: &dyn PreviewBrowser,
+    browser: &(dyn PreviewBrowser + 'static),
     origin: &str,
     steps: &[UiStep],
 ) -> Result<(), String> {
@@ -78,10 +78,15 @@ pub(crate) async fn replay_steps(
         match step {
             UiStep::Open { path } => {
                 let url = format!("{origin}{path}");
-                browser
+                if !browser
                     .navigate_settled(&url, SETTLE_MAX)
                     .await
-                    .map_err(failed)?;
+                    .map_err(failed)?
+                {
+                    return Err(format!(
+                        "step {at}: the page did not finish loading and settle"
+                    ));
+                }
             }
             UiStep::Click { selector } | UiStep::Hover { selector } => {
                 let Some((x, y)) = browser.center_of(selector).await.map_err(failed)? else {
@@ -91,7 +96,9 @@ pub(crate) async fn replay_steps(
                 };
                 let click = matches!(step, UiStep::Click { .. });
                 browser.input(&pointer(x, y, click)).await.map_err(failed)?;
-                browser.wait_settled(STEP_SETTLE).await.map_err(failed)?;
+                if !browser.wait_settled(STEP_SETTLE).await.map_err(failed)? {
+                    return Err(format!("step {at}: the page did not settle"));
+                }
             }
             UiStep::Wait { ms } => {
                 tokio::time::sleep(Duration::from_millis(u64::from(
@@ -124,25 +131,45 @@ fn pointer(x: f64, y: f64, click: bool) -> Vec<adb::Input> {
 
 /// A fresh load of `page` (a reload when the preview is already there, so the
 /// query and fragment stay), settled. Returns the path the page is at.
-async fn load_fresh(
-    browser: &dyn PreviewBrowser,
-    session: &DesignSession,
+pub(super) async fn load_fresh(
+    browser: &(dyn PreviewBrowser + 'static),
+    origin: &str,
     page: Option<&str>,
-) -> Option<String> {
-    let current = browser.current_path().await.ok();
-    let loaded = match (page, session.preview_url.as_deref()) {
-        (Some(page), Some(url)) if current.as_deref() != Some(page) => {
-            let to = format!("{}{page}", origin_of(url));
-            browser.navigate_settled(&to, SETTLE_MAX).await
-        }
-        _ => browser.reload_settled(SETTLE_MAX).await,
-    };
-    match loaded {
-        Ok(true) => {}
-        Ok(false) => tracing::info!("design: the page had not settled when its picture was taken"),
-        Err(error) => tracing::info!(%error, "design: the preview did not reload for the picture"),
+) -> Result<String, String> {
+    let current = browser
+        .current_path()
+        .await
+        .map_err(|error| format!("the preview page could not be read: {error}"))?;
+    let page = page.unwrap_or(&current);
+    if page == current {
+        reload_fresh(browser).await?;
+    } else {
+        navigate_fresh(browser, origin, page).await?;
     }
-    page.map(str::to_owned).or(current)
+    Ok(page.to_owned())
+}
+
+pub(super) async fn reload_fresh(browser: &(dyn PreviewBrowser + 'static)) -> Result<(), String> {
+    check_loaded("the current page", browser.reload_settled(SETTLE_MAX).await)
+}
+
+pub(super) async fn navigate_fresh(
+    browser: &(dyn PreviewBrowser + 'static),
+    origin: &str,
+    page: &str,
+) -> Result<(), String> {
+    let loaded = browser
+        .navigate_settled(&format!("{origin}{page}"), SETTLE_MAX)
+        .await;
+    check_loaded(page, loaded)
+}
+
+fn check_loaded(page: &str, loaded: Result<bool, adb::BrowserError>) -> Result<(), String> {
+    match loaded {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(format!("{page} did not finish loading and settle")),
+        Err(error) => Err(format!("could not load {page}: {error}")),
+    }
 }
 
 impl DesignService {
@@ -184,40 +211,54 @@ impl DesignService {
         let page = shot
             .path
             .or_else(|| note.target.as_ref().map(|t| t.path.as_str()));
-        let base = load_fresh(&*browser, session, page).await;
-        if let Some(url) = session.preview_url.as_deref()
-            && let Err(why) = replay_steps(&*browser, &origin_of(url), shot.steps).await
-        {
+        let Some(url) = session.preview_url.as_deref() else {
+            return AfterOutcome::StepFailed("the preview URL is missing".into());
+        };
+        let origin = origin_of(url);
+        let base = match load_fresh(&*browser, &origin, page).await {
+            Ok(base) => base,
+            Err(why) => return AfterOutcome::StepFailed(why),
+        };
+        if let Err(why) = replay_steps(&*browser, &origin, shot.steps).await {
             return AfterOutcome::StepFailed(why);
         }
         let clip = match (shot.steps.is_empty(), note.target.as_ref()) {
             (true, Some(target)) => match target.selector.as_deref() {
-                Some(selector) => browser
+                Some(selector) => match browser
                     .resolve_selector(selector, Some(recorded_box(target)))
                     .await
-                    .ok()
-                    .flatten(),
+                {
+                    Ok(clip) => clip,
+                    Err(error) => {
+                        return AfterOutcome::StepFailed(format!(
+                            "the element could not be resolved: {error}"
+                        ));
+                    }
+                },
                 None => None,
             },
             _ => None,
         };
+        let head = match self.head_of(wt) {
+            Ok(head) => head,
+            Err(error) => return AfterOutcome::StepFailed(format!("could not read HEAD: {error}")),
+        };
         let picture = match browser.capture(clip, 2.0).await {
             Ok(picture) => picture,
             Err(error) => {
-                tracing::info!(%error, "design: the after picture was not taken");
-                return AfterOutcome::Skipped;
+                return AfterOutcome::StepFailed(format!(
+                    "the after picture could not be taken: {error}"
+                ));
             }
         };
         if self.matches_before(ctx, &*browser, note, &picture).await {
             return AfterOutcome::Matched;
         }
-        let target = recorded_state(note, shot, base.as_deref());
-        let head = self.head_of(wt).unwrap_or_default();
+        let target = recorded_state(note, shot, Some(&base));
         match self.keep_after(ctx, note, target, &picture, &head).await {
             Ok(()) => AfterOutcome::Kept,
             Err(error) => {
-                tracing::info!(%error, "design: the after picture was not kept");
-                AfterOutcome::Skipped
+                AfterOutcome::StepFailed(format!("the after picture was not kept: {error}"))
             }
         }
     }
@@ -227,7 +268,7 @@ impl DesignService {
     pub(crate) async fn matches_before(
         &self,
         ctx: &DaemonContext,
-        browser: &dyn PreviewBrowser,
+        browser: &(dyn PreviewBrowser + 'static),
         note: &DesignNote,
         picture: &adb::Picture,
     ) -> bool {
@@ -290,19 +331,23 @@ impl DesignService {
         }
         let browser = match self.ensure_browser(ctx, &session.id).await {
             Ok(Some(browser)) => browser,
-            Ok(None) | Err(_) => return Err("the preview browser is not running".into()),
+            Ok(None) => return Err("the preview browser is not running".into()),
+            Err(error) => return Err(format!("the preview browser is unavailable: {error}")),
         };
         let page = note.target.as_ref().map(|t| t.path.as_str());
-        let base = load_fresh(&*browser, session, page).await;
-        if let Some(url) = session.preview_url.as_deref() {
-            replay_steps(&*browser, &origin_of(url), steps).await?;
-        }
+        let url = session
+            .preview_url
+            .as_deref()
+            .ok_or("the preview URL is missing")?;
+        let origin = origin_of(url);
+        let base = load_fresh(&*browser, &origin, page).await?;
+        replay_steps(&*browser, &origin, steps).await?;
         let picture = browser
             .capture(None, 2.0)
             .await
             .map_err(|e| format!("the before picture was not taken: {e}"))?;
         let shot = AfterShot { path: None, steps };
-        let target = recorded_state(note, shot, base.as_deref());
+        let target = recorded_state(note, shot, Some(&base));
         self.keep_before(ctx, note, target, &picture)
             .await
             .map_err(|e| format!("the before picture was not kept: {e}"))

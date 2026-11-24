@@ -61,6 +61,9 @@ pub trait PreviewBrowser: Send + Sync {
         near: Option<adb::ClipRect>,
     ) -> Result<Option<adb::ClipRect>, adb::BrowserError>;
     async fn current_path(&self) -> Result<String, adb::BrowserError>;
+    async fn current_location(&self) -> Result<String, adb::BrowserError> {
+        self.current_path().await
+    }
     async fn wait_network_idle(
         &self,
         quiet: Duration,
@@ -274,6 +277,9 @@ impl PreviewBrowser for Real {
         near: Option<adb::ClipRect>,
     ) -> Result<Option<adb::ClipRect>, adb::BrowserError> {
         self.get()?.resolve_selector(selector, near).await
+    }
+    async fn current_location(&self) -> Result<String, adb::BrowserError> {
+        self.get()?.current_location().await
     }
     async fn current_path(&self) -> Result<String, adb::BrowserError> {
         self.get()?.current_path().await

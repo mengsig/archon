@@ -3,10 +3,12 @@
 //! built later from archond's records.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use archon_core::design::{
-    AssetSource, DesignNote, DesignSession, DesignSessionId, FinishChoices, NoteKind, NoteStatus,
-    SessionState, Target, ViewportPreset, is_in_flight, undone_by,
+    AssetSource, DesignNote, DesignSession, DesignSessionId, FinishChoices,
+    MAX_SERIALIZED_FRAME_BYTES, NoteKind, NoteStatus, SessionState, Target, ViewportPreset,
+    is_in_flight, undone_by,
 };
 use archon_core::error::{ArchonError, DesignRefusal};
 use archon_core::protocol::{
@@ -16,12 +18,17 @@ use archon_design_browser as adb;
 use archon_queue::store::{FinishRecord, NoteChange};
 
 use super::assets::{NewAsset, caption_of};
-use super::browser::to_adb_viewport;
+use super::browser::{PreviewBrowser, to_adb_viewport};
+use super::delivery::{Owed, queued_payload};
+use super::state::{navigate_fresh, reload_fresh, replay_steps};
 use super::{Approval, DesignService, WorktreeRef, note_view, refuse};
 use crate::context::DaemonContext;
 
 /// Margin around an element's final picture, in CSS pixels.
 const MARGIN: f64 = 24.0;
+const FINISH_BUDGET: Duration = Duration::from_secs(45);
+const MANUAL_BUDGET: Duration = Duration::from_secs(30);
+const RESTORE_BUDGET: Duration = Duration::from_secs(10);
 /// The finish message to the agent.
 const FINISH_TEXT: &str = "Finish: the operator confirmed the design. Stop the dev server without touching the worktree, then complete with a one-line summary.";
 
@@ -30,6 +37,31 @@ fn conflict() -> ArchonError {
         DesignRefusal::Conflict,
         "another device already confirmed or cancelled; reload",
     )
+}
+
+fn capture_error(why: impl Into<String>) -> ArchonError {
+    ArchonError::Unavailable(format!(
+        "the final picture could not be taken: {}",
+        why.into()
+    ))
+}
+
+fn capture_timeout(budget: Duration) -> ArchonError {
+    capture_error(format!("the capture exceeded {} seconds", budget.as_secs()))
+}
+
+fn restored<T>(
+    capture: Result<T, ArchonError>,
+    restore: Result<(), ArchonError>,
+) -> Result<T, ArchonError> {
+    match (capture, restore) {
+        (Ok(picture), Ok(())) => Ok(picture),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(restore)) => {
+            tracing::warn!(%restore, "design: restoring the preview after capture failed");
+            Err(error)
+        }
+    }
 }
 
 fn stale() -> ArchonError {
@@ -150,8 +182,9 @@ impl DesignService {
         let row = self.current(ctx, session_id).await?;
         let lock = self.item_lock(&row.item);
         let _held = lock.lock().await;
+        let mut row = self.current(ctx, session_id).await?;
         let wt = self.worktree_of(ctx, &row).await?;
-        let mut row = row;
+        let recapturing = row.state == SessionState::Finishing;
         match row.state {
             SessionState::Confirmed => return Err(super::finishing()),
             SessionState::Finishing if !recapture => {
@@ -169,194 +202,265 @@ impl DesignService {
                     false,
                 )?;
             }
-            _ => {}
+            SessionState::Live => {}
+            _ => {
+                return Err(ArchonError::Invalid(
+                    "the design session is not live".into(),
+                ));
+            }
         }
-        // Preconditions.
-        let notes = ctx.store.lock().await.design_notes(&row.item)?;
+        let captured = self.capture_review(ctx, &row, &wt, cancel_queued).await;
+        if recapturing || captured.is_ok() {
+            self.emit_session(ctx, &row.id).await;
+        }
+        self.finish_view(ctx, &captured?, &wt)
+            .await
+            .map(Reply::DesignFinish)
+    }
+
+    async fn capture_review(
+        &self,
+        ctx: &DaemonContext,
+        row: &DesignSession,
+        wt: &WorktreeRef,
+        cancel_queued: bool,
+    ) -> Result<DesignSession, ArchonError> {
+        assert_eq!(row.state, SessionState::Live);
+        let head = self.head_of(wt)?;
+        if let Err(why) = self.worktree_at(wt, &head)? {
+            return Err(ArchonError::Invalid(why));
+        }
+        let (active, notes, queued) = self
+            .finish_capture_notes(ctx, row, wt, &head, cancel_queued)
+            .await?;
+        self.clear_old_finals(ctx, row, &notes).await?;
+        self.capture_finals(ctx, row, &active, &head).await?;
+        if self.worktree_at(wt, &head)?.is_err() {
+            return Err(stale());
+        }
+        let row = {
+            let mut store = ctx.store.lock().await;
+            let current = store.design_session(&row.id)?.ok_or_else(super::gone)?;
+            let note_version = current.note_version + queued;
+            store.design_session_transition(
+                &row.id,
+                SessionState::Live,
+                SessionState::Finishing,
+                Some(FinishRecord {
+                    capture: capture_id(note_version),
+                    head,
+                    note_version,
+                    choices: None,
+                }),
+                cancel_queued,
+            )?
+        };
+        tracing::info!(session = %row.id, device = ?super::current_device_label(), "design: finish capture");
+        assert_eq!(row.state, SessionState::Finishing);
+        Ok(row)
+    }
+
+    async fn finish_capture_notes(
+        &self,
+        ctx: &DaemonContext,
+        row: &DesignSession,
+        wt: &WorktreeRef,
+        head: &str,
+        cancel_queued: bool,
+    ) -> Result<(Vec<DesignNote>, Vec<DesignNote>, u64), ArchonError> {
         let owed = self.has_owed(ctx, &row.id).await?;
-        if let Some(why) = Self::blocker(&row, &notes, owed) {
+        let store = ctx.store.lock().await;
+        let notes = store.design_notes(&row.item)?;
+        if let Some(why) = Self::blocker(row, &notes, owed) {
             return Err(ArchonError::Invalid(why));
         }
         let queued = notes
             .iter()
             .filter(|n| n.session == row.id && n.status == NoteStatus::Queued)
-            .count();
+            .count() as u64;
         if queued > 0 && !cancel_queued {
             return Err(ArchonError::Invalid(format!(
                 "{queued} queued note{} would be cancelled; confirm to cancel and finish",
                 if queued == 1 { "" } else { "s" }
             )));
         }
-        let head = self.head_of(&wt)?;
-        if let Err(why) = self.worktree_at(&wt, &head)? {
-            return Err(ArchonError::Invalid(why));
-        }
-        let (active, approved) = {
-            let store = ctx.store.lock().await;
-            let carried = Self::review_choices(&store, &row.item, &row.id, None)?;
-            (
-                self.active_notes(&store, &wt, &row.item, &head, carried.as_ref())?,
-                super::approved_design(&store, &row.item)?,
-            )
-        };
+        let carried = Self::review_choices(&store, &row.item, &row.id, None)?;
+        let active = self.active_notes(&store, wt, &row.item, head, carried.as_ref())?;
+        let approved = super::approved_design(&store, &row.item)?;
         if super::approval(&active, &notes, &row.id, &approved) == Approval::Nothing {
             return Err(ArchonError::Invalid(super::NOTHING_TO_APPROVE.into()));
         }
-        // Cancelled under the item's lock, which sending also needs, so the
-        // note version the capture records is the one the freeze sees.
-        if cancel_queued && queued > 0 {
-            let mut store = ctx.store.lock().await;
-            for note in notes
-                .iter()
-                .filter(|n| n.session == row.id && n.status == NoteStatus::Queued)
-            {
-                store.design_note_change(
-                    &note.item,
-                    &note.id,
-                    super::status_change(NoteStatus::Cancelled, None),
-                )?;
-            }
-            row = store.design_session(&row.id)?.ok_or_else(super::gone)?;
-        }
-        // Every stored picture counts as a change of the notes, so they are
-        // taken first and the capture names the version they leave. An
-        // earlier session's note keeps the picture its own review confirmed:
-        // its row is never written again (design.md §8.6, Revise).
-        // The page the preview shows at Finish. A page note with no page of
-        // its own is pictured as shown; once a note before it took the
-        // preview elsewhere, it is pictured back at this page, not that
-        // one, and the preview is taken back here afterwards.
-        let start = match self.existing_runtime(&row.id).and_then(|rt| rt.browser()) {
-            Some(browser) => browser.current_path().await.ok(),
-            None => None,
-        };
-        let mut moved = false;
-        for note in active.iter().filter(|n| n.session == row.id) {
-            self.capture_final(ctx, &row, note, &head, start.as_deref(), &mut moved)
-                .await;
-        }
-        self.restore_viewport(ctx, &row).await;
-        if moved
-            && let (Some(start), Some(url)) = (start.as_deref(), row.preview_url.as_deref())
-            && let Some(browser) = self.existing_runtime(&row.id).and_then(|rt| rt.browser())
-        {
-            let _ = browser
-                .navigate(&format!("{}{start}", origin_of(url)))
-                .await;
-        }
-        row = ctx
-            .store
-            .lock()
-            .await
-            .design_session(&row.id)?
-            .ok_or_else(super::gone)?;
-        let capture = capture_id(row.note_version);
-        let moved = ctx.store.lock().await.design_session_transition(
-            &row.id,
-            SessionState::Live,
-            SessionState::Finishing,
-            Some(FinishRecord {
-                capture: capture.clone(),
-                head: head.clone(),
-                note_version: row.note_version,
-                choices: None,
-            }),
-            false,
-        );
-        let row = moved.map_err(|_| conflict())?;
-        tracing::info!(session = %row.id, device = ?super::current_device_label(), "design: finish capture");
-        self.emit_session(ctx, &row.id).await;
-        self.finish_view(ctx, &row, &wt)
-            .await
-            .map(Reply::DesignFinish)
+        Ok((active, notes, queued))
     }
 
-    async fn restore_viewport(&self, ctx: &DaemonContext, row: &DesignSession) {
-        let _ = ctx;
-        if let Some(browser) = self.existing_runtime(&row.id).and_then(|rt| rt.browser()) {
-            let (_, v) = to_adb_viewport(row.viewport_preset);
-            let _ = browser.set_viewport(v).await;
-        }
-    }
-
-    /// The final picture of one note on a fresh load at its page and viewport;
-    /// `start` is the page the preview showed at Finish, and `moved` says an
-    /// earlier picture took the preview away from it.
-    async fn capture_final(
+    async fn clear_old_finals(
         &self,
         ctx: &DaemonContext,
         row: &DesignSession,
+        notes: &[DesignNote],
+    ) -> Result<(), ArchonError> {
+        let mut store = ctx.store.lock().await;
+        for note in notes
+            .iter()
+            .filter(|n| n.session == row.id && n.final_asset.is_some())
+        {
+            let captured_commit = match &note.after_asset {
+                Some(id) => {
+                    store
+                        .design_asset(&row.item, id)?
+                        .ok_or_else(|| ArchonError::Corrupt(format!("missing after picture {id}")))?
+                        .commit
+                }
+                None => None,
+            };
+            store.design_note_change(
+                &row.item,
+                &note.id,
+                NoteChange::Final {
+                    asset: None,
+                    included: None,
+                    captured_commit,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    async fn capture_finals(
+        &self,
+        ctx: &DaemonContext,
+        row: &DesignSession,
+        active: &[DesignNote],
+        head: &str,
+    ) -> Result<(), ArchonError> {
+        let Some(url) = row.preview_url.as_deref() else {
+            return Ok(());
+        };
+        let notes: Vec<_> = active
+            .iter()
+            .filter(|note| note.session == row.id)
+            .collect();
+        if notes.is_empty() {
+            return Ok(());
+        }
+        let deadline = tokio::time::Instant::now() + FINISH_BUDGET;
+        let Some(browser) = tokio::time::timeout_at(deadline, self.ensure_browser(ctx, &row.id))
+            .await
+            .map_err(|_| capture_timeout(FINISH_BUDGET))??
+        else {
+            return Ok(());
+        };
+        let origin = origin_of(url);
+        let start = tokio::time::timeout_at(deadline, browser.current_location())
+            .await
+            .map_err(|_| capture_timeout(FINISH_BUDGET))?
+            .map_err(|error| {
+                capture_error(format!("could not read the current preview page: {error}"))
+            })?;
+        let mut moved = false;
+        let result = tokio::time::timeout_at(deadline, async {
+            for note in notes {
+                self.capture_final(ctx, &*browser, (&origin, &start), note, head, &mut moved)
+                    .await?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap_or_else(|_| Err(capture_timeout(FINISH_BUDGET)));
+        let restore = Self::restore_preview(
+            &*browser,
+            row.viewport_preset,
+            moved.then_some((&origin, &start)),
+        )
+        .await;
+        restored(result, restore)
+    }
+
+    async fn restore_preview(
+        browser: &(dyn PreviewBrowser + 'static),
+        preset: ViewportPreset,
+        page: Option<(&str, &str)>,
+    ) -> Result<(), ArchonError> {
+        tokio::time::timeout(RESTORE_BUDGET, async {
+            let (_, viewport) = to_adb_viewport(preset);
+            let viewport = browser.set_viewport(viewport).await;
+            let page = match page {
+                Some((origin, path)) => browser.navigate(&format!("{origin}{path}")).await,
+                None => Ok(()),
+            };
+            viewport.and(page)
+        })
+        .await
+        .map_err(|_| capture_error("restoring the preview timed out"))?
+        .map_err(|error| capture_error(format!("the preview could not be restored: {error}")))
+    }
+
+    async fn capture_final(
+        &self,
+        ctx: &DaemonContext,
+        browser: &(dyn PreviewBrowser + 'static),
+        page_at_finish: (&str, &str),
         note: &DesignNote,
         head: &str,
-        start: Option<&str>,
         moved: &mut bool,
-    ) {
-        let Ok(Some(browser)) = self.ensure_browser(ctx, &row.id).await else {
-            return;
-        };
+    ) -> Result<(), ArchonError> {
+        let (origin, start) = page_at_finish;
+        let failed = |why: String| capture_error(format!("{}: {why}", note.id));
         let preset = note
             .target
             .as_ref()
             .map_or(note.viewport.preset, |t| t.viewport.preset);
         let (_, viewport) = to_adb_viewport(preset);
-        let _ = browser.set_viewport(viewport).await;
-        // What the after picture recorded: a page note done with its own page
-        // (a new screen) is pictured there, not on whatever page the preview
-        // shows at Finish, and a state the agent reached with steps is
-        // reached again.
-        let shown = self.after_target(ctx, note).await;
-        let steps = shown.as_ref().map(|t| t.steps.clone()).unwrap_or_default();
-        // A page note with no page of its own stays on the page as shown
-        // (its query and fragment too) unless an earlier picture moved it.
-        let page = note
-            .target
+        browser
+            .set_viewport(viewport)
+            .await
+            .map_err(|error| failed(format!("could not set the picture's viewport: {error}")))?;
+        let shown = self.after_target(ctx, note).await?;
+        let steps = shown.as_ref().map_or(&[][..], |target| &target.steps[..]);
+        let page = shown
             .as_ref()
-            .or(shown.as_ref())
-            .map(|t| t.path.as_str());
-        let path = match page {
-            Some(page) => {
-                *moved = true;
-                Some(page)
-            }
-            None => start.filter(|_| *moved),
-        };
-        if let (Some(url), Some(path)) = (row.preview_url.as_deref(), path) {
-            let origin = origin_of(url);
-            let _ = browser
-                .navigate_settled(
-                    &format!("{origin}{path}"),
-                    std::time::Duration::from_secs(10),
-                )
-                .await;
+            .or(note.target.as_ref())
+            .map_or(start, |target| target.path.as_str());
+        if *moved || page != start {
+            *moved = true;
+            navigate_fresh(browser, origin, page)
+                .await
+                .map_err(failed)?;
+        } else {
+            reload_fresh(browser).await.map_err(failed)?;
         }
-        if let Some(url) = row.preview_url.as_deref()
-            && let Err(why) = super::state::replay_steps(&*browser, &origin_of(url), &steps).await
-        {
-            tracing::info!(note = %note.id, why, "design: the final picture's state was not reached");
-        }
-        let Some(clip) = final_clip(&*browser, note, !steps.is_empty()).await else {
-            return;
+        *moved |= !steps.is_empty();
+        replay_steps(browser, origin, steps).await.map_err(failed)?;
+        let Some(clip) = final_clip(browser, note, !steps.is_empty())
+            .await
+            .map_err(|error| failed(format!("could not locate the element: {error}")))?
+        else {
+            return Ok(());
         };
-        let Ok(picture) = browser.capture(clip, 2.0).await else {
-            return;
-        };
-        self.note_unchanged_final(ctx, &*browser, note, &picture)
-            .await;
-        if let Err(error) = self.keep_final(ctx, note, &picture, head).await {
-            tracing::info!(%error, "design: a final picture was not kept");
-        }
+        let picture = browser
+            .capture(clip, 2.0)
+            .await
+            .map_err(|error| failed(format!("the screenshot failed: {error}")))?;
+        self.note_unchanged_final(ctx, browser, note, &picture)
+            .await?;
+        self.keep_final(ctx, note, &picture, head).await
     }
 
-    /// The target the note's after picture recorded: its page and steps.
-    async fn after_target(&self, ctx: &DaemonContext, note: &DesignNote) -> Option<Target> {
-        let after = note.after_asset.as_ref()?;
-        ctx.store
+    async fn after_target(
+        &self,
+        ctx: &DaemonContext,
+        note: &DesignNote,
+    ) -> Result<Option<Target>, ArchonError> {
+        let Some(after) = &note.after_asset else {
+            return Ok(None);
+        };
+        let asset = ctx
+            .store
             .lock()
             .await
-            .design_asset(&note.item, after)
-            .ok()
-            .flatten()
-            .and_then(|a| a.target)
+            .design_asset(&note.item, after)?
+            .ok_or_else(|| ArchonError::Corrupt(format!("missing after picture {after}")))?;
+        Ok(asset.target)
     }
 
     /// A done note with no after picture whose final picture matches its
@@ -365,10 +469,10 @@ impl DesignService {
     async fn note_unchanged_final(
         &self,
         ctx: &DaemonContext,
-        browser: &dyn super::browser::PreviewBrowser,
+        browser: &(dyn PreviewBrowser + 'static),
         note: &DesignNote,
         picture: &adb::Picture,
-    ) {
+    ) -> Result<(), ArchonError> {
         let changed_code =
             note.kind != NoteKind::Revert && note.commit.is_some() && !note.no_change;
         if !changed_code
@@ -376,7 +480,7 @@ impl DesignService {
             || archon_core::design::no_visible_change(note).is_some()
             || !self.matches_before(ctx, browser, note, picture).await
         {
-            return;
+            return Ok(());
         }
         let said = note
             .thread
@@ -389,15 +493,13 @@ impl DesignService {
             from: archon_core::design::ReplyAuthor::Archon,
             text: format!("{}: {said}", archon_core::design::NO_VISIBLE_CHANGE),
         };
-        let noted = ctx.store.lock().await.design_note_change(
+        ctx.store.lock().await.design_note_change(
             &note.item,
             &note.id,
             NoteChange::Thread(entry),
-        );
-        if let Err(error) = noted {
-            tracing::info!(%error, "design: the no-visible-change notice was not kept");
-        }
+        )?;
         self.emit_note(ctx, &note.item, &note.id).await;
+        Ok(())
     }
 
     async fn keep_final(
@@ -407,35 +509,46 @@ impl DesignService {
         picture: &adb::Picture,
         head: &str,
     ) -> Result<(), ArchonError> {
-        let asset = self
-            .put_asset(
-                ctx,
-                &note.item,
-                NewAsset {
-                    source: AssetSource::Final,
-                    target: note.target.clone(),
-                    note: Some(note.id.clone()),
-                    commit: Some(head.to_owned()),
-                    mime: picture.mime,
-                    bytes: &picture.bytes,
-                    width: picture.width,
-                    height: picture.height,
-                    sketch: None,
-                },
-            )
-            .await?;
-        if let Some(asset) = asset {
-            ctx.store.lock().await.design_note_change(
-                &note.item,
-                &note.id,
-                NoteChange::Final {
-                    asset: Some(asset.id),
-                    included: None,
-                    captured_commit: Some(head.to_owned()),
-                },
-            )?;
-        }
+        let asset = self.store_final(ctx, note, picture, head).await?;
+        ctx.store.lock().await.design_note_change(
+            &note.item,
+            &note.id,
+            NoteChange::Final {
+                asset: Some(asset),
+                included: None,
+                captured_commit: Some(head.to_owned()),
+            },
+        )?;
         Ok(())
+    }
+
+    async fn store_final(
+        &self,
+        ctx: &DaemonContext,
+        note: &DesignNote,
+        picture: &adb::Picture,
+        head: &str,
+    ) -> Result<archon_core::design::DesignAssetId, ArchonError> {
+        assert!(!head.is_empty());
+        assert_eq!(note.status, NoteStatus::Done);
+        self.put_asset(
+            ctx,
+            &note.item,
+            NewAsset {
+                source: AssetSource::Final,
+                target: note.target.clone(),
+                note: Some(note.id.clone()),
+                commit: Some(head.to_owned()),
+                mime: picture.mime,
+                bytes: &picture.bytes,
+                width: picture.width,
+                height: picture.height,
+                sketch: None,
+            },
+        )
+        .await?
+        .map(|asset| asset.id)
+        .ok_or_else(|| capture_error("the final picture was not stored"))
     }
 
     /// The review screen, from what is stored.
@@ -449,8 +562,11 @@ impl DesignService {
             .finish_head
             .clone()
             .ok_or_else(|| ArchonError::Corrupt("a finishing session has a head".into()))?;
-        let capture = row.finish_capture.clone().unwrap_or_default();
-        let (active, notes, choices) = {
+        let capture = row
+            .finish_capture
+            .clone()
+            .ok_or_else(|| ArchonError::Corrupt("a finishing session has a capture ID".into()))?;
+        let (active, notes, choices, approved) = {
             let store = ctx.store.lock().await;
             let choices =
                 Self::review_choices(&store, &row.item, &row.id, row.finish_choices.as_ref())?;
@@ -458,144 +574,187 @@ impl DesignService {
                 self.active_notes(&store, wt, &row.item, &head, choices.as_ref())?,
                 store.design_notes(&row.item)?,
                 choices,
+                super::approved_design(&store, &row.item)?,
             )
         };
         // Auto supersession is shown on the cards of the notes it covers.
         let all_active = {
             let store = ctx.store.lock().await;
-            self.active_notes(
-                &store,
-                wt,
-                &row.item,
-                &head,
-                Some(&FinishChoices {
-                    include: BTreeMap::new(),
-                    superseded: notes.iter().map(|n| (n.id.clone(), None)).collect(),
-                }),
-            )?
+            self.review_candidates(&store, wt, row, &head, &notes)?
         };
-        let refs: Vec<&DesignNote> = all_active.iter().collect();
+        let left_history =
+            self.notes_left_history(wt, &head, row, &notes, &approved.ids, &all_active)?;
+        let mut choices = choices;
+        if let Some(choices) = choices.as_mut() {
+            choices.superseded.retain(|_, by| {
+                by.as_ref()
+                    .is_none_or(|by| left_history.iter().all(|left| &left.note != by))
+            });
+        }
+        let mut cards = self
+            .review_cards(ctx, row, &notes, &all_active, choices.as_ref())
+            .await?;
+        cards.extend(left_history);
+        let no_change_only =
+            super::approval(&active, &notes, &row.id, &approved) == Approval::NoChange;
+        let mut view = DesignFinishView {
+            note_version: capture_version(&capture).unwrap_or(row.note_version),
+            capture,
+            head,
+            cards,
+            no_change_only,
+        };
+        self.attach_review_images(ctx, row, &mut view).await?;
+        Ok(view)
+    }
+
+    async fn review_cards(
+        &self,
+        ctx: &DaemonContext,
+        row: &DesignSession,
+        notes: &[DesignNote],
+        candidates: &[DesignNote],
+        choices: Option<&FinishChoices>,
+    ) -> Result<Vec<FinishCard>, ArchonError> {
+        let refs: Vec<_> = candidates.iter().collect();
         let auto = archon_core::design::auto_supersession(&refs);
-        let undone = undone_by(&notes);
-        let chains = archon_core::design::chains(&notes);
-        // A card stands for its chain: the chain's earlier done versions,
-        // oldest first, are its history.
-        let history = |note: &DesignNote| -> Vec<FinishHistoryEntry> {
-            let Some(root) = chains.get(&note.id).map(|p| &p.root) else {
-                return Vec::new();
-            };
-            notes
-                .iter()
-                .filter(|n| {
-                    n.number < note.number
-                        && n.status == NoteStatus::Done
-                        && chains.get(&n.id).is_some_and(|p| &p.root == root)
+        let history = chain_history(notes, candidates);
+        let browser_available = self
+            .existing_runtime(&row.id)
+            .and_then(|rt| rt.browser())
+            .is_some();
+        let store = ctx.store.lock().await;
+        candidates
+            .iter()
+            .map(|note| {
+                let superseded_by = choices
+                    .and_then(|choices| choices.superseded.get(&note.id).cloned())
+                    .unwrap_or_else(|| auto.get(&note.id).cloned());
+                let asset = match &note.final_asset {
+                    Some(id) => Some(store.design_asset(&row.item, id)?.ok_or_else(|| {
+                        ArchonError::Corrupt(format!("missing final picture {id}"))
+                    })?),
+                    None => None,
+                };
+                let earlier = note.session != row.id;
+                let not_found = !earlier
+                    && browser_available
+                    && asset.is_none()
+                    && note
+                        .target
+                        .as_ref()
+                        .is_some_and(|target| target.selector.is_some())
+                    && superseded_by.is_none();
+                let caption = match (earlier, asset.as_ref()) {
+                    (true, Some(_)) => {
+                        Some("Reviewed in an earlier session; kept as it was".into())
+                    }
+                    (true, None) => Some("From an earlier session, with no picture".into()),
+                    (false, None) if !browser_available && superseded_by.is_none() => {
+                        Some("No preview browser was available for a final picture".into())
+                    }
+                    (false, asset) => asset.and_then(caption_of),
+                };
+                Ok(FinishCard {
+                    note: note.id.clone(),
+                    text: note.text.clone(),
+                    asset: asset.map(|asset| asset.id),
+                    data_url: None,
+                    caption,
+                    include: note.final_included.unwrap_or(true) && note.final_asset.is_some(),
+                    superseded_by,
+                    not_found,
+                    left_history: false,
+                    earlier,
+                    history: history.get(note.id.as_str()).cloned().unwrap_or_default(),
                 })
-                .map(|n| FinishHistoryEntry {
-                    note: n.id.clone(),
-                    text: n.text.clone(),
-                    set_aside: undone.contains_key(&n.id),
-                })
-                .collect()
-        };
+            })
+            .collect()
+    }
+
+    fn notes_left_history(
+        &self,
+        wt: &WorktreeRef,
+        head: &str,
+        row: &DesignSession,
+        notes: &[DesignNote],
+        approved: &[String],
+        candidates: &[DesignNote],
+    ) -> Result<Vec<FinishCard>, ArchonError> {
+        let undone = undone_by(notes);
+        let listed: std::collections::BTreeSet<_> =
+            candidates.iter().map(|note| note.id.as_str()).collect();
         let mut cards = Vec::new();
-        let mut remaining_image_bytes = archon_core::protocol::MAX_FRAME_BYTES / 8;
-        for note in &all_active {
-            let superseded_by = choices
-                .as_ref()
-                .and_then(|c| c.superseded.get(&note.id).cloned())
-                .unwrap_or_else(|| auto.get(&note.id).cloned());
-            let asset = match &note.final_asset {
-                Some(id) => ctx.store.lock().await.design_asset(&row.item, id)?,
-                None => None,
-            };
-            let earlier = note.session != row.id;
-            // A note another one supersedes takes no final picture, so its
-            // missing picture is no sign its element is gone. An earlier
-            // session's note is never captured again, so nothing is missing.
-            let not_found = !earlier
-                && asset.is_none()
-                && note.final_asset.is_none()
-                && superseded_by.is_none();
-            let caption = match (earlier, asset.as_ref()) {
-                (true, Some(_)) => Some("Reviewed in an earlier session; kept as it was".into()),
-                (true, None) => Some("From an earlier session, with no picture".into()),
-                (false, asset) => asset.and_then(caption_of),
-            };
-            let data_url = match &asset {
-                Some(asset) if asset.bytes <= remaining_image_bytes as u64 => {
-                    remaining_image_bytes -= asset.bytes as usize;
-                    Some(self.data_url(asset)?)
-                }
-                _ => None,
-            };
+        for note in notes {
+            if listed.contains(note.id.as_str())
+                || note.kind == NoteKind::Revert
+                || note.status != NoteStatus::Done
+                || undone.contains_key(&note.id)
+                || approved.contains(&note.id)
+                || !self.left_history(wt, note, head)?
+            {
+                continue;
+            }
             cards.push(FinishCard {
                 note: note.id.clone(),
                 text: note.text.clone(),
-                asset: asset.as_ref().map(|a| a.id.clone()),
-                data_url,
-                caption,
-                include: note.final_included.unwrap_or(true) && asset.is_some(),
-                superseded_by,
-                not_found,
-                left_history: false,
-                earlier,
-                history: history(note),
+                asset: None,
+                data_url: None,
+                caption: Some("Its change is no longer in the code; not included".into()),
+                include: false,
+                superseded_by: None,
+                not_found: false,
+                left_history: true,
+                earlier: note.session != row.id,
+                history: Vec::new(),
             });
         }
-        // Done notes whose change left the history.
-        for note in &notes {
-            let listed = all_active.iter().any(|a| a.id == note.id);
-            if note.kind != NoteKind::Revert
-                && note.status == NoteStatus::Done
-                && note.commit.is_some()
-                && !undone.contains_key(&note.id)
-                && !listed
-                && !active.iter().any(|a| a.id == note.id)
-                && self.left_history(wt, note, &head)
-            {
-                cards.push(FinishCard {
-                    note: note.id.clone(),
-                    text: note.text.clone(),
-                    asset: None,
-                    data_url: None,
-                    caption: Some("Its change is no longer in the code; not included".into()),
-                    include: false,
-                    superseded_by: None,
-                    not_found: false,
-                    left_history: true,
-                    earlier: note.session != row.id,
-                    history: Vec::new(),
-                });
-            }
-        }
-        // The rule Confirm applies, on the same notes: the review asks
-        // "approve as it is?" exactly when Confirm needs that answer.
-        let approved = super::approved_design(&*ctx.store.lock().await, &row.item)?;
-        let no_change_only =
-            super::approval(&active, &notes, &row.id, &approved) == Approval::NoChange;
-        Ok(DesignFinishView {
-            capture,
-            head,
-            note_version: capture_version(row.finish_capture.as_deref().unwrap_or_default())
-                .unwrap_or(row.note_version),
-            cards,
-            no_change_only,
-        })
+        Ok(cards)
     }
 
-    fn left_history(&self, wt: &WorktreeRef, note: &DesignNote, head: &str) -> bool {
+    async fn attach_review_images(
+        &self,
+        ctx: &DaemonContext,
+        row: &DesignSession,
+        view: &mut DesignFinishView,
+    ) -> Result<(), ArchonError> {
+        let text_bytes = serde_json::to_vec(view)
+            .map_err(|error| ArchonError::Corrupt(format!("could not encode the review: {error}")))?
+            .len();
+        let mut remaining_bytes = MAX_SERIALIZED_FRAME_BYTES.saturating_sub(text_bytes);
+        let store = ctx.store.lock().await;
+        for card in &mut view.cards {
+            let Some(id) = &card.asset else { continue };
+            let asset = store
+                .design_asset(&row.item, id)?
+                .ok_or_else(|| ArchonError::Corrupt(format!("missing final picture {id}")))?;
+            let encoded_bytes = asset.bytes.div_ceil(3) * 4 + 64;
+            if encoded_bytes <= remaining_bytes as u64 {
+                remaining_bytes -= encoded_bytes as usize;
+                card.data_url = Some(self.data_url(&asset)?);
+            }
+        }
+        Ok(())
+    }
+
+    fn left_history(
+        &self,
+        wt: &WorktreeRef,
+        note: &DesignNote,
+        head: &str,
+    ) -> Result<bool, ArchonError> {
         use crate::worktree::design_git::{self, NoteGit};
-        let (Ok(shadow), Some(commit)) = (self.shadow(wt), note.commit.as_deref()) else {
-            return false;
+        let Some(commit) = note.commit.as_deref() else {
+            return Ok(false);
         };
+        let shadow = self.shadow(wt)?;
         let g = NoteGit {
             shadow: &shadow,
             repo: &wt.repo,
             worktree: &wt.worktree,
             branch: &wt.branch,
         };
-        matches!(design_git::contains(&g, commit, head), Ok(false))
+        design_git::contains(&g, commit, head).map(|present| !present)
     }
 
     /// `design_final_capture`: the current frame for one note.
@@ -607,100 +766,117 @@ impl DesignService {
         note_id: &str,
     ) -> Result<Reply, ArchonError> {
         let row = self.current(ctx, session_id).await?;
-        // Under the item lock, as Finish and Confirm: the picture kept here
-        // and the capture re-stamped below are one change of the review.
         let lock = self.item_lock(&row.item);
         let _held = lock.lock().await;
-        let row = ctx
-            .store
-            .lock()
-            .await
-            .design_session(&row.id)?
-            .ok_or_else(super::gone)?;
-        if row.state != SessionState::Finishing {
-            return Err(conflict());
-        }
-        if row.finish_capture.as_deref() != Some(capture) {
-            return Err(stale());
-        }
+        let row = self.current(ctx, session_id).await?;
         let wt = self.worktree_of(ctx, &row).await?;
-        let note = ctx
-            .store
-            .lock()
-            .await
-            .design_note(&row.item, note_id)?
-            .ok_or_else(|| ArchonError::NotFound(format!("note {note_id}")))?;
-        if note.session != row.id {
-            return Err(refuse(
-                DesignRefusal::ReadOnly,
-                format!("{note_id} is from an earlier session; its picture was reviewed then"),
-            ));
-        }
-        // The approved reference records the note's preset size, so the
-        // picture is taken at that preset whatever the preview shows now.
-        // A metrics change keeps the page as the operator left it.
-        let preset = note
-            .target
-            .as_ref()
-            .map_or(note.viewport.preset, |t| t.viewport.preset);
-        let head = row.finish_head.clone().unwrap_or_default();
-        if let Some(browser) = self.ensure_browser(ctx, &row.id).await? {
-            let switched = row.viewport_preset != preset;
-            if switched {
-                let (_, viewport) = to_adb_viewport(preset);
-                if let Err(e) = browser.set_viewport(viewport).await {
-                    self.restore_viewport(ctx, &row).await;
-                    return Err(ArchonError::Unavailable(format!("the capture failed: {e}")));
-                }
+        let head = self.check_review(&row, &wt, capture)?;
+        let note = {
+            let store = ctx.store.lock().await;
+            let note = store
+                .design_note(&row.item, note_id)?
+                .ok_or_else(|| ArchonError::NotFound(format!("note {note_id}")))?;
+            if note.session != row.id {
+                return Err(refuse(
+                    DesignRefusal::ReadOnly,
+                    format!("{note_id} is from an earlier session; its picture was reviewed then"),
+                ));
             }
-            let clip = match note.target.as_ref().and_then(|t| t.selector.as_deref()) {
-                Some(selector) => browser
-                    .resolve_selector(selector, note.target.as_ref().map(recorded_box))
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|r| grow(r, MARGIN)),
-                None => None,
-            };
-            let picture = browser.capture(clip, 2.0).await;
-            if switched {
-                self.restore_viewport(ctx, &row).await;
+            let notes = store.design_notes(&row.item)?;
+            if !self
+                .review_candidates(&store, &wt, &row, head, &notes)?
+                .iter()
+                .any(|eligible| eligible.id == note_id)
+            {
+                return Err(ArchonError::Invalid(format!(
+                    "{note_id} is not part of this review"
+                )));
             }
-            let picture = picture
-                .map_err(|e| ArchonError::Unavailable(format!("the capture failed: {e}")))?;
-            self.keep_final(ctx, &note, &picture, &head).await?;
-        }
-        let row = self.restamp_capture(ctx, &row.id, &head).await?;
+            note
+        };
+        let picture = self.capture_operator_frame(ctx, &row, &note).await?;
+        self.check_review(&row, &wt, capture)?;
+        let asset = self.store_final(ctx, &note, &picture, head).await?;
+        let row = ctx.store.lock().await.design_finish_restamp(
+            &row,
+            &capture_id(row.note_version + 1),
+            note_id,
+            asset,
+        )?;
+        self.emit_session(ctx, &row.id).await;
         self.finish_view(ctx, &row, &wt)
             .await
             .map(Reply::DesignFinish)
     }
 
-    /// The review with a capture id at the notes' version now. A picture the
-    /// operator took during the review changes the notes' version; without a
-    /// new id Confirm would read that as the code changing under the review.
-    /// The head stays: only the operator's own picture changed.
-    async fn restamp_capture(
+    async fn capture_operator_frame(
         &self,
         ctx: &DaemonContext,
-        session: &DesignSessionId,
-        head: &str,
-    ) -> Result<DesignSession, ArchonError> {
-        let restamped = {
-            let mut store = ctx.store.lock().await;
-            let current = store.design_session(session)?.ok_or_else(super::gone)?;
-            if current.finish_capture.as_deref().and_then(capture_version)
-                == Some(current.note_version)
-            {
-                return Ok(current);
+        row: &DesignSession,
+        note: &DesignNote,
+    ) -> Result<adb::Picture, ArchonError> {
+        let deadline = tokio::time::Instant::now() + MANUAL_BUDGET;
+        let browser = tokio::time::timeout_at(deadline, self.ensure_browser(ctx, &row.id))
+            .await
+            .map_err(|_| capture_timeout(MANUAL_BUDGET))??
+            .ok_or_else(|| capture_error("there is no preview browser available"))?;
+        let preset = note
+            .target
+            .as_ref()
+            .map_or(note.viewport.preset, |t| t.viewport.preset);
+        let switched = row.viewport_preset != preset;
+        let result = tokio::time::timeout_at(deadline, async {
+            if switched {
+                let (_, viewport) = to_adb_viewport(preset);
+                browser.set_viewport(viewport).await?;
             }
-            store
-                .design_finish_restamp(session, &capture_id(current.note_version), head)
-                .map_err(|_| conflict())?
+            let clip = match note
+                .target
+                .as_ref()
+                .and_then(|target| target.selector.as_deref())
+            {
+                Some(selector) => browser
+                    .resolve_selector(selector, note.target.as_ref().map(recorded_box))
+                    .await?
+                    .map(|rect| grow(rect, MARGIN)),
+                None => None,
+            };
+            browser.capture(clip, 2.0).await
+        })
+        .await
+        .map_err(|_| capture_timeout(MANUAL_BUDGET))
+        .and_then(|res| res.map_err(|error| capture_error(error.to_string())));
+        let restore = if switched {
+            Self::restore_preview(&*browser, row.viewport_preset, None).await
+        } else {
+            Ok(())
         };
-        // Other devices reviewing the same session take the new id too.
-        self.emit_session(ctx, session).await;
-        Ok(restamped)
+        restored(result, restore)
+    }
+
+    fn check_review<'a>(
+        &self,
+        row: &'a DesignSession,
+        wt: &WorktreeRef,
+        capture: &str,
+    ) -> Result<&'a str, ArchonError> {
+        if row.state != SessionState::Finishing {
+            return Err(conflict());
+        }
+        if row.finish_capture.as_deref() != Some(capture)
+            || capture_version(capture) != Some(row.note_version)
+        {
+            return Err(stale());
+        }
+        let head = row
+            .finish_head
+            .as_deref()
+            .filter(|head| !head.is_empty())
+            .ok_or_else(|| ArchonError::Corrupt("a finishing session has a head".into()))?;
+        if self.worktree_at(wt, head)?.is_err() {
+            return Err(stale());
+        }
+        Ok(head)
     }
 
     pub(crate) async fn finish_confirm(
@@ -712,120 +888,201 @@ impl DesignService {
         superseded: BTreeMap<String, Option<String>>,
         confirm_no_change: bool,
     ) -> Result<Reply, ArchonError> {
-        let item = {
-            let store = ctx.store.lock().await;
-            store
-                .design_session(session_id)?
-                .ok_or_else(super::gone)?
-                .item
-        };
-        let lock = self.item_lock(&item);
+        let row = self.current(ctx, session_id).await?;
+        let lock = self.item_lock(&row.item);
         let _held = lock.lock().await;
-        // Read the session under the item lock: a Back to editing, a new
-        // capture or the session's end may have landed while this waited.
-        let row = {
-            let store = ctx.store.lock().await;
-            let row = store.design_session(session_id)?.ok_or_else(super::gone)?;
-            if row.state == SessionState::Ended {
-                return Err(super::gone());
-            }
-            row
-        };
-        if row.state != SessionState::Finishing {
-            return Err(conflict());
-        }
-        if row.finish_capture.as_deref() != Some(capture) {
-            return Err(stale());
-        }
-        let head = row.finish_head.clone().unwrap_or_default();
+        let row = self.current(ctx, session_id).await?;
         let wt = self.worktree_of(ctx, &row).await?;
-        if self.head_of(&wt)? != head || self.worktree_at(&wt, &head)?.is_err() {
-            return Err(stale());
-        }
-        if capture_version(capture) != Some(row.note_version) {
-            return Err(stale());
-        }
-        // Q3: an approved requirement is never superseded.
-        let approved = super::approved_design(&*ctx.store.lock().await, &row.item)?;
-        for (id, by) in &superseded {
-            if by.is_some() && approved.ids.contains(id) {
-                return Err(ArchonError::Invalid(format!(
-                    "{id} was approved earlier; add a new note instead"
-                )));
-            }
-        }
-        // Only this session's pictures are chosen here: an earlier session's
-        // note keeps the inclusion its own review recorded.
-        let notes_now = ctx.store.lock().await.design_notes(&row.item)?;
-        let include: BTreeMap<String, bool> = include
-            .into_iter()
-            .filter(|(id, _)| notes_now.iter().any(|n| &n.id == id && n.session == row.id))
-            .collect();
-        let choices = FinishChoices {
-            include: include.clone(),
-            superseded,
+        let head = self.check_review(&row, &wt, capture)?;
+        let row = {
+            let mut store = ctx.store.lock().await;
+            let choices = FinishChoices {
+                include,
+                superseded,
+            };
+            let (choices, inclusion) =
+                self.confirm_choices(&store, &row, &wt, head, choices, confirm_no_change)?;
+            let owed = queued_payload(
+                &store,
+                &row,
+                Owed {
+                    key: format!("design:{}:finish", row.id),
+                    text: FINISH_TEXT.to_owned(),
+                    asset: None,
+                    item: row.item.clone(),
+                    more: Vec::new(),
+                },
+            )?;
+            store.design_finish_confirm(
+                &row.id,
+                FinishRecord {
+                    capture: capture.to_owned(),
+                    head: head.to_owned(),
+                    note_version: row.note_version,
+                    choices: Some(choices),
+                },
+                &inclusion,
+                &owed,
+            )?
         };
-        let (active, notes) = {
-            let store = ctx.store.lock().await;
-            let in_force = Self::review_choices(&store, &row.item, &row.id, Some(&choices))?;
-            (
-                self.active_notes(&store, &wt, &row.item, &head, in_force.as_ref())?,
-                store.design_notes(&row.item)?,
-            )
-        };
+        tracing::info!(session = %row.id, device = ?super::current_device_label(), "design: finish confirmed");
+        self.park_browser(&row.id, "confirmed");
+        self.emit_session(ctx, &row.id).await;
+        if let Err(error) = self.flush_owed(ctx, &row).await {
+            tracing::warn!(%error, session = %row.id, "design: Finish delivery is owed and will retry");
+        }
+        Ok(Reply::DesignDone)
+    }
+
+    fn confirm_choices(
+        &self,
+        store: &archon_queue::store::Store,
+        row: &DesignSession,
+        wt: &WorktreeRef,
+        head: &str,
+        mut choices: FinishChoices,
+        confirm_no_change: bool,
+    ) -> Result<(FinishChoices, Vec<(String, bool)>), ArchonError> {
+        let notes = store.design_notes(&row.item)?;
+        let candidates = self.review_candidates(store, wt, row, head, &notes)?;
+        let approved = super::approved_design(store, &row.item)?;
+        let carried = Self::review_choices(store, &row.item, &row.id, None)?;
+        self.validate_choices(
+            (wt, head),
+            row,
+            (&notes, &candidates),
+            &approved.ids,
+            carried.as_ref(),
+            &mut choices,
+        )?;
+        let in_force = Self::review_choices(store, &row.item, &row.id, Some(&choices))?;
+        let active = self.active_notes(store, wt, &row.item, head, in_force.as_ref())?;
         match super::approval(&active, &notes, &row.id, &approved) {
-            Approval::Notes => {}
             Approval::Nothing => {
                 return Err(ArchonError::Invalid(super::NOTHING_TO_APPROVE.into()));
             }
             Approval::NoChange if !confirm_no_change => {
                 return Err(ArchonError::Invalid(NO_CHANGE_UNCONFIRMED.into()));
             }
-            Approval::NoChange => {}
+            _ => {}
         }
-        let moved = ctx.store.lock().await.design_session_transition(
-            &row.id,
-            SessionState::Finishing,
-            SessionState::Confirmed,
-            Some(FinishRecord {
-                capture: capture.to_owned(),
-                head: head.clone(),
-                note_version: row.note_version,
-                choices: Some(choices),
-            }),
-            false,
-        );
-        let row = moved.map_err(|_| conflict())?;
-        {
-            let mut store = ctx.store.lock().await;
-            for note in active.iter().filter(|n| n.session == row.id) {
-                let included =
-                    include.get(&note.id).copied().unwrap_or(true) && note.final_asset.is_some();
-                store.design_note_change(
-                    &note.item,
-                    &note.id,
-                    NoteChange::Final {
-                        asset: note.final_asset.clone(),
-                        included: Some(included),
-                        captured_commit: note.captured_commit.clone(),
-                    },
-                )?;
+        let inclusion = active
+            .iter()
+            .filter(|note| note.session == row.id)
+            .map(|note| {
+                let include = choices.include.get(&note.id).copied().unwrap_or(true)
+                    && note.final_asset.is_some();
+                (note.id.clone(), include)
+            })
+            .collect();
+        Ok((choices, inclusion))
+    }
+
+    fn validate_choices(
+        &self,
+        (wt, head): (&WorktreeRef, &str),
+        row: &DesignSession,
+        (notes, candidates): (&[DesignNote], &[DesignNote]),
+        approved: &[String],
+        carried: Option<&FinishChoices>,
+        choices: &mut FinishChoices,
+    ) -> Result<(), ArchonError> {
+        let undone = undone_by(notes);
+        for (id, by) in &choices.superseded {
+            if by.is_some() && approved.contains(id) {
+                return Err(ArchonError::Invalid(format!(
+                    "{id} was approved earlier; add a new note instead"
+                )));
+            }
+            let carried_by = carried.and_then(|choices| choices.superseded.get(id));
+            self.validate_replacement(
+                wt,
+                head,
+                (notes, &undone),
+                candidates,
+                id,
+                by.as_deref(),
+                carried_by == Some(by),
+                approved,
+            )?;
+        }
+        choices
+            .superseded
+            .retain(|id, _| candidates.iter().any(|note| &note.id == id));
+        for id in choices.include.keys() {
+            if !candidates.iter().any(|note| &note.id == id) {
+                return Err(ArchonError::Invalid(format!(
+                    "{id} is not part of this review"
+                )));
             }
         }
-        tracing::info!(session = %row.id, device = ?super::current_device_label(), "design: finish confirmed");
-        // The preview is done: the gate reads the recorded pictures, so the
-        // browser and its profile go now, not when the gate is answered.
-        self.park_browser(&row.id, "confirmed");
-        self.emit_session(ctx, &row.id).await;
-        self.owe(
-            ctx,
-            &row,
-            format!("design:{}:finish", row.id),
-            FINISH_TEXT.to_owned(),
-            None,
-        )
-        .await?;
-        Ok(Reply::DesignDone)
+        choices.include.retain(|id, _| {
+            candidates
+                .iter()
+                .any(|note| &note.id == id && note.session == row.id && note.final_asset.is_some())
+        });
+        Ok(())
+    }
+
+    fn validate_replacement(
+        &self,
+        wt: &WorktreeRef,
+        head: &str,
+        (notes, undone): (&[DesignNote], &BTreeMap<String, String>),
+        candidates: &[DesignNote],
+        id: &str,
+        by: Option<&str>,
+        carried: bool,
+        approved: &[String],
+    ) -> Result<(), ArchonError> {
+        let Some(source) = candidates.iter().find(|note| note.id == id) else {
+            // Older clients send an empty choice for every card, including changes that left history.
+            if by.is_none()
+                && let Some(note) = notes.iter().find(|note| note.id == id)
+                && note.kind != NoteKind::Revert
+                && note.status == NoteStatus::Done
+                && !undone.contains_key(id)
+                && self.left_history(wt, note, head)?
+            {
+                return Ok(());
+            }
+            return Err(ArchonError::Invalid(format!(
+                "{id} is not part of this review"
+            )));
+        };
+        let Some(by) = by else { return Ok(()) };
+        if candidates
+            .iter()
+            .any(|note| note.id == by && note.number > source.number)
+        {
+            return Ok(());
+        }
+        if carried
+            && let Some(replacement) = notes
+                .iter()
+                .find(|note| note.id == by && note.number > source.number)
+            && (approved.iter().any(|id| id == by) || !self.left_history(wt, replacement, head)?)
+        {
+            return Ok(());
+        }
+        Err(ArchonError::Invalid(format!(
+            "{id} can only be superseded by a later note in this review"
+        )))
+    }
+
+    fn review_candidates(
+        &self,
+        store: &archon_queue::store::Store,
+        wt: &WorktreeRef,
+        row: &DesignSession,
+        head: &str,
+        notes: &[DesignNote],
+    ) -> Result<Vec<DesignNote>, ArchonError> {
+        let choices = FinishChoices {
+            include: BTreeMap::new(),
+            superseded: notes.iter().map(|n| (n.id.clone(), None)).collect(),
+        };
+        self.active_notes(store, wt, &row.item, head, Some(&choices))
     }
 
     pub(crate) async fn finish_cancel(
@@ -834,19 +1091,22 @@ impl DesignService {
         session_id: &DesignSessionId,
     ) -> Result<Reply, ArchonError> {
         let row = self.current(ctx, session_id).await?;
+        let lock = self.item_lock(&row.item);
+        let held = lock.lock().await;
+        let row = self.current(ctx, session_id).await?;
         if row.state != SessionState::Finishing {
             return Err(conflict());
         }
-        let moved = ctx.store.lock().await.design_session_transition(
+        let row = ctx.store.lock().await.design_session_transition(
             &row.id,
             SessionState::Finishing,
             SessionState::Live,
             None,
             false,
-        );
-        let row = moved.map_err(|_| conflict())?;
+        )?;
         tracing::info!(session = %row.id, device = ?super::current_device_label(), "design: back to editing");
         self.emit_session(ctx, &row.id).await;
+        drop(held);
         self.pump(ctx, &row.item).await?;
         Ok(Reply::DesignDone)
     }
@@ -858,13 +1118,12 @@ impl DesignService {
         preset: ViewportPreset,
     ) -> Result<Reply, ArchonError> {
         let row = self.current(ctx, session_id).await?;
-        ctx.store.lock().await.design_session_patch(
-            &row.id,
-            archon_queue::store::SessionPatch {
-                viewport_preset: Some(preset),
-                ..Default::default()
-            },
-        )?;
+        let lock = self.item_lock(&row.item);
+        let _held = lock.lock().await;
+        let row = self.current(ctx, session_id).await?;
+        if row.state == SessionState::Confirmed {
+            return Err(super::finishing());
+        }
         if let Some(browser) = self.existing_runtime(&row.id).and_then(|rt| rt.browser()) {
             let (_, v) = to_adb_viewport(preset);
             browser
@@ -872,10 +1131,52 @@ impl DesignService {
                 .await
                 .map_err(|e| ArchonError::Unavailable(e.to_string()))?;
         }
+        ctx.store.lock().await.design_session_patch(
+            &row.id,
+            archon_queue::store::SessionPatch {
+                viewport_preset: Some(preset),
+                ..Default::default()
+            },
+        )?;
         tracing::info!(session = %row.id, ?preset, device = ?super::current_device_label(), "design: viewport changed");
         self.emit_session(ctx, &row.id).await;
         Ok(Reply::DesignDone)
     }
+}
+
+fn chain_history<'a>(
+    notes: &'a [DesignNote],
+    candidates: &'a [DesignNote],
+) -> BTreeMap<&'a str, Vec<FinishHistoryEntry>> {
+    let chains = archon_core::design::chains(notes);
+    let undone = undone_by(notes);
+    let representatives: BTreeMap<_, _> = candidates
+        .iter()
+        .filter_map(|note| {
+            chains
+                .get(&note.id)
+                .map(|chain| (chain.root.as_str(), note))
+        })
+        .collect();
+    let mut history = BTreeMap::<&str, Vec<_>>::new();
+    for note in notes.iter().filter(|note| note.status == NoteStatus::Done) {
+        let Some(card) = chains
+            .get(&note.id)
+            .and_then(|chain| representatives.get(chain.root.as_str()))
+            .filter(|card| card.number > note.number)
+        else {
+            continue;
+        };
+        history
+            .entry(card.id.as_str())
+            .or_default()
+            .push(FinishHistoryEntry {
+                note: note.id.clone(),
+                text: note.text.clone(),
+                set_aside: undone.contains_key(&note.id),
+            });
+    }
+    history
 }
 
 pub(crate) fn origin_of(url: &str) -> String {
@@ -887,25 +1188,25 @@ pub(crate) fn origin_of(url: &str) -> String {
 /// What the final picture covers: nothing is `None` (the note's element is
 /// gone), `Some(None)` the whole view (a state reached by steps, or no target).
 async fn final_clip(
-    browser: &dyn super::browser::PreviewBrowser,
+    browser: &(dyn PreviewBrowser + 'static),
     note: &DesignNote,
     stepped: bool,
-) -> Option<Option<adb::ClipRect>> {
+) -> Result<Option<Option<adb::ClipRect>>, adb::BrowserError> {
     let target = match note.target.as_ref() {
-        _ if stepped => return Some(None),
-        None => return Some(None),
+        _ if stepped => return Ok(Some(None)),
+        None => return Ok(Some(None)),
         Some(target) => target,
     };
     if target.region {
-        return Some(Some(clip_of(target, 0.0)));
+        return Ok(Some(Some(clip_of(target, 0.0))));
     }
-    let selector = target.selector.as_deref()?;
+    let Some(selector) = target.selector.as_deref() else {
+        return Ok(None);
+    };
     let rect = browser
         .resolve_selector(selector, Some(recorded_box(target)))
-        .await
-        .ok()
-        .flatten()?;
-    Some(Some(grow(rect, MARGIN)))
+        .await?;
+    Ok(rect.map(|rect| Some(grow(rect, MARGIN))))
 }
 
 /// The element's box as the note recorded it, in page CSS pixels at the

@@ -44,6 +44,7 @@ pub struct FakeBrowser {
     pictures: Mutex<std::collections::VecDeque<Vec<u8>>>,
     /// No selector matches anything on the page.
     no_elements: Mutex<bool>,
+    load_error: Mutex<Option<adb::BrowserError>>,
     pid: u32,
 }
 
@@ -58,6 +59,7 @@ impl FakeBrowser {
             containment: Mutex::default(),
             pictures: Mutex::default(),
             no_elements: Mutex::default(),
+            load_error: Mutex::default(),
             pid,
         }
     }
@@ -102,6 +104,15 @@ impl FakeBrowser {
         *self.no_elements.lock().unwrap() = true;
     }
 
+    pub fn fail_next_load(&self) {
+        let prior = self
+            .load_error
+            .lock()
+            .unwrap()
+            .replace(adb::BrowserError::Protocol("scripted load failure".into()));
+        assert!(prior.is_none());
+    }
+
     fn op(&self, what: impl Into<String>) {
         self.calls.lock().unwrap().ops.push(what.into());
     }
@@ -144,12 +155,12 @@ impl PreviewBrowser for FakeBrowser {
     async fn navigate(&self, url: &str) -> Result<(), adb::BrowserError> {
         self.calls.lock().unwrap().navigated.push(url.to_owned());
         self.op(format!("navigate {url}"));
-        Ok(())
+        self.load_error.lock().unwrap().take().map_or(Ok(()), Err)
     }
     async fn reload(&self) -> Result<(), adb::BrowserError> {
         self.calls.lock().unwrap().reloads += 1;
         self.op("reload");
-        Ok(())
+        self.load_error.lock().unwrap().take().map_or(Ok(()), Err)
     }
     async fn set_viewport(&self, viewport: adb::Viewport) -> Result<(), adb::BrowserError> {
         self.calls.lock().unwrap().viewports.push(viewport);

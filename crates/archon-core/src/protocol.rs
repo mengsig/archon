@@ -96,6 +96,8 @@ pub mod schema;
 mod v24_tests;
 #[cfg(test)]
 mod v25_tests;
+#[cfg(test)]
+mod v26_tests;
 
 use crate::design::{DesignAssetId, DesignSessionId, Rect, SessionState, ViewportPreset};
 pub use design::{
@@ -254,6 +256,10 @@ pub struct ClientFrame {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "frame", rename_all = "snake_case")]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a design event is the common frame on a design subscription; boxing it would allocate per frame"
+)]
 pub enum ServerFrame {
     /// `id: 0` is the daemon explaining why it is closing the connection.
     Reply {
@@ -1556,7 +1562,7 @@ pub enum Reply {
     /// What a click resolved to.
     DesignResolved(DesignResolvedView),
     /// One note.
-    DesignNote(DesignNoteView),
+    DesignNote(Box<DesignNoteView>),
     /// The Finish review.
     DesignFinish(DesignFinishView),
     /// One stored picture.

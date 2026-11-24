@@ -209,6 +209,17 @@ fn note_view_value() -> Value {
     object.insert("read_only".into(), json!(false));
     object.insert("active".into(), json!(true));
     object.insert("approved".into(), json!(false));
+    // Protocol 26 adds these; a 25 reader ignores them.
+    for (key, value) in [
+        ("follows", Value::Null),
+        ("refs", json!([])),
+        ("chain", Value::Null),
+        ("version", json!(0)),
+        ("versions", json!(0)),
+        ("set_aside", json!(false)),
+    ] {
+        object.insert(key.into(), value);
+    }
     view
 }
 
@@ -241,7 +252,7 @@ fn every_design_reply_round_trips() {
     let card = json!({
         "note": "D1", "text": "t", "asset": ASSET, "data_url": "data:image/png;base64,AA",
         "caption": null, "include": true, "superseded_by": null, "not_found": false,
-        "left_history": false, "earlier": false,
+        "left_history": false, "earlier": false, "history": [],
     });
     // A card from a daemon that predates `earlier` reads as this session's.
     let mut older = card.clone();
@@ -363,8 +374,8 @@ fn the_design_errors_have_their_code_names() {
 }
 
 #[test]
-fn the_version_and_feature_are_25() {
-    assert_eq!(PROTOCOL_VERSION, 25);
+fn the_feature_is_offered_from_25() {
+    const { assert!(PROTOCOL_VERSION >= 25) };
     assert_eq!(feature::DESIGN_SESSIONS, "design_sessions");
     assert!(feature::ALL.contains(&feature::DESIGN_SESSIONS));
     let welcome = negotiate(

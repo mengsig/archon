@@ -208,6 +208,7 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
                 "no_change": false, "path": "/settings",
                 "steps": [{"do": "click", "selector": "button.new"}]}),
         ),
+        ("design_history", json!({"id": "D3"})),
         (
             "read_artifact",
             json!({"item": qi(), "name": "evidence/out.json", "offset": 10, "limit": 100}),

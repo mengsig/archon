@@ -229,3 +229,73 @@ fn ids_and_presets() {
     assert_eq!(ViewportPreset::Tablet.size(), (834, 1112));
     assert!(ViewportPreset::Tablet.touch() && !ViewportPreset::Desktop.touch());
 }
+
+fn version(number: u64, follows: Option<u64>, status: NoteStatus) -> DesignNote {
+    let mut n = note(number, NoteKind::Change, status, None);
+    n.follows = follows.map(note_id);
+    n
+}
+
+#[test]
+fn chains_group_follow_ups_under_their_first_note_and_branch() {
+    // D1 ← D3 ← D5, and D1 ← D6 (a branch from D1); D2 alone; D4 an undo.
+    let notes = vec![
+        version(1, None, Done),
+        version(2, None, Done),
+        version(3, Some(1), Done),
+        {
+            let mut r = note(4, NoteKind::Revert, Done, None);
+            r.reverts = Some("D3".into());
+            r
+        },
+        version(5, Some(3), Done),
+        version(6, Some(1), Done),
+    ];
+    let places = chains(&notes);
+    assert!(!places.contains_key("D4"), "an undo belongs to no chain");
+    let place = |id: &str| places.get(id).cloned().unwrap();
+    assert_eq!(place("D1").root, "D1");
+    assert_eq!((place("D1").version, place("D1").versions), (1, 4));
+    assert_eq!((place("D5").root.as_str(), place("D5").version), ("D1", 3));
+    assert_eq!((place("D6").root.as_str(), place("D6").version), ("D1", 4));
+    assert_eq!((place("D2").version, place("D2").versions), (1, 1));
+    let line: Vec<&str> = ancestors(&notes, "D5")
+        .iter()
+        .map(|n| n.id.as_str())
+        .collect();
+    assert_eq!(line, ["D1", "D3"]);
+    assert!(ancestors(&notes, "D1").is_empty());
+    assert_eq!(chain_root(&notes, "D6"), "D1");
+}
+
+#[test]
+fn a_loop_or_a_missing_link_ends_the_chain() {
+    let mut a = version(1, Some(2), Done);
+    let b = version(2, Some(1), Done);
+    let c = version(3, Some(9), Done);
+    let notes = vec![a.clone(), b, c];
+    // A loop terminates; a missing parent makes the note its own root.
+    let _ = chain_root(&notes, "D1");
+    assert_eq!(chain_root(&notes, "D3"), "D3");
+    a.follows = None;
+    assert_eq!(chain_root(&[a], "D1"), "D1");
+}
+
+#[test]
+fn the_newest_active_version_supersedes_its_chain() {
+    let notes = vec![
+        version(1, None, Done),
+        version(2, Some(1), Done),
+        version(3, Some(2), Done),
+        version(4, None, Done),
+    ];
+    // D3 set aside (not a candidate): D2 stands for the chain.
+    let candidates: Vec<&DesignNote> = [&notes[0], &notes[1], &notes[3]].into();
+    let map = chain_supersession(&candidates, &notes);
+    assert_eq!(map.get("D1").map(String::as_str), Some("D2"));
+    assert!(!map.contains_key("D2") && !map.contains_key("D4"));
+    let all: Vec<&DesignNote> = notes.iter().collect();
+    let map = chain_supersession(&all, &notes);
+    assert_eq!(map.get("D1").map(String::as_str), Some("D3"));
+    assert_eq!(map.get("D2").map(String::as_str), Some("D3"));
+}

@@ -136,12 +136,12 @@ impl DesignService {
         let all = store.design_notes(item)?;
         let current = store.design_current_session(item)?;
         let approved = super::approved_ids(&store, item)?;
-        Ok(Reply::DesignNote(note_view(
+        Ok(Reply::DesignNote(Box::new(note_view(
             &note,
             &all,
             current.as_ref(),
             &approved,
-        )))
+        ))))
     }
 
     /// A note of the item's current session, for a change request.

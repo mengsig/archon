@@ -6000,8 +6000,8 @@ proposal gate and `approve_intent` unchanged.
 owns the headless Chromium (a child with a cleared environment, a fresh profile
 and a debugging pipe), the CDP client, the session and note store and the frame
 relay. The agent gets no browser handle; it reports with the MCP tools
-`design_preview` and `design_note`, accepted only from the live design stage's
-agent.
+`design_preview` and `design_note`, and reads its chains with
+`design_history`, accepted only from the live design stage's agent.
 
 **Commit check and Undo.** archond accepts a note's `done` only when HEAD is
 the reported commit, that commit has one parent and the parent is the note's

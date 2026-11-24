@@ -180,8 +180,8 @@ invisible, bidirectional and private-use characters are refused.
 `GET /ws` upgrades to a WebSocket with the subprotocol `archon` (version
 13 only). It carries archond's own protocol
 ([ARCHITECTURE §10](ARCHITECTURE.md)), one JSON frame per text message: the
-first message must be `hello` with protocol 23, 24 or 25 (archond's own is
-25), and archond answers `welcome`, which names the device and its role at
+first message must be `hello` with protocol 23 to 26 (archond's own is
+26), and archond answers `welcome`, which names the device and its role from
 25. After that each `{"req": N, "cmd": …}` is
 answered by a `reply` frame with the same id, and `subscribe_feed` streams
 `feed` frames, as on the Unix socket.
@@ -257,6 +257,13 @@ Protocol 25 adds [live design sessions](design-sessions.md) behind the
 `welcome` feature `design_sessions`, advertised only when `[design] enabled`
 is true and every request below is served. A protocol 23 or 24 app does not see
 the feature and shows `proposal = live` as plain text.
+
+Protocol 26 adds the feature `design_iterations` (follow-ups, references and
+the iteration tree): `design_note_add` takes optional `follows` and `refs`,
+`design_note_continue_from {item, id, text?, client_key?, refs?}` sets a
+chain's newer versions aside and queues a follow-up, and note views carry
+`follows`, `refs`, `chain`, `version`, `versions` and `set_aside`. Each new
+field has a default, so a 25 app keeps working.
 
 Requests. `design_get` is a read, so observers may send it (they get only
 `{state, note_count}`); everything else is an operator change and is logged

@@ -4116,6 +4116,20 @@
                 "null"
               ]
             },
+            "follows": {
+              "description": "For a follow-up, the version of its chain it continues from.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "refs": {
+              "description": "Earlier notes it references.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "send_picture": {
               "type": "boolean"
             },
@@ -4132,6 +4146,48 @@
             "client_key",
             "text",
             "send_picture"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Continue a chain from one of its versions: revert the newer versions\nin the code, newest first, then queue the follow-up `text` if given.",
+          "properties": {
+            "client_key": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "design_note_continue_from",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            "refs": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "text": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
           ],
           "type": "object"
         },
@@ -4465,6 +4521,37 @@
             "cmd",
             "id",
             "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent reads the history of a note's chain, or every chain.",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "design_history",
+              "type": "string"
+            },
+            "id": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
           ],
           "type": "object"
         }
@@ -5652,6 +5739,14 @@
             "null"
           ]
         },
+        "chain": {
+          "default": null,
+          "description": "The first note of its chain of follow-ups; none for a revert note.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "client_key": {
           "description": "The client's idempotency key.",
           "type": "string"
@@ -5717,6 +5812,14 @@
             "null"
           ]
         },
+        "follows": {
+          "default": null,
+          "description": "For a follow-up, the version of its chain it continues from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "id": {
           "description": "`D<n>`, or `D<n>-final` for a final picture.",
           "type": "string"
@@ -5743,6 +5846,14 @@
           "description": "Made in an earlier session: no longer editable.",
           "type": "boolean"
         },
+        "refs": {
+          "default": [],
+          "description": "Earlier notes the operator referenced, at most [`MAX_REFS`].",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "resent_from": {
           "description": "The note this one was resent from.",
           "type": [
@@ -5764,6 +5875,11 @@
         "session": {
           "$ref": "#/$defs/DesignSessionId",
           "description": "The session it was made in."
+        },
+        "set_aside": {
+          "default": false,
+          "description": "Its change was reverted (undone, or set aside by a continue).",
+          "type": "boolean"
         },
         "status": {
           "$ref": "#/$defs/NoteStatus",
@@ -5809,6 +5925,20 @@
           "description": "When it last changed.",
           "format": "date-time",
           "type": "string"
+        },
+        "version": {
+          "default": 0,
+          "description": "Its 1-based place in the chain; 0 for a revert note.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "versions": {
+          "default": 0,
+          "description": "How many versions the chain holds.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "viewport": {
           "$ref": "#/$defs/Viewport2",
@@ -6998,6 +7128,14 @@
           "description": "The note belongs to an earlier session of the item (before a\nRevise): its picture was reviewed then and is carried as it stands,\nnever captured or confirmed again.",
           "type": "boolean"
         },
+        "history": {
+          "default": [],
+          "description": "The earlier versions of the note's chain, oldest first.",
+          "items": {
+            "$ref": "#/$defs/FinishHistoryEntry"
+          },
+          "type": "array"
+        },
         "include": {
           "description": "Whether the picture is included.",
           "type": "boolean"
@@ -7059,6 +7197,29 @@
       "required": [
         "include",
         "superseded"
+      ],
+      "type": "object"
+    },
+    "FinishHistoryEntry": {
+      "description": "One earlier version of a chain on its Finish card.",
+      "properties": {
+        "note": {
+          "description": "The version's note id.",
+          "type": "string"
+        },
+        "set_aside": {
+          "description": "Its change was reverted.",
+          "type": "boolean"
+        },
+        "text": {
+          "description": "Its words.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "note",
+        "text",
+        "set_aside"
       ],
       "type": "object"
     },
@@ -17672,6 +17833,20 @@
                 "null"
               ]
             },
+            "follows": {
+              "description": "For a follow-up, the version of its chain it continues from.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "refs": {
+              "description": "Earlier notes it references.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "send_picture": {
               "type": "boolean"
             },
@@ -17688,6 +17863,48 @@
             "client_key",
             "text",
             "send_picture"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Continue a chain from one of its versions: revert the newer versions\nin the code, newest first, then queue the follow-up `text` if given.",
+          "properties": {
+            "client_key": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "design_note_continue_from",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            "refs": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "text": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
           ],
           "type": "object"
         },
@@ -18021,6 +18238,37 @@
             "cmd",
             "id",
             "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent reads the history of a note's chain, or every chain.",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "design_history",
+              "type": "string"
+            },
+            "id": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
           ],
           "type": "object"
         }
@@ -21411,10 +21659,11 @@
     "github_links",
     "github_import",
     "device_roles",
-    "design_sessions"
+    "design_sessions",
+    "design_iterations"
   ],
   "min_web_protocol_version": 23,
-  "protocol_version": 25,
+  "protocol_version": 26,
   "server_frame": {
     "$ref": "#/$defs/ServerFrame"
   },

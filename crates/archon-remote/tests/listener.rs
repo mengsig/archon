@@ -513,13 +513,14 @@ async fn a_session_needs_the_cookie_and_a_forged_one_is_cleared() {
 
 /// The web app may speak 23, 24 or 25; 26 is refused with the range accepted.
 #[tokio::test]
-async fn the_web_app_connects_at_23_to_25_and_26_is_refused_with_the_range() {
+async fn the_web_app_connects_at_23_to_26_and_27_is_refused_with_the_range() {
     let listener = Listener::start().await;
     let cookie = listener.pair().await;
     for (version, features) in [
         (23, serde_json::json!([])),
         (24, serde_json::json!(["changes"])),
         (25, serde_json::json!(["changes"])),
+        (26, serde_json::json!(["changes"])),
     ] {
         let mut socket = listener.upgrade(&cookie).await;
         let welcome = exchange(&mut socket, hello(version)).await;
@@ -539,7 +540,7 @@ async fn the_web_app_connects_at_23_to_25_and_26_is_refused_with_the_range() {
     let error = &refusal["result"]["Err"];
     assert_eq!(error["code"], "incompatible", "{refusal}");
     let message = error["message"].as_str().unwrap();
-    assert!(message.contains("accepts 23 to 25"), "{message}");
+    assert!(message.contains("accepts 23 to 26"), "{message}");
     assert_eq!(close_code(&mut socket).await, 1008);
 }
 

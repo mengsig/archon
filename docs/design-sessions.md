@@ -20,6 +20,7 @@ ever reaches your browser: only pictures and JSON.
 - [Using the design screen](#using-the-design-screen)
 - [Notes and their statuses](#notes-and-their-statuses)
 - [Compare, Undo and Revise](#compare-undo-and-revise)
+- [Follow-ups, references and the tree](#follow-ups-references-and-the-tree)
 - [Finishing and approving](#finishing-and-approving)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Using it from a phone](#using-it-from-a-phone)
@@ -181,6 +182,44 @@ review still holds, and its card shows it; clear it there to bring the note
 back. A replacement lapses when its replacing note is undone, so the
 replaced note counts again.
 
+## Follow-ups, references and the tree
+
+**Follow-up.** Any note, done or not, has **Follow up**. A follow-up is a new
+note (its own `D<n>`, its own commit and pictures) that continues the note it
+follows; nothing earlier is amended. The agent gets your words with the earlier
+versions of the same chain, oldest first, and builds on the code as it is now.
+A chain is rooted at its first note; its versions count 1, 2, 3 in the order
+they were made. At Finish a chain counts once, with its newest version that is
+still in the code.
+
+**References.** A note or follow-up can reference up to 5 earlier notes, picked
+from the list or typed as `@D3`. The agent's message gets a "Referenced
+changes" block with each one's words, commit and reply, marked as data, not
+instructions, and up to 3 of their after pictures.
+
+**Tree.** The **Tree** tab beside **Notes** shows every note as a node with its
+picture, status and short commit, grouped by chain. A follow-up of an older
+version branches. Versions set aside are dimmed. Select a node to see that
+version's before and after pictures under "Viewing D5 · version 2 of 3", with
+**Back to current** and **Compare** with another version of the chain. This
+shows pictures only: the live preview stays at the current code.
+
+**Continue from this version.** On an older version, **Continue from this
+version** undoes the chain's newer versions, newest first, with new revert
+commits through Undo (never a reset), marks them **Set aside**, and queues your
+follow-up on the chosen version. A newer version that is still queued or with
+the agent must be dropped or finished first. If a revert conflicts, the rest is
+cancelled and the card shows Undo's message. A follow-up on an older version
+whose newer versions are still in the code is refused with a pointer to
+Continue.
+
+**For the agent.** The read-only MCP tool `design_history` lists the chains of
+the session (or one chain, with `id`): each version's words, commit, reply,
+whether it is set aside, and the notes it references. `design_note` is unchanged.
+
+Protocol 26 adds these behind the `welcome` feature `design_iterations`. A
+protocol 23 to 25 app sees follow-ups as plain notes.
+
 ## Pictures of a change
 
 When the agent reports a note done, archond waits for the preview to settle
@@ -329,7 +368,9 @@ with OK and Cancel, so the page never hangs.
 - 10 frames a second; 64 input events a request; 60 input requests and 10
   resolves a second.
 - Notes up to 4,000 characters, replies up to 2,000; 200 notes and 200 MiB of
-  pictures per item.
+  pictures per item, follow-ups included.
+- 20 versions per chain; 5 references per note; 3 referenced pictures per
+  message to the agent.
 - Every frame and picture is at most 768 KiB as sent; pictures are re-encoded
   until they fit.
 - The browser is capped at 1 GiB of JavaScript heap, restarts if its memory

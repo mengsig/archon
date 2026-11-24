@@ -28,13 +28,13 @@ fn every_client_but_the_web_app_needs_an_exact_match() {
     }
 }
 
-/// `archon-web` at 23 to 25 connects; 26 is refused with the range.
+/// `archon-web` at 23 to the current version connects.
 #[test]
-fn the_web_app_may_speak_23_to_25() {
+fn the_web_app_may_speak_23_to_current() {
     let served = [feature::CHANGES];
     let web = ClientKind::ArchonWeb;
     let current = negotiate(web, PROTOCOL_VERSION, "web", &served).unwrap();
-    assert_eq!(current.protocol_version, 25);
+    assert_eq!(current.protocol_version, PROTOCOL_VERSION);
     assert_eq!(current.min_protocol_version, 23);
     assert_eq!(current.features, ["changes"]);
     let at_24 = negotiate(
@@ -48,10 +48,11 @@ fn the_web_app_may_speak_23_to_25() {
     let older = negotiate(web, MIN_WEB_PROTOCOL_VERSION, "web", &served).unwrap();
     assert_eq!(older.protocol_version, 23);
     assert!(older.features.is_empty(), "23 knows no feature");
-    for refused in [22, 26] {
+    let range = format!("accepts 23 to {PROTOCOL_VERSION}");
+    for refused in [22, PROTOCOL_VERSION + 1] {
         let refusal = negotiate(web, refused, "web", &served).unwrap_err();
         assert!(
-            refusal.contains(&format!("speaks {refused}")) && refusal.contains("accepts 23 to 25"),
+            refusal.contains(&format!("speaks {refused}")) && refusal.contains(&range),
             "{refusal}"
         );
     }

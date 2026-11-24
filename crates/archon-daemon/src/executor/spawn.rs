@@ -1246,13 +1246,14 @@ fn hidden_tools(
     let native = HIDDEN_NATIVE_TOOLS
         .into_iter()
         .chain(read_only.then_some(INTEGRATE_TOOL));
-    let design = match kind {
-        archon_core::catalog::StageKind::Design => {
-            archon_core::mcp_tools::DESIGN_STAGE_TOOLS.as_slice()
-        }
-        _ => &[],
+    let design_tools = archon_core::mcp_tools::DESIGN_STAGE_TOOLS.as_slice();
+    let (design, not_design): (&[&str], &[&str]) = match kind {
+        archon_core::catalog::StageKind::Design => (design_tools, &[]),
+        // A read-only design tool, such as `design_history`, is not hidden by
+        // the tools mode, so it is hidden here.
+        _ => (&[], design_tools),
     };
-    hidden
+    let mut hidden: Vec<String> = hidden
         .into_iter()
         .filter(|name| {
             !archon_core::mcp_tools::STAGE_TOOLS
@@ -1260,8 +1261,15 @@ fn hidden_tools(
                 .chain(design)
                 .any(|tool| name == &archon_core::mcp_tools::qualified(tool))
         })
-        .chain(native.map(str::to_owned))
-        .collect()
+        .collect();
+    for tool in not_design {
+        let name = archon_core::mcp_tools::qualified(tool);
+        if !hidden.contains(&name) {
+            hidden.push(name);
+        }
+    }
+    hidden.extend(native.map(str::to_owned));
+    hidden
 }
 
 pub(super) fn reserve_replacement(

@@ -647,3 +647,24 @@ fn the_next_note_id_follows_the_counter() {
         "nothing reserved"
     );
 }
+
+/// Schema 26: a follow-up keeps the note it follows and its references, and a
+/// note from before reads with none.
+#[test]
+fn a_follow_up_keeps_its_link_and_references() {
+    let (mut store, _repo, items) = seeded(1);
+    let item = &items[0].id;
+    let session = live(&mut store, item);
+    assert_eq!(add(&mut store, item, &session, "k1"), "D1");
+    let mut follow = new_note(item, &session, "k2");
+    follow.follows = Some("D1".into());
+    follow.refs = vec!["D1".into()];
+    let (note, created) = store.design_note_add(follow).unwrap();
+    assert!(created);
+    let notes = store.design_notes(item).unwrap();
+    let read = notes.iter().find(|n| n.id == note.id).unwrap();
+    assert_eq!(read.follows.as_deref(), Some("D1"));
+    assert_eq!(read.refs, ["D1"]);
+    let first = notes.iter().find(|n| n.id == "D1").unwrap();
+    assert!(first.follows.is_none() && first.refs.is_empty());
+}

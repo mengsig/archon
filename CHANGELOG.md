@@ -13,6 +13,14 @@
   and Chrome or Chromium (`archon doctor` checks). Protocol 25 adds the design
   requests, events and the `design_sessions` feature. See
   [docs/design-sessions.md](docs/design-sessions.md).
+- Design follow-ups, references and an iteration tree. Any note can be
+  followed up with a new note that continues it; a note can reference up to
+  5 earlier ones; the Tree tab shows each chain with its versions, older
+  versions can be viewed as pictures, and **Continue from this version**
+  undoes the newer versions with new revert commits. Finish shows one card
+  per chain with its history. The agent gets the MCP read tool
+  `design_history`. Protocol 26 adds the `design_iterations` feature; store
+  schema 26 adds `follows` and `refs` to design notes.
 
 ### Changed
 

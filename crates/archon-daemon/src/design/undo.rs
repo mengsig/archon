@@ -57,6 +57,8 @@ impl DesignService {
             )?;
         }
         self.emit_note(ctx, &revert.item, &revert.id).await;
+        // A continue stops at its first failed revert: nothing after it runs.
+        self.cancel_continue(ctx, revert).await;
         Ok(())
     }
 

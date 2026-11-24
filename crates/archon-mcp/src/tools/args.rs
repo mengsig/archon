@@ -71,6 +71,10 @@ fn query_request(tool: &str, args: &mut Args) -> Result<Option<Request>, ToolErr
             caller: None,
         },
         "design_note" => design_note(args)?,
+        "design_history" => Request::DesignHistory {
+            id: args.optional_text("id")?,
+            caller: None,
+        },
         "submit_verdict" => Request::SubmitVerdict {
             summary: args.required_text("summary")?,
             // An object, as `complete_task` takes it: nothing else is read.

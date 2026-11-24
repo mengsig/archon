@@ -456,6 +456,12 @@ pub struct DesignNote {
     pub reverts: Option<String>,
     /// The note this one was resent from.
     pub resent_from: Option<String>,
+    /// For a follow-up, the version of its chain it continues from.
+    #[serde(default)]
+    pub follows: Option<String>,
+    /// Earlier notes the operator referenced, at most [`MAX_REFS`].
+    #[serde(default)]
+    pub refs: Vec<String>,
     /// The note that supersedes this one.
     pub superseded_by: Option<String>,
     /// The conversation about it.
@@ -537,6 +543,12 @@ pub const IMAGE_CAP_WARN_MARGIN: u32 = 8;
 pub const DROP_OFFERED_AFTER_MINUTES: i64 = 15;
 /// A design stage's timeout in minutes.
 pub const STAGE_TIMEOUT_MINUTES: u32 = 240;
+/// Versions one chain of follow-ups may hold, its first note included.
+pub const MAX_CHAIN_VERSIONS: usize = 20;
+/// Earlier notes one note may reference.
+pub const MAX_REFS: usize = 5;
+/// After pictures of referenced notes attached to one message.
+pub const MAX_REF_PICTURES: usize = 3;
 
 /// Whether a note of `kind` may move from `from` to `to`.
 pub fn transition_allowed(kind: NoteKind, from: NoteStatus, to: NoteStatus) -> bool {
@@ -736,6 +748,124 @@ pub fn auto_supersession(candidates: &[&DesignNote]) -> BTreeMap<String, String>
         }
     }
     out
+}
+
+/// Where a note sits in its chain of follow-ups.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainPlace {
+    /// The chain's first note.
+    pub root: String,
+    /// 1-based position in the chain, by note number.
+    pub version: u32,
+    /// How many versions the chain holds.
+    pub versions: u32,
+}
+
+/// Each note's id, with the id its `follows` names when that note exists.
+fn parents(notes: &[DesignNote]) -> BTreeMap<&str, Option<&str>> {
+    let ids: std::collections::BTreeSet<&str> = notes.iter().map(|n| n.id.as_str()).collect();
+    notes
+        .iter()
+        .map(|n| {
+            let parent = n.follows.as_deref().filter(|p| ids.contains(p));
+            (n.id.as_str(), parent)
+        })
+        .collect()
+}
+
+/// The root `id` reaches through `parents`; a loop ends the walk.
+fn root_in(parents: &BTreeMap<&str, Option<&str>>, id: &str) -> String {
+    let mut at = id;
+    for _ in 0..=parents.len() {
+        match parents.get(at).copied().flatten() {
+            Some(parent) => at = parent,
+            None => break,
+        }
+    }
+    at.to_owned()
+}
+
+/// The first note of `id`'s chain: `follows` walked back as far as it goes
+/// among `notes`. A loop or a missing link ends the walk where it is.
+pub fn chain_root(notes: &[DesignNote], id: &str) -> String {
+    root_in(&parents(notes), id)
+}
+
+/// Every note of a chain, by note id: its place. Revert notes belong to none.
+pub fn chains(notes: &[DesignNote]) -> BTreeMap<String, ChainPlace> {
+    let parents = parents(notes);
+    let mut members: BTreeMap<String, Vec<(u64, String)>> = BTreeMap::new();
+    for note in notes.iter().filter(|n| n.kind != NoteKind::Revert) {
+        members
+            .entry(root_in(&parents, &note.id))
+            .or_default()
+            .push((note.number, note.id.clone()));
+    }
+    let mut out = BTreeMap::new();
+    for (root, mut ids) in members {
+        ids.sort();
+        let versions = u32::try_from(ids.len()).unwrap_or(u32::MAX);
+        for (n, (_, id)) in ids.into_iter().enumerate() {
+            let version = u32::try_from(n + 1).unwrap_or(u32::MAX);
+            out.insert(
+                id,
+                ChainPlace {
+                    root: root.clone(),
+                    version,
+                    versions,
+                },
+            );
+        }
+    }
+    out
+}
+
+/// Which earlier version of a chain the chain's newest active version
+/// supersedes, by note id: among `candidates` (the active notes), the one
+/// with the highest number in each chain stands for it. `all` resolves the
+/// chains, so a link through a set-aside version still counts.
+pub fn chain_supersession(
+    candidates: &[&DesignNote],
+    all: &[DesignNote],
+) -> BTreeMap<String, String> {
+    let parents = parents(all);
+    let mut newest: BTreeMap<String, (u64, String)> = BTreeMap::new();
+    for note in candidates {
+        let root = root_in(&parents, &note.id);
+        let slot = newest.entry(root).or_insert((note.number, note.id.clone()));
+        if note.number > slot.0 {
+            *slot = (note.number, note.id.clone());
+        }
+    }
+    candidates
+        .iter()
+        .filter_map(|note| {
+            let (_, by) = newest.get(&root_in(&parents, &note.id))?;
+            (by != &note.id).then(|| (note.id.clone(), by.clone()))
+        })
+        .collect()
+}
+
+/// The earlier versions of `id`'s chain that are ancestors of it, oldest
+/// first: the line of `follows` from the chain's first note to `id`.
+pub fn ancestors<'a>(notes: &'a [DesignNote], id: &str) -> Vec<&'a DesignNote> {
+    let mut line = Vec::new();
+    let mut at = notes
+        .iter()
+        .find(|n| n.id == id)
+        .and_then(|n| n.follows.clone());
+    while let Some(parent) = at {
+        if line.len() > notes.len() {
+            break;
+        }
+        let Some(note) = notes.iter().find(|n| n.id == parent) else {
+            break;
+        };
+        line.push(note);
+        at = note.follows.clone();
+    }
+    line.reverse();
+    line
 }
 
 #[cfg(test)]

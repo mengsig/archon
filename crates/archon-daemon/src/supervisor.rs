@@ -2136,6 +2136,7 @@ mod tests {
             "submit_verdict",
             "design_preview",
             "design_note",
+            "design_history",
         ];
         for tool in archon_core::mcp_tools::TOOLS {
             if stage_only.contains(&tool.name) {

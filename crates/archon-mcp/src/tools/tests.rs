@@ -1521,7 +1521,7 @@ fn the_tool_list_stays_within_its_budget() {
     const EFFORT_CAP_NOTE_BYTES: usize = 256;
     // `design_preview` and `design_note` (live design sessions), with the
     // `steps` that put a note's pictures in the state that shows its change.
-    const DESIGN_TOOLS_BYTES: usize = 2 * 1024 + 512;
+    const DESIGN_TOOLS_BYTES: usize = 3 * 1024;
     const BUDGET_BYTES: usize = 33 * 1024
         + DESIGN_TOOLS_BYTES
         + INTENT_BINDING_BYTES

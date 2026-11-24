@@ -8,6 +8,7 @@ mod assets;
 mod browser;
 mod delivery;
 mod finish;
+mod iterations;
 mod notes;
 mod recovery;
 mod relay;
@@ -165,6 +166,8 @@ fn revise_note(
         client_key: format!("{prefix}{}", session.id),
         reverts: None,
         resent_from: None,
+        follows: None,
+        refs: Vec::new(),
         before_asset: None,
         created_by_device: None,
     })?;
@@ -794,6 +797,10 @@ impl DesignService {
             }
             candidates.push(note);
         }
+        // A chain of follow-ups stands as its newest version in the code:
+        // the earlier ones are its history, never requirements of their own.
+        let chained = archon_core::design::chain_supersession(&candidates, &notes);
+        candidates.retain(|note| !chained.contains_key(&note.id));
         let auto = auto_supersession(&candidates);
         Ok(candidates
             .into_iter()
@@ -1020,6 +1027,7 @@ pub fn note_view(
 ) -> DesignNoteView {
     let undone = undone_by(all);
     let read_only = current.is_none_or(|c| c.id != note.session);
+    let place = archon_core::design::chains(all).remove(&note.id);
     let active = note.kind != NoteKind::Revert
         && note.status == NoteStatus::Done
         && !undone.contains_key(&note.id)
@@ -1030,5 +1038,9 @@ pub fn note_view(
         read_only,
         active,
         approved: approved.contains(&note.id),
+        chain: place.as_ref().map(|p| p.root.clone()),
+        version: place.as_ref().map_or(0, |p| p.version),
+        versions: place.as_ref().map_or(0, |p| p.versions),
+        set_aside: note.kind != NoteKind::Revert && undone.contains_key(&note.id),
     }
 }

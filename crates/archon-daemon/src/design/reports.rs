@@ -19,7 +19,7 @@ use crate::worktree::design_git::{self, NoteGit, Shape, Tidy};
 
 impl DesignService {
     /// The session whose agent `caller` is, while its stage attempt is live.
-    async fn agent_session(
+    pub(crate) async fn agent_session(
         &self,
         ctx: &DaemonContext,
         caller: Option<&AetherAgentId>,

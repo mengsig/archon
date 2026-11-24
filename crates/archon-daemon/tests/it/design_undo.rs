@@ -239,6 +239,8 @@ async fn left_working(f: &Fixture, original: &str, pre: &str, new: &str) -> Stri
             client_key: format!("crash-{pre}-{new}"),
             reverts: Some(original.to_owned()),
             resent_from: None,
+            follows: None,
+            refs: Vec::new(),
             before_asset: None,
             created_by_device: None,
         })
@@ -434,6 +436,8 @@ async fn finish_captures_confirms_and_goes_back() {
             asset: None,
             send_picture: false,
             details_text: None,
+            follows: None,
+            refs: Vec::new(),
         })
         .await;
     crate::design_session::refused(&added, archon_core::error::DesignRefusal::Finishing);
@@ -514,6 +518,8 @@ async fn finish_cancels_queued_notes_only_when_told_to() {
                 client_key: "waiting".into(),
                 reverts: None,
                 resent_from: None,
+                follows: None,
+                refs: Vec::new(),
                 before_asset: None,
                 created_by_device: None,
             })

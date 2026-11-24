@@ -144,6 +144,8 @@ fn note(number: u64, kind: NoteKind, status: NoteStatus, target: Option<Target>)
         no_change: false,
         reverts: None,
         resent_from: None,
+        follows: None,
+        refs: Vec::new(),
         superseded_by: None,
         thread: vec![],
         client_key: String::new(),

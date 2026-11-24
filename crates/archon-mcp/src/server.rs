@@ -382,6 +382,7 @@ fn name_caller(
         | Request::PublishArtifact { caller, .. }
         | Request::DesignPreview { caller, .. }
         | Request::DesignNoteReport { caller, .. }
+        | Request::DesignHistory { caller, .. }
         | Request::SubmitVerdict { caller, .. }
         | Request::RecordChatAnswer { caller, .. }
         | Request::RequestAuthority { caller, .. } => (caller, true),

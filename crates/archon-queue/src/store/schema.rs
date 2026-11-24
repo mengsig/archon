@@ -872,12 +872,19 @@ CREATE TABLE design_assets (
 CREATE INDEX design_assets_by_item ON design_assets (item);
 "#;
 
+/// Version 26 (design iterations): a follow-up names the version it
+/// continues from, and a note the earlier notes it references. Additive.
+const V26: &str = r#"
+ALTER TABLE design_notes ADD COLUMN follows TEXT;
+ALTER TABLE design_notes ADD COLUMN refs_json TEXT NOT NULL DEFAULT '[]';
+"#;
+
 /// The migration after whose SQL stored failure classes are recomputed.
 const RECLASSIFY_VERSION: usize = 24;
 
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25,
+    V22, V23, V24, V25, V26,
 ];
 const _: () = assert!(RECLASSIFY_VERSION <= MIGRATIONS.len());
 

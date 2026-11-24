@@ -61,6 +61,8 @@ fn new_note(item: &QueueItemId, session: &DesignSessionId, key: &str) -> NewDesi
         client_key: key.into(),
         reverts: None,
         resent_from: None,
+        follows: None,
+        refs: Vec::new(),
         before_asset: None,
         created_by_device: None,
     }

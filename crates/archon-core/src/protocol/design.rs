@@ -1,5 +1,5 @@
 //! The wire types of live design sessions (protocol 25, feature
-//! `design_sessions`): input events, the views replies carry and the events
+//! `design_sessions`; iterations from 26, `design_iterations`): input events, the views replies carry and the events
 //! of a `subscribe_design` stream.
 
 use std::collections::BTreeMap;
@@ -189,6 +189,29 @@ pub struct DesignNoteView {
     /// Bound by an approved intent: no Undo or supersession touches it.
     #[serde(default)]
     pub approved: bool,
+    /// The first note of its chain of follow-ups; none for a revert note.
+    #[serde(default)]
+    pub chain: Option<String>,
+    /// Its 1-based place in the chain; 0 for a revert note.
+    #[serde(default)]
+    pub version: u32,
+    /// How many versions the chain holds.
+    #[serde(default)]
+    pub versions: u32,
+    /// Its change was reverted (undone, or set aside by a continue).
+    #[serde(default)]
+    pub set_aside: bool,
+}
+
+/// One earlier version of a chain on its Finish card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FinishHistoryEntry {
+    /// The version's note id.
+    pub note: String,
+    /// Its words.
+    pub text: String,
+    /// Its change was reverted.
+    pub set_aside: bool,
 }
 
 /// An item's session and notes.
@@ -251,6 +274,9 @@ pub struct FinishCard {
     /// never captured or confirmed again.
     #[serde(default)]
     pub earlier: bool,
+    /// The earlier versions of the note's chain, oldest first.
+    #[serde(default)]
+    pub history: Vec<FinishHistoryEntry>,
 }
 
 /// The final capture the operator reviews.

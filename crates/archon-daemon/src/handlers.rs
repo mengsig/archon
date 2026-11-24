@@ -367,6 +367,7 @@ fn orchestrators_alone(
             | Request::SubmitVerdict { .. }
             | Request::DesignPreview { .. }
             | Request::DesignNoteReport { .. }
+            | Request::DesignHistory { .. }
     );
     for_an_agent(client, caller) && !request.is_read_only() && !stage_message
 }
@@ -387,6 +388,7 @@ fn check_named_caller(
         | Request::PublishArtifact { caller, .. }
         | Request::DesignPreview { caller, .. }
         | Request::DesignNoteReport { caller, .. }
+        | Request::DesignHistory { caller, .. }
         | Request::SubmitVerdict { caller, .. }
         | Request::AskOperator { caller, .. }
         | Request::RecordChatAnswer { caller, .. }
@@ -451,13 +453,15 @@ pub(crate) async fn route(
         | Request::DesignNoteReply { .. }
         | Request::DesignNoteDrop { .. }
         | Request::DesignNoteUndo { .. }
+        | Request::DesignNoteContinueFrom { .. }
         | Request::DesignNoteResend { .. }
         | Request::DesignFinishCapture { .. }
         | Request::DesignFinalCapture { .. }
         | Request::DesignFinishConfirm { .. }
         | Request::DesignFinishCancel { .. }
         | Request::DesignPreview { .. }
-        | Request::DesignNoteReport { .. }) => crate::design::handle(ctx, client, request).await,
+        | Request::DesignNoteReport { .. }
+        | Request::DesignHistory { .. }) => crate::design::handle(ctx, client, request).await,
         Request::ListArtifacts { item } => crate::artifacts::list_for(ctx, &item).await,
         Request::ReadArtifact {
             item,

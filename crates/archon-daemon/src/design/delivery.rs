@@ -29,10 +29,13 @@ pub(crate) struct Owed {
     pub text: String,
     pub asset: Option<DesignAssetId>,
     pub item: QueueItemId,
+    /// Referenced notes' after pictures, attached after `asset`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub more: Vec<DesignAssetId>,
 }
 
 /// The fence for untrusted text: longer than any run of backticks inside.
-fn fence_for(text: &str) -> String {
+pub(crate) fn fence_for(text: &str) -> String {
     let mut longest = 0;
     let mut run = 0;
     for c in text.chars() {
@@ -46,8 +49,20 @@ fn fence_for(text: &str) -> String {
     "`".repeat(longest.max(2) + 1)
 }
 
-/// The note message of design.md §8.5.
-pub(crate) fn note_message(session: &DesignSession, note: &DesignNote, head: &str) -> String {
+/// The note message of design.md §8.5, with its chain and references, and
+/// the referenced pictures to attach after the note's own.
+pub(crate) fn note_message(
+    session: &DesignSession,
+    note: &DesignNote,
+    head: &str,
+    all: &[DesignNote],
+) -> (String, Vec<DesignAssetId>) {
+    let (iterations, pictures) = super::iterations::message_block(note, all);
+    let text = note_text(session, note, head, &iterations);
+    (text, pictures)
+}
+
+fn note_text(session: &DesignSession, note: &DesignNote, head: &str, iterations: &str) -> String {
     let (w, h) = (note.viewport.w, note.viewport.h);
     let preset = format!("{:?}", note.viewport.preset).to_lowercase();
     let mut text = format!(
@@ -75,6 +90,7 @@ pub(crate) fn note_message(session: &DesignSession, note: &DesignNote, head: &st
     if note.send_picture && note.before_asset.is_some() {
         text.push_str("Picture: attached (what the operator saw when writing the note).\n");
     }
+    text.push_str(iterations);
     text.push_str(&format!(
         "Do: change the code; make exactly one commit with trailer \"Archon-Note: {id}\" and leave the worktree clean; call design_note {{id:\"{id}\", status:\"done\", commit:\"<sha>\", reply:\"<one line>\"}}.\n\
 If unclear, discard your edits, call design_note {{status:\"needs_reply\", reply:\"<your question>\"}} and wait.",
@@ -106,6 +122,20 @@ impl DesignService {
         text: String,
         asset: Option<DesignAssetId>,
     ) -> Result<(), ArchonError> {
+        self.owe_queue_with(ctx, session, key, text, asset, Vec::new())
+            .await
+    }
+
+    /// [`Self::owe_queue`] with referenced pictures attached after `asset`.
+    pub(crate) async fn owe_queue_with(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSession,
+        key: String,
+        text: String,
+        asset: Option<DesignAssetId>,
+        more: Vec<DesignAssetId>,
+    ) -> Result<(), ArchonError> {
         let _held = self.owed_lock.lock().await;
         let mut store = ctx.store.lock().await;
         let kv_key = keys::design_owed(&session.id);
@@ -119,6 +149,7 @@ impl DesignService {
                 text,
                 asset,
                 item: session.item.clone(),
+                more,
             });
         }
         let raw = serde_json::to_string(&list)
@@ -183,34 +214,29 @@ impl DesignService {
     }
 
     async fn attachments_for(&self, ctx: &DaemonContext, owed: &Owed) -> Vec<ImageAttachment> {
-        let Some(id) = &owed.asset else {
-            return Vec::new();
-        };
-        let asset = ctx
-            .store
-            .lock()
-            .await
-            .design_asset(&owed.item, id)
-            .ok()
-            .flatten();
-        let Some(asset) = asset else {
-            return Vec::new();
-        };
-        match self.asset_bytes(&asset) {
-            Ok(bytes) => {
-                match ImageAttachment::encode(&bytes, Some(&format!("{}.jpg", asset.id))) {
-                    Ok(image) => vec![image],
-                    Err(error) => {
-                        tracing::warn!(%error, "a note's picture is not attached");
-                        Vec::new()
+        let mut out = Vec::new();
+        for id in owed.asset.iter().chain(owed.more.iter()) {
+            let asset = ctx
+                .store
+                .lock()
+                .await
+                .design_asset(&owed.item, id)
+                .ok()
+                .flatten();
+            let Some(asset) = asset else {
+                continue;
+            };
+            match self.asset_bytes(&asset) {
+                Ok(bytes) => {
+                    match ImageAttachment::encode(&bytes, Some(&format!("{}.jpg", asset.id))) {
+                        Ok(image) => out.push(image),
+                        Err(error) => tracing::warn!(%error, "a note's picture is not attached"),
                     }
                 }
-            }
-            Err(error) => {
-                tracing::warn!(%error, "a note's picture cannot be read");
-                Vec::new()
+                Err(error) => tracing::warn!(%error, "a note's picture cannot be read"),
             }
         }
+        out
     }
 
     /// Whether a delivery is owed for the session.
@@ -277,7 +303,7 @@ impl DesignService {
                 self.run_undo(ctx, &session, &next).await?;
                 continue;
             }
-            return self.send_note(ctx, &session, &next).await;
+            return self.send_note(ctx, &session, &next, &notes).await;
         }
     }
 
@@ -286,6 +312,7 @@ impl DesignService {
         ctx: &DaemonContext,
         session: &DesignSession,
         note: &DesignNote,
+        all: &[DesignNote],
     ) -> Result<(), ArchonError> {
         if session.agent.is_none() {
             return Ok(());
@@ -293,12 +320,13 @@ impl DesignService {
         let wt = self.worktree_of(ctx, session).await?;
         let head = self.head_of(&wt)?;
         let key = format!("design:{}:{}:1", session.id, note.id);
-        let text = note_message(session, note, &head);
+        let (text, more) = note_message(session, note, &head, all);
         let asset = note
             .send_picture
             .then(|| note.before_asset.clone())
             .flatten();
-        self.owe_queue(ctx, session, key, text, asset).await?;
+        self.owe_queue_with(ctx, session, key, text, asset, more)
+            .await?;
         {
             let mut store = ctx.store.lock().await;
             store.design_note_change(

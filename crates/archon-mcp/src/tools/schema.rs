@@ -65,6 +65,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         watch_repo(),
         design_preview(),
         design_note(),
+        design_history(),
     ]
 }
 
@@ -78,6 +79,21 @@ fn design_preview() -> ToolDefinition {
         object(
             json!({"url": {"type": "string", "minLength": 1, "description": "For example http://127.0.0.1:5173/."}}),
             &["url"],
+        ),
+        false,
+    )
+}
+
+fn design_history() -> ToolDefinition {
+    define(
+        "design_history",
+        "Design history",
+        "Stage agent of a live design stage: read the chains of follow-ups of the operator's \
+         notes, each version with its words, commit, status and your reply, or only the chain \
+         of note `id`. Each follow-up is its own note: report it with `design_note`.",
+        object(
+            json!({"id": {"type": "string", "description": "A note id like D3; omit for every chain."}}),
+            &[],
         ),
         false,
     )

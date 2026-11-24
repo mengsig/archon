@@ -57,6 +57,8 @@ pub async fn add_with(
             asset: None,
             send_picture,
             details_text: details_text.map(str::to_owned),
+            follows: None,
+            refs: Vec::new(),
         })
         .await
         .expect("note added");
@@ -243,6 +245,8 @@ async fn ending_the_stage_ends_the_session_and_closes_the_browser() {
             asset: None,
             send_picture: false,
             details_text: None,
+            follows: None,
+            refs: Vec::new(),
         })
         .await;
     refused(&result, DesignRefusal::Gone);
@@ -404,6 +408,8 @@ async fn observers_see_a_summary_and_cannot_act() {
             asset: None,
             send_picture: false,
             details_text: None,
+            follows: None,
+            refs: Vec::new(),
         })
         .await;
     assert!(

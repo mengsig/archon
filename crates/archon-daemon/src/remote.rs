@@ -47,6 +47,7 @@ impl Backend for DaemonBackend {
         // Advertised only once every request it covers is served.
         if self.context().is_ok_and(|ctx| ctx.design.enabled()) {
             features.push(feature::DESIGN_SESSIONS);
+            features.push(feature::DESIGN_ITERATIONS);
         }
         features
     }

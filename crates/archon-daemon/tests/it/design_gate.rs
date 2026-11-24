@@ -208,6 +208,8 @@ async fn note_with(
             client_key: format!("key-{text}"),
             reverts: None,
             resent_from: None,
+            follows: None,
+            refs: Vec::new(),
             before_asset: before,
             created_by_device: None,
         })
@@ -1017,6 +1019,8 @@ async fn a_live_session_missing_its_change_request_gets_it_with_the_next_pump() 
         asset: None,
         send_picture: false,
         details_text: None,
+        follows: None,
+        refs: Vec::new(),
     })
     .await
     .expect("the operator's note");
@@ -1239,6 +1243,8 @@ async fn a_no_change_review_reaches_the_gate_and_is_approved() {
                 client_key: "key-fine".into(),
                 reverts: None,
                 resent_from: None,
+                follows: None,
+                refs: Vec::new(),
                 before_asset: None,
                 created_by_device: None,
             })
@@ -1298,6 +1304,8 @@ async fn a_no_change_review_with_a_change_gone_from_history_is_approved() {
                 client_key: "key-fine".into(),
                 reverts: None,
                 resent_from: None,
+                follows: None,
+                refs: Vec::new(),
                 before_asset: None,
                 created_by_device: None,
             })
@@ -1343,6 +1351,8 @@ async fn a_no_change_review_with_a_change_gone_from_history_is_approved() {
                 client_key: "key-gone".into(),
                 reverts: None,
                 resent_from: None,
+                follows: None,
+                refs: Vec::new(),
                 before_asset: None,
                 created_by_device: None,
             })

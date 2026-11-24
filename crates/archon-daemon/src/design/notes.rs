@@ -26,6 +26,8 @@ impl DesignService {
         asset: Option<DesignAssetId>,
         send_picture: bool,
         details_text: Option<String>,
+        follows: Option<String>,
+        refs: Vec<String>,
     ) -> Result<Reply, ArchonError> {
         let row = self.current(ctx, session).await?;
         let row = self.current_for_notes(ctx, &row.item).await.map(|_| row)?;
@@ -48,44 +50,70 @@ impl DesignService {
                     "a session holds at most {MAX_NOTES_PER_SESSION} notes"
                 )));
             }
-            // Only a picture this server stored for this item is accepted.
-            let stored = match &asset {
-                Some(id) => Some(store.design_asset(&row.item, id)?.ok_or_else(|| {
-                    ArchonError::Invalid(
-                        "that picture was not stored by Archon for this item".into(),
-                    )
-                })?),
+            // A repeat of a note already added is answered as it stands,
+            // whatever happened to its chain since.
+            if let Some(found) = existing.iter().find(|n| n.client_key == client_key) {
+                let id = found.id.clone();
+                drop(store);
+                return self.note_reply(ctx, &row.item, &id).await;
+            }
+            let refs = super::iterations::check_refs(refs, &existing)?;
+            let parent = match follows.as_deref() {
+                Some(follows) => {
+                    Some(super::iterations::check_follows(follows, &existing, &[])?.clone())
+                }
                 None => None,
             };
-            let target = stored.as_ref().and_then(|a| a.target.clone());
-            let kind = if target.is_some() {
-                NoteKind::Change
+            if let (Some(parent), None) = (&parent, &asset) {
+                // A follow-up with no picture of its own points where its
+                // version did and starts from that version's picture.
+                let mut new = super::iterations::follow_up(
+                    &row.item, &row.id, parent, text, client_key, refs, device,
+                );
+                new.details_text = details;
+                store.design_note_add(new)?
             } else {
-                NoteKind::Page
-            };
-            let viewport = target.as_ref().map(|t| t.viewport).unwrap_or_else(|| {
-                let (w, h) = row.viewport_preset.size();
-                Viewport {
-                    w,
-                    h,
-                    preset: row.viewport_preset,
-                }
-            });
-            store.design_note_add(NewDesignNote {
-                item: row.item.clone(),
-                session: row.id.clone(),
-                kind,
-                text,
-                details_text: details,
-                send_picture: send_picture && stored.is_some(),
-                target,
-                viewport,
-                client_key,
-                reverts: None,
-                resent_from: None,
-                before_asset: stored.map(|a| a.id),
-                created_by_device: device,
-            })?
+                // Only a picture this server stored for this item is accepted.
+                let stored = match &asset {
+                    Some(id) => Some(store.design_asset(&row.item, id)?.ok_or_else(|| {
+                        ArchonError::Invalid(
+                            "that picture was not stored by Archon for this item".into(),
+                        )
+                    })?),
+                    None => None,
+                };
+                let target = stored.as_ref().and_then(|a| a.target.clone());
+                let kind = if target.is_some() {
+                    NoteKind::Change
+                } else {
+                    NoteKind::Page
+                };
+                let viewport = target.as_ref().map(|t| t.viewport).unwrap_or_else(|| {
+                    let (w, h) = row.viewport_preset.size();
+                    Viewport {
+                        w,
+                        h,
+                        preset: row.viewport_preset,
+                    }
+                });
+                store.design_note_add(NewDesignNote {
+                    item: row.item.clone(),
+                    session: row.id.clone(),
+                    kind,
+                    text,
+                    details_text: details,
+                    send_picture: send_picture && stored.is_some(),
+                    target,
+                    viewport,
+                    client_key,
+                    reverts: None,
+                    resent_from: None,
+                    follows: parent.map(|p| p.id),
+                    refs,
+                    before_asset: stored.map(|a| a.id),
+                    created_by_device: device,
+                })?
+            }
         };
         if created {
             tracing::info!(note = %note.id, item = %note.item, device = ?super::current_device_label(), "design: note added");
@@ -333,6 +361,8 @@ impl DesignService {
                 client_key: format!("undo:{id}:{}", notes.len()),
                 reverts: Some(id.to_owned()),
                 resent_from: None,
+                follows: None,
+                refs: Vec::new(),
                 before_asset: None,
                 created_by_device: device,
             })?;
@@ -382,6 +412,8 @@ impl DesignService {
                 client_key: format!("resend:{id}:{}", session.id),
                 reverts: None,
                 resent_from: Some(id.to_owned()),
+                follows: None,
+                refs: Vec::new(),
                 before_asset: note.before_asset.clone(),
                 created_by_device: device,
             })?;
@@ -413,12 +445,13 @@ impl DesignService {
             let wt = self.worktree_of(ctx, &session).await?;
             let head = self.head_of(&wt)?;
             let key = format!("design:{}:{}:{}", session.id, note.id, delivery);
-            let text = note_message(&session, note, &head);
+            let (text, more) = note_message(&session, note, &head, &notes);
             let asset = note
                 .send_picture
                 .then(|| note.before_asset.clone())
                 .flatten();
-            self.owe_queue(ctx, &session, key, text, asset).await?;
+            self.owe_queue_with(ctx, &session, key, text, asset, more)
+                .await?;
             ctx.store.lock().await.design_note_change(
                 &session.item,
                 &note.id,

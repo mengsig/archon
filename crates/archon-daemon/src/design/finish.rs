@@ -9,7 +9,9 @@ use archon_core::design::{
     SessionState, Target, ViewportPreset, is_in_flight, undone_by,
 };
 use archon_core::error::{ArchonError, DesignRefusal};
-use archon_core::protocol::{DesignFinishView, DesignStateView, FinishCard, Reply};
+use archon_core::protocol::{
+    DesignFinishView, DesignStateView, FinishCard, FinishHistoryEntry, Reply,
+};
 use archon_design_browser as adb;
 use archon_queue::store::{FinishRecord, NoteChange};
 
@@ -474,6 +476,28 @@ impl DesignService {
         };
         let refs: Vec<&DesignNote> = all_active.iter().collect();
         let auto = archon_core::design::auto_supersession(&refs);
+        let undone = undone_by(&notes);
+        let chains = archon_core::design::chains(&notes);
+        // A card stands for its chain: the chain's earlier done versions,
+        // oldest first, are its history.
+        let history = |note: &DesignNote| -> Vec<FinishHistoryEntry> {
+            let Some(root) = chains.get(&note.id).map(|p| &p.root) else {
+                return Vec::new();
+            };
+            notes
+                .iter()
+                .filter(|n| {
+                    n.number < note.number
+                        && n.status == NoteStatus::Done
+                        && chains.get(&n.id).is_some_and(|p| &p.root == root)
+                })
+                .map(|n| FinishHistoryEntry {
+                    note: n.id.clone(),
+                    text: n.text.clone(),
+                    set_aside: undone.contains_key(&n.id),
+                })
+                .collect()
+        };
         let mut cards = Vec::new();
         for note in &all_active {
             let superseded_by = choices
@@ -508,10 +532,10 @@ impl DesignService {
                 not_found,
                 left_history: false,
                 earlier,
+                history: history(note),
             });
         }
         // Done notes whose change left the history.
-        let undone = undone_by(&notes);
         for note in &notes {
             let listed = all_active.iter().any(|a| a.id == note.id);
             if note.kind != NoteKind::Revert
@@ -533,6 +557,7 @@ impl DesignService {
                     not_found: false,
                     left_history: true,
                     earlier: note.session != row.id,
+                    history: Vec::new(),
                 });
             }
         }

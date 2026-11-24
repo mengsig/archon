@@ -64,6 +64,8 @@ pub struct NewDesignNote {
     pub client_key: String,
     pub reverts: Option<String>,
     pub resent_from: Option<String>,
+    pub follows: Option<String>,
+    pub refs: Vec<String>,
     pub before_asset: Option<DesignAssetId>,
     pub created_by_device: Option<String>,
 }
@@ -253,7 +255,7 @@ const NOTE_COLUMNS: &str = "item, id, number, session, kind, text, details_text,
     target_json, viewport_json, status, fail_reason, base_commit, commit_sha, no_change, reverts,
     resent_from, superseded_by, reply_thread_json, client_key, delivery, before_asset,
     after_asset, final_asset, final_included, captured_commit, created_by_device, created_at,
-    updated_at";
+    updated_at, follows, refs_json";
 
 fn asset_id(text: Option<String>) -> Option<DesignAssetId> {
     text.map(DesignAssetId)
@@ -271,6 +273,7 @@ fn note_row(row: &Row<'_>) -> rusqlite::Result<Result<DesignNote, ArchonError>> 
     let delivery: i64 = row.get(20)?;
     let created: String = row.get(27)?;
     let updated: String = row.get(28)?;
+    let refs: String = row.get(30)?;
     let build = || -> Result<DesignNote, ArchonError> {
         fn ctx<T>(r: rusqlite::Result<T>) -> Result<T, ArchonError> {
             r.ctx("read design note")
@@ -293,6 +296,8 @@ fn note_row(row: &Row<'_>) -> rusqlite::Result<Result<DesignNote, ArchonError>> 
             no_change: ctx(row.get(14))?,
             reverts: ctx(row.get(15))?,
             resent_from: ctx(row.get(16))?,
+            follows: ctx(row.get(29))?,
+            refs: from_json(&refs, "note refs")?,
             superseded_by: ctx(row.get(17))?,
             thread: from_json(&thread, "note thread")?,
             client_key: ctx(row.get(19))?,
@@ -779,9 +784,10 @@ impl Store {
         tx.execute(
             "INSERT INTO design_notes (item, id, number, session, kind, text, details_text,
                  send_picture, target_json, viewport_json, status, reply_thread_json, client_key,
-                 reverts, resent_from, before_asset, created_by_device, created_at, updated_at)
+                 reverts, resent_from, before_asset, created_by_device, created_at, updated_at,
+                 follows, refs_json)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'queued', '[]', ?11, ?12, ?13,
-                 ?14, ?15, ?16, ?16)",
+                 ?14, ?15, ?16, ?16, ?17, ?18)",
             params![
                 new.item.as_str(),
                 id,
@@ -804,6 +810,8 @@ impl Store {
                 new.before_asset.as_ref().map(|a| a.0.clone()),
                 new.created_by_device,
                 at,
+                new.follows,
+                to_json(&new.refs, "note refs")?,
             ],
         )
         .ctx("insert design note")?;

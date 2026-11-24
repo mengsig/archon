@@ -73,7 +73,11 @@ use crate::steer::Steer;
 /// graph, run plans and GitHub links; `archon-web` may still speak 23.
 /// 25: live design sessions (`design_*` requests, `subscribe_design`, the
 /// `design` frame); an older archond knows none of them.
-pub const PROTOCOL_VERSION: u32 = 25;
+/// 26: design iterations (feature `design_iterations`): `design_note_add`
+/// may carry `follows` and `refs`, `design_note_continue_from` and
+/// `design_history`; note views and finish cards gain defaulted fields, so
+/// a client at 23 to 25 reads follow-ups as plain notes.
+pub const PROTOCOL_VERSION: u32 = 26;
 
 /// The oldest protocol archond accepts from `archon-web`; every other client
 /// ships in archond's own binary and must match exactly.
@@ -96,8 +100,8 @@ mod v25_tests;
 use crate::design::{DesignAssetId, DesignSessionId, Rect, SessionState, ViewportPreset};
 pub use design::{
     AgentNoteStatus, BrowserStatus, DesignAssetView, DesignEvent, DesignFinishView, DesignNoteView,
-    DesignResolvedView, DesignStateView, FinishCard, InputEvent, KeyAction, MouseAction,
-    MouseButton, TouchAction, TouchPoint,
+    DesignResolvedView, DesignStateView, FinishCard, FinishHistoryEntry, InputEvent, KeyAction,
+    MouseAction, MouseButton, TouchAction, TouchPoint,
 };
 
 pub use changes::{
@@ -127,8 +131,9 @@ pub mod feature {
     pub const GITHUB_IMPORT: &str = "github_import";
     pub const DEVICE_ROLES: &str = "device_roles";
     pub const DESIGN_SESSIONS: &str = "design_sessions";
-    /// Every feature protocol 25 defines.
-    pub const ALL: [&str; 10] = [
+    pub const DESIGN_ITERATIONS: &str = "design_iterations";
+    /// Every feature protocol 26 defines.
+    pub const ALL: [&str; 11] = [
         CHANGES,
         TASK_GRAPH,
         RUN_PLAN,
@@ -139,6 +144,7 @@ pub mod feature {
         GITHUB_IMPORT,
         DEVICE_ROLES,
         DESIGN_SESSIONS,
+        DESIGN_ITERATIONS,
     ];
 }
 
@@ -186,16 +192,19 @@ pub fn negotiate(
         features.iter().all(|f| feature::ALL.contains(f)),
         "archond advertises only features protocol {PROTOCOL_VERSION} defines: {features:?}"
     );
-    // A client at 24 knows protocol 24's features and none of 25's.
-    let features = match protocol_version {
-        PROTOCOL_VERSION => features.iter().map(|f| (*f).to_owned()).collect(),
-        FIRST_FEATURE_PROTOCOL_VERSION => features
-            .iter()
-            .filter(|f| **f != feature::DESIGN_SESSIONS)
-            .map(|f| (*f).to_owned())
-            .collect(),
-        _ => Vec::new(),
+    // A client knows the features of its own protocol and none of a later
+    // one's: 24 none of 25's design sessions, 25 none of 26's iterations.
+    let later: &[&str] = match protocol_version {
+        PROTOCOL_VERSION => &[],
+        25 => &[feature::DESIGN_ITERATIONS],
+        FIRST_FEATURE_PROTOCOL_VERSION => &[feature::DESIGN_SESSIONS, feature::DESIGN_ITERATIONS],
+        _ => &feature::ALL,
     };
+    let features = features
+        .iter()
+        .filter(|f| !later.contains(f))
+        .map(|f| (*f).to_owned())
+        .collect();
     Ok(Welcome {
         protocol_version,
         daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -891,6 +900,24 @@ pub enum Request {
         asset: Option<DesignAssetId>,
         send_picture: bool,
         details_text: Option<String>,
+        /// For a follow-up, the version of its chain it continues from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        follows: Option<String>,
+        /// Earlier notes it references.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        refs: Vec<String>,
+    },
+    /// Continue a chain from one of its versions: revert the newer versions
+    /// in the code, newest first, then queue the follow-up `text` if given.
+    DesignNoteContinueFrom {
+        item: QueueItemId,
+        id: String,
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        client_key: Option<String>,
+        #[serde(default)]
+        refs: Vec<String>,
     },
     /// Change a queued note's text.
     DesignNoteEdit {
@@ -977,6 +1004,13 @@ pub enum Request {
         /// replayed for the after picture, and a repeated `done` retakes it.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         steps: Vec<crate::design::UiStep>,
+        /// Aether's out-of-band MCP caller identity, never a tool argument.
+        caller: Option<AetherAgentId>,
+    },
+    /// A stage agent reads the history of a note's chain, or every chain.
+    DesignHistory {
+        #[serde(default)]
+        id: Option<String>,
         /// Aether's out-of-band MCP caller identity, never a tool argument.
         caller: Option<AetherAgentId>,
     },
@@ -1087,6 +1121,7 @@ impl Request {
             | Self::DesignNoteReply { .. }
             | Self::DesignNoteDrop { .. }
             | Self::DesignNoteUndo { .. }
+            | Self::DesignNoteContinueFrom { .. }
             | Self::DesignNoteResend { .. }
             | Self::DesignFinishCapture { .. }
             | Self::DesignFinalCapture { .. }
@@ -1107,6 +1142,7 @@ impl Request {
             | Self::PublishArtifact { .. }
             | Self::DesignPreview { .. }
             | Self::DesignNoteReport { .. }
+            | Self::DesignHistory { .. }
             | Self::SubmitVerdict { .. }
             | Self::ApproveIntent(_)
             | Self::Enqueue(_)

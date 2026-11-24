@@ -34,6 +34,8 @@ async fn pick(f: &Fixture, key: &str, text: &str) -> DesignNote {
             asset: Some(asset),
             send_picture: false,
             details_text: None,
+            follows: None,
+            refs: Vec::new(),
         })
         .await
         .expect("note added")
@@ -370,6 +372,8 @@ async fn the_operators_sketch_is_not_replaced_by_a_retaken_before_picture() {
             asset: Some(uploaded.clone()),
             send_picture: true,
             details_text: None,
+            follows: None,
+            refs: Vec::new(),
         })
         .await
         .expect("note added")

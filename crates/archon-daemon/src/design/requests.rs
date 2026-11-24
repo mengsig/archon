@@ -187,6 +187,8 @@ pub(crate) async fn handle(
             asset,
             send_picture,
             details_text,
+            follows,
+            refs,
         } => {
             service
                 .note_add(
@@ -197,7 +199,20 @@ pub(crate) async fn handle(
                     asset,
                     send_picture,
                     details_text,
+                    follows,
+                    refs,
                 )
+                .await
+        }
+        Request::DesignNoteContinueFrom {
+            item,
+            id,
+            text,
+            client_key,
+            refs,
+        } => {
+            service
+                .note_continue_from(ctx, &item, &id, text, client_key, refs)
                 .await
         }
         Request::DesignNoteEdit { item, id, text } => {
@@ -266,6 +281,9 @@ pub(crate) async fn handle(
                 steps,
             };
             service.note_report(ctx, report, caller.as_ref()).await
+        }
+        Request::DesignHistory { id, caller } => {
+            service.history(ctx, id.as_deref(), caller.as_ref()).await
         }
         other => Err(ArchonError::Invalid(format!(
             "not a design request: {other:?}"

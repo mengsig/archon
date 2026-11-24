@@ -146,6 +146,7 @@ fn operator_changes(request: &Request) -> bool {
             | R::DesignNoteReply { .. }
             | R::DesignNoteDrop { .. }
             | R::DesignNoteUndo { .. }
+            | R::DesignNoteContinueFrom { .. }
             | R::DesignNoteResend { .. }
             | R::DesignFinishCapture { .. }
             | R::DesignFinalCapture { .. }

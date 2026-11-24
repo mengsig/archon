@@ -267,12 +267,22 @@ fn ledger_notes(
     let choices: Option<&FinishChoices> = carried.as_ref();
     let head = session.finish_head.clone().unwrap_or_default();
     let all = store.design_notes(item)?;
+    let chains = archon_core::design::chains(&all);
+    let undone = archon_core::design::undone_by(&all);
     let mut out = Vec::new();
     for note in active.iter().filter(|n| !n.no_change) {
+        // A chain's final version carries the words of its earlier done
+        // versions still in the code, in order.
+        let root = chains.get(&note.id).map(|p| p.root.as_str());
         let mut earlier: Vec<&DesignNote> = all
             .iter()
             .filter(|n| {
-                n.superseded_by.as_deref() == Some(note.id.as_str())
+                (root.is_some()
+                    && n.number < note.number
+                    && n.status == NoteStatus::Done
+                    && !undone.contains_key(&n.id)
+                    && chains.get(&n.id).map(|p| p.root.as_str()) == root)
+                    || n.superseded_by.as_deref() == Some(note.id.as_str())
                     || choices
                         .and_then(|c| c.superseded.get(&n.id))
                         .is_some_and(|by| by.as_deref() == Some(note.id.as_str()))
@@ -913,6 +923,8 @@ mod tests {
             no_change: false,
             reverts: None,
             resent_from: None,
+            follows: None,
+            refs: Vec::new(),
             superseded_by: None,
             thread: Vec::new(),
             client_key: String::new(),

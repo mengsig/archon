@@ -6,18 +6,36 @@ use archon_core::protocol::Request;
 use serde_json::{Map, Value};
 
 /// The whole question text for `action`, observed as `before`.
-pub(super) fn question(action: &Request, before: &Value, channel: &OperatorChannel) -> String {
-    let (title, lines) = describe(action, before);
-    let mut text = title;
+pub(super) fn question(
+    action: &Request,
+    before: &Value,
+    channel: &OperatorChannel,
+) -> Result<String, serde_json::Error> {
+    let (title, lines) = describe(serde_json::to_value(action)?, before);
+    let mut text = display_line(&title);
     for line in lines {
         text.push_str("\n- ");
-        text.push_str(&line);
+        text.push_str(&display_line(&line));
     }
-    text.push_str(&format!("\n{}", origin(channel)));
+    text.push_str(&format!("\n{}", display_line(&origin(channel))));
     text.push_str(
         "\nReply yes or no (or /answer N yes). A bare reply counts only as your next message, while this is the only open confirmation.",
     );
-    text
+    Ok(text)
+}
+
+fn display_line(line: &str) -> String {
+    let mut display = String::with_capacity(line.len());
+    for ch in line.chars() {
+        if ch.is_control()
+            || matches!(ch, '\u{061c}' | '\u{200e}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        {
+            display.extend(ch.escape_unicode());
+        } else {
+            display.push(ch);
+        }
+    }
+    display
 }
 
 fn origin(channel: &OperatorChannel) -> String {
@@ -32,8 +50,7 @@ fn origin(channel: &OperatorChannel) -> String {
     }
 }
 
-fn describe(action: &Request, before: &Value) -> (String, Vec<String>) {
-    let mut value = serde_json::to_value(action).unwrap_or(Value::Null);
+fn describe(mut value: Value, before: &Value) -> (String, Vec<String>) {
     let cmd = value
         .get("cmd")
         .and_then(Value::as_str)
@@ -296,9 +313,7 @@ fn changed_lines(old: &Value, new: &Value) -> Vec<String> {
 fn list(fields: &Map<String, Value>, skip: &[&str]) -> Vec<String> {
     fields
         .iter()
-        .filter(|(k, v)| {
-            !skip.contains(&k.as_str()) && !v.is_null() && *v != "keep" && *v != &Value::Bool(false)
-        })
+        .filter(|(k, v)| !skip.contains(&k.as_str()) && !v.is_null())
         .map(|(k, v)| format!("{}: {}", label(k), plain(k, v)))
         .collect()
 }
@@ -367,6 +382,29 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn question(action: &Request, before: &Value, channel: &OperatorChannel) -> String {
+        super::question(action, before, channel).unwrap()
+    }
+
+    #[test]
+    fn directive_values_stay_visible_within_one_confirmation_line() {
+        for (value, displayed) in [("keep", "keep"), ("first\nsecond", "first\\u{a}second")] {
+            let action: Request =
+                serde_json::from_value(json!({"cmd":"set_directive","text":value})).unwrap();
+            let text = question(&action, &Value::Null, &chat());
+            assert!(
+                text.lines()
+                    .any(|line| line == format!("- Text: {displayed}"))
+            );
+            assert_eq!(
+                text.lines()
+                    .filter(|line| line.starts_with("- Text: "))
+                    .count(),
+                1
+            );
+        }
+    }
 
     fn chat() -> OperatorChannel {
         OperatorChannel::ArchonChat

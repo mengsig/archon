@@ -70,7 +70,7 @@ pub(super) async fn ask(
     before: Value,
 ) -> Result<Reply, ArchonError> {
     let now = archon_core::now();
-    let text = super::describe::question(&action, &before, &evidence.channel);
+    let text = super::describe::question(&action, &before, &evidence.channel)?;
     let question = Question {
         id: QuestionId::new(),
         number: 0,

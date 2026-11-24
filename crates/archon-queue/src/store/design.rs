@@ -1121,14 +1121,14 @@ impl Store {
 }
 
 fn check_note_capacity(tx: &Connection, session: &DesignSessionId) -> Result<(), ArchonError> {
-    let count: usize = tx
+    let count: i64 = tx
         .query_row(
             "SELECT COUNT(*) FROM design_notes WHERE session = ?1",
             [session.as_str()],
             |r| r.get(0),
         )
         .ctx("count design notes")?;
-    if count >= MAX_NOTES_PER_SESSION {
+    if count >= MAX_NOTES_PER_SESSION as i64 {
         return Err(ArchonError::Invalid(format!(
             "a session holds at most {MAX_NOTES_PER_SESSION} notes"
         )));

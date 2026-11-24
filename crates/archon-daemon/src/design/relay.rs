@@ -177,12 +177,12 @@ impl FrameWindow {
         frames: &mpsc::Sender<ServerFrame>,
     ) -> Result<(), ()> {
         tokio::time::sleep_until((self.last_sent + FRAME_GAP).into()).await;
-        if self.sent > 0 {
-            // A slow subscriber resumes at the newest frame after ACK_WAIT.
-            match tokio::time::timeout(ACK_WAIT, ack.wait_for(|seq| *seq >= self.sent)).await {
-                Ok(Err(_closed)) => return Err(()),
-                Ok(Ok(_)) | Err(_) => {}
-            }
+        // A slow subscriber resumes at the newest frame after ACK_WAIT.
+        if self.sent > 0
+            && let Ok(Err(_closed)) =
+                tokio::time::timeout(ACK_WAIT, ack.wait_for(|seq| *seq >= self.sent)).await
+        {
+            return Err(());
         }
         let Some(frame) = live.borrow_and_update().clone() else {
             return Ok(());

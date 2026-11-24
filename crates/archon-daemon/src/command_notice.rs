@@ -85,7 +85,7 @@ pub(crate) async fn show_level(
     if client.serves_conversation() {
         // A post carries no level, so its line leads with the word instead.
         let line = note_line(label, level, text, false);
-        feed::system(ctx, line).await?;
+        feed::command_result(ctx, line, text).await?;
         return Ok(Shown::InFeed);
     }
     let welcome = client.welcome();

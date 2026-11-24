@@ -89,6 +89,7 @@ fn feed_item(seq: u64) -> FeedItem {
         at: archon_core::now(),
         entry: FeedEntry::System {
             command_id: None,
+            command_result: None,
             text: format!("item {seq}"),
         },
     }

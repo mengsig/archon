@@ -191,9 +191,9 @@ pub(crate) async fn handle(
     };
     match request {
         Request::DesignGet { item } => service.state_view(ctx, &item).await,
-        Request::SubscribeDesign { .. } => Err(ArchonError::Invalid(
-            "subscribe_design is served by the connection".into(),
-        )),
+        Request::SubscribeDesign { .. } | Request::DesignUnsubscribe { .. } => Err(
+            ArchonError::Invalid("design subscriptions are managed by their connection".into()),
+        ),
         Request::DesignAsset { item, id } => service.asset_view(ctx, &item, &id).await,
         Request::DesignFrameAck { .. } => Err(ArchonError::Invalid(
             "design_frame_ack is served by the design subscription's connection".into(),

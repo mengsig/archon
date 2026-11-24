@@ -230,6 +230,8 @@ the CLI's does. For example, `/archon apply {"cmd":"set_directive",
 "text":"docs fixes only","expires_in_hours":null}` sets a directive and
 `/archon apply {"cmd":"clear_directive","directive":null}` clears them.
 
+A paired operator can include a unique `command_id` on a host command sent through `say`. The operator feed entry, its transcript echo and its terminal system result carry that ID. The system entry’s `command_result` gives the outcome whether Aether is connected or offline.
+
 An observer only reads: the listener refuses its `say` and `answer` before
 archond sees them. Behind that, archond still gives an observer's requests
 the Aether app's standing (`archon-web`), whose relayed lines go out marked
@@ -277,6 +279,7 @@ which are logged at debug and counted per session in the end-of-session log.
 | --- | --- |
 | `design_get {item}` | Replies `design_state {item, session, notes, …}`; an observer gets `design_summary {state, note_count}` only. |
 | `subscribe_design {session}` | Replies `subscribed {id}` and streams `design` frames carrying `sub: id`; counts toward the 4 subscriptions. |
+| `design_unsubscribe {sub}` | With feature `design_unsubscribe`, closes this socket’s design stream and releases its subscription slot. Older daemons release it when the socket closes. |
 | `design_frame_ack {sub, seq}` | Flow control; the next frame is sent only after it. |
 | `design_input {session, events}` | `mouse`, `wheel`, `key`, `text` and `touch` events in CSS pixels; at most 64 per request, 60 requests a second. |
 | `design_resolve {session, x, y, depth, select}` / `design_region {session, box}` | The element under a point, or a region; with `select` also captures the crop as a pending picture. |

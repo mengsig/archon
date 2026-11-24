@@ -138,9 +138,10 @@ pub mod feature {
     pub const DEVICE_ROLES: &str = "device_roles";
     pub const ENQUEUE_ADVICE: &str = "enqueue_advice";
     pub const DESIGN_SESSIONS: &str = "design_sessions";
+    pub const DESIGN_UNSUBSCRIBE: &str = "design_unsubscribe";
     pub const DESIGN_ITERATIONS: &str = "design_iterations";
     /// Every feature protocol 26 defines.
-    pub const ALL: [&str; 12] = [
+    pub const ALL: [&str; 13] = [
         CHANGES,
         TASK_GRAPH,
         RUN_PLAN,
@@ -153,6 +154,7 @@ pub mod feature {
         ENQUEUE_ADVICE,
         DESIGN_SESSIONS,
         DESIGN_ITERATIONS,
+        DESIGN_UNSUBSCRIBE,
     ];
 }
 
@@ -204,7 +206,7 @@ pub fn negotiate(
         .iter()
         .filter(|f| {
             let introduced = match **f {
-                feature::DESIGN_SESSIONS => DESIGN_PROTOCOL_VERSION,
+                feature::DESIGN_SESSIONS | feature::DESIGN_UNSUBSCRIBE => DESIGN_PROTOCOL_VERSION,
                 feature::DESIGN_ITERATIONS => DESIGN_ITERATIONS_PROTOCOL_VERSION,
                 _ => FIRST_FEATURE_PROTOCOL_VERSION,
             };
@@ -846,6 +848,10 @@ pub enum Request {
     SubscribeDesign {
         session: DesignSessionId,
     },
+    /// Release a design subscription on the connection that created it.
+    DesignUnsubscribe {
+        sub: u64,
+    },
     /// One stored design picture.
     DesignAsset {
         item: QueueItemId,
@@ -1063,6 +1069,7 @@ impl Request {
             Self::DesignGet { .. }
             | Self::SubscribeDesign { .. }
             | Self::DesignAsset { .. }
+            | Self::DesignUnsubscribe { .. }
             | Self::DesignFrameAck { .. }
             | Self::DesignInput { .. }
             | Self::DesignResolve { .. }
@@ -1177,6 +1184,7 @@ impl Request {
             | Self::ConfigureRemote { .. }
             | Self::RemotePair { .. }
             | Self::RemoteRevoke { .. }
+            | Self::DesignUnsubscribe { .. }
             | Self::DesignFrameAck { .. }
             | Self::DesignInput { .. }
             | Self::DesignResolve { .. }

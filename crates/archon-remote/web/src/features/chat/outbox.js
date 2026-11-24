@@ -1,4 +1,4 @@
-import { entryKey, echoedLine } from '../../core/conversation.js';
+import { entryKey, echoedLine, commandEchoId } from '../../core/conversation.js';
 
 // Chat lines sent from here, until the orchestrator reads them and the
 // conversation shows them. The outcome of each send (offline, refused) stays
@@ -35,8 +35,9 @@ export function removePending(store, localId) {
   store.set({ outbox: store.get().outbox.filter((e) => e.localId !== localId) });
 }
 
-// Fresh operator entries, and archond's posts of commands it ran, replace the
-// oldest pending send with the same text that began before them.
+// Host commands are consumed by archond and echoed as posts. Only ordinary chat
+// is relayed to the orchestrator and matched by transcript sequence and text.
+const hostCommand = /^\/(answer|approve|reject|merge|archon|upgrade|update|watch|a)(?:\s|$)/i;
 export function matchEchoes(store, fresh) {
   if (!Array.isArray(fresh)) throw new TypeError('matchEchoes needs the fresh conversation entries');
   let { outbox, chatNotes } = store.get();
@@ -45,7 +46,9 @@ export function matchEchoes(store, fresh) {
     const line = echoedLine(item);
     if (line === null) continue;
     const text = line.trim();
-    const at = outbox.findIndex((e) => item.seq > e.after && e.text.trim() === text);
+    const id = commandEchoId(item);
+    const at = id ? outbox.findIndex((e) => e.localId === id)
+      : outbox.findIndex((e) => item.kind === 'operator' && !hostCommand.test(text) && item.seq > e.after && e.text.trim() === text);
     if (at < 0) continue;
     const entry = outbox[at];
     outbox = outbox.filter((_, i) => i !== at);
@@ -64,8 +67,11 @@ export function commandOutcome(feed, pending) {
     const entry = item.entry;
     if (entry?.entry !== 'system' || entry.command_id !== pending.localId || typeof entry.text !== 'string') continue;
     const line = entry.text.trim();
-    if (!line.startsWith('Operator command')) { if (line) lines.push(line); continue; }
-    const result = line.startsWith('Operator command: ') ? line.slice('Operator command: '.length).trim() : line;
+    const result = entry.command_result;
+    if (typeof result !== 'string' || !result.trim()) {
+      if (line) lines.push(line);
+      continue;
+    }
     const question = /\bQ(\d+)\b/.exec(/^Awaiting your confirmation/.test(result) ? result : '')?.[0] ?? null;
     return { lines: [...lines, result].filter(Boolean), question };
   }

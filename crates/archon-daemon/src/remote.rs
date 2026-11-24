@@ -48,6 +48,7 @@ impl Backend for DaemonBackend {
         if self.context().is_ok_and(|ctx| ctx.design.enabled()) {
             features.push(feature::DESIGN_SESSIONS);
             features.push(feature::DESIGN_ITERATIONS);
+            features.push(feature::DESIGN_UNSUBSCRIBE);
         }
         features
     }

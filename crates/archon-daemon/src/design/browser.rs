@@ -113,6 +113,7 @@ pub trait PreviewBrowser: Send + Sync {
     }
     fn events(&self) -> broadcast::Receiver<adb::BrowserEvent>;
     fn rss_bytes(&self) -> Option<u64>;
+    fn terminate(&self) -> std::io::Result<()>;
     async fn close(&self);
 }
 
@@ -344,6 +345,12 @@ impl PreviewBrowser for Real {
     }
     fn rss_bytes(&self) -> Option<u64> {
         self.get().ok().and_then(|b| b.rss_bytes())
+    }
+    fn terminate(&self) -> std::io::Result<()> {
+        let Some((pid, started)) = self.pid().zip(self.started_at()) else {
+            return Ok(());
+        };
+        adb::kill_if_matches(pid, started).map(drop)
     }
     async fn close(&self) {
         let taken = self.inner.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -821,6 +828,7 @@ impl DesignService {
                     .browser
                     .as_ref()
                     .is_some_and(|b| Arc::ptr_eq(b, &browser))
+                    || state.containment.is_some()
                     || browser.containment_reason().is_some()
                 {
                     break;
@@ -1115,9 +1123,13 @@ async fn end_for_containment(
     rt: &Runtime,
     reason: &str,
 ) {
-    rt.frames.send_replace(None);
     let reason = format!("{CONTAINMENT_END}: {reason}");
-    rt.st().containment = Some(reason.clone());
+    {
+        let mut state = rt.st();
+        state.containment = Some(reason.clone());
+        rt.frames.send_replace(None);
+    }
+    ctx.design.stop_browser(session, &reason, false).await;
     tracing::warn!(%session, %reason, "design: preview terminated");
     let result = async {
         let Some(row) = ctx.store.lock().await.design_session(session)? else {
@@ -1194,6 +1206,9 @@ impl DesignService {
         }
         let rss = browser.rss_bytes();
         if memory_limit_reached(rss, &mut rt.st().rss_over_since, Instant::now()) {
+            if let Err(error) = browser.terminate() {
+                tracing::error!(%session, %error, "signalling the over-budget preview failed; closing it");
+            }
             self.memory_stop(ctx, session, rt, rss).await;
             return false;
         }

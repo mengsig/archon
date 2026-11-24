@@ -268,6 +268,7 @@ pub(super) fn save_scored(
         FeedEntry::System {
             text,
             command_id: None,
+            command_result: None,
         },
         at,
     )?;

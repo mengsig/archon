@@ -178,6 +178,11 @@ class Transport {
     const ended = err?.code === 'internal' || ENDED_SUBSCRIPTION.test(this.closeReason);
     if (!ended || this.current !== 'open' || !this.ws) return;
     this.on.protocolError(new DaemonError(err?.code ?? 'internal', `${this.closeReason}; reconnecting`));
+    this.resubscribe();
+  }
+
+  resubscribe() {
+    if (this.current !== 'open' || !this.ws || this.restarting) return;
     this.restarting = true;
     this.ws.close(CLOSE_RESUBSCRIBE, 'resubscribe');
   }

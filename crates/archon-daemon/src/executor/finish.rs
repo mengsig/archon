@@ -419,6 +419,7 @@ pub(super) async fn remove_worktree(
         FeedEntry::System {
             text,
             command_id: None,
+            command_result: None,
         },
     )
     .await?;

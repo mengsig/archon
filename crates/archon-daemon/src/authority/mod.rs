@@ -76,6 +76,7 @@ pub(crate) async fn socket_settings(
             text: crate::operator_sentence::request_sentence(&action),
             images: Vec::new(),
             local: true,
+            command_id: None,
         },
     )
     .await?;

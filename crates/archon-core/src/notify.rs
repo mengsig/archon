@@ -176,6 +176,8 @@ pub enum FeedEntry {
         /// conversation gets it as a post.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         local: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command_id: Option<String>,
     },
     /// Final text of an orchestrator turn that answered the operator.
     Orchestrator {
@@ -199,6 +201,8 @@ pub enum FeedEntry {
     /// Daemon-level notices: start/stop, orchestrator restarted, caps hit.
     System {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command_result: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         command_id: Option<String>,
     },
@@ -249,6 +253,7 @@ mod tests {
             text: "/status".into(),
             images: Vec::new(),
             local: true,
+            command_id: None,
         };
         let wire = serde_json::to_value(&local).unwrap();
         assert_eq!(wire["local"], true);

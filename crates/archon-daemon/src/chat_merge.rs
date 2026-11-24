@@ -121,6 +121,16 @@ async fn apply(
     match operator_merge::merge_now(ctx, &item, authority, command.ignore_checks).await {
         Ok(merge) => {
             assert_eq!(merge.item, item, "the item named was merged");
+            let result = match &merge.state {
+                archon_core::merge::MergeState::Refused { reason } => {
+                    format!("Merge refused: {reason}")
+                }
+                state => format!(
+                    "Merge request for {item}: {}.",
+                    state.kind().replace('_', " ")
+                ),
+            };
+            feed::paired_command_result(ctx, &result).await?;
             Ok(None)
         }
         Err(error) if error.is_store() => Err(error),
@@ -136,7 +146,7 @@ async fn refused(ctx: &DaemonContext, why: &str) -> Result<(), ArchonError> {
     if shown != Shown::InFeed {
         let note =
             format!("A `/merge` sent in the orchestrator's Aether chat was not applied: {why}");
-        feed::system(ctx, clip(&note, 2 * MAX_NEWS_CHARS)).await?;
+        feed::command_result(ctx, clip(&note, 2 * MAX_NEWS_CHARS), why).await?;
     }
     let news = TriggerEvent::ChatMergeRefused {
         text: clip(why, MAX_NEWS_CHARS),

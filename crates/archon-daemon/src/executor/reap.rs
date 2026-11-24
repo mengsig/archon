@@ -64,6 +64,7 @@ pub(super) async fn stage_end(
         FeedEntry::System {
             text,
             command_id: None,
+            command_result: None,
         },
     )
     .await?;
@@ -92,6 +93,7 @@ pub(super) async fn run_end(ctx: &DaemonContext, tree: &Path) -> Result<FollowUp
         FeedEntry::System {
             text,
             command_id: None,
+            command_result: None,
         },
     )
     .await?;

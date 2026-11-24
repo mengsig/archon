@@ -315,6 +315,7 @@ mod tests {
                 text: "add caching".into(),
                 images: Vec::new(),
                 local: false,
+                command_id: None,
             }),
             false,
         );
@@ -339,6 +340,7 @@ mod tests {
             text: "what is this?".into(),
             images: vec![shot.clone()],
             local: false,
+            command_id: None,
         });
         let rendered = render_feed_item(&line, false).unwrap();
         assert_eq!(head(&rendered), "you  what is this?");
@@ -347,6 +349,7 @@ mod tests {
             text: String::new(),
             images: vec![shot],
             local: false,
+            command_id: None,
         });
         let rendered = render_feed_item(&only, false).unwrap();
         assert_eq!(head(&rendered), "you  [image: shot.png, 1.5 KB]");
@@ -449,6 +452,7 @@ mod tests {
         assert!(rendered.lines().nth(1).unwrap().trim() == "http://127.0.0.1:4000/s/abc");
         let system = item(FeedEntry::System {
             command_id: None,
+            command_result: None,
             text: "Aether reconnected".into(),
         });
         assert_eq!(

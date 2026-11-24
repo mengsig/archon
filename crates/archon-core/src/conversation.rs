@@ -13,7 +13,16 @@ pub const OPERATOR_POST_LABEL: &str = "**Operator:** ";
 /// The operator line a post carries, when it is one archond ran itself.
 pub fn operator_line(entry: &ConversationEntry) -> Option<&str> {
     match entry.kind {
-        EntryKind::Post => entry.text.strip_prefix(OPERATOR_POST_LABEL),
+        EntryKind::Post => entry.text.strip_prefix(OPERATOR_POST_LABEL).or_else(|| {
+            let (id, text) = entry
+                .text
+                .strip_prefix("**Operator (")?
+                .split_once("):** ")?;
+            (!id.is_empty()
+                && id.len() <= 64
+                && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+            .then_some(text)
+        }),
         _ => None,
     }
 }

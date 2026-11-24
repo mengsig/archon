@@ -43,6 +43,12 @@ enum Ended {
     Violation(CloseCode, &'static str),
 }
 
+struct DesignControl {
+    ack: watch::Sender<u64>,
+    task: tokio::task::AbortHandle,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+
 struct Session {
     backend: Arc<dyn Backend>,
     /// The listener's state, to see a revoke before each request runs.
@@ -59,7 +65,7 @@ struct Session {
     subscriptions: u64,
     /// One permit per live subscription, given back when its stream ends.
     live_subscriptions: Arc<Semaphore>,
-    design_acks: BTreeMap<u64, watch::Sender<u64>>,
+    design_streams: BTreeMap<u64, DesignControl>,
 }
 
 pub async fn carry<S>(
@@ -87,7 +93,7 @@ pub async fn carry<S>(
         tasks: JoinSet::new(),
         subscriptions: 0,
         live_subscriptions: Arc::new(Semaphore::new(MAX_SUBSCRIPTIONS)),
-        design_acks: BTreeMap::new(),
+        design_streams: BTreeMap::new(),
     };
     let ended = match greet(&mut socket, &mut registration, &mut session).await {
         Ok(()) => run(&mut socket, &mut session, &mut frames, &mut registration).await,
@@ -225,11 +231,9 @@ where
 /// always wins the select cannot pile them up.
 fn reap(tasks: &mut JoinSet<()>) {
     while let Some(done) = tasks.try_join_next() {
-        if let Err(error) = done {
-            assert!(
-                !error.is_cancelled(),
-                "session tasks are only aborted once it ends"
-            );
+        if let Err(error) = done
+            && error.is_panic()
+        {
             tracing::error!(%error, "a remote request task panicked");
         }
     }
@@ -302,6 +306,12 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
             },
         );
     }
+    if let Request::DesignUnsubscribe { sub } = request {
+        if let Some(control) = session.design_streams.remove(&sub) {
+            control.task.abort();
+        }
+        return queue(session, design_done(id));
+    }
     if let Request::DesignFrameAck { sub, seq } = request {
         return acknowledge_design(session, id, sub, seq);
     }
@@ -340,8 +350,8 @@ fn acknowledge_design(session: &Session, id: u64, sub: u64, seq: u64) -> Result<
         session.device.role,
         archon_core::protocol::DeviceRole::Operator
     );
-    if let Some(sender) = session.design_acks.get(&sub) {
-        sender.send_if_modified(|last| {
+    if let Some(control) = session.design_streams.get(&sub) {
+        control.ack.send_if_modified(|last| {
             if seq <= *last {
                 return false;
             }
@@ -350,13 +360,14 @@ fn acknowledge_design(session: &Session, id: u64, sub: u64, seq: u64) -> Result<
         });
         tracing::debug!(device = %session.device.id, sub, seq, "design: frame acknowledged");
     }
-    queue(
-        session,
-        ServerFrame::Reply {
-            id,
-            result: Ok(Reply::DesignDone),
-        },
-    )
+    queue(session, design_done(id))
+}
+
+fn design_done(id: u64) -> ServerFrame {
+    ServerFrame::Reply {
+        id,
+        result: Ok(Reply::DesignDone),
+    }
 }
 
 /// What a subscription streams.
@@ -373,6 +384,7 @@ fn subscribe(
     stream: Stream,
     after: Option<u64>,
 ) -> Result<(), Ended> {
+    session.design_streams.retain(|_, c| !c.task.is_finished());
     let Ok(live) = session.live_subscriptions.clone().try_acquire_owned() else {
         let message = format!("at most {MAX_SUBSCRIPTIONS} live subscriptions per connection");
         return queue(
@@ -397,20 +409,25 @@ fn subscribe(
             });
         }
         Stream::Design(design) => {
-            session.design_acks.retain(|_, sender| !sender.is_closed());
             let (ack, acked) = watch::channel(0);
-            let previous = session.design_acks.insert(sub, ack);
-            assert!(previous.is_none(), "subscription ids are never reused");
             let subscription = DesignSubscription {
                 id: sub,
                 request: id,
                 session: design,
                 device: session.device.clone(),
             };
-            session.tasks.spawn(async move {
+            let task = session.tasks.spawn(async move {
                 backend.design(subscription, acked, outbox).await;
-                drop(live);
             });
+            let previous = session.design_streams.insert(
+                sub,
+                DesignControl {
+                    ack,
+                    task,
+                    _permit: live,
+                },
+            );
+            assert!(previous.is_none(), "subscription ids are never reused");
         }
         Stream::Changes => {
             let subscription = ChangeSubscription {

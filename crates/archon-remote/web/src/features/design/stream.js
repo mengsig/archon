@@ -21,7 +21,22 @@ export function createDesignStream({
   let started = false;
   let pending = null; // the one subscribe in flight: {session, promise}
 
-  function detach() {
+  function release(id, socket) {
+    if (!wasOpen || ctx.transport?.ws !== socket) return;
+    if (!ctx.store.get().designUnsubscribe) {
+      // Older preview daemons release their subscriptions on disconnect.
+      ctx.transport?.resubscribe();
+      return;
+    }
+    ctx.design.unsubscribe(id).catch((error) => {
+      if (ctx.transport?.ws !== socket || error?.code === 'disconnected') return;
+      onError(error);
+      ctx.transport?.resubscribe();
+    });
+  }
+
+  function detach(close = false) {
+    if (close && active) release(active.id, active.socket);
     if (active?.ackTimer != null) clearTimer(active.ackTimer);
     if (active) active.latest = null;
     active = null;
@@ -29,33 +44,34 @@ export function createDesignStream({
   }
 
   // start: a fresh subscription (first load, reconnect). refresh: design_get only; the
-  // subscription is kept unless the session id changed or there is none yet. The daemon
-  // caps subscriptions per connection and has no unsubscribe request, so never resubscribe needlessly.
+  // subscription is kept until the session changes or the view closes.
   async function load(fresh) {
     if (!alive) return;
     started = true;
     if (!wasOpen) return;
     const mine = ++generation;
-    if (fresh) { detach(); onReset(); }
+    if (fresh) { detach(true); onReset(); }
     try {
       const { kind, data } = await ctx.design.get(item);
       if (!alive || mine !== generation) return;
       const session = kind === 'design_state' ? data.session : null;
       const changed = (session?.id ?? null) !== sessionId;
       sessionId = session?.id ?? null;
-      if (changed) { detach(); if (!fresh) onReset(); }
+      if (changed) { detach(true); if (!fresh) onReset(); }
       onView(kind, data);
       if (!alive || mine !== generation) return;
       if (!session || session.state === 'ended' || session.state === 'confirmed' || !ctx.canOperate) return;
       if (active) return;
       // A refresh while a subscribe is in flight joins it: one live subscription at a time.
       if (!pending || pending.session !== session.id) {
-        const p = { session: session.id };
+        const p = { session: session.id, socket: ctx.transport?.ws };
         pending = p;
         p.promise = ctx.design.subscribe(session.id).then((id) => {
           if (pending === p && alive && sessionId === p.session) {
             console.assert(Number.isInteger(id) && active === null, 'Invalid design subscription transition');
-            active = { id, latest: null, decoding: false, lastAck: -Infinity, ackSeq: 0, ackTimer: null };
+            active = { id, socket: p.socket, latest: null, decoding: false, lastAck: -Infinity, ackSeq: 0, ackTimer: null };
+          } else {
+            release(id, p.socket);
           }
         }).finally(() => { if (pending === p) pending = null; });
       }
@@ -148,7 +164,7 @@ export function createDesignStream({
     get sub() { return active?.id ?? null; },
     stop() {
       alive = false;
-      detach();
+      detach(true);
       offHub();
       offConn();
     },

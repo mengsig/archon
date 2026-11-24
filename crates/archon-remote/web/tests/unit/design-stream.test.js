@@ -172,3 +172,33 @@ test('opening a design while disconnected subscribes when the connection opens',
   assert.equal(stream.sub, 1);
   stream.stop();
 });
+
+test('stopping the view releases its subscription even if the reply arrives later', async () => {
+  for (const delayed of [false, true]) {
+    const { ctx } = fake();
+    ctx.store.get = () => ({ connection: { state: 'open' }, designUnsubscribe: true });
+    const released = [];
+    ctx.design.unsubscribe = async (id) => { released.push(id); };
+    let resolve;
+    ctx.design.subscribe = () => new Promise((done) => { resolve = done; });
+    const stream = make(ctx);
+    const started = stream.start();
+    await tick();
+    if (delayed) stream.stop();
+    resolve(17);
+    await started;
+    if (!delayed) stream.stop();
+    assert.deepEqual(released, [17]);
+    assert.equal(stream.sub, null);
+  }
+});
+
+test('older daemons release subscriptions by reconnecting the transport', async () => {
+  const { ctx } = fake();
+  let closed = 0;
+  ctx.transport = { ws: {}, resubscribe() { closed += 1; } };
+  const stream = make(ctx);
+  await stream.start();
+  stream.stop();
+  assert.equal(closed, 1);
+});

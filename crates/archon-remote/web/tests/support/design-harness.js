@@ -140,7 +140,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
     const { ws } = conn;
     const { req, cmd } = msg;
     state.requests.push(msg);
-    if (cmd === 'hello') return reply(ws, req, 'welcome', { protocol_version: state.iterations ? 26 : 25, features: state.iterations ? ['design_sessions', 'design_iterations'] : ['design_sessions'], device: { id: 'dev1', name: 'Test', role } });
+    if (cmd === 'hello') return reply(ws, req, 'welcome', { protocol_version: state.iterations ? 26 : 25, features: state.iterations ? ['design_sessions', 'design_iterations', 'design_unsubscribe'] : ['design_sessions', 'design_unsubscribe'], device: { id: 'dev1', name: 'Test', role } });
     if (cmd === 'feed_history') return reply(ws, req, 'feed', []);
     if (cmd === 'list_item_summaries') return reply(ws, req, 'item_summaries', state.summaries);
     if (cmd === 'list_questions') return reply(ws, req, 'questions', state.questions);
@@ -169,6 +169,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
         return reply(ws, req, 'design_done', null);
       }
       case 'subscribe_design': conn.subscribed = true; reply(ws, req, 'subscribed', { id: 1, last_seq: 0 }); return later(() => sendFrame(conn), 50);
+      case 'design_unsubscribe': conn.subscribed = false; return reply(ws, req, 'design_done', null);
       case 'design_frame_ack': reply(ws, req, 'design_done', null); return later(() => sendFrame(conn), 120);
       case 'design_resolve': return reply(ws, req, 'design_resolved', { target: await target(), label: 'button "Buy now"', asset: 'da_pending', data_url: PIXEL });
       case 'design_region': return reply(ws, req, 'design_resolved', { target: { ...(await target()), selector: null, role_name: null, box: msg.box, region: true }, label: 'Region', asset: 'da_region', data_url: PIXEL });

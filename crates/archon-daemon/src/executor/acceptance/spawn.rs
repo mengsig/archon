@@ -236,6 +236,26 @@ fn live_judge(
         .copied()
         .filter(|m| !out_of_quota.spent(&m.model))
         .collect();
+    if usable.is_empty() && !permitted.is_empty() {
+        return Err(ArchonError::Invalid(format!(
+            "no eligible acceptance judge: every permitted, connected model's provider is out of quota ({})",
+            out_of_quota.names(permitted.iter().map(|m| &m.model))
+        )));
+    }
+    let checked_pin = pin.and_then(|model| catalog.check(model).ok());
+    if let Some(model) = &checked_pin
+        && strict
+        && usable.iter().any(|m| m.model == *model)
+        && !independent(model, builders, ProposalMode::Live)
+    {
+        return Err(ArchonError::Invalid(format!(
+            "independent acceptance needs a model different from every builder in model and vendor, but the plan pins `{model}` for {STAGE} ([review] independent_acceptance = true)"
+        )));
+    }
+    let usable: Vec<_> = usable
+        .into_iter()
+        .filter(|m| !strict || independent(&m.model, builders, ProposalMode::Live))
+        .collect();
     let moved: Vec<_> = usable
         .iter()
         .copied()
@@ -246,28 +266,12 @@ fn live_judge(
         catalog.check(judge).is_ok_and(|listed| listed == **judge)
             && eligible.iter().any(|m| m.model == **judge)
     };
-    let pinned_judge = match pin.and_then(|m| catalog.check(m).ok()) {
-        Some(model) if eligible.iter().any(|m| m.model == model) => Some(model),
-        _ => None,
-    };
-    if let (Some(model), true) = (&pinned_judge, strict)
-        && shares_builder(model, builders)
-    {
-        return Err(ArchonError::Invalid(format!(
-            "independent acceptance needs a model different from every builder in model and \
-             vendor, but the plan pins `{model}` for {STAGE} ([review] independent_acceptance = true)"
-        )));
-    }
-    if let (Some(pin), None) = (pin, &pinned_judge) {
+    let pinned_judge = checked_pin.as_ref().filter(still_judges);
+    if let (Some(pin), None) = (pin, pinned_judge) {
         tracing::info!(model = %pin, "the pinned acceptance model cannot judge now; another is selected");
     }
-    match woken.filter(still_judges).or(pinned_judge.as_ref()) {
+    match woken.filter(still_judges).or(pinned_judge) {
         Some(judge) => Ok(judge.clone()),
-        None if eligible.is_empty() && !permitted.is_empty() => Err(ArchonError::Invalid(format!(
-            "no eligible acceptance judge: every permitted, connected model's provider is out \
-                 of quota ({})",
-            out_of_quota.names(permitted.iter().map(|m| &m.model))
-        ))),
         None => judge_model(&eligible, builders, visual, strict),
     }
 }
@@ -461,7 +465,8 @@ pub(super) async fn check_judge(
         (store.stage_runs(&run.id)?, vision_models(&store)?)
     };
     let builders = builder_models(&stages);
-    if builders.contains(&stage.choice.model) && ctx.config.review.independent_acceptance {
+    let independent = independent(&stage.choice.model, &builders, proposal);
+    if !independent && ctx.config.review.independent_acceptance {
         return Err(ArchonError::Invalid(
             "acceptance must use a different model from the builder".into(),
         ));
@@ -473,7 +478,7 @@ pub(super) async fn check_judge(
     }
     assert_eq!(stage.stage_id, STAGE);
     assert!(stage.aether_agent.is_some());
-    Ok(independent(&stage.choice.model, &builders, proposal))
+    Ok(independent)
 }
 
 const RULES: &str = r#"
@@ -677,6 +682,35 @@ mod tests {
 
     fn names(pool: &[&CatalogModel]) -> Vec<String> {
         pool.iter().map(|m| m.model.to_string()).collect()
+    }
+
+    #[test]
+    fn strict_live_judges_must_differ_in_vendor_for_wake_and_fallback() {
+        let catalog = listed(&["codex/build", "openai/other", "anthropic/judge"]);
+        let builder: ModelRef = "codex/build".parse().unwrap();
+        let builders = [builder];
+        let woken: ModelRef = "openai/other".parse().unwrap();
+        let pool = judge_pool(&catalog, |_| true, &builders);
+        let quota = Quota::of(None, &[]);
+        for wake in [None, Some(&woken)] {
+            let pick = |pool: &[&CatalogModel]| {
+                live_judge(
+                    &catalog,
+                    pool,
+                    &builders,
+                    (false, true),
+                    (&quota, wake, None),
+                )
+            };
+            assert_eq!(pick(&pool).unwrap().to_string(), "anthropic/judge");
+            let only_builder_vendor: Vec<_> = pool
+                .iter()
+                .copied()
+                .filter(|m| m.model.provider != "anthropic")
+                .collect();
+            assert!(pick(&only_builder_vendor).is_err());
+            assert!(!independent(&woken, &builders, ProposalMode::Live));
+        }
     }
 
     #[test]

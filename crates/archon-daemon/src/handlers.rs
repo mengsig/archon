@@ -458,6 +458,7 @@ pub(crate) async fn route(
         request @ (Request::DesignGet { .. }
         | Request::SubscribeDesign { .. }
         | Request::DesignAsset { .. }
+        | Request::DesignUnsubscribe { .. }
         | Request::DesignFrameAck { .. }
         | Request::DesignInput { .. }
         | Request::DesignResolve { .. }

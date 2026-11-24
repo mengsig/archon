@@ -39,6 +39,7 @@ pub(super) async fn say(
         text: text.clone(),
         images: refs,
         local: false,
+        command_id: None,
     };
     let item = feed::append(ctx, entry).await?;
     assert!(item.seq > 0, "feed sequences start at 1");

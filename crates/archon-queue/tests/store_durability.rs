@@ -64,6 +64,7 @@ fn populate(store: &mut Store) -> (Vec<QueueItem>, archon_core::run::PipelineRun
                 text: "go".into(),
                 images: Vec::new(),
                 local: false,
+                command_id: None,
             },
             t(1),
         )
@@ -141,6 +142,7 @@ fn everything_survives_a_reopen() {
         .append_feed(
             FeedEntry::System {
                 command_id: None,
+                command_result: None,
                 text: "restarted".into(),
             },
             t(9),
@@ -382,6 +384,7 @@ fn concurrent_feed_appends_stay_gapless() {
                             FeedEntry::System {
                                 text,
                                 command_id: None,
+                                command_result: None,
                             },
                             t(i),
                         )
@@ -482,6 +485,7 @@ fn drive_item(shared: &Mutex<Store>, it: &QueueItem, n: u32) {
                 FeedEntry::System {
                     text,
                     command_id: None,
+                    command_result: None,
                 },
                 t(30),
             )

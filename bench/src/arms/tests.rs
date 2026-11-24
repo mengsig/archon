@@ -461,6 +461,7 @@ fn operator_line(text: &str) -> FeedEntry {
         text: text.into(),
         images: Vec::new(),
         local: false,
+        command_id: None,
     }
 }
 

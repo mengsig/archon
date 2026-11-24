@@ -3849,6 +3849,25 @@
           "type": "object"
         },
         {
+          "description": "Release a design subscription on the connection that created it.",
+          "properties": {
+            "cmd": {
+              "const": "design_unsubscribe",
+              "type": "string"
+            },
+            "sub": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "sub"
+          ],
+          "type": "object"
+        },
+        {
           "description": "One stored design picture.",
           "properties": {
             "cmd": {
@@ -6877,6 +6896,12 @@
         },
         {
           "properties": {
+            "command_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "entry": {
               "const": "operator",
               "type": "string"
@@ -7007,6 +7032,12 @@
           "description": "Daemon-level notices: start/stop, orchestrator restarted, caps hit.",
           "properties": {
             "command_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "command_result": {
               "type": [
                 "string",
                 "null"
@@ -18067,6 +18098,25 @@
           "type": "object"
         },
         {
+          "description": "Release a design subscription on the connection that created it.",
+          "properties": {
+            "cmd": {
+              "const": "design_unsubscribe",
+              "type": "string"
+            },
+            "sub": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "sub"
+          ],
+          "type": "object"
+        },
+        {
           "description": "One stored design picture.",
           "properties": {
             "cmd": {
@@ -22335,7 +22385,8 @@
     "device_roles",
     "enqueue_advice",
     "design_sessions",
-    "design_iterations"
+    "design_iterations",
+    "design_unsubscribe"
   ],
   "min_web_protocol_version": 23,
   "protocol_version": 26,

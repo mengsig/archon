@@ -354,6 +354,7 @@ mod tests {
                     text: "hi".into(),
                     images: Vec::new(),
                     local: false,
+                    command_id: None,
                 },
             ),
             feed(4, answer(&asked_before)),
@@ -367,6 +368,7 @@ mod tests {
                 FeedEntry::System {
                     text: "up".into(),
                     command_id: None,
+                    command_result: None,
                 },
             ),
         ];

@@ -161,9 +161,11 @@ async fn repeated_phone_commands_have_distinct_persisted_results() {
     let ids: Vec<_> = rows
         .iter()
         .filter_map(|item| match &item.entry {
-            FeedEntry::System { command_id, text } if text.starts_with("Operator command:") => {
-                command_id.as_deref()
-            }
+            FeedEntry::System {
+                command_id,
+                command_result: Some(_),
+                ..
+            } => command_id.as_deref(),
             _ => None,
         })
         .collect();

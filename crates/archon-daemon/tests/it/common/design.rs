@@ -30,6 +30,7 @@ pub struct Calls {
     pub screencasts_started: u32,
     pub screencasts_stopped: u32,
     pub closed: bool,
+    pub terminated: bool,
 }
 
 /// One scripted browser.
@@ -247,6 +248,10 @@ impl PreviewBrowser for FakeBrowser {
     }
     fn rss_bytes(&self) -> Option<u64> {
         Some(*self.rss.lock().unwrap())
+    }
+    fn terminate(&self) -> std::io::Result<()> {
+        self.calls.lock().unwrap().terminated = true;
+        Ok(())
     }
     async fn close(&self) {
         self.calls.lock().unwrap().closed = true;

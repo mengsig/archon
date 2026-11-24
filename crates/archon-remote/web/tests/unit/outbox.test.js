@@ -43,7 +43,10 @@ test("archond's post of a command it ran settles the send; another post does not
   const id = addPending(s, '/status');
   matchEchoes(s, [{ ...operator(7, '/status'), kind: 'post' }]);
   assert.equal(s.get().outbox.length, 1, 'a plain post is no echo');
-  matchEchoes(s, [{ ...operator(8, `${OPERATOR_POST_LABEL}/status`), kind: 'post' }]);
+  matchEchoes(s, [{ ...operator(6, `${OPERATOR_POST_LABEL}/status`), kind: 'post' },
+    { ...operator(7, '**Operator (another-device):** /status'), kind: 'post' }]);
+  assert.equal(s.get().outbox.length, 1, 'delayed identical commands from another device cannot settle ours');
+  matchEchoes(s, [{ ...operator(8, `**Operator (${id}):** /status`), kind: 'post' }]);
   assert.equal(s.get().outbox.length, 0);
   assert.equal(s.get().chatNotes['8-0'].localId, id);
 });
@@ -111,9 +114,9 @@ test('identical concurrent commands match only their own interleaved outcome', (
   assert.notEqual(first, second);
   const feed = [fed(1, { entry: 'system', command_id: second, text: 'second detail' }),
     fed(2, { entry: 'system', command_id: first, text: 'first detail' }),
-    fed(3, { entry: 'system', command_id: second, text: 'Operator command: Awaiting your confirmation as Q7; nothing changed yet.' }),
+    fed(3, { entry: 'system', command_id: second, command_result: 'Awaiting your confirmation as Q7; nothing changed yet.', text: 'Refused: /archon set: Awaiting your confirmation as Q7; nothing changed yet.' }),
     fed(4, { entry: 'system', text: 'Operator command: uncorrelated' }),
-    fed(5, { entry: 'system', command_id: first, text: 'Operator command: Applied.' })];
+    fed(5, { entry: 'system', command_id: first, command_result: 'Applied.', text: 'Operator command: Applied.' })];
   assert.deepEqual(commandOutcome(feed, s.get().outbox[0]), { lines: ['first detail', 'Applied.'], question: null });
   assert.deepEqual(commandOutcome(feed, s.get().outbox[1]), { lines: ['second detail', 'Awaiting your confirmation as Q7; nothing changed yet.'], question: 'Q7' });
 });

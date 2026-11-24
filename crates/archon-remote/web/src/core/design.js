@@ -40,6 +40,7 @@ export function designCommands(request) {
       if (!Number.isInteger(data?.id)) throw new DaemonError('internal', 'subscribe_design answered without a sub id');
       return data.id;
     }),
+    unsubscribe: (sub) => request('design_unsubscribe', { sub }).then(expect('design_done')),
     asset: (item, id) => request('design_asset', { item, id }).then(expect('design_asset')),
     ack: (sub, seq) => request('design_frame_ack', { sub, seq }).then(expect('design_done')),
     input: (session, events) => request('design_input', { session, events }).then(expect('design_done')),

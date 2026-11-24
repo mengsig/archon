@@ -10,7 +10,7 @@ use archon_core::protocol::{
     DesignEvent, DeviceRole, PROTOCOL_VERSION, Reply, Request, ServerFrame, WelcomeDevice,
 };
 use archon_core::remote::{RemoteChange, RemoteConfig};
-use archon_remote::{Backend, DesignSubscription, FeedSubscription, Remote};
+use archon_remote::{Backend, ChangeSubscription, DesignSubscription, FeedSubscription, Remote};
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
@@ -33,7 +33,13 @@ impl Backend for Fake {
         Ok(Reply::Ok)
     }
 
-    async fn feed(&self, _: FeedSubscription, _: mpsc::Sender<ServerFrame>) {}
+    async fn feed(&self, sub: FeedSubscription, frames: mpsc::Sender<ServerFrame>) {
+        hold_subscription(sub.request, sub.id, frames).await;
+    }
+
+    async fn changes(&self, sub: ChangeSubscription, frames: mpsc::Sender<ServerFrame>) {
+        hold_subscription(sub.request, sub.id, frames).await;
+    }
 
     async fn design(
         &self,
@@ -66,7 +72,21 @@ impl Backend for Fake {
 
     fn features(&self) -> Vec<&'static str> {
         use archon_core::protocol::feature;
-        vec![feature::DESIGN_SESSIONS, feature::DESIGN_ITERATIONS]
+        vec![
+            feature::DESIGN_SESSIONS,
+            feature::DESIGN_ITERATIONS,
+            feature::DESIGN_UNSUBSCRIBE,
+        ]
+    }
+}
+
+async fn hold_subscription(request: u64, id: u64, frames: mpsc::Sender<ServerFrame>) {
+    let reply = ServerFrame::Reply {
+        id: request,
+        result: Ok(Reply::Subscribed { id, last_seq: 0 }),
+    };
+    if frames.send(reply).await.is_ok() {
+        frames.closed().await;
     }
 }
 
@@ -169,8 +189,8 @@ impl Harness {
         assert_eq!(welcome["protocol_version"], version);
         let offered = match version {
             23 | 24 => serde_json::json!([]),
-            25 => serde_json::json!(["design_sessions"]),
-            _ => serde_json::json!(["design_sessions", "design_iterations"]),
+            25 => serde_json::json!(["design_sessions", "design_unsubscribe"]),
+            _ => serde_json::json!(["design_sessions", "design_iterations", "design_unsubscribe"]),
         };
         assert_eq!(welcome["features"], offered);
         socket
@@ -315,4 +335,33 @@ async fn design_streams_count_toward_the_subscription_cap_and_observers_get_none
     let refused = exchange(&mut observer, request).await;
     assert_eq!(refused["result"]["Err"]["code"], "forbidden", "{refused}");
     assert_eq!(harness.backend.subscribed.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn leaving_the_view_frees_its_slot_with_feed_and_changes_still_live() {
+    use serde_json::json;
+    let harness = Harness::start().await;
+    let mut socket = harness.socket(DeviceRole::Operator).await;
+    for (req, cmd) in [(2, "subscribe_feed"), (3, "subscribe_changes")] {
+        let reply = exchange(&mut socket, json!({"req":req,"cmd":cmd,"verbose":false})).await;
+        assert_eq!(reply["result"]["Ok"]["reply"], "subscribed", "{reply}");
+    }
+    let session = DesignSessionId::new();
+    for n in 0..8 {
+        let reply = exchange(
+            &mut socket,
+            json!({"req":4+2*n,"cmd":"subscribe_design","session":session}),
+        )
+        .await;
+        let sub = reply["result"]["Ok"]["data"]["id"]
+            .as_u64()
+            .expect("a slot for this visit");
+        assert_eq!(next_frame(&mut socket).await["sub"], sub);
+        let done = exchange(
+            &mut socket,
+            json!({"req":5+2*n,"cmd":"design_unsubscribe","sub":sub}),
+        )
+        .await;
+        assert_eq!(done["result"]["Ok"]["reply"], "design_done");
+    }
 }

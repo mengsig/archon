@@ -29,7 +29,7 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
   if (typeof onDeviceChanged !== 'function') throw new TypeError('the app reports a changed device');
   const store = createStore({
     session, connection: { state: 'connecting' }, summaries: null, questions: null, status: null,
-    cost: null, repos: null, reports: null, feed: [], conversation: [], outbox: [], chatNotes: {}, errors: {}, sessionUnsure: false, designEnabled: false, designIterations: false,
+    cost: null, repos: null, reports: null, feed: [], conversation: [], outbox: [], chatNotes: {}, errors: {}, sessionUnsure: false, designEnabled: false, designIterations: false, designUnsubscribe: false,
   });
   let transport = null;
   const request = (cmd, fields, options) => transport.request(cmd, fields, options);
@@ -61,7 +61,7 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
     if (welcomed?.reply !== 'welcome' || !welcomed.data) throw new TypeError(`hello answered ${welcomed?.reply}`);
     if (welcomed.data.device) guard(welcomed.data.device);
     welcome = welcomed.data;
-    store.set({ designEnabled: hasDesign(welcome), designIterations: hasIterations(welcome) });
+    store.set({ designEnabled: hasDesign(welcome), designIterations: hasIterations(welcome), designUnsubscribe: welcome.features?.includes('design_unsubscribe') === true });
     feedSync.start();
     changesSync.start();
     conversation.run();

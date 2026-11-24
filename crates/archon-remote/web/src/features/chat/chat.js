@@ -54,7 +54,8 @@ function renderTranscript(ctx, transcript) {
     if (day !== lastDay) rows.push({ kind: 'day', key: `d-${day}`, at: entry.at });
     lastDay = day;
     const key = `c-${entryKey(entry)}`;
-    rows.push({ kind: 'entry', key, entry, note: chatNotes[entryKey(entry)] ?? null });
+    const note = chatNotes[entryKey(entry)];
+    rows.push({ kind: 'entry', key, entry, note, outcome: commandOutcome(state.feed, note) });
   }
   for (const pending of outbox) rows.push({ kind: 'pending', key: `p-${pending.localId}`, pending, outcome: commandOutcome(state.feed, pending), offline });
   reconcile(transcript, rows, {
@@ -63,7 +64,7 @@ function renderTranscript(ctx, transcript) {
     render: (row) => {
       if (row.kind === 'pending') return pendingEntry(row.pending, { outcome: row.outcome, offline: row.offline, retry: () => resend(ctx, row.pending), discard: () => removePending(ctx.store, row.pending.localId) });
       if (row.kind === 'day') return h('li', { class: 'day-divider', text: new Date(row.at).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) });
-      return conversationEntry(row.entry, row.note);
+      return conversationEntry(row.entry, row.note, row.outcome);
     },
   });
   const empty = ctx.canOperate ? 'Say hello. The orchestrator reads every line you send here.' : 'No conversation yet.';

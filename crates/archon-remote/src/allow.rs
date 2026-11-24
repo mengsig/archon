@@ -131,6 +131,7 @@ fn operator_changes(request: &Request) -> bool {
             | R::WatchRepo { .. }
             | R::SubscribeDesign { .. }
             | R::DesignAsset { .. }
+            | R::DesignUnsubscribe { .. }
             | R::DesignFrameAck { .. }
             | R::DesignInput { .. }
             | R::DesignResolve { .. }

@@ -2,7 +2,7 @@
 import { h } from '../../ui/dom.js';
 import { renderMarkdown } from '../../ui/markdown.js';
 import { clockTime, safeHttpUrl } from '../../core/format.js';
-import { stripRelayMark } from '../../core/conversation.js';
+import { stripRelayMark, commandEchoId, echoedLine } from '../../core/conversation.js';
 
 export function dayKey(iso) {
   const at = new Date(iso);
@@ -10,11 +10,13 @@ export function dayKey(iso) {
 }
 
 // One conversation entry exactly as archond sent it; `note` is the send outcome of an operator line.
-export function conversationEntry(entry, note) {
+export function conversationEntry(entry, note, outcome) {
   switch (entry.kind) {
     case 'operator': return bubble('operator', stripRelayMark(entry.text), entry.at, operatorNote(note));
     case 'assistant': return bubble('orchestrator', entry.text, entry.at);
-    case 'post': return line('post', 'Post', entry.text, entry.at, linkButtons(entry.links));
+    case 'post':
+      if (commandEchoId(entry)) return bubble('operator', echoedLine(entry), entry.at, outcome ? commandNote(outcome) : operatorNote(note));
+      return line('post', 'Post', entry.text, entry.at, linkButtons(entry.links));
     case 'question': return line('question', 'Question', entry.text, entry.at, h('a', { class: 'link-button', href: '#/inbox' }, 'Answer in Inbox'));
     default: return line('system', String(entry.kind ?? 'Entry'), entry.text ?? '', entry.at, null, { plain: true });
   }

@@ -171,6 +171,8 @@ async fn explicit_reload_recovers_after_the_automatic_crash_budget() {
 #[tokio::test]
 async fn emergency_memory_restarts_end_the_session_with_a_reason() {
     let f = Fixture::new().await;
+    let lock = f.h.ctx.design.item_lock_for_tests(&f.item);
+    let held = lock.lock().await;
     let rss = 3 * 1024 * 1024 * 1024;
     *f.factory.initial_rss.lock().unwrap() = Some(rss);
     f.factory.browser(0).set_rss(rss);
@@ -180,9 +182,41 @@ async fn emergency_memory_restarts_end_the_session_with_a_reason() {
             .lock()
             .unwrap()
             .get(5)
-            .is_some_and(|browser| browser.calls(|calls| calls.closed))
+            .is_some_and(|browser| browser.calls(|calls| calls.terminated && calls.closed))
     })
     .await;
+    let before =
+        f.h.ctx
+            .store
+            .lock()
+            .await
+            .design_session(&f.session)
+            .unwrap()
+            .unwrap();
+    assert_eq!(
+        before.state,
+        archon_core::design::SessionState::Live,
+        "browser stops before durable settlement can acquire the item"
+    );
+    drop(held);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let row =
+                f.h.ctx
+                    .store
+                    .lock()
+                    .await
+                    .design_session(&f.session)
+                    .unwrap()
+                    .unwrap();
+            if row.state == archon_core::design::SessionState::Ended {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("memory stop settles when the item is free");
     let row =
         f.h.ctx
             .store

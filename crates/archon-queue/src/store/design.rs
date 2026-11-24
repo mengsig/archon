@@ -440,7 +440,12 @@ fn end_session(tx: &Connection, id: &DesignSessionId, reason: &str) -> Result<()
     tx.execute(
         "UPDATE design_sessions SET state = 'ended', ended_at = ?2, end_reason = ?3,
              note_version = note_version + ?4 WHERE id = ?1 AND state <> 'ended'",
-        params![id.as_str(), at, reason, changed],
+        params![
+            id.as_str(),
+            at,
+            reason,
+            to_i64(changed as u64, "settled notes")?
+        ],
     )
     .ctx("end design session")?;
     settings::kv_delete(tx, &keys::design_owed(id))?;

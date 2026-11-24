@@ -26,6 +26,7 @@ rustix = { workspace = true, features = ["event"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 ulid = { workspace = true }
@@ -36,7 +37,6 @@ archon-queue = { workspace = true, features = ["testing"] }
 archon-aether = { workspace = true, features = ["fake"] }
 archon-core = { workspace = true, features = ["testing"] }
 archon-remote = { workspace = true }
-tempfile = { workspace = true }
 toml = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }

@@ -844,16 +844,17 @@ impl DesignService {
 
     /// Forget an item's design data; its asset files go with it.
     pub fn gc_item(&self, store: &mut Store, item: &QueueItemId) -> Result<(), ArchonError> {
-        let assets = store.design_item_delete(item)?;
-        for asset in assets {
-            let _ = std::fs::remove_file(self.asset_path(&asset));
+        let path = self.data_dir.join("design/assets").join(item.as_str());
+        match std::fs::remove_dir_all(&path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(ArchonError::io(
+                    format!("remove item pictures at {}", path.display()),
+                    error,
+                ));
+            }
+            _ => {}
         }
-        let _ = std::fs::remove_dir_all(
-            self.data_dir
-                .join("design")
-                .join("assets")
-                .join(item.to_string()),
-        );
+        store.design_item_delete(item)?;
         Ok(())
     }
 

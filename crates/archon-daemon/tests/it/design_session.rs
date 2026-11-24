@@ -930,7 +930,13 @@ mod stream {
                 role: archon_core::protocol::DeviceRole::Operator,
             },
         };
-        let task = tokio::spawn(archon_daemon::design::stream(f.h.ctx.clone(), sub, tx));
+        let task = {
+            let ctx = f.h.ctx.clone();
+            tokio::spawn(async move {
+                let (_acks, receiver) = tokio::sync::watch::channel(0);
+                archon_daemon::design::stream(ctx, sub, receiver, tx).await;
+            })
+        };
         (rx, task)
     }
 
@@ -1102,7 +1108,13 @@ mod stream {
                 role: archon_core::protocol::DeviceRole::Operator,
             },
         };
-        let task = tokio::spawn(archon_daemon::design::stream(f.h.ctx.clone(), sub, tx));
+        let task = {
+            let ctx = f.h.ctx.clone();
+            tokio::spawn(async move {
+                let (_acks, receiver) = tokio::sync::watch::channel(0);
+                archon_daemon::design::stream(ctx, sub, receiver, tx).await;
+            })
+        };
         let service = f.h.ctx.design.clone();
         until("the second subscriber", || {
             service.subscriber_count(&second) == 1
@@ -1160,7 +1172,13 @@ mod stream {
                 role: archon_core::protocol::DeviceRole::Operator,
             },
         };
-        let task = tokio::spawn(archon_daemon::design::stream(f.h.ctx.clone(), sub, tx));
+        let task = {
+            let ctx = f.h.ctx.clone();
+            tokio::spawn(async move {
+                let (_acks, receiver) = tokio::sync::watch::channel(0);
+                archon_daemon::design::stream(ctx, sub, receiver, tx).await;
+            })
+        };
         let service = f.h.ctx.design.clone();
         until("the watcher", || service.subscriber_count(&second) == 1).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1245,7 +1263,13 @@ mod stream {
                 role: archon_core::protocol::DeviceRole::Operator,
             },
         };
-        let task = tokio::spawn(archon_daemon::design::stream(f.h.ctx.clone(), sub, tx));
+        let task = {
+            let ctx = f.h.ctx.clone();
+            tokio::spawn(async move {
+                let (_acks, receiver) = tokio::sync::watch::channel(0);
+                archon_daemon::design::stream(ctx, sub, receiver, tx).await;
+            })
+        };
         let service = f.h.ctx.design.clone();
         until("the second subscriber", || {
             service.subscriber_count(&second) == 1

@@ -610,8 +610,8 @@ fn assets_dedupe_by_item_hash_and_source_and_are_swept() {
     store.design_asset_delete(item, &other.id).unwrap();
     assert!(store.design_asset(item, &other.id).unwrap().is_none());
     // The capture still holds the bytes the deleted upload shared.
-    assert!(store.design_asset_sha_held(item, "aa").unwrap());
-    assert!(!store.design_asset_sha_held(item, "bb").unwrap());
+    assert!(store.design_asset_sha_shared(item, "aa", &other.id).unwrap());
+    assert!(!store.design_asset_sha_shared(item, "bb", &other.id).unwrap());
     // Deleting the item returns what remains and clears its counter.
     let gone = store.design_item_delete(item).unwrap();
     assert_eq!(gone.len(), 1);

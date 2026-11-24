@@ -101,6 +101,21 @@ fn sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
+fn write_asset(path: &std::path::Path, bytes: &[u8]) -> Result<(), ArchonError> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .ok_or_else(|| ArchonError::Invalid("missing asset directory".into()))?;
+    let io = |e| ArchonError::io(format!("write design picture {}", path.display()), e);
+    let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(io)?;
+    tmp.write_all(bytes).map_err(io)?;
+    tmp.as_file().sync_all().map_err(io)?;
+    tmp.persist(path).map_err(|error| io(error.error))?;
+    std::fs::File::open(parent)
+        .and_then(|dir| dir.sync_all())
+        .map_err(io)
+}
+
 pub(crate) struct NewAsset<'a> {
     pub source: AssetSource,
     pub target: Option<Target>,
@@ -160,13 +175,14 @@ impl DesignService {
             std::fs::create_dir_all(parent)
                 .map_err(|e| ArchonError::io(format!("creating {}", parent.display()), e))?;
         }
-        if !path.exists() {
-            std::fs::write(&path, new.bytes)
-                .map_err(|e| ArchonError::io(format!("writing {}", path.display()), e))?;
+        if !path
+            .try_exists()
+            .map_err(|e| ArchonError::io("check design picture", e))?
+        {
+            write_asset(&path, new.bytes)?;
         }
         if let Some(sketch) = new.sketch {
-            std::fs::write(path.with_extension("json"), sketch)
-                .map_err(|e| ArchonError::io("saving the design sketch", e))?;
+            write_asset(&path.with_extension("json"), sketch.as_bytes())?;
         }
         Ok(Some(store.design_asset_put(asset)?))
     }
@@ -328,11 +344,22 @@ impl DesignService {
         let old = store.design_unused_assets(cutoff)?;
         let count = old.len();
         for asset in old {
-            store.design_asset_delete(&asset.item, &asset.id)?;
-            // Records of different sources share one file per hash.
-            if !store.design_asset_sha_held(&asset.item, &asset.sha256)? {
-                let _ = std::fs::remove_file(self.asset_path(&asset));
+            if asset.sha256.len() != 64 || !asset.sha256.bytes().all(|c| c.is_ascii_hexdigit()) {
+                return Err(ArchonError::Corrupt(
+                    "invalid hash for an unused design picture".into(),
+                ));
             }
+            if !store.design_asset_sha_shared(&asset.item, &asset.sha256, &asset.id)? {
+                let path = self.asset_path(&asset);
+                for file in [path.with_extension("json"), path] {
+                    if let Err(error) = std::fs::remove_file(&file)
+                        && error.kind() != std::io::ErrorKind::NotFound
+                    {
+                        return Err(ArchonError::io(format!("remove {}", file.display()), error));
+                    }
+                }
+            }
+            store.design_asset_delete(&asset.item, &asset.id)?;
         }
         Ok(count)
     }

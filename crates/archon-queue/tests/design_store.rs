@@ -436,6 +436,13 @@ fn finish_is_a_compare_and_set_with_the_operators_sentences() {
     let item = &items[0].id;
     let session = live(&mut store, item);
     let finish = |store: &mut Store, cancel: bool| {
+        let current = store.design_session(&session).unwrap().unwrap();
+        let queued = store
+            .design_notes(item)
+            .unwrap()
+            .into_iter()
+            .filter(|n| n.status == NoteStatus::Queued && cancel)
+            .count() as u64;
         store.design_session_transition(
             &session,
             SessionState::Live,
@@ -443,7 +450,7 @@ fn finish_is_a_compare_and_set_with_the_operators_sentences() {
             Some(FinishRecord {
                 capture: "cap1".into(),
                 head: "h".into(),
-                note_version: 0,
+                note_version: current.note_version + queued,
                 choices: None,
             }),
             cancel,
@@ -927,6 +934,55 @@ fn the_next_note_id_follows_the_counter() {
         "D3",
         "nothing reserved"
     );
+}
+
+#[test]
+fn stale_finish_capture_keeps_the_queued_note() {
+    let (mut store, _, items) = seeded(1);
+    let item = &items[0].id;
+    let session = live(&mut store, item);
+    let id = add(&mut store, item, &session, "queued");
+    let record = FinishRecord {
+        capture: "cap".into(),
+        head: "h".into(),
+        note_version: 0,
+        choices: None,
+    };
+    let error = store
+        .design_session_transition(
+            &session,
+            SessionState::Live,
+            SessionState::Finishing,
+            Some(record),
+            true,
+        )
+        .unwrap_err();
+    assert!(refusal(&error, "Conflict"));
+    assert_eq!(
+        store.design_session(&session).unwrap().unwrap().state,
+        SessionState::Live
+    );
+    assert_eq!(
+        store.design_note(item, &id).unwrap().unwrap().status,
+        NoteStatus::Queued
+    );
+}
+
+#[test]
+fn a_corrupt_counter_refuses_reads_and_writes_together() {
+    let (mut store, _, items) = seeded(1);
+    let item = &items[0].id;
+    let session = live(&mut store, item);
+    for value in ["broken", "18446744073709551615"] {
+        store.kv_set(&keys::design_seq(item), value).unwrap();
+        assert!(store.design_next_note_id(item).is_err());
+        assert!(
+            store
+                .design_note_add(new_note(item, &session, "key"))
+                .is_err()
+        );
+        assert!(store.design_notes(item).unwrap().is_empty());
+    }
 }
 
 /// Schema 30: a follow-up keeps the note it follows and its references, and a

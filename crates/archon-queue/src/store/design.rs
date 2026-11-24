@@ -629,43 +629,7 @@ impl Store {
             )));
         }
         if from == SessionState::Live && to == SessionState::Finishing {
-            let notes = session_notes(&tx, id)?;
-            if let Some(note) = notes.iter().find(|n| is_in_flight(n.status)) {
-                return Err(ArchonError::InvalidTransition(
-                    if note.status == NoteStatus::NeedsReply {
-                        format!("{} needs your answer", note.id)
-                    } else {
-                        format!("Finish after {} is done", note.id)
-                    },
-                ));
-            }
-            if settings::kv_get(&tx, &keys::design_owed(id))?.is_some() {
-                return Err(ArchonError::InvalidTransition(
-                    "Finish after the message to the agent is delivered".into(),
-                ));
-            }
-            let queued: Vec<&DesignNote> = notes
-                .iter()
-                .filter(|n| n.status == NoteStatus::Queued)
-                .collect();
-            if !queued.is_empty() {
-                if !cancel_queued {
-                    return Err(ArchonError::InvalidTransition(format!(
-                        "Cancel {} queued {} and finish?",
-                        queued.len(),
-                        plural(queued.len())
-                    )));
-                }
-                for note in &queued {
-                    tx.execute(
-                        "UPDATE design_notes SET status = 'cancelled', updated_at = ?3
-                         WHERE item = ?1 AND id = ?2",
-                        params![note.item.as_str(), note.id, now()],
-                    )
-                    .ctx("cancel queued design note")?;
-                    bump(&tx, id)?;
-                }
-            }
+            prepare_finish(&tx, id, cancel_queued)?;
         }
         if to == SessionState::Ended {
             end_session(&tx, id, "ended")?;
@@ -685,17 +649,7 @@ impl Store {
             .ctx("clear design finish")?;
         }
         if let Some(record) = finish {
-            let choices = record
-                .choices
-                .as_ref()
-                .map(|c| to_json(c, "finish choices"))
-                .transpose()?;
-            tx.execute(
-                "UPDATE design_sessions SET finish_capture = ?2, finish_head = ?3,
-                     finish_choices_json = ?4 WHERE id = ?1",
-                params![id.as_str(), record.capture, record.head, choices],
-            )
-            .ctx("record design finish")?;
+            record_finish(&tx, id, record)?;
         }
         let updated = session_by_id(&tx, id)?.expect("the session exists");
         tx.commit().ctx("commit design session transition")?;
@@ -905,11 +859,7 @@ impl Store {
     /// counter and every id its approved intent already uses; nothing is
     /// reserved. A design finished with no change names its requirement so.
     pub fn design_next_note_id(&self, item: &QueueItemId) -> Result<String, ArchonError> {
-        let seq = settings::kv_get(&self.conn, &keys::design_seq(item))?
-            .and_then(|s| s.parse::<u64>().ok());
-        let used = intent_ids(&self.conn, item)?;
-        let used: Vec<&str> = used.iter().map(String::as_str).collect();
-        Ok(note_id(next_note_number(seq, &used)))
+        Ok(note_id(next_number(&self.conn, item)?))
     }
 
     /// Every note of the item, all sessions, by number.
@@ -1151,19 +1101,101 @@ fn insert_note(tx: &Connection, new: NewDesignNote) -> Result<(DesignNote, bool)
     check_note_capacity(tx, &new.session)?;
     write_note(tx, new)
 }
+fn prepare_finish(
+    tx: &Connection,
+    id: &DesignSessionId,
+    cancel_queued: bool,
+) -> Result<(), ArchonError> {
+    let notes = session_notes(tx, id)?;
+    if let Some(note) = notes.iter().find(|n| is_in_flight(n.status)) {
+        return Err(ArchonError::InvalidTransition(
+            if note.status == NoteStatus::NeedsReply {
+                format!("{} needs your answer", note.id)
+            } else {
+                format!("Finish after {} is done", note.id)
+            },
+        ));
+    }
+    if settings::kv_get(tx, &keys::design_owed(id))?.is_some() {
+        return Err(ArchonError::InvalidTransition(
+            "Finish after the message to the agent is delivered".into(),
+        ));
+    }
+    let queued: Vec<&DesignNote> = notes
+        .iter()
+        .filter(|n| n.status == NoteStatus::Queued)
+        .collect();
+    if !queued.is_empty() {
+        if !cancel_queued {
+            return Err(ArchonError::InvalidTransition(format!(
+                "Cancel {} queued {} and finish?",
+                queued.len(),
+                plural(queued.len())
+            )));
+        }
+        for note in &queued {
+            tx.execute(
+                "UPDATE design_notes SET status = 'cancelled', updated_at = ?3
+                 WHERE item = ?1 AND id = ?2",
+                params![note.item.as_str(), note.id, now()],
+            )
+            .ctx("cancel queued design note")?;
+            bump(tx, id)?;
+        }
+    }
+    Ok(())
+}
+
+fn record_finish(
+    tx: &Connection,
+    id: &DesignSessionId,
+    record: FinishRecord,
+) -> Result<(), ArchonError> {
+    let choices = record
+        .choices
+        .as_ref()
+        .map(|c| to_json(c, "finish choices"))
+        .transpose()?;
+    let changed = tx
+        .execute(
+            "UPDATE design_sessions SET finish_capture = ?2, finish_head = ?3,
+         finish_choices_json = ?4 WHERE id = ?1 AND note_version = ?5",
+            params![
+                id.as_str(),
+                record.capture,
+                record.head,
+                choices,
+                to_i64(record.note_version, "note version")?
+            ],
+        )
+        .ctx("record design finish")?;
+    if changed != 1 {
+        return Err(refuse(
+            DesignRefusal::Conflict,
+            "the notes changed during Finish capture; capture again",
+        ));
+    }
+    Ok(())
+}
+
+fn next_number(tx: &Connection, item: &QueueItemId) -> Result<u64, ArchonError> {
+    let seq = settings::kv_get(tx, &keys::design_seq(item))?
+        .map(|s| s.parse::<u64>())
+        .transpose()
+        .map_err(|_| ArchonError::Corrupt("invalid stored design note number".into()))?;
+    let used = intent_ids(tx, item)?;
+    let used: Vec<&str> = used.iter().map(String::as_str).collect();
+    let number = next_note_number(seq, &used);
+    to_i64(number, "note number")?;
+    Ok(number)
+}
+
 fn write_note(tx: &Connection, new: NewDesignNote) -> Result<(DesignNote, bool), ArchonError> {
     let text = clean_text(&new.text, MAX_NOTE_CHARS);
     if text.is_empty() {
         return Err(ArchonError::Invalid("a note needs words".into()));
     }
-    let seq_key = keys::design_seq(&new.item);
-    let seq = settings::kv_get(tx, &seq_key)?
-        .map(|s| s.parse::<u64>())
-        .transpose()
-        .map_err(|_| ArchonError::Corrupt("invalid stored design note number".into()))?;
-    let used = intent_ids(tx, &new.item)?;
-    let used: Vec<&str> = used.iter().map(String::as_str).collect();
-    let number = next_note_number(seq, &used);
+    let number = next_number(tx, &new.item)?;
     let id = note_id(number);
     let at = now();
     tx.execute(
@@ -1200,7 +1232,7 @@ fn write_note(tx: &Connection, new: NewDesignNote) -> Result<(DesignNote, bool),
         ],
     )
     .ctx("insert design note")?;
-    settings::kv_set(tx, &seq_key, &(number + 1).to_string())?;
+    settings::kv_set(tx, &keys::design_seq(&new.item), &(number + 1).to_string())?;
     bump(tx, &new.session)?;
     let note = note_by_id(tx, &new.item, &id)?.expect("the note was just inserted");
     Ok((note, true))

@@ -482,31 +482,9 @@ impl DesignService {
         let lock = self.item_lock(item);
         let _held = lock.lock().await;
         loop {
-            let (session, notes, request) = {
-                let mut store = ctx.store.lock().await;
-                let session = store.design_current_session(item)?;
-                // An Ask for changes a failed add kept out of a live session
-                // (a store error, a restart between going live and adding
-                // it) arrives with the next pump or sweep, not only on the
-                // agent's next preview report. Idempotent per session.
-                let request = match &session {
-                    Some(live) if live.state == SessionState::Live => {
-                        super::revise_note(&mut store, live).unwrap_or_else(|error| {
-                            tracing::warn!(%error, session = %live.id, "design: the operator's change request was not added; the next pump tries again");
-                            None
-                        })
-                    }
-                    _ => None,
-                };
-                (session, store.design_notes(item)?, request)
-            };
-            let Some(session) = session else {
+            let Some((session, notes)) = self.queue_state(ctx, item).await? else {
                 return Ok(());
             };
-            if let Some(note) = &request {
-                tracing::info!(note = %note.id, session = %session.id, "design: the operator's change request was added late");
-                self.emit_note(ctx, item, &note.id).await;
-            }
             if session.state == SessionState::Confirmed {
                 return self.flush_owed(ctx, &session).await;
             }
@@ -517,28 +495,56 @@ impl DesignService {
             if self.has_owed(ctx, &session.id).await? {
                 return Ok(());
             }
-            let mine: Vec<&DesignNote> = notes.iter().filter(|n| n.session == session.id).collect();
-            let busy = mine.iter().any(|n| {
-                is_in_flight(n.status)
-                    || (n.kind == NoteKind::Revert && n.status == NoteStatus::Working)
-            });
-            if busy {
+            let mut mine = notes.iter().filter(|n| n.session == session.id);
+            if let Some(busy) = mine.clone().find(|n| is_in_flight(n.status)) {
+                if busy.kind == NoteKind::Revert && busy.status == NoteStatus::Working {
+                    super::recovery::settle_working_revert(ctx, &session, busy).await?;
+                    continue;
+                }
                 return Ok(());
             }
-            let Some(next) = mine.iter().find(|n| n.status == NoteStatus::Queued) else {
+            let Some(next) = mine.find(|n| n.status == NoteStatus::Queued) else {
                 return Ok(());
             };
-            let next = (*next).clone();
-            if let Some(why) = super::iterations::stale_queued(&next, &notes) {
-                self.cancel_stale(ctx, &next, why).await?;
+            if let Some(why) = super::iterations::stale_queued(next, &notes) {
+                self.cancel_stale(ctx, next, why).await?;
                 continue;
             }
             if next.kind == NoteKind::Revert {
-                self.run_undo(ctx, &session, &next).await?;
+                self.run_undo(ctx, &session, next).await?;
                 continue;
             }
-            return self.send_note(ctx, &session, &next, &notes).await;
+            return self.send_note(ctx, &session, next, &notes).await;
         }
+    }
+
+    /// Read the queue, retrying a missing change request once the session is live.
+    async fn queue_state(
+        &self,
+        ctx: &DaemonContext,
+        item: &QueueItemId,
+    ) -> Result<Option<(DesignSession, Vec<DesignNote>)>, ArchonError> {
+        let mut store = ctx.store.lock().await;
+        let Some(session) = store.design_current_session(item)? else {
+            return Ok(None);
+        };
+        assert_eq!(session.item, *item);
+        let request = if session.state == SessionState::Live {
+            super::revise_note(&mut store, &session).unwrap_or_else(|error| {
+                tracing::warn!(%error, session = %session.id, "design: the operator's change request was not added; the next pump tries again");
+                None
+            })
+        } else {
+            None
+        };
+        let notes = store.design_notes(item)?;
+        drop(store);
+        if let Some(note) = request {
+            assert_eq!(note.session, session.id);
+            tracing::info!(note = %note.id, session = %session.id, "design: the operator's change request was added late");
+            self.emit_note(ctx, item, &note.id).await;
+        }
+        Ok(Some((session, notes)))
     }
 
     /// Cancel a queued note that must not run any more, saying why in its

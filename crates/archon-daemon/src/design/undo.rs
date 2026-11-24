@@ -33,30 +33,26 @@ impl DesignService {
         Ok(repo_identity::RepoIdentity::merger(identity.as_ref()))
     }
 
-    async fn fail_revert(
+    pub(super) async fn fail_revert(
         &self,
         ctx: &DaemonContext,
         revert: &DesignNote,
         reason: FailReason,
         text: String,
     ) -> Result<(), ArchonError> {
-        {
-            let mut store = ctx.store.lock().await;
-            store.design_note_change(
-                &revert.item,
-                &revert.id,
-                NoteChange::Thread(ThreadEntry {
-                    at: archon_core::now(),
-                    from: ReplyAuthor::Archon,
-                    text,
-                }),
-            )?;
-            store.design_note_change(
-                &revert.item,
-                &revert.id,
-                super::status_change(NoteStatus::Failed, Some(reason)),
-            )?;
-        }
+        assert_eq!(revert.kind, archon_core::design::NoteKind::Revert);
+        assert!(!text.is_empty(), "every refusal explains what happened");
+        ctx.store.lock().await.design_note_transition(
+            &revert.item,
+            &revert.id,
+            super::status_change(NoteStatus::Failed, Some(reason)),
+            Some(ThreadEntry {
+                at: archon_core::now(),
+                from: ReplyAuthor::Archon,
+                text,
+            }),
+            None,
+        )?;
         self.emit_note(ctx, &revert.item, &revert.id).await;
         // A continue stops at its first failed revert: nothing after it runs.
         self.cancel_continue(ctx, revert).await;
@@ -72,15 +68,15 @@ impl DesignService {
     ) -> Result<(), ArchonError> {
         let original_id = revert
             .reverts
-            .clone()
+            .as_deref()
             .ok_or_else(|| ArchonError::Corrupt("a revert note names its original".into()))?;
         let original = ctx
             .store
             .lock()
             .await
-            .design_note(&revert.item, &original_id)?
+            .design_note(&revert.item, original_id)?
             .ok_or_else(|| ArchonError::Corrupt(format!("{original_id} is gone")))?;
-        let Some(commit) = original.commit.clone() else {
+        let Some(commit) = original.commit else {
             return self
                 .fail_revert(
                     ctx,
@@ -100,85 +96,49 @@ impl DesignService {
             branch: &wt.branch,
         };
         let prep = design_git::prepare_revert(&g, &commit, &revert.id, &identity);
-        let (pre, new) = match prep {
-            Ok(RevertPrep::Conflict(files)) => {
-                tracing::info!(note = %original_id, ?files, "design: undo conflicts");
-                return self
-                    .fail_revert(ctx, revert, FailReason::UndoConflict, CONFLICT_TEXT.into())
-                    .await;
-            }
-            Ok(RevertPrep::Refused(why)) => {
-                return self
-                    .fail_revert(ctx, revert, FailReason::UndoRefused, why)
-                    .await;
-            }
-            Err(error) => {
-                return self
-                    .fail_revert(
-                        ctx,
-                        revert,
-                        FailReason::UndoRefused,
-                        format!("Undo was not possible: {error}"),
-                    )
-                    .await;
-            }
-            Ok(RevertPrep::Ready { pre, new }) => (pre, new),
+        let change = match prepared_change(prep, original_id) {
+            Ok(change) => change,
+            Err((reason, why)) => return self.fail_revert(ctx, revert, reason, why).await,
         };
-        // Stored before the branch moves, so a restart can settle it.
-        ctx.store.lock().await.design_note_change(
-            &revert.item,
-            &revert.id,
-            NoteChange::RevertPrepared {
-                base_commit: pre.clone(),
-                commit: new.clone(),
-            },
-        )?;
+        let prepared =
+            ctx.store
+                .lock()
+                .await
+                .design_note_change(&revert.item, &revert.id, change)?;
         self.emit_note(ctx, &revert.item, &revert.id).await;
-        let applied = match design_git::apply_revert(&g, &pre, &new) {
-            Ok(applied) => applied,
-            Err(error) => {
-                // `apply_revert` puts the files back when it fails before the
-                // branch moved: nothing changed, so the undo fails visibly
-                // and the session is editable again. A branch that did move
-                // is left for startup's reconcile, as before.
-                if crate::worktree::stack::sha(&wt.repo, &wt.branch)
-                    .ok()
-                    .as_deref()
-                    != Some(pre.as_str())
-                {
-                    return Err(error);
-                }
-                // "Nothing changed" only when the files really are back at
-                // the commit the undo started from; a restore that failed
-                // too is said plainly, so the operator checks the preview.
-                if matches!(self.worktree_at(&wt, &pre), Ok(Ok(()))) {
-                    tracing::warn!(note = %original_id, %error, "design: undo failed; nothing changed");
-                    return self
-                        .fail_revert(
-                            ctx,
-                            revert,
-                            FailReason::UndoRefused,
-                            format!("Undo did not finish, so nothing changed: {error}"),
-                        )
-                        .await;
-                }
-                tracing::warn!(note = %original_id, %error, "design: undo failed and its files were not all restored");
-                return self
-                    .fail_revert(
-                        ctx,
-                        revert,
-                        FailReason::UndoInterrupted,
-                        format!(
-                            "Undo did not finish and its files could not all be put back; check \
-                             the preview and add a note if something looks wrong: {error}"
-                        ),
-                    )
-                    .await;
+        self.apply_prepared(ctx, session, &prepared, &wt, &g).await
+    }
+
+    async fn apply_prepared(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSession,
+        revert: &DesignNote,
+        wt: &WorktreeRef,
+        git: &NoteGit<'_>,
+    ) -> Result<(), ArchonError> {
+        assert_eq!(revert.status, NoteStatus::Working);
+        assert_eq!(revert.session, session.id);
+        let original = revert
+            .reverts
+            .as_deref()
+            .expect("a prepared undo names its original");
+        let pre = revert
+            .base_commit
+            .as_deref()
+            .expect("stored before applying");
+        let new = revert.commit.as_deref().expect("stored before applying");
+        match design_git::apply_revert(git, pre, new) {
+            Ok(RevertApplied::Applied) => {
+                self.settle_revert_done(ctx, session, revert, original, new, wt)
+                    .await
             }
-        };
-        match applied {
-            RevertApplied::HistoryChanged(why) => {
-                tracing::info!(note = %original_id, why, "design: undo found the history changed");
+            Ok(RevertApplied::HistoryChanged(why)) => {
+                tracing::info!(
+                    note = original,
+                    why,
+                    "design: undo found the history changed"
+                );
                 self.fail_revert(
                     ctx,
                     revert,
@@ -187,9 +147,25 @@ impl DesignService {
                 )
                 .await
             }
-            RevertApplied::Applied => {
-                self.settle_revert_done(ctx, session, revert, &original_id, &new, &wt)
-                    .await
+            Err(error) => {
+                tracing::warn!(note = original, %error, "design: settling an unsuccessful undo");
+                let head = crate::worktree::stack::sha(&wt.repo, &wt.branch)?;
+                if head != pre {
+                    return super::recovery::settle_working_revert(ctx, session, revert).await;
+                }
+                let (reason, message) = match self.worktree_at(wt, pre)? {
+                    Ok(()) => (
+                        FailReason::UndoRefused,
+                        format!("Undo did not finish, so nothing changed: {error}"),
+                    ),
+                    Err(why) => (
+                        FailReason::UndoInterrupted,
+                        format!(
+                            "Undo did not finish and its files could not all be put back; check the preview: {why} ({error})"
+                        ),
+                    ),
+                };
+                self.fail_revert(ctx, revert, reason, message).await
             }
         }
     }
@@ -247,5 +223,26 @@ impl DesignService {
         let mut store = ctx.store.lock().await;
         let owed = queued_payload(&store, session, message)?;
         store.design_revert_done(session, &revert.id, new, &owed)
+    }
+}
+
+fn prepared_change(
+    prep: Result<RevertPrep, ArchonError>,
+    original: &str,
+) -> Result<NoteChange, (FailReason, String)> {
+    match prep {
+        Ok(RevertPrep::Ready { pre, new }) => Ok(NoteChange::RevertPrepared {
+            base_commit: pre,
+            commit: new,
+        }),
+        Ok(RevertPrep::Conflict(files)) => {
+            tracing::info!(note = original, ?files, "design: undo conflicts");
+            Err((FailReason::UndoConflict, CONFLICT_TEXT.into()))
+        }
+        Ok(RevertPrep::Refused(why)) => Err((FailReason::UndoRefused, why)),
+        Err(error) => Err((
+            FailReason::UndoRefused,
+            format!("Undo was not possible: {error}"),
+        )),
     }
 }

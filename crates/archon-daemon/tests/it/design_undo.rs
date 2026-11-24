@@ -322,6 +322,20 @@ async fn undone(f: &Fixture) -> (String, String, String) {
     (id, commit, revert)
 }
 
+#[tokio::test]
+async fn the_live_queue_settles_an_undo_left_working_after_the_branch_moved() {
+    let f = Fixture::new().await;
+    let (original, pre, new) = undone(&f).await;
+    let prepared = left_working(&f, &original, &pre, &new).await;
+
+    let next = add(&f, "next", "the next change").await;
+    let settled = note(&f, &prepared).await;
+    assert_eq!(settled.status, NoteStatus::Done);
+    assert_eq!(settled.commit.as_deref(), Some(new.as_str()));
+    assert_eq!(f.head(), new);
+    assert_eq!(note(&f, &next.id).await.status, NoteStatus::Sent);
+}
+
 async fn recovered(f: &Fixture, id: &str) -> archon_core::design::DesignNote {
     archon_daemon::design::recover(&f.h.ctx)
         .await

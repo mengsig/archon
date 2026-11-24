@@ -1,12 +1,10 @@
 //! Start-up: reap browsers a dead archond left, sweep their profiles, and
 //! settle the undos it was in the middle of.
 
-use archon_core::design::{
-    DesignNote, FailReason, NoteKind, NoteStatus, ReplyAuthor, SessionState, ThreadEntry,
-};
+use archon_core::design::{DesignNote, FailReason, NoteKind, NoteStatus, SessionState};
 use archon_core::error::ArchonError;
 use archon_design_browser as adb;
-use archon_queue::store::{NoteChange, SessionPatch};
+use archon_queue::store::SessionPatch;
 
 use crate::context::DaemonContext;
 use crate::worktree::design_git::{self, NoteGit, Reconciled};
@@ -84,24 +82,24 @@ async fn reap_recorded_browsers(ctx: &DaemonContext) -> Result<(), ArchonError> 
     Ok(())
 }
 
-async fn settle_working_revert(
+pub(super) async fn settle_working_revert(
     ctx: &DaemonContext,
     session: &archon_core::design::DesignSession,
     revert: &DesignNote,
 ) -> Result<(), ArchonError> {
+    assert_eq!(revert.session, session.id);
+    assert_eq!(revert.status, NoteStatus::Working);
     let service = &ctx.design;
     let original = revert
         .reverts
         .as_deref()
         .ok_or_else(|| ArchonError::Corrupt("a revert note names its original".into()))?;
-    let (Some(pre), Some(new)) = (revert.base_commit.clone(), revert.commit.clone()) else {
-        return fail(
-            ctx,
-            revert,
-            FailReason::UndoInterrupted,
-            format!("Undo of {original} was interrupted; nothing changed. Press Undo again."),
-        )
-        .await;
+    let interrupted =
+        || format!("Undo of {original} was interrupted; nothing changed. Press Undo again.");
+    let (Some(pre), Some(new)) = (revert.base_commit.as_deref(), revert.commit.as_deref()) else {
+        return service
+            .fail_revert(ctx, revert, FailReason::UndoInterrupted, interrupted())
+            .await;
     };
     let wt = service.worktree_of(ctx, session).await?;
     let shadow = service.shadow(&wt)?;
@@ -111,57 +109,28 @@ async fn settle_working_revert(
         worktree: &wt.worktree,
         branch: &wt.branch,
     };
-    match design_git::reconcile_revert(&g, &pre, &new)? {
+    match design_git::reconcile_revert(&g, pre, new)? {
         Reconciled::Done | Reconciled::Completed => {
             service
-                .record_revert_done(ctx, session, revert, original, &new)
+                .record_revert_done(ctx, session, revert, original, new)
                 .await?;
+            service.emit_note(ctx, &revert.item, &revert.id).await;
             service.flush_owed(ctx, session).await
         }
         Reconciled::NotApplied => {
-            fail(
-                ctx,
-                revert,
-                FailReason::UndoInterrupted,
-                format!("Undo of {original} was interrupted; nothing changed. Press Undo again."),
-            )
-            .await
+            service
+                .fail_revert(ctx, revert, FailReason::UndoInterrupted, interrupted())
+                .await
         }
         Reconciled::HistoryChanged(_) => {
-            fail(
-                ctx,
-                revert,
-                FailReason::HistoryChanged,
-                format!("Undo of {original} was interrupted; check the preview"),
-            )
-            .await
+            service
+                .fail_revert(
+                    ctx,
+                    revert,
+                    FailReason::HistoryChanged,
+                    format!("Undo of {original} was interrupted; check the preview"),
+                )
+                .await
         }
     }
-}
-
-async fn fail(
-    ctx: &DaemonContext,
-    revert: &DesignNote,
-    reason: FailReason,
-    text: String,
-) -> Result<(), ArchonError> {
-    let mut store = ctx.store.lock().await;
-    store.design_note_change(
-        &revert.item,
-        &revert.id,
-        NoteChange::Thread(ThreadEntry {
-            at: archon_core::now(),
-            from: ReplyAuthor::Archon,
-            text,
-        }),
-    )?;
-    store.design_note_change(
-        &revert.item,
-        &revert.id,
-        super::status_change(NoteStatus::Failed, Some(reason)),
-    )?;
-    drop(store);
-    // As a live failed undo does: the rest of its continue stops.
-    ctx.design.cancel_continue(ctx, revert).await;
-    Ok(())
 }

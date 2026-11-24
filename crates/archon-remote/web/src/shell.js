@@ -13,7 +13,7 @@ import { mountOverview } from './features/overview/overview.js';
 import { mountSettings } from './features/settings/settings.js';
 import { mountDesign } from './features/design/screen.js';
 import { mountGraph } from './features/graph/graph.js';
-import { APP_VERSION } from './version.js';
+import { hostVersionLabel } from './core/format.js';
 
 const SCREENS = { queue: mountQueue, graph: mountGraph, item: mountItem, design: mountDesign, inbox: mountInbox, chat: mountChat, overview: mountOverview, settings: mountSettings };
 const TABS = [
@@ -27,7 +27,7 @@ const TABS = [
 export function mountShell(root, app, { onForget }) {
   const banner = h('div', { class: 'conn-banner', role: 'status', 'aria-live': 'polite' });
   const views = h('main', { class: 'views', id: 'views' });
-  const tabbar = buildTabbar();
+  const tabbar = buildTabbar(hostVersionLabel(app.store.get()));
   const shell = h('div', { class: 'shell', id: 'shell' }, banner, views, tabbar.nav);
   const overlay = h('div', { id: 'overlay', class: 'overlay' });
   root.replaceChildren(shell, overlay, h('div', { id: 'toasts', class: 'toasts', 'aria-live': 'polite' }));
@@ -60,6 +60,7 @@ export function mountShell(root, app, { onForget }) {
       renderBanner(banner, app.store.get().connection, app);
     }),
     app.store.watch((s) => s.questions, (questions) => tabbar.badge(openCount(questions))),
+    app.store.watch((s) => hostVersionLabel(s), (label) => tabbar.version(label)),
     app.store.watch((s) => s.errors.protocol, (err) => err && toast(describeError(err), { tone: 'red' })),
   ];
   router.start();
@@ -71,11 +72,12 @@ export function mountShell(root, app, { onForget }) {
   };
 }
 
-function buildTabbar() {
+function buildTabbar(versionText) {
   const buttons = new Map();
   // Settings sits in the sidebar's footer, not among the tabs; on a phone only its header icon leads there.
   const settings = h('a', { class: 'nav-settings', href: '#/settings', dataset: { tab: 'settings' } }, icon('settings', { size: 18 }), 'Settings');
   const badge = h('span', { class: 'tab-badge', 'aria-hidden': 'true', hidden: true });
+  const version = h('span', { class: 'nav-version', text: versionText });
   const nav = h('nav', { class: 'tabbar', 'aria-label': 'Sections' },
     h('a', { class: 'tabbar-brand', href: '#/overview', 'aria-label': 'Archon home' }, icon('mark', { size: 28 }), 'archon'),
     h('span', { class: 'nav-eyebrow', text: 'Workspace' }),
@@ -88,7 +90,7 @@ function buildTabbar() {
     }),
     h('div', { class: 'nav-footer' },
       settings,
-      h('span', { class: 'nav-version', text: `Archon ${APP_VERSION}` })));
+      version));
   return {
     nav,
     select(id) {
@@ -97,6 +99,9 @@ function buildTabbar() {
         if (tab === id) link.setAttribute('aria-current', 'page');
         else link.removeAttribute('aria-current');
       }
+    },
+    version(text) {
+      version.textContent = text;
     },
     badge(count) {
       badge.hidden = count === 0;

@@ -71,7 +71,8 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage, iterat
       iterOn && note.follows ? h('span', { class: 'note-tag', text: `Follow-up on ${note.follows}` }) : null,
       iterOn && isSetAside(note) && note.kind !== 'revert' ? h('span', { class: 'chip tone-muted note-chip' }, h('span', { class: 'chip-text', text: 'Set aside' })) : null));
     li.append(h('p', { class: 'note-text' }, iterOn ? linkedText(note.text || (note.kind === 'revert' ? 'Reverse this change' : ''), note.refs ?? [], onLink) : (note.text || (note.kind === 'revert' ? 'Reverse this change' : ''))));
-    if (iterOn && note.refs?.length) li.append(refLinks(note.text, note.refs, onLink));
+    const refLine = iterOn ? refLinks(note.text, note.refs, onLink) : null;
+    if (refLine) li.append(refLine);
     if (note.read_only) li.append(h('p', { class: 'note-hint', text: earlierText(note, state.session?.id) }));
     if (note.undone_by) li.append(h('p', { class: 'note-hint', text: `Undone by ${note.undone_by}. It no longer counts.` }));
     if (note.no_change) li.append(h('p', { class: 'note-hint', text: 'Done, nothing to change.' }));

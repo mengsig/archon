@@ -669,6 +669,9 @@ test.describe('iterations (desktop)', () => {
       await expect(sentCard.locator('.note-text').getByRole('button', { name: 'Show D3 in the tree' })).toBeVisible();
       await expect(sentCard.locator('.note-refs').getByRole('button', { name: 'Show D5 in the tree' })).toBeVisible();
       await expect(sentCard.locator('.note-refs').getByRole('button', { name: 'Show D3 in the tree' })).toHaveCount(0);
+      // A note whose words already name every reference adds no line under them.
+      await expect(page.locator('#note-D9 .note-refs')).toHaveCount(0);
+      await expect(page.locator('#note-D9')).not.toContainText('null');
       // D9's own text links D5; a link selects that node in the tree.
       await page.locator('#note-D9').getByRole('button', { name: 'Show D5 in the tree' }).click();
       await expect(page.getByRole('tab', { name: 'Tree' })).toHaveAttribute('aria-selected', 'true');

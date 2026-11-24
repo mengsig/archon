@@ -62,7 +62,9 @@ allows `--no-sandbox`; the design screen then shows an **Unsandboxed preview**
 badge for as long as it runs that way. The residual risk is the same one you
 already accept: the app's dev server runs unsandboxed as your user.
 
-**Preview origin.** Serve the page and its assets through the item's own HTTP
+**Preview origin.** Live preview requires a Linux daemon host with access to
+the dev server’s process and socket records in `/proc`. Serve the page and
+its assets through the item's own HTTP
 dev server on loopback. Start it in the run worktree and record its PID in
 `.archon/services/<name>.pid`. The former repository setting
 `[design] allow_hosts` is unsupported. Serve fonts, styles and other external

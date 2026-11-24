@@ -123,6 +123,10 @@ impl PreviewBrowser for FakeBrowser {
     fn started_at(&self) -> Option<u64> {
         Some(1_000)
     }
+    async fn probe(&self, _url: &str) -> bool {
+        true
+    }
+
     async fn navigate(&self, url: &str) -> Result<(), adb::BrowserError> {
         self.calls.lock().unwrap().navigated.push(url.to_owned());
         self.op(format!("navigate {url}"));
@@ -274,8 +278,28 @@ impl FakeFactory {
     }
 }
 
+#[derive(Debug)]
+struct FixtureServer;
+
+#[async_trait::async_trait]
+impl adb::UpstreamGuard for FixtureServer {
+    async fn verify_peer(&self, _peer: &tokio::net::TcpStream) -> Result<(), adb::BrowserError> {
+        Err(adb::BrowserError::Protocol(
+            "the fixture has no network server".into(),
+        ))
+    }
+}
+
 #[async_trait::async_trait]
 impl BrowserFactory for FakeFactory {
+    async fn verify_server(
+        &self,
+        _worktree: &Path,
+        _url: &str,
+    ) -> Result<Arc<dyn adb::UpstreamGuard>, archon_core::error::ArchonError> {
+        Ok(Arc::new(FixtureServer))
+    }
+
     fn binary(&self, _configured: Option<&Path>) -> Result<PathBuf, adb::BrowserError> {
         if *self.missing.lock().unwrap() {
             return Err(adb::BrowserError::NotFound {
@@ -288,6 +312,7 @@ impl BrowserFactory for FakeFactory {
     async fn launch(
         &self,
         spec: adb::LaunchSpec,
+        registration: &archon_daemon::design::BrowserRegistration<'_>,
     ) -> Result<Arc<dyn PreviewBrowser>, adb::BrowserError> {
         let delay = *self.delay.lock().unwrap();
         if !delay.is_zero() {
@@ -296,9 +321,13 @@ impl BrowserFactory for FakeFactory {
         if let Some(error) = self.fail.lock().unwrap().take() {
             return Err(error);
         }
-        let mut launches = self.launches.lock().unwrap();
-        launches.push(spec);
-        let browser = Arc::new(FakeBrowser::new(40_000 + launches.len() as u32));
+        let pid = {
+            let mut launches = self.launches.lock().unwrap();
+            launches.push(spec);
+            40_000 + launches.len() as u32
+        };
+        registration.record(pid, 1_000).await?;
+        let browser = Arc::new(FakeBrowser::new(pid));
         self.browsers.lock().unwrap().push(browser.clone());
         Ok(browser)
     }
@@ -328,6 +357,20 @@ pub struct Fixture {
 /// The preview URL every fixture session reports.
 pub const PREVIEW: &str = "http://127.0.0.1:5173/";
 
+pub async fn enqueue_live(h: &Harness, title: &str) -> archon_core::queue::QueueItem {
+    let mut request =
+        super::enqueue_request(super::REPO_NAME, super::PIPELINE, title, super::plan());
+    request.autonomy.proposal = Some(archon_core::autonomy::ProposalMode::Live);
+    match h
+        .cli(Request::Enqueue(request))
+        .await
+        .expect("enqueue live item")
+    {
+        Reply::Item(item) => item,
+        other => panic!("enqueue replied {other:?}"),
+    }
+}
+
 impl Fixture {
     pub async fn new() -> Self {
         Self::with(design_config()).await
@@ -337,7 +380,7 @@ impl Fixture {
         let h = Harness::with_config(config).await;
         let factory = Arc::new(FakeFactory::default());
         h.ctx.design.set_factory(factory.clone());
-        let item = h.enqueue("design the save button").await;
+        let item = enqueue_live(&h, "design the save button").await;
         h.dispatch().await;
         let run = h.run(&item.id).await;
         // The dispatched stage's own agent, which the fake backend knows.

@@ -185,7 +185,7 @@ fn session_row(row: &Row<'_>) -> rusqlite::Result<Result<DesignSession, ArchonEr
     let note_version: i64 = row.get(7)?;
     let build = || -> Result<DesignSession, ArchonError> {
         Ok(DesignSession {
-            id: DesignSessionId(id.clone()),
+            id: DesignSessionId::parse(&id)?,
             item: QueueItemId::parse(&item)?,
             run: PipelineRunId::parse(&run)?,
             stage_id: row.get(3).ctx("read design session")?,
@@ -235,7 +235,7 @@ fn session_by_id(
     conn: &Connection,
     id: &DesignSessionId,
 ) -> Result<Option<DesignSession>, ArchonError> {
-    Ok(read_sessions(conn, "WHERE id = ?1", &[&id.0])?.pop())
+    Ok(read_sessions(conn, "WHERE id = ?1", &[&id.as_str()])?.pop())
 }
 
 /// The item's newest session that has not ended.
@@ -257,8 +257,8 @@ const NOTE_COLUMNS: &str = "item, id, number, session, kind, text, details_text,
     after_asset, final_asset, final_included, captured_commit, created_by_device, created_at,
     updated_at, follows, refs_json";
 
-fn asset_id(text: Option<String>) -> Option<DesignAssetId> {
-    text.map(DesignAssetId)
+fn asset_id(text: Option<String>) -> Result<Option<DesignAssetId>, ArchonError> {
+    text.map(DesignAssetId::try_from).transpose()
 }
 
 fn note_row(row: &Row<'_>) -> rusqlite::Result<Result<DesignNote, ArchonError>> {
@@ -282,7 +282,7 @@ fn note_row(row: &Row<'_>) -> rusqlite::Result<Result<DesignNote, ArchonError>> 
             item: QueueItemId::parse(&item)?,
             id: ctx(row.get(1))?,
             number: to_u64(number, "note number")?,
-            session: DesignSessionId(ctx(row.get(3))?),
+            session: DesignSessionId::try_from(ctx(row.get::<_, String>(3))?)?,
             kind: dec(&kind, "note kind")?,
             text: ctx(row.get(5))?,
             details_text: ctx(row.get(6))?,
@@ -302,9 +302,9 @@ fn note_row(row: &Row<'_>) -> rusqlite::Result<Result<DesignNote, ArchonError>> 
             thread: from_json(&thread, "note thread")?,
             client_key: ctx(row.get(19))?,
             delivery: u32::try_from(delivery).map_err(corrupt("delivery"))?,
-            before_asset: asset_id(ctx(row.get(21))?),
-            after_asset: asset_id(ctx(row.get(22))?),
-            final_asset: asset_id(ctx(row.get(23))?),
+            before_asset: asset_id(ctx(row.get(21))?)?,
+            after_asset: asset_id(ctx(row.get(22))?)?,
+            final_asset: asset_id(ctx(row.get(23))?)?,
             final_included: ctx(row.get(24))?,
             captured_commit: ctx(row.get(25))?,
             created_by_device: ctx(row.get(26))?,
@@ -344,7 +344,11 @@ fn session_notes(
     conn: &Connection,
     session: &DesignSessionId,
 ) -> Result<Vec<DesignNote>, ArchonError> {
-    read_notes(conn, "WHERE session = ?1 ORDER BY number", &[&session.0])
+    read_notes(
+        conn,
+        "WHERE session = ?1 ORDER BY number",
+        &[&session.as_str()],
+    )
 }
 
 /// Every requirement and image id of a record read loosely: `requirements[].id`
@@ -409,7 +413,7 @@ fn intent_ids(conn: &Connection, item: &QueueItemId) -> Result<Vec<String>, Arch
 fn bump(tx: &Connection, session: &DesignSessionId) -> Result<(), ArchonError> {
     tx.execute(
         "UPDATE design_sessions SET note_version = note_version + 1 WHERE id = ?1",
-        [&session.0],
+        [&session.as_str()],
     )
     .ctx("bump note version")?;
     Ok(())
@@ -423,7 +427,7 @@ fn end_session(tx: &Connection, id: &DesignSessionId, reason: &str) -> Result<()
     tx.execute(
         "UPDATE design_sessions SET state = 'ended', ended_at = ?2, end_reason = ?3
          WHERE id = ?1 AND state <> 'ended'",
-        params![id.0, now(), reason],
+        params![id.as_str(), now(), reason],
     )
     .ctx("end design session")?;
     Ok(())
@@ -467,7 +471,7 @@ impl Store {
                  note_version, viewport_preset, sandbox_off, agent, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, 'starting', 0, 0, ?6, ?7, ?8, ?9)",
             params![
-                id.0,
+                id.as_str(),
                 new.item.as_str(),
                 new.run.as_str(),
                 new.stage_id,
@@ -499,12 +503,34 @@ impl Store {
         current_session(&self.conn, item)
     }
 
+    /// The open session of this attempt, or its most recently ended session.
+    pub fn design_session_for_attempt(
+        &self,
+        run: &PipelineRunId,
+        stage: &str,
+        attempt: u32,
+    ) -> Result<Option<DesignSession>, ArchonError> {
+        Ok(read_sessions(&self.conn,
+            "WHERE run = ?1 AND stage_id = ?2 AND attempt = ?3 ORDER BY (state = 'ended'), rowid DESC LIMIT 1",
+            &[&run.as_str(), &stage, &attempt],
+        )?.pop())
+    }
+
     /// Every session of the item, oldest first.
     pub fn design_sessions(&self, item: &QueueItemId) -> Result<Vec<DesignSession>, ArchonError> {
         read_sessions(
             &self.conn,
             "WHERE item = ?1 ORDER BY rowid",
             &[&item.as_str()],
+        )
+    }
+
+    /// Includes ended sessions, which may have been interrupted before browser cleanup.
+    pub fn design_sessions_with_process(&self) -> Result<Vec<DesignSession>, ArchonError> {
+        read_sessions(
+            &self.conn,
+            "WHERE browser_pid IS NOT NULL OR browser_started_at IS NOT NULL",
+            &[],
         )
     }
 
@@ -551,7 +577,7 @@ impl Store {
                  browser_started_at = ?4, viewport_preset = ?5, degraded = ?6,
                  agent = ?7 WHERE id = ?1",
             params![
-                id.0,
+                id.as_str(),
                 session.preview_url,
                 session.browser_pid.map(i64::from),
                 session
@@ -644,7 +670,7 @@ impl Store {
         } else {
             tx.execute(
                 "UPDATE design_sessions SET state = ?2 WHERE id = ?1",
-                params![id.0, enc(&to)],
+                params![id.as_str(), enc(&to)],
             )
             .ctx("transition design session")?;
         }
@@ -652,7 +678,7 @@ impl Store {
             tx.execute(
                 "UPDATE design_sessions SET finish_capture = NULL, finish_head = NULL,
                      finish_choices_json = NULL WHERE id = ?1",
-                [&id.0],
+                [&id.as_str()],
             )
             .ctx("clear design finish")?;
         }
@@ -665,7 +691,7 @@ impl Store {
             tx.execute(
                 "UPDATE design_sessions SET finish_capture = ?2, finish_head = ?3,
                      finish_choices_json = ?4 WHERE id = ?1",
-                params![id.0, record.capture, record.head, choices],
+                params![id.as_str(), record.capture, record.head, choices],
             )
             .ctx("record design finish")?;
         }
@@ -697,7 +723,7 @@ impl Store {
         }
         tx.execute(
             "UPDATE design_sessions SET finish_capture = ?2, finish_head = ?3 WHERE id = ?1",
-            params![id.0, capture, head],
+            params![id.as_str(), capture, head],
         )
         .ctx("restamp design finish")?;
         let updated = session_by_id(&tx, id)?.expect("the session exists");
@@ -765,7 +791,7 @@ impl Store {
         let count: i64 = tx
             .query_row(
                 "SELECT COUNT(*) FROM design_notes WHERE session = ?1",
-                [&new.session.0],
+                [&new.session.as_str()],
                 |r| r.get(0),
             )
             .ctx("count design notes")?;
@@ -792,7 +818,7 @@ impl Store {
                 new.item.as_str(),
                 id,
                 to_i64(number, "note number")?,
-                new.session.0,
+                new.session.as_str(),
                 enc(&new.kind),
                 text,
                 new.details_text
@@ -807,7 +833,7 @@ impl Store {
                 new.client_key,
                 new.reverts,
                 new.resent_from,
-                new.before_asset.as_ref().map(|a| a.0.clone()),
+                new.before_asset.as_ref().map(DesignAssetId::as_str),
                 new.created_by_device,
                 at,
                 new.follows,
@@ -1002,12 +1028,12 @@ impl Store {
                 note.superseded_by,
                 to_json(&note.thread, "note thread")?,
                 i64::from(note.delivery),
-                note.after_asset.as_ref().map(|a| a.0.clone()),
-                note.final_asset.as_ref().map(|a| a.0.clone()),
+                note.after_asset.as_ref().map(DesignAssetId::as_str),
+                note.final_asset.as_ref().map(DesignAssetId::as_str),
                 note.final_included,
                 note.captured_commit,
                 at,
-                note.before_asset.as_ref().map(|a| a.0.clone()),
+                note.before_asset.as_ref().map(DesignAssetId::as_str),
             ],
         )
         .ctx("update design note")?;
@@ -1031,7 +1057,7 @@ impl Store {
             .optional()
             .ctx("find design asset")?;
         if let Some(existing) = existing {
-            let found = asset_by_id(&tx, &asset.item, &DesignAssetId(existing))?
+            let found = asset_by_id(&tx, &asset.item, &DesignAssetId::parse(&existing)?)?
                 .expect("the asset was just found");
             return Ok(found);
         }
@@ -1040,7 +1066,7 @@ impl Store {
                  source, target_json, note, commit_sha, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
-                asset.id.0,
+                asset.id.as_str(),
                 asset.item.as_str(),
                 asset.sha256,
                 asset.mime,
@@ -1110,7 +1136,7 @@ impl Store {
         self.conn
             .execute(
                 "DELETE FROM design_assets WHERE item = ?1 AND id = ?2",
-                params![item.as_str(), id.0],
+                params![item.as_str(), id.as_str()],
             )
             .ctx("delete design asset")?;
         Ok(())
@@ -1186,7 +1212,7 @@ fn read_assets(
                     r.ctx("read design asset")
                 }
                 Ok(DesignAsset {
-                    id: DesignAssetId(ctx(row.get(0))?),
+                    id: DesignAssetId::try_from(ctx(row.get::<_, String>(0))?)?,
                     item: QueueItemId::parse(&item)?,
                     sha256: ctx(row.get(2))?,
                     mime: ctx(row.get(3))?,
@@ -1218,7 +1244,7 @@ fn asset_by_id(
     Ok(read_assets(
         conn,
         "WHERE item = ?1 AND id = ?2",
-        &[&item.as_str(), &id.0],
+        &[&item.as_str(), &id.as_str()],
     )?
     .pop())
 }

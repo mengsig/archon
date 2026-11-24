@@ -1759,6 +1759,15 @@ fn design_preview_maps_to_its_request() {
 }
 
 #[test]
+fn design_tools_validate_preview_urls_and_canonical_note_ids() {
+    assert!(to_request("design_preview", json!({"url": "http://localhost:0/"})).is_err());
+    for invalid in ["D0", "D01", "D1-final", "wrong"] {
+        assert!(to_request("design_history", json!({"id": invalid})).is_err());
+        assert!(to_request("design_note", json!({"id": invalid, "status": "working"})).is_err());
+    }
+}
+
+#[test]
 fn design_note_checks_its_status_and_commit() {
     use archon_core::protocol::AgentNoteStatus;
     let sha1 = "a".repeat(40);

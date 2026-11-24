@@ -361,9 +361,9 @@ binary = "gh"                  # the command `github_reply` posts with
 `[design]` turns on [live design
 sessions](design-sessions.md). `enabled` is `false` until you set it. With it
 off, `proposal = live` is refused with a clear message and a running live
-stage fails with "design sessions turned off". A repository's
-`<repo>/.archon/repo.toml` may add `[design] allow_hosts = [...]`, extra hosts
-the preview may load; all others except loopback are blocked.
+stage fails with "design sessions turned off". Serve all preview assets through the item's registered
+dev-server origin. Remove nonempty `[design] allow_hosts` lists from
+`.archon/repo.toml`.
 
 In `<repo>/.archon/config.toml`, `[repo]` takes `ship = "pr"`, `base_branch = "main"` and
 `default_pipeline = "direct"`, and `[pipelines]` takes `disabled = ["adaptive"]`,

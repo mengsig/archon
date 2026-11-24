@@ -382,6 +382,28 @@ async fn only_the_stage_agent_may_report() {
     assert!(operator.is_err(), "design_preview is for stage agents");
 }
 
+#[tokio::test]
+async fn settled_design_agent_cannot_use_its_still_open_session() {
+    let f = Fixture::new().await;
+    let mut store = f.h.ctx.store.lock().await;
+    let mut stage = store.stage_run_by_agent(&f.agent).unwrap().unwrap();
+    stage.state = archon_core::run::StageState::Completed;
+    stage.finished_at = Some(archon_core::now());
+    store.upsert_stage_run(&stage).unwrap();
+    assert!(store.design_current_session(&f.item).unwrap().is_some());
+    drop(store);
+    let result = f
+        .as_agent(Request::DesignHistory {
+            caller: Some(f.agent.clone()),
+            id: None,
+        })
+        .await;
+    assert!(
+        matches!(result, Err(ArchonError::Forbidden(_))),
+        "{result:?}"
+    );
+}
+
 /// Observers (the web client) see a summary and change nothing.
 #[tokio::test]
 async fn observers_see_a_summary_and_cannot_act() {
@@ -618,28 +640,7 @@ async fn a_revised_session_confirms_with_only_its_own_notes() {
         .await
         .expect("decided");
     // The kept agent resumes in attempt 2's new session.
-    let next =
-        f.h.ctx
-            .design
-            .stage_started(
-                &f.h.ctx,
-                &f.item,
-                &f.run,
-                &f.stage_id,
-                f.attempt + 1,
-                &f.agent,
-                f.worktree.clone(),
-            )
-            .await
-            .expect("the revised session starts");
-    f.session = next;
-    f.attempt += 1;
-    f.as_agent(Request::DesignPreview {
-        url: crate::common::design::PREVIEW.into(),
-        caller: Some(f.agent.clone()),
-    })
-    .await
-    .expect("preview reported");
+    next_session(&mut f).await;
     let (d2, _) = crate::design_undo::done_note(&f, "k2", "b.txt", "two\n").await;
     let shots = f.factory.launched();
     let view = finish_and_confirm(&f).await;
@@ -679,6 +680,19 @@ async fn a_revised_session_confirms_with_only_its_own_notes() {
 /// Start the item's next design session (attempt + 1), live, as a revise or
 /// a rerun after a failed acceptance leaves it.
 async fn next_session(f: &mut Fixture) {
+    use archon_core::run::StageState;
+    let mut store = f.h.ctx.store.lock().await;
+    let mut stage = store.stage_run_by_agent(&f.agent).unwrap().unwrap();
+    stage.state = StageState::Completed;
+    stage.finished_at = Some(archon_core::now());
+    store.upsert_stage_run(&stage).unwrap();
+    stage.id = archon_core::id::StageRunId::new();
+    stage.attempt += 1;
+    stage.started_at = archon_core::now();
+    stage.finished_at = None;
+    stage.state = StageState::Running;
+    store.upsert_stage_run(&stage).unwrap();
+    drop(store);
     let next =
         f.h.ctx
             .design
@@ -1045,7 +1059,7 @@ mod stream {
         let f = Fixture::with(config).await;
         assert_eq!(f.factory.launched(), 1, "the first session holds the slot");
 
-        let item = f.h.enqueue("design the cancel button").await;
+        let item = crate::common::design::enqueue_live(&f.h, "design the cancel button").await;
         f.h.dispatch().await;
         let run = f.h.run(&item.id).await;
         let stage =
@@ -1110,7 +1124,7 @@ mod stream {
     #[tokio::test]
     async fn a_session_watched_before_its_app_is_up_starts_its_preview_on_the_report() {
         let f = Fixture::new().await;
-        let item = f.h.enqueue("design the cancel button").await;
+        let item = crate::common::design::enqueue_live(&f.h, "design the cancel button").await;
         f.h.dispatch().await;
         let run = f.h.run(&item.id).await;
         let stage =
@@ -1189,7 +1203,7 @@ mod stream {
         // The operator watches the design they will confirm.
         let (mut first_rx, first_task) = subscribe(&f, 9);
 
-        let item = f.h.enqueue("design the cancel button").await;
+        let item = crate::common::design::enqueue_live(&f.h, "design the cancel button").await;
         f.h.dispatch().await;
         let run = f.h.run(&item.id).await;
         let stage =

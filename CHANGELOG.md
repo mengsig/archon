@@ -26,6 +26,9 @@
 
 ### Changed
 
+- The mobile app shows the embedded release version and matches command
+  results by submission ID, including after a feed replay.
+
 - Stage leads take fewer turns on a small, passing change. The stage
   contract now says a lead delegates no more whole-change reviewers than its
   review level names, not even one to confirm a pass: a further reviewer is

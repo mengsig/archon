@@ -35,8 +35,13 @@ impl DesignService {
         if text.is_empty() {
             return Err(ArchonError::Invalid("a note needs words".into()));
         }
-        if client_key.trim().is_empty() {
-            return Err(ArchonError::Invalid("a note needs a client key".into()));
+        if client_key.trim().is_empty()
+            || client_key.len() > 256
+            || client_key.chars().any(char::is_control)
+        {
+            return Err(ArchonError::Invalid(
+                "a note needs a client key of up to 256 bytes without control characters".into(),
+            ));
         }
         let details = details_text
             .map(|d| clean_text(&d, MAX_DETAILS_CHARS))
@@ -45,17 +50,17 @@ impl DesignService {
         let (note, created) = {
             let mut store = ctx.store.lock().await;
             let existing = store.design_notes(&row.item)?;
-            if existing.iter().filter(|n| n.session == row.id).count() >= MAX_NOTES_PER_SESSION {
-                return Err(ArchonError::Invalid(format!(
-                    "a session holds at most {MAX_NOTES_PER_SESSION} notes"
-                )));
-            }
             // A repeat of a note already added is answered as it stands,
             // whatever happened to its chain since.
             if let Some(found) = existing.iter().find(|n| n.client_key == client_key) {
                 let id = found.id.clone();
                 drop(store);
                 return self.note_reply(ctx, &row.item, &id).await;
+            }
+            if existing.iter().filter(|n| n.session == row.id).count() >= MAX_NOTES_PER_SESSION {
+                return Err(ArchonError::Invalid(format!(
+                    "a session holds at most {MAX_NOTES_PER_SESSION} notes"
+                )));
             }
             let refs = super::iterations::check_refs(refs, &existing)?;
             let parent = match follows.as_deref() {

@@ -109,6 +109,34 @@ pub trait PreviewBrowser: Send + Sync {
     async fn close(&self);
 }
 
+/// Records a child's kernel identity while its launch pipe still holds it.
+pub struct BrowserRegistration<'a> {
+    ctx: &'a DaemonContext,
+    session: &'a DesignSessionId,
+}
+
+impl BrowserRegistration<'_> {
+    /// The launcher calls this once for the new process before starting Chromium.
+    pub async fn record(&self, pid: u32, started: u64) -> Result<(), adb::BrowserError> {
+        if pid == 0 || started == 0 {
+            return Err(adb::BrowserError::Launch(
+                "missing preview process identity".into(),
+            ));
+        }
+        let patch = archon_queue::store::SessionPatch {
+            browser: Some(Some((pid, started))),
+            ..Default::default()
+        };
+        self.ctx
+            .store
+            .lock()
+            .await
+            .design_session_patch(self.session, patch)
+            .map(|_| ())
+            .map_err(|e| adb::BrowserError::Launch(format!("recording the preview browser: {e}")))
+    }
+}
+
 /// How browsers are found and started; tests replace it.
 #[async_trait::async_trait]
 pub trait BrowserFactory: Send + Sync {
@@ -125,6 +153,7 @@ pub trait BrowserFactory: Send + Sync {
     async fn launch(
         &self,
         spec: adb::LaunchSpec,
+        registration: &BrowserRegistration<'_>,
     ) -> Result<Arc<dyn PreviewBrowser>, adb::BrowserError>;
 }
 
@@ -145,8 +174,11 @@ impl BrowserFactory for RealFactory {
     async fn launch(
         &self,
         spec: adb::LaunchSpec,
+        registration: &BrowserRegistration<'_>,
     ) -> Result<Arc<dyn PreviewBrowser>, adb::BrowserError> {
-        let browser = adb::Browser::launch(spec).await?;
+        let browser =
+            adb::Browser::launch_recorded(spec, |pid, started| registration.record(pid, started))
+                .await?;
         Ok(Arc::new(Real {
             inner: std::sync::Mutex::new(Some(Arc::new(browser))),
             relay: std::sync::Mutex::new(None),
@@ -601,7 +633,14 @@ impl DesignService {
         let factory = self.factory();
         let binary = factory.binary(self.cfg.browser.as_deref())?;
         let profile = self.profile_dir(&row.id);
-        let _ = std::fs::remove_dir_all(&profile);
+        match std::fs::remove_dir_all(&profile) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(adb::BrowserError::Launch(format!(
+                    "remove stale preview profile: {error}"
+                )));
+            }
+            _ => {}
+        }
         if let Some(parent) = profile.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| adb::BrowserError::Launch(e.to_string()))?;
@@ -618,13 +657,11 @@ impl DesignService {
             lang: "en-US".into(),
             tz: "UTC".into(),
         };
-        let browser = factory.launch(spec).await?;
-        if let Err(error) = self.persist_browser_pid(ctx, row, &*browser).await {
-            browser.close().await;
-            return Err(adb::BrowserError::Launch(format!(
-                "recording the preview browser: {error}"
-            )));
-        }
+        let registration = BrowserRegistration {
+            ctx,
+            session: &row.id,
+        };
+        let browser = factory.launch(spec, &registration).await?;
         if let Err(error) = browser.navigate(url).await {
             tracing::info!(%error, url, "the first navigation of the preview failed");
         }
@@ -643,30 +680,6 @@ impl DesignService {
         self.emit_session(ctx, &row.id).await;
         self.spawn_monitor(ctx, row.id.clone());
         Ok(browser)
-    }
-
-    async fn persist_browser_pid(
-        &self,
-        ctx: &DaemonContext,
-        row: &archon_core::design::DesignSession,
-        browser: &dyn PreviewBrowser,
-    ) -> Result<(), ArchonError> {
-        let pid = browser.pid();
-        let started_at = browser.started_at();
-        if pid.is_some() != started_at.is_some() {
-            return Err(ArchonError::Unavailable(
-                "the preview browser has no verifiable process identity".into(),
-            ));
-        }
-        let patch = archon_queue::store::SessionPatch {
-            browser: Some(pid.zip(started_at)),
-            ..Default::default()
-        };
-        ctx.store
-            .lock()
-            .await
-            .design_session_patch(&row.id, patch)?;
-        Ok(())
     }
 
     fn set_status(&self, rt: &Runtime, session: &DesignSessionId, status: BrowserStatus) {
@@ -774,7 +787,7 @@ impl DesignService {
             return;
         };
         let _gate = rt.gate.lock().await;
-        let (browser, tasks, counters) = {
+        let (browser, counters) = {
             let mut st = rt.st();
             for task in st.tasks.drain(..) {
                 task.abort();
@@ -785,9 +798,8 @@ impl DesignService {
             // A relaunched browser starts its preview probe afresh: misses
             // the stopped one counted must not mark the new one down.
             st.probe_misses = 0;
-            (st.browser.take(), Vec::<()>::new(), counters)
+            (st.browser.take(), counters)
         };
-        let _ = tasks;
         if let Some(browser) = browser {
             browser.close().await;
             tracing::info!(%session, reason, "design: browser stopped");

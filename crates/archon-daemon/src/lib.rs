@@ -128,7 +128,8 @@ async fn run_until_stopped(options: DaemonOptions) -> Result<(), ArchonError> {
     let result = match recover(&ctx).await {
         Ok(()) => {
             if let Err(error) = design::recover(&ctx).await {
-                tracing::warn!(%error, "design recovery did not finish; sessions are left as they were");
+                ctx.design.shutdown().await;
+                tracing::error!(%error, "live design disabled until restart because recovery failed");
             }
             ctx.recovery.finish();
             remote::start(&ctx).await;
@@ -147,6 +148,7 @@ async fn run_until_stopped(options: DaemonOptions) -> Result<(), ArchonError> {
         }
     };
     ctx.remote.shutdown().await;
+    ctx.design.shutdown().await;
     remove_socket(&ctx.paths.socket);
     drop(lock);
     match &result {

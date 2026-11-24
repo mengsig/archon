@@ -22,20 +22,7 @@ pub async fn recover(ctx: &DaemonContext) -> Result<(), ArchonError> {
             SessionState::Confirmed,
         ])?
     };
-    for session in &sessions {
-        if let (Some(pid), Some(started)) = (session.browser_pid, session.browser_started_at) {
-            let killed = adb::kill_if_matches(pid, started);
-            tracing::info!(session = %session.id, pid, killed, "design: recorded browser reaped");
-            let mut store = ctx.store.lock().await;
-            store.design_session_patch(
-                &session.id,
-                SessionPatch {
-                    browser: Some(None),
-                    ..Default::default()
-                },
-            )?;
-        }
-    }
+    reap_recorded_browsers(ctx).await?;
     let root = service.data_dir.join("design").join("profiles");
     if root.is_dir() {
         match adb::sweep_profiles(&root, &[]) {
@@ -60,12 +47,39 @@ pub async fn recover(ctx: &DaemonContext) -> Result<(), ArchonError> {
             let store = ctx.store.lock().await;
             match store.run(&session.run) {
                 Ok(run) => run.state.is_terminal(),
-                Err(_) => true,
+                Err(ArchonError::NotFound(_)) => true,
+                Err(error) => return Err(error),
             }
         };
         if terminal && let Err(error) = service.end_session(ctx, session, "run ended").await {
             tracing::warn!(%error, session = %session.id, "design: a session of a finished run was not ended");
         }
+    }
+    Ok(())
+}
+
+async fn reap_recorded_browsers(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    let sessions = ctx.store.lock().await.design_sessions_with_process()?;
+    for session in sessions {
+        let (pid, started) = session
+            .browser_pid
+            .zip(session.browser_started_at)
+            .ok_or_else(|| {
+                ArchonError::Unavailable(format!(
+                    "incomplete browser process identity for {}",
+                    session.id
+                ))
+            })?;
+        let killed = adb::kill_if_matches(pid, started)
+            .map_err(|error| ArchonError::io("reap recorded preview browser", error))?;
+        tracing::info!(session = %session.id, pid, killed, "design: checked recorded browser");
+        ctx.store.lock().await.design_session_patch(
+            &session.id,
+            SessionPatch {
+                browser: Some(None),
+                ..Default::default()
+            },
+        )?;
     }
     Ok(())
 }

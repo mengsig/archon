@@ -32,7 +32,7 @@ pub struct LaunchSpec {
 }
 
 /// Shell wrapper: Chromium reads CDP on fd 3 and writes on fd 4, with no stdio of its own.
-pub(crate) const SHELL_SCRIPT: &str = r#"exec 3<&0 4>&1 </dev/null >/dev/null; exec "$0" "$@""#;
+pub(crate) const SHELL_SCRIPT: &str = r#"IFS= read -r start && [ "$start" = START ] || exit 1; exec 3<&0 4>&1 </dev/null >/dev/null; exec "$0" "$@""#;
 
 /// Chromium's command-line arguments (without the binary).
 pub(crate) fn launch_args(spec: &LaunchSpec, proxy: SocketAddr) -> Vec<String> {
@@ -196,11 +196,30 @@ pub(crate) fn kill_group(pid: u32) -> bool {
 }
 
 /// Kill the process group led by `pid`, only if its start time still equals `started_at`.
-pub fn kill_if_matches(pid: u32, started_at: u64) -> bool {
-    if process_start_time(pid) != Some(started_at) {
-        return false;
+pub fn kill_if_matches(pid: u32, started_at: u64) -> std::io::Result<bool> {
+    use std::io::{Error, ErrorKind};
+    let group = i32::try_from(pid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "invalid recorded browser PID"))?;
+    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        result => result?,
+    };
+    let actual = parse_start_time(&stat).ok_or_else(|| {
+        Error::new(
+            ErrorKind::InvalidData,
+            "unreadable browser process identity",
+        )
+    })?;
+    if actual != started_at {
+        return Ok(false);
     }
-    kill_group(pid)
+    match rustix::process::kill_process_group(group, rustix::process::Signal::KILL) {
+        Ok(()) => Ok(true),
+        Err(rustix::io::Errno::SRCH) => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Remove every directory under `root` that is not in `keep`; returns how many were removed.
@@ -313,13 +332,36 @@ mod tests {
     }
 
     #[test]
+    fn launcher_requires_registration_to_execute() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("executed");
+        for (input, allowed) in [
+            (b"".as_slice(), false),
+            (b"invalid\n", false),
+            (b"START\n", true),
+        ] {
+            let mut child = Command::new("/bin/sh")
+                .args(["-c", SHELL_SCRIPT, "/usr/bin/touch"])
+                .arg(&marker)
+                .stdin(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child.stdin.take().unwrap().write_all(input).unwrap();
+            assert_eq!(child.wait().unwrap().success(), allowed);
+            assert_eq!(marker.exists(), allowed);
+        }
+    }
+
+    #[test]
     fn kill_mismatch_does_nothing() {
         let mut c = std::process::Command::new("sleep")
             .arg("30")
             .spawn()
             .unwrap();
         let t = process_start_time(c.id()).unwrap();
-        assert!(!kill_if_matches(c.id(), t + 1));
+        assert!(!kill_if_matches(c.id(), t + 1).unwrap());
         assert!(c.try_wait().unwrap().is_none());
         c.kill().unwrap();
         c.wait().unwrap();

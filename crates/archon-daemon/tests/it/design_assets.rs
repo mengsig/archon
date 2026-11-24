@@ -22,7 +22,8 @@ async fn until(what: &str, mut ok: impl FnMut() -> bool) {
 
 /// Another watched design session on the fixture's daemon.
 async fn new_session(f: &Fixture, name: &str) -> archon_core::design::DesignSessionId {
-    let item = f.h.enqueue(&format!("design the {name} button")).await;
+    let item =
+        crate::common::design::enqueue_live(&f.h, &format!("design the {name} button")).await;
     f.h.dispatch().await;
     let run = f.h.run(&item.id).await;
     let stage =

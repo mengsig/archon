@@ -17,6 +17,55 @@ use crate::context::DaemonContext;
 const RESOLVES_PER_SECOND: u32 = 10;
 const INPUTS_PER_SECOND: u32 = 60;
 
+fn validate_input(event: &InputEvent, width: u32, height: u32) -> Result<(), ArchonError> {
+    let point =
+        |x, y| (0.0..=f64::from(width)).contains(&x) && (0.0..=f64::from(height)).contains(&y);
+    let valid = match event {
+        InputEvent::Mouse {
+            x,
+            y,
+            click_count,
+            modifiers,
+            ..
+        } => point(*x, *y) && *click_count <= 32 && *modifiers <= 15,
+        InputEvent::Wheel {
+            x,
+            y,
+            dx,
+            dy,
+            modifiers,
+        } => {
+            point(*x, *y) && dx.abs() <= 1_000_000.0 && dy.abs() <= 1_000_000.0 && *modifiers <= 15
+        }
+        InputEvent::Text { text } => text.len() <= 16 * 1024,
+        InputEvent::Key {
+            key,
+            code,
+            text,
+            modifiers,
+            ..
+        } => {
+            !key.is_empty()
+                && key.len() <= 128
+                && code.len() <= 128
+                && text.as_ref().is_none_or(|v| v.len() <= 128)
+                && *modifiers <= 15
+        }
+        InputEvent::Touch { points, .. } => {
+            points.len() <= 10
+                && points.iter().enumerate().all(|(index, p)| {
+                    point(p.x, p.y) && points[..index].iter().all(|earlier| earlier.id != p.id)
+                })
+        }
+    };
+    if !valid {
+        return Err(ArchonError::Invalid(
+            "preview input has an invalid coordinate, modifier, size or touch identifier".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn input_of(event: InputEvent) -> adb::Input {
     match event {
         InputEvent::Mouse {
@@ -169,6 +218,9 @@ pub(crate) async fn handle(
             accept,
             text,
         } => {
+            if text.as_ref().is_some_and(|value| value.len() > 16 * 1024) {
+                return Err(ArchonError::Invalid("dialog text exceeds 16 KiB".into()));
+            }
             let row = service.current(ctx, &session).await?;
             let browser = service
                 .existing_runtime(&row.id)
@@ -318,6 +370,10 @@ impl DesignService {
                 "at most {MAX_INPUT_EVENTS} input events a request"
             )));
         }
+        let (width, height) = row.viewport_preset.size();
+        for event in &events {
+            validate_input(event, width, height)?;
+        }
         let rt = self.runtime(&row.id);
         {
             let mut st = rt.st();
@@ -349,6 +405,11 @@ impl DesignService {
         if !(0.0..=viewport.w as f64).contains(&x) || !(0.0..=viewport.h as f64).contains(&y) {
             return Err(ArchonError::Invalid(
                 "that point is outside the preview".into(),
+            ));
+        }
+        if !(-64..=64).contains(&depth) {
+            return Err(ArchonError::Invalid(
+                "selection depth must be between -64 and 64".into(),
             ));
         }
         let rt = self.runtime(&row.id);
@@ -475,5 +536,36 @@ impl DesignService {
             asset: Some(asset.id),
             data_url: Some(data_url),
         }))
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    use archon_core::protocol::TouchPoint;
+
+    #[test]
+    fn reject_duplicate_fingers_and_points_outside_the_preview() {
+        let touch = |points| InputEvent::Touch {
+            action: TouchAction::Move,
+            points,
+        };
+        let finger = TouchPoint {
+            x: 5.0,
+            y: 6.0,
+            id: 1,
+        };
+        assert!(validate_input(&touch(vec![finger.clone()]), 40, 60).is_ok());
+        assert!(validate_input(&touch(vec![finger.clone(), finger.clone()]), 40, 60).is_err());
+        assert!(validate_input(&touch(vec![finger]), 1, 1).is_err());
+    }
+
+    #[test]
+    fn refuse_oversized_paste_before_starting_input() {
+        let text = |length| InputEvent::Text {
+            text: "x".repeat(length),
+        };
+        assert!(validate_input(&text(16 * 1024), 20, 30).is_ok());
+        assert!(validate_input(&text(16 * 1024 + 1), 20, 30).is_err());
     }
 }

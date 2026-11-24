@@ -5401,7 +5401,6 @@
       "type": "object"
     },
     "DesignAssetId": {
-      "description": "A stored design picture, `da_<ULID>`.",
       "type": "string"
     },
     "DesignAssetView": {
@@ -6178,7 +6177,6 @@
       "type": "object"
     },
     "DesignSessionId": {
-      "description": "A design session, `ds_<ULID>`.",
       "type": "string"
     },
     "DesignStateView": {

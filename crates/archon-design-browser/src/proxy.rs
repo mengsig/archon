@@ -57,8 +57,15 @@ impl Policy {
     async fn connect(&self) -> Result<TcpStream, ProxyError> {
         let address = self.origin.address;
         assert!(address.ip().is_loopback());
-        let peer = TcpStream::connect(address).await?;
-        if peer.peer_addr()? != address {
+        let address6 = SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, address.port()));
+        let candidates = [address, address6];
+        let addresses = if self.origin.authority.host() == "localhost" {
+            &candidates[..]
+        } else {
+            &candidates[..1]
+        };
+        let peer = TcpStream::connect(addresses).await?;
+        if !addresses.contains(&peer.peer_addr()?) {
             return Err(refused("unexpected preview socket address"));
         }
         self.guard.verify_peer(&peer).await?;

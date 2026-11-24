@@ -17,6 +17,10 @@ use super::{DesignService, WorktreeRef, refuse};
 use crate::context::DaemonContext;
 use crate::worktree::design_git::{self, NoteGit, Shape, Tidy};
 
+fn preview_authority(url: &str) -> Option<&str> {
+    url.strip_prefix("http://")?.split(['/', '?', '#']).next()
+}
+
 impl DesignService {
     /// The session whose agent `caller` is, while its stage attempt is live.
     pub(crate) async fn agent_session(
@@ -27,62 +31,54 @@ impl DesignService {
         let caller = caller.ok_or_else(|| {
             ArchonError::Forbidden("design tools are for the stage's agent".into())
         })?;
-        if let Some(found) = Self::live_session_of(ctx, caller).await? {
-            return Ok(found);
-        }
-        // A Design stage whose agent runs without a session: a retry or a
-        // resume whose start did not open one (or opened it for an earlier
-        // attempt). Open it now, so the agent's first `design_preview` works.
-        // A run or item that is ending had its sessions ended already: its
-        // agent's late call opens nothing.
-        let stage = {
-            let store = ctx.store.lock().await;
-            store
-                .live_stage_runs()?
-                .into_iter()
-                .filter(|s| {
-                    s.aether_agent.as_ref() == Some(caller)
-                        && s.kind == Some(archon_core::catalog::StageKind::Design)
-                        && s.state == archon_core::run::StageState::Running
-                })
-                .max_by_key(|s| s.attempt)
-                .filter(|s| {
-                    store.run(&s.run).is_ok_and(|run| {
-                        !run.state.is_terminal()
-                            && store
-                                .item(&run.item)
-                                .is_ok_and(|item| !item.state.is_terminal())
-                    })
-                })
+        let denied = || {
+            ArchonError::Forbidden(
+                "only the agent of a running design stage may use design tools".into(),
+            )
         };
-        if let Some(stage) = stage {
-            tracing::info!(stage = %stage.id, attempt = stage.attempt, "design: opening the session of a running stage on its agent's call");
-            crate::executor::design_started(ctx, &stage, caller).await;
-            if let Some(found) = Self::live_session_of(ctx, caller).await? {
-                return Ok(found);
+        let (stage, run, repo) = {
+            let store = ctx.store.lock().await;
+            let stage = store.stage_run_by_agent(caller)?.ok_or_else(denied)?;
+            if stage.state != archon_core::run::StageState::Running
+                || stage.kind != Some(archon_core::catalog::StageKind::Design)
+            {
+                return Err(denied());
             }
-        }
-        Err(ArchonError::Forbidden("stage attempt is not live".into()))
-    }
-
-    /// The newest open session whose agent is `caller`.
-    async fn live_session_of(
-        ctx: &DaemonContext,
-        caller: &AetherAgentId,
-    ) -> Result<Option<DesignSession>, ArchonError> {
-        let store = ctx.store.lock().await;
-        let live = store.design_sessions_in(&[
-            SessionState::Starting,
-            SessionState::Live,
-            SessionState::Finishing,
-            SessionState::Confirmed,
-        ])?;
-        // Oldest first: a resumed agent can hold an earlier attempt's
-        // confirmed session still waiting on its gate; the newest attempt wins.
-        Ok(live
-            .into_iter()
-            .filter(|s| s.agent.as_ref() == Some(caller))
-            .max_by_key(|s| s.attempt))
+            let run = store.run(&stage.run)?;
+            let item = store.item(&run.item)?;
+            if run.state.is_terminal() || item.state.is_terminal() {
+                return Err(denied());
+            }
+            if let Some(session) = store.design_current_session(&item.id)?
+                && session.run == run.id
+                && session.stage_id == stage.stage_id
+                && session.attempt == stage.attempt
+                && session.agent.as_ref() == Some(caller)
+            {
+                return Ok(session);
+            }
+            let repo = store.repo(&crate::resolve::repo_ref(
+                item.repo.as_ref().ok_or_else(denied)?,
+            ))?;
+            (stage, run, repo.path)
+        };
+        let wt = WorktreeRef {
+            repo,
+            worktree: run.workspace,
+            branch: run.branch,
+        };
+        let id = self
+            .stage_started(
+                &ctx.arc(),
+                &run.item,
+                &run.id,
+                &stage.stage_id,
+                stage.attempt,
+                caller,
+                wt,
+            )
+            .await?;
+        self.current(ctx, &id).await
     }
 
     pub(crate) async fn design_preview(
@@ -91,17 +87,47 @@ impl DesignService {
         url: &str,
         caller: Option<&AetherAgentId>,
     ) -> Result<Reply, ArchonError> {
-        let session = self.agent_session(ctx, caller).await?;
         let url = validate_preview_url(url)?;
-        let (became_live, request) = {
+        let session = self.agent_session(ctx, caller).await?;
+        let wt = self.worktree_of(ctx, &session).await?;
+        self.factory().verify_server(&wt.worktree, &url).await?;
+        let lock = self.item_lock(&session.item);
+        let held = lock.lock().await;
+        let current = self.agent_session(ctx, caller).await?;
+        if session.id != current.id {
+            return Err(super::gone());
+        }
+        if !matches!(current.state, SessionState::Starting | SessionState::Live) {
+            return Err(super::finishing());
+        }
+        let request = self.register_preview(ctx, &current, &url).await?;
+        self.update_preview_browser(&current, &url).await?;
+        drop(held);
+        self.emit_session(ctx, &session.id).await;
+        if let Some(note) = request {
+            self.emit_note(ctx, &session.item, &note.id).await;
+            self.pump(ctx, &session.item).await?;
+        }
+        Ok(Reply::DesignDone)
+    }
+
+    async fn register_preview(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSession,
+        url: &str,
+    ) -> Result<Option<DesignNote>, ArchonError> {
+        let (title, note) = {
             let mut store = ctx.store.lock().await;
-            let patch = archon_queue::store::SessionPatch {
-                preview_url: Some(Some(url.clone())),
-                degraded: Some(false),
-                ..Default::default()
-            };
-            store.design_session_patch(&session.id, patch)?;
-            let became_live = if session.state == SessionState::Starting {
+            store.design_session_patch(
+                &session.id,
+                archon_queue::store::SessionPatch {
+                    preview_url: Some(Some(url.to_owned())),
+                    degraded: Some(false),
+                    ..Default::default()
+                },
+            )?;
+            let title = if session.state == SessionState::Starting {
                 store.design_session_transition(
                     &session.id,
                     SessionState::Starting,
@@ -113,71 +139,46 @@ impl DesignService {
             } else {
                 None
             };
-            // On every report while live, not only the first: adding it is
-            // idempotent, so a request a failure kept out arrives on the
-            // agent's next report (or the next pump) instead of being lost;
-            // and a failure here never fails the report that made the session
-            // live.
-            let request = match session.state {
-                SessionState::Starting | SessionState::Live => {
-                    super::revise_note(&mut store, &session).unwrap_or_else(|error| {
-                        tracing::warn!(%error, session = %session.id, "design: the operator's change request was not added; the next preview report tries again");
-                        None
-                    })
-                }
-                _ => None,
-            };
-            (became_live, request)
+            (title, super::revise_note(&mut store, session)?)
         };
-        // The first report makes the session live: tell the operator, whose
-        // inbox shows the entry with an Open button for the design screen.
-        if let Some(title) = became_live {
-            // The title is the operator's own words: clipped, so the inbox
-            // entry and a push stay one short line.
+        if let Some(title) = title {
             let title = crate::executor::clip(title.trim(), 80);
-            let text =
-                format!("Design session ready: {title}. Open it to show the agent what to change.");
-            // The session waits on the operator: a Blocker is the kind that
-            // asks for their action (Decision is a choice already made).
-            if let Err(error) = crate::feed::notify(
+            crate::feed::notify(
                 ctx,
                 archon_core::notify::NotificationKind::Blocker,
-                text,
+                format!("Design session ready: {title}. Open it to show the agent what to change."),
                 Some(session.item.clone()),
                 Some(session.run.clone()),
             )
-            .await
+            .await?;
+        }
+        Ok(note)
+    }
+
+    async fn update_preview_browser(
+        &self,
+        row: &DesignSession,
+        url: &str,
+    ) -> Result<(), ArchonError> {
+        let rt = self.runtime(&row.id);
+        rt.st().last_url = Some(url.to_owned());
+        if let Some(browser) = rt.browser() {
+            if row.preview_url.as_deref().and_then(preview_authority) == preview_authority(url)
+                && browser.probe(url).await
             {
-                tracing::warn!(%error, session = %session.id, "design: the ready notice was not posted");
+                browser.navigate(url).await.map_err(|e| {
+                    ArchonError::Unavailable(format!("navigating the preview: {e}"))
+                })?;
+            } else {
+                self.stop_browser(&row.id, "dev server changed", false)
+                    .await;
             }
         }
-        let rt = self.runtime(&session.id);
-        rt.st().last_url = Some(url.clone());
         let watched = rt.st().subscribers > 0;
-        match rt.browser() {
-            Some(browser) => {
-                if let Err(error) = browser.navigate(&url).await {
-                    tracing::info!(%error, "design: navigating the preview failed");
-                }
-            }
-            // A screen opened before the app was up (a Revise's next session,
-            // followed from the old one) subscribed while there was nothing
-            // to show: start its preview now, not on its next reopen.
-            None if watched => self.spawn_first_look(&session.id),
-            None => {}
+        if watched && rt.browser().is_none() {
+            self.spawn_first_look(&row.id);
         }
-        tracing::info!(session = %session.id, url, "design: preview reported");
-        self.emit_session(ctx, &session.id).await;
-        if let Some(note) = request {
-            tracing::info!(note = %note.id, session = %session.id, "design: the operator's change request is the session's first note");
-            self.emit_note(ctx, &session.item, &note.id).await;
-            // The note is stored queued: a failed delivery here is retried
-            // by the next pump or sweep, so it never fails the agent's report.
-            if let Err(error) = self.pump(ctx, &session.item).await {
-                tracing::warn!(%error, session = %session.id, "design: delivering the operator's change request failed");
-            }
-        }
-        Ok(Reply::DesignDone)
+        Ok(())
     }
 
     /// Start the browser and frames of a session someone already watches,
@@ -637,6 +638,11 @@ pub(crate) struct NoteReport {
 
 /// The arguments that make no sense, refused before any note is read.
 fn check_report(report: &NoteReport) -> Result<(), ArchonError> {
+    if !archon_core::design::valid_note_id(&report.id) {
+        return Err(ArchonError::Invalid(
+            "id must be a note ID such as D3".into(),
+        ));
+    }
     let done_with_change = report.status == AgentNoteStatus::Done && !report.no_change;
     if let Some(path) = &report.path {
         archon_core::design::check_app_path(path)

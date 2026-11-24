@@ -67,14 +67,21 @@ fn query_request(tool: &str, args: &mut Args) -> Result<Option<Request>, ToolErr
             caller: None,
         },
         "design_preview" => Request::DesignPreview {
-            url: args.required_text("url")?,
+            url: archon_core::design::validate_preview_url(&args.required_text("url")?)
+                .map_err(|error| args.error("url", error))?,
             caller: None,
         },
         "design_note" => design_note(args)?,
-        "design_history" => Request::DesignHistory {
-            id: args.optional_text("id")?,
-            caller: None,
-        },
+        "design_history" => {
+            let id = args.optional_text("id")?;
+            if id
+                .as_deref()
+                .is_some_and(|id| !archon_core::design::valid_note_id(id))
+            {
+                return Err(args.error("id", "must be a note ID such as D3"));
+            }
+            Request::DesignHistory { id, caller: None }
+        }
         "submit_verdict" => Request::SubmitVerdict {
             summary: args.required_text("summary")?,
             // An object, as `complete_task` takes it: nothing else is read.
@@ -701,7 +708,7 @@ fn quoted(keys: &[&str]) -> String {
 /// `design_note`: a note id, a status, and for `done` an exact commit id.
 fn design_note(args: &mut Args) -> Result<Request, ToolError> {
     let id = args.required_text("id")?;
-    if archon_core::design::note_number(&id).is_none() || id.contains('-') {
+    if !archon_core::design::valid_note_id(&id) {
         return Err(args.error("id", format_args!("must look like D3, got {id:?}")));
     }
     let status = args.required("status")?;

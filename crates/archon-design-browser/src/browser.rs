@@ -479,8 +479,10 @@ impl Shared {
             reason,
             "closing preview browser after document policy failure"
         );
-        if let Some((pid, started_at)) = self.owned_process {
-            kill_if_matches(pid, started_at);
+        if let Some((pid, started_at)) = self.owned_process
+            && let Err(error) = kill_if_matches(pid, started_at)
+        {
+            tracing::error!(%error, pid, "failed to reap a blocked preview browser");
         }
         self.cdp.abort();
         self.emit(BrowserEvent::Exited);
@@ -700,6 +702,17 @@ async fn configure_page(cdp: &Cdp, session: &str, confined: bool) -> Result<(), 
 impl Browser {
     /// Start Chromium and attach to its page.
     pub async fn launch(spec: LaunchSpec) -> Result<Browser, BrowserError> {
+        Self::launch_recorded(spec, |_, _| std::future::ready(Ok(()))).await
+    }
+
+    /// Persist the process identity before releasing the child to execute Chromium.
+    pub async fn launch_recorded<F>(
+        spec: LaunchSpec,
+        record: impl FnOnce(u32, u64) -> F,
+    ) -> Result<Browser, BrowserError>
+    where
+        F: Future<Output = Result<(), BrowserError>>,
+    {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
         let io = |e: std::io::Error| BrowserError::Launch(e.to_string());
         let policy = Arc::new(Policy::new(&spec.preview_url, spec.upstream_guard.clone())?);
@@ -713,14 +726,18 @@ impl Browser {
             .create(&spec.profile_dir)
             .map_err(io)?;
         fs::set_permissions(&spec.profile_dir, fs::Permissions::from_mode(0o700)).map_err(io)?;
-        Self::spawn(&spec, policy, proxy).await
+        Self::spawn(&spec, policy, proxy, record).await
     }
 
-    async fn spawn(
+    async fn spawn<F>(
         spec: &LaunchSpec,
         policy: Arc<Policy>,
         proxy: Proxy,
-    ) -> Result<Browser, BrowserError> {
+        record: impl FnOnce(u32, u64) -> F,
+    ) -> Result<Browser, BrowserError>
+    where
+        F: Future<Output = Result<(), BrowserError>>,
+    {
         let mut guard = LaunchGuard {
             pid: None,
             profile: Some(spec.profile_dir.clone()),
@@ -746,6 +763,14 @@ impl Browser {
         let process = pid.zip(started_at).ok_or_else(|| {
             BrowserError::Launch("browser process identity is unavailable".into())
         })?;
+        record(process.0, process.1).await?;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| BrowserError::Launch("missing launch pipe".into()))?;
+        tokio::io::AsyncWriteExt::write_all(stdin, b"START\n")
+            .await
+            .map_err(|e| BrowserError::Launch(format!("release recorded browser: {e}")))?;
         let mut b =
             Self::attach_child(&mut child, spec.viewport, OwnedSession { policy, process }).await?;
         b.proxy = Some(proxy);

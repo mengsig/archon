@@ -99,6 +99,14 @@ If unclear, discard your edits, call design_note {{status:\"needs_reply\", reply
     text
 }
 
+fn decode_owed(raw: Option<String>) -> Result<Vec<Owed>, ArchonError> {
+    match raw {
+        Some(raw) => serde_json::from_str(&raw)
+            .map_err(|e| ArchonError::Corrupt(format!("invalid design_owed: {e}"))),
+        None => Ok(Vec::new()),
+    }
+}
+
 impl DesignService {
     pub(crate) async fn owed_list(
         &self,
@@ -106,11 +114,7 @@ impl DesignService {
         session: &archon_core::design::DesignSessionId,
     ) -> Result<Vec<Owed>, ArchonError> {
         let raw = ctx.store.lock().await.kv_get(&keys::design_owed(session))?;
-        match raw {
-            None => Ok(Vec::new()),
-            Some(raw) => serde_json::from_str(&raw)
-                .map_err(|e| ArchonError::Corrupt(format!("invalid design_owed: {e}"))),
-        }
+        decode_owed(raw)
     }
 
     /// Record a delivery as owed, without sending it.
@@ -136,13 +140,9 @@ impl DesignService {
         asset: Option<DesignAssetId>,
         more: Vec<DesignAssetId>,
     ) -> Result<(), ArchonError> {
-        let _held = self.owed_lock.lock().await;
         let mut store = ctx.store.lock().await;
         let kv_key = keys::design_owed(&session.id);
-        let mut list: Vec<Owed> = match store.kv_get(&kv_key)? {
-            Some(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-            None => Vec::new(),
-        };
+        let mut list = decode_owed(store.kv_get(&kv_key)?)?;
         if list.iter().all(|o| o.key != key) {
             list.push(Owed {
                 key,
@@ -179,10 +179,16 @@ impl DesignService {
         let Some(agent) = session.agent.clone() else {
             return Ok(());
         };
+        let rt = self.runtime(&session.id);
+        let _held = rt.delivery.lock().await;
         let list = self.owed_list(ctx, &session.id).await?;
         for owed in list {
-            let _held = self.owed_lock.lock().await;
-            let attachments = self.attachments_for(ctx, &owed).await;
+            if owed.item != session.item {
+                return Err(ArchonError::Corrupt(
+                    "design delivery belongs to a different item".into(),
+                ));
+            }
+            let attachments = self.attachments_for(ctx, &owed).await?;
             match ctx
                 .backend
                 .send_message_with_attachments(&agent, &owed.text, &owed.key, &attachments)
@@ -191,10 +197,7 @@ impl DesignService {
                 Ok(()) => {
                     let mut store = ctx.store.lock().await;
                     let kv_key = keys::design_owed(&session.id);
-                    let mut left: Vec<Owed> = match store.kv_get(&kv_key)? {
-                        Some(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-                        None => Vec::new(),
-                    };
+                    let mut left = decode_owed(store.kv_get(&kv_key)?)?;
                     left.retain(|o| o.key != owed.key);
                     if left.is_empty() {
                         store.kv_delete(&kv_key)?;
@@ -213,30 +216,34 @@ impl DesignService {
         Ok(())
     }
 
-    async fn attachments_for(&self, ctx: &DaemonContext, owed: &Owed) -> Vec<ImageAttachment> {
-        let mut out = Vec::new();
-        for id in owed.asset.iter().chain(owed.more.iter()) {
+    async fn attachments_for(
+        &self,
+        ctx: &DaemonContext,
+        owed: &Owed,
+    ) -> Result<Vec<ImageAttachment>, ArchonError> {
+        let mut images = Vec::new();
+        for id in owed.asset.iter().chain(&owed.more) {
             let asset = ctx
                 .store
                 .lock()
                 .await
-                .design_asset(&owed.item, id)
-                .ok()
-                .flatten();
-            let Some(asset) = asset else {
-                continue;
-            };
-            match self.asset_bytes(&asset) {
-                Ok(bytes) => {
-                    match ImageAttachment::encode(&bytes, Some(&format!("{}.jpg", asset.id))) {
-                        Ok(image) => out.push(image),
-                        Err(error) => tracing::warn!(%error, "a note's picture is not attached"),
-                    }
-                }
-                Err(error) => tracing::warn!(%error, "a note's picture cannot be read"),
-            }
+                .design_asset(&owed.item, id)?
+                .ok_or_else(|| {
+                    ArchonError::Corrupt(format!("missing picture {id} for design delivery"))
+                })?;
+            let bytes = self.asset_bytes(&asset)?;
+            let image = ImageAttachment::encode(
+                &bytes,
+                Some(&format!(
+                    "{}.{}",
+                    id,
+                    asset.mime.trim_start_matches("image/")
+                )),
+            )
+            .map_err(|error| ArchonError::Corrupt(format!("design picture {id}: {error}")))?;
+            images.push(image);
         }
-        out
+        Ok(images)
     }
 
     /// Whether a delivery is owed for the session.
@@ -414,5 +421,19 @@ pub async fn sweep(ctx: std::sync::Arc<DaemonContext>) -> Result<(), ArchonError
                 tracing::warn!(%error, "design: unused pictures were not swept");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod owed_tests {
+    use super::*;
+
+    #[test]
+    fn an_unreadable_delivery_queue_must_survive_an_append_or_flush() {
+        assert!(decode_owed(None).unwrap().is_empty());
+        assert!(matches!(
+            decode_owed(Some("broken".into())),
+            Err(ArchonError::Corrupt(_))
+        ));
     }
 }

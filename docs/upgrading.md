@@ -5,6 +5,15 @@ that needs more than `archon update --yes` changes. The update command
 itself is in [install.md](install.md#updating), and every release's changes
 are in the [changelog](../CHANGELOG.md).
 
+## Unreleased live design sessions
+
+Store migrations V29 and V30 follow V28. Opening an earlier live-design
+branch store preserves its sessions, notes, and pictures while reconciling its
+V25/V26 version numbers. Live design is opt-in. Remove any repository
+`[design] allow_hosts` list and serve fonts, styles and other assets through
+the item's own dev server. Protocol 25 adds design sessions and 26 adds
+iteration history. The web handshake still negotiates back to 23.
+
 ## From 1.5.x to 1.6.x
 
 Archon 1.6.4 requires Aether 1.4.2 or later. Upgrade an older Aether with

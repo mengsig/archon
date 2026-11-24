@@ -182,7 +182,7 @@ invisible, bidirectional and private-use characters are refused.
 ([ARCHITECTURE §10](ARCHITECTURE.md)), one JSON frame per text message: the
 first message must be `hello` with protocol 23 to 26 (archond's own is
 26), and archond answers `welcome`, which names the device and its role from
-25. After that each `{"req": N, "cmd": …}` is
+24. After that each `{"req": N, "cmd": …}` is
 answered by a `reply` frame with the same id, and `subscribe_feed` streams
 `feed` frames, as on the Unix socket.
 

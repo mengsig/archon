@@ -2,7 +2,6 @@
 //! stores and the web app share. Nothing here does I/O.
 
 use std::collections::BTreeMap;
-use std::fmt;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -11,63 +10,7 @@ use crate::aether_ids::AetherAgentId;
 use crate::error::ArchonError;
 use crate::id::{PipelineRunId as RunId, QueueItemId};
 
-/// The next ULID of this process; ids made in one millisecond still sort in
-/// the order they were made.
-fn next_ulid() -> ulid::Ulid {
-    static GENERATOR: std::sync::Mutex<Option<ulid::Generator>> = std::sync::Mutex::new(None);
-    let mut guard = GENERATOR.lock().unwrap_or_else(|e| e.into_inner());
-    match guard.get_or_insert_with(ulid::Generator::new).generate() {
-        Ok(ulid) => ulid,
-        Err(overflow) => overflow.commit_overflow_random(),
-    }
-}
-
-macro_rules! design_id {
-    ($(#[$doc:meta])* $name:ident, $prefix:literal) => {
-        $(#[$doc])*
-        #[derive(
-            Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-            schemars::JsonSchema,
-        )]
-        #[serde(transparent)]
-        pub struct $name(pub String);
-
-        impl $name {
-            /// A fresh id: the prefix, `_`, and a ULID.
-            pub fn new() -> Self {
-                Self(format!("{}_{}", $prefix, next_ulid()))
-            }
-
-            /// The id as text.
-            pub fn as_str(&self) -> &str {
-                &self.0
-            }
-        }
-
-        impl Default for $name {
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(&self.0)
-            }
-        }
-    };
-}
-
-design_id!(
-    /// A design session, `ds_<ULID>`.
-    DesignSessionId,
-    "ds"
-);
-design_id!(
-    /// A stored design picture, `da_<ULID>`.
-    DesignAssetId,
-    "da"
-);
+pub use crate::id::{DesignAssetId, DesignSessionId};
 
 /// Where a design session is in its life.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -581,6 +524,13 @@ pub fn note_id(number: u64) -> String {
     format!("D{number}")
 }
 
+/// A note allocated by the store, spelled exactly as it appears in the ledger.
+pub fn valid_note_id(id: &str) -> bool {
+    id.strip_prefix('D')
+        .filter(|digits| !digits.starts_with('0') && digits.bytes().all(|c| c.is_ascii_digit()))
+        .is_some_and(|digits| digits.parse::<u64>().is_ok())
+}
+
 /// The number of a `D<n>` or `D<n>-<suffix>` id.
 pub fn note_number(id: &str) -> Option<u64> {
     let rest = id.strip_prefix('D')?;
@@ -610,13 +560,23 @@ pub fn next_note_number(seq: Option<u64>, existing_ids: &[&str]) -> u64 {
 /// Check a preview URL and return it normalized: `http` only, the host
 /// exactly `127.0.0.1`, `localhost` or `[::1]`, any port, no credentials.
 pub fn validate_preview_url(url: &str) -> Result<String, ArchonError> {
+    if url.len() > 4096 {
+        return Err(ArchonError::Invalid(
+            "preview URL exceeds 4096 bytes".into(),
+        ));
+    }
     let refuse = |why: &str| {
         ArchonError::Invalid(format!(
             "preview URL {url:?}: {why}; use http://127.0.0.1:<port>/, http://localhost:<port>/ or http://[::1]:<port>/"
         ))
     };
-    if url.chars().any(|c| c.is_control() || c.is_whitespace()) {
-        return Err(refuse("contains whitespace or control characters"));
+    if url
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || c == '\\')
+    {
+        return Err(refuse(
+            "contains whitespace, control characters or backslashes",
+        ));
     }
     let rest = url
         .strip_prefix("http://")
@@ -648,9 +608,9 @@ pub fn validate_preview_url(url: &str) -> Result<String, ArchonError> {
         return Err(refuse("the host must be 127.0.0.1, localhost or [::1]"));
     }
     if let Some(port) = port
-        && (port.is_empty() || port.parse::<u16>().is_err())
+        && (!port.bytes().all(|b| b.is_ascii_digit()) || !matches!(port.parse::<u16>(), Ok(1..)))
     {
-        return Err(refuse("the port is not a number"));
+        return Err(refuse("the port must be between 1 and 65535"));
     }
     Ok(url.to_owned())
 }

@@ -62,16 +62,11 @@ allows `--no-sandbox`; the design screen then shows an **Unsandboxed preview**
 badge for as long as it runs that way. The residual risk is the same one you
 already accept: the app's dev server runs unsandboxed as your user.
 
-**Hosts the preview may load.** The preview browser reaches only loopback
-addresses. If the app needs fonts or other assets from named hosts, list them
-in the repository's `<repo>/.archon/repo.toml`, which is committed:
-
-```toml
-[design]
-allow_hosts = ["fonts.googleapis.com", "fonts.gstatic.com"]
-```
-
-Every other host fails, and the design screen lists the blocked ones.
+**Preview origin.** Serve the page and its assets through the item's own HTTP
+dev server on loopback. Start it in the run worktree and record its PID in
+`.archon/services/<name>.pid`. The former repository setting
+`[design] allow_hosts` is unsupported. Serve fonts, styles and other external
+assets locally or through the dev server.
 
 ## Starting a session
 
@@ -222,7 +217,8 @@ the session (or one chain, with `id`): each version's words, commit, reply,
 whether it is set aside, and the notes it references. `design_note` is unchanged.
 
 Protocol 26 adds these behind the `welcome` feature `design_iterations`. A
-protocol 23 to 25 app sees follow-ups as plain notes.
+protocol 25 app sees follow-ups as plain notes. Protocol 23 and 24 clients
+can use the ordinary item views. Design sessions require protocol 25 or newer.
 
 ## Pictures of a change
 
@@ -393,7 +389,7 @@ with OK and Cancel, so the page never hangs.
   Archon, Aether, Git or cloud variables), a fresh temporary profile that is
   deleted when the session ends, its sandbox on, and a debugging pipe instead
   of a port, so no other local process can drive it.
-- Network: everything except loopback and `allow_hosts` goes to a dead proxy.
+- The preview uses the registered dev-server origin for requests.
 - Only operator devices see the preview and act. Observers see a one-line
   status. Every note, undo, finish and answer is logged with the device.
 - What reaches a model: only what you reviewed on screen. Live frames and after
@@ -410,7 +406,7 @@ always.
 - **No frames.** Run `archon doctor`; check the browser line. Check the item's
   agent started a server (`archon log`), and that `design_preview` was called.
 - **The page is blank or unstyled.** The app may load assets from other hosts;
-  add them to `allow_hosts` and start a new session.
+  serve those assets through the same dev server as the page.
 - **Edits do not show.** After a note is done Archon reloads once if nothing
   changed in 8 seconds. Use **Reload** (Shift+R).
 - **The queue is stuck.** A note in Needs reply holds it: answer or **Drop

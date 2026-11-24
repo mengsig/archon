@@ -12,9 +12,9 @@ mod iterations;
 mod notes;
 mod recovery;
 mod relay;
-mod repo_hosts;
 mod reports;
 mod requests;
+mod server_origin;
 mod state;
 mod undo;
 
@@ -35,7 +35,9 @@ use archon_core::id::QueueItemId;
 use archon_core::protocol::{DesignEvent, DesignNoteView, WelcomeDevice};
 use archon_queue::Store;
 
-pub use self::browser::{BrowserFactory, FrameFeed, PreviewBrowser, RealFactory};
+pub use self::browser::{
+    BrowserFactory, BrowserRegistration, FrameFeed, PreviewBrowser, RealFactory,
+};
 pub(crate) use self::delivery::sweep;
 pub use self::recovery::recover;
 pub use self::relay::stream;
@@ -285,7 +287,7 @@ pub struct DesignService {
     pub(crate) rt: std::sync::Mutex<HashMap<DesignSessionId, Arc<browser::Runtime>>>,
     wts: std::sync::Mutex<HashMap<DesignSessionId, WorktreeRef>>,
     item_locks: std::sync::Mutex<HashMap<QueueItemId, Arc<tokio::sync::Mutex<()>>>>,
-    pub(crate) owed_lock: tokio::sync::Mutex<()>,
+    stopping: std::sync::atomic::AtomicBool,
     /// Streams' flow control: (device, subscription) to the last frame acked.
     pub(crate) acks: std::sync::Mutex<HashMap<(String, u64), Arc<relay::AckState>>>,
 }
@@ -308,7 +310,7 @@ impl DesignService {
             rt: Default::default(),
             wts: Default::default(),
             item_locks: Default::default(),
-            owed_lock: Default::default(),
+            stopping: Default::default(),
             acks: Default::default(),
         }
     }
@@ -335,7 +337,23 @@ impl DesignService {
     }
 
     pub fn enabled(&self) -> bool {
-        self.cfg.enabled
+        self.cfg.enabled && !self.stopping.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        self.stopping
+            .store(true, std::sync::atomic::Ordering::Release);
+        let sessions: Vec<_> = self
+            .rt
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .cloned()
+            .collect();
+        for session in sessions {
+            self.close_session_browser(&session, "daemon shutdown")
+                .await;
+        }
     }
 
     pub fn item_lock_for_tests(&self, item: &QueueItemId) -> Arc<tokio::sync::Mutex<()>> {
@@ -371,6 +389,22 @@ impl DesignService {
         }
         self.bind(ctx);
         let mut store = ctx.store.lock().await;
+        let owner = store.stage_run_by_agent(agent)?;
+        let current_run = store.run(run)?;
+        if !owner.is_some_and(|s| {
+            s.run == *run
+                && s.stage_id == stage_id
+                && s.attempt == attempt
+                && s.kind == Some(archon_core::catalog::StageKind::Design)
+                && s.state == archon_core::run::StageState::Running
+        }) || current_run.item != *item
+            || current_run.state.is_terminal()
+            || store.item(item)?.state.is_terminal()
+        {
+            return Err(ArchonError::Forbidden(
+                "the design stage attempt is no longer active".into(),
+            ));
+        }
         if let Some(found) = self.session_of(&store, run, stage_id, attempt)?
             && found.state != SessionState::Ended
         {
@@ -602,24 +636,7 @@ impl DesignService {
         stage_id: &str,
         attempt: u32,
     ) -> Result<Option<DesignSession>, ArchonError> {
-        let all = store.design_sessions_in(&[
-            SessionState::Starting,
-            SessionState::Live,
-            SessionState::Finishing,
-            SessionState::Confirmed,
-            SessionState::Ended,
-        ])?;
-        // A retried slot reuses its attempt number: the open session wins,
-        // else the newest (the store lists oldest first).
-        let mine = all
-            .into_iter()
-            .filter(|s| &s.run == run && s.stage_id == stage_id && s.attempt == attempt)
-            .collect::<Vec<_>>();
-        let open = mine.iter().rposition(|s| s.state != SessionState::Ended);
-        Ok(match open {
-            Some(at) => mine.into_iter().nth(at),
-            None => mine.into_iter().last(),
-        })
+        store.design_session_for_attempt(run, stage_id, attempt)
     }
 
     // ---- worktree ----------------------------------------------------------
@@ -939,7 +956,7 @@ impl DesignService {
         ctx: &DaemonContext,
         session: &DesignSessionId,
         degraded: bool,
-        url: Option<&str>,
+        _url: Option<&str>,
     ) {
         let row = ctx
             .store
@@ -966,13 +983,9 @@ impl DesignService {
         }
         self.emit_session(ctx, session).await;
         if degraded && matches!(row.state, SessionState::Live | SessionState::Starting) {
-            let url = url
-                .map(str::to_owned)
-                .or(row.preview_url.clone())
-                .unwrap_or_default();
             let incident = archon_core::now().timestamp_millis();
             let key = format!("design:{session}:preview:{incident}");
-            let text = format!("preview unreachable at {url}");
+            let text = "The registered preview server is unreachable. Check the server in this item’s worktree.".to_owned();
             if let Err(error) = self.owe(ctx, &row, key, text, None).await {
                 tracing::warn!(%error, "the preview-unreachable message was not queued");
             }

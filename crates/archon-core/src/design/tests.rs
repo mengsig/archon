@@ -78,6 +78,9 @@ fn preview_urls() {
         "http://127.0.0.1.nip.io/",
         "http://127.0.0.1:99999/",
         "http://127.0.0.1:/",
+        "http://localhost:+80/",
+        "http://localhost:0/",
+        "http://localhost/test\\name",
         "",
     ] {
         assert!(validate_preview_url(bad).is_err(), "{bad}");
@@ -222,7 +225,9 @@ fn only_done_reverts_undo() {
 
 #[test]
 fn ids_and_presets() {
-    assert!(DesignSessionId::new().0.starts_with("ds_"));
+    assert!(DesignSessionId::new().as_str().starts_with("ds_"));
+    assert!(serde_json::from_str::<DesignSessionId>(r#""ds_bad/id""#).is_err());
+    assert!(DesignAssetId::parse(DesignSessionId::new().as_str()).is_err());
     assert!(DesignAssetId::new().to_string().starts_with("da_"));
     assert_eq!(ViewportPreset::Phone.size(), (390, 844));
     assert_eq!(ViewportPreset::Desktop.size(), (1440, 900));

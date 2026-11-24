@@ -94,6 +94,13 @@ pub(crate) fn sniff(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
+fn sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 pub(crate) struct NewAsset<'a> {
     pub source: AssetSource,
     pub target: Option<Target>,
@@ -115,6 +122,11 @@ impl DesignService {
         item: &QueueItemId,
         new: NewAsset<'_>,
     ) -> Result<Option<DesignAsset>, ArchonError> {
+        if new.bytes.is_empty() || new.bytes.len() > MAX_ENCODED_IMAGE_BYTES {
+            return Err(ArchonError::Invalid(
+                "the design picture is empty or exceeds 560 KiB".into(),
+            ));
+        }
         let size = new.bytes.len() as u64;
         let mut store = ctx.store.lock().await;
         if store.design_asset_bytes(item)? + size > MAX_ITEM_ASSET_BYTES {
@@ -126,10 +138,7 @@ impl DesignService {
                 "this item's pictures are at the 200 MiB limit".into(),
             ));
         }
-        let sha256 = Sha256::digest(new.bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
+        let sha256 = sha256(new.bytes);
         let mut asset = DesignAsset {
             id: DesignAssetId::new(),
             item: item.clone(),
@@ -156,14 +165,38 @@ impl DesignService {
                 .map_err(|e| ArchonError::io(format!("writing {}", path.display()), e))?;
         }
         if let Some(sketch) = new.sketch {
-            let _ = std::fs::write(path.with_extension("json"), sketch);
+            std::fs::write(path.with_extension("json"), sketch)
+                .map_err(|e| ArchonError::io("saving the design sketch", e))?;
         }
         Ok(Some(store.design_asset_put(asset)?))
     }
 
     pub(crate) fn asset_bytes(&self, asset: &DesignAsset) -> Result<Vec<u8>, ArchonError> {
+        use std::io::Read;
+        if asset.sha256.len() != 64
+            || !asset.sha256.bytes().all(|c| c.is_ascii_hexdigit())
+            || asset.bytes > MAX_ENCODED_IMAGE_BYTES as u64
+        {
+            return Err(ArchonError::Corrupt(format!(
+                "invalid metadata for design picture {}",
+                asset.id
+            )));
+        }
         let path = self.asset_path(asset);
-        std::fs::read(&path).map_err(|e| ArchonError::io(format!("reading {}", path.display()), e))
+        let read_error = |e| ArchonError::io(format!("reading {}", path.display()), e);
+        let mut bytes = Vec::new();
+        std::fs::File::open(path.as_path())
+            .map_err(read_error)?
+            .take(asset.bytes + 1)
+            .read_to_end(&mut bytes)
+            .map_err(read_error)?;
+        if bytes.len() as u64 != asset.bytes || sha256(&bytes) != asset.sha256 {
+            return Err(ArchonError::Corrupt(format!(
+                "design picture {} differs from its stored hash or length",
+                asset.id
+            )));
+        }
+        Ok(bytes)
     }
 
     pub(crate) fn data_url(&self, asset: &DesignAsset) -> Result<String, ArchonError> {
@@ -214,8 +247,14 @@ impl DesignService {
         ) {
             return Err(super::finishing());
         }
+        let data = data.trim();
+        if data.len() > MAX_ENCODED_IMAGE_BYTES.div_ceil(3) * 4 {
+            return Err(ArchonError::Invalid(
+                "the picture is over 560 KiB; make it smaller".into(),
+            ));
+        }
         let bytes = base64::engine::general_purpose::STANDARD
-            .decode(data.trim())
+            .decode(data)
             .map_err(|_| ArchonError::Invalid("the picture is not valid base64".into()))?;
         if bytes.len() > MAX_ENCODED_IMAGE_BYTES {
             return Err(ArchonError::Invalid(

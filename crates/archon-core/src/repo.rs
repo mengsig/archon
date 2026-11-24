@@ -12,9 +12,7 @@ use crate::id::RepoId;
 pub mod affected;
 mod tiers;
 
-pub use tiers::{
-    Checks, DEFAULT_RELEASE_BRANCH, REPO_FILE_NAME, RepoTiers, check_command, valid_allow_host,
-};
+pub use tiers::{Checks, DEFAULT_RELEASE_BRANCH, REPO_FILE_NAME, RepoTiers, check_command};
 
 /// How finished work leaves a repository. Nothing merges unless
 /// the item's `merge = auto` knob is within the operator's ceiling.

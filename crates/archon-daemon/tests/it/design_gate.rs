@@ -57,6 +57,9 @@ async fn enqueue(
 
 /// A live item with its design stage running, and the session it owns.
 pub(super) async fn designing(h: &Harness, item: &QueueItem) -> (PipelineRun, DesignSession) {
+    h.ctx
+        .design
+        .set_factory(std::sync::Arc::new(common::design::FakeFactory::default()));
     h.dispatch().await;
     let running = h.running().await;
     assert_eq!(

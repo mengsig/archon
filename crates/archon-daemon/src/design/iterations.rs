@@ -502,6 +502,11 @@ impl DesignService {
     ) -> Result<Reply, ArchonError> {
         let session = self.agent_session(ctx, caller).await?;
         let notes = ctx.store.lock().await.design_notes(&session.item)?;
+        if id.is_some_and(|id| !archon_core::design::valid_note_id(id)) {
+            return Err(ArchonError::Invalid(
+                "id must be a note ID such as D3".into(),
+            ));
+        }
         let places = chains(&notes);
         let undone = undone_by(&notes);
         let roots: Vec<String> = match id {

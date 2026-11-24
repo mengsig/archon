@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crate::common::design::{Fixture, add_worktree, design_config};
 use archon_core::aether_ids::AetherAgentId;
-use archon_core::protocol::{Request, ServerFrame, WelcomeDevice};
+use archon_core::protocol::{Reply, Request, ServerFrame, WelcomeDevice};
 use archon_daemon::design::StageEnd;
 use archon_remote::DesignSubscription;
 use tokio::sync::mpsc;
@@ -152,6 +152,48 @@ fn picture_files(f: &Fixture) -> Vec<std::path::PathBuf> {
         .flatten()
         .map(|e| e.path())
         .collect()
+}
+
+#[tokio::test]
+async fn same_pixels_keep_distinct_sketches_and_share_one_file() {
+    let f = Fixture::new().await;
+    let upload_sketch = |label: &str, strokes: &str| {
+        let mut request = upload(&f, crate::common::design::jpeg(32, 32));
+        let Request::DesignUpload { name, sketch, .. } = &mut request else {
+            unreachable!("the helper constructs an upload")
+        };
+        *name = Some(label.into());
+        *sketch = Some(strokes.into());
+        request
+    };
+    let uploads = [
+        ("first", "[]"),
+        ("second", "[]"),
+        ("first", "[{}]"),
+        ("first", "[]"),
+    ];
+    let mut ids = Vec::new();
+    for (name, strokes) in uploads {
+        let reply = f.operator(upload_sketch(name, strokes)).await.unwrap();
+        let Reply::DesignResolved(view) = reply else {
+            panic!("unexpected reply: {reply:?}");
+        };
+        ids.push(view.asset.unwrap());
+    }
+    assert_ne!(ids[0], ids[1], "the upload names differ");
+    assert_ne!(ids[0], ids[2], "the vector drawings differ");
+    assert_eq!(ids[0], ids[3], "the exact sketch is reused");
+    assert_eq!(picture_files(&f).len(), 1);
+    let cutoff = archon_core::now() + chrono::Duration::minutes(1);
+    assert_eq!(
+        f.h.ctx
+            .design
+            .sweep_assets_before(&f.h.ctx, cutoff)
+            .await
+            .unwrap(),
+        3
+    );
+    assert!(picture_files(&f).is_empty());
 }
 
 /// The asset sweep deletes a picture no note uses once it is old enough, file

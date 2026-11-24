@@ -898,9 +898,12 @@ CREATE INDEX IF NOT EXISTS design_assets_by_item ON design_assets (item);
 /// continues from, and a note the earlier notes it references. Additive.
 const V30: &str = ""; // Column-aware DDL lives in migrate_design_iterations.
 
+/// Version 31: separate capture metadata from picture contents.
+const V31: &str = include_str!("schema/design_asset_metadata.sql");
+
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28, V29, V30,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31,
 ];
 // Later migrations must preserve the tables read by V24 reclassification.
 const _: () = assert!(RECLASSIFY_VERSION <= MIGRATIONS.len());
@@ -1460,31 +1463,28 @@ mod tests {
             migrate(&mut conn).unwrap();
             conn.execute_batch(include_str!("../../tests/common/undo_timing.sql"))
                 .unwrap();
+            conn.execute_batch(V29).unwrap();
             conn.execute_batch(
                 "DROP TABLE stage_spend; DROP TABLE stage_spend_windows;
                  ALTER TABLE spend DROP COLUMN orchestration; ALTER TABLE delegated_agents DROP COLUMN created_seq;
                  DROP INDEX items_by_created_at; DROP INDEX stage_runs_by_started_at;
                  DROP INDEX items_by_duplicate_candidate;
                  INSERT INTO design_assets VALUES ('da_1', 'qi_1', 'abc', 'image/png', 1, 1, 1,
-                     'a.png', 'note', NULL, NULL, NULL, '2026-11-23T00:00:00Z');
+                     'a.png', 'capture', NULL, NULL, NULL, '2026-11-23T00:00:00Z');
                  DELETE FROM schema_migrations WHERE version >= 25;
                  INSERT INTO schema_migrations VALUES (25, '2026-11-23T00:00:00Z');",
             )
             .unwrap();
             if with_follows {
+                migrate_design_iterations(&conn).unwrap();
                 conn.execute_batch(
                     "INSERT INTO schema_migrations VALUES (26, '2026-11-23T00:00:00Z');",
                 )
                 .unwrap();
-            } else {
-                conn.execute_batch(
-                    "ALTER TABLE design_notes DROP COLUMN follows;
-                     ALTER TABLE design_notes DROP COLUMN refs_json;",
-                )
-                .unwrap();
             }
             assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
-            let versions: Vec<i64> = applied_versions(&conn).iter().map(|(v, _)| *v).collect();
+            let applied = applied_versions(&conn);
+            let versions: Vec<i64> = applied.iter().map(|(v, _)| *v).collect();
             assert_eq!(versions, (1..=MIGRATIONS.len() as i64).collect::<Vec<_>>());
             conn.prepare("SELECT 1 FROM stage_spend").unwrap();
             conn.prepare("SELECT follows, refs_json FROM design_notes")
@@ -1493,14 +1493,77 @@ mod tests {
                 .query_row("SELECT COUNT(*) FROM design_assets", [], |row| row.get(0))
                 .unwrap();
             assert_eq!(kept, 1);
+            assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+            assert_eq!(applied_versions(&conn), applied);
         }
+    }
+
+    fn design_v30_fixture(conn: &mut Connection) {
+        migrate(conn).unwrap();
+        conn.execute_batch(
+            "DROP TABLE design_assets; DELETE FROM schema_migrations WHERE version >= 31;",
+        )
+        .unwrap();
+        conn.execute_batch(V29).unwrap();
+        assert_eq!(applied_versions(conn).last().unwrap().0, 30);
+    }
+
+    #[test]
+    fn v31_keeps_v30_picture_records_note_links_and_migration_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("archon.db");
+        let mut conn = Connection::open(&path).unwrap();
+        configure(&conn, true).unwrap();
+        design_v30_fixture(&mut conn);
+        conn.execute_batch(
+            "INSERT INTO design_assets VALUES ('da_old', 'qi_old', 'abc', 'image/png', 128, 32, 16,
+                 'old/abc.png', 'sketch', '{\"path\":\"/old\"}', 'D1', 'old-sha', 'old-date');
+             INSERT INTO design_notes (item, id, number, session, kind, text, send_picture,
+                 viewport_json, status, reply_thread_json, client_key, created_at, updated_at,
+                 before_asset, after_asset, final_asset)
+             VALUES ('qi_old', 'D1', 1, 'ds_old', 'change', 'keep it', 1, '{}', 'done', '[]', 'old',
+                 'old-date', 'old-date', 'da_old', 'da_old', 'da_old');",
+        )
+        .unwrap();
+        let applied_v30 = applied_versions(&conn);
+        drop(conn);
+        drop(crate::Store::open(&path).unwrap());
+        let conn = Connection::open(&path).unwrap();
+        let applied = applied_versions(&conn);
+        assert_eq!(&applied[..30], applied_v30.as_slice());
+        assert_eq!(applied.last().unwrap().0, 31);
+        assert!(
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM design_assets a JOIN design_notes n ON n.item = a.item
+              WHERE a.id = 'da_old' AND n.before_asset = a.id AND n.after_asset = a.id
+                AND n.final_asset = a.id AND a.sha256 = 'abc' AND a.mime = 'image/png'
+                AND a.bytes = 128 AND a.width = 32 AND a.height = 16 AND a.path = 'old/abc.png'
+                AND a.source = 'sketch' AND json_extract(a.target_json, '$.path') = '/old'
+                AND a.note = 'D1' AND a.commit_sha = 'old-sha' AND a.created_at = 'old-date'
+                AND a.last_used_at = a.created_at AND a.sketch IS NULL)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap()
+        );
+        assert!(
+            !conn
+                .prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .exists([])
+                .unwrap()
+        );
+        drop(conn);
+        drop(crate::Store::open(&path).unwrap());
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(applied_versions(&conn), applied);
     }
 
     #[test]
     fn each_iteration_column_can_be_present_before_version_30() {
         for existing in ["follows", "refs_json"] {
             let mut conn = v2_store();
-            migrate(&mut conn).unwrap();
+            design_v30_fixture(&mut conn);
             let missing = if existing == "follows" {
                 "refs_json"
             } else {

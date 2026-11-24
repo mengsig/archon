@@ -689,7 +689,6 @@ fn existing_lessons_migrate_unchanged() {
          DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster; DROP INDEX items_by_duplicate_candidate;
          ALTER TABLE lessons DROP COLUMN cluster;
          ALTER TABLE outcomes DROP COLUMN class_source; ALTER TABLE outcomes DROP COLUMN failure_class_163;
-         DROP TABLE design_sessions; DROP TABLE design_notes; DROP TABLE design_assets;
          DELETE FROM schema_migrations WHERE version >= 23;",
     )
     .unwrap();
@@ -733,5 +732,5 @@ fn existing_lessons_migrate_unchanged() {
     );
     assert_eq!(applied, vec![vec![rusqlite::types::Value::Integer(23)]]);
     let latest = rows(&conn, "SELECT MAX(version) FROM schema_migrations");
-    assert_eq!(latest, vec![vec![rusqlite::types::Value::Integer(30)]]);
+    assert_eq!(latest, vec![vec![rusqlite::types::Value::Integer(31)]]);
 }

@@ -3,8 +3,8 @@
 mod common;
 
 use archon_core::design::{
-    AssetSource, DesignAsset, DesignAssetId, DesignSessionId, NoteKind, NoteStatus, SessionState,
-    Viewport, ViewportPreset,
+    AssetSource, DesignAsset, DesignAssetId, DesignSessionId, MAX_ITEM_ASSET_BYTES, NoteKind,
+    NoteStatus, Rect, SessionState, Target, Viewport, ViewportPreset,
 };
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId};
@@ -602,8 +602,10 @@ fn a_session_holds_at_most_200_notes() {
 
 #[test]
 fn a_retaken_before_picture_replaces_the_old_one_and_survives_a_reload() {
-    let (mut store, _repo, items) = seeded(1);
-    let item = &items[0].id;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("archon.db");
+    let mut store = Store::open(&path).unwrap();
+    let item = &store.insert_item(&item(None, "design"), None).unwrap().id;
     let session = live(&mut store, item);
     let (note, _) = store
         .design_note_add(new_note(item, &session, "k1"))
@@ -629,10 +631,15 @@ fn a_retaken_before_picture_replaces_the_old_one_and_survives_a_reload() {
         assert_eq!(read.before_asset.as_ref(), Some(&kept.id));
         assert_eq!(read.after_asset, None, "only the before picture moves");
     }
+    drop(store);
+    let store = Store::open(&path).unwrap();
+    let reloaded = store.design_note(item, &note.id).unwrap().unwrap();
+    assert_eq!(reloaded.before_asset, Some(second.id.clone()));
+    assert_eq!(store.design_asset(item, &second.id).unwrap(), Some(second));
 }
 
 #[test]
-fn assets_dedupe_by_item_hash_and_source_and_are_swept() {
+fn sweeping_one_capture_keeps_a_shared_picture_used_by_a_note() {
     let (mut store, _repo, items) = seeded(2);
     let item = &items[0].id;
     let a = asset(item, "aa", AssetSource::Capture, 100);
@@ -642,13 +649,13 @@ fn assets_dedupe_by_item_hash_and_source_and_are_swept() {
         .unwrap();
     assert_eq!(again.id, stored.id);
     let other = store
-        .design_asset_put(asset(item, "aa", AssetSource::Upload, 50))
+        .design_asset_put(asset(item, "aa", AssetSource::Upload, 100))
         .unwrap();
     assert_ne!(other.id, stored.id);
     store
         .design_asset_put(asset(&items[1].id, "aa", AssetSource::Capture, 7))
         .unwrap();
-    assert_eq!(store.design_asset_bytes(item).unwrap(), 150);
+    assert_eq!(store.design_asset_bytes(item).unwrap(), 100);
     assert_eq!(
         store.design_asset(item, &stored.id).unwrap().unwrap(),
         stored
@@ -668,26 +675,210 @@ fn assets_dedupe_by_item_hash_and_source_and_are_swept() {
         2
     );
     assert!(unused.iter().all(|a| a.id != stored.id));
-    store.design_asset_delete(item, &other.id).unwrap();
-    assert!(store.design_asset(item, &other.id).unwrap().is_none());
-    // The capture still holds the bytes the deleted upload shared.
     assert!(
         store
-            .design_asset_sha_shared(item, "aa", &other.id)
+            .design_asset_sweep(item, &other.id, t(100), |_| {
+                panic!("another capture still uses the file")
+            })
             .unwrap()
     );
+    assert!(store.design_asset(item, &other.id).unwrap().is_none());
     assert!(
         !store
-            .design_asset_sha_shared(item, "bb", &other.id)
+            .design_asset_sweep(item, &stored.id, t(100), |_| {
+                panic!("a note still uses the capture")
+            })
             .unwrap()
     );
-    // Deleting the item returns what remains and clears its counter.
     let gone = store.design_item_delete(item).unwrap();
     assert_eq!(gone.len(), 1);
     assert!(store.design_notes(item).unwrap().is_empty());
     assert!(store.design_sessions(item).unwrap().is_empty());
     assert_eq!(store.kv_get(&keys::design_seq(item)).unwrap(), None);
     assert_eq!(store.design_asset_bytes(&items[1].id).unwrap(), 7);
+}
+
+#[test]
+fn a_failed_file_operation_rolls_back_the_asset_change() {
+    let (mut store, _, items) = seeded(1);
+    let item = &items[0].id;
+    let picture = asset(item, "same", AssetSource::Capture, 100);
+    let failed = store.design_asset_publish(picture.clone(), None, |_| {
+        Err(ArchonError::Store("picture write failed".into()))
+    });
+    assert!(
+        failed
+            .unwrap_err()
+            .to_string()
+            .contains("picture write failed")
+    );
+    assert_eq!(store.design_asset(item, &picture.id).unwrap(), None);
+    assert_eq!(store.design_asset_put(picture.clone()).unwrap(), picture);
+    let failed = store.design_asset_sweep(item, &picture.id, t(10), |_| {
+        Err(ArchonError::Store("picture removal failed".into()))
+    });
+    assert!(
+        failed
+            .unwrap_err()
+            .to_string()
+            .contains("picture removal failed")
+    );
+    assert_eq!(
+        store.design_asset(item, &picture.id).unwrap(),
+        Some(picture)
+    );
+}
+
+#[test]
+fn identical_picture_bytes_keep_independent_capture_metadata() {
+    let (mut store, _, items) = seeded(1);
+    let item = &items[0].id;
+    let mut original = asset(item, "same", AssetSource::Capture, 100);
+    let target = Target {
+        path: "/first".into(),
+        selector: None,
+        role_name: None,
+        component: None,
+        rect: Rect {
+            x: 0.,
+            y: 0.,
+            w: 10.,
+            h: 10.,
+        },
+        viewport: Viewport {
+            w: 800,
+            h: 600,
+            preset: ViewportPreset::Desktop,
+        },
+        styles: Default::default(),
+        region: true,
+        steps: Box::default(),
+    };
+    original.target = Some(target);
+    original.commit = Some("old".into());
+    original.note = Some("D1".into());
+    assert_eq!(store.design_asset_put(original.clone()).unwrap(), original);
+    let mut different_target = original.clone();
+    different_target.target.as_mut().unwrap().path = "/second".into();
+    let mut different_commit = original.clone();
+    different_commit.commit = Some("new".into());
+    let mut different_note = original.clone();
+    different_note.note = None;
+    for mut capture in [different_target, different_commit, different_note] {
+        capture.id = DesignAssetId::new();
+        assert_eq!(store.design_asset_put(capture.clone()).unwrap(), capture);
+        let mut retry = capture.clone();
+        retry.id = DesignAssetId::new();
+        retry.created_at = t(50);
+        assert_eq!(store.design_asset_put(retry).unwrap(), capture);
+    }
+    assert_eq!(
+        store.design_asset(item, &original.id).unwrap(),
+        Some(original)
+    );
+    assert_eq!(store.design_asset_bytes(item).unwrap(), 100);
+}
+
+#[test]
+fn the_asset_cap_charges_new_file_and_sketch_bytes_only() {
+    let (mut store, _, items) = seeded(1);
+    let item = &items[0].id;
+    let picture = asset(item, "same", AssetSource::Sketch, MAX_ITEM_ASSET_BYTES - 4);
+    let first = store
+        .design_asset_publish(picture.clone(), Some("é"), |_| Ok(()))
+        .unwrap()
+        .unwrap();
+    let mut changed = picture.clone();
+    changed.id = DesignAssetId::new();
+    let second = store
+        .design_asset_publish(changed.clone(), Some("ø"), |_| Ok(()))
+        .unwrap()
+        .unwrap();
+    assert_ne!(second.id, first.id);
+    assert_eq!(
+        store.design_asset_bytes(item).unwrap(),
+        MAX_ITEM_ASSET_BYTES
+    );
+    let mut retry = picture.clone();
+    retry.id = DesignAssetId::new();
+    assert_eq!(
+        store
+            .design_asset_publish(retry, Some("é"), |_| Ok(()))
+            .unwrap(),
+        Some(first)
+    );
+    changed.id = DesignAssetId::new();
+    assert!(
+        store
+            .design_asset_publish(changed, Some("x"), |_| panic!("over cap"))
+            .unwrap()
+            .is_none()
+    );
+    let shared = asset(item, "same", AssetSource::Capture, picture.bytes);
+    assert_eq!(store.design_asset_put(shared.clone()).unwrap(), shared);
+    let extra = asset(item, "extra", AssetSource::Capture, 1);
+    assert!(
+        store
+            .design_asset_publish(extra, None, |_| panic!("over cap"))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn a_reused_pending_capture_outlives_a_stale_sweep_candidate() {
+    let (mut store, _, items) = seeded(1);
+    let item = &items[0].id;
+    let original = store
+        .design_asset_put(asset(item, "same", AssetSource::Upload, 1))
+        .unwrap();
+    assert_eq!(
+        store.design_unused_assets(t(10)).unwrap(),
+        vec![original.clone()]
+    );
+    let mut retry = original.clone();
+    retry.id = DesignAssetId::new();
+    retry.created_at = t(20);
+    assert_eq!(store.design_asset_put(retry).unwrap(), original);
+    assert!(
+        !store
+            .design_asset_sweep(item, &original.id, t(10), |_| panic!("recently reused"))
+            .unwrap()
+    );
+    assert!(
+        store
+            .design_asset_sweep(item, &original.id, t(30), |capture| {
+                assert_eq!(capture, &original);
+                Ok(())
+            })
+            .unwrap()
+    );
+    assert_eq!(store.design_asset_bytes(item).unwrap(), 0);
+}
+
+#[test]
+fn concurrent_exact_asset_publishes_reuse_one_capture() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("archon.db");
+    let mut first = Store::open(&path).unwrap();
+    let mut second = Store::open(&path).unwrap();
+    let item = first.insert_item(&item(None, "design"), None).unwrap().id;
+    let a = asset(&item, "same", AssetSource::Capture, 1);
+    let mut b = a.clone();
+    b.id = DesignAssetId::new();
+    let barrier = std::sync::Barrier::new(2);
+    let (left, right) = std::thread::scope(|scope| {
+        let worker = scope.spawn(|| {
+            barrier.wait();
+            first.design_asset_put(a).unwrap()
+        });
+        barrier.wait();
+        let right = second.design_asset_put(b).unwrap();
+        (worker.join().unwrap(), right)
+    });
+    assert_eq!(left, right);
+    assert_eq!(second.design_asset_bytes(&item).unwrap(), 1);
+    assert_eq!(second.design_unused_assets(t(10)).unwrap(), vec![left]);
 }
 
 #[test]
@@ -700,13 +891,21 @@ fn the_migration_applies_to_an_existing_database() {
     let item = store.insert_item(&item(Some(&repo), "x"), None).unwrap();
     drop(store);
     let conn = rusqlite::Connection::open(&path).unwrap();
+    let versions = |conn: &rusqlite::Connection| {
+        conn.query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap()
+    };
     conn.execute_batch(
         "DROP TABLE design_notes; DROP TABLE design_sessions; DROP TABLE design_assets;
          DELETE FROM schema_migrations WHERE version >= 29",
     )
     .unwrap();
+    assert_eq!(versions(&conn), 28);
     drop(conn);
     let mut store = Store::open(&path).unwrap();
+    assert_eq!(versions(&rusqlite::Connection::open(&path).unwrap()), 31);
     assert_eq!(store.item(&item.id).unwrap().title, "x");
     let session = live(&mut store, &item.id);
     assert_eq!(add(&mut store, &item.id, &session, "k"), "D1");

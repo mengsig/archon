@@ -9,10 +9,10 @@ use std::collections::BTreeSet;
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::design::{
-    DesignAsset, DesignAssetId, DesignNote, DesignSession, DesignSessionId, FailReason,
-    FinishChoices, MAX_NOTE_CHARS, MAX_NOTES_PER_SESSION, NoteKind, NoteStatus, SessionState,
-    Target, ThreadEntry, Viewport, ViewportPreset, clean_text, is_in_flight, next_note_number,
-    note_id, transition_allowed, validate_preview_url,
+    DesignAssetId, DesignNote, DesignSession, DesignSessionId, FailReason, FinishChoices,
+    MAX_NOTE_CHARS, MAX_NOTES_PER_SESSION, NoteKind, NoteStatus, SessionState, Target, ThreadEntry,
+    Viewport, ViewportPreset, clean_text, is_in_flight, next_note_number, note_id,
+    transition_allowed, validate_preview_url,
 };
 use archon_core::error::{ArchonError, DesignRefusal};
 use archon_core::id::{PipelineRunId, QueueItemId};
@@ -24,6 +24,8 @@ use serde::de::DeserializeOwned;
 use super::Store;
 use super::codec::{SqlContext, from_json, to_i64, to_json, to_u64, ts, write_tx};
 use super::settings;
+
+mod assets;
 
 /// Well-known `kv` keys.
 pub mod keys {
@@ -1095,144 +1097,6 @@ impl Store {
         let updated = note_by_id(tx, item, id)?.expect("the note exists");
         Ok(updated)
     }
-
-    /// Store a picture's record; the one already held for (item, sha256, source) is returned
-    /// instead of a second.
-    pub fn design_asset_put(&mut self, asset: DesignAsset) -> Result<DesignAsset, ArchonError> {
-        let tx = write_tx(&mut self.conn)?;
-        let source = enc(&asset.source);
-        let existing: Option<String> = tx
-            .query_row(
-                "SELECT id FROM design_assets WHERE item = ?1 AND sha256 = ?2 AND source = ?3",
-                params![asset.item.as_str(), asset.sha256, source],
-                |r| r.get(0),
-            )
-            .optional()
-            .ctx("find design asset")?;
-        if let Some(existing) = existing {
-            let found = asset_by_id(&tx, &asset.item, &DesignAssetId::parse(&existing)?)?
-                .expect("the asset was just found");
-            return Ok(found);
-        }
-        tx.execute(
-            "INSERT INTO design_assets (id, item, sha256, mime, bytes, width, height, path,
-                 source, target_json, note, commit_sha, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![
-                asset.id.as_str(),
-                asset.item.as_str(),
-                asset.sha256,
-                asset.mime,
-                to_i64(asset.bytes, "asset bytes")?,
-                i64::from(asset.width),
-                i64::from(asset.height),
-                asset.path,
-                source,
-                asset
-                    .target
-                    .as_ref()
-                    .map(|t| to_json(t, "asset target"))
-                    .transpose()?,
-                asset.note,
-                asset.commit,
-                ts(&asset.created_at),
-            ],
-        )
-        .ctx("insert design asset")?;
-        let stored =
-            asset_by_id(&tx, &asset.item, &asset.id)?.expect("the asset was just inserted");
-        tx.commit().ctx("commit design asset")?;
-        Ok(stored)
-    }
-
-    pub fn design_asset(
-        &self,
-        item: &QueueItemId,
-        id: &DesignAssetId,
-    ) -> Result<Option<DesignAsset>, ArchonError> {
-        asset_by_id(&self.conn, item, id)
-    }
-
-    /// The bytes the item's pictures hold.
-    pub fn design_asset_bytes(&self, item: &QueueItemId) -> Result<u64, ArchonError> {
-        let total: i64 = self
-            .conn
-            .query_row(
-                "SELECT COALESCE(SUM(bytes), 0) FROM design_assets WHERE item = ?1",
-                [item.as_str()],
-                |r| r.get(0),
-            )
-            .ctx("sum design asset bytes")?;
-        to_u64(total, "asset bytes")
-    }
-
-    /// Pictures created before `older_than` that no note uses.
-    pub fn design_unused_assets(
-        &self,
-        older_than: DateTime<Utc>,
-    ) -> Result<Vec<DesignAsset>, ArchonError> {
-        read_assets(
-            &self.conn,
-            "WHERE created_at < ?1 AND NOT EXISTS (
-                 SELECT 1 FROM design_notes n WHERE n.item = design_assets.item
-                   AND design_assets.id IN (n.before_asset, n.after_asset, n.final_asset))
-             ORDER BY created_at",
-            &[&ts(&older_than)],
-        )
-    }
-
-    pub fn design_asset_delete(
-        &mut self,
-        item: &QueueItemId,
-        id: &DesignAssetId,
-    ) -> Result<(), ArchonError> {
-        self.conn
-            .execute(
-                "DELETE FROM design_assets WHERE item = ?1 AND id = ?2",
-                params![item.as_str(), id.as_str()],
-            )
-            .ctx("delete design asset")?;
-        Ok(())
-    }
-
-    /// Whether another record shares this picture file.
-    pub fn design_asset_sha_shared(
-        &self,
-        item: &QueueItemId,
-        hash: &str,
-        id: &DesignAssetId,
-    ) -> Result<bool, ArchonError> {
-        self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM design_assets WHERE item = ?1 AND sha256 = ?2 AND id != ?3)",
-            params![item.as_str(), hash, id.as_str()], |row| row.get(0),
-        ).ctx("check shared design picture")
-    }
-
-    /// Remove everything the item holds; the pictures come back so their files can go.
-    pub fn design_item_delete(
-        &mut self,
-        item: &QueueItemId,
-    ) -> Result<Vec<DesignAsset>, ArchonError> {
-        let tx = write_tx(&mut self.conn)?;
-        let assets = read_assets(
-            &tx,
-            "WHERE item = ?1 ORDER BY created_at",
-            &[&item.as_str()],
-        )?;
-        for session in read_sessions(&tx, "WHERE item = ?1", &[&item.as_str()])? {
-            settings::kv_delete(&tx, &keys::design_owed(&session.id))?;
-        }
-        for table in ["design_notes", "design_sessions", "design_assets"] {
-            tx.execute(
-                &format!("DELETE FROM {table} WHERE item = ?1"),
-                [item.as_str()],
-            )
-            .ctx("delete design rows")?;
-        }
-        settings::kv_delete(&tx, &keys::design_seq(item))?;
-        tx.commit().ctx("commit design item delete")?;
-        Ok(assets)
-    }
 }
 
 fn check_note_capacity(tx: &Connection, session: &DesignSessionId) -> Result<(), ArchonError> {
@@ -1340,65 +1204,4 @@ fn write_note(tx: &Connection, new: NewDesignNote) -> Result<(DesignNote, bool),
     bump(tx, &new.session)?;
     let note = note_by_id(tx, &new.item, &id)?.expect("the note was just inserted");
     Ok((note, true))
-}
-
-const ASSET_COLUMNS: &str = "id, item, sha256, mime, bytes, width, height, path, source,
-    target_json, note, commit_sha, created_at";
-
-fn read_assets(
-    conn: &Connection,
-    clause: &str,
-    args: &[&dyn rusqlite::ToSql],
-) -> Result<Vec<DesignAsset>, ArchonError> {
-    let sql = format!("SELECT {ASSET_COLUMNS} FROM design_assets {clause}");
-    let mut statement = conn.prepare_cached(&sql).ctx("prepare design assets")?;
-    let rows = statement
-        .query_map(args, |row| {
-            let item: String = row.get(1)?;
-            let bytes: i64 = row.get(4)?;
-            let width: i64 = row.get(5)?;
-            let height: i64 = row.get(6)?;
-            let source: String = row.get(8)?;
-            let target: Option<String> = row.get(9)?;
-            let created: String = row.get(12)?;
-            Ok((|| -> Result<DesignAsset, ArchonError> {
-                fn ctx<T>(r: rusqlite::Result<T>) -> Result<T, ArchonError> {
-                    r.ctx("read design asset")
-                }
-                Ok(DesignAsset {
-                    id: DesignAssetId::try_from(ctx(row.get::<_, String>(0))?)?,
-                    item: QueueItemId::parse(&item)?,
-                    sha256: ctx(row.get(2))?,
-                    mime: ctx(row.get(3))?,
-                    bytes: to_u64(bytes, "asset bytes")?,
-                    width: u32::try_from(width).map_err(corrupt("asset width"))?,
-                    height: u32::try_from(height).map_err(corrupt("asset height"))?,
-                    path: ctx(row.get(7))?,
-                    source: dec(&source, "asset source")?,
-                    target: target.map(|t| from_json(&t, "asset target")).transpose()?,
-                    note: ctx(row.get(10))?,
-                    commit: ctx(row.get(11))?,
-                    created_at: parse_ts(&created)?,
-                })
-            })())
-        })
-        .ctx("read design assets")?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row.ctx("read design assets")??);
-    }
-    Ok(out)
-}
-
-fn asset_by_id(
-    conn: &Connection,
-    item: &QueueItemId,
-    id: &DesignAssetId,
-) -> Result<Option<DesignAsset>, ArchonError> {
-    Ok(read_assets(
-        conn,
-        "WHERE item = ?1 AND id = ?2",
-        &[&item.as_str(), &id.as_str()],
-    )?
-    .pop())
 }

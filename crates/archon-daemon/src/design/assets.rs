@@ -3,7 +3,7 @@
 
 use archon_core::design::{
     AssetSource, DesignAsset, DesignAssetId, DesignSession, MAX_ENCODED_IMAGE_BYTES,
-    MAX_IMAGE_SIDE, MAX_ITEM_ASSET_BYTES, SessionState, Target,
+    MAX_IMAGE_SIDE, SessionState, Target,
 };
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
@@ -143,21 +143,10 @@ impl DesignService {
             ));
         }
         let size = new.bytes.len() as u64;
-        let mut store = ctx.store.lock().await;
-        if store.design_asset_bytes(item)? + size > MAX_ITEM_ASSET_BYTES {
-            if new.source == AssetSource::After {
-                tracing::info!(%item, "design: asset cap reached; the after picture is skipped");
-                return Ok(None);
-            }
-            return Err(ArchonError::Invalid(
-                "this item's pictures are at the 200 MiB limit".into(),
-            ));
-        }
-        let sha256 = sha256(new.bytes);
         let mut asset = DesignAsset {
             id: DesignAssetId::new(),
             item: item.clone(),
-            sha256,
+            sha256: sha256(new.bytes),
             mime: new.mime.to_owned(),
             bytes: size,
             width: new.width,
@@ -171,20 +160,33 @@ impl DesignService {
         };
         let path = self.asset_path(&asset);
         asset.path = path.display().to_string();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| ArchonError::io(format!("creating {}", parent.display()), e))?;
+        let stored = ctx
+            .store
+            .lock()
+            .await
+            .design_asset_publish(asset, new.sketch, |_| {
+                if !path
+                    .try_exists()
+                    .map_err(|e| ArchonError::io("check design picture", e))?
+                {
+                    let parent = path.parent().expect("picture paths have an item directory");
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        ArchonError::io(format!("creating {}", parent.display()), e)
+                    })?;
+                    write_asset(&path, new.bytes)?;
+                }
+                Ok(())
+            })?;
+        if stored.is_some() {
+            return Ok(stored);
         }
-        if !path
-            .try_exists()
-            .map_err(|e| ArchonError::io("check design picture", e))?
-        {
-            write_asset(&path, new.bytes)?;
+        if new.source == AssetSource::After {
+            tracing::info!(%item, "design: asset cap reached; the after picture is skipped");
+            return Ok(None);
         }
-        if let Some(sketch) = new.sketch {
-            write_asset(&path.with_extension("json"), sketch.as_bytes())?;
-        }
-        Ok(Some(store.design_asset_put(asset)?))
+        Err(ArchonError::Invalid(
+            "this item's pictures are at the 200 MiB limit".into(),
+        ))
     }
 
     pub(crate) fn asset_bytes(&self, asset: &DesignAsset) -> Result<Vec<u8>, ArchonError> {
@@ -230,16 +232,16 @@ impl DesignService {
         item: &QueueItemId,
         id: &DesignAssetId,
     ) -> Result<Reply, ArchonError> {
-        let asset = ctx
-            .store
-            .lock()
-            .await
+        let store = ctx.store.lock().await;
+        let asset = store
             .design_asset(item, id)?
             .ok_or_else(|| ArchonError::NotFound(format!("picture {id}")))?;
+        let data_url = self.data_url(&asset)?;
+        drop(store);
         let caption = caption_of(&asset);
         Ok(Reply::DesignAsset(DesignAssetView {
             id: asset.id.clone(),
-            data_url: self.data_url(&asset)?,
+            data_url,
             width: asset.width,
             height: asset.height,
             caption,
@@ -342,26 +344,33 @@ impl DesignService {
     ) -> Result<usize, ArchonError> {
         let mut store = ctx.store.lock().await;
         let old = store.design_unused_assets(cutoff)?;
-        let count = old.len();
+        let mut count = 0;
         for asset in old {
-            if asset.sha256.len() != 64 || !asset.sha256.bytes().all(|c| c.is_ascii_hexdigit()) {
-                return Err(ArchonError::Corrupt(
-                    "invalid hash for an unused design picture".into(),
-                ));
-            }
-            if !store.design_asset_sha_shared(&asset.item, &asset.sha256, &asset.id)? {
-                let path = self.asset_path(&asset);
-                for file in [path.with_extension("json"), path] {
-                    if let Err(error) = std::fs::remove_file(&file)
-                        && error.kind() != std::io::ErrorKind::NotFound
-                    {
-                        return Err(ArchonError::io(format!("remove {}", file.display()), error));
-                    }
-                }
-            }
-            store.design_asset_delete(&asset.item, &asset.id)?;
+            count += usize::from(store.design_asset_sweep(
+                &asset.item,
+                &asset.id,
+                cutoff,
+                |asset| self.remove_asset_file(asset),
+            )?);
         }
         Ok(count)
+    }
+
+    fn remove_asset_file(&self, asset: &DesignAsset) -> Result<(), ArchonError> {
+        if asset.sha256.len() != 64 || !asset.sha256.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return Err(ArchonError::Corrupt(
+                "invalid hash for an unused design picture".into(),
+            ));
+        }
+        let path = self.asset_path(asset);
+        for file in [path.with_extension("json"), path] {
+            if let Err(error) = std::fs::remove_file(&file)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(ArchonError::io(format!("remove {}", file.display()), error));
+            }
+        }
+        Ok(())
     }
 }
 

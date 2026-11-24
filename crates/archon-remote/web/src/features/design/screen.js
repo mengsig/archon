@@ -16,7 +16,7 @@ import { createNoteOutbox, newClientKey } from './outbox.js';
 import { createThumbs } from './thumbs.js';
 import { createTreePanel } from './tree.js';
 import { createViewer } from './viewer.js';
-import { buildChains, chainOfNote, olderInCode, followTarget, versionLabel } from './chains.js';
+import { buildChains, chainOfNote, olderInCode, followTarget, versionLabel, continuePlan, asideText, VERSION_ACTIONS } from './chains.js';
 import { openCompare } from './compare.js';
 import { noteFields } from './details.js';
 import { startFinish, resumeFinish, ledgerPanel } from './finish.js';
@@ -148,7 +148,7 @@ export function mountDesign(view, ctx) {
   const tree = createTreePanel({
     getState: () => state, thumbs, onSelect: (id) => viewNode(id), onLink: (id) => viewNode(id, { keep: true }), getViewing: () => viewing, isPhone: () => layout === 'phone',
     canAct: () => state.session?.state === 'live',
-    actions: { compare: (n) => openCompare(ctx, n), followUp: (n) => followUpOn(n), continueFrom: (n) => continueFrom(n) },
+    actions: { back: () => { viewing = null; render(); }, compare: (n) => openCompare(ctx, n), followUp: (n) => followUpOn(n), continueFrom: (n) => continueFrom(n) },
   });
   tree.element.hidden = true;
   const viewer = createViewer({ ctx, onBack: () => { viewing = null; render(); }, onContinue: (n) => continueFrom(n), onFollowUp: (n) => followUpOn(n) });
@@ -176,8 +176,8 @@ export function mountDesign(view, ctx) {
   }
   async function continueFrom(note) {
     const chain = chainOfNote(buildChains(state.notes), note.id);
-    const newer = chain ? chain.versions.filter((n) => n.number > note.number && n.status === 'done' && !n.set_aside).map((n) => n.id) : [];
-    const ok = await confirmSheet({ title: `Continue from ${note.id}?`, message: `Archon reverses ${newer.length ? newer.join(', ') : 'the newer versions'} with new commits (nothing is erased) and marks ${newer.length > 1 ? 'them' : 'it'} Set aside. Then you can follow up on ${note.id}.`, confirmLabel: 'Continue from this version', cancelLabel: 'Keep as it is', tone: 'primary' });
+    const { reverts: newer, aside } = continuePlan(chain, note);
+    const ok = await confirmSheet({ title: `Continue from ${note.id}?`, message: `Archon reverses ${newer.length ? newer.join(', ') : 'the newer versions'} with new commits (nothing is erased) and marks ${newer.length > 1 ? 'them' : 'it'} Set aside. ${asideText(aside)}${aside.length ? ' ' : ''}Then you can follow up on ${note.id}.`, confirmLabel: VERSION_ACTIONS.continueFrom, cancelLabel: 'Keep as it is', tone: 'primary' });
     if (!ok) return;
     try {
       const view = await ctx.design.noteContinueFrom(item, note.id, { text: null, clientKey: newClientKey(), refs: [] });
@@ -194,8 +194,8 @@ export function mountDesign(view, ctx) {
     const base = chain?.versions.find((n) => n.id === target) ?? null;
     if (!base) throw new Error('That note is no longer here.');
     if (olderInCode(chain, base) && !continuedFrom.has(base.id)) {
-      const newer = chain.versions.filter((n) => n.number > base.number && n.status === 'done' && !n.set_aside).map((n) => n.id);
-      const ok = await confirmSheet({ title: `Follow up on ${base.id}?`, message: `${newer.join(', ')} will be undone first, with new commits, and set aside. Then your follow-up on ${base.id} is sent.`, confirmLabel: 'Undo and follow up', cancelLabel: 'Keep as it is', tone: 'primary' });
+      const { reverts: newer, aside } = continuePlan(chain, base);
+      const ok = await confirmSheet({ title: `Follow up on ${base.id}?`, message: `${newer.join(', ')} will be undone first, with new commits, and set aside. ${asideText(aside)}${aside.length ? ' ' : ''}Then your follow-up on ${base.id} is sent.`, confirmLabel: 'Undo and follow up', cancelLabel: 'Keep as it is', tone: 'primary' });
       if (!ok) return false;
       const note = await ctx.design.noteContinueFrom(item, base.id, { text, clientKey: newClientKey(), refs });
       dispatch({ type: 'event', event: { event: 'note', ...note } });

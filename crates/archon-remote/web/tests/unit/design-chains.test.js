@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildChains, chainLabel, chainOf, isSetAside, olderInCode, followTarget, historyLine, mentionAt, suggestRefs, applyMention, addRef, linkParts, versionLabel, versionLimitText } from '../../src/features/design/chains.js';
+import { buildChains, chainLabel, chainOf, isSetAside, olderInCode, followTarget, historyLine, mentionAt, suggestRefs, applyMention, addRef, linkParts, versionLabel, versionLimitText, continuePlan, asideText, viewingText, VERSION_ACTIONS, reviewChanges } from '../../src/features/design/chains.js';
 import { nodeLine } from '../../src/features/design/tree.js';
 import { hasIterations, MAX_REFS, MAX_VERSIONS } from '../../src/core/design.js';
 
@@ -126,4 +126,43 @@ test('the host feature is read from the welcome', () => {
   assert.equal(hasIterations({ features: ['design_sessions', 'design_iterations'] }), true);
   assert.equal(hasIterations({ features: ['design_sessions'] }), false);
   assert.equal(hasIterations(null), false);
+});
+
+test('a continue lists every version it reverts, by the daemon rule, and those already set aside', () => {
+  const placed = notes.map((n) => ({ ...n, chain: n.kind === 'revert' ? null : { D6: 'D5', D7: 'D3', D8: 'D5', D9: 'D3' }[n.id] ?? n.id }));
+  const chains = buildChains(placed);
+  const d3 = chains.find((c) => c.id === 'D3');
+  const d5 = chains.find((c) => c.id === 'D5');
+  assert.deepEqual(continuePlan(d3, d3.versions[0]), { reverts: ['D7', 'D9'], aside: [] });
+  // D6 is set aside already and D8 is not in the code yet: nothing to revert, D6 named.
+  assert.deepEqual(continuePlan(d5, d5.versions[0]), { reverts: [], aside: ['D6'] });
+  // Done with no change, or with no commit, is not in the code; an undone one is set aside.
+  const odd = buildChains([note(1), note(2, { follows: 'D1', no_change: true }), note(3, { follows: 'D2', commit: null }), note(4, { follows: 'D3', undone_by: 'D9', set_aside: undefined }), note(5, { follows: 'D4' })]
+    .map((n) => ({ ...n, chain: 'D1' })))[0];
+  assert.deepEqual(continuePlan(odd, odd.versions[0]), { reverts: ['D5'], aside: ['D4'] });
+  assert.deepEqual(continuePlan(null, note(1)), { reverts: [], aside: [] });
+  assert.equal(asideText(['D6']), 'D6 is already set aside and stays so.');
+  assert.equal(asideText(['D4', 'D6']), 'D4, D6 are already set aside and stay so.');
+  assert.equal(asideText([]), '');
+});
+
+test('phone and desktop name a version and its actions the same way', () => {
+  const chain = buildChains([note(3), note(7, { follows: 'D3', commit: '4c1e9a2cccc' })].map((n) => ({ ...n, chain: 'D3' })))[0];
+  assert.deepEqual(viewingText(chain, chain.versions[1]), { title: 'Viewing D7 · version 2 of 2', rest: ' (pictures at commit 4c1e9a2). The live preview still shows the current version.' });
+  assert.equal(viewingText(chain, { ...chain.versions[1], commit: null }).rest, ' (no commit yet). The live preview still shows the current version.');
+  assert.deepEqual(VERSION_ACTIONS, { back: 'Back to current', compare: 'Compare', compareWith: 'Compare with…', followUp: 'Follow up on this version', continueFrom: 'Continue from this version' });
+});
+
+test('a review card lists each change of its chain with its before and after pictures', () => {
+  const all = [note(3, { before_asset: 'b3', after_asset: 'a3' }), note(7, { follows: 'D3', before_asset: 'b7', after_asset: 'a7', set_aside: true }), note(9, { follows: 'D7', before_asset: 'b9', after_asset: null })];
+  const card = { note: 'D9', text: 'green', history: [{ note: 'D3', text: 'taller' }, { note: 'D7', text: 'bigger', set_aside: true }] };
+  const out = reviewChanges(card, all);
+  assert.deepEqual(out.map(({ note: n, ...c }) => ({ ...c, has: Boolean(n) })), [
+    { id: 'D3', text: 'taller', setAside: false, before: 'b3', after: 'a3', has: true },
+    { id: 'D7', text: 'bigger', setAside: true, before: 'b7', after: 'a7', has: true },
+    { id: 'D9', text: 'green', setAside: false, before: 'b9', after: null, has: true },
+  ]);
+  // An older host sends no history: the card's own note alone.
+  assert.deepEqual(reviewChanges({ note: 'D3', text: 'taller' }, all).map((c) => [c.id, c.before, c.after]), [['D3', 'b3', 'a3']]);
+  assert.equal(reviewChanges({ note: 'D4', text: 'gone' }, all)[0].note, null);
 });

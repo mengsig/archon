@@ -836,6 +836,34 @@ test.describe('iterations (desktop)', () => {
       const review = page.getByRole('dialog', { name: 'Review before finishing' });
       await expect(review.locator('.finish-card')).toHaveCount(2); // D9 (chain D3) and D5 (D6 is set aside, D8 is not done)
       await expect(review.getByText('History: D3 Make the header taller › D7 bigger title')).toBeVisible();
+      // Each change of the chain, not only its final picture: before and after for D3, D7 and D9.
+      const changes = review.getByRole('list', { name: 'Changes in D9' });
+      await expect(changes.getByRole('listitem')).toHaveCount(3);
+      await expect(changes.locator('.finish-change-title')).toHaveText(['D3 Make the header taller', 'D7 bigger title', 'D9 green, like D5']);
+      await expect(changes.getByRole('img')).toHaveCount(6);
+      await expect(changes.getByRole('img', { name: 'After picture of D7' })).toBeVisible();
+      await expect(changes.locator('figcaption')).toHaveText(['Your sketch', 'After', 'Your sketch', 'After', 'Your sketch', 'After']);
+      await expect(review.getByRole('list', { name: 'Changes in D5' }).getByRole('listitem')).toHaveCount(1);
+    } finally { await harness.stop(); }
+  });
+
+  test('the continue dialog names every version it reverts and those already set aside', async ({ browser, page }) => {
+    const notes = [
+      seedNote({ number: 1, text: 'Make the header taller' }),
+      seedNote({ number: 2, follows: 'D1', text: 'bigger title' }),
+      seedNote({ number: 3, follows: 'D2', text: 'rounder corners' }),
+      seedNote({ number: 4, follows: 'D2', text: 'outline style' }),
+      seedNote({ number: 5, kind: 'revert', reverts: 'D3', text: '', commit: 'rev00001' }),
+    ];
+    const harness = await open(browser, page, { iterations: true, notes });
+    try {
+      await page.getByRole('tab', { name: 'Tree' }).click();
+      await page.locator('.tree-node[data-note="D1"] .tree-node-main').click();
+      await page.locator('.design-viewer').getByRole('button', { name: 'Continue from this version' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Continue from D1?' });
+      await expect(dialog).toContainText('Archon reverses D2, D4 with new commits (nothing is erased) and marks them Set aside. D3 is already set aside and stays so. Then you can follow up on D1.');
+      await dialog.getByRole('button', { name: 'Continue from this version' }).click();
+      await expect.poll(() => harness.daemon.state.notes.filter((n) => n.kind === 'revert' && n.status === 'done').map((n) => n.reverts).sort()).toEqual(['D2', 'D3', 'D4']);
     } finally { await harness.stop(); }
   });
 
@@ -860,20 +888,43 @@ test.describe('iterations (phone)', () => {
       await page.getByRole('tab', { name: 'Tree' }).click();
       await page.locator('.tree-node[data-note="D7"] .tree-node-main').click();
       const detail = page.getByRole('group', { name: 'Version D7' });
-      await expect(detail).toContainText('D7 · version 2 of 3');
-      await expect(detail).toContainText('4c1e9a2');
-      await expect(detail.getByText('Before', { exact: true })).toBeVisible();
+      // The same words as the desktop viewer: its line, its captions and its buttons.
+      await expect(detail).toContainText('Viewing D7 · version 2 of 3 (pictures at commit 4c1e9a2). The live preview still shows the current version.');
+      await expect(detail.getByText('Your sketch', { exact: true })).toBeVisible(); // a note with no target: its before picture is the sketch
       await expect(detail.getByText('After', { exact: true })).toBeVisible();
+      await expect(detail.getByRole('button')).toHaveText(['Back to current', 'Compare', 'Follow up on this version', 'Continue from this version']);
       await expect(page.locator('.design-viewer')).toBeHidden();
-      await detail.getByRole('button', { name: 'Open compare' }).click();
+      await detail.getByRole('button', { name: 'Compare', exact: true }).click();
       await expect(page.getByRole('dialog', { name: 'D7: before and after' })).toBeVisible();
+      await expect(page.getByRole('dialog', { name: 'D7: before and after' }).getByText('Your sketch', { exact: true })).toBeVisible();
       await page.getByRole('dialog', { name: 'D7: before and after' }).getByRole('button', { name: 'Close' }).click();
       await expect(page.getByRole('dialog')).toHaveCount(0);
+      await detail.getByRole('button', { name: 'Back to current' }).click();
+      await expect(page.getByRole('group', { name: 'Version D7' })).toHaveCount(0);
       await page.locator('.tree-node[data-note="D3"] .tree-node-main').click();
-      await page.getByRole('group', { name: 'Version D3' }).getByRole('button', { name: 'Continue from here' }).click();
+      await page.getByRole('group', { name: 'Version D3' }).getByRole('button', { name: 'Continue from this version' }).click();
       await page.getByRole('dialog', { name: 'Continue from D3?' }).getByRole('button', { name: 'Continue from this version' }).click();
       await expect.poll(() => sentOf(harness, 'design_note_continue_from').length).toBe(1);
       await expect(page.getByLabel('Follow-up on D3')).toBeVisible();
+    } finally { await harness.stop(); }
+  });
+
+  test('a deep tree fits the phone: no sideways scroll, nodes keep their width', async ({ browser, page }) => {
+    const notes = [seedNote({ number: 1, text: 'Make the header taller' })];
+    for (let n = 2; n <= 9; n += 1) notes.push(seedNote({ number: n, follows: `D${n - 1}`, text: n === 8 ? 'https://example.com/a-very-long-address-with-no-spaces-to-break-the-line-anywhere' : `step ${n}`, refs: n === 9 ? ['D1', 'D2', 'D3', 'D4', 'D5'] : [] }));
+    const harness = await open(browser, page, { iterations: true, notes });
+    try {
+      await page.getByRole('navigation', { name: 'Design modes' }).getByRole('button', { name: 'Notes', exact: true }).click();
+      await page.getByRole('tab', { name: 'Tree' }).click();
+      await page.locator('.tree-node[data-note="D9"] .tree-node-main').click();
+      await expect(page.getByRole('group', { name: 'Version D9' })).toBeVisible();
+      const sizes = await page.evaluate(() => {
+        const side = document.querySelector('.design-side');
+        return { scroll: side.scrollWidth, client: side.clientWidth, page: document.documentElement.scrollWidth, deepest: document.querySelector('.tree-node[data-note="D9"] .tree-node-main').getBoundingClientRect().width };
+      });
+      expect(sizes.scroll).toBeLessThanOrEqual(sizes.client);
+      expect(sizes.page).toBeLessThanOrEqual(390);
+      expect(sizes.deepest).toBeGreaterThanOrEqual(280);
     } finally { await harness.stop(); }
   });
 });

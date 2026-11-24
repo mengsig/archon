@@ -2,7 +2,7 @@
 // and a chain is a tree (a follow-up on an older version branches). Also what
 // the follow-up box needs: @D mentions, reference limits and the history line.
 import { MAX_REFS, MAX_VERSIONS } from '../../core/design.js';
-import { noteLook } from './state.js';
+import { noteLook, shortSha, afterAssetOf } from './state.js';
 
 const byNumber = (a, b) => a.number - b.number;
 const STOP = new Set(['make', 'change', 'use', 'add', 'set', 'give', 'put', 'turn', 'move', 'remove', 'show', 'hide', 'update', 'fix', 'the', 'a', 'an', 'this', 'that', 'my', 'it', 'to', 'its', 'our', 'your', 'more', 'less', 'please', 'can', 'you', 'be', 'and', 'of', 'in', 'on', 'for', 'green', 'blue', 'red', 'black', 'white', 'gray', 'grey', 'yellow', 'orange', 'purple', 'pink', 'dark', 'light', 'primary', 'secondary', 'big', 'bigger', 'small', 'smaller', 'large', 'larger', 'tall', 'taller', 'wide', 'wider', 'bold', 'round', 'rounder', 'new', 'all', 'some', 'with', 'from', 'like', 'but', 'not']);
@@ -92,6 +92,44 @@ export const inCode = (n) => n.status === 'done' && Boolean(n.commit) && !n.no_c
 // from it reverts those first.
 export function olderInCode(chain, note) {
   return inCode(note) && chain.versions.some((n) => n.number > note.number && inCode(n));
+}
+
+// One name for each thing done with a version, on a phone and a desktop alike.
+export const VERSION_ACTIONS = Object.freeze({
+  back: 'Back to current', compare: 'Compare', compareWith: 'Compare with…',
+  followUp: 'Follow up on this version', continueFrom: 'Continue from this version',
+});
+
+// The line over a version being viewed: what it is and where its pictures come from.
+export function viewingText(chain, note) {
+  const commit = note.commit ? `pictures at commit ${shortSha(note.commit)}` : 'no commit yet';
+  return { title: `Viewing ${versionLabel(chain, note)}`, rest: ` (${commit}). The live preview still shows the current version.` };
+}
+
+// The changes a review card stands for, oldest first: the chain's earlier
+// versions (its history), then the card's own note, each with the ids of its
+// before and after pictures (null when it has none).
+export function reviewChanges(card, notes) {
+  const byId = new Map((notes ?? []).map((n) => [n.id, n]));
+  const history = card?.history ?? [];
+  return [...history, { note: card.note, text: card.text, set_aside: false }].map((entry) => {
+    const n = byId.get(entry.note);
+    return { id: entry.note, text: entry.text ?? n?.text ?? '', setAside: Boolean(entry.set_aside), note: n ?? null, before: n?.before_asset ?? null, after: n ? afterAssetOf(n) : null };
+  });
+}
+
+// What continuing from `note` does, by archond's rule (design/iterations.rs):
+// the chain's newer versions still in the code are reverted; newer ones
+// already set aside stay so. Both lists by number.
+export function continuePlan(chain, note) {
+  const newer = chain ? chain.versions.filter((n) => n.number > note.number && n.kind !== 'revert') : [];
+  return { reverts: newer.filter(inCode).map((n) => n.id), aside: newer.filter(isSetAside).map((n) => n.id) };
+}
+
+// The short line naming the newer versions a continue leaves set aside.
+export function asideText(ids) {
+  if (!ids?.length) return '';
+  return ids.length === 1 ? `${ids[0]} is already set aside and stays so.` : `${ids.join(', ')} are already set aside and stay so.`;
 }
 
 // The version a follow-up on the chain continues from by default.

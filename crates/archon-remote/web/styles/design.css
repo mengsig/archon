@@ -159,6 +159,15 @@
 .finish-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
 .finish-card { display: grid; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-s); background: var(--surface-2); }
 .finish-card-head { display: flex; gap: var(--space-2); align-items: center; }
+.finish-changes { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.finish-change { display: grid; gap: var(--space-1); }
+.finish-change.is-aside { opacity: .6; }
+.finish-change-title { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.finish-change-pics { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+.finish-change-fig { margin: 0; display: grid; gap: 2px; min-width: 0; }
+.finish-change-img { display: grid; place-items: center; aspect-ratio: 16 / 10; overflow: hidden; background: var(--surface); border: 1px solid var(--separator); border-radius: var(--radius-s); }
+.finish-change-pic { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; }
+.finish-final-label { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-2); }
 .finish-img { display: block; width: 100%; max-height: 60vh; object-fit: contain; background: var(--surface-2); border-radius: var(--radius-s); border: 1px solid var(--separator); }
 .design-ledger { display: grid; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-m); background: var(--accent-soft); }
 /* approval: the ledger fills the stage once the operator confirmed */
@@ -257,16 +266,21 @@
 .tree-node { display: grid; gap: var(--space-2); }
 .tree-node.depth-1 { margin-left: 16px; } .tree-node.depth-2 { margin-left: 32px; } .tree-node.depth-3 { margin-left: 48px; }
 .tree-node.depth-4 { margin-left: 64px; } .tree-node.depth-5 { margin-left: 80px; } .tree-node.depth-6 { margin-left: 96px; }
+/* A phone keeps deep branches readable: smaller steps, so a node never gets squeezed or pushes the sheet sideways. */
+.design[data-layout="phone"] .tree-node.depth-1 { margin-left: 10px; } .design[data-layout="phone"] .tree-node.depth-2 { margin-left: 20px; }
+.design[data-layout="phone"] .tree-node.depth-3 { margin-left: 30px; } .design[data-layout="phone"] .tree-node.depth-4 { margin-left: 40px; }
+.design[data-layout="phone"] .tree-node.depth-5 { margin-left: 50px; } .design[data-layout="phone"] .tree-node.depth-6 { margin-left: 60px; }
+.tree-groups, .tree-node, .tree-detail { min-width: 0; }
 .tree-node-main { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 48px; padding: 4px var(--space-2); border: 2px solid transparent; border-radius: var(--radius-m); background: none; color: var(--text); text-align: left; }
 .tree-node.is-viewing > .tree-node-main { border-color: var(--accent); background: var(--accent-soft); }
 .tree-node.is-aside > .tree-node-main { opacity: .55; }
 .tree-node-body { display: grid; gap: 2px; min-width: 0; }
 .tree-node-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.tree-node-refs { margin: -4px 0 0; padding-left: calc(var(--space-2) + 66px); font-size: 13px; color: var(--text-2); }
+.tree-node-refs { margin: -4px 0 0; padding-left: calc(var(--space-2) + 66px); font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; }
 .tree-node.is-aside > .tree-node-refs { opacity: .55; }
-.tree-node-line { font-size: 13px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; }
+.tree-node-line { font-size: 13px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; overflow-wrap: anywhere; }
 .tree-detail { display: grid; gap: var(--space-2); padding: var(--space-2); border-radius: var(--radius-s); background: var(--surface-2); }
-.tree-detail-title { margin: 0; font-size: 14px; }
+.tree-detail-title { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
 .tree-pics { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
 .tree-pic { margin: 0; display: grid; gap: 2px; }
 .design-viewer { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3) var(--space-4); min-height: 0; overflow: auto; flex: 1; }

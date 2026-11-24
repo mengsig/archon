@@ -3,17 +3,17 @@
 // and the two ways to continue. The live preview is never touched.
 import { h } from '../../ui/dom.js';
 import { createCompare } from './compare.js';
-import { versionLabel, versionNumber, olderInCode, isSetAside } from './chains.js';
+import { versionNumber, olderInCode, isSetAside, VERSION_ACTIONS, viewingText } from './chains.js';
 import { shortSha, afterAssetOf } from './state.js';
 import { designErrorText } from '../../core/design.js';
 
 export function createViewer({ ctx, onBack, onContinue, onFollowUp }) {
   const bar = h('div', { class: 'viewer-bar', role: 'status' });
-  const back = h('button', { class: 'button button-plain button-small', type: 'button', onclick: () => onBack() }, 'Back to current');
+  const back = h('button', { class: 'button button-plain button-small', type: 'button', onclick: () => onBack() }, VERSION_ACTIONS.back);
   const body = h('div', { class: 'viewer-body' });
-  const select = h('select', { class: 'input input-inline viewer-compare-with', 'aria-label': 'Compare with…' });
-  const cont = h('button', { class: 'button button-primary button-small', type: 'button' }, 'Continue from this version');
-  const follow = h('button', { class: 'button button-plain button-small', type: 'button' }, 'Follow up on this version');
+  const select = h('select', { class: 'input input-inline viewer-compare-with', 'aria-label': VERSION_ACTIONS.compareWith });
+  const cont = h('button', { class: 'button button-primary button-small', type: 'button' }, VERSION_ACTIONS.continueFrom);
+  const follow = h('button', { class: 'button button-plain button-small', type: 'button' }, VERSION_ACTIONS.followUp);
   const el = h('section', { class: 'design-viewer', 'aria-label': 'Viewing a version', hidden: true }, h('div', { class: 'viewer-barrow' }, bar, back), body, h('div', { class: 'viewer-actions' }, select, cont, follow));
   let shownId = null;
   let compare = null;
@@ -54,9 +54,9 @@ export function createViewer({ ctx, onBack, onContinue, onFollowUp }) {
       current = { chain, note };
       if (fresh) { shownId = note.id; other = ''; compare = createCompare(ctx, note); }
       else compare.update(note);
-      const commit = note.commit ? `pictures at commit ${shortSha(note.commit)}` : 'no commit yet';
-      bar.replaceChildren(h('strong', { text: `Viewing ${versionLabel(chain, note)}` }), ` (${commit}). The live preview still shows the current version.`);
-      select.replaceChildren(h('option', { value: '', text: 'Compare with…' }), ...chain.versions.filter((n) => n.id !== note.id)
+      const line = viewingText(chain, note);
+      bar.replaceChildren(h('strong', { text: line.title }), line.rest);
+      select.replaceChildren(h('option', { value: '', text: VERSION_ACTIONS.compareWith }), ...chain.versions.filter((n) => n.id !== note.id)
         .map((n) => h('option', { value: n.id, text: `${n.id}·v${versionNumber(chain, n)}${chain.current?.id === n.id ? ' (current)' : ''}${isSetAside(n) ? ' (set aside)' : ''}` })));
       select.value = other;
       cont.hidden = !act || !olderInCode(chain, note);

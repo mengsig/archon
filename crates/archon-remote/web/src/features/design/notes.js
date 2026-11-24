@@ -7,7 +7,7 @@ import { confirmSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
 import { noteLook, noteActions, failText, shortSha, sessionLabel, earlierText, notesHeading } from './state.js';
 import { openCompare } from './compare.js';
-import { buildChains, chainOf, chainById, chainOfNote, followTarget, olderInCode, linkParts, versionLimitText, versionNumber, isSetAside } from './chains.js';
+import { buildChains, chainOf, chainById, chainOfNote, followTarget, olderInCode, linkParts, versionLimitText, versionNumber, isSetAside, continuePlan } from './chains.js';
 import { createFollowBox } from './followup.js';
 import { designErrorText, MAX_REPLY_CHARS, MAX_NOTE_CHARS } from '../../core/design.js';
 
@@ -154,7 +154,7 @@ export function createNotesPanel({ ctx, getState, onFocusNote, onAddPage, iterat
     li.append(h('div', { class: 'note-actions chain-actions' }, toggle, full ? h('span', { class: 'note-hint', text: full }) : null));
     if (entry.open) {
       const target = chain.versions.find((n) => n.id === entry.target) ?? followTarget(chain);
-      const newer = chain.versions.filter((n) => n.number > target.number && n.status === 'done' && !isSetAside(n)).map((n) => n.id);
+      const newer = continuePlan(chain, target).reverts;
       entry.box.setTarget(target.id, `Follow up on ${target.id}${versionNumber(chain, target) < chain.count ? '' : ' (newest)'}`,
         olderInCode(chain, target) ? `Sending this first undoes ${newer.join(', ')} with new commits, then follows up on ${target.id}.` : '');
       li.append(entry.box.element);

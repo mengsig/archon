@@ -3,9 +3,10 @@
 // the node's detail opens inline under it.
 import { h } from '../../ui/dom.js';
 import { reconcile } from '../../ui/list.js';
-import { buildChains, chainOfNote, versionLabel, olderInCode, isSetAside } from './chains.js';
+import { buildChains, chainOfNote, olderInCode, isSetAside, VERSION_ACTIONS, viewingText } from './chains.js';
 import { noteLook, shortSha, afterAssetOf, hasPictures } from './state.js';
 import { statusChip } from './notes.js';
+import { compareLayout } from './compare.js';
 
 const MAX_INDENT = 6;
 const clip = (t, n = 60) => { const s = String(t ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
@@ -41,16 +42,19 @@ export function createTreePanel({ getState, thumbs, onSelect, getViewing, isPhon
     return li;
   }
 
-  // Phone: the version's pictures and what can be done with it, inline in the sheet.
+  // Phone: the version's pictures and what can be done with it, inline in the
+  // sheet, under the same words the desktop viewer uses.
   function detail(chain, note) {
     const pic = (id, word) => h('figure', { class: 'tree-pic' }, thumbs.image(id, `${word} picture of ${note.id}`, 'l'), h('figcaption', { class: 'cmp-caption', text: word }));
-    const buttons = h('div', { class: 'note-actions' });
-    if (hasPictures(note)) buttons.append(h('button', { class: 'button button-plain button-small', type: 'button', onclick: () => actions.compare(note) }, 'Open compare'));
-    if (canAct()) buttons.append(h('button', { class: 'button button-plain button-small', type: 'button', onclick: () => actions.followUp(note) }, 'Follow up'));
-    if (canAct() && olderInCode(chain, note)) buttons.append(h('button', { class: 'button button-primary button-small', type: 'button', onclick: () => actions.continueFrom(note) }, 'Continue from here'));
+    const button = (label, onclick, primary = false) => h('button', { class: ['button', primary ? 'button-primary' : 'button-plain', 'button-small'], type: 'button', onclick }, label);
+    const buttons = h('div', { class: 'note-actions' }, button(VERSION_ACTIONS.back, () => actions.back()));
+    if (hasPictures(note)) buttons.append(button(VERSION_ACTIONS.compare, () => actions.compare(note)));
+    if (canAct()) buttons.append(button(VERSION_ACTIONS.followUp, () => actions.followUp(note)));
+    if (canAct() && olderInCode(chain, note)) buttons.append(button(VERSION_ACTIONS.continueFrom, () => actions.continueFrom(note), true));
+    const line = viewingText(chain, note);
     return h('div', { class: 'tree-detail', role: 'group', 'aria-label': `Version ${note.id}` },
-      h('p', { class: 'tree-detail-title' }, h('strong', { text: versionLabel(chain, note) }), note.commit ? ` ${shortSha(note.commit)}` : ''),
-      h('div', { class: 'tree-pics' }, pic(note.before_asset, 'Before'), pic(afterAssetOf(note), 'After')),
+      h('p', { class: 'tree-detail-title' }, h('strong', { text: line.title }), line.rest),
+      h('div', { class: 'tree-pics' }, pic(note.before_asset, compareLayout(note).beforeWord), pic(afterAssetOf(note), 'After')),
       buttons);
   }
 

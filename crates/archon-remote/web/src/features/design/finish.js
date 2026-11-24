@@ -6,7 +6,8 @@ import { toast } from '../../ui/toast.js';
 import { queuedNotes, imageCapWarning, ledgerLede, afterAssetOf, noVisibleChange } from './state.js';
 import { reconcile } from '../../ui/list.js';
 import { statusChip } from './notes.js';
-import { historyLine } from './chains.js';
+import { historyLine, reviewChanges } from './chains.js';
+import { compareLayout } from './compare.js';
 import { IMAGE_CAP_WARN_MARGIN, designErrorText } from '../../core/design.js';
 
 // The daemon's answer when Confirm would approve no note (the choices made
@@ -69,6 +70,24 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   seed();
   const body = h('div', { class: 'finish' });
   let sheet = null;
+  // Each change's before and after pictures, asked for once while the review is open.
+  const pictures = new Map();
+  const picture = (n, id, word) => {
+    const box = h('div', { class: 'finish-change-img' }, h('span', { class: 'muted', text: id ? 'Loading…' : 'No picture' }));
+    if (id) {
+      if (!pictures.has(id)) pictures.set(id, ctx.design.asset(n.item, id).catch((err) => { pictures.delete(id); throw err; }));
+      pictures.get(id).then((asset) => box.replaceChildren(h('img', { class: 'finish-change-pic', src: asset.data_url, alt: `${word} picture of ${n.id}` })))
+        .catch((err) => box.replaceChildren(h('span', { class: 'form-error', text: designErrorText(err) })));
+    }
+    return h('figure', { class: 'finish-change-fig' }, box, h('figcaption', { class: 'cmp-caption', text: word }));
+  };
+  const changes = (card) => {
+    const list = reviewChanges(card, state.notes).filter((c) => c.note);
+    if (!list.length) return null;
+    return h('ol', { class: 'finish-changes', 'aria-label': `Changes in ${card.note}` }, list.map((c) => h('li', { class: ['finish-change', c.setAside && 'is-aside'] },
+      h('p', { class: 'finish-change-title' }, h('strong', { text: c.id }), ` ${c.text}`, c.setAside ? ' (set aside)' : ''),
+      h('div', { class: 'finish-change-pics' }, picture(c.note, c.before, compareLayout(c.note).beforeWord), picture(c.note, c.after, 'After')))));
+  };
   let busy = false;
 
   async function run(fn) {
@@ -141,6 +160,8 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
       h('div', { class: 'finish-card-head' }, h('strong', { text: card.note }), card.earlier ? h('span', { class: 'note-tag', text: 'Earlier session' }) : null, card.superseded_by ? h('span', { class: 'note-tag', text: `Superseded by ${card.superseded_by}` }) : null),
       h('p', { class: 'note-text', text: card.text }),
       historyLine(card.history) ? h('p', { class: 'note-hint finish-history', text: historyLine(card.history) }) : null,
+      changes(card),
+      card.data_url ? h('p', { class: 'finish-final-label', text: 'Final picture' }) : null,
       card.data_url ? h('img', { class: 'finish-img', src: card.data_url, alt: `Final picture for ${card.note}` }) : null,
       card.caption ? h('p', { class: 'cmp-caption', text: card.caption }) : null,
       card.not_found && !card.earlier ? h('div', { class: 'callout callout-amber', role: 'note' },

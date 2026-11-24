@@ -580,6 +580,8 @@ async fn a_design_gate_recovers_but_its_revision_needs_design_enabled() {
     let mut config = h.ctx.config.clone();
     config.design.enabled = false;
     h.restart_with(config);
+    // archond binds its context even when it starts with a historical design gate.
+    h.ctx.design.bind(&h.ctx);
     archon_daemon::executor::recover(&h.ctx).await.unwrap();
     assert_eq!(open_proposal(&h, &item.id).await.question, gate.question);
 

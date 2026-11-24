@@ -20,6 +20,17 @@ pub(crate) const CLOSED_EVENT: &str = "Archon.closed";
 type Reply = Result<Value, BrowserError>;
 type Pending = Arc<Mutex<Option<HashMap<u64, oneshot::Sender<Reply>>>>>;
 
+struct PendingCall<'a> {
+    cdp: &'a Cdp,
+    id: u64,
+}
+
+impl Drop for PendingCall<'_> {
+    fn drop(&mut self) {
+        self.cdp.forget(self.id);
+    }
+}
+
 /// A CDP event.
 #[derive(Debug, Clone)]
 pub(crate) struct CdpEvent {
@@ -30,7 +41,7 @@ pub(crate) struct CdpEvent {
 
 #[derive(Debug)]
 pub(crate) struct Cdp {
-    tx: mpsc::UnboundedSender<Vec<u8>>,
+    tx: mpsc::Sender<Vec<u8>>,
     pending: Pending,
     next_id: AtomicU64,
     events: broadcast::Sender<CdpEvent>,
@@ -51,8 +62,8 @@ impl Cdp {
         W: AsyncWrite + Unpin + Send + 'static,
     {
         let pending: Pending = Arc::new(Mutex::new(Some(HashMap::new())));
-        let (events, _) = broadcast::channel(2048);
-        let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (events, _) = broadcast::channel(64);
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
 
         let wtask = tokio::spawn(async move {
             let mut w = writer;
@@ -131,27 +142,29 @@ impl Cdp {
         let (otx, orx) = oneshot::channel();
         match self.pending.lock().unwrap().as_mut() {
             Some(m) => {
+                if m.len() >= 256 {
+                    return Err(BrowserError::Protocol("too many pending CDP calls".into()));
+                }
                 m.insert(id, otx);
             }
             None => return Err(BrowserError::Closed),
         }
+        let _pending_call = PendingCall { cdp: self, id };
         let mut msg = json!({"id": id, "method": method, "params": params});
         if let Some(s) = session {
             msg["sessionId"] = Value::String(s.into());
         }
         let bytes = serde_json::to_vec(&msg).map_err(|e| BrowserError::Protocol(e.to_string()))?;
-        if self.tx.send(bytes).is_err() {
-            self.forget(id);
-            return Err(BrowserError::Closed);
-        }
-        match tokio::time::timeout(timeout, orx).await {
-            Ok(Ok(r)) => r,
-            Ok(Err(_)) => Err(BrowserError::Closed),
-            Err(_) => {
-                self.forget(id);
-                Err(BrowserError::Timeout(method.into()))
-            }
-        }
+        let call = async {
+            self.tx
+                .send(bytes)
+                .await
+                .map_err(|_| BrowserError::Closed)?;
+            orx.await.map_err(|_| BrowserError::Closed)?
+        };
+        tokio::time::timeout(timeout, call)
+            .await
+            .map_err(|_| BrowserError::Timeout(method.into()))?
     }
 
     fn forget(&self, id: u64) {
@@ -165,6 +178,12 @@ impl Cdp {
             t.abort();
         }
         fail_all(&self.pending, || BrowserError::Closed);
+    }
+}
+
+impl Drop for Cdp {
+    fn drop(&mut self) {
+        self.abort();
     }
 }
 
@@ -218,6 +237,33 @@ mod tests {
             }
             b.push(c);
         }
+    }
+
+    #[tokio::test]
+    async fn cancelled_call_releases_pending_entry() {
+        let (cdp, mut peer, _writer) = pair();
+        let cdp = Arc::new(cdp);
+        let caller = cdp.clone();
+        let task =
+            tokio::spawn(async move { caller.call(None, "Page.enable", json!({}), T).await });
+        let message = read_msg(&mut peer).await;
+        assert!(message["id"].as_u64().is_some());
+        assert_eq!(cdp.pending.lock().unwrap().as_ref().unwrap().len(), 1);
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(cdp.pending.lock().unwrap().as_ref().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dropping_cdp_closes_its_pipe_tasks() {
+        let (cdp, mut peer, _writer) = pair();
+        drop(cdp);
+        let mut byte = [0];
+        let n = tokio::time::timeout(T, peer.read(&mut byte))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(n, 0);
     }
 
     // T-U1

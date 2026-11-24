@@ -217,6 +217,9 @@ async fn run(
                 let mut st = rt.st();
                 st.counters.frames_sent += 1;
                 if let Some(at) = st.pending_input.take() {
+                    if st.counters.latencies_ms.len() >= 4096 {
+                        st.counters.latencies_ms.drain(..2048);
+                    }
                     st.counters.latencies_ms.push(at.elapsed().as_millis() as u64);
                 }
             }

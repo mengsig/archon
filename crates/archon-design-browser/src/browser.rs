@@ -11,7 +11,7 @@ use std::time::Duration;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::process::{Child, Command};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
@@ -30,6 +30,28 @@ use crate::{
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
+
+struct LaunchGuard {
+    pid: Option<u32>,
+    profile: Option<PathBuf>,
+}
+
+impl Drop for LaunchGuard {
+    fn drop(&mut self) {
+        if let Some(pid) = self.pid {
+            kill_group(pid);
+        }
+        if let Some(profile) = &self.profile
+            && let Err(error) = fs::remove_dir_all(profile)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!(
+                "failed to remove browser profile {}: {error}",
+                profile.display()
+            );
+        }
+    }
+}
 
 #[derive(Debug)]
 struct State {
@@ -72,11 +94,22 @@ pub struct Browser {
 impl Drop for Browser {
     fn drop(&mut self) {
         self.event_task.abort();
+        self.sh.relay.close();
+        self.sh.cdp.abort();
         if let (Some(pid), Some(_)) = (self.pid, self.child.as_ref()) {
             kill_group(pid);
         }
         if let Some(h) = self.sh.st.lock().unwrap().poll.take() {
             h.abort();
+        }
+        if let Some(profile) = self.profile.take()
+            && let Err(error) = fs::remove_dir_all(&profile)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!(
+                "failed to remove browser profile {}: {error}",
+                profile.display()
+            );
         }
     }
 }
@@ -399,7 +432,9 @@ impl Shared {
             || err.contains("ERR_TUNNEL_CONNECTION_FAILED");
         if let (true, Some(host)) = (proxy_failure, host_of(&url)) {
             let host = clean(&host);
-            if self.st.lock().unwrap().blocked.insert(host.clone()) {
+            let mut st = self.st.lock().unwrap();
+            if st.blocked.len() < 256 && st.blocked.insert(host.clone()) {
+                drop(st);
                 self.emit(BrowserEvent::BlockedHost { host });
             }
         }
@@ -449,14 +484,14 @@ impl Browser {
             .create(&spec.profile_dir)
             .map_err(io)?;
         fs::set_permissions(&spec.profile_dir, fs::Permissions::from_mode(0o700)).map_err(io)?;
-        let result = Self::spawn(&spec).await;
-        if result.is_err() {
-            let _ = fs::remove_dir_all(&spec.profile_dir);
-        }
-        result
+        Self::spawn(&spec).await
     }
 
     async fn spawn(spec: &LaunchSpec) -> Result<Browser, BrowserError> {
+        let mut guard = LaunchGuard {
+            pid: None,
+            profile: Some(spec.profile_dir.clone()),
+        };
         let mut cmd = Command::new("/bin/sh");
         cmd.arg("-c")
             .arg(SHELL_SCRIPT)
@@ -473,6 +508,7 @@ impl Browser {
             .spawn()
             .map_err(|e| BrowserError::Launch(e.to_string()))?;
         let pid = child.id();
+        guard.pid = pid;
         let started_at = pid.and_then(process_start_time);
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
@@ -482,11 +518,14 @@ impl Browser {
         let tail = Arc::new(Mutex::new(String::new()));
         let t2 = tail.clone();
         let stderr_task = tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
+            let mut stderr = stderr;
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = stderr.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
                 let mut t = t2.lock().unwrap();
-                t.push_str(&line);
-                t.push('\n');
+                t.push_str(&String::from_utf8_lossy(&buf[..n]));
                 if t.len() > 16 * 1024 {
                     let cut = t.len() - 8 * 1024;
                     let cut = (cut..t.len()).find(|i| t.is_char_boundary(*i)).unwrap_or(0);
@@ -538,6 +577,8 @@ impl Browser {
         b.profile = Some(spec.profile_dir.clone());
         b.pid = pid;
         b.started_at = started_at;
+        guard.pid = None;
+        guard.profile = None;
         Ok(b)
     }
 
@@ -928,12 +969,18 @@ impl Browser {
         }
         self.event_task.abort();
         self.sh.cdp.abort();
-        if let Some(p) = self.profile.take() {
+        if let Some(p) = self.profile.clone() {
             let mut last = None;
             for _ in 0..20 {
                 match fs::remove_dir_all(&p) {
-                    Ok(()) => return Ok(()),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                    Ok(()) => {
+                        self.profile = None;
+                        return Ok(());
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        self.profile = None;
+                        return Ok(());
+                    }
                     Err(e) => {
                         last = Some(e);
                         tokio::time::sleep(Duration::from_millis(100)).await;

@@ -230,7 +230,7 @@ the CLI's does. For example, `/archon apply {"cmd":"set_directive",
 "text":"docs fixes only","expires_in_hours":null}` sets a directive and
 `/archon apply {"cmd":"clear_directive","directive":null}` clears them.
 
-A paired operator can include a unique `command_id` on a host command sent through `say`. The operator feed entry, its transcript echo and its terminal system result carry that ID. The system entry’s `command_result` gives the outcome whether Aether is connected or offline.
+A paired operator can include a unique `command_id` on a host command sent through `say`. The operator feed entry and its terminal system result carry that ID. When Aether serves conversation posts, the transcript echo carries it too. The system entry’s `command_result` gives the outcome whether Aether is connected or offline.
 
 An observer only reads: the listener refuses its `say` and `answer` before
 archond sees them. Behind that, archond still gives an observer's requests

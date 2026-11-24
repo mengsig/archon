@@ -121,6 +121,20 @@ test('identical concurrent commands match only their own interleaved outcome', (
   assert.deepEqual(commandOutcome(feed, s.get().outbox[1]), { lines: ['second detail', 'Awaiting your confirmation as Q7; nothing changed yet.'], question: 'Q7' });
 });
 
+test('mixed daemon versions settle only the exact ID using their own terminal format', () => {
+  const feed = [
+    fed(1, { entry: 'system', text: 'Operator command: Wrong' }),
+    fed(2, { entry: 'system', command_id: 'old', text: 'legacy detail' }),
+    fed(3, { entry: 'system', command_id: 'new', text: 'Applied: /archon', command_result: 'Saved' }),
+    fed(4, { entry: 'system', command_id: 'old', text: 'Operator command: Awaiting your confirmation as Q9' }),
+    fed(5, { entry: 'system', command_id: 'refused', text: 'Operator command refused: unknown item' }),
+  ];
+  assert.deepEqual(commandOutcome(feed, { localId: 'new' }), { lines: ['Saved'], question: null });
+  assert.deepEqual(commandOutcome(feed, { localId: 'old' }), { lines: ['legacy detail', 'Awaiting your confirmation as Q9'], question: 'Q9' });
+  assert.deepEqual(commandOutcome(feed, { localId: 'refused' }), { lines: ['Operator command refused: unknown item'], question: null });
+  assert.equal(commandOutcome(feed, { localId: 'unknown' }), null);
+});
+
 test('say sends the pending command identifier to the daemon', async () => {
   const s = store();
   const id = addPending(s, '/status');

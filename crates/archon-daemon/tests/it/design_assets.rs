@@ -83,6 +83,83 @@ fn watch(
     (rx, task)
 }
 
+#[tokio::test]
+async fn unsubscribing_before_publication_wakes_the_next_queued_preview() {
+    use archon_core::protocol::{BrowserStatus, DesignEvent};
+    let mut config = design_config();
+    config.design.max_sessions = 1;
+    let f = Fixture::with_preview(config).await;
+    let second = new_session(&f, "queue-on-cancel").await;
+    let resume = f.factory.pause_next_launch();
+    let (_frames, first_task) = watch(&f, &f.session);
+    until("the first launch to register", || {
+        !f.factory.browsers.lock().unwrap().is_empty()
+    })
+    .await;
+    let (mut second_frames, second_task) = watch(&f, &second);
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while let Some(frame) = second_frames.recv().await {
+            if matches!(
+                frame,
+                ServerFrame::Design {
+                    event: DesignEvent::Session {
+                        browser: BrowserStatus::QueuedForSlot,
+                        ..
+                    },
+                    ..
+                }
+            ) {
+                return;
+            }
+        }
+        panic!("the second preview closed before queueing");
+    })
+    .await
+    .expect("second preview queues");
+    first_task.abort();
+    assert!(first_task.await.unwrap_err().is_cancelled());
+    assert!(
+        resume.send(()).is_err(),
+        "the cancelled launch released its wait"
+    );
+    until("the queued preview to start", || {
+        f.factory.browsers.lock().unwrap().len() == 2
+    })
+    .await;
+    assert_eq!(f.h.ctx.design.subscriber_count(&f.session), 0);
+    second_task.abort();
+    assert!(second_task.await.unwrap_err().is_cancelled());
+}
+
+#[tokio::test]
+async fn unsubscribing_during_publication_preserves_the_browser_monitor() {
+    let f = Fixture::with_preview(design_config()).await;
+    let resume = f.factory.pause_next_launch();
+    let (_frames, subscriber) = watch(&f, &f.session);
+    until("the browser to register", || {
+        !f.factory.browsers.lock().unwrap().is_empty()
+    })
+    .await;
+    let browser = f.factory.browser(0);
+    // The status broadcast reads the store after installing the browser.
+    let held = f.h.ctx.store.lock().await;
+    resume.send(()).expect("release the registered launch");
+    until("navigation to finish", || {
+        browser.calls(|calls| !calls.navigated.is_empty())
+    })
+    .await;
+    subscriber.abort();
+    assert!(subscriber.await.unwrap_err().is_cancelled());
+    assert_eq!(f.h.ctx.design.subscriber_count(&f.session), 0);
+    drop(held);
+    browser.crash();
+    until(
+        "the independent monitor to replace the crashed browser",
+        || browser.calls(|calls| calls.closed) && f.factory.browsers.lock().unwrap().len() == 2,
+    )
+    .await;
+}
+
 /// Two sessions starting together under one slot never both launch.
 #[tokio::test]
 async fn concurrent_starts_never_exceed_max_sessions() {

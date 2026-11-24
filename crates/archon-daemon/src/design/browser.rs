@@ -391,11 +391,25 @@ pub(crate) struct Runtime {
 }
 
 /// A reserved slot; releasing it on drop covers every error path.
-struct SlotGuard(Arc<Runtime>);
+struct SlotGuard<'a> {
+    runtime: &'a Runtime,
+    service: &'a DesignService,
+}
 
-impl Drop for SlotGuard {
+impl Drop for SlotGuard<'_> {
     fn drop(&mut self) {
-        self.0.st().launching = false;
+        let freed = {
+            let mut state = self.runtime.st();
+            debug_assert!(state.launching);
+            state.launching = false;
+            if state.browser.is_none() && state.status == BrowserStatus::Starting {
+                state.status = BrowserStatus::Idle;
+            }
+            state.browser.is_none()
+        };
+        if freed && self.service.enabled() {
+            self.service.spawn_start_queued();
+        }
     }
 }
 
@@ -473,6 +487,29 @@ impl Runtime {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    fn publish_browser(
+        &self,
+        ctx: &DaemonContext,
+        row: &archon_core::design::DesignSession,
+        url: &str,
+        browser: Arc<dyn PreviewBrowser>,
+        events: broadcast::Receiver<adb::BrowserEvent>,
+    ) {
+        let pid = browser.pid();
+        let mut state = self.st();
+        debug_assert!(state.launching && state.browser.is_none());
+        debug_assert!(state.monitor.is_none());
+        state.browser = Some(browser);
+        state.last_url = Some(url.to_owned());
+        state.status = if row.sandbox_off {
+            BrowserStatus::Unsandboxed
+        } else {
+            BrowserStatus::Running
+        };
+        state.monitor = Some(tokio::spawn(monitor(ctx.arc(), row.id.clone(), events)));
+        tracing::info!(session = %row.id, ?pid, sandbox = !row.sandbox_off, device = ?super::current_device_label(), "design: browser started");
+    }
+
     pub fn browser(&self) -> Option<Arc<dyn PreviewBrowser>> {
         self.st().browser.clone()
     }
@@ -535,7 +572,7 @@ impl DesignService {
     /// Take a slot for `rt`'s launch, atomically with the count: the map lock
     /// is held from the count to the mark, so two launches never both see a
     /// free slot. `None` when all are taken.
-    fn reserve_slot(&self, rt: &Arc<Runtime>) -> Option<SlotGuard> {
+    fn reserve_slot<'a>(&'a self, rt: &'a Runtime) -> Option<SlotGuard<'a>> {
         let all = self.rt.lock().unwrap_or_else(|e| e.into_inner());
         let taken = all
             .values()
@@ -545,10 +582,16 @@ impl DesignService {
             })
             .count();
         if taken >= self.cfg.max_sessions as usize {
+            rt.st().status = BrowserStatus::QueuedForSlot;
             return None;
         }
-        rt.st().launching = true;
-        Some(SlotGuard(rt.clone()))
+        let mut state = rt.st();
+        state.launching = true;
+        state.status = BrowserStatus::Starting;
+        Some(SlotGuard {
+            service: self,
+            runtime: rt,
+        })
     }
 
     /// A slot was freed: start a queued session's browser, off this path.
@@ -590,26 +633,11 @@ impl DesignService {
             return Ok(None);
         };
         let Some(slot) = self.reserve_slot(&rt) else {
-            rt.st().status = BrowserStatus::QueuedForSlot;
             return Ok(None);
         };
-        rt.st().status = BrowserStatus::Starting;
-        let upstream_guard = match self.verify_registered_preview(ctx, &row, &url).await {
-            Ok(guard) => guard,
-            Err(error) => {
-                drop(slot);
-                self.spawn_start_queued();
-                rt.st().status = BrowserStatus::Idle;
-                return Err(error);
-            }
-        };
+        let upstream_guard = self.verify_registered_preview(ctx, &row, &url).await?;
         let launched = self.launch_into(ctx, &rt, &row, &url, upstream_guard).await;
-        // The browser is stored by now, or the launch failed: either way the
-        // reservation ends, and a failed launch hands its slot on.
         drop(slot);
-        if launched.is_err() {
-            self.spawn_start_queued();
-        }
         match launched {
             Ok(browser) => Ok(Some(browser)),
             Err(adb::BrowserError::Containment(reason)) => {
@@ -775,20 +803,8 @@ impl DesignService {
             browser.close().await;
             return Err(error);
         }
-        let pid = browser.pid();
-        {
-            let mut state = rt.st();
-            state.browser = Some(browser.clone());
-            state.last_url = Some(url.to_owned());
-            state.status = if row.sandbox_off {
-                BrowserStatus::Unsandboxed
-            } else {
-                BrowserStatus::Running
-            };
-        }
-        tracing::info!(session = %row.id, ?pid, sandbox = !row.sandbox_off, device = ?super::current_device_label(), "design: browser started");
+        rt.publish_browser(ctx, row, url, browser.clone(), events);
         self.emit_session(ctx, &row.id).await;
-        self.spawn_monitor(ctx, row.id.clone(), events);
         Ok(browser)
     }
 
@@ -950,19 +966,6 @@ impl DesignService {
                 .unwrap_or_else(|e| e.into_inner())
                 .remove(session);
         }
-    }
-
-    fn spawn_monitor(
-        &self,
-        ctx: &DaemonContext,
-        session: DesignSessionId,
-        events: broadcast::Receiver<adb::BrowserEvent>,
-    ) {
-        let ctx = ctx.arc();
-        let rt = self.runtime(&session);
-        rt.st().monitor = Some(tokio::spawn(async move {
-            monitor(ctx, session, events).await;
-        }));
     }
 
     async fn relaunch(

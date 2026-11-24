@@ -148,6 +148,20 @@ test('an internal id-0 error reconnects to resubscribe, backing off while it rep
   assert.equal(errors.length, 2);
 });
 
+test('healthy legacy preview visits release the stream without accumulating fault backoff', () => {
+  const h = harness();
+  const first = backoffDelay(0, () => 0.5);
+  h.transport.start();
+  for (let visit = 0; visit < 8; visit += 1) {
+    h.last().open();
+    h.last().welcome();
+    h.transport.resubscribe();
+    assert.equal(h.last().closedWith, 4001);
+    assert.equal(h.states.at(-1).retryInMs, first);
+    h.fire(first);
+  }
+});
+
 test('a change subscription ended by a lag reconnects to resubscribe', () => {
   const errors = [];
   const h = harness({ onProtocolError: (err) => errors.push(err) });

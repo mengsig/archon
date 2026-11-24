@@ -43,7 +43,7 @@ class Transport {
     this.current = 'idle';
     this.stopped = false;
     this.closeReason = null;
-    this.restarting = false;
+    this.restartCause = null;
     this.pending = new Map();
     this.queued = [];
   }
@@ -133,8 +133,8 @@ class Transport {
 
   opened(welcome) {
     // A daemon that keeps ending the feed backs off as if it kept dropping.
-    if (!this.restarting) this.attempt = 0;
-    this.restarting = false;
+    if (this.restartCause !== 'fault') this.attempt = 0;
+    this.restartCause = null;
     this.setState('open', { welcome });
     for (const entry of this.queued.splice(0)) this.dispatch(entry);
     this.on.ready(welcome);
@@ -178,12 +178,13 @@ class Transport {
     const ended = err?.code === 'internal' || ENDED_SUBSCRIPTION.test(this.closeReason);
     if (!ended || this.current !== 'open' || !this.ws) return;
     this.on.protocolError(new DaemonError(err?.code ?? 'internal', `${this.closeReason}; reconnecting`));
-    this.resubscribe();
+    this.resubscribe({ afterFault: true });
   }
 
-  resubscribe() {
-    if (this.current !== 'open' || !this.ws || this.restarting) return;
-    this.restarting = true;
+  resubscribe({ afterFault = false } = {}) {
+    if (this.current !== 'open' || !this.ws || this.restartCause) return;
+    this.restartCause = afterFault ? 'fault' : 'release';
+    if (!afterFault) this.attempt = 0;
     this.ws.close(CLOSE_RESUBSCRIBE, 'resubscribe');
   }
 

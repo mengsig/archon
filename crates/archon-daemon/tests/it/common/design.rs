@@ -13,7 +13,7 @@ use archon_core::id::QueueItemId;
 use archon_core::protocol::{ClientKind, Reply, Request};
 use archon_daemon::design::{BrowserFactory, FrameFeed, PreviewBrowser, StageEnd, WorktreeRef};
 use archon_design_browser as adb;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::{Harness, git};
 
@@ -295,6 +295,7 @@ pub struct FakeFactory {
     /// No Chromium on the host.
     pub missing: Mutex<bool>,
     pub initial_rss: Mutex<Option<u64>>,
+    after_registration: Mutex<Option<oneshot::Receiver<()>>>,
     pub fail_initial_navigation: Mutex<bool>,
     /// Every launch takes this long.
     pub delay: Mutex<std::time::Duration>,
@@ -303,6 +304,18 @@ pub struct FakeFactory {
 impl FakeFactory {
     pub fn browser(&self, n: usize) -> Arc<FakeBrowser> {
         self.browsers.lock().unwrap()[n].clone()
+    }
+
+    pub fn pause_next_launch(&self) -> oneshot::Sender<()> {
+        let (resume, paused) = oneshot::channel();
+        assert!(
+            self.after_registration
+                .lock()
+                .unwrap()
+                .replace(paused)
+                .is_none()
+        );
+        resume
     }
 
     pub fn launched(&self) -> usize {
@@ -367,6 +380,10 @@ impl BrowserFactory for FakeFactory {
             browser.fail_next_load();
         }
         self.browsers.lock().unwrap().push(browser.clone());
+        let paused = self.after_registration.lock().unwrap().take();
+        if let Some(resume) = paused {
+            resume.await.map_err(|_| adb::BrowserError::Closed)?;
+        }
         Ok(browser)
     }
 }

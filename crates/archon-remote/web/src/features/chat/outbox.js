@@ -67,7 +67,11 @@ export function commandOutcome(feed, pending) {
     const entry = item.entry;
     if (entry?.entry !== 'system' || entry.command_id !== pending.localId || typeof entry.text !== 'string') continue;
     const line = entry.text.trim();
-    const result = entry.command_result;
+    let result = entry.command_result;
+    if (result === undefined) {
+      if (line.startsWith('Operator command: ')) result = line.slice('Operator command: '.length).trim();
+      else if (line.startsWith('Operator command refused: ')) result = line;
+    }
     if (typeof result !== 'string' || !result.trim()) {
       if (line) lines.push(line);
       continue;

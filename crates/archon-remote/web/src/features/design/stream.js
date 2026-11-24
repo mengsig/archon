@@ -31,7 +31,7 @@ export function createDesignStream({
     ctx.design.unsubscribe(id).catch((error) => {
       if (ctx.transport?.ws !== socket || error?.code === 'disconnected') return;
       onError(error);
-      ctx.transport?.resubscribe();
+      ctx.transport?.resubscribe({ afterFault: true });
     });
   }
 

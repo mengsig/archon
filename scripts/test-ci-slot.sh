@@ -229,6 +229,7 @@ done
 cat > "$lpbin/systemd-run" <<'MOCK_SD'
 #!/bin/sh
 [ "${MOCK_SD_FAIL:-0}" = 1 ] && exit 1
+[ "${MOCK_SD_HANG:-0}" = 1 ] && exec sleep 60
 echo "systemd-run $*" >> "$LP_LOG"
 while [ "$#" -gt 0 ]; do case "$1" in --) shift; break ;; *) shift ;; esac; done
 [ "$#" -gt 0 ] || exit 0
@@ -251,10 +252,14 @@ lp sh -c 'exit 5' 2>/dev/null || status=$?
 if lp sh -c 'echo >&9' 2>/dev/null; then fail "wrappers leaked the lock descriptor"; fi
 : > "$LP_LOG"
 MOCK_SD_FAIL=1 lp true 2>"$testdir/lp.err"
-grep -q 'systemd-run --user unavailable; using nice/ionice only' "$testdir/lp.err" || fail "no fallback message"
+grep -q 'systemd-run --user unavailable or probe timed out' "$testdir/lp.err" || fail "no fallback message"
 grep -q '^nice -n 19 ionice' "$LP_LOG" || grep -q '^nice -n 19' "$LP_LOG" || fail "fallback skipped nice"
 grep -q '^ionice -c 3' "$LP_LOG" || fail "fallback skipped ionice"
 if grep -q '^systemd-run' "$LP_LOG"; then fail "systemd-run ran after a failed probe"; fi
+: > "$LP_LOG"
+MOCK_SD_HANG=1 PATH="$lpbin:$PATH" CI_LOW_PRIORITY=1 timeout 8 "$shell" "$slot" true 2>"$testdir/hang.err" || fail "hanging probe blocked the slot"
+grep -q 'probe timed out' "$testdir/hang.err" || fail "hanging probe was not reported"
+CI_LOW_PRIORITY=0 timeout 5 "$shell" "$slot" true || fail "slot remained locked after hanging probe"
 : > "$LP_LOG"
 CI_LOW_PRIORITY=0 PATH="$lpbin:$PATH" run_slot true 2>"$testdir/lp.err"
 [ ! -s "$LP_LOG" ] || fail "CI_LOW_PRIORITY=0 still wrapped"
@@ -286,6 +291,7 @@ noflock="$testdir/noflock-bin"
 mkdir "$noflock"
 cp "$lpbin"/* "$noflock"/
 ln -s "$(command -v sh)" "$noflock/sh"
+ln -s "$(command -v timeout)" "$noflock/timeout"
 printf '#!/bin/sh\nexit 0\n' > "$noflock/true"
 chmod +x "$noflock/true"
 shell_path=$(command -v "$shell")
@@ -293,6 +299,16 @@ shell_path=$(command -v "$shell")
 PATH="$noflock" CI_LOW_PRIORITY=1 "$shell_path" "$slot" true 2>"$testdir/noflock.err" || fail "no-flock run failed: $(cat "$testdir/noflock.err")"
 grep -q 'no flock on PATH' "$testdir/noflock.err" || fail "no-flock run was not announced"
 grep -q -- "$wrapped" "$LP_LOG" || fail "no-flock run skipped low priority: $(cat "$LP_LOG")"
+no_timeout="$testdir/no-timeout-bin"
+mkdir "$no_timeout"
+cp "$lpbin"/* "$no_timeout"/
+ln -s "$(command -v sh)" "$no_timeout/sh"
+ln -s "$(command -v touch)" "$no_timeout/touch"
+: > "$LP_LOG"
+PATH="$no_timeout" CI_HOST_SLOTS=0 CI_LOW_PRIORITY=1 "$shell_path" "$slot" touch "$testdir/no-timeout-ran" 2>"$testdir/no-timeout.err" || fail "missing timeout blocked command"
+[ -e "$testdir/no-timeout-ran" ] || fail "command did not run without timeout"
+grep -q 'timeout missing' "$testdir/no-timeout.err" || fail "missing timeout was not reported"
+if grep -q '^systemd-run' "$LP_LOG"; then fail "systemd-run ran without timeout"; fi
 threads=$(env -u NEXTEST_TEST_THREADS -u RUST_TEST_THREADS PATH="$noflock" "$shell_path" "$slot" sh -c "$show_threads" 2>/dev/null)
 [ "$threads" = "4 4" ] || fail "no-flock run left test threads '$threads'"
 
@@ -318,6 +334,16 @@ grep -q 'WARNING.*running anyway' "$testdir/mem.err" || fail "no cap warning"
 [ -e "$testdir/ran-anyway" ] || fail "command did not run after the cap"
 CI_MIN_FREE_GIB=6 CI_SLOT_MEM_WAIT_MAX_SECS=2 run_slot true 2>"$testdir/mem.err"
 grep -q WARNING "$testdir/mem.err" || fail "no warning after timed cap"
+printf 'MemAvailable: 8388608 kB\n' > "$testdir/meminfo"
+CI_MIN_FREE_GIB=00008 CI_MEM_WAIT_MAX_MIN=00008 run_slot true 2>"$testdir/mem.err" || fail "leading zeros rejected"
+CI_MIN_FREE_GIB=010 CI_MEM_WAIT_MAX_MIN=0 run_slot true 2>"$testdir/mem.err"
+grep -q 'waiting for 10 GiB' "$testdir/mem.err" || fail "010 was not interpreted as decimal 10"
+for bad in CI_MIN_FREE_GIB CI_MEM_WAIT_MAX_MIN; do
+    status=0
+    env "$bad=999999999999999999999999999999" "$shell" "$slot" true 2>"$testdir/bad.err" || status=$?
+    [ "$status" -eq 2 ] || fail "overflowing $bad exit status $status"
+    grep -q "$bad must be at most" "$testdir/bad.err" || fail "no clear bound for $bad"
+done
 unset CI_SLOT_MEMINFO CI_SLOT_MEM_POLL_SECS
 for bad in CI_MIN_FREE_GIB CI_MEM_WAIT_MAX_MIN CI_TEST_THREADS; do
     if env "$bad=x1" "$shell" "$slot" true 2>/dev/null; then fail "malformed $bad accepted"; fi

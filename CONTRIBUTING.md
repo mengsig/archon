@@ -64,11 +64,13 @@ Aether's `scripts/ci_slot.sh`:
 - `CI_MIN_FREE_GIB` (default 6; 0 disables): once it holds a slot, it waits
   until `MemAvailable` in `/proc/meminfo` reaches this many GiB, saying so
   once and then every 60 seconds. After `CI_MEM_WAIT_MAX_MIN` minutes
-  (default 30) it runs anyway with a warning.
+  (default 30) it runs anyway with a warning. Both values are decimal; the
+  maximum is 1024 GiB and 10080 minutes, respectively.
 - The command runs at low priority: in a `systemd-run --user --scope` with
   `CPUWeight=20`, `IOWeight=20` and `MemoryHigh=$CI_MEMORY_HIGH` (default
   `6G`), under `nice -n 19` and `ionice -c 3` where they exist. Without
-  `systemd-run --user` it says so and uses only `nice` and `ionice`.
+  `systemd-run --user`, or if its three-second probe times out or `timeout` is
+  unavailable, it says so and uses only `nice` and `ionice`.
   `CI_LOW_PRIORITY=0` runs the command as is.
 - `CI_TEST_THREADS` (default 4) sets `NEXTEST_TEST_THREADS` and
   `RUST_TEST_THREADS` for the command, unless they are already set.

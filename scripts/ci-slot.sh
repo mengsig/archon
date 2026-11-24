@@ -7,12 +7,22 @@ require_whole() {
         '' | *[!0-9]*) echo "ci-slot: $1 must be a whole number, not '$2'" >&2; exit 2 ;;
     esac
 }
+bounded_decimal() {
+    require_whole "$1" "$2"
+    value=$2
+    while [ "${value#0}" != "$value" ]; do value=${value#0}; done
+    [ -n "$value" ] || value=0
+    if [ "${#value}" -gt "${#3}" ] ||
+        { [ "${#value}" -eq "${#3}" ] && [ "$value" -gt "$3" ]; }; then
+        echo "ci-slot: $1 must be at most $3" >&2
+        exit 2
+    fi
+    printf '%s\n' "$value"
+}
 slots=${CI_HOST_SLOTS:-1}
 require_whole CI_HOST_SLOTS "$slots"
-min_free_gib=${CI_MIN_FREE_GIB:-6}
-require_whole CI_MIN_FREE_GIB "$min_free_gib"
-mem_wait_max_min=${CI_MEM_WAIT_MAX_MIN:-30}
-require_whole CI_MEM_WAIT_MAX_MIN "$mem_wait_max_min"
+min_free_gib=$(bounded_decimal CI_MIN_FREE_GIB "${CI_MIN_FREE_GIB:-6}" 1024)
+mem_wait_max_min=$(bounded_decimal CI_MEM_WAIT_MAX_MIN "${CI_MEM_WAIT_MAX_MIN:-30}" 10080)
 test_threads=${CI_TEST_THREADS:-4}
 require_whole CI_TEST_THREADS "$test_threads"
 # Test hooks: meminfo path, poll/progress intervals and wait cap in whole seconds.
@@ -185,11 +195,12 @@ run_command() {
     if [ "${CI_LOW_PRIORITY:-1}" != 0 ]; then
         if command -v ionice >/dev/null 2>&1; then set -- ionice -c 3 "$@"; fi
         if command -v nice >/dev/null 2>&1; then set -- nice -n 19 "$@"; fi
-        if command -v systemd-run >/dev/null 2>&1 && (exec 9>&-; systemd-run --user --scope --quiet true) >/dev/null 2>&1; then
+        if command -v timeout >/dev/null 2>&1 && command -v systemd-run >/dev/null 2>&1 &&
+            (exec 9>&-; timeout -k 1 3 systemd-run --user --scope --quiet true) >/dev/null 2>&1; then
             set -- systemd-run --user --scope --quiet -p CPUWeight=20 -p IOWeight=20 \
                 -p "MemoryHigh=${CI_MEMORY_HIGH:-6G}" -- "$@"
         else
-            echo 'ci-slot: systemd-run --user unavailable; using nice/ionice only' >&2
+            echo 'ci-slot: systemd-run --user unavailable or probe timed out (or timeout missing); using nice/ionice only' >&2
         fi
     fi
     (exec 9>&-; exec "$@")

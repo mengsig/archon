@@ -39,8 +39,8 @@ pub fn check_rules(checks: &Checks, fast: FastCheck<'_>) -> String {
         None => String::new(),
     };
     rules.push(format!(
-        "Do not run the full suite{full}: it runs on the integration branch after merges, \
-         off this item's path."
+        "For this item, do not run the full suite{full} unless the brief asks for it: \
+         it runs on the integration branch after merges, off this item's path."
     ));
     if fast.integration.is_some() {
         rules.extend(INTEGRATION_LIMITS.iter().map(|rule| (*rule).to_owned()));
@@ -149,13 +149,16 @@ mod tests {
         assert!(text.starts_with("\n## Checks\n"), "{text}");
         assert!(text.contains("fast check: `cargo test -p a`"), "{text}");
         assert!(
-            text.contains("Do not run the full suite (`make ci`)"),
+            text.contains("do not run the full suite (`make ci`)"),
             "{text}"
         );
         assert!(!text.contains("placeholders"), "{text}");
         assert!(!text.contains("Archon runs it again"), "{text}");
         let unnamed = check_rules(&checks(Some("make quick"), None), fast);
-        assert!(unnamed.contains("Do not run the full suite:"), "{unnamed}");
+        assert!(
+            unnamed.contains("do not run the full suite unless the brief asks for it:"),
+            "{unnamed}"
+        );
     }
 
     #[test]
@@ -170,7 +173,7 @@ mod tests {
             "pull request is for the integration branch `next`",
             "(such as `sh scripts/ci-slot.sh <command>`)",
             "the format check, the linter, and the tests of the crates or packages your change touches",
-            "Do not run the full suite:",
+            "do not run the full suite unless the brief asks for it:",
             "Run the full suite only for a release pull request",
             "release preparation, or when the brief asks for it",
             "of your last fast checks in place of a full check",

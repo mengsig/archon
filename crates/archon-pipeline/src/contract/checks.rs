@@ -68,12 +68,13 @@ const INTEGRATION_LIMITS: [&str; 3] = [
 /// any fast check command the repository names.
 fn integration_rule(branch: &str) -> String {
     assert!(!branch.trim().is_empty(), "a branch has a name");
-    assert!(
-        !branch.contains(['`', '\n']),
-        "validated: a plain branch name"
-    );
+    assert!(!branch.contains('\n'), "validated: a one-line branch name");
+    let longest_run = branch.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest_run + 1);
+    // Padding separates a leading or trailing backtick from the code-span fence.
+    let padding = if longest_run > 0 { " " } else { "" };
     format!(
-        "This change's pull request is for the integration branch `{branch}`: run fast \
+        "This change's pull request is for the integration branch {fence}{padding}{branch}{padding}{fence}: run fast \
          checks, through the repository's CI slot script where it has one (such as `sh \
          scripts/ci-slot.sh <command>`): the format check, the linter, and the tests of the \
          crates or packages your change touches. Name each command among the checks you ran."
@@ -205,6 +206,44 @@ mod tests {
             "Reviewers do not rerun",
         ] {
             assert!(!elsewhere.contains(integration_only), "{elsewhere}");
+        }
+    }
+
+    #[test]
+    fn integration_branches_with_backticks_validate_and_render_unambiguously() {
+        use archon_core::repo::RepoTiers;
+
+        for (branch, quoted) in [
+            ("next`candidate", "`` next`candidate ``"),
+            ("`next", "`` `next ``"),
+            ("next`", "`` next` ``"),
+            ("`", "`` ` ``"),
+            ("next``candidate`", "``` next``candidate` ```"),
+        ] {
+            let registry = RepoTiers {
+                integration_branch: Some(branch.to_owned()),
+                ..RepoTiers::default()
+            };
+            let config = RepoTiers::parse(
+                &format!("integration_branch = '{branch}'"),
+                ".archon/repo.toml",
+            )
+            .unwrap();
+            assert_eq!(config, registry);
+            for tiers in [registry, config] {
+                assert!(tiers.validate().is_ok(), "{branch}");
+                let text = check_rules(
+                    &tiers.checks,
+                    FastCheck {
+                        integration: tiers.integration_branch.as_deref(),
+                        ..FastCheck::default()
+                    },
+                );
+                assert!(
+                    text.contains(&format!("integration branch {quoted}: run fast checks")),
+                    "{text}"
+                );
+            }
         }
     }
 

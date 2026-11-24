@@ -156,7 +156,10 @@ pub(crate) fn reshape(
         return Ok(None);
     };
     let autonomy = within_ceiling(ctx, env, &reshaped, &removed, item.autonomy, knobs)?;
-    knobs::check_live_design(ctx, &reshaped, autonomy.proposal)?;
+    knobs::check_design_mode(&reshaped, autonomy.proposal)?;
+    if prefix == 0 && autonomy.proposal == ProposalMode::Live {
+        knobs::require_design_enabled(ctx)?;
+    }
     let what = noting_review(what, item.autonomy.review, autonomy.review);
     let repo = env.repo.as_ref().map(|repo| &repo.id);
     let policy = env.resolved_policy(ctx);

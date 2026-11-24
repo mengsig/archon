@@ -55,7 +55,10 @@ pub(crate) fn resolve(
     let autonomy = knobs(&base, &patch, &policy)?;
     check_ceiling(&policy, env, &base, autonomy)?;
     let spec = augment(&base, &autonomy)?;
-    check_live_design(ctx, &spec, autonomy.proposal)?;
+    check_design_mode(&spec, autonomy.proposal)?;
+    if autonomy.proposal == ProposalMode::Live {
+        require_design_enabled(ctx)?;
+    }
     assert_eq!(spec.name(), name, "augmenting keeps the pipeline's name");
     Ok(Resolved {
         pipeline: name,
@@ -66,16 +69,12 @@ pub(crate) fn resolve(
 }
 
 /// Validate the effective stage list, including frozen or steered pipelines.
-pub(crate) fn check_live_design(
-    ctx: &DaemonContext,
+pub(crate) fn check_design_mode(
     spec: &PipelineSpec,
     proposal: ProposalMode,
 ) -> Result<(), ArchonError> {
     match (proposal, archon_pipeline::autonomy::design_stage(spec)) {
-        (ProposalMode::Live, Some(_)) if ctx.design.enabled() => Ok(()),
-        (ProposalMode::Live, Some(_)) => Err(ArchonError::Invalid(
-            "design sessions are turned off; set [design] enabled = true".into(),
-        )),
+        (ProposalMode::Live, Some(_)) => Ok(()),
         (ProposalMode::Live, None) => Err(ArchonError::Invalid(
             "proposal = live requires a design stage".into(),
         )),
@@ -84,6 +83,15 @@ pub(crate) fn check_live_design(
         )),
         (_, None) => Ok(()),
     }
+}
+
+pub(crate) fn require_design_enabled(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    if ctx.design.enabled() {
+        return Ok(());
+    }
+    Err(ArchonError::Invalid(
+        "design sessions are turned off; set [design] enabled = true".into(),
+    ))
 }
 
 /// An explicit pipeline wins, then a default one (`Layers::default_pipeline`);

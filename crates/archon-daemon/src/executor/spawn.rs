@@ -587,6 +587,14 @@ fn reserve_checked(
     mut plans: Vec<SpawnPlan>,
     (env, catalog): (&RepoEnv, &archon_core::model_tier::ModelCatalog),
 ) -> Result<Reserved, ArchonError> {
+    if plans[0].kind == StageKind::Design
+        && let Err(error) = crate::knobs::require_design_enabled(ctx)
+    {
+        return Ok(Reserved::Blocked(Exhausted {
+            stage: plans[0].stage_id.clone(),
+            error: error.to_string(),
+        }));
+    }
     if let Err(error) =
         super::acceptance::select_model(ctx, store, &item, run, &mut plans, (None, None))
     {

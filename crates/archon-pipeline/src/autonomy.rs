@@ -125,7 +125,8 @@ pub fn augment(spec: &PipelineSpec, autonomy: &Autonomy) -> Result<PipelineSpec,
         }
         (ProposalMode::Live, Some(StageKind::Propose)) => {
             return Err(ArchonError::Invalid(format!(
-                "pipeline {:?} declares a written propose stage; use a design stage or let                  proposal = live insert one",
+                "pipeline {:?} declares a written propose stage; use a design stage or let \
+                 proposal = live insert one",
                 spec.name()
             )));
         }

@@ -253,7 +253,7 @@ async fn prepare(
     let (base, current) = knobs::item_specs(&env, item)?;
     // A steer may have given the item a stage list of its own (§6.6).
     let current = super::steer::shaped(ctx, item, current).await?;
-    knobs::check_live_design(ctx, &current, item.autonomy.proposal)?;
+    knobs::check_design_mode(&current, item.autonomy.proposal)?;
     // The ceiling may have been lowered since the item was enqueued.
     let policy = env.autonomy(ctx);
     let checked = crate::authority::item_grants::for_ceiling_check(

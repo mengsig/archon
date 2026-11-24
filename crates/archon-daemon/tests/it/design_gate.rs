@@ -541,6 +541,32 @@ async fn a_fresh_live_item_is_approved_from_archonds_records_not_the_agents() {
     assert_eq!(intent.requirements[0].images, ["D1-final"]);
 }
 
+#[tokio::test]
+async fn a_build_past_design_recovers_when_design_is_turned_off() {
+    let mut h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    let (_, head) = done_note(&h, &session, &run, "make it green", b"green").await;
+    confirm(&h, &session, &head, &["D1"], &[]).await;
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    approve(&h, &open_proposal(&h, &item.id).await).await;
+    let before = h.running().await;
+    assert_eq!(before.len(), 1);
+    assert_ne!(before[0].stage_id, session.stage_id);
+
+    let mut config = h.ctx.config.clone();
+    config.design.enabled = false;
+    h.restart_with(config);
+    archon_daemon::executor::recover(&h.ctx).await.unwrap();
+    let resumed = h.run(&item.id).await;
+    assert_eq!(
+        resumed.state.live_stage(),
+        Some(before[0].stage_id.as_str())
+    );
+    assert_eq!(h.running().await[0].id, before[0].id);
+}
+
 const BEFORE_PNG: &[u8] = include_bytes!("../fixtures/design/before.png");
 const AFTER_PNG: &[u8] = include_bytes!("../fixtures/design/after.png");
 

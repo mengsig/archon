@@ -896,10 +896,7 @@ CREATE INDEX IF NOT EXISTS design_assets_by_item ON design_assets (item);
 
 /// Version 30 (design iterations): a follow-up names the version it
 /// continues from, and a note the earlier notes it references. Additive.
-const V30: &str = r#"
-ALTER TABLE design_notes ADD COLUMN follows TEXT;
-ALTER TABLE design_notes ADD COLUMN refs_json TEXT NOT NULL DEFAULT '[]';
-"#;
+const V30: &str = ""; // Column-aware DDL lives in migrate_design_iterations.
 
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
@@ -1097,18 +1094,29 @@ fn forget_branch_only_v26(tx: &Connection) -> Result<(), ArchonError> {
     Ok(())
 }
 
-/// The migration that adds `design_notes.follows`. A design-branch build
-/// recorded the design tables as versions 25 and 26, which the forget steps
-/// above drop; V29 is idempotent, and V30 is skipped when its columns exist.
-const DESIGN_FOLLOWS_VERSION: usize = 30;
-
-fn design_follows_present(tx: &Connection) -> Result<bool, ArchonError> {
-    tx.query_row(
-        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('design_notes') WHERE name = 'follows')",
-        [],
-        |row| row.get(0),
-    )
-    .ctx("look for design_notes.follows")
+/// Earlier design builds can already have either iteration field. Add only
+/// missing fields inside the same transaction that records version 30.
+fn migrate_design_iterations(tx: &Connection) -> Result<(), ArchonError> {
+    for (name, declaration) in [
+        ("follows", "TEXT"),
+        ("refs_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ] {
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('design_notes') WHERE name = ?1)",
+                [name],
+                |row| row.get(0),
+            )
+            .ctx("inspect design iteration columns")?;
+        if !exists {
+            tx.execute(
+                &format!("ALTER TABLE design_notes ADD COLUMN {name} {declaration}"),
+                [],
+            )
+            .ctx("add design iteration column")?;
+        }
+    }
+    Ok(())
 }
 
 /// Apply every migration newer than the store's version, each with its
@@ -1143,8 +1151,8 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
     let now = ts(&archon_core::now());
     for (index, sql) in MIGRATIONS.iter().enumerate().skip(current) {
         let version = index + 1;
-        if version == DESIGN_FOLLOWS_VERSION && design_follows_present(&tx)? {
-            // A design-branch build already added these columns under another number.
+        if version == 30 {
+            migrate_design_iterations(&tx)?;
         } else {
             tx.execute_batch(sql)
                 .ctx(&format!("apply migration {version}"))?;
@@ -1485,6 +1493,31 @@ mod tests {
                 .query_row("SELECT COUNT(*) FROM design_assets", [], |row| row.get(0))
                 .unwrap();
             assert_eq!(kept, 1);
+        }
+    }
+
+    #[test]
+    fn each_iteration_column_can_be_present_before_version_30() {
+        for existing in ["follows", "refs_json"] {
+            let mut conn = v2_store();
+            migrate(&mut conn).unwrap();
+            let missing = if existing == "follows" {
+                "refs_json"
+            } else {
+                "follows"
+            };
+            conn.execute_batch(&format!(
+                "DELETE FROM schema_migrations WHERE version = 30;
+                 ALTER TABLE design_notes DROP COLUMN {missing}"
+            ))
+            .unwrap();
+            migrate(&mut conn).unwrap();
+            conn.prepare("SELECT follows, refs_json FROM design_notes")
+                .unwrap();
+            let versions = applied_versions(&conn);
+            migrate(&mut conn).unwrap();
+            assert_eq!(applied_versions(&conn), versions);
+            assert_eq!(versions.len(), MIGRATIONS.len());
         }
     }
 

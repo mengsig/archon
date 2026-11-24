@@ -171,7 +171,7 @@ impl Harness {
         let feed = self.feed().await;
         feed.into_iter()
             .filter_map(|entry| match entry {
-                FeedEntry::System { text } => Some(text),
+                FeedEntry::System { text, .. } => Some(text),
                 _ => None,
             })
             .collect()

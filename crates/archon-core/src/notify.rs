@@ -199,6 +199,8 @@ pub enum FeedEntry {
     /// Daemon-level notices: start/stop, orchestrator restarted, caps hit.
     System {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command_id: Option<String>,
     },
 }
 

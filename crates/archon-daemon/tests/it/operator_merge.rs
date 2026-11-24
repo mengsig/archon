@@ -927,7 +927,7 @@ async fn changing_grant_merge_posts_the_feed_note() {
     set_grant(&h, false).await;
     let feed = h.ctx.store.lock().await.feed_after(0, 10_000).unwrap();
     for expected in ["grant_merge is on", "grant_merge is off"] {
-        assert!(feed.iter().any(|entry| matches!(&entry.entry, FeedEntry::System { text } if text.contains(expected))), "{expected}: {feed:?}");
+        assert!(feed.iter().any(|entry| matches!(&entry.entry, FeedEntry::System { text, .. } if text.contains(expected))), "{expected}: {feed:?}");
     }
 }
 

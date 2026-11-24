@@ -479,6 +479,9 @@ pub enum Request {
     /// blank when there is at least one image.
     Say {
         text: String,
+        /// Correlates a paired operator device's host command with its feed results.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command_id: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<crate::attachment::ImageAttachment>,
     },
@@ -3066,6 +3069,7 @@ mod tests {
         assert!(wrap(Request::Status(StatusQuery::default())).is_read_only());
         assert!(
             !wrap(Request::Say {
+                command_id: None,
                 text: "hi".into(),
                 images: Vec::new(),
             })
@@ -3073,6 +3077,7 @@ mod tests {
         );
         assert!(
             wrap(Request::Say {
+                command_id: None,
                 text: "hi".into(),
                 images: Vec::new(),
             })
@@ -3118,6 +3123,7 @@ mod tests {
     fn operator_only_requests_are_flagged() {
         assert!(
             Request::Say {
+                command_id: None,
                 text: "hi".into(),
                 images: Vec::new(),
             }

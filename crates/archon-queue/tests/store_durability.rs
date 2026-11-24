@@ -140,6 +140,7 @@ fn everything_survives_a_reopen() {
     let next = store
         .append_feed(
             FeedEntry::System {
+                command_id: None,
                 text: "restarted".into(),
             },
             t(9),
@@ -376,7 +377,15 @@ fn concurrent_feed_appends_stay_gapless() {
                 (0..per_writer)
                     .map(|i| {
                         let text = format!("{w}:{i}");
-                        append_retrying_busy(&mut store, FeedEntry::System { text }, t(i)).seq
+                        append_retrying_busy(
+                            &mut store,
+                            FeedEntry::System {
+                                text,
+                                command_id: None,
+                            },
+                            t(i),
+                        )
+                        .seq
                     })
                     .collect::<Vec<u64>>()
             })
@@ -469,7 +478,13 @@ fn drive_item(shared: &Mutex<Store>, it: &QueueItem, n: u32) {
         shared
             .lock()
             .unwrap()
-            .append_feed(FeedEntry::System { text }, t(30))
+            .append_feed(
+                FeedEntry::System {
+                    text,
+                    command_id: None,
+                },
+                t(30),
+            )
             .unwrap();
     };
     feed(format!("started {n}"));

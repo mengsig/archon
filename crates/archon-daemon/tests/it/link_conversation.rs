@@ -335,6 +335,7 @@ async fn answer_from_the_phone(harness: &Harness, number: u64) {
         role: DeviceRole::Operator,
     };
     let say = Request::Say {
+        command_id: None,
         text: format!("/answer {number} yes"),
         images: Vec::new(),
     };

@@ -59,7 +59,14 @@ pub(super) async fn stage_end(
         });
         store.upsert_stage_run(&record)?;
     }
-    crate::feed::append(ctx, FeedEntry::System { text }).await?;
+    crate::feed::append(
+        ctx,
+        FeedEntry::System {
+            text,
+            command_id: None,
+        },
+    )
+    .await?;
     Ok(FollowUp::default())
 }
 
@@ -80,7 +87,14 @@ pub(super) async fn run_end(ctx: &DaemonContext, tree: &Path) -> Result<FollowUp
     }
     let text = format!("{} Its run ended.", report.describe(tree));
     tracing::warn!("{text}");
-    crate::feed::append(ctx, FeedEntry::System { text }).await?;
+    crate::feed::append(
+        ctx,
+        FeedEntry::System {
+            text,
+            command_id: None,
+        },
+    )
+    .await?;
     Ok(FollowUp::default())
 }
 

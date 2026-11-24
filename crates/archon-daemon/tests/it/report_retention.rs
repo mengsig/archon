@@ -191,7 +191,7 @@ async fn assert_fallback(h: &Harness, title: &str, html: &Path) -> archon_core::
         .unwrap();
     assert_eq!(record.path, html.canonicalize().unwrap());
     let feed = h.ctx.store.lock().await.feed_after(0, 10_000).unwrap();
-    assert!(feed.iter().any(|f| matches!(&f.entry, FeedEntry::System { text }
+    assert!(feed.iter().any(|f| matches!(&f.entry, FeedEntry::System { text, .. }
         if text.contains(title) && text.contains(&html.canonicalize().unwrap().display().to_string())
         && text.contains("could not be copied") && text.contains("not durable")
         && text.contains("workspace is collected"))), "{feed:?}");
@@ -659,7 +659,7 @@ async fn stages_publish_copy_refusals_and_visibly_refuse_workspace_escapes() {
             assert!(records.is_empty());
             assert!(
                 feed.iter()
-                    .any(|f| matches!(&f.entry, FeedEntry::System { text }
+                    .any(|f| matches!(&f.entry, FeedEntry::System { text, .. }
                 if text.contains("did not publish") && text.contains("outside"))),
                 "{feed:?}"
             );
@@ -669,7 +669,7 @@ async fn stages_publish_copy_refusals_and_visibly_refuse_workspace_escapes() {
             assert_eq!(records[0].state, ReportState::Open);
             assert!(
                 feed.iter()
-                    .any(|f| matches!(&f.entry, FeedEntry::System { text }
+                    .any(|f| matches!(&f.entry, FeedEntry::System { text, .. }
                 if text.contains("not durable") && text.contains("workspace is collected"))),
                 "{feed:?}"
             );

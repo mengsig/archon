@@ -229,7 +229,7 @@ async fn hello_requests_feed_and_shutdown_over_a_socket() {
         "the operator is told of the unnamed call: {unnamed_notice}"
     );
     assert!(
-        matches!(&feed[2].entry, FeedEntry::System { text } if text.contains("again")),
+        matches!(&feed[2].entry, FeedEntry::System { text, .. } if text.contains("again")),
         "and of the named one that follows: {:?}",
         feed[2].entry
     );

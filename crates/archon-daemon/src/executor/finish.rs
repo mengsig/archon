@@ -414,7 +414,14 @@ pub(super) async fn remove_worktree(
         "Could not remove the worktree {} {when}: {error}.{caches}",
         target.display()
     );
-    crate::feed::append(ctx, FeedEntry::System { text }).await?;
+    crate::feed::append(
+        ctx,
+        FeedEntry::System {
+            text,
+            command_id: None,
+        },
+    )
+    .await?;
     Ok(())
 }
 

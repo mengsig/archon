@@ -197,7 +197,7 @@ fn describe(entry: &FeedEntry) -> Parts {
             simple("you", Style::Bold, &with_image_labels(text, images))
         }
         FeedEntry::Orchestrator { text } => simple("orchestrator", Style::Cyan, text),
-        FeedEntry::System { text } => simple("system", Style::Dim, text),
+        FeedEntry::System { text, .. } => simple("system", Style::Dim, text),
         FeedEntry::Notification(n) => {
             let (label, tone) = notification_style(n.kind);
             let mut parts = simple(label, tone, &n.text);
@@ -448,6 +448,7 @@ mod tests {
         assert_eq!(head(&rendered), "report  E2E results");
         assert!(rendered.lines().nth(1).unwrap().trim() == "http://127.0.0.1:4000/s/abc");
         let system = item(FeedEntry::System {
+            command_id: None,
             text: "Aether reconnected".into(),
         });
         assert_eq!(

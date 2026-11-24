@@ -1259,6 +1259,7 @@ async fn a_web_devices_say_carries_no_operator_authority() {
     fake.set_default("send_message", Scripted::reply("message_sent", json!({})));
     let command = format!("/archon set --repo {REPO_NAME} grant_merge=true");
     let say = Request::Say {
+        command_id: None,
         text: command.clone(),
         images: vec![],
     };

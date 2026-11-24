@@ -88,6 +88,7 @@ fn feed_item(seq: u64) -> FeedItem {
         seq,
         at: archon_core::now(),
         entry: FeedEntry::System {
+            command_id: None,
             text: format!("item {seq}"),
         },
     }
@@ -469,6 +470,7 @@ async fn a_daemon_that_stops_reading_times_out_queued_requests() {
     let mut stalled = tokio::task::JoinSet::new();
     // Far over the socket buffer, so the writer blocks on it...
     let big = Request::Say {
+        command_id: None,
         text: "x".repeat(8 << 20),
         images: Vec::new(),
     };

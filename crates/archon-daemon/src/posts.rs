@@ -220,7 +220,7 @@ async fn post_of(ctx: &DaemonContext, item: &FeedItem) -> Result<Option<Post>, A
         FeedEntry::Report {
             title, location, ..
         } => Some(report_post(title, location)),
-        FeedEntry::System { text } => Some(plain(format!("**Archon:** {text}"))),
+        FeedEntry::System { text, .. } => Some(plain(format!("**Archon:** {text}"))),
     };
     Ok(post.map(|post| Post {
         text: clip(&post.text, MAX_POST_CHARS),

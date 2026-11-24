@@ -54,11 +54,17 @@ pub async fn notify(
     append(ctx, FeedEntry::Notification(notification)).await
 }
 
+tokio::task_local! {
+    /// Only the paired operator's host-command future sets this correlation ID.
+    pub(crate) static COMMAND_ID: String;
+}
+
 /// Daemon lifecycle notes: reconnects, orchestrator restarts, degraded plugins.
 pub async fn system(ctx: &DaemonContext, text: impl Into<String>) -> Result<FeedItem, ArchonError> {
     let text = text.into();
     assert!(!text.trim().is_empty(), "a system note says something");
-    append(ctx, FeedEntry::System { text }).await
+    let command_id = COMMAND_ID.try_with(Clone::clone).ok();
+    append(ctx, FeedEntry::System { text, command_id }).await
 }
 
 /// An Archon-side question (no Aether `ask_user` behind it): its answer

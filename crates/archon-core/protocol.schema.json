@@ -2305,6 +2305,13 @@
               "const": "say",
               "type": "string"
             },
+            "command_id": {
+              "description": "Correlates a paired operator device's host command with its feed results.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "images": {
               "items": {
                 "$ref": "#/$defs/ImageAttachment"
@@ -7001,6 +7008,12 @@
         {
           "description": "Daemon-level notices: start/stop, orchestrator restarted, caps hit.",
           "properties": {
+            "command_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "entry": {
               "const": "system",
               "type": "string"
@@ -16510,6 +16523,13 @@
             "cmd": {
               "const": "say",
               "type": "string"
+            },
+            "command_id": {
+              "description": "Correlates a paired operator device's host command with its feed results.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "images": {
               "items": {

@@ -362,7 +362,13 @@ mod tests {
             feed(7, FeedEntry::Question(theirs.clone())),
             feed(8, answer(&theirs)),
             feed(9, report),
-            feed(10, FeedEntry::System { text: "up".into() }),
+            feed(
+                10,
+                FeedEntry::System {
+                    text: "up".into(),
+                    command_id: None,
+                },
+            ),
         ];
         let known = HashSet::from([asked_before.id.clone()]);
         let mut filter = LogFilter::new(Some(mine), known, vec![]);

@@ -547,6 +547,7 @@ pub(crate) async fn push_once(
     }
     let raw = serde_json::to_string(&outbox)?;
     let entry = archon_core::notify::FeedEntry::System {
+        command_id: None,
         text: "Initiative finished; coordinated result queued.".into(),
     };
     let saved = store.append_feed_with_kv(

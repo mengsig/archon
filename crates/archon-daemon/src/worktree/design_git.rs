@@ -22,8 +22,6 @@
 //! | `pre` | clean against `pre` | `NotApplied`, nothing written |
 //! | anything else | | `HistoryChanged`, left as is |
 
-#![allow(dead_code, reason = "the design service consumes it in a later task")]
-
 use std::path::Path;
 
 use archon_core::error::ArchonError;
@@ -42,6 +40,15 @@ pub(crate) struct NoteGit<'a> {
     pub repo: &'a Path,
     pub worktree: &'a Path,
     pub branch: &'a str,
+}
+
+fn validate_commit(id: &str) -> Result<(), ArchonError> {
+    if !is_commit_id(id) {
+        return Err(ArchonError::Invalid(
+            "expected a full design commit ID".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// The commit the worktree's `HEAD` names.
@@ -124,7 +131,7 @@ pub(crate) fn check_shape(
     base: &str,
     done: Option<&str>,
 ) -> Result<Shape, ArchonError> {
-    assert!(is_commit_id(base), "a commit id");
+    validate_commit(base)?;
     let now = head(g)?;
     let changed = |why: &str| Ok(Shape::HistoryChanged(why.to_owned()));
     let Some(done) = done else {
@@ -218,7 +225,7 @@ pub(crate) fn check_tidy(g: &NoteGit, trailer: Option<&str>) -> Result<Tidy, Arc
     }
     if let Some(id) = trailer {
         let message = DaemonGit::sealed_in(g.worktree)
-            .args(["show", "-s", "--format=%B", "HEAD"])
+            .args(["show", "-s", "--format=%(trailers:key=Archon-Note)", "HEAD"])
             .output()?;
         if !message.status.success() {
             return Err(message.failure());
@@ -263,7 +270,7 @@ pub(crate) fn prepare_revert(
     revert_note: &str,
     identity: &Identity,
 ) -> Result<RevertPrep, ArchonError> {
-    assert!(is_commit_id(original), "a commit id");
+    validate_commit(original)?;
     assert!(!identity.email.is_empty(), "a revert has an author");
     let pre = head(g)?;
     if check_tidy(g, None)? != Tidy::Tidy {
@@ -311,7 +318,7 @@ pub(crate) fn prepare_revert(
             &message,
         ])
         .text()?;
-    assert!(is_commit_id(&new), "commit-tree prints the commit");
+    validate_commit(&new)?;
     Ok(RevertPrep::Ready { pre, new })
 }
 
@@ -329,7 +336,8 @@ pub(crate) fn apply_revert(
     pre: &str,
     new: &str,
 ) -> Result<RevertApplied, ArchonError> {
-    assert!(is_commit_id(pre) && is_commit_id(new), "commit ids");
+    validate_commit(pre)?;
+    validate_commit(new)?;
     let moved = || RevertApplied::HistoryChanged("the code history moved during the revert".into());
     if stack::sha(g.repo, g.branch)? != pre {
         return Ok(moved());
@@ -375,7 +383,8 @@ pub(crate) fn reconcile_revert(
     pre: &str,
     new: &str,
 ) -> Result<Reconciled, ArchonError> {
-    assert!(is_commit_id(pre) && is_commit_id(new), "commit ids");
+    validate_commit(pre)?;
+    validate_commit(new)?;
     let now = head(g)?;
     let changed = |why: &str| Ok(Reconciled::HistoryChanged(why.to_owned()));
     if now == new {

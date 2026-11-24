@@ -185,6 +185,20 @@ fn tidy_names_the_fix() {
         check_tidy(&f.g(), Some("D2")).unwrap(),
         Tidy::Untidy(_)
     ));
+    run(
+        &f.wt,
+        &[
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-m",
+            "not a trailer\n\nArchon-Note: D1\n\nMore prose.",
+        ],
+    );
+    assert!(matches!(
+        check_tidy(&f.g(), Some("D1")).unwrap(),
+        Tidy::Untidy(_)
+    ));
 }
 
 #[test]

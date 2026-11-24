@@ -15,6 +15,19 @@ use super::delivery::note_message;
 use super::{DesignService, note_view, refuse, status_change};
 use crate::context::DaemonContext;
 
+pub(super) fn validate_client_key(key: &str) -> Result<(), ArchonError> {
+    if key.trim().is_empty()
+        || key.len() > 256
+        || key.chars().any(char::is_control)
+        || ["continue:", "revise:", "undo:", "resend:"]
+            .iter()
+            .any(|prefix| key.starts_with(prefix))
+    {
+        return Err(ArchonError::Invalid("use a unique client key of up to 256 bytes without control characters or a reserved prefix".into()));
+    }
+    Ok(())
+}
+
 impl DesignService {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn note_add(
@@ -35,14 +48,7 @@ impl DesignService {
         if text.is_empty() {
             return Err(ArchonError::Invalid("a note needs words".into()));
         }
-        if client_key.trim().is_empty()
-            || client_key.len() > 256
-            || client_key.chars().any(char::is_control)
-        {
-            return Err(ArchonError::Invalid(
-                "a note needs a client key of up to 256 bytes without control characters".into(),
-            ));
-        }
+        validate_client_key(&client_key)?;
         let details = details_text
             .map(|d| clean_text(&d, MAX_DETAILS_CHARS))
             .filter(|d| !d.is_empty());

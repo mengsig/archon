@@ -110,6 +110,7 @@ pub trait PreviewBrowser: Send + Sync {
 }
 
 /// Records a child's kernel identity while its launch pipe still holds it.
+#[derive(Debug)]
 pub struct BrowserRegistration<'a> {
     ctx: &'a DaemonContext,
     session: &'a DesignSessionId,

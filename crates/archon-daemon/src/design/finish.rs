@@ -499,6 +499,7 @@ impl DesignService {
                 .collect()
         };
         let mut cards = Vec::new();
+        let mut remaining_image_bytes = archon_core::protocol::MAX_FRAME_BYTES / 8;
         for note in &all_active {
             let superseded_by = choices
                 .as_ref()
@@ -521,11 +522,18 @@ impl DesignService {
                 (true, None) => Some("From an earlier session, with no picture".into()),
                 (false, asset) => asset.and_then(caption_of),
             };
+            let data_url = match &asset {
+                Some(asset) if asset.bytes <= remaining_image_bytes as u64 => {
+                    remaining_image_bytes -= asset.bytes as usize;
+                    Some(self.data_url(asset)?)
+                }
+                _ => None,
+            };
             cards.push(FinishCard {
                 note: note.id.clone(),
                 text: note.text.clone(),
                 asset: asset.as_ref().map(|a| a.id.clone()),
-                data_url: asset.as_ref().and_then(|a| self.data_url(a).ok()),
+                data_url,
                 caption,
                 include: note.final_included.unwrap_or(true) && asset.is_some(),
                 superseded_by,
@@ -872,7 +880,7 @@ impl DesignService {
 
 pub(crate) fn origin_of(url: &str) -> String {
     let rest = url.strip_prefix("http://").unwrap_or(url);
-    let authority = rest.split('/').next().unwrap_or_default();
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
     format!("http://{authority}")
 }
 

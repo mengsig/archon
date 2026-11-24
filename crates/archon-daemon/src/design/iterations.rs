@@ -301,9 +301,9 @@ impl DesignService {
         let text = text
             .map(|t| clean_text(&t, MAX_NOTE_CHARS))
             .filter(|t| !t.is_empty());
-        let client_key = client_key
-            .map(|k| k.trim().to_owned())
-            .filter(|k| !k.is_empty());
+        if let Some(key) = client_key.as_deref() {
+            super::notes::validate_client_key(key)?;
+        }
         let (queued, reply_id) = {
             let mut store = ctx.store.lock().await;
             let notes = store.design_notes(item)?;
@@ -409,9 +409,9 @@ impl DesignService {
                     notes.len()
                 )),
             };
-            let mut queued = Vec::new();
+            let mut group_notes = Vec::new();
             for n in &to_revert {
-                let (revert, _) = store.design_note_add(NewDesignNote {
+                group_notes.push(NewDesignNote {
                     item: item.clone(),
                     session: session.id.clone(),
                     kind: NoteKind::Revert,
@@ -427,10 +427,9 @@ impl DesignService {
                     refs: Vec::new(),
                     before_asset: None,
                     created_by_device: device.clone(),
-                })?;
-                queued.push(revert.id);
+                });
             }
-            let mut reply_id = id.to_owned();
+            let follow = text.is_some();
             if let (Some(text), Some(parent)) = (text, parent) {
                 let new = follow_up(
                     item,
@@ -441,10 +440,18 @@ impl DesignService {
                     refs,
                     device.clone(),
                 );
-                let (note, _) = store.design_note_add(new)?;
-                reply_id = note.id.clone();
-                queued.push(note.id);
+                group_notes.push(new);
             }
+            let queued: Vec<_> = store
+                .design_notes_add_group(group_notes)?
+                .into_iter()
+                .map(|n| n.id)
+                .collect();
+            let reply_id = if follow {
+                queued.last().expect("the follow-up was queued").clone()
+            } else {
+                id.to_owned()
+            };
             (queued, reply_id)
         };
         tracing::info!(note = id, ?queued, %item, device = ?super::current_device_label(), "design: continue from a version queued");

@@ -74,6 +74,19 @@ fn add(store: &mut Store, item: &QueueItemId, session: &DesignSessionId, key: &s
     note.id
 }
 
+#[test]
+fn a_continue_with_an_invalid_followup_rolls_back_its_undos_and_sequence() {
+    let (mut store, _, items) = seeded(1);
+    let item = &items[0].id;
+    let session = live(&mut store, item);
+    let undo = new_note(item, &session, "undo:one");
+    let mut follow = new_note(item, &session, "follow");
+    follow.text.clear();
+    assert!(store.design_notes_add_group(vec![undo, follow]).is_err());
+    assert!(store.design_notes(item).unwrap().is_empty());
+    assert_eq!(add(&mut store, item, &session, "next"), "D1");
+}
+
 fn status(
     store: &mut Store,
     item: &QueueItemId,

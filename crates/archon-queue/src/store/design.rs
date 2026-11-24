@@ -755,97 +755,29 @@ impl Store {
         new: NewDesignNote,
     ) -> Result<(DesignNote, bool), ArchonError> {
         let tx = write_tx(&mut self.conn)?;
-        if let Some(found) = read_notes(
-            &tx,
-            "WHERE item = ?1 AND client_key = ?2",
-            &[&new.item.as_str(), &new.client_key],
-        )?
-        .pop()
-        {
-            return Ok((found, false));
-        }
-        let current = current_session(&tx, &new.item)?;
-        let session = match current {
-            Some(s) if s.id == new.session => s,
-            _ => return Err(refuse(DesignRefusal::Gone, "this design session has ended")),
-        };
-        match session.state {
-            SessionState::Live => {}
-            SessionState::Finishing => {
-                return Err(refuse(
-                    DesignRefusal::Finishing,
-                    "the session is being finished; go back to editing first",
-                ));
-            }
-            _ => {
-                return Err(refuse(
-                    DesignRefusal::Gone,
-                    "this design session is not live",
-                ));
-            }
-        }
-        let text = clean_text(&new.text, MAX_NOTE_CHARS);
-        if text.is_empty() {
-            return Err(ArchonError::Invalid("a note needs words".into()));
-        }
-        let count: i64 = tx
-            .query_row(
-                "SELECT COUNT(*) FROM design_notes WHERE session = ?1",
-                [&new.session.as_str()],
-                |r| r.get(0),
-            )
-            .ctx("count design notes")?;
-        if usize::try_from(count).unwrap_or(usize::MAX) >= MAX_NOTES_PER_SESSION {
-            return Err(ArchonError::Invalid(format!(
-                "a session holds at most {MAX_NOTES_PER_SESSION} notes"
-            )));
-        }
-        let seq_key = keys::design_seq(&new.item);
-        let seq = settings::kv_get(&tx, &seq_key)?.and_then(|s| s.parse::<u64>().ok());
-        let used = intent_ids(&tx, &new.item)?;
-        let used: Vec<&str> = used.iter().map(String::as_str).collect();
-        let number = next_note_number(seq, &used);
-        let id = note_id(number);
-        let at = now();
-        tx.execute(
-            "INSERT INTO design_notes (item, id, number, session, kind, text, details_text,
-                 send_picture, target_json, viewport_json, status, reply_thread_json, client_key,
-                 reverts, resent_from, before_asset, created_by_device, created_at, updated_at,
-                 follows, refs_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'queued', '[]', ?11, ?12, ?13,
-                 ?14, ?15, ?16, ?16, ?17, ?18)",
-            params![
-                new.item.as_str(),
-                id,
-                to_i64(number, "note number")?,
-                new.session.as_str(),
-                enc(&new.kind),
-                text,
-                new.details_text
-                    .as_deref()
-                    .map(|d| clean_text(d, archon_core::design::MAX_DETAILS_CHARS)),
-                new.send_picture,
-                new.target
-                    .as_ref()
-                    .map(|t| to_json(t, "note target"))
-                    .transpose()?,
-                to_json(&new.viewport, "note viewport")?,
-                new.client_key,
-                new.reverts,
-                new.resent_from,
-                new.before_asset.as_ref().map(DesignAssetId::as_str),
-                new.created_by_device,
-                at,
-                new.follows,
-                to_json(&new.refs, "note refs")?,
-            ],
-        )
-        .ctx("insert design note")?;
-        settings::kv_set(&tx, &seq_key, &(number + 1).to_string())?;
-        bump(&tx, &new.session)?;
-        let note = note_by_id(&tx, &new.item, &id)?.expect("the note was just inserted");
+        let added = insert_note(&tx, new)?;
         tx.commit().ctx("commit design note")?;
-        Ok((note, true))
+        Ok(added)
+    }
+
+    /// Queue a Continue's reverts and follow-up together, including their sequence numbers.
+    pub fn design_notes_add_group(
+        &mut self,
+        group: Vec<NewDesignNote>,
+    ) -> Result<Vec<DesignNote>, ArchonError> {
+        let tx = write_tx(&mut self.conn)?;
+        let mut notes = Vec::with_capacity(group.len());
+        for new in group {
+            let (note, created) = insert_note(&tx, new)?;
+            if !created {
+                return Err(ArchonError::Invalid(
+                    "a different note already uses this continue key".into(),
+                ));
+            }
+            notes.push(note);
+        }
+        tx.commit().ctx("commit design continue group")?;
+        Ok(notes)
     }
 
     pub fn design_note(
@@ -1186,6 +1118,113 @@ impl Store {
         tx.commit().ctx("commit design item delete")?;
         Ok(assets)
     }
+}
+
+fn check_note_capacity(tx: &Connection, session: &DesignSessionId) -> Result<(), ArchonError> {
+    let count: usize = tx
+        .query_row(
+            "SELECT COUNT(*) FROM design_notes WHERE session = ?1",
+            [session.as_str()],
+            |r| r.get(0),
+        )
+        .ctx("count design notes")?;
+    if count >= MAX_NOTES_PER_SESSION {
+        return Err(ArchonError::Invalid(format!(
+            "a session holds at most {MAX_NOTES_PER_SESSION} notes"
+        )));
+    }
+    Ok(())
+}
+
+fn insert_note(tx: &Connection, new: NewDesignNote) -> Result<(DesignNote, bool), ArchonError> {
+    if let Some(found) = read_notes(
+        tx,
+        "WHERE item = ?1 AND client_key = ?2",
+        &[&new.item.as_str(), &new.client_key],
+    )?
+    .pop()
+    {
+        return Ok((found, false));
+    }
+    let current = current_session(tx, &new.item)?;
+    let session = match current {
+        Some(s) if s.id == new.session => s,
+        _ => return Err(refuse(DesignRefusal::Gone, "this design session has ended")),
+    };
+    match session.state {
+        SessionState::Live => {}
+        SessionState::Finishing => {
+            return Err(refuse(
+                DesignRefusal::Finishing,
+                "the session is being finished; go back to editing first",
+            ));
+        }
+        _ => {
+            return Err(refuse(
+                DesignRefusal::Gone,
+                "this design session is not live",
+            ));
+        }
+    }
+    if new.text.trim().is_empty() {
+        return Err(ArchonError::Invalid("a note needs words".into()));
+    }
+    check_note_capacity(tx, &new.session)?;
+    write_note(tx, new)
+}
+fn write_note(tx: &Connection, new: NewDesignNote) -> Result<(DesignNote, bool), ArchonError> {
+    let text = clean_text(&new.text, MAX_NOTE_CHARS);
+    if text.is_empty() {
+        return Err(ArchonError::Invalid("a note needs words".into()));
+    }
+    let seq_key = keys::design_seq(&new.item);
+    let seq = settings::kv_get(tx, &seq_key)?
+        .map(|s| s.parse::<u64>())
+        .transpose()
+        .map_err(|_| ArchonError::Corrupt("invalid stored design note number".into()))?;
+    let used = intent_ids(tx, &new.item)?;
+    let used: Vec<&str> = used.iter().map(String::as_str).collect();
+    let number = next_note_number(seq, &used);
+    let id = note_id(number);
+    let at = now();
+    tx.execute(
+        "INSERT INTO design_notes (item, id, number, session, kind, text, details_text,
+                 send_picture, target_json, viewport_json, status, reply_thread_json, client_key,
+                 reverts, resent_from, before_asset, created_by_device, created_at, updated_at,
+                 follows, refs_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'queued', '[]', ?11, ?12, ?13,
+                 ?14, ?15, ?16, ?16, ?17, ?18)",
+        params![
+            new.item.as_str(),
+            id,
+            to_i64(number, "note number")?,
+            new.session.as_str(),
+            enc(&new.kind),
+            text,
+            new.details_text
+                .as_deref()
+                .map(|d| clean_text(d, archon_core::design::MAX_DETAILS_CHARS)),
+            new.send_picture,
+            new.target
+                .as_ref()
+                .map(|t| to_json(t, "note target"))
+                .transpose()?,
+            to_json(&new.viewport, "note viewport")?,
+            new.client_key,
+            new.reverts,
+            new.resent_from,
+            new.before_asset.as_ref().map(DesignAssetId::as_str),
+            new.created_by_device,
+            at,
+            new.follows,
+            to_json(&new.refs, "note refs")?,
+        ],
+    )
+    .ctx("insert design note")?;
+    settings::kv_set(tx, &seq_key, &(number + 1).to_string())?;
+    bump(tx, &new.session)?;
+    let note = note_by_id(tx, &new.item, &id)?.expect("the note was just inserted");
+    Ok((note, true))
 }
 
 const ASSET_COLUMNS: &str = "id, item, sha256, mime, bytes, width, height, path, source,

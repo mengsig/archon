@@ -15413,7 +15413,7 @@
       "properties": {
         "allow_hosts": {
           "default": [],
-          "description": "Extra hosts (`host` or `host:port`) the preview may load.",
+          "description": "Read the former allowlist so a configured host gets a migration hint.",
           "items": {
             "type": "string"
           },

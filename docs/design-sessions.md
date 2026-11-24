@@ -369,14 +369,17 @@ text and suggested answers stay inside Chromium.
   carries up to 64 input events. The daemon accepts 60 input requests and 10
   resolves a second.
 - Notes up to 4,000 characters, replies up to 2,000; 200 notes per session, including follow-ups. Each
-  item can keep up to 200 MiB of pictures.
+  item can keep up to 200 MiB of pictures and sketches. Equal encoded
+  images count once. New sketches count separately for each capture.
 - 20 versions per chain; 5 references per note; 3 referenced pictures per
   message to the agent.
 - Every frame and picture is at most 768 KiB as sent; pictures are re-encoded
   until they fit.
 - The browser is capped at 1 GiB of JavaScript heap, restarts if its memory
-  stays above 2 GiB for 30 seconds, and after exhausting 5 automatic restarts in 10 minutes stops retrying.
-  Select **Reload** to restart the preview.
+  stays above 2 GiB for 30 seconds, and restarts on a sample of 3 GiB or more.
+  After five memory restarts another excess ends the design session. For
+  ordinary crashes, five automatic restarts in ten minutes exhaust the retry
+  budget. Select **Reload** to retry a crashed preview.
 - The stage waits up to 240 minutes in total.
 - With 128 reference images allowed per item, the screen warns 8 before the
   cap on active visual notes.
@@ -388,7 +391,9 @@ Live design is opt-in. The preview runs the item’s own dev server in a fresh
 temporary Chromium profile with no saved credentials or extensions. The
 daemon clears the child environment, uses a private debugging pipe, denies
 downloads and sensitive permissions, and deletes the profile on close.
-Chromium’s platform sandbox is on by default.
+Chromium’s platform sandbox is on by default. The daemon samples browser
+process-group resident memory about every three seconds. Usage can rise
+above either watchdog threshold between samples.
 
 A session proxy checks the destination and the process serving each connection
 before forwarding traffic. Serve fonts, styles and other assets through the

@@ -21,7 +21,9 @@
   per chain with its history. The agent gets the MCP read tool
   `design_history`. Protocol 26 adds the `design_iterations` feature; store
   schema 29 adds the design tables and 30 adds `follows` and `refs` to design
-  notes. A store from a build of this work's own branch, which recorded them
+  notes. Schema 31 preserves per-capture targets, commits and sketches when
+  multiple pictures share the same bytes. Back up the store before upgrading
+  if you need to return to an older release. A store from a build of this work's own branch, which recorded them
   as 25 and 26, upgrades in place and keeps its design records.
 
 ### Changed

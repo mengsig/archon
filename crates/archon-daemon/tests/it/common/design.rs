@@ -289,6 +289,7 @@ pub struct FakeFactory {
     pub fail: Mutex<Option<adb::BrowserError>>,
     /// No Chromium on the host.
     pub missing: Mutex<bool>,
+    pub initial_rss: Mutex<Option<u64>>,
     /// Every launch takes this long.
     pub delay: Mutex<std::time::Duration>,
 }
@@ -353,6 +354,9 @@ impl BrowserFactory for FakeFactory {
         };
         registration.record(pid, 1_000).await?;
         let browser = Arc::new(FakeBrowser::new(pid));
+        if let Some(rss) = *self.initial_rss.lock().unwrap() {
+            browser.set_rss(rss);
+        }
         self.browsers.lock().unwrap().push(browser.clone());
         Ok(browser)
     }

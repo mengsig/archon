@@ -125,6 +125,38 @@ async fn a_crash_give_up_starts_a_queued_session() {
     task.abort();
 }
 
+#[tokio::test]
+async fn emergency_memory_restarts_end_the_session_with_a_reason() {
+    let f = Fixture::new().await;
+    let rss = 3 * 1024 * 1024 * 1024;
+    *f.factory.initial_rss.lock().unwrap() = Some(rss);
+    f.factory.browser(0).set_rss(rss);
+    until("the final over-limit browser to close", || {
+        f.factory
+            .browsers
+            .lock()
+            .unwrap()
+            .get(5)
+            .is_some_and(|browser| browser.calls(|calls| calls.closed))
+    })
+    .await;
+    let row =
+        f.h.ctx
+            .store
+            .lock()
+            .await
+            .design_session(&f.session)
+            .unwrap()
+            .unwrap();
+    assert_eq!(row.state, archon_core::design::SessionState::Ended);
+    assert!(
+        row.end_reason
+            .unwrap()
+            .contains("memory limit after five automatic restarts")
+    );
+    assert_eq!(f.factory.launched(), 6);
+}
+
 fn upload(f: &Fixture, bytes: Vec<u8>) -> Request {
     use base64::Engine;
     Request::DesignUpload {

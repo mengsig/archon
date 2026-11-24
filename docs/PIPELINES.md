@@ -1154,7 +1154,8 @@ pipeline:
 
 All three values apply only to pipelines that ship, through `[pipeline.ship]` or
 a `ship` stage. An inserted stage has
-`fan_out = 1`, no gate, a 45-minute timeout and `allow_delegation = false`. If the item's
+`fan_out = 1`, no gate, `allow_delegation = false` and a 45-minute timeout for proposal or report.
+Live design has a 240-minute timeout. If the item's
 `model_plan` does not name it, it gets the first choice of the pipeline's
 first stage.
 
@@ -1174,13 +1175,16 @@ instead of `propose`. It has no fan-out and no gate of its own; the proposal
 gate applies to it exactly as to `propose`, with the same Approve, Revise and
 Reject. The agent is kept so it waits for notes between requests, and the stage
 needs `workspace = "worktree"` because it edits and commits code. Its contract
-tells it to run the dev server under `setsid`, call `design_preview`, make one
+tells it to run the dev server from the worktree under `setsid`, record its
+actual PID under `.archon/services/`, call `design_preview`, make one
 commit per note with an `Archon-Note: D<n>` trailer, and on `finish` stop the
 server and complete. Archon builds the approved intent from its own records
 rather than the stage's `structured` output. The stage id `design` and the
 prompt file `archon-design.md` are reserved; a pipeline that declares its
 own first `design` stage gets no duplicate. At most one `propose` or `design`
-stage is allowed, and it must be first.
+stage is allowed, and it must be first. Choosing live design for a pipeline
+with a custom written `propose` stage requires changing that stage to
+`design` or removing it.
 
 Later stages get extra context in their prompts:
 - Every stage after `propose` gets the proposal's summary, whether the

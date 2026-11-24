@@ -21,6 +21,7 @@ pub(crate) const MAX_CRASHES: usize = 5;
 pub(crate) const CRASH_WINDOW: Duration = Duration::from_secs(600);
 /// Resident memory above which the browser is restarted, held this long.
 pub(crate) const RSS_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
+const RSS_EMERGENCY: u64 = 3 * 1024 * 1024 * 1024;
 pub(crate) const RSS_HOLD: Duration = Duration::from_secs(30);
 /// The screencast stops this long after the last subscriber left.
 pub(crate) const IDLE_STOP: Duration = Duration::from_secs(60);
@@ -412,7 +413,8 @@ pub(crate) struct RtState {
     pub last_sub_gone: Option<Instant>,
     pub crashes: VecDeque<Instant>,
     pub last_url: Option<String>,
-    pub rss_over_since: Option<Instant>,
+    rss_over_since: Option<Instant>,
+    memory_restarts: usize,
     pub counters: Counters,
     pub pending_input: Option<Instant>,
     pub input_window: (Instant, u32),
@@ -438,6 +440,7 @@ impl Default for RtState {
             crashes: VecDeque::new(),
             last_url: None,
             rss_over_since: None,
+            memory_restarts: 0,
             counters: Counters::default(),
             pending_input: None,
             input_window: (now, 0),
@@ -1094,6 +1097,32 @@ impl DesignService {
         }
     }
 
+    async fn memory_stop(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSessionId,
+        rt: &Runtime,
+        rss: Option<u64>,
+    ) {
+        let attempts = {
+            let mut state = rt.st();
+            state.memory_restarts += 1;
+            state.memory_restarts
+        };
+        tracing::warn!(%session, ?rss, attempts, "preview exceeded its memory limit");
+        if attempts > MAX_CRASHES {
+            end_for_containment(
+                ctx,
+                session,
+                rt,
+                "the browser exceeded its memory limit after five automatic restarts",
+            )
+            .await;
+        } else if let Err(error) = self.relaunch(ctx, session).await {
+            tracing::warn!(%error, %session, "restarting the preview browser failed");
+        }
+    }
+
     /// One monitor tick; false when the monitor should end.
     async fn tick(
         &self,
@@ -1123,24 +1152,8 @@ impl DesignService {
             }
         }
         let rss = browser.rss_bytes();
-        let restart = {
-            let mut st = rt.st();
-            match rss {
-                Some(rss) if rss > RSS_LIMIT => {
-                    let since = *st.rss_over_since.get_or_insert_with(Instant::now);
-                    since.elapsed() >= RSS_HOLD
-                }
-                _ => {
-                    st.rss_over_since = None;
-                    false
-                }
-            }
-        };
-        if restart {
-            tracing::warn!(%session, "design: the preview browser used over 2 GiB for 30 s; restarting it");
-            if let Err(error) = self.relaunch(ctx, session).await {
-                tracing::warn!(%error, "restarting the preview browser failed");
-            }
+        if memory_limit_reached(rss, &mut rt.st().rss_over_since, Instant::now()) {
+            self.memory_stop(ctx, session, rt, rss).await;
             return false;
         }
         // Is the app answering?
@@ -1166,5 +1179,39 @@ impl DesignService {
     }
 }
 
+fn memory_limit_reached(rss: Option<u64>, over_since: &mut Option<Instant>, now: Instant) -> bool {
+    let Some(rss) = rss.filter(|rss| *rss > RSS_LIMIT) else {
+        *over_since = None;
+        return false;
+    };
+    let since = over_since.get_or_insert(now);
+    rss >= RSS_EMERGENCY || now.duration_since(*since) >= RSS_HOLD
+}
+
 /// Consecutive failed health probes before a preview is marked down.
 const PROBE_MISSES_DOWN: u32 = 2;
+
+#[cfg(test)]
+mod memory_tests {
+    use super::*;
+
+    #[test]
+    fn sustained_and_emergency_samples_have_separate_thresholds() {
+        let start = Instant::now();
+        let mut since = None;
+        let over = Some(RSS_LIMIT + 1);
+        assert!(!memory_limit_reached(over, &mut since, start));
+        assert!(memory_limit_reached(over, &mut since, start + RSS_HOLD));
+        assert!(!memory_limit_reached(
+            Some(RSS_LIMIT),
+            &mut since,
+            start + RSS_HOLD
+        ));
+        assert_eq!(since, None);
+        assert!(memory_limit_reached(
+            Some(RSS_EMERGENCY),
+            &mut since,
+            start + RSS_HOLD
+        ));
+    }
+}

@@ -290,6 +290,7 @@ pub struct FakeFactory {
     /// No Chromium on the host.
     pub missing: Mutex<bool>,
     pub initial_rss: Mutex<Option<u64>>,
+    pub fail_initial_navigation: Mutex<bool>,
     /// Every launch takes this long.
     pub delay: Mutex<std::time::Duration>,
 }
@@ -356,6 +357,9 @@ impl BrowserFactory for FakeFactory {
         let browser = Arc::new(FakeBrowser::new(pid));
         if let Some(rss) = *self.initial_rss.lock().unwrap() {
             browser.set_rss(rss);
+        }
+        if std::mem::take(&mut *self.fail_initial_navigation.lock().unwrap()) {
+            browser.fail_next_load();
         }
         self.browsers.lock().unwrap().push(browser.clone());
         Ok(browser)

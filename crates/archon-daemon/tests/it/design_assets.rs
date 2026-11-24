@@ -126,6 +126,49 @@ async fn a_crash_give_up_starts_a_queued_session() {
 }
 
 #[tokio::test]
+async fn a_failed_first_navigation_releases_the_browser_for_retry() {
+    let mut config = design_config();
+    config.design.max_sessions = 1;
+    let f = Fixture::with(config).await;
+    f.end(StageEnd::Cancelled).await;
+    let session = new_session(&f, "retry").await;
+    *f.factory.fail_initial_navigation.lock().unwrap() = true;
+    let reload = || Request::DesignReload {
+        session: session.clone(),
+    };
+    assert!(f.operator(reload()).await.is_err());
+    assert!(f.factory.browser(1).calls(|calls| calls.closed));
+    f.operator(reload()).await.unwrap();
+    assert_eq!(f.factory.launched(), 3);
+    assert!(f.factory.browser(2).calls(|c| c.reloads == 1 && !c.closed));
+}
+
+#[tokio::test]
+async fn explicit_reload_recovers_after_the_automatic_crash_budget() {
+    let f = Fixture::new().await;
+    for index in 0..6 {
+        until("a replacement browser", || {
+            f.factory.browsers.lock().unwrap().len() > index
+        })
+        .await;
+        let browser = f.factory.browser(index);
+        browser.crash();
+        until("closed crashed browser", || {
+            browser.calls(|calls| calls.closed)
+        })
+        .await;
+    }
+    assert_eq!(f.factory.launched(), 6);
+    f.operator(Request::DesignReload {
+        session: f.session.clone(),
+    })
+    .await
+    .unwrap();
+    assert_eq!(f.factory.launched(), 7);
+    assert!(f.factory.browser(6).calls(|c| c.reloads == 1));
+}
+
+#[tokio::test]
 async fn emergency_memory_restarts_end_the_session_with_a_reason() {
     let f = Fixture::new().await;
     let rss = 3 * 1024 * 1024 * 1024;

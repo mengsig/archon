@@ -576,55 +576,23 @@ impl DesignService {
     ) -> Result<Option<Arc<dyn PreviewBrowser>>, ArchonError> {
         let rt = self.runtime(session);
         let _gate = rt.gate.lock().await;
-        if self.stopping.load(std::sync::atomic::Ordering::Acquire) {
-            return Err(ArchonError::Unavailable(
-                "the daemon is shutting down".into(),
-            ));
-        }
-        if let Some(reason) = rt.st().containment.clone() {
-            return Err(ArchonError::Forbidden(reason));
-        }
-        if let Some(browser) = rt.browser() {
-            if let Some(reason) = browser.containment_reason() {
-                return Err(ArchonError::Forbidden(format!(
-                    "{CONTAINMENT_END}: {reason}"
-                )));
-            }
+        if let Some(browser) = self.running_browser(&rt)? {
             return Ok(Some(browser));
         }
-        let row = {
-            let store = ctx.store.lock().await;
-            store.design_session(session)?
-        };
-        let Some(row) = row else {
+        let Some((row, url)) = self.launch_candidate(ctx, session, &rt).await? else {
             return Ok(None);
         };
-        // A request that raced end_session must not start a browser nobody
-        // would ever close.
-        // A Confirmed session's browser was closed at settle; it stays closed.
-        if matches!(
-            row.state,
-            archon_core::design::SessionState::Ended | archon_core::design::SessionState::Confirmed
-        ) {
-            return Ok(None);
-        }
-        let Some(url) = rt.st().last_url.clone().or(row.preview_url.clone()) else {
-            return Ok(None);
-        };
-        if rt.st().status == BrowserStatus::CrashedTooOften {
-            return Ok(None);
-        }
         let Some(slot) = self.reserve_slot(&rt) else {
-            self.set_status(&rt, session, BrowserStatus::QueuedForSlot);
+            rt.st().status = BrowserStatus::QueuedForSlot;
             return Ok(None);
         };
-        self.set_status(&rt, session, BrowserStatus::Starting);
+        rt.st().status = BrowserStatus::Starting;
         let upstream_guard = match self.verify_registered_preview(ctx, &row, &url).await {
             Ok(guard) => guard,
             Err(error) => {
                 drop(slot);
                 self.spawn_start_queued();
-                self.set_status(&rt, session, BrowserStatus::Idle);
+                rt.st().status = BrowserStatus::Idle;
                 return Err(error);
             }
         };
@@ -646,20 +614,68 @@ impl DesignService {
                 )))
             }
             Err(adb::BrowserError::NotFound { hint }) => {
-                self.set_status(&rt, session, BrowserStatus::Missing { hint });
+                rt.st().status = BrowserStatus::Missing { hint };
                 Ok(None)
             }
             Err(adb::BrowserError::SandboxUnavailable { hint }) => {
-                self.set_status(&rt, session, BrowserStatus::SandboxUnavailable { hint });
+                rt.st().status = BrowserStatus::SandboxUnavailable { hint };
                 Ok(None)
             }
             Err(error) => {
-                self.set_status(&rt, session, BrowserStatus::Idle);
+                rt.st().status = BrowserStatus::Idle;
                 Err(ArchonError::Unavailable(format!(
                     "the preview browser did not start: {error}"
                 )))
             }
         }
+    }
+
+    fn running_browser(
+        &self,
+        rt: &Runtime,
+    ) -> Result<Option<Arc<dyn PreviewBrowser>>, ArchonError> {
+        if self.stopping.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(ArchonError::Unavailable(
+                "the daemon is shutting down".into(),
+            ));
+        }
+        if let Some(reason) = rt.st().containment.clone() {
+            return Err(ArchonError::Forbidden(reason));
+        }
+        if let Some(browser) = rt.browser() {
+            if let Some(reason) = browser.containment_reason() {
+                return Err(ArchonError::Forbidden(format!(
+                    "{CONTAINMENT_END}: {reason}"
+                )));
+            }
+            return Ok(Some(browser));
+        }
+        Ok(None)
+    }
+
+    async fn launch_candidate(
+        &self,
+        ctx: &DaemonContext,
+        session: &DesignSessionId,
+        rt: &Runtime,
+    ) -> Result<Option<(archon_core::design::DesignSession, String)>, ArchonError> {
+        let row = ctx.store.lock().await.design_session(session)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        if matches!(
+            row.state,
+            archon_core::design::SessionState::Ended | archon_core::design::SessionState::Confirmed
+        ) {
+            return Ok(None);
+        }
+        let Some(url) = rt.st().last_url.clone().or(row.preview_url.clone()) else {
+            return Ok(None);
+        };
+        if rt.st().status == BrowserStatus::CrashedTooOften {
+            return Ok(None);
+        }
+        Ok(Some((row, url)))
     }
 
     pub(super) async fn reload_preview(
@@ -744,6 +760,14 @@ impl DesignService {
         let browser = factory.launch(spec, &registration).await?;
         let events = browser.events();
         let navigation = browser.navigate(url).await;
+        if let Some(reason) = browser.containment_reason() {
+            browser.close().await;
+            return Err(adb::BrowserError::Containment(reason));
+        }
+        if let Err(error) = navigation {
+            browser.close().await;
+            return Err(error);
+        }
         let pid = browser.pid();
         {
             let mut state = rt.st();
@@ -758,16 +782,7 @@ impl DesignService {
         tracing::info!(session = %row.id, ?pid, sandbox = !row.sandbox_off, device = ?super::current_device_label(), "design: browser started");
         self.emit_session(ctx, &row.id).await;
         self.spawn_monitor(ctx, row.id.clone(), events);
-        if let Some(reason) = browser.containment_reason() {
-            return Err(adb::BrowserError::Containment(reason));
-        }
-        navigation?;
         Ok(browser)
-    }
-
-    fn set_status(&self, rt: &Runtime, session: &DesignSessionId, status: BrowserStatus) {
-        rt.st().status = status;
-        let _ = session;
     }
 
     /// Start frames for a subscriber; the feeder runs while any is attached.
@@ -1028,32 +1043,7 @@ async fn monitor(
                     }
                     return;
                 }
-                Ok(adb::BrowserEvent::Dialog { kind, message, default_prompt }) => {
-                    let _ = rt.events.send(DesignEvent::Dialog { kind, message, default_prompt });
-                }
-                Ok(adb::BrowserEvent::BlockedHost { host }) => {
-                    let hosts = {
-                        let mut st = rt.st();
-                        if st.counters.blocked.len() >= 64 || !st.counters.blocked.insert(host) { continue; }
-                        st.counters.blocked.iter().cloned().collect::<Vec<_>>()
-                    };
-                    let _ = rt.events.send(DesignEvent::BlockedHosts { hosts });
-                }
-                Ok(adb::BrowserEvent::PopupClosed { .. }) => {
-                    let message = "A pop-up was closed.".to_owned();
-                    let _ = rt.events.send(DesignEvent::Toast { message });
-                }
-                Ok(adb::BrowserEvent::FileChooserRefused) => {
-                    let _ = rt.events.send(DesignEvent::Toast {
-                        message: "File pickers aren't available in the preview yet".into(),
-                    });
-                }
-                Ok(adb::BrowserEvent::NavigationFailed { .. }) => {
-                    service.record_health(&ctx, &session, true).await;
-                }
-                Ok(adb::BrowserEvent::Loaded { .. }) => {
-                    service.record_health(&ctx, &session, false).await;
-                }
+                Ok(event) => report_browser_event(&ctx, &session, &rt, event).await,
                 Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => return,
             },
@@ -1062,6 +1052,57 @@ async fn monitor(
                     return;
                 }
             }
+        }
+    }
+}
+
+async fn report_browser_event(
+    ctx: &DaemonContext,
+    session: &DesignSessionId,
+    rt: &Runtime,
+    event: adb::BrowserEvent,
+) {
+    match event {
+        adb::BrowserEvent::Dialog {
+            kind,
+            message,
+            default_prompt,
+        } => {
+            let _ = rt.events.send(DesignEvent::Dialog {
+                kind,
+                message,
+                default_prompt,
+            });
+        }
+        adb::BrowserEvent::BlockedHost { host } => {
+            let hosts = {
+                let mut st = rt.st();
+                if st.counters.blocked.len() >= 64 || !st.counters.blocked.insert(host) {
+                    return;
+                }
+                st.counters.blocked.iter().cloned().collect::<Vec<_>>()
+            };
+            let _ = rt.events.send(DesignEvent::BlockedHosts { hosts });
+        }
+        adb::BrowserEvent::PopupClosed { .. } => {
+            let message = "A pop-up was closed.".to_owned();
+            let _ = rt.events.send(DesignEvent::Toast { message });
+        }
+        adb::BrowserEvent::FileChooserRefused => {
+            let _ = rt.events.send(DesignEvent::Toast {
+                message: "File pickers aren't available in the preview yet".into(),
+            });
+        }
+        adb::BrowserEvent::NavigationFailed { .. } => {
+            ctx.design.record_health(ctx, session, true).await;
+        }
+        adb::BrowserEvent::Loaded { .. } => {
+            ctx.design.record_health(ctx, session, false).await;
+        }
+        adb::BrowserEvent::ContainmentStopped { .. }
+        | adb::BrowserEvent::Crashed
+        | adb::BrowserEvent::Exited => {
+            unreachable!("the monitor handles terminal browser events before forwarding")
         }
     }
 }

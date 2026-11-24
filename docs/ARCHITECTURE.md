@@ -6111,7 +6111,8 @@ pid and start time.
 **Ledger from records.** At Finish archond freezes the session and builds the
 approved intent from its own rows, never from the agent's `structured` output:
 it starts from the item's current intent and adds one requirement `D<n>` per
-active note, bound only to the operator's final picture. The executor's
+active note. If the operator includes a picture, the ledger uses the final
+capture or falls back to the note’s after picture. The executor's
 `verify` and open-gate paths use it for a `Design` gate stage, so the rest of
 the gate flow is unchanged.
 

@@ -144,9 +144,9 @@ from. The commit message carries a trailer, `Archon-Note: D3`, so
 **Compare.** Open a done note for a before/after slider (side by side on wide
 screens). A note drawn on a sketch (New screen) shows your sketch and the
 result next to each other instead. Each picture is captioned like "captured from the preview at commit
-3f9c2a1, 14:32". These are evidence for you, not proof of the build: the dev
-server may serve edits that are not yet committed. They are never sent to a
-model.
+3f9c2a1, 14:32". A preview can show uncommitted dev-server edits. Only the operator receives the live
+frames. A reference can send the after picture to the design agent,
+and an included final or after picture can enter the approved intent.
 
 **Undo.** **Undo** on a done note asks "Undo D3? Archon will reverse its
 change." Archon itself reverts the commit (the agent never does). It waits

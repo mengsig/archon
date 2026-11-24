@@ -129,64 +129,19 @@ async fn run(
     if !send_state(ctx, sub, frames).await {
         return;
     }
-    let mut last_seq = 0u64;
-    let mut last_sent = Instant::now() - FRAME_GAP;
-    let mut pending_ack: Option<u64> = None;
+    let mut window = FrameWindow {
+        seen: 0,
+        sent: 0,
+        last_sent: Instant::now() - FRAME_GAP,
+    };
     loop {
         tokio::select! {
             changed = live.changed() => {
                 if changed.is_err() {
                     return;
                 }
-                // Latest wins: whatever arrived while this waited is skipped.
-                let gap = last_sent.elapsed();
-                if gap < FRAME_GAP {
-                    tokio::time::sleep(FRAME_GAP - gap).await;
-                }
-                if let Some(seq) = pending_ack {
-                    let waited = tokio::time::timeout(ACK_WAIT, async {
-                        while *ack_rx.borrow() < seq {
-                            if ack_rx.changed().await.is_err() {
-                                break;
-                            }
-                        }
-                    })
-                    .await;
-                    let _ = waited;
-                }
-                let Some(frame) = live.borrow_and_update().clone() else {
-                    continue;
-                };
-                if frame.seq <= last_seq {
-                    continue;
-                }
-                let event = DesignEvent::Frame {
-                    seq: frame.seq,
-                    jpeg_b64: base64::engine::general_purpose::STANDARD.encode(&frame.jpeg),
-                    w: frame.width,
-                    h: frame.height,
-                    at: archon_core::now(),
-                };
-                let outgoing = ServerFrame::Design { sub: sub.id, event };
-                let size = serde_json::to_vec(&outgoing).map_or(usize::MAX, |b| b.len());
-                if size > MAX_SERIALIZED_FRAME_BYTES {
-                    rt.st().counters.frames_dropped += 1;
-                    last_seq = frame.seq;
-                    continue;
-                }
-                if frames.send(outgoing).await.is_err() {
+                if window.send_latest(sub.id, &rt, &mut live, ack_rx, frames).await.is_err() {
                     return;
-                }
-                last_seq = frame.seq;
-                last_sent = Instant::now();
-                pending_ack = Some(frame.seq);
-                let mut st = rt.st();
-                st.counters.frames_sent += 1;
-                if let Some(at) = st.pending_input.take() {
-                    if st.counters.latencies_ms.len() >= 4096 {
-                        st.counters.latencies_ms.drain(..2048);
-                    }
-                    st.counters.latencies_ms.push(at.elapsed().as_millis() as u64);
                 }
             }
             event = events.recv() => match event {
@@ -203,5 +158,70 @@ async fn run(
             },
             _ = frames.closed() => return,
         }
+    }
+}
+
+struct FrameWindow {
+    seen: u64,
+    sent: u64,
+    last_sent: Instant,
+}
+
+impl FrameWindow {
+    async fn send_latest(
+        &mut self,
+        sub: u64,
+        rt: &super::browser::Runtime,
+        live: &mut watch::Receiver<Option<Arc<archon_design_browser::Frame>>>,
+        ack: &mut watch::Receiver<u64>,
+        frames: &mpsc::Sender<ServerFrame>,
+    ) -> Result<(), ()> {
+        tokio::time::sleep_until((self.last_sent + FRAME_GAP).into()).await;
+        if self.sent > 0 {
+            // A slow subscriber resumes at the newest frame after ACK_WAIT.
+            match tokio::time::timeout(ACK_WAIT, ack.wait_for(|seq| *seq >= self.sent)).await {
+                Ok(Err(_closed)) => return Err(()),
+                Ok(Ok(_)) | Err(_) => {}
+            }
+        }
+        let Some(frame) = live.borrow_and_update().clone() else {
+            return Ok(());
+        };
+        if frame.seq <= self.seen {
+            return Ok(());
+        }
+        self.seen = frame.seq;
+        let event = DesignEvent::Frame {
+            seq: frame.seq,
+            jpeg_b64: base64::engine::general_purpose::STANDARD.encode(&frame.jpeg),
+            w: frame.width,
+            h: frame.height,
+            at: archon_core::now(),
+        };
+        let outgoing = ServerFrame::Design { sub, event };
+        let size = serde_json::to_vec(&outgoing)
+            .map_err(|error| tracing::error!(%error, "serialize design frame"))?
+            .len();
+        if size > MAX_SERIALIZED_FRAME_BYTES {
+            rt.st().counters.frames_dropped += 1;
+            return Ok(());
+        }
+        frames.send(outgoing).await.map_err(|_| ())?;
+        self.sent = frame.seq;
+        self.last_sent = Instant::now();
+        record_sent(rt);
+        Ok(())
+    }
+}
+
+fn record_sent(rt: &super::browser::Runtime) {
+    let mut state = rt.st();
+    state.counters.frames_sent += 1;
+    if let Some(at) = state.pending_input.take() {
+        let samples = &mut state.counters.latencies_ms;
+        if samples.len() >= 4096 {
+            samples.drain(..2048);
+        }
+        samples.push(at.elapsed().as_millis() as u64);
     }
 }

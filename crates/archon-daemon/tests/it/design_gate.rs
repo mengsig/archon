@@ -567,6 +567,41 @@ async fn a_build_past_design_recovers_when_design_is_turned_off() {
     assert_eq!(h.running().await[0].id, before[0].id);
 }
 
+#[tokio::test]
+async fn a_design_gate_recovers_but_its_revision_needs_design_enabled() {
+    let mut h = Harness::with_config(live_config()).await;
+    let item = enqueue(&h, live(), None).await.unwrap();
+    let (run, session) = designing(&h, &item).await;
+    let head = common::git(&run.workspace, &["rev-parse", "HEAD"]);
+    confirm(&h, &session, &head, &[], &[]).await;
+    h.settle_running(forged).await;
+    h.dispatch().await;
+    let gate = open_proposal(&h, &item.id).await;
+    let mut config = h.ctx.config.clone();
+    config.design.enabled = false;
+    h.restart_with(config);
+    archon_daemon::executor::recover(&h.ctx).await.unwrap();
+    assert_eq!(open_proposal(&h, &item.id).await.question, gate.question);
+
+    h.cli(Request::Answer {
+        chat: false,
+        question: gate.question.expect("an open proposal has a question"),
+        text: "try a different layout".into(),
+    })
+    .await
+    .unwrap();
+    h.dispatch().await;
+    let failed = h.run(&item.id).await;
+    let archon_core::run::RunState::Failed { stage_id, error } = failed.state else {
+        panic!(
+            "the disabled design stage should not resume: {:?}",
+            failed.state
+        );
+    };
+    assert_eq!(stage_id, session.stage_id);
+    assert!(error.contains("design sessions are turned off"), "{error}");
+}
+
 const BEFORE_PNG: &[u8] = include_bytes!("../fixtures/design/before.png");
 const AFTER_PNG: &[u8] = include_bytes!("../fixtures/design/after.png");
 

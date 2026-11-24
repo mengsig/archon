@@ -1139,3 +1139,51 @@ fn billed_event(
         at: t(at),
     }
 }
+
+/// The stage view reads each delegate's attempt from the same ledger rows,
+/// and leaves out one whose usage the ledger could not attribute.
+#[test]
+fn delegated_stage_spend_names_each_delegates_attempt_and_skips_unattributed_ones() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "split"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let mut original = running_stage(&run, 0, 1);
+    original.state = StageState::Completed;
+    original.finished_at = Some(t(120));
+    store.upsert_stage_run(&original).unwrap();
+    let (lead, child, stray) = (common::agent(1), common::agent(2), common::agent(3));
+    let model = "codex/helper".parse().unwrap();
+    store
+        .record_delegation_event(&child, &lead, &model, 10)
+        .unwrap();
+    let mut repair = common::stage(&run, 0);
+    repair.attempt = 2;
+    repair.started_at = t(130);
+    store.upsert_stage_run(&repair).unwrap();
+    store
+        .bind_kept_spend(&repair.id, &lead, &t(140), Some(20))
+        .unwrap();
+    // The stray's usage lands before Archon learns who delegated it.
+    store
+        .record_spend_event(&billed_event(&item.id, stray.clone(), 0.5, 21), 21)
+        .unwrap();
+    store
+        .record_delegation_event(&stray, &lead, &model, 22)
+        .unwrap();
+    store
+        .record_spend_event(&billed_event(&item.id, child.clone(), 0.25, 23), 23)
+        .unwrap();
+
+    let first = store
+        .delegated_stage_spend(&lead, &original.id, false)
+        .unwrap();
+    assert_eq!(
+        first.into_iter().collect::<Vec<_>>(),
+        [(child.clone(), Some(0.25))]
+    );
+    let second = store
+        .delegated_stage_spend(&lead, &repair.id, false)
+        .unwrap();
+    assert_eq!(second.into_iter().collect::<Vec<_>>(), [(child, None)]);
+    assert_eq!(store.unlinked_spend().unwrap(), [stray]);
+}

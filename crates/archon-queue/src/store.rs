@@ -62,6 +62,7 @@ mod timing_report;
 mod tracked;
 pub use tracked::{Claim, TrackedRequest};
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use archon_core::Timestamp;
@@ -871,6 +872,15 @@ impl Store {
         agent: &AetherAgentId,
     ) -> Result<bool, ArchonError> {
         stage_spend::has_window(&self.conn, stage, agent)
+    }
+    /// Each fully attributed agent beneath `root`, with its charge on `stage`, if any.
+    pub fn delegated_stage_spend(
+        &self,
+        root: &AetherAgentId,
+        stage: &StageRunId,
+        estimates: bool,
+    ) -> Result<BTreeMap<AetherAgentId, Option<f64>>, ArchonError> {
+        stage_spend::delegated_on_stage(&self.conn, root, stage, estimates)
     }
     /// Set the spend boundary before a kept agent is told to resume or wake.
     pub fn bind_kept_spend(

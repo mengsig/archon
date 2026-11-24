@@ -3,6 +3,7 @@ use crate::common;
 
 use archon_core::model_evidence::ModelEvidenceQuery;
 use archon_core::protocol::{ClientKind, Reply, Request};
+use archon_core::queue::QueueItem;
 use archon_core::run::{StageState, Verdict};
 use archon_daemon::handlers;
 use common::{Harness, PIPELINE, completed};
@@ -622,4 +623,144 @@ allow_delegation = true
     let report = evidence(&h).await;
     let row = report.rows.iter().find(|r| r.stage == "review").unwrap();
     assert_eq!((row.completed, row.passed, row.verdicts), (1, 0, 1));
+}
+
+type AgentId = archon_core::aether_ids::AetherAgentId;
+
+/// Charge `agent` a running total of `usd` with Aether event `seq`; a
+/// `settled` total is the provider's final one and may lower the charge.
+async fn usage(h: &Harness, agent: &AgentId, usd: f64, seq: u64, settled: bool) {
+    let mut total = serde_json::json!({"cost_usd": usd, "cost_basis": "provider_reported"});
+    if settled {
+        total["cost_complete"] = serde_json::json!(true);
+    }
+    let mut wire = archon_aether::fake::event(
+        Some(agent.as_str()),
+        None,
+        serde_json::json!({"type": "agent.usage_updated", "total": total}),
+    );
+    wire["seq"] = serde_json::json!(seq);
+    wire["at"] = serde_json::json!(archon_core::now());
+    let event = archon_aether::events::parse_event(wire).unwrap();
+    archon_daemon::pump::handle_fleet_event(&h.ctx, &event)
+        .await
+        .unwrap();
+}
+
+/// `lead` delegated to `child` at Aether event `seq`, as the watchdog records it.
+async fn delegated(h: &Harness, child: &AgentId, lead: &AgentId, seq: u64) {
+    let model = common::MODEL.parse().unwrap();
+    let mut store = h.ctx.store.lock().await;
+    store
+        .record_delegation_event(child, lead, &model, seq)
+        .unwrap();
+}
+
+/// An item whose lead delegated to `early`, charged `early_usd` before a failed
+/// review kept the lead for a fix after Aether event 20; the item and lead.
+async fn kept_for_a_fix(h: &Harness, early: &AgentId, early_usd: f64) -> (QueueItem, AgentId) {
+    let item = h.enqueue("a lead that delegates, then a fix").await;
+    h.dispatch().await;
+    let lead = h.running().await.remove(0).aether_agent.unwrap();
+    delegated(h, early, &lead, 5).await;
+    usage(h, &lead, 0.25, 6, false).await;
+    usage(h, early, early_usd, 7, false).await;
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    h.settle_running(|s| common::verdict(s.fan_index != 0))
+        .await;
+    h.backend.set_event_watermark(20);
+    h.dispatch().await;
+    let fix = h.running().await.remove(0);
+    assert_eq!((fix.attempt, fix.aether_agent.as_ref()), (2, Some(&lead)));
+    (item, lead)
+}
+
+/// The stage view of each implement attempt: its cost and its delegates' charges.
+async fn implement_costs(h: &Harness, item: &QueueItem) -> Vec<(u32, f64, Vec<(AgentId, f64)>)> {
+    let query = archon_core::protocol::StageQuery {
+        item: item.id.clone(),
+        run: None,
+        stage: None,
+        attempt: None,
+        slot: None,
+        offset: 0,
+        limit: None,
+    };
+    let Reply::StageDetail(detail) = h.cli(Request::GetStage(query)).await.unwrap() else {
+        panic!("stage detail");
+    };
+    let implement = detail.stages.iter().filter(|s| s.stage_id == "implement");
+    implement
+        .map(|s| {
+            let agents = s.delegation.iter().flat_map(|split| &split.agents);
+            let agents = agents.map(|a| (a.agent.clone(), a.cost_usd)).collect();
+            (s.attempt, s.cost_usd, agents)
+        })
+        .collect()
+}
+
+/// Model evidence's two completed implement attempts, dearer first: with two,
+/// p90 is the dearer and the median their mean.
+async fn evidence_costs(h: &Harness) -> (f64, f64) {
+    let report = evidence(h).await;
+    let row = report.rows.iter().find(|r| r.stage == "implement").unwrap();
+    assert_eq!(row.completed, 2, "{row:?}");
+    let dearer = row.p90_cost_usd.unwrap();
+    (dearer, 2.0 * row.median_cost_usd.unwrap() - dearer)
+}
+
+/// A delegate's usage that lands after its lead was kept for a fix stays with
+/// the attempt that delegated it, in the stage view as in model evidence.
+#[tokio::test]
+async fn late_delegate_usage_stays_with_its_attempt_in_both_views() {
+    let h = Harness::new().await;
+    let parse = |raw| AgentId::parse(raw).unwrap();
+    let (early, late) = (parse("agt_early"), parse("agt_late"));
+    let (item, lead) = kept_for_a_fix(&h, &early, 0.5).await;
+    // The early delegate reports after the hand-off; a new one works for the fix.
+    usage(&h, &early, 1.5, 21, false).await;
+    usage(&h, &lead, 1.0, 22, false).await;
+    delegated(&h, &late, &lead, 23).await;
+    usage(&h, &late, 0.125, 24, false).await;
+    h.settle_running(|_| completed("fixed")).await;
+
+    let expected = [
+        (1, 1.75, vec![(early.clone(), 1.5)]),
+        (2, 0.875, vec![(late.clone(), 0.125)]),
+    ];
+    let viewed = implement_costs(&h, &item).await;
+    assert_eq!(
+        viewed, expected,
+        "each delegate on the attempt that made it"
+    );
+    assert_eq!(evidence_costs(&h).await, (1.75, 0.875));
+    let spent = h.ctx.store.lock().await.spend_for_item(&item.id, false);
+    assert_eq!(spent.unwrap(), 2.625, "the item total is unchanged");
+    let unlinked = h.ctx.store.lock().await.unlinked_spend().unwrap();
+    assert!(unlinked.is_empty(), "{unlinked:?}");
+}
+
+/// A delegate's settled total that lands below its charge at the hand-off
+/// refunds its own attempt: the stage costs what the ledger holds, in both views.
+#[tokio::test]
+async fn a_settled_refund_after_a_hand_off_lowers_the_delegates_attempt_in_both_views() {
+    let h = Harness::new().await;
+    let early = AgentId::parse("agt_early").unwrap();
+    let (item, lead) = kept_for_a_fix(&h, &early, 1.0).await;
+    usage(&h, &early, 0.5, 21, true).await;
+    usage(&h, &lead, 1.0, 22, false).await;
+    h.settle_running(|_| completed("fixed")).await;
+
+    let viewed = implement_costs(&h, &item).await;
+    let expected = [(1, 0.75, vec![(early.clone(), 0.5)]), (2, 0.75, vec![])];
+    assert_eq!(viewed, expected, "the refund lowers the attempt it charged");
+    assert_eq!(evidence_costs(&h).await, (0.75, 0.75));
+    let spent = h.ctx.store.lock().await.spend_for_item(&item.id, false);
+    let stage_total: f64 = viewed.iter().map(|(_, cost, _)| cost).sum();
+    assert_eq!(
+        spent.unwrap(),
+        stage_total,
+        "the stage costs what the ledger holds"
+    );
 }

@@ -8,6 +8,8 @@ use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::model_tier::ModelCatalog;
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
+use archon_core::plan_origin::TierMove;
+use archon_core::queue::QueueItem;
 use archon_core::run::{
     PipelineRun, RecordRepair, RunState, StageOutcome, StageRun, StageState, Verdict, VerdictNote,
 };
@@ -946,7 +948,9 @@ async fn slot_retry(
         slot.iter().any(|s| s.id == failed.id),
         "the slot holds the failure"
     );
-    let earlier = slot.iter().filter(|s| s.id != failed.id);
+    let earlier = slot
+        .iter()
+        .filter(|s| s.id != failed.id && !create_model_refusal(s));
     let replaced = earlier
         .filter(|s| RetryKind::of_replaced(s, planner) == kind)
         .count();
@@ -1095,6 +1099,11 @@ fn retry_choice(
     if retry.wake.is_none() {
         route_fresh(ctx, (store, table), (run, spec), &mut plan, catalog)?;
     }
+    if create_model_refusal(failed) && plan.choice.model == failed.choice.model {
+        return Err(ArchonError::Unavailable(
+            "the refreshed catalog still selects the refused model".into(),
+        ));
+    }
     Ok(plan)
 }
 
@@ -1156,17 +1165,60 @@ fn retry_judge(
     }
 }
 
+pub(super) enum ModelRefusal {
+    Frozen(String),
+    Create {
+        reason: String,
+        refresh_error: Option<String>,
+    },
+}
+
+// The earlier failed stage records that its slot already used a catalog repair.
+const CREATE_MODEL_REFUSAL: &str = "cannot create agent: Aether refused model ";
+
+fn create_model_refusal(stage: &StageRun) -> bool {
+    stage.aether_agent.is_none()
+        && matches!(&stage.state, StageState::Failed { error } if error.starts_with(CREATE_MODEL_REFUSAL))
+}
+
 pub(super) async fn replace_refused_model(
     ctx: &DaemonContext,
     table: &mut RunTable,
     stage: &StageRun,
-    reason: String,
+    refusal: ModelRefusal,
 ) -> Result<FollowUp, ArchonError> {
-    let (run, all) = {
+    assert_eq!(stage.state, StageState::Spawning);
+    assert!(
+        stage.aether_agent.is_none(),
+        "the refused create has no agent"
+    );
+    let (run, all, block) = {
         let store = ctx.store.lock().await;
-        (store.run(&stage.run)?, store.stage_runs(&stage.run)?)
+        let run = store.run(&stage.run)?;
+        let all = store.stage_runs(&stage.run)?;
+        let block = match &refusal {
+            ModelRefusal::Create { refresh_error, .. } if !run.state.is_terminal() => {
+                let item = store.item(&run.item)?;
+                create_repair_block(&item, stage, &all).or_else(|| {
+                    refresh_error
+                        .as_ref()
+                        .map(|error| format!("catalog refresh failed: {error}"))
+                })
+            }
+            _ => None,
+        };
+        (run, all, block)
     };
-    let error = format!("cannot create agent: {reason}");
+    let (error, create) = match refusal {
+        ModelRefusal::Frozen(reason) => (format!("cannot create agent: {reason}"), false),
+        ModelRefusal::Create { reason, .. } => {
+            table.spawn_errors.remove(&stage.id);
+            (
+                format!("{CREATE_MODEL_REFUSAL}{} ({reason})", stage.choice.model),
+                true,
+            )
+        }
+    };
     if run.state.is_terminal() {
         return settle_locked(
             ctx,
@@ -1178,6 +1230,45 @@ pub(super) async fn replace_refused_model(
         )
         .await;
     }
+    if let Some(block) = block {
+        let message = format!("{error}. {block}. Re-plan this item and retry");
+        return spawn::fail_stage_and_run(ctx, table, stage, message, false).await;
+    }
+    replace_model_slot(ctx, table, (stage, &run, &all), error, create).await
+}
+
+fn create_repair_block(item: &QueueItem, stage: &StageRun, all: &[StageRun]) -> Option<String> {
+    assert!(all.iter().any(|earlier| earlier.id == stage.id));
+    assert!(all.iter().all(|earlier| earlier.run == stage.run));
+    if let Some(choices) = item
+        .model_plan
+        .choices_for(&stage.stage_id)
+        .filter(|c| !c.is_empty())
+        && stage.stage_id != archon_pipeline::acceptance::STAGE
+    {
+        let slot = stage.fan_index as usize % choices.len();
+        let origin = item.model_plan.origin(&item.id, &stage.stage_id, slot);
+        if !origin.may_replace(TierMove::InRun) {
+            return Some("the plan pins this model".to_owned());
+        }
+    }
+    all.iter()
+        .any(|earlier| spawn::same_slot_as(earlier, stage) && create_model_refusal(earlier))
+        .then(|| "the slot already retried with a repaired model".to_owned())
+}
+
+async fn replace_model_slot(
+    ctx: &DaemonContext,
+    table: &mut RunTable,
+    (stage, run, all): (&StageRun, &PipelineRun, &[StageRun]),
+    error: String,
+    create: bool,
+) -> Result<FollowUp, ArchonError> {
+    assert_eq!(stage.run, run.id, "the slot belongs to the run");
+    assert!(
+        !run.state.is_terminal(),
+        "only a live run can replace a slot"
+    );
     let outcome = StageOutcome::Failed {
         error: error.clone(),
         infra: true,
@@ -1190,14 +1281,22 @@ pub(super) async fn replace_refused_model(
         extension: None,
         engine_login: false,
     };
-    match replace(ctx, table, &run, &all, &failed, retry, None).await {
+    match replace(ctx, table, run, all, &failed, retry, None).await {
         Ok(Some((id, _))) => Ok(FollowUp {
             issue: vec![id],
             descendant_stops: vec![stage.id.clone()],
             ..FollowUp::default()
         }),
-        // The model was refused, not the machine: no infrastructure failure.
+        Ok(None) if create => {
+            let message =
+                format!("{error}. No replacement was reserved. Re-plan this item and retry");
+            spawn::fail_stage_and_run(ctx, table, stage, message, false).await
+        }
         Ok(None) => spawn::fail_stage_and_run(ctx, table, stage, error, false).await,
+        Err(ArchonError::Unavailable(why)) if create => {
+            let message = format!("{error}. {why}. Re-plan this item and retry");
+            spawn::fail_stage_and_run(ctx, table, stage, message, false).await
+        }
         Err(ArchonError::Unavailable(why)) => {
             let subject = format!("stage:{}", stage.id);
             let what = format!(

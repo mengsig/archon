@@ -98,3 +98,13 @@ async fn fake_browser_with(
     let b = Browser::connect(a_r, a_w).await.expect("connect");
     (b, log)
 }
+
+#[derive(Debug)]
+pub(crate) struct AcceptUpstream;
+
+#[async_trait::async_trait]
+impl crate::UpstreamGuard for AcceptUpstream {
+    async fn verify_peer(&self, _: &tokio::net::TcpStream) -> Result<(), crate::BrowserError> {
+        Ok(())
+    }
+}

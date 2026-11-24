@@ -9,14 +9,22 @@ publish.workspace = true
 description = "Headless Chromium driver for live design sessions: pipe CDP, screencast relay, element resolution"
 
 [dependencies]
+async-trait = { workspace = true }
 base64 = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true, features = ["client"] }
+hyper-util = { workspace = true }
 rustix = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tokio-tungstenite = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

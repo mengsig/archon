@@ -45,6 +45,7 @@ pub(crate) struct Cdp {
     pending: Pending,
     next_id: AtomicU64,
     events: broadcast::Sender<CdpEvent>,
+    documents: broadcast::Sender<CdpEvent>,
     tasks: Vec<JoinHandle<()>>,
 }
 
@@ -63,6 +64,7 @@ impl Cdp {
     {
         let pending: Pending = Arc::new(Mutex::new(Some(HashMap::new())));
         let (events, _) = broadcast::channel(64);
+        let (documents, _) = broadcast::channel(64);
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
 
         let wtask = tokio::spawn(async move {
@@ -77,6 +79,7 @@ impl Cdp {
 
         let p = pending.clone();
         let ev = events.clone();
+        let document_events = documents.clone();
         let rtask = tokio::spawn(async move {
             let mut r = reader;
             let mut buf: Vec<u8> = Vec::new();
@@ -99,7 +102,7 @@ impl Cdp {
                     if frame.is_empty() {
                         continue;
                     }
-                    handle_frame(frame, &p, &ev);
+                    handle_frame(frame, &p, &ev, &document_events);
                 }
                 buf.drain(..start);
                 if buf.len() > max_frame {
@@ -123,12 +126,17 @@ impl Cdp {
             pending,
             next_id: AtomicU64::new(1),
             events,
+            documents,
             tasks: vec![wtask, rtask],
         }
     }
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<CdpEvent> {
         self.events.subscribe()
+    }
+
+    pub(crate) fn subscribe_documents(&self) -> broadcast::Receiver<CdpEvent> {
+        self.documents.subscribe()
     }
 
     pub(crate) async fn call(
@@ -187,7 +195,12 @@ impl Drop for Cdp {
     }
 }
 
-fn handle_frame(frame: &[u8], pending: &Pending, events: &broadcast::Sender<CdpEvent>) {
+fn handle_frame(
+    frame: &[u8],
+    pending: &Pending,
+    events: &broadcast::Sender<CdpEvent>,
+    documents: &broadcast::Sender<CdpEvent>,
+) {
     let Ok(v) = serde_json::from_slice::<Value>(frame) else {
         return;
     };
@@ -206,7 +219,13 @@ fn handle_frame(frame: &[u8], pending: &Pending, events: &broadcast::Sender<CdpE
             let _ = tx.send(r);
         }
     } else if let Some(m) = v.get("method").and_then(Value::as_str) {
-        let _ = events.send(CdpEvent {
+        let destination = match m {
+            "Fetch.requestPaused" | "Page.frameNavigated" | "Page.navigatedWithinDocument" => {
+                documents
+            }
+            _ => events,
+        };
+        let _ = destination.send(CdpEvent {
             method: m.to_string(),
             params: v.get("params").cloned().unwrap_or(Value::Null),
             session_id: v.get("sessionId").and_then(Value::as_str).map(String::from),

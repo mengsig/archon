@@ -1,10 +1,12 @@
 //! Finding, launching and reaping the Chromium child.
 
 use std::fs;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::BrowserError;
-use crate::Viewport;
+use crate::{UpstreamGuard, Viewport};
 
 /// Everything needed to start one browser.
 #[derive(Debug, Clone)]
@@ -15,8 +17,10 @@ pub struct LaunchSpec {
     pub profile_dir: PathBuf,
     /// Keep Chromium's sandbox on (`--no-sandbox` only when false).
     pub sandbox: bool,
-    /// Hosts the repository allows beyond loopback.
-    pub allow_hosts: Vec<String>,
+    /// Registered HTTP preview URL.
+    pub preview_url: String,
+    /// Verifies ownership of each connected preview socket.
+    pub upstream_guard: Arc<dyn UpstreamGuard>,
     /// Initial window size.
     pub viewport: Viewport,
     /// `PATH` for the child.
@@ -30,41 +34,8 @@ pub struct LaunchSpec {
 /// Shell wrapper: Chromium reads CDP on fd 3 and writes on fd 4, with no stdio of its own.
 pub(crate) const SHELL_SCRIPT: &str = r#"exec 3<&0 4>&1 </dev/null >/dev/null; exec "$0" "$@""#;
 
-const BASE_BYPASS: &str = "<-loopback>;localhost;127.0.0.1;[::1]";
-
-/// A host (optionally `*.`-prefixed) with an optional `:port`, the form the
-/// config's `allow_hosts` accepts (`archon_core::repo::valid_allow_host`) and
-/// Chromium's bypass list reads as "this host on this port only".
-fn valid_host(h: &str) -> bool {
-    let (h, port) = match h.split_once(':') {
-        Some((host, port)) => (host, Some(port)),
-        None => (h, None),
-    };
-    let h = h.strip_prefix("*.").unwrap_or(h);
-    !h.is_empty()
-        && h.len() <= 253
-        && h.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
-        && port.is_none_or(|p| {
-            p.parse::<u16>().is_ok_and(|n| n > 0) && p.bytes().all(|b| b.is_ascii_digit())
-        })
-}
-
-/// The `--proxy-bypass-list` value: loopback plus each valid allowed host.
-pub fn proxy_bypass_list(allow_hosts: &[String]) -> String {
-    let mut s = BASE_BYPASS.to_string();
-    for h in allow_hosts {
-        let h = h.trim();
-        if valid_host(h) {
-            s.push(';');
-            s.push_str(h);
-        }
-    }
-    s
-}
-
 /// Chromium's command-line arguments (without the binary).
-pub fn launch_args(spec: &LaunchSpec) -> Vec<String> {
+pub(crate) fn launch_args(spec: &LaunchSpec, proxy: SocketAddr) -> Vec<String> {
     let mut a: Vec<String> = vec![
         "--headless=new".into(),
         "--remote-debugging-pipe".into(),
@@ -77,11 +48,12 @@ pub fn launch_args(spec: &LaunchSpec) -> Vec<String> {
         "--disable-component-update".into(),
         "--mute-audio".into(),
         "--js-flags=--max-old-space-size=1024".into(),
-        "--proxy-server=http://127.0.0.1:9".into(),
-        format!(
-            "--proxy-bypass-list={}",
-            proxy_bypass_list(&spec.allow_hosts)
-        ),
+        format!("--proxy-server=http://{proxy}"),
+        "--proxy-bypass-list=<-loopback>".into(),
+        "--disable-quic".into(),
+        "--webrtc-ip-handling-policy=disable_non_proxied_udp".into(),
+        "--force-webrtc-ip-handling-policy=disable_non_proxied_udp".into(),
+        "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1".into(),
         format!(
             "--window-size={},{}",
             spec.viewport.width, spec.viewport.height
@@ -281,12 +253,13 @@ mod tests {
 
     use super::*;
 
-    fn spec(sandbox: bool, hosts: &[&str]) -> LaunchSpec {
+    fn spec(sandbox: bool) -> LaunchSpec {
         LaunchSpec {
             binary: "/usr/bin/chromium".into(),
             profile_dir: "/tmp/p/ds_1".into(),
             sandbox,
-            allow_hosts: hosts.iter().map(|s| s.to_string()).collect(),
+            preview_url: "http://127.0.0.1:3000/".into(),
+            upstream_guard: Arc::new(crate::testutil::AcceptUpstream),
             viewport: Viewport {
                 width: 1440,
                 height: 900,
@@ -302,50 +275,34 @@ mod tests {
     // T-U7
     #[test]
     fn launch_line_and_env() {
-        let on = launch_args(&spec(true, &[]));
+        let proxy = "127.0.0.1:4242".parse().unwrap();
+        let on = launch_args(&spec(true), proxy);
         assert!(!on.iter().any(|a| a == "--no-sandbox"));
         assert_eq!(on.last().unwrap(), "about:blank");
         for want in [
             "--headless=new",
             "--remote-debugging-pipe",
             "--user-data-dir=/tmp/p/ds_1",
-            "--proxy-server=http://127.0.0.1:9",
+            "--proxy-server=http://127.0.0.1:4242",
             "--js-flags=--max-old-space-size=1024",
             "--window-size=1440,900",
-            "--proxy-bypass-list=<-loopback>;localhost;127.0.0.1;[::1]",
+            "--proxy-bypass-list=<-loopback>",
+            "--disable-quic",
+            "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
         ] {
             assert!(on.iter().any(|a| a == want), "missing {want}");
         }
-        let off = launch_args(&spec(false, &[]));
+        let off = launch_args(&spec(false), proxy);
         assert!(off.iter().any(|a| a == "--no-sandbox"));
 
-        let env = launch_env(&spec(true, &[]));
+        let env = launch_env(&spec(true));
         let keys: Vec<_> = env.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(keys, ["HOME", "PATH", "LANG", "TZ"]);
         assert!(env.iter().all(|(k, _)| {
             !k.starts_with("ARCHON_") && !k.starts_with("AETHER_") && !k.starts_with("GIT_")
         }));
         assert_eq!(env[0].1, "/tmp/p/ds_1");
-    }
-
-    #[test]
-    fn bypass_list_keeps_only_valid_hosts() {
-        let l = proxy_bypass_list(&[
-            "dev.example.com".into(),
-            "*.cdn.test".into(),
-            "bad;host".into(),
-            "".into(),
-            "a b".into(),
-            "cdn.local:8080".into(),
-            "bad.port:".into(),
-            "bad.port:0".into(),
-            "bad.port:70000".into(),
-            "bad.port:+80".into(),
-        ]);
-        assert_eq!(
-            l,
-            "<-loopback>;localhost;127.0.0.1;[::1];dev.example.com;*.cdn.test;cdn.local:8080"
-        );
     }
 
     #[test]

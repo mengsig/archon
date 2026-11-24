@@ -1,56 +1,207 @@
 //! T-I5: a real Chromium. Skipped unless ARCHON_DESIGN_REAL_BROWSER=1 and a browser is found.
 
-use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use bytes::Bytes;
+use http_body_util::Full;
+use hyper::{Request, Response, body::Incoming};
+use hyper_util::rt::TokioIo;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 
 use archon_design_browser::{
-    Browser, BrowserError, BrowserEvent, LaunchSpec, Viewport, find_browser,
+    Browser, BrowserError, BrowserEvent, Input, LaunchSpec, MouseAction, MouseButton,
+    UpstreamGuard, Viewport, find_browser,
 };
 
-static HITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+#[derive(Debug)]
+struct TestUpstream {
+    accepts: AtomicU32,
+    allow: bool,
+}
 
-fn serve(body: &'static str) -> u16 {
-    let l = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = l.local_addr().unwrap().port();
-    std::thread::spawn(move || {
-        for s in l.incoming() {
-            let Ok(mut s) = s else { break };
-            let mut buf = [0u8; 4096];
-            let _ = s.read(&mut buf);
-            if body == "fetched-ok" {
-                HITS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            }
-            let _ = write!(
-                s,
-                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
+impl TestUpstream {
+    fn allowing() -> Arc<Self> {
+        Arc::new(Self {
+            accepts: AtomicU32::new(0),
+            allow: true,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl UpstreamGuard for TestUpstream {
+    async fn verify_peer(&self, peer: &TcpStream) -> Result<(), BrowserError> {
+        assert!(peer.peer_addr().unwrap().ip().is_loopback());
+        self.accepts.fetch_add(1, Ordering::Relaxed);
+        if self.allow {
+            Ok(())
+        } else {
+            Err(BrowserError::Launch(
+                "fixture denied the preview socket".into(),
+            ))
+        }
+    }
+}
+
+type TestResponse = Response<Full<Bytes>>;
+
+fn page_body(html: impl Into<Bytes>) -> TestResponse {
+    Response::builder()
+        .header("content-type", "text/html")
+        .body(Full::new(html.into()))
+        .unwrap()
+}
+
+async fn serve(handler: impl Fn(Request<Incoming>) -> TestResponse + Send + Sync + 'static) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handler = Arc::new(handler);
+    tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            let handler = handler.clone();
+            tokio::spawn(async move {
+                let service = hyper::service::service_fn(move |request| {
+                    std::future::ready(Ok::<_, std::convert::Infallible>(handler(request)))
+                });
+                if let Err(error) = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(socket), service)
+                    .with_upgrades()
+                    .await
+                {
+                    assert!(error.is_incomplete_message(), "{error}");
+                }
+            });
         }
     });
     port
 }
 
-#[tokio::test]
-async fn real_browser_is_confined() {
+fn websocket(mut request: Request<Incoming>) -> TestResponse {
+    let key = request.headers()["sec-websocket-key"].as_bytes();
+    let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key);
+    let upgrade = hyper::upgrade::on(&mut request);
+    tokio::spawn(async move {
+        let mut socket = TokioIo::new(upgrade.await.unwrap());
+        socket.write_all(&[0x81, 2, b'o', b'k']).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    });
+    Response::builder()
+        .status(101)
+        .header("upgrade", "websocket")
+        .header("connection", "upgrade")
+        .header("sec-websocket-accept", accept)
+        .body(Full::default())
+        .unwrap()
+}
+
+fn browser_options() -> Option<(std::path::PathBuf, String)> {
     if std::env::var("ARCHON_DESIGN_REAL_BROWSER").as_deref() != Ok("1") {
         eprintln!("skipped: ARCHON_DESIGN_REAL_BROWSER=1 not set");
-        return;
+        return None;
     }
     let path = std::env::var("PATH").unwrap_or_default();
     let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
     let Ok(binary) = find_browser(None, &path, &home) else {
         eprintln!("skipped: no browser found");
+        return None;
+    };
+    Some((binary, path))
+}
+
+async fn launch(spec: LaunchSpec) -> Option<Browser> {
+    match Browser::launch(spec).await {
+        Ok(browser) => Some(browser),
+        Err(BrowserError::SandboxUnavailable { hint }) => {
+            eprintln!("skipped: sandbox unavailable: {hint}");
+            None
+        }
+        Err(error) => panic!("launch: {error}"),
+    }
+}
+
+async fn click_other_preview(browser: &Browser) {
+    let (x, y) = browser
+        .center_of("#other")
+        .await
+        .unwrap()
+        .expect("preview link");
+    assert!(x.is_finite() && y.is_finite());
+    let mut events = browser.events();
+    browser
+        .input(
+            &[MouseAction::Down, MouseAction::Up].map(|action| Input::Mouse {
+                action,
+                x,
+                y,
+                button: MouseButton::Left,
+                click_count: 1,
+                modifiers: 0,
+            }),
+        )
+        .await
+        .unwrap();
+    let blocked = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Ok(event) = events.recv().await {
+            if matches!(event, BrowserEvent::BlockedHost { host } if host == "localhost") {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap();
+    assert!(blocked);
+}
+
+#[tokio::test]
+async fn real_browser_is_confined() {
+    let Some((binary, path)) = browser_options() else {
         return;
     };
     let root = tempfile::tempdir().unwrap();
     let profile = root.path().join("ds_test");
+    let hits = Arc::new(AtomicU32::new(0));
+    let other = serve({
+        let hits = hits.clone();
+        move |_| {
+            hits.fetch_add(1, Ordering::Relaxed);
+            page_body("other origin")
+        }
+    })
+    .await;
+    let page = serve(move |request| match request.uri().path() {
+        "/socket" => websocket(request),
+        "/local-redirect" => Response::builder()
+            .status(302)
+            .header("location", "/x?y=1")
+            .body(Full::default())
+            .unwrap(),
+        "/off-origin-redirect" => Response::builder()
+            .status(302)
+            .header("location", format!("http://127.0.0.1:{other}/"))
+            .body(Full::default())
+            .unwrap(),
+        _ => page_body(format!(
+            "<html><body><button data-testid=save>Save changes</button>\
+             <a id=other href='http://localhost:{other}/'>Other preview</a>\
+             <script>\
+             fetch('http://127.0.0.1:{other}/', {{mode:'no-cors'}}).catch(() => {{}});\
+             const socket = new WebSocket('ws://' + location.host + '/socket');\
+             socket.onmessage = (m) => document.querySelector('button').textContent = m.data;\
+             </script></body></html>"
+        )),
+    })
+    .await;
+    let guard = TestUpstream::allowing();
     let spec = LaunchSpec {
         binary,
         profile_dir: profile.clone(),
         sandbox: std::env::var("ARCHON_DESIGN_SANDBOX_OFF").as_deref() != Ok("1"),
-        allow_hosts: vec![],
+        preview_url: format!("http://localhost:{page}/"),
+        upstream_guard: guard.clone(),
         viewport: Viewport {
             width: 800,
             height: 600,
@@ -61,14 +212,8 @@ async fn real_browser_is_confined() {
         lang: "C.UTF-8".into(),
         tz: "UTC".into(),
     };
-    let b = match Browser::launch(spec).await {
-        Ok(b) => b,
-        Err(BrowserError::SandboxUnavailable { hint }) => {
-            eprintln!("skipped: sandbox unavailable: {hint}");
-            return;
-        }
-        Err(e) => panic!("launch: {e}"),
-    };
+    let Some(b) = launch(spec).await else { return };
+
     let pid = b.pid().unwrap();
     let environ = std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
     let environ = String::from_utf8_lossy(&environ);
@@ -77,21 +222,8 @@ async fn real_browser_is_confined() {
         "{environ}"
     );
 
-    let other = serve("fetched-ok");
-    let page = serve(Box::leak(
-        format!(
-            "<html><body><button data-testid=save class=primary>Save changes</button><script>\
-             window.res={{}};\
-             const t=(k,u)=>fetch(u,{{mode:'no-cors'}}).then(()=>res[k]='ok',()=>res[k]='fail');\
-             t('loop','http://127.0.0.1:{other}/');\
-             t('ext','http://example.com/');t('meta','http://169.254.169.254/');t('priv','http://10.0.0.1/');\
-             try{{const w=new WebSocket('ws://10.0.0.1:9/');w.onerror=()=>res.ws='fail';w.onopen=()=>res.ws='ok';}}catch(e){{res.ws='fail'}}\
-             </script></body></html>"
-        )
-        .into_boxed_str(),
-    ));
     let mut ev = b.events();
-    b.navigate(&format!("http://127.0.0.1:{page}/x?y=1"))
+    b.navigate(&format!("http://localhost:{page}/local-redirect"))
         .await
         .unwrap();
     assert!(
@@ -99,42 +231,101 @@ async fn real_browser_is_confined() {
             .await
             .unwrap()
     );
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    assert!(
-        HITS.load(std::sync::atomic::Ordering::SeqCst) >= 1,
-        "loopback fetch to another port failed"
-    );
     assert_eq!(b.current_path().await.unwrap(), "/x");
+    assert!(b.probe(&format!("http://localhost:{page}/x")).await);
 
-    // Read the results through resolve's sibling path: the button's box proves the page rendered.
-    let r = b.resolve(20.0, 20.0, 0).await.unwrap();
+    let websocket_text = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let resolved = b.resolve(20.0, 20.0, 0).await.unwrap();
+            if resolved.role_name.as_deref() == Some("button \"ok\"") {
+                break resolved;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("same-origin websocket did not deliver its message");
     assert_eq!(
-        r.role_name.as_deref(),
-        Some("button \"Save changes\""),
-        "{r:?}"
+        websocket_text.selector.as_deref(),
+        Some("[data-testid=\"save\"]")
     );
-    assert_eq!(r.selector.as_deref(), Some("[data-testid=\"save\"]"));
-    assert_eq!(r.path, "/x");
+    assert_eq!(websocket_text.path, "/x");
 
     let pic = b.capture(None, 1.0).await.unwrap();
     assert!(!pic.bytes.is_empty() && pic.bytes.len() <= 560 * 1024);
+    assert!(guard.accepts.load(Ordering::Relaxed) >= 4);
 
-    let mut blocked = Vec::new();
-    while let Ok(e) = ev.try_recv() {
-        if let BrowserEvent::BlockedHost { host } = e {
-            blocked.push(host);
-        }
+    for disallowed in [
+        format!("http://127.0.0.1:{page}/"),
+        format!("http://127.0.0.1:{other}/"),
+        "about:blank".into(),
+    ] {
+        assert!(matches!(
+            b.navigate(&disallowed).await,
+            Err(BrowserError::Navigation { .. })
+        ));
     }
-    for h in ["example.com", "169.254.169.254", "10.0.0.1"] {
-        assert!(
-            blocked.iter().any(|b| b == h),
-            "{h} not blocked: {blocked:?}"
-        );
-    }
-    assert!(!blocked.iter().any(|h| h == "127.0.0.1"));
+    click_other_preview(&b).await;
+    let off_origin_redirect = format!("http://localhost:{page}/off-origin-redirect");
+    assert!(b.navigate(&off_origin_redirect).await.is_err());
+    assert_eq!(hits.load(Ordering::Relaxed), 0);
+    assert!(
+        std::iter::from_fn(|| ev.try_recv().ok()).any(|event| matches!(
+            event, BrowserEvent::BlockedHost { host } if host == "127.0.0.1"
+        ))
+    );
 
     b.close().await.unwrap();
     assert!(!profile.exists(), "profile still there");
+}
+
+#[tokio::test]
+async fn rejected_preview_socket_receives_no_bytes() {
+    let Some((binary, path)) = browser_options() else {
+        return;
+    };
+    let fixture = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", fixture.local_addr().unwrap());
+    let root = tempfile::tempdir().unwrap();
+    let guard = Arc::new(TestUpstream {
+        accepts: AtomicU32::new(0),
+        allow: false,
+    });
+    let spec = LaunchSpec {
+        binary,
+        profile_dir: root.path().join("guard"),
+        sandbox: std::env::var("ARCHON_DESIGN_SANDBOX_OFF").as_deref() != Ok("1"),
+        preview_url: url.clone(),
+        upstream_guard: guard.clone(),
+        viewport: Viewport {
+            width: 800,
+            height: 600,
+            touch: false,
+            dpr: 1.0,
+        },
+        path_env: path,
+        lang: "C.UTF-8".into(),
+        tz: "UTC".into(),
+    };
+    let Some(browser) = launch(spec).await else {
+        return;
+    };
+    assert!(!browser.probe(&url).await);
+    assert!(browser.navigate(&url).await.is_err());
+    let checks = guard.accepts.load(Ordering::Relaxed);
+    assert!(
+        checks >= 2,
+        "expected both the health check and Chromium to verify the peer"
+    );
+    for _ in 0..checks {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let (mut socket, _) = fixture.accept().await.unwrap();
+            assert_eq!(socket.read(&mut [0]).await.unwrap(), 0);
+        })
+        .await
+        .unwrap();
+    }
+    browser.close().await.unwrap();
 }
 
 /// LOW-crop: a selector shared by a nav's links (`nav > a`) resolved to the
@@ -142,14 +333,7 @@ async fn real_browser_is_confined() {
 /// with its margin reached past the page's edge.
 #[tokio::test]
 async fn a_shared_selector_finds_the_recorded_element_and_crops_stay_on_the_page() {
-    if std::env::var("ARCHON_DESIGN_REAL_BROWSER").as_deref() != Ok("1") {
-        eprintln!("skipped: ARCHON_DESIGN_REAL_BROWSER=1 not set");
-        return;
-    }
-    let path = std::env::var("PATH").unwrap_or_default();
-    let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
-    let Ok(binary) = find_browser(None, &path, &home) else {
-        eprintln!("skipped: no browser found");
+    let Some((binary, path)) = browser_options() else {
         return;
     };
     let root = tempfile::tempdir().unwrap();
@@ -159,32 +343,36 @@ async fn a_shared_selector_finds_the_recorded_element_and_crops_stay_on_the_page
         touch: true,
         dpr: 1.0,
     };
+    let page = serve(|request| {
+        if request.uri().path() == "/moved" {
+            page_body("<html><head><meta name=viewport content=\"width=device-width\"></head>\
+         <body style=\"margin:0\"><nav style=\"position:relative;height:60px\">\
+         <a href=\"/\" style=\"position:absolute;left:10px;top:20px;width:50px;height:20px\">Home</a>\
+         <a href=\"/tasks\" style=\"position:absolute;left:100px;top:20px;width:50px;height:20px\">Tasks</a>\
+         <a href=\"/new\" style=\"position:absolute;left:200px;top:20px;width:80px;height:20px\">New task</a>\
+         </nav></body></html>")
+        } else {
+            page_body("<html><head><meta name=viewport content=\"width=device-width\"></head>\
+         <body style=\"margin:0\"><nav style=\"position:relative;height:60px\">\
+         <a href=\"/tasks\" style=\"position:absolute;left:200px;top:20px;width:50px;height:20px\">Tasks</a>\
+         <a href=\"/new\" style=\"position:absolute;left:300px;top:20px;width:80px;height:20px\">New task</a>\
+         </nav></body></html>")
+        }
+    }).await;
     let spec = LaunchSpec {
         binary,
         profile_dir: root.path().join("ds_zoom"),
         sandbox: std::env::var("ARCHON_DESIGN_SANDBOX_OFF").as_deref() != Ok("1"),
-        allow_hosts: vec![],
+        preview_url: format!("http://127.0.0.1:{page}/"),
+        upstream_guard: TestUpstream::allowing(),
         viewport: phone,
         path_env: path,
         lang: "C.UTF-8".into(),
         tz: "UTC".into(),
     };
-    let b = match Browser::launch(spec).await {
-        Ok(b) => b,
-        Err(BrowserError::SandboxUnavailable { hint }) => {
-            eprintln!("skipped: sandbox unavailable: {hint}");
-            return;
-        }
-        Err(e) => panic!("launch: {e}"),
-    };
+    let Some(b) = launch(spec).await else { return };
+
     b.set_viewport(phone).await.unwrap();
-    let page = serve(
-        "<html><head><meta name=viewport content=\"width=device-width\"></head>\
-         <body style=\"margin:0\"><nav style=\"position:relative;height:60px\">\
-         <a href=\"/tasks\" style=\"position:absolute;left:200px;top:20px;width:50px;height:20px\">Tasks</a>\
-         <a href=\"/new\" style=\"position:absolute;left:300px;top:20px;width:80px;height:20px\">New task</a>\
-         </nav></body></html>",
-    );
     b.navigate(&format!("http://127.0.0.1:{page}/"))
         .await
         .unwrap();
@@ -227,15 +415,7 @@ async fn a_shared_selector_finds_the_recorded_element_and_crops_stay_on_the_page
     let selector = picked.selector.expect("a selector");
     assert!(selector.ends_with("a[href=\"/new\"]"), "{selector}");
     // So a link the design adds before it leaves the note on its element.
-    let moved = serve(
-        "<html><head><meta name=viewport content=\"width=device-width\"></head>\
-         <body style=\"margin:0\"><nav style=\"position:relative;height:60px\">\
-         <a href=\"/\" style=\"position:absolute;left:10px;top:20px;width:50px;height:20px\">Home</a>\
-         <a href=\"/tasks\" style=\"position:absolute;left:100px;top:20px;width:50px;height:20px\">Tasks</a>\
-         <a href=\"/new\" style=\"position:absolute;left:200px;top:20px;width:80px;height:20px\">New task</a>\
-         </nav></body></html>",
-    );
-    b.navigate(&format!("http://127.0.0.1:{moved}/"))
+    b.navigate(&format!("http://127.0.0.1:{page}/moved"))
         .await
         .unwrap();
     let _ = b
@@ -257,14 +437,7 @@ async fn a_shared_selector_finds_the_recorded_element_and_crops_stay_on_the_page
 /// of the same, static page.
 #[tokio::test]
 async fn whole_page_pictures_at_2x_are_not_tiled_while_the_stream_runs() {
-    if std::env::var("ARCHON_DESIGN_REAL_BROWSER").as_deref() != Ok("1") {
-        eprintln!("skipped: ARCHON_DESIGN_REAL_BROWSER=1 not set");
-        return;
-    }
-    let path = std::env::var("PATH").unwrap_or_default();
-    let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
-    let Ok(binary) = find_browser(None, &path, &home) else {
-        eprintln!("skipped: no browser found");
+    let Some((binary, path)) = browser_options() else {
         return;
     };
     let root = tempfile::tempdir().unwrap();
@@ -273,24 +446,6 @@ async fn whole_page_pictures_at_2x_are_not_tiled_while_the_stream_runs() {
         height: 900,
         touch: false,
         dpr: 1.0,
-    };
-    let spec = LaunchSpec {
-        binary,
-        profile_dir: root.path().join("ds_tile"),
-        sandbox: std::env::var("ARCHON_DESIGN_SANDBOX_OFF").as_deref() != Ok("1"),
-        allow_hosts: vec![],
-        viewport: desktop,
-        path_env: path,
-        lang: "C.UTF-8".into(),
-        tz: "UTC".into(),
-    };
-    let b = match Browser::launch(spec).await {
-        Ok(b) => std::sync::Arc::new(b),
-        Err(BrowserError::SandboxUnavailable { hint }) => {
-            eprintln!("skipped: sandbox unavailable: {hint}");
-            return;
-        }
-        Err(e) => panic!("launch: {e}"),
     };
     // Four quadrants of four colours: a tiled picture repeats them.
     let quad = |l: u32, t: u32, c: &str| {
@@ -305,7 +460,20 @@ async fn whole_page_pictures_at_2x_are_not_tiled_while_the_stream_runs() {
         quad(0, 450, "#00f"),
         quad(720, 450, "#ff0"),
     );
-    let page = serve(Box::leak(body.into_boxed_str()));
+    let page = serve(move |_| page_body(body.clone())).await;
+    let spec = LaunchSpec {
+        binary,
+        profile_dir: root.path().join("ds_tile"),
+        sandbox: std::env::var("ARCHON_DESIGN_SANDBOX_OFF").as_deref() != Ok("1"),
+        preview_url: format!("http://127.0.0.1:{page}/"),
+        upstream_guard: TestUpstream::allowing(),
+        viewport: desktop,
+        path_env: path,
+        lang: "C.UTF-8".into(),
+        tz: "UTC".into(),
+    };
+    let Some(b) = launch(spec).await else { return };
+    let b = Arc::new(b);
     b.set_viewport(desktop).await.unwrap();
     b.navigate(&format!("http://127.0.0.1:{page}/"))
         .await

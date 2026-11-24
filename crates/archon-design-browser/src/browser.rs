@@ -19,8 +19,10 @@ use tokio::time::Instant;
 
 use crate::cdp::{CLOSED_EVENT, Cdp, CdpEvent, MAX_FRAME};
 use crate::launch::{
-    SHELL_SCRIPT, classify_stderr, kill_group, launch_args, launch_env, process_start_time,
+    SHELL_SCRIPT, classify_stderr, kill_group, kill_if_matches, launch_args, launch_env,
+    process_start_time,
 };
+use crate::proxy::{Policy, Proxy};
 use crate::relay::{FrameRelay, RelayShared};
 use crate::sanitize::clean;
 use crate::{
@@ -53,9 +55,15 @@ impl Drop for LaunchGuard {
     }
 }
 
+struct OwnedSession {
+    policy: Arc<Policy>,
+    process: (u32, u64),
+}
+
 #[derive(Debug)]
 struct State {
     url: String,
+    main_frame: Option<String>,
     reqs: HashMap<String, String>,
     last_net: Instant,
     blocked: HashSet<String>,
@@ -71,6 +79,8 @@ pub(crate) struct Shared {
     pub(crate) cdp: Cdp,
     pub(crate) session: String,
     target_id: String,
+    policy: Option<Arc<Policy>>,
+    owned_process: Option<(u32, u64)>,
     events: broadcast::Sender<BrowserEvent>,
     pub(crate) relay: Arc<RelayShared>,
     st: Mutex<State>,
@@ -89,10 +99,12 @@ pub struct Browser {
     pid: Option<u32>,
     started_at: Option<u64>,
     event_task: JoinHandle<()>,
+    proxy: Option<Proxy>,
 }
 
 impl Drop for Browser {
     fn drop(&mut self) {
+        self.proxy.take();
         self.event_task.abort();
         self.sh.relay.close();
         self.sh.cdp.abort();
@@ -380,13 +392,13 @@ impl Shared {
             }),
             "Page.fileChooserOpened" if ours => self.emit(BrowserEvent::FileChooserRefused),
             "Page.frameNavigated" if ours && p["frame"]["parentId"].is_null() => {
-                if let Some(u) = p["frame"]["url"].as_str() {
-                    self.st.lock().unwrap().url = u.to_string();
-                }
+                let frame = &p["frame"];
+                return self.record_document(frame["id"].as_str(), frame["url"].as_str());
             }
             "Page.navigatedWithinDocument" if ours => {
-                if let Some(u) = p["url"].as_str() {
-                    self.st.lock().unwrap().url = u.to_string();
+                let frame = p["frameId"].as_str();
+                if self.policy.is_none() || self.st.lock().unwrap().main_frame.as_deref() == frame {
+                    return self.record_document(frame, p["url"].as_str());
                 }
             }
             "Page.loadEventFired" if ours => {
@@ -418,6 +430,73 @@ impl Shared {
         false
     }
 
+    fn record_document(&self, frame: Option<&str>, url: Option<&str>) -> bool {
+        let mut state = self.st.lock().unwrap();
+        let Some(url) = url else {
+            return false;
+        };
+        if let Some(policy) = &self.policy
+            && !policy.origin.allows_navigation(url)
+            && !(url == "about:blank" && state.url.is_empty())
+            && url != "chrome-error://chromewebdata/"
+        {
+            drop(state);
+            self.stop_for_policy("unexpected document URL");
+            return true;
+        }
+        state.main_frame = frame.map(str::to_owned);
+        state.url = url.to_owned();
+        false
+    }
+
+    async fn guard_document(&self, event: &CdpEvent) -> Result<(), BrowserError> {
+        let Some(policy) = &self.policy else {
+            return Ok(());
+        };
+        let params = &event.params;
+        let id = params["requestId"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| BrowserError::Protocol("document request has no request ID".into()))?;
+        let url = params["request"]["url"]
+            .as_str()
+            .ok_or_else(|| BrowserError::Protocol("document request has no URL".into()))?;
+        let (method, args) = if policy.origin.allows_navigation(url) {
+            ("Fetch.continueRequest", json!({"requestId": id}))
+        } else {
+            self.emit_blocked(url);
+            (
+                "Fetch.failRequest",
+                json!({"requestId": id, "errorReason": "BlockedByClient"}),
+            )
+        };
+        self.call(method, args).await?;
+        Ok(())
+    }
+
+    fn stop_for_policy(&self, reason: &str) {
+        tracing::warn!(
+            reason,
+            "closing preview browser after document policy failure"
+        );
+        if let Some((pid, started_at)) = self.owned_process {
+            kill_if_matches(pid, started_at);
+        }
+        self.cdp.abort();
+        self.emit(BrowserEvent::Exited);
+    }
+
+    fn emit_blocked(&self, url: &str) {
+        if let Some(host) = host_of(url) {
+            let host = clean(&host);
+            let mut st = self.st.lock().unwrap();
+            if st.blocked.len() < 256 && st.blocked.insert(host.clone()) {
+                drop(st);
+                self.emit(BrowserEvent::BlockedHost { host });
+            }
+        }
+    }
+
     fn on_failed(&self, p: &Value) {
         let err = p["errorText"].as_str().unwrap_or_default();
         let url = {
@@ -430,13 +509,13 @@ impl Shared {
         };
         let proxy_failure = err.contains("ERR_PROXY_CONNECTION_FAILED")
             || err.contains("ERR_TUNNEL_CONNECTION_FAILED");
-        if let (true, Some(host)) = (proxy_failure, host_of(&url)) {
-            let host = clean(&host);
-            let mut st = self.st.lock().unwrap();
-            if st.blocked.len() < 256 && st.blocked.insert(host.clone()) {
-                drop(st);
-                self.emit(BrowserEvent::BlockedHost { host });
-            }
+        if proxy_failure
+            || self
+                .policy
+                .as_ref()
+                .is_some_and(|policy| !policy.origin.allows_network_url(&url))
+        {
+            self.emit_blocked(&url);
         }
         if p["type"] == "Document" && p["canceled"] != true {
             self.emit(BrowserEvent::NavigationFailed {
@@ -470,11 +549,161 @@ impl Shared {
     }
 }
 
+async fn handle_events(
+    sh: Arc<Shared>,
+    mut events: broadcast::Receiver<CdpEvent>,
+    mut documents: broadcast::Receiver<CdpEvent>,
+) {
+    loop {
+        let event = tokio::select! {
+            biased;
+            result = documents.recv() => match result {
+                Err(broadcast::error::RecvError::Lagged(_)) if sh.policy.is_some() => {
+                    sh.stop_for_policy("lost document events");
+                    return;
+                }
+                other => other,
+            },
+            result = events.recv() => result,
+        };
+        match event {
+            Ok(ev)
+                if ev.method == "Fetch.requestPaused"
+                    && ev.session_id.as_deref() == Some(&sh.session) =>
+            {
+                if let Err(error) = sh.guard_document(&ev).await {
+                    sh.stop_for_policy(&error.to_string());
+                    return;
+                }
+            }
+            Ok(ev) => {
+                if sh.handle(ev) {
+                    return;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(_)) => {}
+            Err(broadcast::error::RecvError::Closed) => return,
+        }
+    }
+}
+
+async fn read_stderr(mut stderr: tokio::process::ChildStderr, tail: Arc<Mutex<String>>) {
+    let mut buf = [0u8; 4096];
+    while let Ok(n) = stderr.read(&mut buf).await {
+        if n == 0 {
+            break;
+        }
+        let mut t = tail.lock().unwrap();
+        t.push_str(&String::from_utf8_lossy(&buf[..n]));
+        if t.len() > 16 * 1024 {
+            let cut = t.len() - 8 * 1024;
+            let cut = (cut..t.len()).find(|i| t.is_char_boundary(*i)).unwrap_or(0);
+            t.drain(..cut);
+        }
+    }
+}
+
+fn launch_failure(tail: &Mutex<String>, why: String) -> BrowserError {
+    let text = tail.lock().unwrap();
+    classify_stderr(&text).unwrap_or_else(|| {
+        let offset = text
+            .char_indices()
+            .rev()
+            .nth(499)
+            .map_or(0, |(index, _)| index);
+        BrowserError::Launch(format!("{why}: {}", text[offset..].trim()))
+    })
+}
+
+async fn attach_page(
+    cdp: &Cdp,
+    rx: &mut broadcast::Receiver<CdpEvent>,
+) -> Result<(String, String), BrowserError> {
+    cdp.call(
+        None,
+        "Target.setDiscoverTargets",
+        json!({"discover": true}),
+        CALL_TIMEOUT,
+    )
+    .await?;
+    let target_id = tokio::time::timeout(CALL_TIMEOUT, async {
+        loop {
+            match rx.recv().await {
+                Ok(e)
+                    if e.method == "Target.targetCreated"
+                        && e.params["targetInfo"]["type"] == "page" =>
+                {
+                    return Ok(e.params["targetInfo"]["targetId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string());
+                }
+                Ok(e) if e.method == CLOSED_EVENT => return Err(BrowserError::Closed),
+                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(_) => return Err(BrowserError::Closed),
+            }
+        }
+    })
+    .await
+    .map_err(|_| BrowserError::Timeout("no page target".into()))??;
+    let r = cdp
+        .call(
+            None,
+            "Target.attachToTarget",
+            json!({"targetId": target_id, "flatten": true}),
+            CALL_TIMEOUT,
+        )
+        .await?;
+    let session = r["sessionId"]
+        .as_str()
+        .ok_or_else(|| BrowserError::Protocol("attachToTarget gave no sessionId".into()))?
+        .to_string();
+    Ok((target_id, session))
+}
+
+async fn configure_page(cdp: &Cdp, session: &str, confined: bool) -> Result<(), BrowserError> {
+    cdp.call(
+        None,
+        "Browser.setDownloadBehavior",
+        json!({"behavior": "deny"}),
+        CALL_TIMEOUT,
+    )
+    .await?;
+    for m in [
+        "Page.enable",
+        "DOM.enable",
+        "CSS.enable",
+        "Network.enable",
+        "Runtime.enable",
+    ] {
+        cdp.call(Some(session), m, json!({}), CALL_TIMEOUT).await?;
+    }
+    cdp.call(
+        Some(session),
+        "Page.setInterceptFileChooserDialog",
+        json!({"enabled": true}),
+        CALL_TIMEOUT,
+    )
+    .await?;
+    if confined {
+        cdp.call(
+            Some(session),
+            "Fetch.enable",
+            json!({"patterns": [{"resourceType": "Document"}]}),
+            CALL_TIMEOUT,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 impl Browser {
     /// Start Chromium and attach to its page.
     pub async fn launch(spec: LaunchSpec) -> Result<Browser, BrowserError> {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
         let io = |e: std::io::Error| BrowserError::Launch(e.to_string());
+        let policy = Arc::new(Policy::new(&spec.preview_url, spec.upstream_guard.clone())?);
+        let proxy = Proxy::start(policy.clone()).await.map_err(io)?;
         if let Some(parent) = spec.profile_dir.parent() {
             fs::create_dir_all(parent).map_err(io)?;
         }
@@ -484,10 +713,14 @@ impl Browser {
             .create(&spec.profile_dir)
             .map_err(io)?;
         fs::set_permissions(&spec.profile_dir, fs::Permissions::from_mode(0o700)).map_err(io)?;
-        Self::spawn(&spec).await
+        Self::spawn(&spec, policy, proxy).await
     }
 
-    async fn spawn(spec: &LaunchSpec) -> Result<Browser, BrowserError> {
+    async fn spawn(
+        spec: &LaunchSpec,
+        policy: Arc<Policy>,
+        proxy: Proxy,
+    ) -> Result<Browser, BrowserError> {
         let mut guard = LaunchGuard {
             pid: None,
             profile: Some(spec.profile_dir.clone()),
@@ -496,7 +729,7 @@ impl Browser {
         cmd.arg("-c")
             .arg(SHELL_SCRIPT)
             .arg(&spec.binary)
-            .args(launch_args(spec))
+            .args(launch_args(spec, proxy.addr))
             .env_clear()
             .envs(launch_env(spec))
             .stdin(Stdio::piped())
@@ -510,69 +743,12 @@ impl Browser {
         let pid = child.id();
         guard.pid = pid;
         let started_at = pid.and_then(process_start_time);
-        let (Some(stdin), Some(stdout), Some(stderr)) =
-            (child.stdin.take(), child.stdout.take(), child.stderr.take())
-        else {
-            return Err(BrowserError::Launch("child pipes missing".into()));
-        };
-        let tail = Arc::new(Mutex::new(String::new()));
-        let t2 = tail.clone();
-        let stderr_task = tokio::spawn(async move {
-            let mut stderr = stderr;
-            let mut buf = [0u8; 4096];
-            while let Ok(n) = stderr.read(&mut buf).await {
-                if n == 0 {
-                    break;
-                }
-                let mut t = t2.lock().unwrap();
-                t.push_str(&String::from_utf8_lossy(&buf[..n]));
-                if t.len() > 16 * 1024 {
-                    let cut = t.len() - 8 * 1024;
-                    let cut = (cut..t.len()).find(|i| t.is_char_boundary(*i)).unwrap_or(0);
-                    t.drain(..cut);
-                }
-            }
-        });
-        let fail = |child: &mut Child, why: String| {
-            if let Some(p) = child.id() {
-                kill_group(p);
-            }
-            let text = tail.lock().unwrap().clone();
-            classify_stderr(&text).unwrap_or_else(|| {
-                let t: String = text
-                    .chars()
-                    .rev()
-                    .take(500)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect();
-                BrowserError::Launch(format!("{why}: {}", t.trim()))
-            })
-        };
-        let connected = tokio::select! {
-            r = tokio::time::timeout(LAUNCH_TIMEOUT, Self::attach(stdout, stdin, Some(spec.viewport))) => Some(r),
-            status = child.wait() => {
-                let _ = tokio::time::timeout(Duration::from_secs(1), stderr_task).await;
-                let why = format!("browser exited early ({})", status.map(|s| s.to_string()).unwrap_or_default());
-                return Err(fail(&mut child, why));
-            }
-        };
-        let mut b = match connected {
-            Some(Ok(Ok(b))) => b,
-            Some(Ok(Err(e))) => {
-                let _ = tokio::time::timeout(Duration::from_millis(300), stderr_task).await;
-                let text = tail.lock().unwrap().clone();
-                if let Some(s) = classify_stderr(&text) {
-                    if let Some(p) = child.id() {
-                        kill_group(p);
-                    }
-                    return Err(s);
-                }
-                return Err(fail(&mut child, e.to_string()));
-            }
-            _ => return Err(fail(&mut child, "browser did not answer in time".into())),
-        };
+        let process = pid.zip(started_at).ok_or_else(|| {
+            BrowserError::Launch("browser process identity is unavailable".into())
+        })?;
+        let mut b =
+            Self::attach_child(&mut child, spec.viewport, OwnedSession { policy, process }).await?;
+        b.proxy = Some(proxy);
         b.child = Some(child);
         b.profile = Some(spec.profile_dir.clone());
         b.pid = pid;
@@ -582,19 +758,56 @@ impl Browser {
         Ok(b)
     }
 
+    async fn attach_child(
+        child: &mut Child,
+        viewport: Viewport,
+        owned: OwnedSession,
+    ) -> Result<Browser, BrowserError> {
+        let (Some(stdin), Some(stdout), Some(stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
+            return Err(BrowserError::Launch("child pipes missing".into()));
+        };
+        let tail = Arc::new(Mutex::new(String::new()));
+        let stderr_task = tokio::spawn(read_stderr(stderr, tail.clone()));
+        let connected = tokio::select! {
+            result = tokio::time::timeout(
+                LAUNCH_TIMEOUT,
+                Self::attach(stdout, stdin, Some(viewport), Some(owned)),
+            ) => result,
+            status = child.wait() => {
+                let _ = tokio::time::timeout(Duration::from_secs(1), stderr_task).await;
+                return Err(launch_failure(&tail, format!("browser exited early ({status:?})")));
+            }
+        };
+        match connected {
+            Ok(Ok(browser)) => Ok(browser),
+            Ok(Err(error)) => {
+                let _ = tokio::time::timeout(Duration::from_millis(300), stderr_task).await;
+                Err(launch_failure(&tail, error.to_string()))
+            }
+            Err(_) => Err(launch_failure(
+                &tail,
+                "browser did not answer in time".into(),
+            )),
+        }
+    }
+
     /// Drive a browser over an existing CDP pipe (no process is owned).
-    pub async fn connect<R, W>(reader: R, writer: W) -> Result<Browser, BrowserError>
+    #[cfg(test)]
+    pub(crate) async fn connect<R, W>(reader: R, writer: W) -> Result<Browser, BrowserError>
     where
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
-        Self::attach(reader, writer, None).await
+        Self::attach(reader, writer, None, None).await
     }
 
     async fn attach<R, W>(
         reader: R,
         writer: W,
         viewport: Option<Viewport>,
+        owned: Option<OwnedSession>,
     ) -> Result<Browser, BrowserError>
     where
         R: AsyncRead + Unpin + Send + 'static,
@@ -602,68 +815,13 @@ impl Browser {
     {
         let cdp = Cdp::new(reader, writer, MAX_FRAME);
         let mut rx = cdp.subscribe();
-        cdp.call(
-            None,
-            "Target.setDiscoverTargets",
-            json!({"discover": true}),
-            CALL_TIMEOUT,
-        )
-        .await?;
-        let target_id = tokio::time::timeout(CALL_TIMEOUT, async {
-            loop {
-                match rx.recv().await {
-                    Ok(e)
-                        if e.method == "Target.targetCreated"
-                            && e.params["targetInfo"]["type"] == "page" =>
-                    {
-                        return Ok(e.params["targetInfo"]["targetId"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_string());
-                    }
-                    Ok(e) if e.method == CLOSED_EVENT => return Err(BrowserError::Closed),
-                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(_) => return Err(BrowserError::Closed),
-                }
-            }
-        })
-        .await
-        .map_err(|_| BrowserError::Timeout("no page target".into()))??;
-        let r = cdp
-            .call(
-                None,
-                "Target.attachToTarget",
-                json!({"targetId": target_id, "flatten": true}),
-                CALL_TIMEOUT,
-            )
-            .await?;
-        let session = r["sessionId"]
-            .as_str()
-            .ok_or_else(|| BrowserError::Protocol("attachToTarget gave no sessionId".into()))?
-            .to_string();
-        cdp.call(
-            None,
-            "Browser.setDownloadBehavior",
-            json!({"behavior": "deny"}),
-            CALL_TIMEOUT,
-        )
-        .await?;
-        for m in [
-            "Page.enable",
-            "DOM.enable",
-            "CSS.enable",
-            "Network.enable",
-            "Runtime.enable",
-        ] {
-            cdp.call(Some(&session), m, json!({}), CALL_TIMEOUT).await?;
-        }
-        cdp.call(
-            Some(&session),
-            "Page.setInterceptFileChooserDialog",
-            json!({"enabled": true}),
-            CALL_TIMEOUT,
-        )
-        .await?;
+        let documents = cdp.subscribe_documents();
+        let (target_id, session) = attach_page(&cdp, &mut rx).await?;
+        let (policy, owned_process) = match owned {
+            Some(OwnedSession { policy, process }) => (Some(policy), Some(process)),
+            None => (None, None),
+        };
+        configure_page(&cdp, &session, policy.is_some()).await?;
         let vp = viewport.unwrap_or(Viewport {
             width: 1280,
             height: 800,
@@ -675,11 +833,14 @@ impl Browser {
             cdp,
             session,
             target_id,
+            policy,
+            owned_process,
             events,
             relay: Arc::new(RelayShared::default()),
             shot: tokio::sync::Mutex::new(()),
             st: Mutex::new(State {
                 url: String::new(),
+                main_frame: None,
                 reqs: HashMap::new(),
                 last_net: Instant::now(),
                 blocked: HashSet::new(),
@@ -689,20 +850,7 @@ impl Browser {
                 poll: None,
             }),
         });
-        let sh2 = sh.clone();
-        let event_task = tokio::spawn(async move {
-            loop {
-                match rx.recv().await {
-                    Ok(ev) => {
-                        if sh2.handle(ev) {
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(_) => break,
-                }
-            }
-        });
+        let event_task = tokio::spawn(handle_events(sh.clone(), rx, documents));
         let b = Browser {
             sh,
             child: None,
@@ -710,6 +858,7 @@ impl Browser {
             pid: None,
             started_at: None,
             event_task,
+            proxy: None,
         };
         if let Some(v) = viewport {
             b.set_viewport(v).await?;
@@ -729,6 +878,17 @@ impl Browser {
 
     /// Navigate the page.
     pub async fn navigate(&self, url: &str) -> Result<(), BrowserError> {
+        if self
+            .sh
+            .policy
+            .as_ref()
+            .is_some_and(|policy| !policy.origin.allows_navigation(url))
+        {
+            return Err(BrowserError::Navigation {
+                url: clean(url),
+                error: "URL is outside the registered preview origin".into(),
+            });
+        }
         let r = self.sh.call("Page.navigate", json!({"url": url})).await?;
         if let Some(e) = r["errorText"].as_str().filter(|e| !e.is_empty()) {
             let (url, error) = (clean(url), clean(e));
@@ -739,6 +899,14 @@ impl Browser {
             return Err(BrowserError::Navigation { url, error });
         }
         Ok(())
+    }
+
+    /// Check whether the verified preview server responds to HTTP.
+    pub async fn probe(&self, url: &str) -> bool {
+        match &self.sh.policy {
+            Some(policy) => policy.probe(url).await,
+            None => false,
+        }
     }
 
     /// Reload the page.
@@ -957,6 +1125,7 @@ impl Browser {
 
     /// Kill the process group, wait for it and delete the profile.
     pub async fn close(mut self) -> Result<(), BrowserError> {
+        self.proxy.take();
         self.sh.relay.close();
         if let Some(h) = self.sh.st.lock().unwrap().poll.take() {
             h.abort();

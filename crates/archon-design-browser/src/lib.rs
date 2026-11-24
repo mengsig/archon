@@ -8,6 +8,8 @@ mod browser;
 mod cdp;
 mod error;
 mod launch;
+mod origin;
+mod proxy;
 mod relay;
 mod resolve;
 mod sanitize;
@@ -20,9 +22,10 @@ use std::collections::BTreeMap;
 pub use browser::Browser;
 pub use error::BrowserError;
 pub use launch::{
-    LaunchSpec, doctor_line, find_browser, kill_if_matches, launch_args, launch_env,
-    process_start_time, proxy_bypass_list, sweep_profiles,
+    LaunchSpec, doctor_line, find_browser, kill_if_matches, launch_env, process_start_time,
+    sweep_profiles,
 };
+pub use proxy::UpstreamGuard;
 pub use relay::{FrameRelay, FrameSubscriber};
 
 /// Largest encoded picture or frame (a base64 JSON frame then stays under 768 KiB).

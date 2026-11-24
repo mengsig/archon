@@ -39,6 +39,8 @@ pub trait PreviewBrowser: Send + Sync {
     fn pid(&self) -> Option<u32>;
     fn started_at(&self) -> Option<u64>;
     async fn navigate(&self, url: &str) -> Result<(), adb::BrowserError>;
+    /// Check whether the attached preview server answers at the registered URL.
+    async fn probe(&self, url: &str) -> bool;
     async fn reload(&self) -> Result<(), adb::BrowserError>;
     async fn set_viewport(&self, viewport: adb::Viewport) -> Result<(), adb::BrowserError>;
     async fn input(&self, events: &[adb::Input]) -> Result<(), adb::BrowserError>;
@@ -112,6 +114,14 @@ pub trait PreviewBrowser: Send + Sync {
 pub trait BrowserFactory: Send + Sync {
     /// The browser binary, or the driver's refusal with its install hint.
     fn binary(&self, configured: Option<&std::path::Path>) -> Result<PathBuf, adb::BrowserError>;
+    /// Verify ownership of the registered preview server and prepare socket checks.
+    async fn verify_server(
+        &self,
+        worktree: &std::path::Path,
+        url: &str,
+    ) -> Result<Arc<dyn adb::UpstreamGuard>, ArchonError> {
+        super::server_origin::verify(worktree, url).await
+    }
     async fn launch(
         &self,
         spec: adb::LaunchSpec,
@@ -181,6 +191,12 @@ impl PreviewBrowser for Real {
     }
     async fn navigate(&self, url: &str) -> Result<(), adb::BrowserError> {
         self.get()?.navigate(url).await
+    }
+    async fn probe(&self, url: &str) -> bool {
+        match self.get() {
+            Ok(browser) => browser.probe(url).await,
+            Err(_) => false,
+        }
     }
     async fn reload(&self) -> Result<(), adb::BrowserError> {
         self.get()?.reload().await
@@ -312,6 +328,7 @@ pub(crate) struct Runtime {
     pub state: std::sync::Mutex<RtState>,
     /// Serializes launch, relaunch and close.
     pub gate: tokio::sync::Mutex<()>,
+    pub delivery: tokio::sync::Mutex<()>,
 }
 
 /// A reserved slot; releasing it on drop covers every error path.
@@ -383,6 +400,7 @@ impl Runtime {
             frames: watch::channel(None).0,
             state: std::sync::Mutex::new(RtState::default()),
             gate: tokio::sync::Mutex::new(()),
+            delivery: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -479,7 +497,7 @@ impl DesignService {
         self.data_dir
             .join("design")
             .join("profiles")
-            .join(&session.0)
+            .join(session.as_str())
     }
 
     /// The session's browser, launched now if it is not running: lazily, on an
@@ -492,6 +510,11 @@ impl DesignService {
     ) -> Result<Option<Arc<dyn PreviewBrowser>>, ArchonError> {
         let rt = self.runtime(session);
         let _gate = rt.gate.lock().await;
+        if self.stopping.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(ArchonError::Unavailable(
+                "the daemon is shutting down".into(),
+            ));
+        }
         if let Some(browser) = rt.browser() {
             return Ok(Some(browser));
         }
@@ -522,8 +545,8 @@ impl DesignService {
             return Ok(None);
         };
         self.set_status(&rt, session, BrowserStatus::Starting);
-        let wt = match self.worktree_of(ctx, &row).await {
-            Ok(wt) => wt,
+        let upstream_guard = match self.verify_registered_preview(ctx, &row, &url).await {
+            Ok(guard) => guard,
             Err(error) => {
                 drop(slot);
                 self.spawn_start_queued();
@@ -531,8 +554,7 @@ impl DesignService {
                 return Err(error);
             }
         };
-        let allow_hosts = super::repo_hosts::allow_hosts(ctx, &wt, &self.data_dir).await;
-        let launched = self.launch_into(ctx, &rt, &row, &url, allow_hosts).await;
+        let launched = self.launch_into(ctx, &rt, &row, &url, upstream_guard).await;
         // The browser is stored by now, or the launch failed: either way the
         // reservation ends, and a failed launch hands its slot on.
         drop(slot);
@@ -558,13 +580,23 @@ impl DesignService {
         }
     }
 
+    async fn verify_registered_preview(
+        &self,
+        ctx: &DaemonContext,
+        row: &archon_core::design::DesignSession,
+        url: &str,
+    ) -> Result<Arc<dyn adb::UpstreamGuard>, ArchonError> {
+        let wt = self.worktree_of(ctx, row).await?;
+        self.factory().verify_server(&wt.worktree, url).await
+    }
+
     async fn launch_into(
         &self,
         ctx: &DaemonContext,
         rt: &Arc<Runtime>,
         row: &archon_core::design::DesignSession,
         url: &str,
-        allow_hosts: Vec<String>,
+        upstream_guard: Arc<dyn adb::UpstreamGuard>,
     ) -> Result<Arc<dyn PreviewBrowser>, adb::BrowserError> {
         let factory = self.factory();
         let binary = factory.binary(self.cfg.browser.as_deref())?;
@@ -579,18 +611,24 @@ impl DesignService {
             binary,
             profile_dir: profile,
             sandbox: !row.sandbox_off,
-            allow_hosts,
+            preview_url: url.to_owned(),
+            upstream_guard,
             viewport,
             path_env: std::env::var("PATH").unwrap_or_default(),
             lang: "en-US".into(),
             tz: "UTC".into(),
         };
         let browser = factory.launch(spec).await?;
+        if let Err(error) = self.persist_browser_pid(ctx, row, &*browser).await {
+            browser.close().await;
+            return Err(adb::BrowserError::Launch(format!(
+                "recording the preview browser: {error}"
+            )));
+        }
         if let Err(error) = browser.navigate(url).await {
             tracing::info!(%error, url, "the first navigation of the preview failed");
         }
         let pid = browser.pid();
-        let started = browser.started_at();
         {
             let mut state = rt.st();
             state.browser = Some(browser.clone());
@@ -601,20 +639,34 @@ impl DesignService {
                 BrowserStatus::Running
             };
         }
-        {
-            let mut store = ctx.store.lock().await;
-            let patch = archon_queue::store::SessionPatch {
-                browser: Some(pid.zip(started)),
-                ..Default::default()
-            };
-            if let Err(error) = store.design_session_patch(&row.id, patch) {
-                tracing::warn!(%error, "the browser's pid was not recorded");
-            }
-        }
         tracing::info!(session = %row.id, ?pid, sandbox = !row.sandbox_off, device = ?super::current_device_label(), "design: browser started");
         self.emit_session(ctx, &row.id).await;
         self.spawn_monitor(ctx, row.id.clone());
         Ok(browser)
+    }
+
+    async fn persist_browser_pid(
+        &self,
+        ctx: &DaemonContext,
+        row: &archon_core::design::DesignSession,
+        browser: &dyn PreviewBrowser,
+    ) -> Result<(), ArchonError> {
+        let pid = browser.pid();
+        let started_at = browser.started_at();
+        if pid.is_some() != started_at.is_some() {
+            return Err(ArchonError::Unavailable(
+                "the preview browser has no verifiable process identity".into(),
+            ));
+        }
+        let patch = archon_queue::store::SessionPatch {
+            browser: Some(pid.zip(started_at)),
+            ..Default::default()
+        };
+        ctx.store
+            .lock()
+            .await
+            .design_session_patch(&row.id, patch)?;
+        Ok(())
     }
 
     fn set_status(&self, rt: &Runtime, session: &DesignSessionId, status: BrowserStatus) {
@@ -964,7 +1016,7 @@ impl DesignService {
         // Is the app answering?
         let url = rt.st().last_url.clone();
         if let Some(url) = url {
-            let reachable = probe(&url).await;
+            let reachable = browser.probe(&url).await;
             // A dev server compiling a route can miss one probe; two misses
             // in a row (about 3 s apart) mean the preview is down.
             let down = {
@@ -982,110 +1034,3 @@ impl DesignService {
 
 /// Consecutive failed health probes before a preview is marked down.
 const PROBE_MISSES_DOWN: u32 = 2;
-
-/// Whether the preview's dev server answers HTTP: a status line (any status)
-/// within two seconds. A server that is stopped or hung still accepts TCP
-/// through the kernel backlog, so connecting alone proves nothing.
-pub(crate) async fn probe(url: &str) -> bool {
-    let Some(rest) = url.strip_prefix("http://") else {
-        return false;
-    };
-    let (authority, path) = match rest.find(['/', '?', '#']) {
-        Some(at) => (&rest[..at], &rest[at..]),
-        None => (rest, "/"),
-    };
-    let path = match path.split('#').next().unwrap_or("/") {
-        "" => "/",
-        p if p.starts_with('/') => p,
-        p => return probe_with(authority, &format!("/{p}")).await,
-    };
-    probe_with(authority, path).await
-}
-
-async fn probe_with(authority: &str, path: &str) -> bool {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    // `host:port` or `[v6]:port` as given; a bare host or `[v6]` gets port 80.
-    let has_port = if authority.starts_with('[') {
-        authority.contains("]:")
-    } else {
-        authority.contains(':')
-    };
-    let target = if has_port {
-        authority.to_owned()
-    } else {
-        format!("{authority}:80")
-    };
-    let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\nAccept: */*\r\n\r\n"
-    );
-    let attempt = async {
-        let mut stream = tokio::net::TcpStream::connect(&target).await.ok()?;
-        stream.write_all(request.as_bytes()).await.ok()?;
-        let mut head = Vec::with_capacity(16);
-        let mut buf = [0u8; 16];
-        while head.len() < 12 {
-            let n = stream.read(&mut buf).await.ok()?;
-            if n == 0 {
-                break;
-            }
-            head.extend_from_slice(&buf[..n]);
-        }
-        Some(head.starts_with(b"HTTP/") && head.len() >= 12)
-    };
-    matches!(
-        tokio::time::timeout(Duration::from_secs(2), attempt).await,
-        Ok(Some(true))
-    )
-}
-
-#[cfg(test)]
-mod probe_tests {
-    use super::probe;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    async fn serve(status: &'static str) -> String {
-        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = l.local_addr().unwrap();
-        tokio::spawn(async move {
-            loop {
-                let Ok((mut s, _)) = l.accept().await else {
-                    return;
-                };
-                tokio::spawn(async move {
-                    let mut b = [0u8; 512];
-                    let n = s.read(&mut b).await.unwrap_or(0);
-                    assert!(String::from_utf8_lossy(&b[..n]).starts_with("GET /x?q=1 HTTP/1.1"));
-                    let _ = s
-                        .write_all(
-                            format!("HTTP/1.1 {status}\r\ncontent-length: 0\r\n\r\n").as_bytes(),
-                        )
-                        .await;
-                });
-            }
-        });
-        format!("http://{addr}/x?q=1")
-    }
-
-    #[tokio::test]
-    async fn any_status_is_reachable() {
-        assert!(probe(&serve("200 OK").await).await);
-        assert!(probe(&serve("404 Not Found").await).await);
-    }
-
-    #[tokio::test]
-    async fn silent_listener_is_unreachable() {
-        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/", l.local_addr().unwrap());
-        let started = std::time::Instant::now();
-        assert!(!probe(&url).await);
-        assert!(started.elapsed() < std::time::Duration::from_secs(4));
-    }
-
-    #[tokio::test]
-    async fn closed_port_is_unreachable() {
-        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/", l.local_addr().unwrap());
-        drop(l);
-        assert!(!probe(&url).await);
-    }
-}

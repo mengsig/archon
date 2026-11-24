@@ -83,7 +83,8 @@ pub const TOOLS: &[ToolName] = &[
     tool("watch_repo", ToolClass::Mutation),
     tool("design_preview", ToolClass::Mutation),
     tool("design_note", ToolClass::Mutation),
-    tool("design_history", ToolClass::ReadOnly),
+    // A read, but it names its caller like the other design tools.
+    tool("design_history", ToolClass::Mutation),
 ];
 
 /// The tools a stage agent keeps whatever its item's `tools` mode: its

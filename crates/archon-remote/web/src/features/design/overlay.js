@@ -255,7 +255,16 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
         layout();
       }
       ctx2d.drawImage(bitmap, 0, 0, frame.w, frame.h);
-      bitmap.close?.();
+    },
+    clearFrame() {
+      ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+      touches.clear();
+      twoPrev = null;
+      drag = null;
+      hover.hidden = true;
+      kbRegion = null;
+      regionBox.hidden = true;
+      if (capturing) { capturing = false; onCapture(false); }
     },
     get frame() { return frame; },
     get capturing() { return capturing; },

@@ -7,13 +7,15 @@ const MAX_QUEUED = 512;
 
 export function createInputBatcher({
   send, now = () => performance.now(), setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t),
-  perSecond = MAX_REQUESTS_PER_SECOND, maxEvents = MAX_INPUT_EVENTS,
+  perSecond = MAX_REQUESTS_PER_SECOND, maxEvents = MAX_INPUT_EVENTS, onOverflow = () => {},
 }) {
   if (typeof send !== 'function') throw new TypeError('the input batcher needs a send function');
   const gap = 1000 / perSecond;
   let queue = [];
   let lastSent = -Infinity;
   let timer = null;
+  const pressed = new Set();
+  let overflowReported = false;
 
   function merge(event) {
     const last = queue[queue.length - 1];
@@ -32,7 +34,35 @@ export function createInputBatcher({
     return false;
   }
 
+  function admit(event) {
+    const { type, action } = event;
+    const key = type === 'key' ? `key:${event.code || event.key}`
+      : type === 'mouse' && event.button !== 'none' ? `mouse:${event.button}`
+      : type === 'touch' ? 'touch' : null;
+    const down = key !== null && (action === 'down' || action === 'start');
+    const up = key !== null && (action === 'up' || action === 'end' || action === 'cancel');
+    const held = pressed.has(key);
+    if (key !== null && (up || action === 'move') && !held) return false;
+    if (merge(event)) return true;
+
+    // Each admitted press reserves space for its release, even after it is sent.
+    const reserve = down && !held ? 1 : up ? -1 : 0;
+    while (queue.length + pressed.size + 1 + reserve > MAX_QUEUED) {
+      const at = queue.findIndex((e) => e.type === 'wheel' || e.action === 'move');
+      if (at !== -1) { queue.splice(at, 1); continue; }
+      if (!overflowReported) { overflowReported = true; onOverflow(); }
+      return false;
+    }
+    if (down) pressed.add(key);
+    if (up) pressed.delete(key);
+    queue.push(event);
+    console.assert(queue.length + pressed.size <= MAX_QUEUED, 'Input queue exceeded its release reserve');
+    console.assert(!up || !pressed.has(key), 'Input release did not clear its press');
+    return true;
+  }
+
   function flush() {
+    if (timer !== null) clearTimer(timer);
     timer = null;
     if (queue.length === 0) return 0;
     const wait = lastSent + gap - now();
@@ -42,6 +72,7 @@ export function createInputBatcher({
     }
     const events = queue.slice(0, maxEvents);
     queue = queue.slice(maxEvents);
+    if (queue.length === 0) overflowReported = false;
     lastSent = now();
     send(events);
     if (queue.length > 0 && timer === null) timer = setTimer(flush, Math.ceil(gap));
@@ -50,15 +81,9 @@ export function createInputBatcher({
 
   return {
     push(event) {
-      if (!merge(event)) {
-        queue.push(event);
-        // Past the bound, the oldest pure moves go first; clicks and keys are never dropped.
-        if (queue.length > MAX_QUEUED) {
-          const at = queue.findIndex((e) => (e.type === 'mouse' && e.action === 'move') || e.type === 'wheel');
-          queue.splice(at >= 0 ? at : 0, 1);
-        }
-      }
-      if (timer === null) timer = setTimer(flush, 0);
+      const accepted = admit(event);
+      if (accepted && timer === null) timer = setTimer(flush, 0);
+      return accepted;
     },
     flush,
     get pending() { return queue.length; },
@@ -66,6 +91,8 @@ export function createInputBatcher({
       if (timer !== null) clearTimer(timer);
       timer = null;
       queue = [];
+      pressed.clear();
+      overflowReported = false;
     },
   };
 }

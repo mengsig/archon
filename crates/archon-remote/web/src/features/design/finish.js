@@ -52,6 +52,31 @@ export async function resumeFinish(ctx, state, { onDone, onOpen, onClose }) {
   }
 }
 
+function hasFinalPicture(card) {
+  return Boolean(card.data_url || card.asset);
+}
+
+function renderFinalPicture(card, loadAsset) {
+  if (!hasFinalPicture(card)) return null;
+  const label = `Final picture for ${card.note}`;
+  const image = (src) => h('img', { class: 'finish-img', src, alt: label });
+  const box = h('div', { class: 'finish-final-picture' });
+  async function load() {
+    box.replaceChildren(h('p', { class: 'list-status', role: 'status', text: 'Loading final picture…' }));
+    try {
+      const asset = await loadAsset(card.asset);
+      box.replaceChildren(image(asset.data_url));
+    } catch (err) {
+      box.replaceChildren(
+        h('p', { class: 'form-error', role: 'alert', text: designErrorText(err) }),
+        h('button', { class: 'button button-plain button-small', type: 'button', 'aria-label': `Retry final picture for ${card.note}`, onclick: load }, 'Retry picture'));
+    }
+  }
+  if (card.data_url) box.append(image(card.data_url));
+  else load();
+  return [h('p', { class: 'finish-final-label', text: 'Final picture' }), box];
+}
+
 export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   let finish = initial;
   let message = '';
@@ -70,13 +95,20 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   seed();
   const body = h('div', { class: 'finish' });
   let sheet = null;
-  // Each change's before and after pictures, asked for once while the review is open.
   const pictures = new Map();
+  function loadPicture(item, id) {
+    if (!pictures.has(id)) {
+      pictures.set(id, ctx.design.asset(item, id).then((asset) => {
+        if (!asset?.data_url) throw new Error('The host returned an empty picture');
+        return asset;
+      }).catch((err) => { pictures.delete(id); throw err; }));
+    }
+    return pictures.get(id);
+  }
   const picture = (n, id, word) => {
     const box = h('div', { class: 'finish-change-img' }, h('span', { class: 'muted', text: id ? 'Loading…' : 'No picture' }));
     if (id) {
-      if (!pictures.has(id)) pictures.set(id, ctx.design.asset(n.item, id).catch((err) => { pictures.delete(id); throw err; }));
-      pictures.get(id).then((asset) => box.replaceChildren(h('img', { class: 'finish-change-pic', src: asset.data_url, alt: `${word} picture of ${n.id}` })))
+      loadPicture(n.item, id).then((asset) => box.replaceChildren(h('img', { class: 'finish-change-pic', src: asset.data_url, alt: `${word} picture of ${n.id}` })))
         .catch((err) => box.replaceChildren(h('span', { class: 'form-error', text: designErrorText(err) })));
     }
     return h('figure', { class: 'finish-change-fig' }, box, h('figcaption', { class: 'cmp-caption', text: word }));
@@ -156,15 +188,14 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
     // Relabelled in place: this fires on blur, and redrawing then would
     // replace the button the operator is clicking.
     sup.addEventListener('change', () => { superseded.set(card.note, sup.value); if (askNoChange) { askNoChange = false; relabel(); } });
-    const inc = h('input', { class: 'switch-input', type: 'checkbox', role: 'switch', checked: included(card) !== false, 'aria-label': `Include picture for ${card.note}`, disabled: !card.data_url || card.earlier });
+    const inc = h('input', { class: 'switch-input', type: 'checkbox', role: 'switch', checked: included(card) !== false, 'aria-label': `Include picture for ${card.note}`, disabled: !hasFinalPicture(card) || card.earlier });
     inc.addEventListener('change', () => { chosen.set(card.note, inc.checked); askNoChange = false; draw(); });
     return h('li', { class: 'finish-card' },
       h('div', { class: 'finish-card-head' }, h('strong', { text: card.note }), card.earlier ? h('span', { class: 'note-tag', text: 'Earlier session' }) : null, card.superseded_by ? h('span', { class: 'note-tag', text: `Superseded by ${card.superseded_by}` }) : null),
       h('p', { class: 'note-text', text: card.text }),
       historyLine(card.history) ? h('p', { class: 'note-hint finish-history', text: historyLine(card.history) }) : null,
       changes(card),
-      card.data_url ? h('p', { class: 'finish-final-label', text: 'Final picture' }) : null,
-      card.data_url ? h('img', { class: 'finish-img', src: card.data_url, alt: `Final picture for ${card.note}` }) : null,
+      renderFinalPicture(card, (id) => loadPicture(state.item, id)),
       card.caption ? h('p', { class: 'cmp-caption', text: card.caption }) : null,
       card.not_found && !card.earlier ? h('div', { class: 'callout callout-amber', role: 'note' },
         h('p', { class: 'callout-text', text: 'Not found on a fresh load: open it in the preview and press Capture.' }),
@@ -186,7 +217,7 @@ export function openReview(ctx, state, initial, { onDone, onOpen, onClose }) {
   }
 
   function draw() {
-    const picked = finish.cards.filter((c) => c.data_url && included(c)).length;
+    const picked = finish.cards.filter((c) => !c.earlier && hasFinalPicture(c) && included(c)).length;
     const warn = imageCapWarning(state.imagesUsed, state.imagesMax, picked, IMAGE_CAP_WARN_MARGIN);
     const noChange = finish.no_change_only || askNoChange;
     body.replaceChildren(...[

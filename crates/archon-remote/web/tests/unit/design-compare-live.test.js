@@ -5,6 +5,7 @@ import { installDom, Element } from '../support/dom-shim.js';
 installDom();
 Object.defineProperty(Element.prototype, 'style', { get() { return { setProperty() {} }; } });
 const { createCompare } = await import('../../src/features/design/compare.js');
+const { createViewer } = await import('../../src/features/design/viewer.js');
 const { afterAssetOf, hasPictures, noVisibleChange } = await import('../../src/features/design/state.js');
 
 const note = (fields = {}) => ({ id: 'D6', item: 'qi_1', target: { box: {} }, before_asset: 'da_before', base_commit: 'aaa', commit: 'bbb', status: 'done', ...fields });
@@ -98,4 +99,33 @@ test('the notice and the picture swap whole panes, never a pane in two places', 
   assert.equal(stages()[0], 'cmp-stage');
   assert.equal(view.content.children[0].children.length, 2);
   assert.equal(view.content.children.length, 2, 'the slider follows its stage');
+});
+
+test('a late comparison response cannot replace the latest selected pair', async () => {
+  const requested = [];
+  let release;
+  const asset = (id) => ({ data_url: `data:${id}`, width: 1, height: 1 });
+  const ctx = { design: { asset: async (_item, id) => {
+    requested.push(id);
+    if (id === 'after7') await new Promise((resolve) => { release = resolve; });
+    return asset(id);
+  } } };
+  const versions = [6, 7, 8].map((number) => note({ id: `D${number}`, number, after_asset: `after${number}` }));
+  const chain = { versions, count: versions.length, current: versions.at(-1) };
+  const viewer = createViewer({ ctx, onBack() {}, onContinue() {}, onFollowUp() {} });
+  viewer.show(chain, versions[0]);
+  const [picker] = viewer.element.query('select');
+  picker.value = 'D7';
+  picker.listeners.change();
+  picker.value = 'D8';
+  picker.listeners.change();
+  await settle();
+  assert.match(viewer.element.textContent, /After D8·v3/);
+  release();
+  await settle();
+  assert.doesNotMatch(viewer.element.textContent, /After D7·v2/);
+  assert.match(viewer.element.textContent, /After D8·v3/);
+  const count = requested.length;
+  viewer.show(chain, versions[0]);
+  assert.equal(requested.length, count, 'an unchanged render reuses the current pair');
 });

@@ -46,6 +46,7 @@ export function mountDesign(view, ctx) {
   let pick = null; // where the open selection came from, for Wider / Narrower
   let depth = 0; // how many parents above the picked element; the one counter for keys and buttons
   let tickets = 0;
+  let viewCurrent = false;
   let autoPreset = false;
   let presetSent = null; // `${session}|${preset}` of the last preset request, so a mismatch re-sends once
   let follower = null; // the poll that waits for the item's next session
@@ -110,10 +111,18 @@ export function mountDesign(view, ctx) {
     continueWithout: () => { continued = true; render(); },
   });
   const status = buildStatusBar();
-  const batcher = createInputBatcher({ send: (events) => { if (session()) ctx.design.input(session(), events).catch(refuse); } });
+  const batcher = createInputBatcher({
+    send: (events) => {
+      const id = session();
+      if (!id || !state.frame || !isLive(state) || state.connection !== 'open') return;
+      ctx.design.input(id, events).catch((err) => { if (session() === id) refuse(err); });
+    },
+    onOverflow: () => toast('The preview could not keep up. Some input was skipped.', { tone: 'amber' }),
+  });
+  const queueInput = (event) => state.frame && state.connection === 'open' && isLive(state) && batcher.push(event);
   const stage = createStage({
     getMode: () => state.mode,
-    onInput: (e) => batcher.push(e),
+    onInput: queueInput,
     onHover: hoverAt,
     onPick: pickAt,
     onRegion: regionAt,
@@ -122,10 +131,10 @@ export function mountDesign(view, ctx) {
   });
   const capture = h('div', { class: 'design-capture', role: 'status', hidden: true },
     h('span', { text: 'Typing into app · Esc to stop' }),
-    h('button', { class: 'button button-plain button-small', type: 'button', onclick: () => { for (const e of escapeKeyEvents()) batcher.push(e); batcher.flush(); } }, 'Send Esc to app'));
+    h('button', { class: 'button button-plain button-small', type: 'button', onclick: () => { for (const e of escapeKeyEvents()) queueInput(e); batcher.flush(); } }, 'Send Esc to app'));
   const typeInput = h('input', { class: 'input input-inline', type: 'text', 'aria-label': 'Type text', placeholder: 'Type text', autocomplete: 'off', enterkeyhint: 'send' });
   const typeForm = h('form', { class: 'design-type', novalidate: true }, typeInput, h('button', { class: 'button button-plain button-small', type: 'submit' }, 'Send text'));
-  typeForm.addEventListener('submit', (e) => { e.preventDefault(); if (typeInput.value) { batcher.push(textEvent(typeInput.value)); batcher.flush(); typeInput.value = ''; } });
+  typeForm.addEventListener('submit', (e) => { e.preventDefault(); if (typeInput.value && queueInput(textEvent(typeInput.value))) { batcher.flush(); typeInput.value = ''; } });
 
   const composer = createComposer({
     onSend: sendNote,
@@ -143,14 +152,28 @@ export function mountDesign(view, ctx) {
     answeredTimer = setTimeout(() => stream.refresh(), 1500);
   });
   const sheetToggle = h('button', { class: 'design-sheet-grab', type: 'button', 'aria-label': 'Resize the notes sheet', onclick: () => { sheetHeight = SHEET_HEIGHTS[(SHEET_HEIGHTS.indexOf(sheetHeight) + 1) % 3]; render(); } });
-  const tabButtons = ['notes', 'tree'].map((name) => h('button', { class: 'design-tab', type: 'button', role: 'tab', id: `design-tab-${name}`, dataset: { tab: name }, onclick: () => setTab(name) }, name === 'notes' ? 'Notes' : 'Tree'));
+  const tabButtons = ['notes', 'tree'].map((name) => h('button', { class: 'design-tab', type: 'button', role: 'tab', id: `design-tab-${name}`, 'aria-controls': `design-panel-${name}`, dataset: { tab: name }, onclick: () => setTab(name) }, name === 'notes' ? 'Notes' : 'Tree'));
   const tabs = h('div', { class: 'design-tabs', role: 'tablist', 'aria-label': 'Notes and tree', hidden: true }, tabButtons);
   const tree = createTreePanel({
     getState: () => state, thumbs, onSelect: (id) => viewNode(id), onLink: (id) => viewNode(id, { keep: true }), getViewing: () => viewing, isPhone: () => layout === 'phone',
     canAct: () => state.session?.state === 'live',
     actions: { back: () => { viewing = null; render(); }, compare: (n) => openCompare(ctx, n), followUp: (n) => followUpOn(n), continueFrom: (n) => continueFrom(n) },
   });
+  notes.element.id = 'design-panel-notes';
+  tree.element.id = 'design-panel-tree';
+  tree.element.setAttribute('role', 'tabpanel');
+  tree.element.setAttribute('aria-labelledby', 'design-tab-tree');
   tree.element.hidden = true;
+  tabs.addEventListener('keydown', (event) => {
+    const { key } = event;
+    const at = tabButtons.indexOf(event.target);
+    if (at === -1 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(key)) return;
+    event.preventDefault();
+    const next = key === 'Home' ? 0 : key === 'End' ? tabButtons.length - 1 : (at + 1) % tabButtons.length;
+    const button = tabButtons[next];
+    setTab(button.dataset.tab);
+    button.focus();
+  });
   const viewer = createViewer({ ctx, onBack: () => { viewing = null; render(); }, onContinue: (n) => continueFrom(n), onFollowUp: (n) => followUpOn(n) });
   const side = h('aside', { class: 'design-side', 'aria-label': 'Notes' }, sheetToggle, tabs, notes.element, tree.element, composer.element);
   const stageWrap = h('div', { class: 'design-stagewrap' }, stage.element, phase.element, ledger.element, capture);
@@ -332,16 +355,16 @@ export function mountDesign(view, ctx) {
       } else { outbox.remove(entry.client_key); composer.setError(designErrorText(err)); if (err?.code === 'gone') refuse(err); }
     } finally { composer.setBusy(false); notes.setPending(outbox.pending()); }
   }
-  let lastFlushAt = 0, lastFlushSession = null, lastFlushKind = null;
+  let lastFlushAt = -Infinity;
+  let lastFlushSession = null;
   const FLUSH_EVERY_MS = 5000;
-  const flushOutbox = (kind) => {
+  const flushOutbox = () => {
     // A note being sent right now sits in the outbox too; flushing then would send it twice.
-    if (!session() || !isLive(state) || state.session.state === 'finishing' || composer.busy) return;
-    if (!outbox.pending().length) { lastFlushKind = kind; return; }
+    if (!viewCurrent || state.connection !== 'open' || state.session?.state !== 'live' || composer.busy) return;
+    if (!outbox.pending().length) return;
     // On reconnect or session change at once; otherwise at most once per few seconds.
-    const fresh = session() !== lastFlushSession || (lastFlushKind === 'reconnecting' && kind !== 'reconnecting');
+    const fresh = session() !== lastFlushSession;
     const now = Date.now();
-    lastFlushKind = kind;
     if (!fresh && now - lastFlushAt < FLUSH_EVERY_MS) return;
     lastFlushAt = now; lastFlushSession = session();
     outbox.flush((f) => ctx.design.noteAdd(f), session(), {
@@ -397,6 +420,13 @@ export function mountDesign(view, ctx) {
     tabs.hidden = !iter;
     const treeTab = iter && tab === 'tree';
     for (const b of tabButtons) { const on = b.dataset.tab === (treeTab ? 'tree' : 'notes'); b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
+    if (iter) {
+      notes.element.setAttribute('role', 'tabpanel');
+      notes.element.setAttribute('aria-labelledby', 'design-tab-notes');
+    } else {
+      notes.element.removeAttribute('role');
+      notes.element.setAttribute('aria-labelledby', 'design-notes-title');
+    }
     notes.element.hidden = treeTab;
     tree.element.hidden = !treeTab;
     composer.setRefsEnabled(iterations());
@@ -421,7 +451,7 @@ export function mountDesign(view, ctx) {
     root.dataset.phase = p.kind;
     root.dataset.preset = state.preset;
     root.dataset.mode = state.mode;
-    if (state.loaded && ctx.canOperate && state.session?.state === 'live') flushOutbox(p.kind);
+    if (state.loaded && ctx.canOperate && state.session?.state === 'live') flushOutbox();
     // The daemon may not have applied the preset the session says it has: a frame at another size re-sends it, once.
     if (operator && state.session?.state === 'live' && presetMismatch(state) && presetSent !== `${session()}|${state.preset}`) {
       presetSent = `${session()}|${state.preset}`;
@@ -473,9 +503,20 @@ export function mountDesign(view, ctx) {
 
   const stream = createDesignStream({
     ctx, item,
-    onView: (kind, data) => dispatch(kind === 'design_state' ? { type: 'view', view: data } : { type: 'summary', summary: data }),
+    onView: (kind, data) => {
+      viewCurrent = true;
+      dispatch(kind === 'design_state' ? { type: 'view', view: data } : { type: 'summary', summary: data });
+    },
     onEvent: (e) => dispatch(e.type === 'connection' ? e : { type: 'event', event: e }),
     onFrame: (bitmap, meta) => stage.draw(bitmap, meta),
+    onReset: () => {
+      viewCurrent = false;
+      lastFlushAt = -Infinity;
+      tickets += 1;
+      batcher.stop();
+      stage.clearFrame();
+      state = reduce(state, { type: 'frame_reset' });
+    },
     onError: (err) => dispatch({ type: 'error', error: designErrorText(err) }),
   });
   const onKey = (e) => {

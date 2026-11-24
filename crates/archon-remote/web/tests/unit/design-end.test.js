@@ -5,7 +5,7 @@ import {
   confirmedPreset, presetMismatch, pointerBlockedText, notesHeading, PRESET_SIZE, ledgerLede,
 } from '../../src/features/design/state.js';
 import { designErrorText } from '../../src/core/design.js';
-import { gateQuestionFor } from '../../src/features/design/finish.js';
+import { gateChoices, gateQuestionFor } from '../../src/features/design/finish.js';
 
 test('approval uses only the open proposal gate for the exact design attempt', () => {
   const current = { run: 'r1', stage_id: 'design', attempt: 2 };
@@ -184,4 +184,13 @@ test('item 8: an approved design says when the item is built, stopped or cancell
   assert.match(approved('failed').phase.text, /stopped after the design was approved/);
   assert.match(approved('cancelled').phase.text, /cancelled after the design was approved/);
   assert.equal(reduce(ended('approved'), { type: 'item_state', state: null }).itemState, null);
+});
+
+test('each proposal option sends its declared value with revision text only when asked', () => {
+  const [approve, revise, reject] = gateChoices({ options: ['reject', 'revise', 'approve'] });
+  assert.deepEqual([approve.id, revise.id, reject.id], ['approve', 'revise', 'reject']);
+  assert.equal(approve.send('ignored'), 'approve');
+  assert.equal(revise.send('More contrast'), 'revise: More contrast');
+  assert.equal(reject.send('ignored'), 'reject');
+  assert.deepEqual([approve, revise, reject].map((choice) => Boolean(choice.needsText)), [false, true, false]);
 });

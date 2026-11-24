@@ -54,6 +54,8 @@ export function reduce(state, action) {
       return { ...state, loaded: true, observer: { state: action.summary.state ?? null, noteCount: action.summary.note_count ?? 0 }, error: null };
     case 'error':
       return { ...state, loaded: true, error: action.error };
+    case 'frame_reset':
+      return { ...state, frame: null };
     case 'connection':
       return { ...state, connection: action.state === 'open' ? 'open' : 'reconnecting' };
     // The item's own state (queued, running, succeeded…), from the app's item list.

@@ -19,8 +19,15 @@ export function createViewer({ ctx, onBack, onContinue, onFollowUp }) {
   let compare = null;
   let other = '';
   let current = null;
+  let loadingPair = null;
+  let optionsKey = '';
+  let barText = '';
 
   async function side(chain, a, b) {
+    const key = JSON.stringify([a, b].map((n) => [n.id, versionNumber(chain, n), afterAssetOf(n), n.commit]));
+    if (loadingPair?.key === key) return;
+    const request = { key };
+    loadingPair = request;
     body.replaceChildren(h('div', { class: 'list-status', text: 'Loading…' }));
     const fig = async (n) => {
       const id = afterAssetOf(n);
@@ -33,7 +40,7 @@ export function createViewer({ ctx, onBack, onContinue, onFollowUp }) {
       } catch (err) { return h('p', { class: 'form-error', role: 'alert', text: designErrorText(err) }); }
     };
     const figs = await Promise.all([fig(a), fig(b)]);
-    if (other && current?.note.id === shownId) body.replaceChildren(h('div', { class: 'cmp-stage cmp-pair viewer-side' }, ...figs));
+    if (loadingPair === request) body.replaceChildren(h('div', { class: 'cmp-stage cmp-pair viewer-side' }, ...figs));
   }
 
   select.addEventListener('change', () => { other = select.value; if (current) draw(current.chain, current.note); });
@@ -41,8 +48,14 @@ export function createViewer({ ctx, onBack, onContinue, onFollowUp }) {
   follow.addEventListener('click', () => current && onFollowUp(current.note));
 
   function draw(chain, note) {
-    if (other && chain.versions.some((n) => n.id === other)) side(chain, note, chain.versions.find((n) => n.id === other));
-    else { other = ''; select.value = ''; body.replaceChildren(compare.content); }
+    const selected = other ? chain.versions.find((n) => n.id === other) : null;
+    if (selected) side(chain, note, selected);
+    else {
+      loadingPair = null;
+      other = '';
+      select.value = '';
+      if (body.firstChild !== compare.content) body.replaceChildren(compare.content);
+    }
   }
 
   return {
@@ -55,15 +68,35 @@ export function createViewer({ ctx, onBack, onContinue, onFollowUp }) {
       if (fresh) { shownId = note.id; other = ''; compare = createCompare(ctx, note); }
       else compare.update(note);
       const line = viewingText(chain, note);
-      bar.replaceChildren(h('strong', { text: line.title }), line.rest);
-      select.replaceChildren(h('option', { value: '', text: VERSION_ACTIONS.compareWith }), ...chain.versions.filter((n) => n.id !== note.id)
-        .map((n) => h('option', { value: n.id, text: `${n.id}·v${versionNumber(chain, n)}${chain.current?.id === n.id ? ' (current)' : ''}${isSetAside(n) ? ' (set aside)' : ''}` })));
-      select.value = other;
+      const nextBar = line.title + line.rest;
+      if (barText !== nextBar) {
+        barText = nextBar;
+        bar.replaceChildren(h('strong', { text: line.title }), document.createTextNode(line.rest));
+      }
+      const options = chain.versions.filter((n) => n.id !== note.id).map((n) => [
+        n.id, `${n.id}·v${versionNumber(chain, n)}${chain.current?.id === n.id ? ' (current)' : ''}${isSetAside(n) ? ' (set aside)' : ''}`,
+      ]);
+      const nextKey = JSON.stringify(options);
+      if (optionsKey !== nextKey) {
+        optionsKey = nextKey;
+        select.replaceChildren(h('option', { value: '', text: VERSION_ACTIONS.compareWith }),
+          ...options.map(([value, text]) => h('option', { value, text })));
+      }
+      if (select.value !== other) select.value = other;
       cont.hidden = !act || !olderInCode(chain, note);
       follow.hidden = !act;
       el.hidden = false;
-      if (fresh) draw(chain, note);
+      draw(chain, note);
     },
-    hide() { el.hidden = true; shownId = null; current = null; compare = null; other = ''; body.replaceChildren(); },
+    hide() {
+      if (el.hidden) return;
+      el.hidden = true;
+      shownId = null;
+      current = null;
+      compare = null;
+      other = '';
+      loadingPair = null;
+      body.replaceChildren();
+    },
   };
 }

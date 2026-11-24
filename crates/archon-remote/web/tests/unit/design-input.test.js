@@ -28,7 +28,7 @@ test('moves merge and a batch never exceeds 64 events', () => {
   const c = clock();
   const sent = [];
   const b = createInputBatcher({ send: (e) => sent.push(e), ...c });
-  for (let i = 0; i < 100; i += 1) b.push(mouseEvent('move', { x: i, y: i }));
+  for (let i = 0; i < 100; i += 1) b.push(mouseEvent('move', { x: i, y: i }, { button: null }));
   c.advance(1);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].length, 1, 'consecutive moves merged into the last one');
@@ -90,4 +90,29 @@ test('every event kind serializes to the Rust InputEvent shape', async () => {
     touchEvent('cancel', [{ x: 1, y: 2, id: 3 }]),
   ];
   assert.equal(JSON.stringify(web), JSON.stringify(rust));
+});
+
+test('saturation preserves releases for all admitted presses and reports skipped input', () => {
+  const c = clock();
+  const sent = [];
+  let overflow = 0;
+  const b = createInputBatcher({ send: (events) => sent.push(...events), onOverflow: () => { overflow += 1; }, ...c });
+  const key = (action, code = 'KeyA') => ({ type: 'key', action, code, key: code.at(-1).toLowerCase(), text: null, modifiers: 0 });
+  const point = { x: 1, y: 2 };
+  const down = [key('down'), mouseEvent('down', point), { type: 'touch', action: 'start', points: [point] }];
+  const up = [key('up'), mouseEvent('up', point), { type: 'touch', action: 'cancel', points: [point] }];
+  for (const event of down) b.push(event);
+  b.flush();
+  for (let i = 0; i < 600; i += 1) b.push({ type: 'text', text: String(i) });
+  assert.equal(b.pending, 509);
+  assert.equal(b.push(key('down', 'KeyB')), false);
+  assert.equal(b.push(key('up', 'KeyB')), false);
+  for (const event of up) assert.equal(b.push(event), true);
+  assert.equal(b.pending, 512);
+  assert.equal(overflow, 1);
+  c.advance(1000);
+  assert.equal(b.pending, 0);
+  assert.deepEqual(sent.slice(0, 3), down);
+  assert.deepEqual(sent.slice(-3), up);
+  assert.equal(sent.filter((e) => e.code === 'KeyB').length, 0);
 });

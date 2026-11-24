@@ -186,6 +186,35 @@ test.describe('desktop', () => {
     } finally { await harness.stop(); }
   });
 
+  test('finishing: an asset-only picture counts, can be retried and can be excluded', async ({ browser, page }) => {
+    const harness = await startHarness(browser, { notes: [seedNote({ number: 1 })] });
+    try {
+      harness.daemon.state.assetOnlyFinish = true;
+      harness.daemon.state.refuseFinalAsset = true;
+      harness.daemon.state.imagesUsed = 119;
+      await harness.install(page);
+      await page.goto(`${harness.baseURL}/#/design/${ITEM}`);
+      await page.getByRole('button', { name: 'Finish' }).click();
+      const review = page.getByRole('dialog', { name: 'Review before finishing' });
+      const include = review.getByRole('switch', { name: 'Include picture for D1' });
+      await expect(include).toBeEnabled();
+      await expect(include).toBeChecked();
+      await expect(review.getByText('120 of 128 pictures are used', { exact: false })).toBeVisible();
+      await expect(review.getByRole('alert')).toHaveText('Try the picture again.');
+      harness.daemon.state.refuseFinalAsset = false;
+      await review.getByRole('button', { name: 'Retry final picture for D1' }).click();
+      await expect(review.getByRole('img', { name: 'Final picture for D1' })).toBeVisible();
+      const loads = () => sentOf(harness, 'design_asset').filter((r) => r.id === 'da_f');
+      expect(loads()).toHaveLength(2);
+      expect(loads().every((request) => request.item === ITEM)).toBe(true);
+      await include.uncheck();
+      await expect(review.getByText('120 of 128 pictures are used', { exact: false })).toHaveCount(0);
+      await review.getByRole('button', { name: 'Confirm' }).click();
+      await expect.poll(() => harness.daemon.state.confirmed?.include).toEqual({ D1: false });
+      expect(loads()).toHaveLength(2);
+    } finally { await harness.stop(); }
+  });
+
   test('finishing: when Confirm finds nothing in force the review asks to approve the design as it is', async ({ browser, page }) => {
     const harness = await open(browser, page);
     try {
@@ -339,6 +368,24 @@ test.describe('robustness and accessibility', () => {
       const adds = harness.daemon.state.requests.filter((r) => r.cmd === 'design_note_add');
       expect(new Set(adds.map((r) => r.client_key)).size).toBe(1);
       expect(harness.daemon.state.notes.map((n) => n.id)).toEqual(['D1']);
+    } finally { await harness.stop(); }
+  });
+
+  test('reconnecting waits for a fresh picture and clears the previous canvas', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      const canvas = page.locator('.design-canvas');
+      const alpha = () => canvas.evaluate((c) => c.getContext('2d').getImageData(0, 0, 1, 1).data[3]);
+      await expect(canvas).toBeVisible();
+      expect(await alpha()).toBe(255);
+      harness.daemon.pauseFrames();
+      harness.daemon.dropSockets();
+      await expect(page.getByRole('heading', { name: 'Starting your app…' })).toBeVisible();
+      await expect(canvas).toBeHidden();
+      expect(await alpha()).toBe(0);
+      harness.daemon.resumeFrames();
+      await expect(canvas).toBeVisible();
+      expect(await alpha()).toBe(255);
     } finally { await harness.stop(); }
   });
 
@@ -697,6 +744,22 @@ test.describe('iterations (desktop)', () => {
       await chain.getByRole('list', { name: 'Earlier notes to reference' }).getByRole('button', { name: /^D6 / }).click();
       await expect(chain.getByText('A note can refer to at most 5 earlier notes.')).toBeVisible();
       await expect(chain.locator('.ref-chip')).toHaveCount(5);
+    } finally { await harness.stop(); }
+  });
+
+  test('Notes and Tree tabs are named and reachable with the arrow keys', async ({ browser, page }) => {
+    const harness = await open(browser, page, { iterations: true });
+    try {
+      const notesTab = page.getByRole('tab', { name: 'Notes' });
+      const treeTab = page.getByRole('tab', { name: 'Tree' });
+      await notesTab.focus();
+      await notesTab.press('ArrowRight');
+      await expect(treeTab).toBeFocused();
+      await expect(treeTab).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByRole('tabpanel', { name: 'Tree' })).toBeVisible();
+      await treeTab.press('ArrowLeft');
+      await expect(notesTab).toBeFocused();
+      await expect(page.getByRole('tabpanel', { name: 'Notes' })).toBeVisible();
     } finally { await harness.stop(); }
   });
 

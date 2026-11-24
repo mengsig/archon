@@ -26,6 +26,7 @@ export function seedNote(fields) {
 export async function startHarness(browser, { role = 'operator', questions = [], summaries = [], notes = [], iterations = false } = {}) {
   const fixtureApp = await startFixtureApp();
   const appPage = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+  appPage.setDefaultTimeout(8000);
   await appPage.goto(fixtureApp.url);
   const server = createServer((req, res) => {
     const path = req.url.split('?')[0];
@@ -46,7 +47,20 @@ export async function startHarness(browser, { role = 'operator', questions = [],
     daemon,
     appPage,
     install: (page) => page.routeWebSocket(/\/ws$/, (ws) => daemon.connect(ws)),
-    stop: async () => { daemon.stop(); await appPage.context().close(); await fixtureApp.stop(); server.close(); writeFileSync(fixtureApp.css, CSS_BASE); },
+    stop: async () => {
+      try {
+        await daemon.stop();
+      } finally {
+        const results = await Promise.allSettled([
+          appPage.context().close(),
+          fixtureApp.stop(),
+          new Promise((done) => server.close(done)),
+        ]);
+        writeFileSync(fixtureApp.css, CSS_BASE);
+        const failures = results.filter((result) => result.status === 'rejected');
+        if (failures.length) throw new AggregateError(failures.map((result) => result.reason), 'Design fixture cleanup failed');
+      }
+    },
   };
 }
 
@@ -55,6 +69,26 @@ const json = (res, body) => res.writeHead(200, { 'Content-Type': 'application/js
 
 function createDaemon({ appPage, fixtureApp, role }) {
   const state = { notes: [], seq: 0, ended: false, paused: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false, questions: [], summaries: [], sessionPatch: {}, sessionId: 'ds_FIXTURE', endReason: null };
+  let stopping = false;
+  const timers = new Set();
+  const running = new Set();
+  const errors = [];
+
+  function run(work) {
+    if (stopping) return;
+    const task = Promise.resolve().then(work).catch((err) => {
+      errors.push(err);
+      console.error('stand-in daemon', err);
+    }).finally(() => running.delete(task));
+    running.add(task);
+  }
+
+  function later(work, delay) {
+    if (stopping) return;
+    const timer = setTimeout(() => { timers.delete(timer); run(work); }, delay);
+    timers.add(timer);
+  }
+
   const now = () => new Date().toISOString();
   const session = () => ({ id: state.sessionId, item: ITEM, run: 'run_FIXTURE', stage_id: 'design', attempt: 1, state: state.sessionState, end_reason: state.endReason, degraded: false, note_version: state.version, viewport_preset: 'desktop', preview_url: 'http://127.0.0.1:5173/', sandbox_off: false, ...state.sessionPatch });
   const undoneBy = (n) => state.notes.find((x) => x.reverts === n.id && x.status === 'done')?.id ?? null;
@@ -69,21 +103,31 @@ function createDaemon({ appPage, fixtureApp, role }) {
   };
   const view = (n) => ({ ...n, undone_by: undoneBy(n), read_only: false, approved: false, active: true, ...iter(n) });
   const nextNumber = () => Math.max(0, ...state.notes.map((n) => n.number)) + 1;
-  const push = (ws, event) => ws.send(JSON.stringify({ frame: 'design', sub: 1, event }));
+  const push = (ws, event) => { if (!stopping) ws.send(JSON.stringify({ frame: 'design', sub: 1, event })); };
   const broadcast = (event) => state.connections.forEach((c) => c.subscribed && push(c.ws, event));
   const reply = (ws, id, reply, data) => ws.send(JSON.stringify({ frame: 'reply', id, result: { Ok: { reply, data } } }));
   const refuse = (ws, id, code, message) => ws.send(JSON.stringify({ frame: 'reply', id, result: { Err: { code, message } } }));
 
   async function sendFrame(conn) {
     if (state.ended || state.paused || !conn.subscribed) return;
-    const jpeg = await appPage.screenshot({ type: 'jpeg', quality: 60 }).catch(() => null);
-    if (!jpeg || state.ended) return;
+    let jpeg;
+    try {
+      jpeg = await appPage.screenshot({ type: 'jpeg', quality: 60, timeout: 5000 });
+    } catch (err) {
+      if (stopping && err.name === 'TimeoutError') return;
+      throw err;
+    }
+    if (stopping || state.ended || !state.connections.has(conn)) return;
     const { width, height } = appPage.viewportSize();
     push(conn.ws, { event: 'frame', seq: ++state.seq, jpeg_b64: jpeg.toString('base64'), w: width, h: height, at: now() });
   }
   async function target() {
     // The protocol's Rect names its size w and h, not Playwright's width and height.
-    const { x, y, width: w, height: h } = await appPage.locator('#cta').boundingBox();
+    const cta = appPage.locator('#cta');
+    await cta.waitFor({ state: 'visible' });
+    const bounds = await cta.boundingBox();
+    if (!bounds) throw new Error('The fixture button has no visible bounds');
+    const { x, y, width: w, height: h } = bounds;
     return { path: '/', selector: 'main > button#cta.primary', role_name: 'button "Buy now"', component: null, box: { x, y, w, h }, viewport: { w: 800, h: 500, preset: 'desktop' }, styles: { color: 'rgb(255, 255, 255)', display: 'block' }, region: false };
   }
   const note = (fields) => ({ item: ITEM, id: `D${fields.number}`, session: 'ds_FIXTURE', kind: 'change', text: '', details_text: null, send_picture: true, target: null, viewport: { w: 800, h: 500, preset: 'desktop' },
@@ -114,7 +158,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
     if (!cmd?.startsWith('design_') && cmd !== 'subscribe_design') return refuse(ws, req, 'unsupported', `${cmd} is not part of this stand-in`);
     if (cmd === 'design_get') {
       if (role !== 'operator') return reply(ws, req, 'design_summary', { state: 'live', note_count: state.notes.length });
-      return reply(ws, req, 'design_state', { item: ITEM, session: session(), notes: state.notes.map(view), browser: { status: 'running' }, finish_blocker: null, images_used: 1, images_max: 128, stage_deadline: null });
+      return reply(ws, req, 'design_state', { item: ITEM, session: session(), notes: state.notes.map(view), browser: { status: 'running' }, finish_blocker: null, images_used: state.imagesUsed ?? 1, images_max: 128, stage_deadline: null });
     }
     if (state.ended) return refuse(ws, req, 'gone', 'This design session has ended.');
     switch (cmd) {
@@ -124,8 +168,8 @@ function createDaemon({ appPage, fixtureApp, role }) {
         if (size) await appPage.setViewportSize(size);
         return reply(ws, req, 'design_done', null);
       }
-      case 'subscribe_design': conn.subscribed = true; reply(ws, req, 'subscribed', { id: 1, last_seq: 0 }); return void setTimeout(() => sendFrame(conn), 50);
-      case 'design_frame_ack': reply(ws, req, 'design_done', null); return void setTimeout(() => sendFrame(conn), 120);
+      case 'subscribe_design': conn.subscribed = true; reply(ws, req, 'subscribed', { id: 1, last_seq: 0 }); return later(() => sendFrame(conn), 50);
+      case 'design_frame_ack': reply(ws, req, 'design_done', null); return later(() => sendFrame(conn), 120);
       case 'design_resolve': return reply(ws, req, 'design_resolved', { target: await target(), label: 'button "Buy now"', asset: 'da_pending', data_url: PIXEL });
       case 'design_region': return reply(ws, req, 'design_resolved', { target: { ...(await target()), selector: null, role_name: null, box: msg.box, region: true }, label: 'Region', asset: 'da_region', data_url: PIXEL });
       case 'design_note_add': {
@@ -138,7 +182,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
         const n = note({ number: nextNumber(), client_key: msg.client_key, text: msg.text, details_text: msg.details_text, send_picture: msg.send_picture, target: resolved, follows: msg.follows ?? null, refs: msg.refs ?? [] });
         state.notes.unshift(n);
         reply(ws, req, 'design_note', view(n));
-        setTimeout(async () => {
+        later(async () => {
           setNote(n, { status: 'working' });
           await recolor('#1f8a3b');
           setNote(n, { status: 'done', commit: 'abc1234def', before_asset: 'da_b', after_asset: 'da_a', thread: [{ at: now(), from: 'agent', text: 'Made the button green.' }] });
@@ -158,7 +202,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
         let follow = null;
         if (msg.text) { follow = note({ number: nextNumber(), client_key: msg.client_key, text: msg.text, follows: base.id, refs: msg.refs ?? [], target: null }); state.notes.unshift(follow); }
         reply(ws, req, 'design_note', view(follow ?? base));
-        setTimeout(async () => {
+        later(async () => {
           for (const r of reverts) {
             setNote(r, { status: 'working' });
             if (state.conflictOn === r.reverts) { setNote(r, { status: 'failed', fail_reason: 'undo_conflict', thread: [{ at: now(), from: 'archon', text: 'Can’t undo automatically, later changes touch the same code; add a note describing what to change back.' }] }); if (follow) setNote(follow, { status: 'cancelled' }); return; }
@@ -170,20 +214,22 @@ function createDaemon({ appPage, fixtureApp, role }) {
         return;
       }
       case 'design_upload': return reply(ws, req, 'design_resolved', { target: null, label: 'Your picture', asset: 'da_up', data_url: PIXEL });
-      case 'design_asset': return reply(ws, req, 'design_asset', { id: msg.id, data_url: PIXEL, width: 1, height: 1, caption: 'captured from the preview at commit abc1234, 14:32' });
+      case 'design_asset':
+        if (msg.id === 'da_f' && state.refuseFinalAsset) return refuse(ws, req, 'unavailable', 'unavailable: try the picture again');
+        return reply(ws, req, 'design_asset', { id: msg.id, data_url: PIXEL, width: 1, height: 1, caption: 'captured from the preview at commit abc1234, 14:32' });
       case 'design_note_undo': {
         const original = state.notes.find((n) => n.id === msg.id);
         const revert = note({ number: nextNumber(), kind: 'revert', reverts: original.id, status: 'working', client_key: 'rev', text: '' });
         state.notes.unshift(revert);
         reply(ws, req, 'design_note', view(revert));
-        setTimeout(async () => { await recolor('#285dce'); setNote(revert, { status: 'done', commit: 'rev00001' }); setNote(original, {}); }, 100);
+        later(async () => { await recolor('#285dce'); setNote(revert, { status: 'done', commit: 'rev00001' }); setNote(original, {}); }, 100);
         return;
       }
       case 'design_finish_capture':
         state.sessionState = 'finishing'; state.version += 1;
         broadcast({ event: 'session', state: 'finishing', degraded: false, preview_path: '/', commit: 'abc1234def', browser: { status: 'running' }, note_version: state.version });
         return reply(ws, req, 'design_finish', { capture: 'cap1', head: 'abc1234def', note_version: state.version, no_change_only: false,
-          cards: state.notes.filter((n) => n.status === 'done' && n.kind !== 'revert' && !view(n).undone_by && (!state.iterations || !state.notes.some((m) => m.status === 'done' && !undoneBy(m) && chainOf(m) === chainOf(n) && m.number > n.number))).map((n) => ({ note: n.id, text: n.text, history: state.iterations ? state.notes.filter((m) => chainOf(m) === chainOf(n) && m.number < n.number).sort((a, b) => a.number - b.number).map((m) => ({ note: m.id, text: m.text, set_aside: Boolean(undoneBy(m)) })) : undefined, asset: 'da_f', data_url: PIXEL, caption: 'captured from the preview at commit abc1234', include: true, superseded_by: null, not_found: false, left_history: false })) });
+          cards: state.notes.filter((n) => n.status === 'done' && n.kind !== 'revert' && !view(n).undone_by && (!state.iterations || !state.notes.some((m) => m.status === 'done' && !undoneBy(m) && chainOf(m) === chainOf(n) && m.number > n.number))).map((n) => ({ note: n.id, text: n.text, history: state.iterations ? state.notes.filter((m) => chainOf(m) === chainOf(n) && m.number < n.number).sort((a, b) => a.number - b.number).map((m) => ({ note: m.id, text: m.text, set_aside: Boolean(undoneBy(m)) })) : undefined, asset: 'da_f', data_url: state.assetOnlyFinish ? null : PIXEL, caption: 'captured from the preview at commit abc1234', include: true, superseded_by: null, not_found: false, left_history: false })) });
       case 'design_finish_cancel': state.sessionState = 'live'; return reply(ws, req, 'design_done', null);
       case 'design_finish_confirm':
         // As archond: approving with no note in force needs the operator's yes.
@@ -199,7 +245,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
     connect(ws) {
       const conn = { ws, subscribed: false };
       state.connections.add(conn);
-      ws.onMessage((raw) => handle(conn, JSON.parse(String(raw))).catch((e) => console.error('stand-in daemon', e)));
+      ws.onMessage((raw) => run(() => handle(conn, JSON.parse(String(raw)))));
       ws.onClose(() => state.connections.delete(conn));
     },
     // A session event as archond pushes it, at the current note version.
@@ -211,13 +257,19 @@ function createDaemon({ appPage, fixtureApp, role }) {
     // Fields of the session as design_get reports it (degraded, preview_url, ...).
     patchSession(patch) { Object.assign(state.sessionPatch, patch); },
     pauseFrames() { state.paused = true; },
-    resumeFrames() { state.paused = false; state.connections.forEach((c) => sendFrame(c)); },
+    resumeFrames() { state.paused = false; state.connections.forEach((c) => run(() => sendFrame(c))); },
     // The network dropped every open socket; the web app reconnects on its own.
     dropSockets() { state.connections.forEach((c) => c.ws.close()); state.connections.clear(); },
     // A new session replaced this one: every request now answers `gone`.
     endSession(reason = 'revised') { state.ended = true; state.sessionState = 'ended'; state.endReason = reason; broadcast({ event: 'ended', reason }); },
     // The agent reran after a revision: design_get now answers with a new live session.
     startNewSession(id = 'ds_SECOND') { state.ended = false; state.sessionId = id; state.sessionState = 'live'; state.endReason = null; state.seq = 0; },
-    stop() { state.ended = true; },
+    async stop() {
+      stopping = true;
+      for (const timer of timers) clearTimeout(timer);
+      timers.clear();
+      await Promise.all(running);
+      if (errors.length) throw new AggregateError(errors, 'Design fixture failed');
+    },
   };
 }

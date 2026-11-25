@@ -30,6 +30,16 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(analyze.mcnemar_exact(6, 0), .03125)
         self.assertEqual(analyze.mcnemar_exact(0, 0), 1)
 
+    def test_pairs_use_matching_task_and_trial_and_exclude_infrastructure(self):
+        def row(task, trial, success, infra=False):
+            return {'task': task, 'trial': trial, 'arm': 'archon', 'success': success, 'infra': infra}
+        old = [row('a', 1, True), row('a', 2, False), row('b', 1, True), row('c', 1, True)]
+        new = [row('a', 1, False), row('a', 2, True), row('b', 1, False, True), row('d', 1, True)]
+        pairs = analyze.paired(old, new, 'archon')
+        self.assertEqual(pairs['pairs'], 2)
+        self.assertEqual((pairs['old_only'], pairs['new_only']), (1, 1))
+        self.assertEqual(pairs['p'], 1)
+
     def test_cost_regression_and_unpriced_data(self):
         data = comparison()
         self.assertEqual(analyze.verdict({'luna': {'archon': data}})[0], 'REGRESSION')

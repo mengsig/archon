@@ -398,7 +398,9 @@ pub(super) async fn intent_of(h: &Harness, item: &QueueItemId) -> ApprovedIntent
 
 #[tokio::test]
 async fn live_is_refused_while_design_sessions_are_off() {
-    let h = Harness::new().await;
+    let mut config = Config::default();
+    config.design.enabled = false;
+    let h = Harness::with_config(config).await;
     let refused = enqueue(&h, live(), None).await.unwrap_err();
     assert!(
         refused

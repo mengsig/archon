@@ -47,7 +47,7 @@ def private_environment(base):
     return root, env
 
 
-def setup(root, env, arm):
+def setup(root, env, arm, temp_root):
     archon = REPORT / f'dl/{arm}/archon'
     aether = REPORT / 'dl/aether/aether'
     hashes = {}
@@ -58,8 +58,7 @@ def setup(root, env, arm):
     hashes['archon-bench'] = hashlib.sha256(bench_binary(arm).read_bytes()).hexdigest()
     assert (root / 'bin/aether').stat().st_mode & 0o111
     config = subprocess.check_output([str(root / 'bin/archon'), 'setup', '--print'], env=env)
-    temp_root = root.parent / 't'
-    temp_root.mkdir()
+    assert temp_root.is_dir() and temp_root.parent == SANDBOX
     config += f'\n[agents]\ntemp_root = "{temp_root}"\n'.encode()
     (root / 'a-config/config.toml').write_bytes(config)
     (root / 'c-config/config.toml').write_text(f'[aether]\nmode = "shared"\nsocket = "{env["AETHER_SOCKET"]}"\n')
@@ -112,11 +111,14 @@ def run(arm, model, label, parallel='1', only='', budget='30'):
     destination = REPORT / label
     destination.mkdir()
     SANDBOX.mkdir(mode=0o700, parents=True, exist_ok=True)
-    base = Path(tempfile.mkdtemp(prefix='r-', dir=SANDBOX))
+    temp_root = SANDBOX / f'{model[0]}{arm[0]}'
+    temp_root.mkdir(mode=0o700)
+    base = None
     proc = None
     try:
+        base = Path(tempfile.mkdtemp(prefix='r-', dir=SANDBOX))
         root, env = private_environment(base)
-        hashes = setup(root, env, arm)
+        hashes = setup(root, env, arm, temp_root)
         record = {'candidate_commit': CANDIDATE_COMMIT,
                   'head': subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip(),
                   'arm': arm, 'model': model, 'parallel': parallel, 'load5': os.getloadavg()[1], 'hashes': hashes,
@@ -151,7 +153,9 @@ def run(arm, model, label, parallel='1', only='', budget='30'):
     finally:
         if proc is not None and proc.poll() is None:
             stop_daemon(proc, root, env)
-        shutil.rmtree(base)
+        if base is not None:
+            shutil.rmtree(base)
+        shutil.rmtree(temp_root)
 
 
 if __name__ == '__main__':

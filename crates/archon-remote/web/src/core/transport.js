@@ -28,13 +28,13 @@ class Transport {
     url, hello, protocol = 'archon', WebSocketImpl = globalThis.WebSocket,
     setTimer = globalThis.setTimeout.bind(globalThis), clearTimer = globalThis.clearTimeout.bind(globalThis),
     random = Math.random, now = Date.now, requestTimeoutMs = REQUEST_TIMEOUT_MS,
-    onFeed = () => {}, onChange = () => {}, onState = () => {}, onReady = () => {}, onProtocolError = () => {},
+    onFeed = () => {}, onChange = () => {}, onDesign = () => {}, onState = () => {}, onReady = () => {}, onProtocolError = () => {},
   }) {
     if (typeof url !== 'string' || !/^wss?:\/\//.test(url)) throw new TypeError(`a WebSocket URL, got ${url}`);
     if (!hello || !Number.isInteger(hello.protocol_version)) throw new TypeError('hello needs an integer protocol_version');
     if (typeof WebSocketImpl !== 'function') throw new TypeError('no WebSocket implementation');
     Object.assign(this, { url, hello, protocol, WebSocketImpl, setTimer, clearTimer, random, now, requestTimeoutMs });
-    this.on = { feed: onFeed, change: onChange, state: onState, ready: onReady, protocolError: onProtocolError };
+    this.on = { feed: onFeed, change: onChange, design: onDesign, state: onState, ready: onReady, protocolError: onProtocolError };
     this.ws = null;
     this.nextReq = 1;
     this.attempt = 0;
@@ -43,7 +43,7 @@ class Transport {
     this.current = 'idle';
     this.stopped = false;
     this.closeReason = null;
-    this.restarting = false;
+    this.restartCause = null;
     this.pending = new Map();
     this.queued = [];
   }
@@ -133,8 +133,8 @@ class Transport {
 
   opened(welcome) {
     // A daemon that keeps ending the feed backs off as if it kept dropping.
-    if (!this.restarting) this.attempt = 0;
-    this.restarting = false;
+    if (this.restartCause !== 'fault') this.attempt = 0;
+    this.restartCause = null;
     this.setState('open', { welcome });
     for (const entry of this.queued.splice(0)) this.dispatch(entry);
     this.on.ready(welcome);
@@ -156,6 +156,10 @@ class Transport {
       this.on.change(frame.change, frame.sub);
       return;
     }
+    if (frame.frame === 'design') {
+      this.on.design(frame.sub, frame.event);
+      return;
+    }
     if (frame.frame !== 'reply' || !Number.isInteger(frame.id)) {
       this.on.protocolError(new Error(`unexpected frame: ${String(text).slice(0, 80)}`));
       return;
@@ -174,7 +178,13 @@ class Transport {
     const ended = err?.code === 'internal' || ENDED_SUBSCRIPTION.test(this.closeReason);
     if (!ended || this.current !== 'open' || !this.ws) return;
     this.on.protocolError(new DaemonError(err?.code ?? 'internal', `${this.closeReason}; reconnecting`));
-    this.restarting = true;
+    this.resubscribe({ afterFault: true });
+  }
+
+  resubscribe({ afterFault = false } = {}) {
+    if (this.current !== 'open' || !this.ws || this.restartCause) return;
+    this.restartCause = afterFault ? 'fault' : 'release';
+    if (!afterFault) this.attempt = 0;
     this.ws.close(CLOSE_RESUBSCRIBE, 'resubscribe');
   }
 

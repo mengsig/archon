@@ -4,6 +4,50 @@ use std::io::Write as _;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+/// One message a fake agent backend was asked to send.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentMessage {
+    /// The recipient.
+    pub to: crate::aether_ids::AetherAgentId,
+    /// The text.
+    pub content: String,
+    /// The idempotency key.
+    pub key: String,
+    /// The pictures; empty for a plain `send_message`.
+    pub attachments: Vec<crate::attachment::ImageAttachment>,
+}
+
+/// What a fake agent backend keeps of its sent messages; tests read them
+/// with [`SentMessages::all`]. Clones share one list.
+#[derive(Debug, Clone, Default)]
+pub struct SentMessages(std::sync::Arc<std::sync::Mutex<Vec<SentMessage>>>);
+
+impl SentMessages {
+    /// Record one message, attachments included.
+    pub fn record(
+        &self,
+        to: &crate::aether_ids::AetherAgentId,
+        content: &str,
+        key: &str,
+        attachments: &[crate::attachment::ImageAttachment],
+    ) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(SentMessage {
+                to: to.clone(),
+                content: content.to_owned(),
+                key: key.to_owned(),
+                attachments: attachments.to_vec(),
+            });
+    }
+
+    /// Every message recorded so far, oldest first.
+    pub fn all(&self) -> Vec<SentMessage> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
+
 /// Write `script` to `path` as an executable a test is about to run.
 ///
 /// A `/bin/sh` child writes it under a temporary name, marks it executable

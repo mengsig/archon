@@ -551,6 +551,14 @@ pub(super) async fn driver_of(
         let approved = super::proposal::started_past(&store, &run.id)?;
         (store.gates_for_run(&run.id)?, approved)
     };
+    crate::knobs::check_design_mode(&spec, item.autonomy.proposal)?;
+    if let archon_core::run::RunState::Running { stage_id, .. } = &run.state
+        && spec
+            .stage(stage_id)
+            .is_some_and(|s| s.kind == archon_core::catalog::StageKind::Design)
+    {
+        crate::knobs::require_design_enabled(ctx)?;
+    }
     let operator_gates = OperatorGates::for_run(&spec, &item.autonomy);
     let experiments = crate::experiments::item_dir(&ctx.paths, &item.id);
     let driver = RunDriver::new(

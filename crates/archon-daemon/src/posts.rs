@@ -199,8 +199,14 @@ async fn post_of(ctx: &DaemonContext, item: &FeedItem) -> Result<Option<Post>, A
     let post = match &item.entry {
         // A command archond ran itself never reached Aether.
         FeedEntry::Operator {
-            text, local: true, ..
-        } if !text.trim().is_empty() => Some(plain(format!("{OPERATOR_POST_LABEL}{text}"))),
+            text,
+            local: true,
+            command_id,
+            ..
+        } if !text.trim().is_empty() => Some(plain(match command_id {
+            Some(id) => format!("**Operator ({id}):** {text}"),
+            None => format!("{OPERATOR_POST_LABEL}{text}"),
+        })),
         FeedEntry::Operator { .. } | FeedEntry::Orchestrator { .. } => None,
         // Its own result line follows.
         FeedEntry::Authority { result, .. } if result == OUTCOME_FOLLOWS => None,
@@ -220,7 +226,7 @@ async fn post_of(ctx: &DaemonContext, item: &FeedItem) -> Result<Option<Post>, A
         FeedEntry::Report {
             title, location, ..
         } => Some(report_post(title, location)),
-        FeedEntry::System { text } => Some(plain(format!("**Archon:** {text}"))),
+        FeedEntry::System { text, .. } => Some(plain(format!("**Archon:** {text}"))),
     };
     Ok(post.map(|post| Post {
         text: clip(&post.text, MAX_POST_CHARS),

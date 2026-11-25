@@ -67,7 +67,10 @@ pub(super) async fn enqueue_item(
     let onto = enqueue_onto(ctx, &env, &resolved.spec, target, key).await?;
     req.intent = resolve_pull_request_intent(ctx, req.intent.as_ref(), onto.as_ref()).await?;
     if req.intent.is_some()
-        || resolved.autonomy.proposal == archon_core::autonomy::ProposalMode::Lavish
+        || matches!(
+            resolved.autonomy.proposal,
+            archon_core::autonomy::ProposalMode::Lavish | archon_core::autonomy::ProposalMode::Live
+        )
     {
         resolved.spec = archon_pipeline::acceptance::augment(&resolved.spec)?;
     }

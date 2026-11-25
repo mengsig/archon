@@ -380,6 +380,9 @@ fn name_caller(
     let (named, required) = match request {
         Request::MessageOrchestrator { caller, .. }
         | Request::PublishArtifact { caller, .. }
+        | Request::DesignPreview { caller, .. }
+        | Request::DesignNoteReport { caller, .. }
+        | Request::DesignHistory { caller, .. }
         | Request::SubmitVerdict { caller, .. }
         | Request::RecordChatAnswer { caller, .. }
         | Request::RequestAuthority { caller, .. } => (caller, true),
@@ -538,6 +541,8 @@ fn how_to_check(request: &Request) -> String {
         }
         Request::MessageOrchestrator { .. } => "the message may already be recorded; check the item's archon log before repeating it, and keep working on your stage".into(),
         Request::PublishArtifact { .. } => "the files may already be stored; list_artifacts for your item shows them, and publishing a name again replaces it".into(),
+        Request::DesignPreview { .. } => "the preview may already point there; calling design_preview again with the same url is safe".into(),
+        Request::DesignNoteReport { id, .. } => format!("the report for {id} may already be recorded; repeating it is safe; a repeated `done` for the same commit retakes the after picture, and any other repeat after a terminal status is refused with the reason"),
         Request::SubmitVerdict { .. } => "the submission may already be read; repeat it as you sent it, which answers it again and never counts an unmarked unreadable verdict as your restatement".into(),
         Request::GithubReply { thread, .. } => thread.check_before_retry(),
         Request::RecordChatAnswer { .. } => "the answer may already be recorded; a repeat is then refused as already answered, which is the confirmation".into(),
@@ -646,6 +651,33 @@ mod tests {
         assert!(
             matches!(for_agent_1(request), Request::PublishArtifact { caller: Some(id), .. } if id.as_str() == "agt_1")
         );
+    }
+
+    #[test]
+    fn design_tools_need_the_out_of_band_caller() {
+        let preview = json!({"url": "http://127.0.0.1:5173/"});
+        let note = json!({"id": "D1", "status": "working"});
+        let params = json!({"_meta": {"aether/agent_id": "agt_1"}});
+        for (tool, args) in [
+            ("design_preview", preview),
+            ("design_note", note),
+            ("design_history", json!({"id": "D1"})),
+        ] {
+            let refused = request_with_caller(tool, args.clone(), &json!({})).unwrap_err();
+            assert!(
+                refused
+                    .0
+                    .contains(&format!("{tool} requires Aether caller"))
+            );
+            let request = for_agent_1(request_with_caller(tool, args, &params).unwrap());
+            assert!(matches!(
+                request,
+                Request::DesignPreview { caller: Some(ref id), .. }
+                    | Request::DesignNoteReport { caller: Some(ref id), .. }
+                    | Request::DesignHistory { caller: Some(ref id), .. }
+                    if id.as_str() == "agt_1"
+            ));
+        }
     }
 
     #[test]

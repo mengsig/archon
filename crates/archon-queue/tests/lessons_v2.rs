@@ -731,4 +731,6 @@ fn existing_lessons_migrate_unchanged() {
         "SELECT version FROM schema_migrations WHERE version = 23",
     );
     assert_eq!(applied, vec![vec![rusqlite::types::Value::Integer(23)]]);
+    let latest = rows(&conn, "SELECT MAX(version) FROM schema_migrations");
+    assert_eq!(latest, vec![vec![rusqlite::types::Value::Integer(31)]]);
 }

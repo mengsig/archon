@@ -547,6 +547,8 @@ pub(crate) async fn push_once(
     }
     let raw = serde_json::to_string(&outbox)?;
     let entry = archon_core::notify::FeedEntry::System {
+        command_id: None,
+        command_result: None,
         text: "Initiative finished; coordinated result queued.".into(),
     };
     let saved = store.append_feed_with_kv(
@@ -1174,10 +1176,10 @@ async fn deliver(ctx: &DaemonContext, batch: &Batch) -> Result<(), ArchonError> 
             Ok(()) => return Ok(()),
             Err(error) if error.is_store() => return Err(error),
             Err(ArchonError::Invalid(refusal)) => {
+                tracing::error!("Aether refused trigger {key} ({refusal}): {payload}");
                 let text = format!(
-                    "Aether refused trigger {key} ({refusal}); its news was not delivered: {payload}"
+                    "Aether refused to take Archon's news ({refusal}); it was not delivered."
                 );
-                tracing::error!("{text}");
                 feed::system(ctx, text).await?;
                 return Ok(());
             }

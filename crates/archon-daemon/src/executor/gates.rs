@@ -3,11 +3,13 @@
 
 use std::path::Path;
 
+use archon_core::autonomy::ProposalMode;
+use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QuestionId, ReportId};
 use archon_core::notify::{FeedEntry, NotificationKind, Question};
 use archon_core::queue::QueueItem;
-use archon_core::run::{GateDecision, GateSubject, OperatorGate, PipelineRun, RunState};
+use archon_core::run::{GateDecision, GateSubject, OperatorGate, PipelineRun, RunState, StageRun};
 use archon_pipeline::OperatorWait;
 use archon_queue::Store;
 
@@ -51,7 +53,12 @@ pub(super) async fn open(
     assert!(wait.attempt >= 1, "attempts are 1-based");
     let mut store = ctx.store.lock().await;
     let stages = store.stage_runs(&run.id)?;
-    let page = pages::gate_page(&run, &stages, &wait);
+    let designed = is_design(&wait.stage_id, wait.attempt, &stages);
+    let page = if designed {
+        None
+    } else {
+        pages::gate_page(&run, &stages, &wait)
+    };
     let mut fresh = OperatorGate {
         run: run.id.clone(),
         item: run.item.clone(),
@@ -68,17 +75,14 @@ pub(super) async fn open(
         opened_at: archon_core::now(),
         decided_at: None,
     };
-    if fresh.subject == GateSubject::Proposal
-        && requires_intent(&store, &fresh)?
-        && store
-            .gate(&fresh.run, &fresh.stage_id, fresh.attempt)?
-            .is_none()
-    {
-        let original =
-            page.ok_or_else(|| ArchonError::Invalid("proposal needs a review page".into()))?;
-        let rendered = super::intent::prepare(ctx, &mut store, &run, &fresh, &stages, &original)?;
-        fresh.page = Some(rendered.display().to_string());
-    }
+    freeze_proposal(
+        ctx,
+        &mut store,
+        &run,
+        &stages,
+        &mut fresh,
+        (page.as_deref(), designed),
+    )?;
     let gate = store.open_gate(&fresh)?;
     assert!(gate.is_open(), "a driver never waits on a decided gate");
     let waiting = RunState::AwaitingOperator {
@@ -97,10 +101,46 @@ pub(super) async fn open(
     Ok(follow)
 }
 
+fn freeze_proposal(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    run: &PipelineRun,
+    stages: &[StageRun],
+    fresh: &mut OperatorGate,
+    (page, designed): (Option<&Path>, bool),
+) -> Result<(), ArchonError> {
+    assert_eq!(fresh.run, run.id);
+    assert_eq!(fresh.item, run.item);
+    if fresh.subject == GateSubject::Proposal
+        && requires_intent(store, fresh)?
+        && store
+            .gate(&fresh.run, &fresh.stage_id, fresh.attempt)?
+            .is_none()
+    {
+        let rendered = if designed {
+            super::design_ledger::prepare(ctx, store, run, fresh, stages)?
+        } else {
+            let original =
+                page.ok_or_else(|| ArchonError::Invalid("proposal needs a review page".into()))?;
+            super::intent::prepare(ctx, store, run, fresh, stages, original)?
+        };
+        fresh.page = Some(rendered.display().to_string());
+    }
+    Ok(())
+}
+
+fn is_design(stage: &str, attempt: u32, stages: &[StageRun]) -> bool {
+    stages
+        .iter()
+        .any(|s| s.stage_id == stage && s.attempt == attempt && s.kind == Some(StageKind::Design))
+}
+
 fn requires_intent(store: &Store, gate: &OperatorGate) -> Result<bool, ArchonError> {
     let item = store.item(&gate.item)?;
     assert_eq!(item.id, gate.item);
-    Ok(item.intent.is_some() || item.model_plan.0.contains_key("intent-acceptance"))
+    Ok(item.intent.is_some()
+        || item.model_plan.0.contains_key("intent-acceptance")
+        || item.autonomy.proposal == ProposalMode::Live)
 }
 
 /// An open gate needs asking until its question is recorded and still open;
@@ -178,10 +218,15 @@ async fn show_page(
         let store = ctx.store.lock().await;
         (store.run(&gate.run)?, store.stage_runs(&gate.run)?)
     };
-    let refused: Vec<String> = pages::gate_pages(&run, &stages, &gate.stage_id, gate.attempt)
-        .into_iter()
-        .filter_map(Result::err)
-        .collect();
+    let designed = is_design(&gate.stage_id, gate.attempt, &stages);
+    let refused: Vec<String> = if designed {
+        Vec::new()
+    } else {
+        pages::gate_pages(&run, &stages, &gate.stage_id, gate.attempt)
+            .into_iter()
+            .filter_map(Result::err)
+            .collect()
+    };
     for why in &refused {
         crate::feed::system(ctx, format!("Gate report was not published: {why}")).await?;
     }
@@ -191,7 +236,8 @@ async fn show_page(
             format!("reports not published: {}", refused.join("; ")),
         ));
     }
-    let (report, mut location) = show_selected_page(ctx, gate, item, &run.workspace).await?;
+    let (report, mut location) =
+        show_selected_page(ctx, gate, item, (&run.workspace, designed)).await?;
     if !refused.is_empty() {
         location.push_str(&format!("\nReports not published: {}", refused.join("; ")));
     }
@@ -202,29 +248,29 @@ async fn show_selected_page(
     ctx: &DaemonContext,
     gate: &OperatorGate,
     item: &QueueItem,
-    workspace: &Path,
+    (workspace, designed): (&Path, bool),
 ) -> Result<(Option<ReportId>, String), ArchonError> {
     let Some(page) = &gate.page else {
         return Ok((None, "no page was written; the summary is below".to_owned()));
     };
-    if let Err(why) = pages::inside_workspace(workspace, page) {
-        crate::feed::system(ctx, format!("Gate report {page} was not published: {why}")).await?;
-        return Ok((None, format!("{page} (not published: {why})")));
-    }
     let title = match gate.subject {
         GateSubject::Proposal => format!("Proposal: {}", item.title),
         GateSubject::Report => format!("Change report: {}", item.title),
     };
-    let pending = if gate.subject == GateSubject::Proposal {
-        let store = ctx.store.lock().await;
-        if super::intent::has_pending(&store, gate)? {
-            Some(super::intent::pending(&store, gate)?)
-        } else {
-            None
+    let pending = pending_proposal(ctx, gate).await?;
+    if designed {
+        if !pending
+            .as_ref()
+            .is_some_and(|saved| !saved.linked_images && saved.page == Path::new(page))
+        {
+            return Err(ArchonError::Corrupt(
+                "design gate has no matching frozen ledger page".into(),
+            ));
         }
-    } else {
-        None
-    };
+    } else if let Err(why) = pages::inside_workspace(workspace, page) {
+        crate::feed::system(ctx, format!("Gate report {page} was not published: {why}")).await?;
+        return Ok((None, format!("{page} (not published: {why})")));
+    }
     let checked =
         reports::publish_checked_page(ctx, &title, Path::new(page), Some(&item.id), |path| {
             if let Some(saved) = &pending {
@@ -272,6 +318,20 @@ fn question_text(gate: &OperatorGate, item: &QueueItem, location: &str) -> Strin
     )
 }
 
+async fn pending_proposal(
+    ctx: &DaemonContext,
+    gate: &OperatorGate,
+) -> Result<Option<super::intent::Pending>, ArchonError> {
+    if gate.subject != GateSubject::Proposal {
+        return Ok(None);
+    }
+    let store = ctx.store.lock().await;
+    if super::intent::has_pending(&store, gate)? {
+        return super::intent::pending(&store, gate).map(Some);
+    }
+    Ok(None)
+}
+
 /// Persist the operator's decision, close the reopen question of its page,
 /// then act on it. Deciding a closed gate again alike is a no-op;
 /// differently, or after a withdrawal, is refused.
@@ -293,7 +353,7 @@ pub(super) async fn decide(
             && matches!(decision, GateDecision::Approve { .. })
             && (requires_intent(&store, &gate)? || super::intent::has_pending(&store, &gate)?)
         {
-            approve_intent(&mut store, &gate)?;
+            approve_intent(ctx, &mut store, &gate)?;
         } else {
             store.update_gate(&gate)?;
         }
@@ -325,6 +385,7 @@ pub(super) async fn decide(
         Some(&run.id),
     )
     .await?;
+    super::proposal::design_decided(ctx, &gate, &all, &decision).await;
     let actions = match table.drivers.get_mut(&run.id) {
         Some(driver) => {
             driver.on_operator_decision(&gate.stage_id, gate.attempt, decision, &all)?
@@ -346,6 +407,7 @@ pub(crate) async fn close_settled_questions(ctx: &DaemonContext) -> Result<(), A
         let mut store = ctx.store.lock().await;
         let mut answers = store.close_withdrawn_questions(now)?;
         answers.extend(store.close_decided_questions(now)?);
+        answers.extend(store.close_cancelled_design_questions(now)?);
         answers
     };
     if answers.is_empty() {
@@ -359,7 +421,11 @@ pub(crate) async fn close_settled_questions(ctx: &DaemonContext) -> Result<(), A
     Ok(())
 }
 
-fn approve_intent(store: &mut Store, gate: &OperatorGate) -> Result<(), ArchonError> {
+fn approve_intent(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    gate: &OperatorGate,
+) -> Result<(), ArchonError> {
     assert_eq!(gate.subject, GateSubject::Proposal);
     assert!(matches!(gate.decision, Some(GateDecision::Approve { .. })));
     let report = gate.report.as_ref().ok_or_else(|| {
@@ -370,6 +436,19 @@ fn approve_intent(store: &mut Store, gate: &OperatorGate) -> Result<(), ArchonEr
     super::intent::verify_page(&saved, &saved.page)?;
     if published != saved.page {
         super::intent::verify_page(&saved, &published)?;
+    }
+    let item = store.item(&gate.item)?;
+    if item.autonomy.proposal == ProposalMode::Live {
+        let run = store.run(&gate.run)?;
+        super::design_ledger::confirmed_worktree(ctx, store, &run, gate)?;
+        for image in &saved.record.images {
+            if super::acceptance::images::reference_hash(&image.path)? != image.sha256 {
+                return Err(ArchonError::Invalid(format!(
+                    "design reference image {} changed after review",
+                    image.id
+                )));
+            }
+        }
     }
     store.approve_gate_intent(gate, &saved.record)
 }

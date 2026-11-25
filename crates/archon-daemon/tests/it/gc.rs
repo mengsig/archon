@@ -436,7 +436,7 @@ async fn shipping_deletes_the_caches_even_of_a_worktree_it_cannot_remove() {
         .feed_after(0, 10_000)
         .expect("feed");
     let noted = feed.iter().any(|item| {
-        matches!(&item.entry, FeedEntry::System { text }
+        matches!(&item.entry, FeedEntry::System { text, .. }
             if text.contains("Could not remove") && text.contains("build caches were deleted"))
     });
     assert!(noted, "the operator learns what was freed");
@@ -683,7 +683,7 @@ async fn releasing_zero_bytes_posts_no_notice_but_real_bytes_do() {
         .expect("zero bytes");
     let notices = |feed: Vec<archon_core::notify::FeedItem>| {
         feed.iter()
-            .filter(|f| matches!(&f.entry, FeedEntry::System { text } if text.contains("of build output")))
+            .filter(|f| matches!(&f.entry, FeedEntry::System { text, .. } if text.contains("of build output")))
             .count()
     };
     let feed = h

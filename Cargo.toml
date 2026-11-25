@@ -21,6 +21,7 @@ archon-mcp = { path = "crates/archon-mcp" }
 archon-lavish = { path = "crates/archon-lavish" }
 archon-daemon = { path = "crates/archon-daemon" }
 archon-remote = { path = "crates/archon-remote" }
+archon-design-browser = { path = "crates/archon-design-browser" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.92"
@@ -31,6 +32,7 @@ clap = { version = "4.6.6", features = ["derive", "env"] }
 dirs = "7.0.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc", "std", "sink"] }
 getrandom = "0.4.3"
+http = "1.5.0"
 http-body-util = "0.1.5"
 hyper = { version = "1.11.1", features = ["server", "http1"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }

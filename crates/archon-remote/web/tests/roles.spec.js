@@ -136,6 +136,9 @@ for (const viewport of VIEWPORTS) {
   test(`settings at ${viewport.width}px is the current section, not Overview`, async ({ browser, fixture }) => {
     const { page, close } = await pairedPage(browser, fixture, 'observer', viewport);
     await visit(page, fixture, '#/settings', (p) => p.getByRole('heading', { name: 'Settings', level: 1 }));
+    const status = await fixture.archond.request({ cmd: 'status' });
+    const app = page.locator('.row').filter({ has: page.getByText('App', { exact: true }) });
+    await expect(app.locator('.row-value')).toHaveText(status.data.daemon_version);
     const nav = page.getByRole('navigation', { name: 'Sections' });
     for (const name of ['Overview', 'Queue', 'Graph', 'Inbox', 'Chat']) {
       await expect(nav.getByRole('link', { name: new RegExp(`^${name}`) })).not.toHaveAttribute('aria-current', 'page');

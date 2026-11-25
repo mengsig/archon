@@ -167,9 +167,22 @@ pub struct DaemonContext {
     pub activity: crate::executor::Activity,
     /// The remote listener Aether mounts, off until the operator enables it.
     pub remote: archon_remote::Remote,
+    /// Live design sessions: previews, the note loop and the finish.
+    pub design: Arc<crate::design::DesignService>,
 }
 
 impl DaemonContext {
+    /// This context's `Arc`, for work that outlives a request. Bound where
+    /// the context is put in its `Arc` (`run`, and the test helpers).
+    ///
+    /// # Panics
+    /// When the context was never bound or is being dropped.
+    pub fn arc(&self) -> Arc<DaemonContext> {
+        self.design
+            .arc()
+            .expect("the context is bound to its Arc (design.bind)")
+    }
+
     /// The directories whose filesystems the disk hold watches.
     pub fn watched_dirs(&self) -> Vec<PathBuf> {
         vec![self.paths.data_dir.clone(), self.paths.worktrees.clone()]

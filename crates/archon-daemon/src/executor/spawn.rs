@@ -587,7 +587,17 @@ fn reserve_checked(
     mut plans: Vec<SpawnPlan>,
     (env, catalog): (&RepoEnv, &archon_core::model_tier::ModelCatalog),
 ) -> Result<Reserved, ArchonError> {
-    if let Err(error) = super::acceptance::select_model(ctx, store, &item, run, &mut plans, None) {
+    if plans[0].kind == StageKind::Design
+        && let Err(error) = crate::knobs::require_design_enabled(ctx)
+    {
+        return Ok(Reserved::Blocked(Exhausted {
+            stage: plans[0].stage_id.clone(),
+            error: error.to_string(),
+        }));
+    }
+    if let Err(error) =
+        super::acceptance::select_model(ctx, store, &item, run, &mut plans, (None, None))
+    {
         if error.is_store() {
             return Err(error);
         }
@@ -1321,7 +1331,7 @@ fn build_request(
         repository: target.repo.map(|repo| repo.name.clone()),
         repository_root: None,
         labels: labels(target, plan, id),
-        hidden_tools: hidden_tools(item.autonomy.tools, plan.workspace),
+        hidden_tools: hidden_tools(item.autonomy.tools, plan.workspace, plan.kind),
         leaf: !target.delegates(plan),
         cost_budget_usd: budget,
         aether_cost_budget: None,
@@ -1416,8 +1426,14 @@ const HIDDEN_NATIVE_TOOLS: [&str; 5] = [
 const INTEGRATE_TOOL: &str = "integrate_workspace";
 
 /// What a stage agent does not see: Archon's tools that act for the
-/// orchestrator (but for [`STAGE_TOOLS`](archon_core::mcp_tools::STAGE_TOOLS)), and the Aether tools above. A child inherits the list.
-fn hidden_tools(tools: ToolsMode, workspace: WorkspaceMode) -> Vec<String> {
+/// orchestrator (but for [`STAGE_TOOLS`](archon_core::mcp_tools::STAGE_TOOLS),
+/// and on a design stage [`DESIGN_STAGE_TOOLS`](archon_core::mcp_tools::DESIGN_STAGE_TOOLS)),
+/// and the Aether tools above. A child inherits the list.
+fn hidden_tools(
+    tools: ToolsMode,
+    workspace: WorkspaceMode,
+    kind: archon_core::catalog::StageKind,
+) -> Vec<String> {
     let hidden = match tools {
         ToolsMode::Guarded => archon_core::mcp_tools::qualified_names(),
         ToolsMode::Yolo => archon_core::mcp_tools::mutating_names(),
@@ -1430,11 +1446,18 @@ fn hidden_tools(tools: ToolsMode, workspace: WorkspaceMode) -> Vec<String> {
     let native = HIDDEN_NATIVE_TOOLS
         .into_iter()
         .chain(read_only.then_some(INTEGRATE_TOOL));
+    let design = match kind {
+        archon_core::catalog::StageKind::Design => {
+            archon_core::mcp_tools::DESIGN_STAGE_TOOLS.as_slice()
+        }
+        _ => &[],
+    };
     hidden
         .into_iter()
         .filter(|name| {
             !archon_core::mcp_tools::STAGE_TOOLS
                 .iter()
+                .chain(design)
                 .any(|tool| name == &archon_core::mcp_tools::qualified(tool))
         })
         .chain(native.map(str::to_owned))
@@ -2209,11 +2232,16 @@ async fn record(
         Ok(Issued::Spawned(spawned)) => {
             table.spawn_errors.remove(&stage.id);
             ctx.disk.agent_created();
-            return spawned_ok(ctx, stage, spawned).await;
+            let agent = spawned.agent.clone();
+            let follow = spawned_ok(ctx, stage, spawned).await?;
+            design_started(ctx, stage, &agent).await;
+            return Ok(follow);
         }
         Ok(Issued::Resumed(agent)) => {
             table.spawn_errors.remove(&stage.id);
-            return resume::resumed_ok(ctx, stage, agent).await;
+            let follow = resume::resumed_ok(ctx, stage, agent.clone()).await?;
+            design_started(ctx, stage, &agent).await;
+            return Ok(follow);
         }
         Ok(Issued::CatalogRefused(refusal)) => {
             return settle::replace_refused_model(ctx, table, stage, refusal).await;
@@ -2251,6 +2279,68 @@ async fn record(
         error if wire::is_internal(&error) => retry_or_fail(ctx, table, stage, error).await,
         ArchonError::Policy(_) => policy_refusal(ctx, table, stage, error).await,
         other => refuse(ctx, table, stage, format!("cannot create agent: {other}")).await,
+    }
+}
+
+/// A Design stage attempt's agent is running: open its live design session
+/// over the run's worktree. A session that cannot start is logged; the stage
+/// then ends at its own deadline or the operator's cancel.
+pub(crate) async fn design_started(ctx: &DaemonContext, stage: &StageRun, agent: &AetherAgentId) {
+    if stage.kind != Some(StageKind::Design) {
+        return;
+    }
+    let found = {
+        let store = ctx.store.lock().await;
+        let current = store.stage_run(&stage.id);
+        let run = store.run(&stage.run);
+        let repo = run.as_ref().ok().and_then(|run| {
+            let item = store.item(&run.item).ok()?;
+            let id = item.repo?;
+            store.repo(&resolve::repo_ref(&id)).ok().map(|r| r.path)
+        });
+        (current, run, repo)
+    };
+    let (Ok(current), Ok(run), Some(repo)) = found else {
+        tracing::warn!(stage = %stage.id, "design stage without a run or repository; no session");
+        return;
+    };
+    if current.state != StageState::Running {
+        return;
+    }
+    let worktree = crate::design::WorktreeRef {
+        repo,
+        worktree: run.workspace.clone(),
+        branch: run.branch.clone(),
+    };
+    let lock = ctx.design.item_lock(&run.item);
+    let ctx = ctx.arc();
+    let agent = agent.clone();
+    let bind = async move |held| {
+        if let Err(error) = ctx
+            .design
+            .stage_started_locked(
+                &ctx,
+                &run.item,
+                &run.id,
+                &current.stage_id,
+                current.attempt,
+                &agent,
+                worktree,
+                held,
+            )
+            .await
+        {
+            tracing::warn!(%error, stage = %current.id, "design session did not start");
+        }
+    };
+    // Record holds the run table. A busy item must release its lock off that path.
+    match lock.clone().try_lock_owned() {
+        Ok(held) => bind(held).await,
+        Err(_) => {
+            tokio::spawn(async move {
+                bind(lock.lock_owned().await).await;
+            });
+        }
     }
 }
 
@@ -2447,6 +2537,25 @@ mod tests {
 
     const HAIKU: &str = "claude-code/claude-haiku-5-5";
     const OTHER: &str = "claude-code/claude-sonnet-5-5";
+
+    /// Only a design stage's agent sees the design tools; the stage tools stay
+    /// visible to every agent, whatever its tools mode.
+    #[test]
+    fn design_tools_are_visible_only_to_a_design_stage() {
+        use archon_core::catalog::StageKind;
+        use archon_core::mcp_tools::{DESIGN_STAGE_TOOLS, STAGE_TOOLS, qualified};
+        for tools in [ToolsMode::Guarded, ToolsMode::Yolo] {
+            let design = hidden_tools(tools, WorkspaceMode::Worktree, StageKind::Design);
+            let work = hidden_tools(tools, WorkspaceMode::Worktree, StageKind::Work);
+            for tool in DESIGN_STAGE_TOOLS {
+                assert!(!design.contains(&qualified(tool)), "{tool} on design");
+                assert!(work.contains(&qualified(tool)), "{tool} hidden from work");
+            }
+            for tool in STAGE_TOOLS {
+                assert!(!design.contains(&qualified(tool)) && !work.contains(&qualified(tool)));
+            }
+        }
+    }
 
     fn model(id: &str) -> ModelRef {
         id.parse().expect("a model id")

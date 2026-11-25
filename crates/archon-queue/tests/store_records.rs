@@ -17,6 +17,8 @@ use common::*;
 fn feed_and_delivery_state_commit_or_roll_back_together() {
     let mut store = store();
     let entry = FeedEntry::System {
+        command_id: None,
+        command_result: None,
         text: "message".into(),
     };
     let invalid =
@@ -384,6 +386,7 @@ fn feed_entries_round_trip_with_gapless_seq() {
             text: "hi".into(),
             images: Vec::new(),
             local: false,
+            command_id: None,
         },
         FeedEntry::Orchestrator {
             text: "hello".into(),
@@ -401,6 +404,8 @@ fn feed_entries_round_trip_with_gapless_seq() {
             item: None,
         },
         FeedEntry::System {
+            command_id: None,
+            command_result: None,
             text: "aether reconnected".into(),
         },
         notification(NotificationKind::Blocker, "budget"),

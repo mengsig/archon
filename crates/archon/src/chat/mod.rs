@@ -452,7 +452,7 @@ mod tests {
 
     fn said(request: Request) -> (String, usize) {
         match request {
-            Request::Say { text, images } => (text, images.len()),
+            Request::Say { text, images, .. } => (text, images.len()),
             other => panic!("not a say: {other:?}"),
         }
     }

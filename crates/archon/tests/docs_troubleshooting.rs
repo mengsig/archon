@@ -243,6 +243,10 @@ const BLOCKERS: &[(&str, &str)] = &[
         "crates/archon/src/cmd/update/restart.rs",
         "see its startup log with",
     ),
+    (
+        "crates/archon-daemon/src/design/reports.rs",
+        "Open it to show the agent what to change",
+    ),
 ];
 
 /// Daemon files that name the kind without carrying a blocker text of their own.

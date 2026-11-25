@@ -229,6 +229,7 @@ async fn overlay_settings(
         }
     }
     Ok(Request::SetSettings {
+        legacy_proposals: false,
         repo,
         settings: serde_json::from_value(value)?,
     })

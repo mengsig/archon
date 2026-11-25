@@ -77,7 +77,7 @@ async fn system_notes(h: &Harness) -> Vec<String> {
         .feed_after(0, 10_000)
         .expect("feed");
     let notes = feed.into_iter().filter_map(|item| match item.entry {
-        FeedEntry::System { text } => Some(text),
+        FeedEntry::System { text, .. } => Some(text),
         _ => None,
     });
     notes.collect()

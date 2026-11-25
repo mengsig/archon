@@ -263,7 +263,15 @@ pub(super) fn save_scored(
         lesson.uses,
         serde_json::to_string(&lesson.text)?
     );
-    super::super::feed::append_in(conn, FeedEntry::System { text }, at)?;
+    super::super::feed::append_in(
+        conn,
+        FeedEntry::System {
+            text,
+            command_id: None,
+            command_result: None,
+        },
+        at,
+    )?;
     Ok(())
 }
 

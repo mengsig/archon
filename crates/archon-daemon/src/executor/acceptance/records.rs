@@ -1,5 +1,6 @@
 use crate::context::DaemonContext;
 use archon_core::acceptance::{AcceptanceReadiness, AcceptanceRecord, AcceptanceStatus};
+use archon_core::autonomy::ProposalMode;
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::queue::QueueItem;
@@ -95,10 +96,10 @@ pub(crate) async fn require_current(
     }
     assert!(view.status != AcceptanceStatus::Passed || view.record.is_some());
     assert!(view.status != AcceptanceStatus::NotRequired || item.intent.is_none());
-    Ok(readiness_text(&view))
+    Ok(readiness_text(&view, item.autonomy.proposal))
 }
 
-pub(crate) fn readiness_text(view: &AcceptanceReadiness) -> String {
+pub(crate) fn readiness_text(view: &AcceptanceReadiness, proposal: ProposalMode) -> String {
     let pin = view
         .record
         .as_ref()
@@ -110,6 +111,11 @@ pub(crate) fn readiness_text(view: &AcceptanceReadiness) -> String {
         })
         .unwrap_or_default();
     let honesty = match &view.record {
+        Some(r) if !r.independent && proposal == ProposalMode::Live => format!(
+            "; acceptance: not independent (judged by `{}`, which shares a model or vendor with a \
+             builder)",
+            r.model
+        ),
         Some(r) if !r.independent => format!(
             "; acceptance: not independent (judged by builder model `{}`: no permitted, connected \
              model apart from every builder could judge it)",
@@ -160,7 +166,11 @@ pub(super) fn failed(
         model: stage.choice.model.clone(),
         checked_at: archon_core::now(),
         page: page.into(),
-        independent: !builders.contains(&stage.choice.model),
+        independent: super::spawn::independent(
+            &stage.choice.model,
+            &builders,
+            item.autonomy.proposal,
+        ),
     };
     assert!(!record.result.requirements.is_empty());
     assert!(!reason.is_empty());
@@ -235,12 +245,12 @@ mod tests {
 
     #[test]
     fn a_fallback_judgment_is_reported_not_independent_and_an_independent_one_is_not() {
-        let fallback = readiness_text(&passed(false));
+        let fallback = readiness_text(&passed(false), ProposalMode::Off);
         assert!(
             fallback.contains("acceptance: not independent"),
             "{fallback}"
         );
         assert!(fallback.contains("`claude-code/builder`"), "{fallback}");
-        assert!(!readiness_text(&passed(true)).contains("not independent"));
+        assert!(!readiness_text(&passed(true), ProposalMode::Off).contains("not independent"));
     }
 }

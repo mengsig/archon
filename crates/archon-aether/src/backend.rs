@@ -1006,6 +1006,24 @@ impl AgentBackend for AetherBackend {
             .await
     }
 
+    async fn send_message_with_attachments(
+        &self,
+        to: &AetherAgentId,
+        content: &str,
+        idempotency_key: &str,
+        attachments: &[archon_core::attachment::ImageAttachment],
+    ) -> Result<(), ArchonError> {
+        let client = self.link.client()?;
+        let version = client.welcome().protocol_version;
+        if !attachments.is_empty() && version < crate::wire::IMAGES_PROTOCOL_VERSION {
+            let text = format!("{content}\n\n(picture available to the operator only)");
+            return client.send_message(to, &text, &[], idempotency_key).await;
+        }
+        client
+            .send_message(to, content, attachments, idempotency_key)
+            .await
+    }
+
     async fn resumed_outcome(
         &self,
         agent: &AetherAgentId,

@@ -16,7 +16,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use archon_core::aether_ids::AetherAgentId;
-use archon_core::error::ArchonError;
+use archon_core::error::{ArchonError, DesignRefusal};
 use archon_core::notify::FeedItem;
 use archon_core::protocol::{
     ClientKind, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request, RequestClass, Welcome,
@@ -320,6 +320,11 @@ pub fn refusal_error(refusal: ErrorReply) -> ArchonError {
         }
         ErrorCode::Unavailable => ArchonError::Unavailable(bare("unavailable: ")),
         ErrorCode::Recovering => ArchonError::Recovering(bare("recovering: ")),
+        ErrorCode::Gone => design_refusal(DesignRefusal::Gone, message),
+        ErrorCode::ReadOnly => design_refusal(DesignRefusal::ReadOnly, message),
+        ErrorCode::Finishing => design_refusal(DesignRefusal::Finishing, message),
+        ErrorCode::Stale => design_refusal(DesignRefusal::Stale, message),
+        ErrorCode::Conflict => design_refusal(DesignRefusal::Conflict, message),
         ErrorCode::HistoryExpired(kept) => ArchonError::Invalid(format!(
             "{message} (changes {} to {} are kept)",
             kept.first_seq, kept.last_seq
@@ -328,6 +333,10 @@ pub fn refusal_error(refusal: ErrorReply) -> ArchonError {
             ArchonError::Protocol(format!("archond failed: {message}"))
         }
     }
+}
+
+fn design_refusal(code: DesignRefusal, message: String) -> ArchonError {
+    ArchonError::Design { code, message }
 }
 
 /// The socket path the CLI and MCP proxy use.

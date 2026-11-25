@@ -1,6 +1,7 @@
 //! `Settings`, `SetSettings` and `ResetSettings`: the operator's overlays
 //! at one scope, and the values in force there with their sources.
 
+use archon_core::autonomy::ProposalMode;
 use archon_core::error::ArchonError;
 use archon_core::protocol::{Reply, RepoRef};
 use archon_core::settings::{OperatorSettings, SettingsView};
@@ -35,9 +36,23 @@ pub(super) async fn view(
 pub(super) async fn set(
     ctx: &DaemonContext,
     repo: Option<&RepoRef>,
-    settings: OperatorSettings,
+    mut settings: OperatorSettings,
+    legacy_proposals: bool,
 ) -> Result<Reply, ArchonError> {
     let id = env(ctx, repo).await?.repo.map(|r| r.id);
+    if legacy_proposals {
+        let current = crate::settings::read(ctx, id.as_ref()).await?;
+        for (new, old) in [
+            (&mut settings.autonomy_default, current.autonomy_default),
+            (&mut settings.autonomy_max, current.autonomy_max),
+        ] {
+            if old.proposal == Some(ProposalMode::Live)
+                && new.proposal == Some(ProposalMode::Lavish)
+            {
+                new.proposal = old.proposal;
+            }
+        }
+    }
     crate::settings::write(ctx, id.as_ref(), settings).await?;
     view(ctx, repo).await
 }

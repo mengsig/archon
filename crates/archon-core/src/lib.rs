@@ -23,6 +23,7 @@ pub mod conversation;
 pub mod cost;
 pub mod crash;
 pub mod delegation;
+pub mod design;
 pub mod effort_sizing;
 pub mod engine_login;
 pub mod error;

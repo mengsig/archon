@@ -781,6 +781,7 @@ async fn ordinary_operator_chat_is_not_a_correction_but_structured_feedback_is()
     h.ctx.aether.replace(None).unwrap();
     let sent = h
         .cli(Request::Say {
+            command_id: None,
             text: "Actually add another test for the typo".into(),
             images: Vec::new(),
         })
@@ -801,6 +802,7 @@ async fn ordinary_operator_chat_is_not_a_correction_but_structured_feedback_is()
     let event = serde_json::json!({"item":item.id,"stage":stage.stage_id,"cause":"quality","reason":"The result regresses parsing"});
     let sent = h
         .cli(Request::Say {
+            command_id: None,
             text: format!("correction {event}"),
             images: Vec::new(),
         })

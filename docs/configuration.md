@@ -233,8 +233,9 @@ Set it to `false` to retry such items by hand with `retry_item`.
 `independent_acceptance` (default `false`) controls approved-intent
 acceptance when no permitted, connected model apart from every builder can
 judge it. Approved reference images need a vision model. Off, the strongest
-permitted model judges it, and readiness says `acceptance: not independent`.
-On, the run is refused instead.
+permitted model judges it, and readiness says `acceptance: not independent`,
+including a live design item's pinned judge when it shares a builder's model
+or vendor. Turning this setting on refuses these runs.
 
 ```toml
 [review]                       # reviewers with no explicit <stage>.review plan
@@ -347,9 +348,23 @@ branch_prefix = "archon/"      # run branches are named <prefix><id>-<slug>
 [lavish]
 binary = "lavish-axi"          # the Lavish command
 
+[design]                       # live design sessions (design-sessions.md)
+enabled = false                # true allows `proposal = live`; false refuses it
+browser = ""                   # path to Chrome or Chromium; empty finds one
+browser_sandbox = "required"   # "required", or "off" (adds --no-sandbox; the UI shows a badge)
+max_sessions = 2               # live headless browsers on this host
+
 [github]
 binary = "gh"                  # the command `github_reply` posts with
 ```
+
+`[design]` turns on [live design
+sessions](design-sessions.md). `enabled` is `false` until you set it. With it
+off, `proposal = live` is refused with a clear message and a running live
+stage fails with "design sessions turned off". Serve all preview assets through the item's registered
+dev-server origin. Verifying socket ownership requires a Linux daemon host
+with access to the dev server’s `/proc` records. Remove nonempty `[design] allow_hosts` lists from
+`.archon/repo.toml`.
 
 In `<repo>/.archon/config.toml`, `[repo]` takes `ship = "pr"`, `base_branch = "main"` and
 `default_pipeline = "direct"`, and `[pipelines]` takes `disabled = ["adaptive"]`,

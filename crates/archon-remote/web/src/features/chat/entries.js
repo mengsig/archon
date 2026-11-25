@@ -2,7 +2,7 @@
 import { h } from '../../ui/dom.js';
 import { renderMarkdown } from '../../ui/markdown.js';
 import { clockTime, safeHttpUrl } from '../../core/format.js';
-import { stripRelayMark } from '../../core/conversation.js';
+import { stripRelayMark, commandEchoId, echoedLine } from '../../core/conversation.js';
 
 export function dayKey(iso) {
   const at = new Date(iso);
@@ -10,11 +10,13 @@ export function dayKey(iso) {
 }
 
 // One conversation entry exactly as archond sent it; `note` is the send outcome of an operator line.
-export function conversationEntry(entry, note) {
+export function conversationEntry(entry, note, outcome) {
   switch (entry.kind) {
     case 'operator': return bubble('operator', stripRelayMark(entry.text), entry.at, operatorNote(note));
     case 'assistant': return bubble('orchestrator', entry.text, entry.at);
-    case 'post': return line('post', 'Post', entry.text, entry.at, linkButtons(entry.links));
+    case 'post':
+      if (commandEchoId(entry)) return bubble('operator', echoedLine(entry), entry.at, outcome ? commandNote(outcome) : operatorNote(note));
+      return line('post', 'Post', entry.text, entry.at, linkButtons(entry.links));
     case 'question': return line('question', 'Question', entry.text, entry.at, h('a', { class: 'link-button', href: '#/inbox' }, 'Answer in Inbox'));
     default: return line('system', String(entry.kind ?? 'Entry'), entry.text ?? '', entry.at, null, { plain: true });
   }
@@ -45,11 +47,13 @@ function line(kind, label, text, at, extra = null, { plain = false } = {}) {
     extra);
 }
 
-export function pendingEntry(entry, { retry, discard }) {
+// `outcome` is archond's answer to a command (see commandOutcome); `offline`
+// says the orchestrator cannot pick a line up yet.
+export function pendingEntry(entry, { retry, discard, outcome = null, offline = false }) {
   const failed = entry.status === 'failed';
-  const note = {
+  const note = outcome && !failed ? commandNote(outcome) : {
     sending: h('span', { class: 'bubble-note', text: 'Sending…' }),
-    sent: h('span', { class: 'bubble-note', text: 'Sent. It shows as read once the orchestrator picks it up.' }),
+    sent: h('span', { class: 'bubble-note', text: offline ? 'Sent. Waiting for the orchestrator, which is offline.' : 'Sent. It shows as read once the orchestrator picks it up.' }),
     offline: h('span', { class: 'bubble-note tone-text-amber', text: 'Saved. The orchestrator is offline and gets it once it is back.' }),
     failed: h('span', { class: 'bubble-note tone-text-red', role: 'alert', text: `Not sent: ${entry.error}` }),
   }[entry.status];
@@ -58,4 +62,10 @@ export function pendingEntry(entry, { retry, discard }) {
     h('div', { class: 'bubble-meta' }, note,
       failed ? h('button', { class: 'link-button', type: 'button', onclick: retry }, 'Retry') : null,
       failed ? h('button', { class: 'link-button', type: 'button', onclick: discard }, 'Discard') : null));
+}
+
+// archond's own answer to a command, under the line that sent it.
+function commandNote(outcome) {
+  return h('span', { class: 'bubble-note bubble-outcome', role: 'status' }, `Archon: ${outcome.lines.map((l) => (/[.!?]$/.test(l) ? l : `${l}.`)).join(' ')}`,
+    outcome.question ? [' ', h('a', { class: 'link-button', href: '#/inbox' }, `Answer ${outcome.question} in Inbox`)] : null);
 }

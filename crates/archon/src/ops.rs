@@ -22,7 +22,14 @@ pub async fn say(
         !text.trim().is_empty() || !images.is_empty(),
         "a message without images is never blank"
     );
-    match client.call(Request::Say { text, images }).await? {
+    match client
+        .call(Request::Say {
+            text,
+            images,
+            command_id: None,
+        })
+        .await?
+    {
         Ok(Reply::Ok) => Ok(()),
         Ok(other) => Err(unexpected(&other, "ok")),
         Err(refusal) => Err(archon_client::refusal_error(refusal).into()),

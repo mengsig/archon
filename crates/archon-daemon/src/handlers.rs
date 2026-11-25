@@ -116,26 +116,45 @@ pub async fn handle_device(
         !matches!(request, Request::ForAgent { .. } | Request::Tracked { .. }),
         "a device's request is its own, never forwarded"
     );
-    let (client, request) = match device.role {
-        DeviceRole::Operator => (ClientKind::ArchonCli, as_tui_command(request)),
-        DeviceRole::Observer => (ClientKind::ArchonWeb, request),
+    let (client, (request, command_id)) = match device.role {
+        DeviceRole::Operator => (ClientKind::ArchonCli, as_tui_command(request)?),
+        DeviceRole::Observer => (ClientKind::ArchonWeb, (request, None)),
     };
-    let request = handle_unattributed(ctx, client, request);
-    changes::attributed_as(TransitionActor::Web, request).await
+    let request =
+        crate::design::with_device(device.clone(), handle_unattributed(ctx, client, request));
+    let request = changes::attributed_as(TransitionActor::Web, request);
+    match command_id {
+        Some(id) => crate::feed::COMMAND_ID.scope(id, request).await,
+        None => request.await,
+    }
 }
 
 /// The TUI sends a host command (`/archon …`, `/answer …`) as an operator
 /// command, never as a chat line to the orchestrator; so does a device.
-fn as_tui_command(request: Request) -> Request {
+fn as_tui_command(request: Request) -> Result<(Request, Option<String>), ArchonError> {
     match request {
-        Request::Say { text, images }
-            if images.is_empty() && crate::operator_commands::names_host_command(&text) =>
-        {
-            Request::OperatorCommand {
-                text: text.trim().to_owned(),
+        Request::Say {
+            text,
+            images,
+            command_id,
+        } if images.is_empty() && crate::operator_commands::names_host_command(&text) => {
+            if let Some(id) = &command_id
+                && (id.is_empty()
+                    || id.len() > 64
+                    || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+            {
+                return Err(ArchonError::Invalid(
+                    "command_id must contain 1 to 64 ASCII letters, digits or hyphens".into(),
+                ));
             }
+            Ok((
+                Request::OperatorCommand {
+                    text: text.trim().to_owned(),
+                },
+                command_id,
+            ))
         }
-        request => request,
+        request => Ok((request, None)),
     }
 }
 
@@ -366,6 +385,9 @@ fn orchestrators_alone(
         Request::MessageOrchestrator { .. }
             | Request::PublishArtifact { .. }
             | Request::SubmitVerdict { .. }
+            | Request::DesignPreview { .. }
+            | Request::DesignNoteReport { .. }
+            | Request::DesignHistory { .. }
     );
     for_an_agent(client, caller) && !request.is_read_only() && !stage_message
 }
@@ -384,6 +406,9 @@ fn check_named_caller(
     let named = match request {
         Request::MessageOrchestrator { caller, .. }
         | Request::PublishArtifact { caller, .. }
+        | Request::DesignPreview { caller, .. }
+        | Request::DesignNoteReport { caller, .. }
+        | Request::DesignHistory { caller, .. }
         | Request::SubmitVerdict { caller, .. }
         | Request::AskOperator { caller, .. }
         | Request::RecordChatAnswer { caller, .. }
@@ -430,6 +455,34 @@ pub(crate) async fn route(
             };
             crate::executor::restatement::submit(ctx, caller.as_ref(), sent).await
         }
+        request @ (Request::DesignGet { .. }
+        | Request::SubscribeDesign { .. }
+        | Request::DesignAsset { .. }
+        | Request::DesignUnsubscribe { .. }
+        | Request::DesignFrameAck { .. }
+        | Request::DesignInput { .. }
+        | Request::DesignResolve { .. }
+        | Request::DesignRegion { .. }
+        | Request::DesignUpload { .. }
+        | Request::DesignViewport { .. }
+        | Request::DesignReload { .. }
+        | Request::DesignTellAgent { .. }
+        | Request::DesignDialogAnswer { .. }
+        | Request::DesignNoteAdd { .. }
+        | Request::DesignNoteEdit { .. }
+        | Request::DesignNoteCancel { .. }
+        | Request::DesignNoteReply { .. }
+        | Request::DesignNoteDrop { .. }
+        | Request::DesignNoteUndo { .. }
+        | Request::DesignNoteContinueFrom { .. }
+        | Request::DesignNoteResend { .. }
+        | Request::DesignFinishCapture { .. }
+        | Request::DesignFinalCapture { .. }
+        | Request::DesignFinishConfirm { .. }
+        | Request::DesignFinishCancel { .. }
+        | Request::DesignPreview { .. }
+        | Request::DesignNoteReport { .. }
+        | Request::DesignHistory { .. }) => crate::design::handle(ctx, client, request).await,
         Request::ListArtifacts { item } => crate::artifacts::list_for(ctx, &item).await,
         Request::ReadArtifact {
             item,
@@ -501,7 +554,7 @@ pub(crate) async fn route(
             Ok(Reply::Merge(Box::new(merge)))
         }
         // Who said it decides whether the line may carry operator authority.
-        Request::Say { text, images } => operator::say(ctx, client, &text, &images).await,
+        Request::Say { text, images, .. } => operator::say(ctx, client, &text, &images).await,
         Request::Answer {
             question,
             text,
@@ -656,9 +709,11 @@ async fn handle_queue(
         Request::Status(query) => control::status(ctx, query).await,
         Request::SetCaps { caps } => control::set_caps(ctx, caps).await,
         Request::Settings { repo } => settings::view(ctx, repo.as_ref()).await,
-        Request::SetSettings { repo, settings } => {
-            settings::set(ctx, repo.as_ref(), settings).await
-        }
+        Request::SetSettings {
+            repo,
+            settings,
+            legacy_proposals,
+        } => settings::set(ctx, repo.as_ref(), settings, legacy_proposals).await,
         Request::ResetSettings { repo } => settings::reset(ctx, repo.as_ref()).await,
         Request::ListPipelines { repo, pipeline } => {
             control::list_pipelines(ctx, repo.as_ref(), pipeline.as_deref()).await

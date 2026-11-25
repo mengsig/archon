@@ -1190,7 +1190,7 @@ async fn gate_questions_name_every_refused_report_even_when_another_page_is_show
                 ("last-refused.html", "resolves outside"),
             ] {
                 assert!(
-                    feed.iter().any(|f| matches!(&f.entry, FeedEntry::System { text }
+                    feed.iter().any(|f| matches!(&f.entry, FeedEntry::System { text, .. }
                         if text.contains(path) && text.contains(reason) && text.contains("not published"))),
                     "{feed:?}"
                 );
@@ -1246,7 +1246,7 @@ async fn a_gate_names_a_listed_page_that_is_missing_or_not_a_regular_file() {
         let feed = h.ctx.store.lock().await.feed_after(0, 10_000).unwrap();
         assert!(
             feed.iter()
-                .any(|f| matches!(&f.entry, FeedEntry::System { text }
+                .any(|f| matches!(&f.entry, FeedEntry::System { text, .. }
             if text.contains("listed.html") && text.contains("not published"))),
             "{feed:?}"
         );
@@ -1279,7 +1279,7 @@ async fn a_gate_with_a_copy_refusal_shows_the_original_and_explains_its_retentio
     let feed = h.ctx.store.lock().await.feed_after(0, 10_000).unwrap();
     assert!(
         feed.iter()
-            .any(|f| matches!(&f.entry, FeedEntry::System { text }
+            .any(|f| matches!(&f.entry, FeedEntry::System { text, .. }
         if text.contains("not durable") && text.contains("Proposal:"))),
         "{feed:?}"
     );

@@ -15,6 +15,7 @@ pub async fn run(
     let repo = repo.map(RepoRef);
     let request = match (set, reset) {
         (Some(raw), false) => Request::SetSettings {
+            legacy_proposals: false,
             repo,
             settings: parse_settings(&raw)?,
         },

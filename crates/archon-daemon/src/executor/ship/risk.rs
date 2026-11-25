@@ -84,7 +84,7 @@ pub(crate) async fn label(
             let readiness = super::super::acceptance::readiness(ctx, &item).await?;
             shown.body = acceptance_body(
                 &shown.body,
-                &super::super::acceptance::readiness_text(&readiness),
+                &super::super::acceptance::readiness_text(&readiness, item.autonomy.proposal),
             );
         }
     }

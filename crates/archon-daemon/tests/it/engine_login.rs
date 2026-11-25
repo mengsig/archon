@@ -29,7 +29,7 @@ async fn system_lines(h: &Harness) -> Vec<String> {
     let feed = h.ctx.store.lock().await.feed_after(0, 10_000).unwrap();
     feed.into_iter()
         .filter_map(|item| match item.entry {
-            FeedEntry::System { text } => Some(text),
+            FeedEntry::System { text, .. } => Some(text),
             _ => None,
         })
         .collect()

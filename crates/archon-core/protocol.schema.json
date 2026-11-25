@@ -209,6 +209,36 @@
     "AetherTaskId": {
       "type": "string"
     },
+    "AgentNoteStatus": {
+      "description": "The status an agent reports for a note.",
+      "oneOf": [
+        {
+          "const": "working",
+          "description": "Started on it.",
+          "type": "string"
+        },
+        {
+          "const": "done",
+          "description": "Finished.",
+          "type": "string"
+        },
+        {
+          "const": "needs_reply",
+          "description": "Waiting for the operator's answer.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Could not do it.",
+          "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "description": "Stopped at the operator's request.",
+          "type": "string"
+        }
+      ]
+    },
     "AllowedUsers": {
       "description": "The GitHub logins that alone may dispatch for one repository: non-empty,\nat most [`MAX_ALLOWED_USERS`], lowercased and de-duplicated in first-seen\norder, as Aether stores them.",
       "items": {
@@ -628,6 +658,125 @@
         "limit"
       ],
       "type": "object"
+    },
+    "BrowserStatus": {
+      "description": "The preview browser's state.",
+      "oneOf": [
+        {
+          "description": "No browser is wanted.",
+          "properties": {
+            "status": {
+              "const": "idle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Starting.",
+          "properties": {
+            "status": {
+              "const": "starting",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Running.",
+          "properties": {
+            "status": {
+              "const": "running",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Waiting for a free preview slot.",
+          "properties": {
+            "status": {
+              "const": "queued_for_slot",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "No browser found.",
+          "properties": {
+            "hint": {
+              "description": "What to do about it.",
+              "type": "string"
+            },
+            "status": {
+              "const": "missing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "hint"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The browser's sandbox cannot start.",
+          "properties": {
+            "hint": {
+              "description": "What to do about it.",
+              "type": "string"
+            },
+            "status": {
+              "const": "sandbox_unavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "hint"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "It crashed too often to be restarted again.",
+          "properties": {
+            "status": {
+              "const": "crashed_too_often",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Running without its sandbox, by the operator's choice.",
+          "properties": {
+            "status": {
+              "const": "unsandboxed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "Caps": {
       "description": "Concurrency and spend limits the dispatcher enforces. Zero means\n\"no limit\" for every field, matching the config file's convention.",
@@ -2156,6 +2305,13 @@
               "const": "say",
               "type": "string"
             },
+            "command_id": {
+              "description": "Correlates a paired operator device's host command with its feed results.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "images": {
               "items": {
                 "$ref": "#/$defs/ImageAttachment"
@@ -3657,6 +3813,786 @@
             "cmd"
           ],
           "type": "object"
+        },
+        {
+          "description": "An item's design session and notes; an observer gets only the summary.",
+          "properties": {
+            "cmd": {
+              "const": "design_get",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stream a design session's frames and events as `design` frames.",
+          "properties": {
+            "cmd": {
+              "const": "subscribe_design",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Release a design subscription on the connection that created it.",
+          "properties": {
+            "cmd": {
+              "const": "design_unsubscribe",
+              "type": "string"
+            },
+            "sub": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "sub"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One stored design picture.",
+          "properties": {
+            "cmd": {
+              "const": "design_asset",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/DesignAssetId"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Flow control: the last frame the client has drawn.",
+          "properties": {
+            "cmd": {
+              "const": "design_frame_ack",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sub": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "sub",
+            "seq"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Pointer, wheel, key, text and touch events for the preview.",
+          "properties": {
+            "cmd": {
+              "const": "design_input",
+              "type": "string"
+            },
+            "events": {
+              "items": {
+                "$ref": "#/$defs/InputEvent"
+              },
+              "type": "array"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "events"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The element under a point, with its `depth`th parent.",
+          "properties": {
+            "cmd": {
+              "const": "design_resolve",
+              "type": "string"
+            },
+            "depth": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "select": {
+              "type": "boolean"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "x": {
+              "format": "double",
+              "type": "number"
+            },
+            "y": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "x",
+            "y",
+            "depth",
+            "select"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A region the operator drew.",
+          "properties": {
+            "box": {
+              "$ref": "#/$defs/Rect"
+            },
+            "cmd": {
+              "const": "design_region",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "box"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A picture the operator supplied or sketched.",
+          "properties": {
+            "base": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DesignAssetId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "blank": {
+              "default": false,
+              "type": "boolean"
+            },
+            "cmd": {
+              "const": "design_upload",
+              "type": "string"
+            },
+            "data": {
+              "description": "Base64.",
+              "type": "string"
+            },
+            "media_type": {
+              "type": "string"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "sketch": {
+              "description": "Stroke JSON of a sketch.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "media_type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Resize the preview to a preset.",
+          "properties": {
+            "cmd": {
+              "const": "design_viewport",
+              "type": "string"
+            },
+            "preset": {
+              "$ref": "#/$defs/ViewportPreset"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "preset"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reload the preview page.",
+          "properties": {
+            "cmd": {
+              "const": "design_reload",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Tell the agent again where the preview is.",
+          "properties": {
+            "cmd": {
+              "const": "design_tell_agent",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Answer the page's JavaScript dialog.",
+          "properties": {
+            "accept": {
+              "type": "boolean"
+            },
+            "cmd": {
+              "const": "design_dialog_answer",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "accept"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Add a note to the session's queue.",
+          "properties": {
+            "asset": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DesignAssetId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "design_note_add",
+              "type": "string"
+            },
+            "details_text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "follows": {
+              "description": "For a follow-up, the version of its chain it continues from.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "refs": {
+              "description": "Earlier notes it references.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "send_picture": {
+              "type": "boolean"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "client_key",
+            "text",
+            "send_picture"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Continue a chain from one of its versions: revert the newer versions\nin the code, newest first, then queue the follow-up `text` if given.",
+          "properties": {
+            "client_key": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "design_note_continue_from",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            "refs": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "text": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Change a queued note's text.",
+          "properties": {
+            "cmd": {
+              "const": "design_note_edit",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Cancel a queued note.",
+          "properties": {
+            "cmd": {
+              "const": "design_note_cancel",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Answer a note that needs a reply.",
+          "properties": {
+            "cmd": {
+              "const": "design_note_reply",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Drop a note that needs a reply.",
+          "properties": {
+            "cmd": {
+              "const": "design_note_drop",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Queue an undo of a done note.",
+          "properties": {
+            "cmd": {
+              "const": "design_note_undo",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Send a failed or cancelled note again.",
+          "properties": {
+            "cmd": {
+              "const": "design_note_resend",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Begin Finish: `live` to `finishing` and the final capture.",
+          "properties": {
+            "cancel_queued": {
+              "default": false,
+              "type": "boolean"
+            },
+            "cmd": {
+              "const": "design_finish_capture",
+              "type": "string"
+            },
+            "recapture": {
+              "default": false,
+              "type": "boolean"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Capture the current frame for one note's final picture.",
+          "properties": {
+            "capture": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "design_final_capture",
+              "type": "string"
+            },
+            "note": {
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "capture",
+            "note"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Confirm Finish with the operator's choices.",
+          "properties": {
+            "capture": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "design_finish_confirm",
+              "type": "string"
+            },
+            "confirm_no_change": {
+              "default": false,
+              "type": "boolean"
+            },
+            "include": {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "type": "object"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "superseded": {
+              "additionalProperties": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "capture",
+            "include",
+            "superseded"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Back to editing: `finishing` to `live`.",
+          "properties": {
+            "cmd": {
+              "const": "design_finish_cancel",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent (re)points the preview at its dev server.",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "design_preview",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent reports a note's status.",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "design_note_report",
+              "type": "string"
+            },
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "no_change": {
+              "default": false,
+              "type": "boolean"
+            },
+            "path": {
+              "description": "For a done page note (no element picked, such as a New screen\nsketch): the app path that shows the change, e.g. `/settings`.\nThe preview goes there and the after and final pictures are taken\nthere.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reply": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/$defs/AgentNoteStatus"
+            },
+            "steps": {
+              "description": "The steps that put the preview in the state that shows the change\n(open a dialog, hover a menu). With `working` they take the\nnote's before picture in that state; with `done` they are\nreplayed for the after picture, and a repeated `done` retakes it.",
+              "items": {
+                "$ref": "#/$defs/UiStep"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "cmd",
+            "id",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent reads the history of a note's chain, or every chain.",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "design_history",
+              "type": "string"
+            },
+            "id": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
         }
       ],
       "properties": {
@@ -3688,6 +4624,24 @@
           "type": "string"
         }
       ]
+    },
+    "ComponentRef": {
+      "description": "A UI component the page names for an element.",
+      "properties": {
+        "framework": {
+          "description": "The framework it came from.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The component's name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "framework"
+      ],
+      "type": "object"
     },
     "ConversationEntry": {
       "description": "One entry, identified and ordered by `(seq, part)`.",
@@ -4465,6 +5419,851 @@
       ],
       "type": "object"
     },
+    "DesignAssetId": {
+      "type": "string"
+    },
+    "DesignAssetView": {
+      "description": "One stored picture.",
+      "properties": {
+        "caption": {
+          "description": "A caption.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "data_url": {
+          "description": "The picture as a `data:` URL.",
+          "type": "string"
+        },
+        "height": {
+          "description": "Height in pixels.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "$ref": "#/$defs/DesignAssetId",
+          "description": "Its id."
+        },
+        "width": {
+          "description": "Width in pixels.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "data_url",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "DesignEvent": {
+      "description": "One event of a `subscribe_design` stream.",
+      "oneOf": [
+        {
+          "description": "One frame of the preview.",
+          "properties": {
+            "at": {
+              "description": "When it was taken.",
+              "format": "date-time",
+              "type": "string"
+            },
+            "event": {
+              "const": "frame",
+              "type": "string"
+            },
+            "h": {
+              "description": "Height in pixels.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "jpeg_b64": {
+              "description": "The JPEG, base64.",
+              "type": "string"
+            },
+            "seq": {
+              "description": "Increases with every frame, for acknowledgements.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "w": {
+              "description": "Width in pixels.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "seq",
+            "jpeg_b64",
+            "w",
+            "h",
+            "at"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The element under the pointer or selected.",
+          "properties": {
+            "box": {
+              "$ref": "#/$defs/Rect",
+              "description": "Its box."
+            },
+            "event": {
+              "const": "selection",
+              "type": "string"
+            },
+            "label": {
+              "description": "A short description.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "box",
+            "label"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The session changed.",
+          "properties": {
+            "browser": {
+              "$ref": "#/$defs/BrowserStatus",
+              "description": "The browser's state."
+            },
+            "commit": {
+              "description": "HEAD.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "degraded": {
+              "description": "The preview is degraded.",
+              "type": "boolean"
+            },
+            "event": {
+              "const": "session",
+              "type": "string"
+            },
+            "note_version": {
+              "description": "The note version.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "preview_path": {
+              "description": "The page path being shown.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "state": {
+              "$ref": "#/$defs/SessionState",
+              "description": "Its state."
+            }
+          },
+          "required": [
+            "event",
+            "state",
+            "degraded",
+            "browser",
+            "note_version"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/DesignNoteView",
+          "description": "A note changed.",
+          "properties": {
+            "event": {
+              "const": "note",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Hosts the page tried to load and was refused.",
+          "properties": {
+            "event": {
+              "const": "blocked_hosts",
+              "type": "string"
+            },
+            "hosts": {
+              "description": "The hosts.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "hosts"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A line of the agent's progress.",
+          "properties": {
+            "event": {
+              "const": "agent_progress",
+              "type": "string"
+            },
+            "line": {
+              "description": "The line.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "line"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The page opened a JavaScript dialog.",
+          "properties": {
+            "default_prompt": {
+              "description": "A prompt's default text.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "event": {
+              "const": "dialog",
+              "type": "string"
+            },
+            "kind": {
+              "description": "`alert`, `confirm`, `prompt` or `beforeunload`.",
+              "type": "string"
+            },
+            "message": {
+              "description": "The dialog's message.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A short message for the operator.",
+          "properties": {
+            "event": {
+              "const": "toast",
+              "type": "string"
+            },
+            "message": {
+              "description": "The message.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The session ended.",
+          "properties": {
+            "event": {
+              "const": "ended",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DesignFinishView": {
+      "description": "The final capture the operator reviews.",
+      "properties": {
+        "capture": {
+          "description": "The capture id.",
+          "type": "string"
+        },
+        "cards": {
+          "description": "One card per note.",
+          "items": {
+            "$ref": "#/$defs/FinishCard"
+          },
+          "type": "array"
+        },
+        "head": {
+          "description": "HEAD at the capture.",
+          "type": "string"
+        },
+        "no_change_only": {
+          "description": "Every note was done with no change.",
+          "type": "boolean"
+        },
+        "note_version": {
+          "description": "The note version at the capture.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "capture",
+        "head",
+        "note_version",
+        "cards",
+        "no_change_only"
+      ],
+      "type": "object"
+    },
+    "DesignNoteView": {
+      "description": "A note as the operator's screen shows it.",
+      "properties": {
+        "active": {
+          "description": "In the item's current approved set.",
+          "type": "boolean"
+        },
+        "after_asset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DesignAssetId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The picture after the change; operator only."
+        },
+        "approved": {
+          "default": false,
+          "description": "Bound by an approved intent: no Undo or supersession touches it.",
+          "type": "boolean"
+        },
+        "base_commit": {
+          "description": "HEAD when it was sent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "before_asset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DesignAssetId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The picture sent with it."
+        },
+        "captured_commit": {
+          "description": "The commit the final picture was captured at.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "chain": {
+          "default": null,
+          "description": "The first note of its chain of follow-ups; none for a revert note.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "client_key": {
+          "description": "The client's idempotency key.",
+          "type": "string"
+        },
+        "commit": {
+          "description": "The commit that made the change.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "description": "When it was made.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "created_by_device": {
+          "description": "The device that made it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "delivery": {
+          "description": "How many times it was delivered.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "details_text": {
+          "description": "The details block as the operator left it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fail_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FailReason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why it failed."
+        },
+        "final_asset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DesignAssetId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The final picture."
+        },
+        "final_included": {
+          "description": "Whether the final picture was included at Finish.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "follows": {
+          "default": null,
+          "description": "For a follow-up, the version of its chain it continues from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "`D<n>`, or `D<n>-final` for a final picture.",
+          "type": "string"
+        },
+        "item": {
+          "$ref": "#/$defs/QueueItemId",
+          "description": "The queue item."
+        },
+        "kind": {
+          "$ref": "#/$defs/NoteKind",
+          "description": "What it asks for."
+        },
+        "no_change": {
+          "description": "Done with nothing to change.",
+          "type": "boolean"
+        },
+        "number": {
+          "description": "The `n` of `D<n>`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "read_only": {
+          "description": "Made in an earlier session: no longer editable.",
+          "type": "boolean"
+        },
+        "refs": {
+          "default": [],
+          "description": "Earlier notes the operator referenced, at most [`MAX_REFS`].",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "resent_from": {
+          "description": "The note this one was resent from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reverts": {
+          "description": "For a revert note, the note it undoes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "send_picture": {
+          "description": "Whether the picture goes to the agent.",
+          "type": "boolean"
+        },
+        "session": {
+          "$ref": "#/$defs/DesignSessionId",
+          "description": "The session it was made in."
+        },
+        "set_aside": {
+          "default": false,
+          "description": "Its change was reverted (undone, or set aside by a continue).",
+          "type": "boolean"
+        },
+        "status": {
+          "$ref": "#/$defs/NoteStatus",
+          "description": "Where it is."
+        },
+        "superseded_by": {
+          "description": "The note that supersedes this one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Target"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What it points at."
+        },
+        "text": {
+          "description": "The operator's words.",
+          "type": "string"
+        },
+        "thread": {
+          "description": "The conversation about it.",
+          "items": {
+            "$ref": "#/$defs/ThreadEntry"
+          },
+          "type": "array"
+        },
+        "undone_by": {
+          "description": "The revert note that undid it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "description": "When it last changed.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "version": {
+          "default": 0,
+          "description": "Its 1-based place in the chain; 0 for a revert note.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "versions": {
+          "default": 0,
+          "description": "How many versions the chain holds.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "viewport": {
+          "$ref": "#/$defs/Viewport2",
+          "description": "The viewport it was made in."
+        }
+      },
+      "required": [
+        "item",
+        "id",
+        "number",
+        "session",
+        "kind",
+        "text",
+        "send_picture",
+        "viewport",
+        "status",
+        "no_change",
+        "thread",
+        "client_key",
+        "delivery",
+        "created_at",
+        "updated_at",
+        "read_only",
+        "active"
+      ],
+      "type": "object"
+    },
+    "DesignResolvedView": {
+      "description": "What a click or region resolved to.",
+      "properties": {
+        "asset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DesignAssetId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The pending crop."
+        },
+        "data_url": {
+          "description": "The crop as a `data:` URL.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "description": "A short description for the composer.",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/Target",
+          "description": "The element or region."
+        }
+      },
+      "required": [
+        "target",
+        "label"
+      ],
+      "type": "object"
+    },
+    "DesignSession": {
+      "description": "One design session of a stage run.",
+      "properties": {
+        "agent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AetherAgentId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The stage agent."
+        },
+        "attempt": {
+          "description": "The stage's attempt.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "browser_pid": {
+          "description": "The browser's process id.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "browser_started_at": {
+          "description": "The browser process's start time, to tell a reused pid.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "created_at": {
+          "description": "When it began.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "degraded": {
+          "description": "The preview could not be started or kept; notes still reach the agent.",
+          "type": "boolean"
+        },
+        "end_reason": {
+          "description": "Why it ended.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ended_at": {
+          "description": "When it ended.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finish_capture": {
+          "description": "The finish capture's id.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finish_choices": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FinishChoices"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The frozen Finish choices."
+        },
+        "finish_head": {
+          "description": "HEAD at the finish capture.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/DesignSessionId",
+          "description": "Its id."
+        },
+        "item": {
+          "$ref": "#/$defs/QueueItemId",
+          "description": "The queue item."
+        },
+        "note_version": {
+          "description": "Bumped on every change to the notes, so Finish can detect a stale capture.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "preview_url": {
+          "description": "The URL the agent gave the preview.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run": {
+          "$ref": "#/$defs/PipelineRunId",
+          "description": "The pipeline run."
+        },
+        "sandbox_off": {
+          "description": "The browser runs without its sandbox.",
+          "type": "boolean"
+        },
+        "stage_id": {
+          "description": "The stage's id in the run.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/SessionState",
+          "description": "Where it is."
+        },
+        "viewport_preset": {
+          "$ref": "#/$defs/ViewportPreset",
+          "description": "The size the preview is drawn at."
+        }
+      },
+      "required": [
+        "id",
+        "item",
+        "run",
+        "stage_id",
+        "attempt",
+        "state",
+        "degraded",
+        "note_version",
+        "viewport_preset",
+        "sandbox_off",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "DesignSessionId": {
+      "type": "string"
+    },
+    "DesignStateView": {
+      "description": "An item's session and notes.",
+      "properties": {
+        "browser": {
+          "$ref": "#/$defs/BrowserStatus",
+          "description": "The browser's state."
+        },
+        "finish_blocker": {
+          "description": "Why Finish is refused right now.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "images_max": {
+          "description": "Pictures allowed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "images_used": {
+          "description": "Pictures stored.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "item": {
+          "$ref": "#/$defs/QueueItemId",
+          "description": "The queue item."
+        },
+        "notes": {
+          "description": "The notes of every session.",
+          "items": {
+            "$ref": "#/$defs/DesignNoteView"
+          },
+          "type": "array"
+        },
+        "session": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DesignSession"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The current session, if any."
+        },
+        "stage_deadline": {
+          "description": "When the stage times out.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "item",
+        "notes",
+        "browser",
+        "images_used",
+        "images_max"
+      ],
+      "type": "object"
+    },
     "DeviceRole": {
       "description": "What a paired device may do: an operator runs the queue, an observer\nonly reads it.",
       "enum": [
@@ -4935,6 +6734,31 @@
           "type": "string"
         },
         {
+          "const": "gone",
+          "description": "The design session is over or was replaced.",
+          "type": "string"
+        },
+        {
+          "const": "read_only",
+          "description": "The note belongs to an earlier session.",
+          "type": "string"
+        },
+        {
+          "const": "finishing",
+          "description": "The session is finishing; notes are frozen.",
+          "type": "string"
+        },
+        {
+          "const": "stale",
+          "description": "The page or notes changed since the capture.",
+          "type": "string"
+        },
+        {
+          "const": "conflict",
+          "description": "Another device acted first.",
+          "type": "string"
+        },
+        {
           "additionalProperties": false,
           "description": "A change cursor older than what is kept: `{\"history_expired\":\n{\"first_seq\":..,\"last_seq\":..}}`. Read a fresh snapshot.",
           "properties": {
@@ -4963,6 +6787,41 @@
         "message"
       ],
       "type": "object"
+    },
+    "FailReason": {
+      "description": "Why a note failed.",
+      "oneOf": [
+        {
+          "const": "history_changed",
+          "description": "The branch moved under the note.",
+          "type": "string"
+        },
+        {
+          "const": "undo_conflict",
+          "description": "A later change touches the same lines.",
+          "type": "string"
+        },
+        {
+          "const": "undo_interrupted",
+          "description": "The daemon stopped in the middle of an undo.",
+          "type": "string"
+        },
+        {
+          "const": "undo_refused",
+          "description": "An undo that git refused.",
+          "type": "string"
+        },
+        {
+          "const": "agent",
+          "description": "The agent reported failure.",
+          "type": "string"
+        },
+        {
+          "const": "not_delivered",
+          "description": "The agent could not be reached.",
+          "type": "string"
+        }
+      ]
     },
     "FailureClass": {
       "description": "Why a failed run failed, as far as the daemon can tell.",
@@ -5037,6 +6896,12 @@
         },
         {
           "properties": {
+            "command_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "entry": {
               "const": "operator",
               "type": "string"
@@ -5166,6 +7031,18 @@
         {
           "description": "Daemon-level notices: start/stop, orchestrator restarted, caps hit.",
           "properties": {
+            "command_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "command_result": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "entry": {
               "const": "system",
               "type": "string"
@@ -5332,6 +7209,134 @@
       "required": [
         "source",
         "by"
+      ],
+      "type": "object"
+    },
+    "FinishCard": {
+      "description": "One note's card in the Finish review.",
+      "properties": {
+        "asset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DesignAssetId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The final picture."
+        },
+        "caption": {
+          "description": "A caption for the picture.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "data_url": {
+          "description": "The picture as a `data:` URL.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "earlier": {
+          "default": false,
+          "description": "The note belongs to an earlier session of the item (before a\nRevise): its picture was reviewed then and is carried as it stands,\nnever captured or confirmed again.",
+          "type": "boolean"
+        },
+        "history": {
+          "default": [],
+          "description": "The earlier versions of the note's chain, oldest first.",
+          "items": {
+            "$ref": "#/$defs/FinishHistoryEntry"
+          },
+          "type": "array"
+        },
+        "include": {
+          "description": "Whether the picture is included.",
+          "type": "boolean"
+        },
+        "left_history": {
+          "description": "The note's commit is no longer in the history.",
+          "type": "boolean"
+        },
+        "not_found": {
+          "description": "The element was not found at the final capture.",
+          "type": "boolean"
+        },
+        "note": {
+          "description": "The note id.",
+          "type": "string"
+        },
+        "superseded_by": {
+          "description": "The note that supersedes this one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "description": "The note's text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "note",
+        "text",
+        "include",
+        "not_found",
+        "left_history"
+      ],
+      "type": "object"
+    },
+    "FinishChoices": {
+      "description": "What the operator chose at Finish.",
+      "properties": {
+        "include": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "description": "Per note id, whether its final picture is included.",
+          "type": "object"
+        },
+        "superseded": {
+          "additionalProperties": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": "Per note id, the note that supersedes it, if any.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "include",
+        "superseded"
+      ],
+      "type": "object"
+    },
+    "FinishHistoryEntry": {
+      "description": "One earlier version of a chain on its Finish card.",
+      "properties": {
+        "note": {
+          "description": "The version's note id.",
+          "type": "string"
+        },
+        "set_aside": {
+          "description": "Its change was reverted.",
+          "type": "boolean"
+        },
+        "text": {
+          "description": "Its words.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "note",
+        "text",
+        "set_aside"
       ],
       "type": "object"
     },
@@ -6274,6 +8279,193 @@
         }
       ]
     },
+    "InputEvent": {
+      "description": "One input event, in CSS pixels.",
+      "oneOf": [
+        {
+          "description": "A pointer event.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/MouseAction",
+              "description": "What happened."
+            },
+            "button": {
+              "$ref": "#/$defs/MouseButton",
+              "description": "The button."
+            },
+            "click_count": {
+              "description": "Consecutive clicks.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "modifiers": {
+              "description": "Modifier bit mask.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "mouse",
+              "type": "string"
+            },
+            "x": {
+              "description": "CSS pixels from the left.",
+              "format": "double",
+              "type": "number"
+            },
+            "y": {
+              "description": "CSS pixels from the top.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "type",
+            "action",
+            "x",
+            "y",
+            "button",
+            "click_count",
+            "modifiers"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A wheel event.",
+          "properties": {
+            "dx": {
+              "description": "Horizontal delta.",
+              "format": "double",
+              "type": "number"
+            },
+            "dy": {
+              "description": "Vertical delta.",
+              "format": "double",
+              "type": "number"
+            },
+            "modifiers": {
+              "description": "Modifier bit mask.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "wheel",
+              "type": "string"
+            },
+            "x": {
+              "description": "CSS pixels from the left.",
+              "format": "double",
+              "type": "number"
+            },
+            "y": {
+              "description": "CSS pixels from the top.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "type",
+            "x",
+            "y",
+            "dx",
+            "dy",
+            "modifiers"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A key event.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/KeyAction",
+              "description": "Down or up."
+            },
+            "code": {
+              "description": "The physical key code.",
+              "type": "string"
+            },
+            "key": {
+              "description": "The key value.",
+              "type": "string"
+            },
+            "modifiers": {
+              "description": "Modifier bit mask.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "The text it types, if any.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "key",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "action",
+            "key",
+            "code",
+            "modifiers"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Text typed or pasted.",
+          "properties": {
+            "text": {
+              "description": "The text.",
+              "type": "string"
+            },
+            "type": {
+              "const": "text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A touch event.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/TouchAction",
+              "description": "The phase."
+            },
+            "points": {
+              "description": "The fingers.",
+              "items": {
+                "$ref": "#/$defs/TouchPoint"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "touch",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "action",
+            "points"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "InsertStage": {
       "additionalProperties": false,
       "description": "`stage` of catalog pipeline `from` (the item's own when left out),\nplaced after stage `after` (before the first unstarted one when left out).",
@@ -7175,6 +9367,21 @@
         "by"
       ],
       "type": "object"
+    },
+    "KeyAction": {
+      "description": "A key going down or up.",
+      "oneOf": [
+        {
+          "const": "down",
+          "description": "Pressed.",
+          "type": "string"
+        },
+        {
+          "const": "up",
+          "description": "Released.",
+          "type": "string"
+        }
+      ]
     },
     "KeySizing": {
       "description": "How one plan key was sized.",
@@ -9117,6 +11324,111 @@
         }
       ]
     },
+    "MouseAction": {
+      "description": "What a mouse event does.",
+      "oneOf": [
+        {
+          "const": "move",
+          "description": "The pointer moved.",
+          "type": "string"
+        },
+        {
+          "const": "down",
+          "description": "A button went down.",
+          "type": "string"
+        },
+        {
+          "const": "up",
+          "description": "A button came up.",
+          "type": "string"
+        }
+      ]
+    },
+    "MouseButton": {
+      "description": "A mouse button.",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "No button.",
+          "type": "string"
+        },
+        {
+          "const": "left",
+          "description": "The primary button.",
+          "type": "string"
+        },
+        {
+          "const": "middle",
+          "description": "The wheel button.",
+          "type": "string"
+        },
+        {
+          "const": "right",
+          "description": "The secondary button.",
+          "type": "string"
+        }
+      ]
+    },
+    "NoteKind": {
+      "description": "What a note asks for.",
+      "oneOf": [
+        {
+          "const": "change",
+          "description": "A change to one element or region.",
+          "type": "string"
+        },
+        {
+          "const": "revert",
+          "description": "Archond's own undo of an earlier note; never sent to the agent.",
+          "type": "string"
+        },
+        {
+          "const": "page",
+          "description": "A change to the page as a whole.",
+          "type": "string"
+        }
+      ]
+    },
+    "NoteStatus": {
+      "description": "Where a note is. There is deliberately no \"undone\": an undone note stays\n`Done` and is derived undone from the revert note naming it.",
+      "oneOf": [
+        {
+          "const": "queued",
+          "description": "Waiting its turn.",
+          "type": "string"
+        },
+        {
+          "const": "sent",
+          "description": "Delivered to the agent.",
+          "type": "string"
+        },
+        {
+          "const": "working",
+          "description": "The agent is on it.",
+          "type": "string"
+        },
+        {
+          "const": "needs_reply",
+          "description": "The agent asked the operator a question.",
+          "type": "string"
+        },
+        {
+          "const": "done",
+          "description": "Finished.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Did not finish; see [`FailReason`].",
+          "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "description": "Withdrawn.",
+          "type": "string"
+        }
+      ]
+    },
     "Notification": {
       "properties": {
         "at": {
@@ -10496,9 +12808,10 @@
       "type": "object"
     },
     "ProposalMode": {
-      "description": "Whether a proposal is written and approved before implementing.",
+      "description": "Whether a proposal is written and approved before implementing:\n`lavish` as a page, `live` as a live design session with the operator.\n`live` is no more autonomous than `lavish`, so it ranks as it.",
       "enum": [
         "lavish",
+        "live",
         "off"
       ],
       "type": "string"
@@ -11162,6 +13475,38 @@
       },
       "required": [
         "runs_done"
+      ],
+      "type": "object"
+    },
+    "Rect": {
+      "description": "A rectangle in CSS pixels.",
+      "properties": {
+        "h": {
+          "description": "Height.",
+          "format": "double",
+          "type": "number"
+        },
+        "w": {
+          "description": "Width.",
+          "format": "double",
+          "type": "number"
+        },
+        "x": {
+          "description": "Left edge.",
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "description": "Top edge.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
       ],
       "type": "object"
     },
@@ -12759,6 +15104,186 @@
             "data"
           ],
           "type": "object"
+        },
+        {
+          "description": "An item's design session and notes.",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/DesignStateView"
+            },
+            "reply": {
+              "const": "design_state",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "What an observer sees of a design session.",
+          "properties": {
+            "data": {
+              "properties": {
+                "note_count": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "state": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/SessionState"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "note_count"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "design_summary",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "What a click resolved to.",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/DesignResolvedView"
+            },
+            "reply": {
+              "const": "design_resolved",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One note.",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/DesignNoteView"
+            },
+            "reply": {
+              "const": "design_note",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The Finish review.",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/DesignFinishView"
+            },
+            "reply": {
+              "const": "design_finish",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One stored picture.",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/DesignAssetView"
+            },
+            "reply": {
+              "const": "design_asset",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A design request that returns nothing.",
+          "properties": {
+            "reply": {
+              "const": "design_done",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The text a stage agent's design tool shows.",
+          "properties": {
+            "data": {
+              "properties": {
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "message"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "design_agent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ReplyAuthor": {
+      "description": "Who wrote a thread entry.",
+      "oneOf": [
+        {
+          "const": "operator",
+          "description": "The operator.",
+          "type": "string"
+        },
+        {
+          "const": "agent",
+          "description": "The stage agent.",
+          "type": "string"
+        },
+        {
+          "const": "archon",
+          "description": "Archon itself.",
+          "type": "string"
         }
       ]
     },
@@ -12913,6 +15438,21 @@
       ],
       "type": "object"
     },
+    "RepoDesign": {
+      "additionalProperties": false,
+      "description": "`[design]` of `.archon/repo.toml`.",
+      "properties": {
+        "allow_hosts": {
+          "default": [],
+          "description": "Read the former allowlist so a configured host gets a migration hint.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "RepoId": {
       "type": "string"
     },
@@ -12996,6 +15536,10 @@
       "properties": {
         "checks": {
           "$ref": "#/$defs/Checks"
+        },
+        "design": {
+          "$ref": "#/$defs/RepoDesign",
+          "description": "`[design]`: what the live design preview may load."
         },
         "integration_branch": {
           "description": "Items fork from it and their pull requests target it; unset uses\nthe repository's base branch.",
@@ -14008,6 +16552,13 @@
             "cmd": {
               "const": "say",
               "type": "string"
+            },
+            "command_id": {
+              "description": "Correlates a paired operator device's host command with its feed results.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "images": {
               "items": {
@@ -15511,6 +18062,786 @@
             "cmd"
           ],
           "type": "object"
+        },
+        {
+          "description": "An item's design session and notes; an observer gets only the summary.",
+          "properties": {
+            "cmd": {
+              "const": "design_get",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stream a design session's frames and events as `design` frames.",
+          "properties": {
+            "cmd": {
+              "const": "subscribe_design",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Release a design subscription on the connection that created it.",
+          "properties": {
+            "cmd": {
+              "const": "design_unsubscribe",
+              "type": "string"
+            },
+            "sub": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "sub"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One stored design picture.",
+          "properties": {
+            "cmd": {
+              "const": "design_asset",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/DesignAssetId"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Flow control: the last frame the client has drawn.",
+          "properties": {
+            "cmd": {
+              "const": "design_frame_ack",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sub": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "sub",
+            "seq"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Pointer, wheel, key, text and touch events for the preview.",
+          "properties": {
+            "cmd": {
+              "const": "design_input",
+              "type": "string"
+            },
+            "events": {
+              "items": {
+                "$ref": "#/$defs/InputEvent"
+              },
+              "type": "array"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "events"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The element under a point, with its `depth`th parent.",
+          "properties": {
+            "cmd": {
+              "const": "design_resolve",
+              "type": "string"
+            },
+            "depth": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "select": {
+              "type": "boolean"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "x": {
+              "format": "double",
+              "type": "number"
+            },
+            "y": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "x",
+            "y",
+            "depth",
+            "select"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A region the operator drew.",
+          "properties": {
+            "box": {
+              "$ref": "#/$defs/Rect"
+            },
+            "cmd": {
+              "const": "design_region",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "box"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A picture the operator supplied or sketched.",
+          "properties": {
+            "base": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DesignAssetId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "blank": {
+              "default": false,
+              "type": "boolean"
+            },
+            "cmd": {
+              "const": "design_upload",
+              "type": "string"
+            },
+            "data": {
+              "description": "Base64.",
+              "type": "string"
+            },
+            "media_type": {
+              "type": "string"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "sketch": {
+              "description": "Stroke JSON of a sketch.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "media_type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Resize the preview to a preset.",
+          "properties": {
+            "cmd": {
+              "const": "design_viewport",
+              "type": "string"
+            },
+            "preset": {
+              "$ref": "#/$defs/ViewportPreset"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "preset"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reload the preview page.",
+          "properties": {
+            "cmd": {
+              "const": "design_reload",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Tell the agent again where the preview is.",
+          "properties": {
+            "cmd": {
+              "const": "design_tell_agent",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Answer the page's JavaScript dialog.",
+          "properties": {
+            "accept": {
+              "type": "boolean"
+            },
+            "cmd": {
+              "const": "design_dialog_answer",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "accept"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Add a note to the session's queue.",
+          "properties": {
+            "asset": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DesignAssetId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "design_note_add",
+              "type": "string"
+            },
+            "details_text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "follows": {
+              "description": "For a follow-up, the version of its chain it continues from.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "refs": {
+              "description": "Earlier notes it references.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "send_picture": {
+              "type": "boolean"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "client_key",
+            "text",
+            "send_picture"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Continue a chain from one of its versions: revert the newer versions\nin the code, newest first, then queue the follow-up `text` if given.",
+          "properties": {
+            "client_key": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "design_note_continue_from",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            "refs": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "text": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Change a queued note's text.",
+          "properties": {
+            "cmd": {
+              "const": "design_note_edit",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Cancel a queued note.",
+          "properties": {
+            "cmd": {
+              "const": "design_note_cancel",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Answer a note that needs a reply.",
+          "properties": {
+            "cmd": {
+              "const": "design_note_reply",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Drop a note that needs a reply.",
+          "properties": {
+            "cmd": {
+              "const": "design_note_drop",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Queue an undo of a done note.",
+          "properties": {
+            "cmd": {
+              "const": "design_note_undo",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Send a failed or cancelled note again.",
+          "properties": {
+            "cmd": {
+              "const": "design_note_resend",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Begin Finish: `live` to `finishing` and the final capture.",
+          "properties": {
+            "cancel_queued": {
+              "default": false,
+              "type": "boolean"
+            },
+            "cmd": {
+              "const": "design_finish_capture",
+              "type": "string"
+            },
+            "recapture": {
+              "default": false,
+              "type": "boolean"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Capture the current frame for one note's final picture.",
+          "properties": {
+            "capture": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "design_final_capture",
+              "type": "string"
+            },
+            "note": {
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "capture",
+            "note"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Confirm Finish with the operator's choices.",
+          "properties": {
+            "capture": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "design_finish_confirm",
+              "type": "string"
+            },
+            "confirm_no_change": {
+              "default": false,
+              "type": "boolean"
+            },
+            "include": {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "type": "object"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "superseded": {
+              "additionalProperties": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "capture",
+            "include",
+            "superseded"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Back to editing: `finishing` to `live`.",
+          "properties": {
+            "cmd": {
+              "const": "design_finish_cancel",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent (re)points the preview at its dev server.",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "design_preview",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent reports a note's status.",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "design_note_report",
+              "type": "string"
+            },
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "no_change": {
+              "default": false,
+              "type": "boolean"
+            },
+            "path": {
+              "description": "For a done page note (no element picked, such as a New screen\nsketch): the app path that shows the change, e.g. `/settings`.\nThe preview goes there and the after and final pictures are taken\nthere.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reply": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/$defs/AgentNoteStatus"
+            },
+            "steps": {
+              "description": "The steps that put the preview in the state that shows the change\n(open a dialog, hover a menu). With `working` they take the\nnote's before picture in that state; with `done` they are\nreplayed for the after picture, and a repeated `done` retakes it.",
+              "items": {
+                "$ref": "#/$defs/UiStep"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "cmd",
+            "id",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent reads the history of a note's chain, or every chain.",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "design_history",
+              "type": "string"
+            },
+            "id": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -16055,6 +19386,59 @@
             "change"
           ],
           "type": "object"
+        },
+        {
+          "description": "One event of a `subscribe_design` subscription.",
+          "properties": {
+            "event": {
+              "$ref": "#/$defs/DesignEvent"
+            },
+            "frame": {
+              "const": "design",
+              "type": "string"
+            },
+            "sub": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "frame",
+            "sub",
+            "event"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SessionState": {
+      "description": "Where a design session is in its life.",
+      "oneOf": [
+        {
+          "const": "starting",
+          "description": "The preview is being set up.",
+          "type": "string"
+        },
+        {
+          "const": "live",
+          "description": "The operator may point and comment.",
+          "type": "string"
+        },
+        {
+          "const": "finishing",
+          "description": "The operator is reviewing the final capture.",
+          "type": "string"
+        },
+        {
+          "const": "confirmed",
+          "description": "The operator confirmed; the finish message is sent.",
+          "type": "string"
+        },
+        {
+          "const": "ended",
+          "description": "Over.",
+          "type": "string"
         }
       ]
     },
@@ -16325,6 +19709,11 @@
         {
           "const": "propose",
           "description": "Writes a proposal page and changes nothing; at most one, first.",
+          "type": "string"
+        },
+        {
+          "const": "design",
+          "description": "A live design session: the agent stays up, edits one note at a time and\ncommits each; replaces `propose` when `proposal = live`. At most one,\nfirst, and no fan-out of its own.",
           "type": "string"
         },
         {
@@ -17198,6 +20587,74 @@
       ],
       "type": "object"
     },
+    "Target": {
+      "description": "What a click became: the element or region the operator pointed at.",
+      "properties": {
+        "box": {
+          "$ref": "#/$defs/Rect",
+          "description": "The element's box."
+        },
+        "component": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComponentRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The framework component, best effort."
+        },
+        "path": {
+          "description": "The page path, without query or fragment.",
+          "type": "string"
+        },
+        "region": {
+          "description": "Whether the operator drew a region rather than picking an element.",
+          "type": "boolean"
+        },
+        "role_name": {
+          "description": "The element's role and name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "selector": {
+          "description": "A CSS selector, generated in the page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "steps": {
+          "description": "The steps that put the preview in the state this picture shows (a\ndialog the button opens, a hovered menu); empty for the page as loaded.",
+          "items": {
+            "$ref": "#/$defs/UiStep"
+          },
+          "type": "array"
+        },
+        "styles": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "A few computed styles.",
+          "type": "object"
+        },
+        "viewport": {
+          "$ref": "#/$defs/Viewport2",
+          "description": "The viewport at the time."
+        }
+      },
+      "required": [
+        "path",
+        "box",
+        "viewport",
+        "styles",
+        "region"
+      ],
+      "type": "object"
+    },
     "TaskEdge": {
       "description": "`from` is the prerequisite and `to` the item that waits for it; for an\n`onto` edge, `from` is the item that owns the pull request and `to` the\nitem queued onto it, with `satisfied` always true.",
       "properties": {
@@ -17559,6 +21016,30 @@
         }
       ]
     },
+    "ThreadEntry": {
+      "description": "One message in a note's conversation.",
+      "properties": {
+        "at": {
+          "description": "When it was written.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "from": {
+          "$ref": "#/$defs/ReplyAuthor",
+          "description": "Who wrote it."
+        },
+        "text": {
+          "description": "What it says.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "at",
+        "from",
+        "text"
+      ],
+      "type": "object"
+    },
     "Tier": {
       "description": "A provider-local capability band, weakest first.",
       "oneOf": [
@@ -17810,6 +21291,58 @@
       ],
       "type": "string"
     },
+    "TouchAction": {
+      "description": "A touch phase.",
+      "oneOf": [
+        {
+          "const": "start",
+          "description": "Fingers down.",
+          "type": "string"
+        },
+        {
+          "const": "move",
+          "description": "Fingers moved.",
+          "type": "string"
+        },
+        {
+          "const": "end",
+          "description": "Fingers up.",
+          "type": "string"
+        },
+        {
+          "const": "cancel",
+          "description": "The gesture was interrupted.",
+          "type": "string"
+        }
+      ]
+    },
+    "TouchPoint": {
+      "description": "One finger.",
+      "properties": {
+        "id": {
+          "description": "The finger's id.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "x": {
+          "description": "CSS pixels from the left.",
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "description": "CSS pixels from the top.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "id"
+      ],
+      "type": "object"
+    },
     "TrackedState": {
       "description": "Where a tracked request stands.",
       "oneOf": [
@@ -17845,6 +21378,89 @@
         "github"
       ],
       "type": "string"
+    },
+    "UiStep": {
+      "description": "One step that drives the preview into the state that shows a change. The\nagent names the steps; the before and after pictures replay them on a\nfresh load of the note's page.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Go to an app path.",
+          "properties": {
+            "do": {
+              "const": "open",
+              "type": "string"
+            },
+            "path": {
+              "description": "The path, like `/settings`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "do",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Click the element a CSS selector matches.",
+          "properties": {
+            "do": {
+              "const": "click",
+              "type": "string"
+            },
+            "selector": {
+              "description": "The selector.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "do",
+            "selector"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Move the pointer over the element a CSS selector matches.",
+          "properties": {
+            "do": {
+              "const": "hover",
+              "type": "string"
+            },
+            "selector": {
+              "description": "The selector.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "do",
+            "selector"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Wait for an animation or a request.",
+          "properties": {
+            "do": {
+              "const": "wait",
+              "type": "string"
+            },
+            "ms": {
+              "description": "Milliseconds.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "do",
+            "ms"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "UpgradeRequest": {
       "description": "An operator's upgrade: drain, install what is named, restart archond\nand, in dedicated mode, Archon's own aetherd. With neither program\nnamed it is a drained restart.",
@@ -18023,6 +21639,53 @@
         "height"
       ],
       "type": "object"
+    },
+    "Viewport2": {
+      "description": "The viewport a note was made in.",
+      "properties": {
+        "h": {
+          "description": "Height in CSS pixels.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "preset": {
+          "$ref": "#/$defs/ViewportPreset",
+          "description": "The preset it came from."
+        },
+        "w": {
+          "description": "Width in CSS pixels.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "w",
+        "h",
+        "preset"
+      ],
+      "type": "object"
+    },
+    "ViewportPreset": {
+      "description": "The size the preview is drawn at.",
+      "oneOf": [
+        {
+          "const": "desktop",
+          "description": "1440x900.",
+          "type": "string"
+        },
+        {
+          "const": "tablet",
+          "description": "834x1112, touch.",
+          "type": "string"
+        },
+        {
+          "const": "phone",
+          "description": "390x844, touch.",
+          "type": "string"
+        }
+      ]
     },
     "WaitingOn": {
       "description": "What the current run needs from the operator, and how to provide it.",
@@ -18720,10 +22383,13 @@
     "github_links",
     "github_import",
     "device_roles",
-    "enqueue_advice"
+    "enqueue_advice",
+    "design_sessions",
+    "design_iterations",
+    "design_unsubscribe"
   ],
   "min_web_protocol_version": 23,
-  "protocol_version": 24,
+  "protocol_version": 26,
   "server_frame": {
     "$ref": "#/$defs/ServerFrame"
   },

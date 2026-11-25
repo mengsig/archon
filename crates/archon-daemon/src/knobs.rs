@@ -55,6 +55,10 @@ pub(crate) fn resolve(
     let autonomy = knobs(&base, &patch, &policy)?;
     check_ceiling(&policy, env, &base, autonomy)?;
     let spec = augment(&base, &autonomy)?;
+    check_design_mode(&spec, autonomy.proposal)?;
+    if autonomy.proposal == ProposalMode::Live {
+        require_design_enabled(ctx)?;
+    }
     assert_eq!(spec.name(), name, "augmenting keeps the pipeline's name");
     Ok(Resolved {
         pipeline: name,
@@ -62,6 +66,32 @@ pub(crate) fn resolve(
         spec,
         base,
     })
+}
+
+/// Validate the effective stage list, including frozen or steered pipelines.
+pub(crate) fn check_design_mode(
+    spec: &PipelineSpec,
+    proposal: ProposalMode,
+) -> Result<(), ArchonError> {
+    match (proposal, archon_pipeline::autonomy::design_stage(spec)) {
+        (ProposalMode::Live, Some(_)) => Ok(()),
+        (ProposalMode::Live, None) => Err(ArchonError::Invalid(
+            "proposal = live requires a design stage".into(),
+        )),
+        (_, Some(_)) => Err(ArchonError::Invalid(
+            "a design stage requires proposal = live".into(),
+        )),
+        (_, None) => Ok(()),
+    }
+}
+
+pub(crate) fn require_design_enabled(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    if ctx.design.enabled() {
+        return Ok(());
+    }
+    Err(ArchonError::Invalid(
+        "design sessions are turned off; set [design] enabled = true".into(),
+    ))
 }
 
 /// An explicit pipeline wins, then a default one (`Layers::default_pipeline`);
@@ -179,6 +209,14 @@ pub(crate) fn revise(
         review,
         ..patch.over(current)
     };
+    // The design stage and the intent acceptance stage are added at enqueue.
+    if (current.proposal == ProposalMode::Live) != (revised.proposal == ProposalMode::Live) {
+        return Err(ArchonError::Invalid(
+            "proposal live cannot be changed on an existing item; choose live when creating \
+             the item"
+                .into(),
+        ));
+    }
     assert!(
         ships(base)
             || (revised.proposal, revised.report, revised.merge)
@@ -228,7 +266,8 @@ pub(crate) fn item_specs(
 ) -> Result<(PipelineSpec, PipelineSpec), ArchonError> {
     let base = env.catalog()?.get(&item.pipeline)?.clone();
     let spec = augment(&base, &item.autonomy)?;
-    let spec = if item.intent.is_some()
+    let spec = if item.autonomy.proposal == ProposalMode::Live
+        || item.intent.is_some()
         || item
             .model_plan
             .0

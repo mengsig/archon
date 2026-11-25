@@ -249,7 +249,7 @@ fn chat_lines(store: &Store) -> Result<Vec<String>, ArchonError> {
             FeedEntry::Report {
                 title, location, ..
             } => format!("report: {title} {location}"),
-            FeedEntry::System { text } => format!("system: {text}"),
+            FeedEntry::System { text, .. } => format!("system: {text}"),
             FeedEntry::Authority { action, result, .. } => {
                 format!("operator action: {action} {result}")
             }

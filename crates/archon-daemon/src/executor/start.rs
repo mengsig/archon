@@ -158,6 +158,7 @@ async fn repair_claimed(
     let item = without_retired_ship(&item, spec);
     match super::model_catalog::repair_item(ctx, &store, &item, catalog, env, spec) {
         Ok(mut repaired) => {
+            fill_legacy_live_judge(ctx, env, catalog, spec, &mut repaired)?;
             let mut replaced = None;
             if repaired.model_plan != item.model_plan {
                 repaired.updated_at = archon_core::now().max(item.updated_at);
@@ -194,6 +195,46 @@ async fn repair_claimed(
     }
 }
 
+/// Earlier live items can predate the plan entry for their required acceptance stage.
+fn fill_legacy_live_judge(
+    ctx: &DaemonContext,
+    env: &RepoEnv,
+    catalog: &archon_core::model_tier::ModelCatalog,
+    spec: &PipelineSpec,
+    item: &mut QueueItem,
+) -> Result<(), ArchonError> {
+    use archon_core::plan_origin::{PlanSource, PlanWriter, Sizing};
+    use archon_pipeline::acceptance::STAGE;
+    if item.autonomy.proposal != archon_core::autonomy::ProposalMode::Live
+        || item.model_plan.choices_for(STAGE).is_some()
+        || spec.stage(STAGE).is_none()
+    {
+        return Ok(());
+    }
+    let policy = env.policy_in(&ctx.config, &catalog.aliases());
+    let tiers = knobs::TierScope::new(&ctx.config, &policy, catalog);
+    let max_tier = env.max_default_tier(&ctx.config);
+    let mut tiered = knobs::fill_stage_tiers(tiers, max_tier, spec, item.model_plan.plan().clone());
+    let candidate = tiered
+        .0
+        .remove(STAGE)
+        .or_else(|| {
+            knobs::default_choice(&ctx.config, tiers, max_tier, spec).map(|choice| vec![choice])
+        })
+        .ok_or_else(|| {
+            ArchonError::Invalid("no permitted model for this live item's acceptance stage".into())
+        })?;
+    let mut writer = PlanWriter::new(&item.id, archon_core::now());
+    writer.carry(&item.model_plan, &item.id, None, |_| Some(usize::MAX));
+    let mut filled = writer.plan().clone();
+    filled.0.insert(STAGE.into(), candidate);
+    writer.filled(filled, (PlanSource::Fallback, PlanSource::Fallback));
+    item.model_plan = writer.finish(Sizing::Off {
+        policy_cap: policy.max_effort,
+    });
+    Ok(())
+}
+
 /// Everything that can fail before the run exists. Slow parts (git) run
 /// without any lock. The run uses a snapshot of its pipeline.
 async fn prepare(
@@ -212,6 +253,7 @@ async fn prepare(
     let (base, current) = knobs::item_specs(&env, item)?;
     // A steer may have given the item a stage list of its own (§6.6).
     let current = super::steer::shaped(ctx, item, current).await?;
+    knobs::check_design_mode(&current, item.autonomy.proposal)?;
     // The ceiling may have been lowered since the item was enqueued.
     let policy = env.autonomy(ctx);
     let checked = crate::authority::item_grants::for_ceiling_check(

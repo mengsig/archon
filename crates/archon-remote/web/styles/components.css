@@ -407,7 +407,7 @@ select.input {
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15), 0 1px 1px rgba(0, 0, 0, 0.16);
   transition: transform var(--t-med) var(--ease-out), opacity var(--t-fast) ease;
 }
-.switch-input:checked + .switch-track { background: var(--amber); }
+.switch-input:checked + .switch-track { background: var(--accent); }
 .switch-input:checked + .switch-track::after { transform: translateX(20px); }
 .switch-input:focus-visible + .switch-track { outline: 2.5px solid var(--accent); outline-offset: 2px; }
 .switch-input:disabled + .switch-track { opacity: 0.6; }

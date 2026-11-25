@@ -143,7 +143,7 @@ fn lesson_lines(store: &archon_queue::Store, lesson: &Lesson) -> Vec<String> {
         .unwrap()
         .into_iter()
         .filter_map(|item| match item.entry {
-            FeedEntry::System { text } if text.contains(lesson.id.as_str()) => Some(text),
+            FeedEntry::System { text, .. } if text.contains(lesson.id.as_str()) => Some(text),
             _ => None,
         })
         .collect()

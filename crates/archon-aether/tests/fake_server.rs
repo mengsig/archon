@@ -1028,6 +1028,74 @@ async fn images_reach_a_protocol_19_aetherd_and_are_refused_below_it() {
 }
 
 #[tokio::test]
+async fn the_backend_sends_attachments_and_leaves_the_frame_alone_without_them() {
+    use archon_core::attachment::ImageAttachment;
+    use archon_core::ports::AgentBackend as _;
+    let image = ImageAttachment::encode(b"\x89PNG\r\n\x1a\npixels", Some("crop.png")).unwrap();
+    let (_dir, fake) = fake_aether().await;
+    fake.set_default("send_message", Scripted::reply("message_sent", json!({})));
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    backend
+        .send_message_with_attachments(
+            &agent,
+            "D1: make it blue",
+            "k1",
+            std::slice::from_ref(&image),
+        )
+        .await
+        .unwrap();
+    backend
+        .send_message_with_attachments(&agent, "D2: nothing to see", "k2", &[])
+        .await
+        .unwrap();
+    backend.send_message(&agent, "plain", "k3").await.unwrap();
+    let sent = fake.received_named("send_message");
+    assert_eq!(sent.len(), 3);
+    assert_eq!(sent[0]["attachments"], json!([image]));
+    assert_eq!(sent[0]["content"], "D1: make it blue");
+    assert_eq!(sent[0]["idempotency_key"], "k1");
+    assert!(sent[1].get("attachments").is_none(), "{}", sent[1]);
+    assert_eq!(sent[1]["content"], "D2: nothing to see");
+    assert_eq!(sent[1]["idempotency_key"], "k2");
+    assert!(sent[2].get("attachments").is_none(), "{}", sent[2]);
+    assert_eq!(sent[2]["content"], "plain");
+}
+
+#[tokio::test]
+async fn legacy_aether_receives_design_note_text_without_attachments() {
+    let image = archon_core::attachment::ImageAttachment::encode(
+        b"\x89PNG\r\n\x1a\npixels",
+        Some("crop.png"),
+    )
+    .unwrap();
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    for version in [17, 18] {
+        let (_dir, fake) = fake_aether().await;
+        fake.set_protocol_window(17, version);
+        fake.set_default("send_message", Scripted::reply("message_sent", json!({})));
+        let backend = backend(&fake, any_model()).await;
+        backend
+            .send_message_with_attachments(
+                &agent,
+                "D1: make it blue",
+                "k1",
+                std::slice::from_ref(&image),
+            )
+            .await
+            .unwrap();
+        let sent = fake.received_named("send_message");
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            sent[0]["content"],
+            "D1: make it blue\n\n(picture available to the operator only)"
+        );
+        assert_eq!(sent[0]["idempotency_key"], "k1");
+        assert!(sent[0].get("attachments").is_none(), "{}", sent[0]);
+    }
+}
+
+#[tokio::test]
 async fn typed_commands_send_what_architecture_4_3_says() {
     let (_dir, fake) = fake_aether().await;
     let sent = json!({"message": "msg_1"});

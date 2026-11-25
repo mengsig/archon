@@ -5,6 +5,17 @@ that needs more than `archon update --yes` changes. The update command
 itself is in [install.md](install.md#updating), and every release's changes
 are in the [changelog](../CHANGELOG.md).
 
+## Unreleased live design sessions
+
+Store migrations V29 through V31 follow V28. V31 preserves existing picture IDs and
+links while allowing equal images to carry separate capture metadata. Opening an earlier live-design
+branch store preserves its sessions, notes, and pictures while reconciling its
+V25/V26 version numbers. Back up the stopped daemon’s database, WAL and design
+asset files before upgrading if you need a downgrade path. Live design is opt-in. Remove any repository
+`[design] allow_hosts` list and serve fonts, styles and other assets through
+the item's own dev server. Protocol 25 adds design sessions and 26 adds
+iteration history. The web handshake still negotiates back to 23.
+
 ## From 1.5.x to 1.6.x
 
 Archon 1.6.4 requires Aether 1.4.2 or later. Upgrade an older Aether with
@@ -224,10 +235,12 @@ counts.
 
 V25 attributes spend to stage runs. V26 adds indexes for evidence snapshots.
 V27 adds an index for near-duplicate enqueue detection. V28 records queue-reason
-intervals and pull request event times.
+intervals and pull request event times. V29 adds the live design session
+tables. V30 adds follow-ups and references to design notes. V31 separates
+capture metadata for pictures that share image bytes.
 
 **Downgrading the binary is not supported after V25 has run.** The schema
-check of an older archond refuses a newer store ("store schema version 28 is
+check of an older archond refuses a newer store ("store schema version 31 is
 newer than this archon supports (24); upgrade archon"), so no older daemon can
 read the upgraded store. Before the update, stop archond and copy `archon.db`
 and any `archon.db-wal`. Going back means stopping archond, installing the

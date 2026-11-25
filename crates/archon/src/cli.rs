@@ -1018,7 +1018,8 @@ pub struct QueueAddArgs {
     /// Review family: strict, standard or none; omitted uses daemon defaults.
     #[arg(long)]
     pub review: Option<archon_core::autonomy::ReviewLevel>,
-    /// Proposal mode: lavish or off; omitted uses daemon defaults.
+    /// Proposal mode: lavish, live (a live design session in the browser preview; choose it
+    /// when creating the item) or off; omitted uses daemon defaults.
     #[arg(long)]
     pub proposal: Option<archon_core::autonomy::ProposalMode>,
     /// Report mode: before-pr, with-pr or off; omitted uses daemon defaults.

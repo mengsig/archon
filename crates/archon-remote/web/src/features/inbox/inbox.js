@@ -70,6 +70,11 @@ function answeredRow(question) {
     h('span', { class: 'plain-row-age', text: age(question.answered_at) }));
 }
 
+// "Design session ready" opens the live screen of the item it names.
+function designReady(entry) {
+  return entry.entry === 'notification' && /^design session ready/i.test(entry.text ?? '') && /^[A-Za-z0-9_]{1,64}$/.test(entry.item ?? '');
+}
+
 function noteRow(item) {
   const entry = item.entry;
   const kind = entry.entry === 'report' ? 'report' : entry.kind;
@@ -78,5 +83,6 @@ function noteRow(item) {
     h('div', { class: 'plain-row-head' }, chip({ label: KIND_LABEL[kind] ?? kind, tone: KIND_TONE[kind] ?? 'neutral' }),
       h('span', { class: 'plain-row-age', text: age(item.at) })),
     entry.entry === 'report' ? h('p', { class: 'plain-row-text', text }) : renderMarkdown(text, { className: 'plain-row-text' }),
+    designReady(entry) ? h('a', { class: 'button button-plain button-small', href: `#/design/${entry.item}` }, 'Open') : null,
     entry.item ? h('a', { class: 'link-button', href: `#/item/${entry.item}` }, 'Open item') : null);
 }

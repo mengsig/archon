@@ -976,6 +976,7 @@ async fn github_operator_can_confirm_a_repository_budget_override() {
         .unwrap();
     deliver(&h, 1, github("turn off budgets for demo", 9)).await;
     let action = Request::SetSettings {
+        legacy_proposals: false,
         repo: Some(RepoRef(REPO_NAME.into())),
         settings: archon_core::settings::OperatorSettings {
             budgets_enabled: Some(false),
@@ -1054,6 +1055,7 @@ async fn github_numbered_answers_cannot_cross_channels_or_threads() {
 async fn resetting_a_masked_lowering_still_requires_confirmation() {
     let h = harness(AetherMode::Dedicated).await;
     h.cli(Request::SetSettings {
+        legacy_proposals: false,
         repo: None,
         settings: serde_json::from_value(json!({
             "autonomy_max":{"merge":"auto"}, "autonomy_default":{"merge":"auto"}
@@ -1063,6 +1065,7 @@ async fn resetting_a_masked_lowering_still_requires_confirmation() {
     .await
     .unwrap();
     h.cli(Request::SetSettings {
+        legacy_proposals: false,
         repo: Some(RepoRef(REPO_NAME.into())),
         settings: serde_json::from_value(json!({"autonomy_max":{"merge":"manual"}})).unwrap(),
     })
@@ -1259,6 +1262,7 @@ async fn a_web_devices_say_carries_no_operator_authority() {
     fake.set_default("send_message", Scripted::reply("message_sent", json!({})));
     let command = format!("/archon set --repo {REPO_NAME} grant_merge=true");
     let say = Request::Say {
+        command_id: None,
         text: command.clone(),
         images: vec![],
     };

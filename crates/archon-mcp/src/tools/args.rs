@@ -66,6 +66,22 @@ fn query_request(tool: &str, args: &mut Args) -> Result<Option<Request>, ToolErr
             name: args.optional_text("name")?,
             caller: None,
         },
+        "design_preview" => Request::DesignPreview {
+            url: archon_core::design::validate_preview_url(&args.required_text("url")?)
+                .map_err(|error| args.error("url", error))?,
+            caller: None,
+        },
+        "design_note" => design_note(args)?,
+        "design_history" => {
+            let id = args.optional_text("id")?;
+            if id
+                .as_deref()
+                .is_some_and(|id| !archon_core::design::valid_note_id(id))
+            {
+                return Err(args.error("id", "must be a note ID such as D3"));
+            }
+            Request::DesignHistory { id, caller: None }
+        }
         "submit_verdict" => Request::SubmitVerdict {
             summary: args.required_text("summary")?,
             // An object, as `complete_task` takes it: nothing else is read.
@@ -687,4 +703,47 @@ fn quoted(keys: &[&str]) -> String {
         .map(|k| format!("`{k}`"))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// `design_note`: a note id, a status, and for `done` an exact commit id.
+fn design_note(args: &mut Args) -> Result<Request, ToolError> {
+    let id = args.required_text("id")?;
+    if !archon_core::design::valid_note_id(&id) {
+        return Err(args.error("id", format_args!("must look like D3, got {id:?}")));
+    }
+    let status = args.required("status")?;
+    let commit = args.optional_text("commit")?;
+    if let Some(commit) = &commit {
+        let hex = commit
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        if !(hex && matches!(commit.len(), 40 | 64)) {
+            return Err(args.error(
+                "commit",
+                "must be the full 40 or 64 character lowercase hex commit id",
+            ));
+        }
+    }
+    let path = args.optional_text("path")?;
+    if let Some(path) = &path
+        && let Err(why) = archon_core::design::check_app_path(path)
+    {
+        return Err(args.error("path", why));
+    }
+    let steps = args
+        .optional::<Vec<archon_core::design::UiStep>>("steps")?
+        .unwrap_or_default();
+    if let Err(why) = archon_core::design::check_steps(&steps) {
+        return Err(args.error("steps", why));
+    }
+    Ok(Request::DesignNoteReport {
+        id,
+        status,
+        reply: args.optional_text("reply")?,
+        commit,
+        no_change: args.optional("no_change")?.unwrap_or(false),
+        path,
+        steps,
+        caller: None,
+    })
 }

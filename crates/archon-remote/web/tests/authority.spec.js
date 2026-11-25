@@ -58,9 +58,15 @@ test('operator: sets and clears a directive and answers a question from the app'
   await expect(setLine).toBeVisible();
   await expect(setLine.getByText(/Not sent/)).toHaveCount(0);
   await expect.poll(() => directives(fixture)).toEqual(['docs fixes only today']);
+  // Aether is down here: the chat shows archond's own answer under the line, in plain words.
+  await expect(setLine.getByRole('status')).toHaveText(/^Archon: Directive dir_\w+ in force: docs fixes only today\. Applied\.$/);
+  // The sidebar names the running daemon's version, not one built into the app.
+  const { data: status } = await fixture.archond.request({ cmd: 'status' });
+  await expect(page.locator('.nav-version')).toHaveText(`Archon ${status.daemon_version}`);
 
-  await send(page, '/archon apply {"cmd":"clear_directive","directive":null}');
+  const clearLine = await send(page, '/archon apply {"cmd":"clear_directive","directive":null}');
   await expect.poll(() => directives(fixture)).toEqual([]);
+  await expect(clearLine.getByRole('status')).toHaveText('Archon: All directives cleared (1). Applied.');
   await expect.poll(() => systemNotes(fixture)).toContainEqual(expect.stringMatching(/All directives cleared/));
 
   const question = await askOperator(fixture.archond, 'Ship the docs fix?', ['yes', 'no']);

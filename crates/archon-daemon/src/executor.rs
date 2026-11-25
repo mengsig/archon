@@ -12,6 +12,8 @@ pub mod archive;
 pub mod coordination;
 mod dependencies;
 mod descendants;
+pub(crate) mod design_ledger;
+pub(crate) mod design_page;
 mod discard;
 pub(crate) mod engine_wait;
 mod failure_class;

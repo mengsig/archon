@@ -1599,12 +1599,20 @@ or malformed result, empty evidence or a bad visual pair gets the one automatic
 repair (`[review] auto_repair`), whose note quotes the allowed values; a blocked
 requirement fails. With no build evidence on record, as in a validation-only
 pipeline, the `intent-acceptance` stage reports the results itself under the same
-contract and repair. The `intent-acceptance` stage
-runs on a model apart from every builder and prefers a different vendor. That model
-must be a vision model when approved reference images exist. If none is permitted
-and connected, the strongest permitted model judges instead. The readiness report
-and the item's outcome then say `acceptance: not independent`. Set `[review]
-independent_acceptance = true` to refuse such a run instead. Missing or blocked
+contract and repair. Archon prefers a judge apart from every builder and a
+different vendor. Approved reference images require a vision model. If no
+independent model is available, the strongest permitted model judges and the
+outcome records `acceptance: not independent`. Enabling
+`[review] independent_acceptance` refuses that fallback.
+
+For a live design item, a permitted, capable judge pinned to
+`intent-acceptance` takes precedence. A judge that shares a builder’s model
+or vendor counts as dependent, including a pinned judge. Archon skips spent
+providers and tries another eligible judge after a quota failure. When all
+eligible providers are spent, the first attempt fails and a retry waits for
+available quota.
+
+Missing or blocked
 requirements, changed images, unexplained gaps and unapproved deviations cannot
 pass.
 

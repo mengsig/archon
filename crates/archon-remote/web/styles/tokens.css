@@ -49,6 +49,9 @@
   --accent: #285dce;
   --accent-soft: #eaf0fc;
   --on-accent: #ffffff;
+  /* Over the preview's own pixels, so the same in both themes. */
+  --frame-accent: #285dce;
+  --frame-halo: #ffffff;
   --primary: #202220;
   --on-primary: #ffffff;
   --on-danger: #ffffff;

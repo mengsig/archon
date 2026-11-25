@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Timestamp;
 use crate::aether_ids::{AetherAgentId, AetherRunId, AetherTaskId};
+use crate::attachment::ImageAttachment;
 use crate::error::ArchonError;
 use crate::model::{Effort, ModelChoice, ModelRef};
 use crate::run::StageOutcome;
@@ -514,6 +515,23 @@ pub trait AgentBackend: Send + Sync {
         content: &str,
         idempotency_key: &str,
     ) -> Result<(), ArchonError>;
+
+    /// [`Self::send_message`] with pictures. A backend that cannot carry
+    /// them sends the text with a note that a picture exists, never the
+    /// picture.
+    async fn send_message_with_attachments(
+        &self,
+        to: &AetherAgentId,
+        content: &str,
+        idempotency_key: &str,
+        attachments: &[ImageAttachment],
+    ) -> Result<(), ArchonError> {
+        if attachments.is_empty() {
+            return self.send_message(to, content, idempotency_key).await;
+        }
+        let text = format!("{content}\n\n(picture available to the operator only)");
+        self.send_message(to, &text, idempotency_key).await
+    }
 
     /// How the turn ended in which a kept agent took `message` (§6.7): `None`
     /// while it works, an `infra` failure when it is gone or said nothing.

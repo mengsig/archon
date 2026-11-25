@@ -352,7 +352,7 @@ async fn a_branch_whose_first_read_fails_is_shown_with_its_problem() {
     assert!(branch.problem.is_some(), "the failure is shown: {branch:?}");
     let feed = h.ctx.store.lock().await.feed_after(0, 10_000).unwrap();
     let told = feed.iter().any(|entry| match &entry.entry {
-        FeedEntry::System { text } => text.contains("could not verify the integration branch"),
+        FeedEntry::System { text, .. } => text.contains("could not verify the integration branch"),
         _ => false,
     });
     assert!(told, "the operator is told: {feed:?}");

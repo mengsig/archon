@@ -93,7 +93,12 @@ impl Harness {
         let link = Arc::new(AetherLink::new());
         let backend = Arc::new(AetherBackend::new(link.clone(), config.models.policy()));
         let dispatch = Arc::new(Notify::new());
+        let design = Arc::new(archon_daemon::design::DesignService::new(
+            &config.design,
+            dir.path().join("data"),
+        ));
         let ctx = DaemonContext {
+            design,
             storage: Default::default(),
             status_probes: Default::default(),
             quota: Default::default(),
@@ -141,7 +146,7 @@ impl Harness {
         Self {
             dir,
             fake,
-            ctx: Arc::new(ctx),
+            ctx: crate::common::bound(ctx),
             drained: 0,
         }
     }
@@ -166,7 +171,7 @@ impl Harness {
         let feed = self.feed().await;
         feed.into_iter()
             .filter_map(|entry| match entry {
-                FeedEntry::System { text } => Some(text),
+                FeedEntry::System { text, .. } => Some(text),
                 _ => None,
             })
             .collect()

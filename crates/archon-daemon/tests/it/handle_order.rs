@@ -34,6 +34,7 @@ async fn a_forwarded_operator_only_request_is_refused_before_recovery() {
     let say = for_agent(
         common::ORCHESTRATOR,
         Request::Say {
+            command_id: None,
             text: "hi".into(),
             images: Vec::new(),
         },

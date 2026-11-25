@@ -237,6 +237,9 @@ async fn report(ctx: &DaemonContext, outcome: Outcome) -> Result<(), ArchonError
         None => "/answer".to_owned(),
     };
     let shown = crate::command_notice::show(ctx, &label, outcome.applied, &outcome.text).await?;
+    if outcome.applied && shown != Shown::InFeed {
+        feed::paired_command_result(ctx, &outcome.text).await?;
+    }
     if !outcome.applied && shown != Shown::InFeed {
         let named = outcome
             .number
@@ -246,7 +249,7 @@ async fn report(ctx: &DaemonContext, outcome: Outcome) -> Result<(), ArchonError
             "A `/answer`{named} sent in the orchestrator's Aether chat was not applied: {}",
             outcome.text
         );
-        feed::system(ctx, clip(&note, 2 * MAX_NEWS_CHARS)).await?;
+        feed::command_result(ctx, clip(&note, 2 * MAX_NEWS_CHARS), &outcome.text).await?;
     }
     let news = TriggerEvent::ChatAnswer {
         number: outcome.number,

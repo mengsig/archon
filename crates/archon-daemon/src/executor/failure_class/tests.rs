@@ -135,3 +135,13 @@ fn a_model_name_with_a_newline_keeps_the_advice_one_line() {
     assert!(!line.contains('\n'), "{line}");
     assert!(line.contains("one effort step up from low"), "{line}");
 }
+
+#[test]
+fn only_a_spent_quota_or_usage_limit_is_a_quota_failure() {
+    assert!(super::is_quota(
+        "usage limit reached; try again at Nov 24th 4:07 PM"
+    ));
+    assert!(super::is_quota("Provider QUOTA exhausted"));
+    assert!(!super::is_quota("rate limit exceeded; retry shortly"));
+    assert!(!super::is_quota("aetherd lost the agent"));
+}

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createStore } from '../../src/core/store.js';
 import { WEB_RELAY_MARK, OPERATOR_POST_LABEL } from '../../src/core/conversation.js';
-import { addPending, settlePending, matchEchoes, removePending } from '../../src/features/chat/outbox.js';
+import { addPending, settlePending, matchEchoes, removePending, commandOutcome } from '../../src/features/chat/outbox.js';
+import { daemonCommands } from '../../src/core/daemon.js';
 
 const store = (conversation = []) => createStore({ conversation, outbox: [], chatNotes: {} });
 const operator = (seq, text, part = 0) => ({ seq, part, at: '2026-11-13T10:00:00Z', kind: 'operator', important: true, text });
@@ -42,7 +43,10 @@ test("archond's post of a command it ran settles the send; another post does not
   const id = addPending(s, '/status');
   matchEchoes(s, [{ ...operator(7, '/status'), kind: 'post' }]);
   assert.equal(s.get().outbox.length, 1, 'a plain post is no echo');
-  matchEchoes(s, [{ ...operator(8, `${OPERATOR_POST_LABEL}/status`), kind: 'post' }]);
+  matchEchoes(s, [{ ...operator(6, `${OPERATOR_POST_LABEL}/status`), kind: 'post' },
+    { ...operator(7, '**Operator (another-device):** /status'), kind: 'post' }]);
+  assert.equal(s.get().outbox.length, 1, 'delayed identical commands from another device cannot settle ours');
+  matchEchoes(s, [{ ...operator(8, `**Operator (${id}):** /status`), kind: 'post' }]);
   assert.equal(s.get().outbox.length, 0);
   assert.equal(s.get().chatNotes['8-0'].localId, id);
 });
@@ -74,4 +78,69 @@ test('a send outcome that arrives after the echo lands on the entry', () => {
   assert.equal(s.get().chatNotes['8-0'].status, 'offline');
   removePending(s, id);
   assert.throws(() => matchEchoes(s, null), TypeError);
+});
+
+const fed = (seq, entry) => ({ seq, at: '2026-11-13T10:00:00Z', entry });
+const setLine = '/archon apply {"cmd":"set_directive","text":"docs only"}';
+
+test('uncorrelated feed lines do not claim a command outcome', () => {
+  const s = createStore({ conversation: [], outbox: [], chatNotes: {}, feed: [fed(4, { entry: 'system', text: 'old line' })] });
+  addPending(s, setLine);
+  const pending = s.get().outbox[0];
+  const feed = [...s.get().feed,
+    fed(5, { entry: 'operator', text: setLine, local: true }),
+    fed(6, { entry: 'authority', action: 'set_directive', result: 'requested' }),
+    fed(7, { entry: 'system', text: 'Directive dir_1 in force: docs only' }),
+    fed(8, { entry: 'system', text: 'Operator command: Applied.' })];
+  assert.equal(commandOutcome(feed.slice(0, 4), pending), null, 'not until the result is there');
+  assert.equal(commandOutcome(feed, pending), null);
+});
+
+test('another command’s confirmation or refusal is never attributed by proximity', () => {
+  const pending = { text: '/archon set max_parallel_agents=40', localId: 'pending-id' };
+  const asked = [fed(1, { entry: 'operator', text: pending.text }), fed(2, { entry: 'system', text: 'Operator command: Awaiting your confirmation as Q7; nothing changed yet.' })];
+  assert.equal(commandOutcome(asked, pending), null);
+  const refused = [fed(1, { entry: 'operator', text: pending.text }), fed(2, { entry: 'system', text: 'Operator command refused: no such gate' })];
+  assert.equal(commandOutcome(refused, pending), null);
+  // An echo from before the send, or a line that is not a command, has no answer here.
+  assert.equal(commandOutcome(asked, { ...pending, localId: 'another-id' }), null);
+  assert.equal(commandOutcome([fed(1, { entry: 'operator', text: 'hello' }), fed(2, { entry: 'system', text: 'Operator command: Applied.' })], { text: 'hello', localId: 'pending-id' }), null);
+});
+
+test('identical concurrent commands match only their own interleaved outcome', () => {
+  const s = store();
+  const first = addPending(s, '/status');
+  const second = addPending(s, '/status');
+  assert.notEqual(first, second);
+  const feed = [fed(1, { entry: 'system', command_id: second, text: 'second detail' }),
+    fed(2, { entry: 'system', command_id: first, text: 'first detail' }),
+    fed(3, { entry: 'system', command_id: second, command_result: 'Awaiting your confirmation as Q7; nothing changed yet.', text: 'Refused: /archon set: Awaiting your confirmation as Q7; nothing changed yet.' }),
+    fed(4, { entry: 'system', text: 'Operator command: uncorrelated' }),
+    fed(5, { entry: 'system', command_id: first, command_result: 'Applied.', text: 'Operator command: Applied.' })];
+  assert.deepEqual(commandOutcome(feed, s.get().outbox[0]), { lines: ['first detail', 'Applied.'], question: null });
+  assert.deepEqual(commandOutcome(feed, s.get().outbox[1]), { lines: ['second detail', 'Awaiting your confirmation as Q7; nothing changed yet.'], question: 'Q7' });
+});
+
+test('mixed daemon versions settle only the exact ID using their own terminal format', () => {
+  const feed = [
+    fed(1, { entry: 'system', text: 'Operator command: Wrong' }),
+    fed(2, { entry: 'system', command_id: 'old', text: 'legacy detail' }),
+    fed(3, { entry: 'system', command_id: 'new', text: 'Applied: /archon', command_result: 'Saved' }),
+    fed(4, { entry: 'system', command_id: 'old', text: 'Operator command: Awaiting your confirmation as Q9' }),
+    fed(5, { entry: 'system', command_id: 'refused', text: 'Operator command refused: unknown item' }),
+  ];
+  assert.deepEqual(commandOutcome(feed, { localId: 'new' }), { lines: ['Saved'], question: null });
+  assert.deepEqual(commandOutcome(feed, { localId: 'old' }), { lines: ['legacy detail', 'Awaiting your confirmation as Q9'], question: 'Q9' });
+  assert.deepEqual(commandOutcome(feed, { localId: 'refused' }), { lines: ['Operator command refused: unknown item'], question: null });
+  assert.equal(commandOutcome(feed, { localId: 'unknown' }), null);
+});
+
+test('say sends the pending command identifier to the daemon', async () => {
+  const s = store();
+  const id = addPending(s, '/status');
+  let request;
+  const commands = daemonCommands(async (cmd, fields) => { request = { cmd, fields }; return { reply: 'ok' }; });
+  await commands.say('/status', id);
+  assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.deepEqual(request, { cmd: 'say', fields: { text: '/status', command_id: id } });
 });

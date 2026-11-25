@@ -161,6 +161,7 @@ fn operator_only_requests() -> Vec<Request> {
             caps: Caps::default(),
         },
         Request::Say {
+            command_id: None,
             text: "hi".into(),
             images: Vec::new(),
         },

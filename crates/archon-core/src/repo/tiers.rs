@@ -28,6 +28,24 @@ pub struct RepoTiers {
     pub release_branch: Option<String>,
     #[serde(skip_serializing_if = "Checks::is_empty")]
     pub checks: Checks,
+    /// `[design]`: what the live design preview may load.
+    #[serde(skip_serializing_if = "RepoDesign::is_empty")]
+    pub design: RepoDesign,
+}
+
+/// `[design]` of `.archon/repo.toml`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct RepoDesign {
+    /// Read the former allowlist so a configured host gets a migration hint.
+    pub allow_hosts: Vec<String>,
+}
+
+impl RepoDesign {
+    /// Whether nothing is set.
+    pub fn is_empty(&self) -> bool {
+        self.allow_hosts.is_empty()
+    }
 }
 
 /// The check tiers: `fast` runs in every item before it commits, for the
@@ -67,6 +85,11 @@ impl RepoTiers {
                 full: self.checks.full.or(below.checks.full),
                 release: self.checks.release.or(below.checks.release),
             },
+            design: if self.design.is_empty() {
+                below.design
+            } else {
+                self.design
+            },
         }
     }
 
@@ -101,6 +124,9 @@ impl RepoTiers {
                     "{key} {name:?} is not a plain branch name"
                 )));
             }
+        }
+        if !self.design.allow_hosts.is_empty() {
+            return Err(ArchonError::Invalid("design.allow_hosts is no longer supported. Serve preview assets through the item's dev server and remove the allowlist.".into()));
         }
         let commands = [
             ("checks.fast", &self.checks.fast),
@@ -178,7 +204,27 @@ mod tests {
                 full: None,
                 release: None,
             },
+            design: RepoDesign::default(),
         }
+    }
+
+    #[test]
+    fn retired_design_allowlist_explains_how_to_serve_assets() {
+        let empty = "[design]\nallow_hosts = []";
+        assert!(
+            RepoTiers::parse(empty, "repo.toml")
+                .unwrap()
+                .design
+                .is_empty()
+        );
+        let configured = "[design]\nallow_hosts = [\"fonts.example\"]";
+        let err = RepoTiers::parse(configured, "repo.toml")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("design.allow_hosts") && err.contains("dev server"),
+            "{err}"
+        );
     }
 
     #[test]

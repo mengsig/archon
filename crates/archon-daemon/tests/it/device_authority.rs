@@ -29,6 +29,7 @@ fn device(role: DeviceRole) -> WelcomeDevice {
 
 fn say(text: &str) -> Request {
     Request::Say {
+        command_id: None,
         text: text.into(),
         images: vec![],
     }
@@ -137,6 +138,38 @@ async fn an_operator_device_sets_and_clears_a_directive_from_chat() {
     let reply = from_device(&h, DeviceRole::Operator, direct).await.unwrap();
     assert!(matches!(reply, Reply::Directive(_)), "{reply:?}");
     assert_eq!(directives(&h).await, ["pause big refactors"]);
+}
+
+#[tokio::test]
+async fn repeated_phone_commands_have_distinct_persisted_results() {
+    use archon_core::notify::FeedEntry;
+
+    let h = harness(AetherMode::Shared).await;
+    let command =
+        r#"/archon apply {"cmd":"set_directive","text":"docs only","expires_in_hours":null}"#;
+    for id in ["first", "second"] {
+        let request = Request::Say {
+            text: command.into(),
+            images: vec![],
+            command_id: Some(id.into()),
+        };
+        from_device(&h, DeviceRole::Operator, request)
+            .await
+            .unwrap();
+    }
+    let rows = h.ctx.store.lock().await.feed_after(0, 100).unwrap();
+    let ids: Vec<_> = rows
+        .iter()
+        .filter_map(|item| match &item.entry {
+            FeedEntry::System {
+                command_id,
+                command_result: Some(_),
+                ..
+            } => command_id.as_deref(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids, ["first", "second"]);
 }
 
 /// `/answer N` from the app closes the question as the TUI's does.

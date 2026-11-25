@@ -5737,9 +5737,14 @@ proposal gate when the item's latest run approved its last proposal gate
 the brief the item has now; `archond` keeps a fingerprint of a gated run's
 brief for that. The later stages get the approved summary and note as
 before, and a restart rebuilds the driver past the same proposal. A fresh
-retry (its new branch lacks the proposal page), an amended brief, and a
-proposal that was revised, rejected, left undecided or never gated all
-propose again.
+retry (its new branch lacks the proposal page), a brief the operator
+amended, and a proposal that was revised, rejected, left undecided or never
+gated all propose again. An automatic repair (`auto_repair`) amends the brief with
+the refusal it repairs. For live design items it carries the run's brief
+fingerprint across that amendment only when the fingerprint still matched the brief before it: the
+repaired run starts past an approved proposal (an approved live design is
+not designed again), while an amendment the operator made in between still
+proposes again.
 
 ### 18.4 Tool exposure
 
@@ -6071,6 +6076,45 @@ pipeline/state invariants and the shipped-head guard. See
 
 **Not yet:** full-auto, TUI orchestrator restart, per-repo daily/total budgets
 and concurrency limits. Unsupported settings are refused.
+
+## Design sessions
+
+`proposal = live` ([design-sessions.md](design-sessions.md)) inserts the
+`design` stage (kind `Design`, `keep`) instead of `propose` and reuses the
+proposal gate and `approve_intent` unchanged.
+
+**Ownership.** The agent owns the dev server, started in its worktree under
+`setsid`, because archond never runs a command read from a worktree. archond
+owns the headless Chromium (a child with a cleared environment, a fresh profile
+and a debugging pipe), the CDP client, the session and note store and the frame
+relay. The agent gets no browser handle; it reports with the MCP tools
+`design_preview` and `design_note`, and reads its chains with
+`design_history`, accepted only from the live design stage's agent.
+
+**Commit check and Undo.** archond accepts a note's `done` only when HEAD is
+the reported commit, that commit has one parent and the parent is the note's
+recorded base. Anything else marks the note failed with `history_changed` and
+leaves the worktree. The check, and Undo, run through the sealed and shadow git
+of §13.4, never a porcelain git in the worktree. Undo computes what `git revert
+--no-edit` computes with `merge-tree --write-tree`, builds the commit with
+`commit-tree` and moves the branch with `stack::advance`, a compare-and-set
+from the pre-revert HEAD. A conflict writes nothing. "Undone" is derived from a
+done revert note that names the note, never stored and never set by an agent.
+
+**Crash-window reconciliation.** A revert stores its new commit on its note
+before `advance`. On start, a working revert note is done if HEAD is that
+commit, its only parent is the base and the tree is clean; otherwise it is
+failed `history_changed` and the worktree is left. Owed deliveries are kept
+under a key and resent by a sweep, as steer steps are; browsers are reaped by
+pid and start time.
+
+**Ledger from records.** At Finish archond freezes the session and builds the
+approved intent from its own rows, never from the agent's `structured` output:
+it starts from the item's current intent and adds one requirement `D<n>` per
+active note. If the operator includes a picture, the ledger uses the final
+capture or falls back to the note’s after picture. The executor's
+`verify` and open-gate paths use it for a `Design` gate stage, so the rest of
+the gate flow is unchanged.
 
 ## 19. Learning
 

@@ -94,6 +94,8 @@ fn completion_feed() -> ServerFrame {
             seq: 1,
             at: archon_core::now(),
             entry: FeedEntry::System {
+                command_id: None,
+                command_result: None,
                 text: "completion".into(),
             },
         },

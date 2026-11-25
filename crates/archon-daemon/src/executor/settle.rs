@@ -488,6 +488,47 @@ fn recorded(outcome: StageOutcome, flagged: bool) -> StageOutcome {
     }
 }
 
+/// End every design session of `run` still open: a run that finishes or is
+/// cancelled while its proposal gate is open leaves a Confirmed session whose
+/// browser would otherwise keep running and hold a `max_sessions` slot.
+pub(super) async fn end_designs(ctx: &DaemonContext, run: &PipelineRun) {
+    let sessions = {
+        let store = ctx.store.lock().await;
+        let found = store.item(&run.item).and_then(|item| {
+            if item.autonomy.proposal == archon_core::autonomy::ProposalMode::Live {
+                store.design_sessions(&run.item)
+            } else {
+                Ok(Vec::new())
+            }
+        });
+        match found {
+            Ok(all) => all
+                .into_iter()
+                .filter(|s| s.run == run.id && s.state != archon_core::design::SessionState::Ended)
+                .collect::<Vec<_>>(),
+            Err(error) => {
+                tracing::warn!(%error, run = %run.id, "could not find the run's open design sessions");
+                return;
+            }
+        }
+    };
+    for session in sessions {
+        if let Err(error) = ctx
+            .design
+            .stage_settled(
+                &ctx.arc(),
+                &session.run,
+                &session.stage_id,
+                session.attempt,
+                crate::design::StageEnd::Cancelled,
+            )
+            .await
+        {
+            tracing::warn!(%error, session = %session.id, "design session did not end");
+        }
+    }
+}
+
 /// Record a final outcome and apply the driver's resulting decision.
 async fn persist(
     ctx: &DaemonContext,
@@ -497,6 +538,13 @@ async fn persist(
     all: &[StageRun],
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
+    let design_end =
+        (stage.kind == Some(archon_core::catalog::StageKind::Design)).then_some(match &outcome {
+            StageOutcome::Completed { .. } => crate::design::StageEnd::Completed,
+            StageOutcome::Failed { .. } => crate::design::StageEnd::Failed,
+            StageOutcome::Cancelled { .. } => crate::design::StageEnd::Cancelled,
+            StageOutcome::TimedOut => crate::design::StageEnd::TimedOut,
+        });
     let mut settled = settled_stage(stage, outcome, archon_core::now());
     if let Some(driver) = table.drivers.get(&run.id) {
         let holds = driver.holds_verdict(&settled.stage_id);
@@ -518,6 +566,31 @@ async fn persist(
         (settled, owes_stop, kept)
     };
     table.spawn_errors.remove(&settled.id);
+    // A confirmed session outlives its completed stage: the gate builds the
+    // ledger from it, and ends it when the operator decides (proposal.rs).
+    let awaiting_gate = match design_end {
+        Some(crate::design::StageEnd::Completed) => {
+            let store = ctx.store.lock().await;
+            let confirmed = ctx
+                .design
+                .session_of(&store, &run.id, &settled.stage_id, settled.attempt)?
+                .filter(|s| s.state == archon_core::design::SessionState::Confirmed);
+            if let Some(session) = &confirmed {
+                // Its browser is not needed while the gate waits.
+                ctx.design.park_browser(&session.id, "stage completed");
+            }
+            confirmed.is_some()
+        }
+        _ => false,
+    };
+    if let Some(end) = design_end.filter(|_| !awaiting_gate)
+        && let Err(error) = ctx
+            .design
+            .stage_settled(&ctx.arc(), &run.id, &settled.stage_id, settled.attempt, end)
+            .await
+    {
+        tracing::warn!(%error, stage = %settled.id, "design session did not settle");
+    }
     let mut follow = decide(ctx, table, run, &settled, all).await?;
     follow.kept.extend(kept);
     follow.reap.push(settled.id.clone());
@@ -1092,7 +1165,7 @@ fn retry_choice(
     // The agent a wake keeps runs the model it was last steered to.
     let kept = catalog.canonical_alias(&ran.model);
     let woken = retry.wake.is_some().then_some(kept);
-    retry_judge(ctx, store, run, &mut plan, woken)?;
+    retry_judge(ctx, store, run, &mut plan, (woken, failed))?;
     if plan.choice.model != *kept {
         retry.wake = None;
     }
@@ -1138,20 +1211,22 @@ fn route_fresh(
 }
 
 /// An acceptance retry is judged by the `woken` judge while it is still
-/// eligible, else by one selected as its first attempt was, never the placeholder.
+/// eligible, else by one selected as its first attempt was, never the placeholder
+/// and never on a provider the `failed` attempt just ran out of quota on.
 fn retry_judge(
     ctx: &DaemonContext,
     store: &mut archon_queue::Store,
     run: &PipelineRun,
     plan: &mut SpawnPlan,
-    woken: Option<&archon_core::model::ModelRef>,
+    judged: (Option<&archon_core::model::ModelRef>, &StageRun),
 ) -> Result<(), ArchonError> {
     if plan.stage_id != archon_pipeline::acceptance::STAGE {
         return Ok(());
     }
     let item = store.item(&run.item)?;
     let plans = std::slice::from_mut(plan);
-    let selected = super::acceptance::select_model(ctx, store, &item, run, plans, woken);
+    let selected =
+        super::acceptance::select_model(ctx, store, &item, run, plans, (judged.0, Some(judged.1)));
     match selected {
         Ok(()) => {
             assert_eq!(plan.choice.tier, None, "a judge is selected, never tiered");

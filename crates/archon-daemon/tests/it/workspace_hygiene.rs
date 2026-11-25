@@ -181,7 +181,7 @@ async fn system_notes(h: &Harness) -> Vec<String> {
         .unwrap()
         .into_iter()
         .filter_map(|f| match f.entry {
-            FeedEntry::System { text } => Some(text),
+            FeedEntry::System { text, .. } => Some(text),
             _ => None,
         })
         .collect()
@@ -478,7 +478,7 @@ async fn gc_deletes_an_idle_cache_and_says_what_it_freed() {
         .unwrap()
         .into_iter()
         .filter_map(|f| match f.entry {
-            FeedEntry::System { text } => Some(text),
+            FeedEntry::System { text, .. } => Some(text),
             _ => None,
         })
         .collect();

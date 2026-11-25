@@ -4,7 +4,7 @@
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
 use archon_core::queue::QueueItem;
-use archon_core::run::{GateDecision, GateSubject};
+use archon_core::run::{GateDecision, GateSubject, StageRun};
 use archon_pipeline::{ApprovedProposal, RunDriver};
 use archon_queue::Store;
 
@@ -51,6 +51,30 @@ pub(super) fn save_start(
     };
     assert_eq!(proposal.stage_id, gate, "started past its own gate");
     store.kv_set(&proposal_key(run), &serde_json::to_string(proposal)?)
+}
+
+/// A live design repair's amendment (`repair.rs`) asks the build again for what a gate
+/// refused; it changes nothing the operator approved. So the latest run's
+/// brief fingerprint follows the amended brief, and the repaired run starts
+/// past that run's approved live design as a plain
+/// retry does, instead of proposing again or opening a design session no one
+/// will finish. Only a fingerprint of `before` is moved: an operator's own
+/// amendment in between still proposes again.
+pub(super) fn carry_brief(
+    store: &mut Store,
+    item: &archon_core::id::QueueItemId,
+    before: &str,
+    after: &str,
+) -> Result<(), ArchonError> {
+    let runs = store.runs_for_item(item)?;
+    let Some(latest) = runs.last() else {
+        return Ok(());
+    };
+    let key = brief_key(&latest.id);
+    if store.kv_get(&key)?.as_deref() != Some(fingerprint(before).as_str()) {
+        return Ok(());
+    }
+    store.kv_set(&key, &fingerprint(after))
 }
 
 /// The approved proposal `run` started past, if it did.
@@ -116,6 +140,37 @@ pub(super) fn approved_before(
     }
 }
 
+/// Tell the design service a Design gate was decided, so the session ends
+/// (approved, rejected) or the next one starts at the revised attempt. A
+/// failure is logged: the decision is already recorded.
+pub(super) async fn design_decided(
+    ctx: &crate::context::DaemonContext,
+    gate: &archon_core::run::OperatorGate,
+    stages: &[StageRun],
+    decision: &GateDecision,
+) {
+    let designed = stages.iter().any(|s| {
+        s.stage_id == gate.stage_id
+            && s.attempt == gate.attempt
+            && s.kind == Some(archon_core::catalog::StageKind::Design)
+    });
+    if !designed {
+        return;
+    }
+    let word = match decision {
+        GateDecision::Approve { .. } => "approved",
+        GateDecision::Revise { .. } => "revised",
+        GateDecision::Reject { .. } => "rejected",
+    };
+    if let Err(error) = ctx
+        .design
+        .gate_decided(&ctx.arc(), &gate.run, &gate.stage_id, gate.attempt, word)
+        .await
+    {
+        tracing::warn!(%error, gate = %gate.stage_id, "design session did not hear the decision");
+    }
+}
+
 /// `driver` started past `approved` while it still gates that proposal: a
 /// pipeline or knob that no longer asks for it runs as it is.
 pub(super) fn start_past(
@@ -139,5 +194,98 @@ mod tests {
         assert_eq!(fingerprint(""), "cbf29ce484222325");
         assert_eq!(fingerprint("a"), "af63dc4c8601ec8c");
         assert_ne!(fingerprint("brief"), fingerprint("brief\n\n## Amendment"));
+    }
+
+    /// A store holding one item with one run that started with `brief`.
+    fn run_started_with(brief: &str) -> (Store, archon_core::id::QueueItemId, PipelineRunId) {
+        use archon_core::queue::QueueState;
+        let mut store = Store::open_in_memory().unwrap();
+        let now = archon_core::now();
+        let item = store
+            .insert_item(
+                &QueueItem {
+                    intent: None,
+                    onto: None,
+                    id: archon_core::id::QueueItemId::new(),
+                    repo: None,
+                    pipeline: "direct".into(),
+                    title: "t".into(),
+                    brief: brief.into(),
+                    priority: archon_core::queue::Priority::Normal,
+                    dependencies: vec![],
+                    tags: vec![],
+                    model_plan: Default::default(),
+                    model_reasons: None,
+                    budget_usd: None,
+                    autonomy: archon_core::autonomy::Autonomy::default(),
+                    origin: None,
+                    stage_timeouts: Default::default(),
+                    fresh_retries: 0,
+                    routed_provider: None,
+                    provider_switch: None,
+                    initiative: None,
+                    risk: None,
+                    supersedes: None,
+                    state: QueueState::Queued,
+                    created_at: now,
+                    updated_at: now,
+                },
+                None,
+            )
+            .unwrap();
+        store
+            .transition_item(&item.id, QueueState::Dispatching, now)
+            .unwrap();
+        let run = archon_core::run::PipelineRun {
+            id: PipelineRunId::new(),
+            item: item.id.clone(),
+            pipeline: "direct".into(),
+            shipped: false,
+            aether_run: None,
+            workspace: "/tmp/carry-brief".into(),
+            team_root: None,
+            branch: "archon/carry".into(),
+            state: archon_core::run::RunState::Running {
+                stage_id: "build".into(),
+                attempt: 1,
+            },
+            cost_usd: 0.0,
+            started_at: now,
+            finished_at: None,
+        };
+        store.insert_run(&run).unwrap();
+        store
+            .kv_set(&brief_key(&run.id), &fingerprint(brief))
+            .unwrap();
+        (store, item.id, run.id)
+    }
+
+    #[test]
+    fn a_repair_amendment_carries_the_runs_brief_fingerprint() {
+        let (mut store, item, run) = run_started_with("restyle");
+        carry_brief(&mut store, &item, "restyle", "restyle\n\n## Repair").unwrap();
+        let held = store.kv_get(&brief_key(&run)).unwrap();
+        assert_eq!(
+            held.as_deref(),
+            Some(fingerprint("restyle\n\n## Repair").as_str())
+        );
+        assert_ne!(held.as_deref(), Some(fingerprint("restyle").as_str()));
+    }
+
+    /// The operator amended the brief after the run started: the brief the
+    /// repair amends is no longer the one the run started with, so the run's
+    /// fingerprint stays and the retried run proposes again.
+    #[test]
+    fn an_operator_amendment_in_between_is_not_carried() {
+        let (mut store, item, run) = run_started_with("restyle");
+        let theirs = "restyle\n\n## Amendment\nalso the footer";
+        carry_brief(&mut store, &item, theirs, &format!("{theirs}\n\n## Repair")).unwrap();
+        let held = store.kv_get(&brief_key(&run)).unwrap();
+        assert_eq!(
+            held.as_deref(),
+            Some(fingerprint("restyle").as_str()),
+            "unchanged"
+        );
+        assert_ne!(held.as_deref(), Some(fingerprint(theirs).as_str()));
     }
 }

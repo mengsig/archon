@@ -738,6 +738,7 @@ async fn waived_checks_that_never_started_are_a_quiet_line_only() {
     use archon_core::settings::{ChecksMode, OperatorSettings};
     let (h, gh) = delivering().await;
     let waive = Request::SetSettings {
+        legacy_proposals: false,
         repo: Some(RepoRef(REPO_NAME.into())),
         settings: OperatorSettings {
             checks: Some(ChecksMode::Waived),
@@ -773,9 +774,13 @@ async fn absent_checks_are_a_quiet_line_watched_or_waived() {
             ..OperatorSettings::default()
         };
         let repo = Some(RepoRef(REPO_NAME.into()));
-        h.cli(Request::SetSettings { repo, settings })
-            .await
-            .unwrap();
+        h.cli(Request::SetSettings {
+            repo,
+            settings,
+            legacy_proposals: false,
+        })
+        .await
+        .unwrap();
         let (_, run) = shipped(&h, "the change").await;
         gh.set_checks(&json!([]));
         age_watch(&h, &run, 3).await;

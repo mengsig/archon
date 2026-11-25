@@ -17,11 +17,15 @@ export const stripRelayMark = (text) => (text.startsWith(WEB_RELAY_MARK) ? text.
 // What leads archond's post of a command it ran itself, as the Rust side writes it.
 export const OPERATOR_POST_LABEL = '**Operator:** ';
 
+const commandPost = /^\*\*Operator \(([A-Za-z0-9-]{1,64})\):\*\* /;
+export const commandEchoId = (entry) => entry.kind === 'post' ? commandPost.exec(entry.text)?.[1] ?? null : null;
+
 // The line an entry gives back: the operator's own, or archond's post of a
 // command it ran itself; null for anything else.
 export function echoedLine(entry) {
   const text = String(entry.text);
   if (entry.kind === 'operator') return stripRelayMark(text);
+  if (commandEchoId(entry)) return text.replace(commandPost, '');
   if (entry.kind === 'post' && text.startsWith(OPERATOR_POST_LABEL)) return text.slice(OPERATOR_POST_LABEL.length);
   return null;
 }

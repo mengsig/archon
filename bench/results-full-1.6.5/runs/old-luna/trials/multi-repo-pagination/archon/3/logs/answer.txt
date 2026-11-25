@@ -1,0 +1,33 @@
+Quota pace: codex is 69% used at 47% elapsed and may run out around Nov 26 14:47 UTC, before its Nov 28 reset. This inventory change is queued as two sequential repo tasks; if codex becomes constrained, the daemon may need to route work to another available provider.
+
+The initiative is queued. The API task comes first; the client task depends on it. Both include README updates, the requested test command, and a commit in their repository.
+
+The daemon also received the Codex quota pace update.
+
+Done: Add cursor pagination to GET /items. Added cursor pagination to GET /items, documented the contract, and added tests for default page size, bounds, ordered traversal, final-page null cursor, and invalid cursors. `python3 -m unittest` passed (6 tests) and `git diff --check HEAD^ HEAD` passed on final commit 455a7cd77823cdc951256eb4d78a5f01a36ee5b4. Independent review passed with no findings. No open work.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88BNYA5M2S42R7V22WBG09F)
+
+SHIPPED: commit 455a7cd77823cdc951256eb4d78a5f01a36ee5b4 on the run branch
+Branch `archon/t10dvt0r-add-cursor-pagination-to-get-items` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/07dfc073497bb2582e51dbf4/inventory-api holds it (3 files changed, 64 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M88BJPFMKSSSXGK1T10DVT0R`; land it in `main`: `archon merge qi_01M88BJPFMKSSSXGK1T10DVT0R`.
+
+Done: Follow API cursors in listItems. Updated listItems to follow API cursors, preserving page order, and documented the behavior. Added coverage for unchanged opaque cursors and absent next_cursor. Baseline npm test passed 3/3; final npm test passed 5/5, and git diff --check passed. Committed as adaca12b44ea68328838e7b68b8b8e39251af4d1; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88BSVX1SF99ZQQTAKDCKQDR)
+
+SHIPPED: commit adaca12b44ea68328838e7b68b8b8e39251af4d1 on the run branch
+Branch `archon/bfse0xxk-follow-api-cursors-in-listitems` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/07dfc073497bb2582e51dbf4/inventory-client holds it (3 files changed, 43 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M88BJPG5TE70FX06BFSE0XXK`; land it in `main`: `archon merge qi_01M88BJPG5TE70FX06BFSE0XXK`.
+
+Initiative finished; coordinated result queued.
+
+Updated listItems to follow API cursors, preserving page order, and documented the behavior. Added coverage for unchanged opaque cursors and absent next_cursor. Baseline npm test passed 3/3; final npm test passed 5/5, and git diff --check passed. Committed as adaca12b44ea68328838e7b68b8b8e39251af4d1; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88BSVX1SF99ZQQTAKDCKQDR)
+
+SHIPPED: commit adaca12b44ea68328838e7b68b8b8e39251af4d1 on the run branch
+
+Added cursor pagination to GET /items, documented the contract, and added tests for default page size, bounds, ordered traversal, final-page null cursor, and invalid cursors. `python3 -m unittest` passed (6 tests) and `git diff --check HEAD^ HEAD` passed on final commit 455a7cd77823cdc951256eb4d78a5f01a36ee5b4. Independent review passed with no findings. No open work.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88BNYA5M2S42R7V22WBG09F)
+
+SHIPPED: commit 455a7cd77823cdc951256eb4d78a5f01a36ee5b4 on the run branch

@@ -1,0 +1,14 @@
+Queued as **qi_01M885P87PFHS3XJ89S3F1Y61Q** on the direct pipeline. The item covers implementing the spec, adding focused tests, running the tests, and committing the changes.
+
+Done: Implement retry_budget.py per specification. Implemented retry_delay per SPEC.md, including strict built-in integer validation before early returns, capped exponential backoff that avoids huge powers, uncapped Retry-After floors, and the strict budget cutoff. Added focused validation and boundary tests. Focused and discovery unittest runs pass (8 tests each); git diff --check passes. Committed as ce26c0f42a8d65dc7fb7051a7fa2efe30902357e; no known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit ce26c0f42a8d65dc7fb7051a7fa2efe30902357e on the run branch
+Branch `archon/s3f1y61q-implement-retry-budget-py-per-specificat` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/4fe9e9c794b47f6fe2fa1985/quality-retry-budget holds it (2 files changed, 81 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M885P87PFHS3XJ89S3F1Y61Q`; land it in `main`: `archon merge qi_01M885P87PFHS3XJ89S3F1Y61Q`.
+
+Implemented retry_delay per SPEC.md, including strict built-in integer validation before early returns, capped exponential backoff that avoids huge powers, uncapped Retry-After floors, and the strict budget cutoff. Added focused validation and boundary tests. Focused and discovery unittest runs pass (8 tests each); git diff --check passes. Committed as ce26c0f42a8d65dc7fb7051a7fa2efe30902357e; no known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit ce26c0f42a8d65dc7fb7051a7fa2efe30902357e on the run branch

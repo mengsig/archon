@@ -1,0 +1,10 @@
+Implemented TT-101 through TT-104 and added tests for each. The requested unittest suite passes: **9 tests, OK**.
+
+Each ticket has its own commit:
+
+- TT-101 `9449c67`
+- TT-102 `9ee50ad`
+- TT-103 `14ed45f`
+- TT-104 `3f5874a`
+
+A follow-up test correction is committed as `797b1c2`. The working tree is clean.

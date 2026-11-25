@@ -1,0 +1,9 @@
+Implemented and committed both repositories.
+
+- `ledger` now accepts an optional three-letter uppercase currency, defaults to USD, emits the currency column, and exits with status 2 for malformed currency codes.
+- `reports` groups totals by account and currency, supports older CSV files without a currency column, and exits with status 2 for malformed currency codes.
+- Updated both READMEs and added regression coverage.
+
+`cargo test` passed; `python3 -m unittest` passed (3 tests). A manual ledger check confirmed malformed currency exits with status 2.
+
+Commits: `ledger` — `c960b42`; `reports` — `02fccaf`. The reports worktree has an untracked `__pycache__/` directory created by the test run.

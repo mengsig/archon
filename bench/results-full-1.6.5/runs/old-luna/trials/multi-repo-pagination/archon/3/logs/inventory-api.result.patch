@@ -1,0 +1,107 @@
+diff --git a/README.md b/README.md
+index 1a55755..5749414 100644
+--- a/README.md
++++ b/README.md
+@@ -6,7 +6,11 @@ In-memory inventory service. `api.handle(request)` maps a request
+ 
+ ## Endpoints
+ 
+-- `GET /items` → `{"items": [...]}`: every item, ordered by `id`.
++- `GET /items?limit=<1..100>&cursor=<cursor>` →
++  `{"items": [...], "next_cursor": "..."}`: items ordered by `id`.
++  `limit` defaults to 20. Pass `next_cursor` unchanged as `cursor` to fetch
++  the next page; the final page has `next_cursor: null`. Invalid limits and
++  cursors return HTTP-shaped status 400 with `{"error": "..."}`.
+ - `GET /items/<id>` → the item, 404 when unknown, 400 when `id` is not a number.
+ 
+ Run the tests with `python3 -m unittest`.
+diff --git a/api.py b/api.py
+index aba1605..d5bc912 100644
+--- a/api.py
++++ b/api.py
+@@ -5,6 +5,10 @@ response is `{"status": int, "body": object}`; the transport layer lives
+ elsewhere.
+ """
+ 
++import base64
++import binascii
++import re
++
+ from data import ITEMS
+ 
+ 
+@@ -22,7 +26,33 @@ def handle(request):
+ 
+ def list_items(query):
+     items = sorted(ITEMS, key=lambda item: item["id"])
+-    return {"status": 200, "body": {"items": items}}
++    raw_limit = query.get("limit", "20")
++    if not isinstance(raw_limit, (str, int)) or not re.fullmatch(r"[0-9]+", str(raw_limit)):
++        return _error(400, "limit must be an integer from 1 to 100")
++    limit = int(raw_limit)
++    if not 1 <= limit <= 100:
++        return _error(400, "limit must be an integer from 1 to 100")
++
++    cursor = query.get("cursor")
++    after_id = None
++    if cursor is not None:
++        if not isinstance(cursor, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", cursor):
++            return _error(400, "invalid cursor")
++        try:
++            decoded = base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True)
++            after_id = int(decoded)
++        except (binascii.Error, ValueError):
++            return _error(400, "invalid cursor")
++        if str(after_id).encode() != decoded or after_id not in {item["id"] for item in items}:
++            return _error(400, "invalid cursor")
++
++    if after_id is not None:
++        items = [item for item in items if item["id"] > after_id]
++    page = items[:limit]
++    next_cursor = None
++    if len(items) > limit:
++        next_cursor = base64.urlsafe_b64encode(str(page[-1]["id"]).encode()).decode().rstrip("=")
++    return {"status": 200, "body": {"items": page, "next_cursor": next_cursor}}
+ 
+ 
+ def get_item(raw_id):
+diff --git a/test_api.py b/test_api.py
+index 55cd1fd..85807bc 100644
+--- a/test_api.py
++++ b/test_api.py
+@@ -13,7 +13,34 @@ class ApiTest(unittest.TestCase):
+         self.assertEqual(res["status"], 200)
+         ids = [item["id"] for item in res["body"]["items"]]
+         self.assertEqual(ids[0], 1)
+-        self.assertEqual(ids, sorted(ids))
++        self.assertEqual(ids, list(range(1, 21)))
++        self.assertIsNotNone(res["body"]["next_cursor"])
++
++    def test_item_pages_cover_ordered_catalogue(self):
++        page = get("/items", limit="13")["body"]
++        items = page["items"]
++        while page["next_cursor"] is not None:
++            page = get("/items", limit="13", cursor=page["next_cursor"])["body"]
++            items.extend(page["items"])
++        self.assertEqual([item["id"] for item in items], list(range(1, 58)))
++
++    def test_item_pagination_limits_and_final_cursor(self):
++        res = get("/items", limit="100")
++        self.assertEqual(res["status"], 200)
++        self.assertEqual(len(res["body"]["items"]), 57)
++        self.assertIsNone(res["body"]["next_cursor"])
++        for limit in ("0", "101", "nope", "1.5"):
++            with self.subTest(limit=limit):
++                res = get("/items", limit=limit)
++                self.assertEqual(res["status"], 400)
++                self.assertEqual(set(res["body"]), {"error"})
++
++    def test_item_pagination_rejects_invalid_cursors(self):
++        for cursor in ("!", "bm90LWEtbnVtYmVy", "OTk5"):
++            with self.subTest(cursor=cursor):
++                res = get("/items", cursor=cursor)
++                self.assertEqual(res["status"], 400)
++                self.assertEqual(set(res["body"]), {"error"})
+ 
+     def test_single_item(self):
+         res = get("/items/5")

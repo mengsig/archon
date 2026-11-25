@@ -1,0 +1,16 @@
+Enqueued **“Fix window.py for all inputs”** as `qi_01M88AJE8XAWMJ08EW670WHV1K` in the `direct` pipeline with standard review. The agent is instructed to leave tests unchanged, run `python3 -m unittest`, check input boundaries, and commit the fix.
+
+Codex is the only model allowed for this repository, so the work will use it despite the quota pace warning.
+
+Done: Fix window.py for all inputs. Fixed sliding_windows to include the last valid start position, so exact-fit and oversized boundary cases behave correctly. The baseline unittest run had 2 failures; after the change all 3 tests and 6 focused boundary cases pass. Commit 8330db6 is independently reviewed with a passing verdict; no work remains.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88AMPQFVB0DJDPXNCE8C6AN)
+
+SHIPPED: commit 8330db6f759b081ce1a56026c9a7b39978f67eca on the run branch
+Branch `archon/670whv1k-fix-window-py-for-all-inputs` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/685bf0b24b75687489876b8b/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M88AJE8XAWMJ08EW670WHV1K`; land it in `main`: `archon merge qi_01M88AJE8XAWMJ08EW670WHV1K`.
+
+Fixed sliding_windows to include the last valid start position, so exact-fit and oversized boundary cases behave correctly. The baseline unittest run had 2 failures; after the change all 3 tests and 6 focused boundary cases pass. Commit 8330db6 is independently reviewed with a passing verdict; no work remains.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88AMPQFVB0DJDPXNCE8C6AN)
+
+SHIPPED: commit 8330db6f759b081ce1a56026c9a7b39978f67eca on the run branch

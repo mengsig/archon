@@ -1,0 +1,59 @@
+Quota pace: Codex was at 68% used with 46% of its primary window elapsed, projecting exhaustion before the 2026-11-28 reset. I queued TT-101–TT-104 serially as a dependency chain (one active item at a time) on the default balanced/medium direct pipeline. I kept standard library and unittest requirements in every brief; the tickets will commit separately.
+
+Queued all four tickets as separate `direct` items in `long-backlog`, chained in order so each starts after the previous ticket succeeds:
+
+- TT-101: `qi_01M883MKQQKV65ZZ7NET999MHE`
+- TT-102: `qi_01M883MKREM99C4PC4F6HXQG84`
+- TT-103: `qi_01M883MKS6VCHQ4VHM270Y0R8G`
+- TT-104: `qi_01M883MKSYEBK7DQVVTNRP5BKG`
+
+Each brief includes the ticket’s acceptance criteria, standard library only, added unittest coverage, the requested test command, and a separate commit. I also posted the quota pacing update. I’ll report the outcomes as the items finish.
+
+Done: TT-101 Reject impossible due dates. TT-101 implemented and committed as 068524b6b43c814da3be61b758f45a4913238f58. Invalid ISO calendar dates and unsupported forms now raise InvalidDate with the original input in the message; supported date, today/tomorrow, and +Nd forms remain valid. Added unittest coverage for all listed invalid examples and representative valid forms. `python3 -m unittest discover -s tests -t .` passed (5 tests); final tree e84112bc40484c0ccde7ba24456efcc48206e389 is clean. No open items. REVIEW: independent review passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M883Q76Q91SP7WN685SBQEGW)
+
+SHIPPED: commit 068524b6b43c814da3be61b758f45a4913238f58 on the run branch
+Branch `archon/et999mhe-tt-101-reject-impossible-due-dates` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/e2e4bf6a72675954f5046043/long-backlog holds it (2 files changed, 33 insertions(+), 7 deletions(-)). Review: `archon diff qi_01M883MKQQKV65ZZ7NET999MHE`; land it in `main`: `archon merge qi_01M883MKQQKV65ZZ7NET999MHE`.
+
+Done: TT-102 RFC 4180 CSV export. Implemented RFC 4180 CSV output with standard-library conditional quoting, doubled embedded quotes, and CRLF endings; added focused unittest coverage. The requested unittest discovery passed (7 tests), diff check passed, and independent review passed with no findings. Committed as 8696e2a7743590ebc3ba3e39bf24150534c9ff32; worktree is clean.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M883TZ43STFPQBSZX0DP8VJT)
+
+SHIPPED: commit 8696e2a7743590ebc3ba3e39bf24150534c9ff32 on the run branch
+
+Done: TT-103 Search query syntax. Implemented TT-103 in tasktracker/search.py with quoted phrase tokenization, case-insensitive AND title matches, exact case-insensitive tags, status filters, and QueryError validation. Added standard-library tests in tests/test_search.py. `python3 -m unittest discover -s tests -t .` passed all 13 tests; independent review passed with no findings. Committed as 460f6d39f476d2c5b90857515855bf9e454a2123. Nothing left open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M883ZGHHJSFPB64VWKWSN2SG)
+
+SHIPPED: commit 460f6d39f476d2c5b90857515855bf9e454a2123 on the run branch
+
+Done: TT-104 Add TaskStore undo. Implemented TaskStore undo for add, complete, and delete with LIFO history, exact deleted-task restoration, and monotonic IDs. Added seven unittest cases covering each operation, cross-kind/repeated undo, failed operations, and ID allocation. Baseline: 13 tests passed; final required suite: 20 tests passed. Commit 07a7b26f492697dc50a6b7c5efac78c647245b0f; review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8843KJ88A5F4XV8124GKNAA)
+
+SHIPPED: commit 07a7b26f492697dc50a6b7c5efac78c647245b0f on the run branch
+
+Implemented TaskStore undo for add, complete, and delete with LIFO history, exact deleted-task restoration, and monotonic IDs. Added seven unittest cases covering each operation, cross-kind/repeated undo, failed operations, and ID allocation. Baseline: 13 tests passed; final required suite: 20 tests passed. Commit 07a7b26f492697dc50a6b7c5efac78c647245b0f; review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8843KJ88A5F4XV8124GKNAA)
+
+SHIPPED: commit 07a7b26f492697dc50a6b7c5efac78c647245b0f on the run branch
+
+Implemented TT-103 in tasktracker/search.py with quoted phrase tokenization, case-insensitive AND title matches, exact case-insensitive tags, status filters, and QueryError validation. Added standard-library tests in tests/test_search.py. `python3 -m unittest discover -s tests -t .` passed all 13 tests; independent review passed with no findings. Committed as 460f6d39f476d2c5b90857515855bf9e454a2123. Nothing left open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M883ZGHHJSFPB64VWKWSN2SG)
+
+SHIPPED: commit 460f6d39f476d2c5b90857515855bf9e454a2123 on the run branch
+
+Implemented RFC 4180 CSV output with standard-library conditional quoting, doubled embedded quotes, and CRLF endings; added focused unittest coverage. The requested unittest discovery passed (7 tests), diff check passed, and independent review passed with no findings. Committed as 8696e2a7743590ebc3ba3e39bf24150534c9ff32; worktree is clean.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M883TZ43STFPQBSZX0DP8VJT)
+
+SHIPPED: commit 8696e2a7743590ebc3ba3e39bf24150534c9ff32 on the run branch
+
+TT-101 implemented and committed as 068524b6b43c814da3be61b758f45a4913238f58. Invalid ISO calendar dates and unsupported forms now raise InvalidDate with the original input in the message; supported date, today/tomorrow, and +Nd forms remain valid. Added unittest coverage for all listed invalid examples and representative valid forms. `python3 -m unittest discover -s tests -t .` passed (5 tests); final tree e84112bc40484c0ccde7ba24456efcc48206e389 is clean. No open items. REVIEW: independent review passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M883Q76Q91SP7WN685SBQEGW)
+
+SHIPPED: commit 068524b6b43c814da3be61b758f45a4913238f58 on the run branch

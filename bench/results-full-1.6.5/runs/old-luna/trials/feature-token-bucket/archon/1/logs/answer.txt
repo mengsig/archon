@@ -1,0 +1,16 @@
+Queued as **qi_01M882Z9H86EAFMEQVYPH8J6JR** on the `direct` pipeline. It will implement the spec, verify the edge cases, and commit the change.
+
+The quota notice says Codex may run out before its reset. This is one item running through a single-author pipeline; I haven’t changed provider or concurrency settings.
+
+Done: Implement SPEC.md rate limiter. Restored the missing review/ship record for the existing rate limiter implementation; no source changes were needed. `python -m unittest -v` passed all 10 tests, reviewer `agt_01M8836ZK4NCW4AFAFGJXDGNZN` independently passed the full diff from base fb098811c62e33ac30fec8bb225af6defa2966e8 through HEAD, and `git diff --check` passed. Branch remains clean at f185d8cf896cf015a490af2a9225a2c163bedf9c. Reviewer noted positive infinity is accepted by positivity validation; this is nonblocking under the stated spec.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8836ZK4NCW4AFAFGJXDGNZN)
+
+SHIPPED: commit f185d8cf896cf015a490af2a9225a2c163bedf9c on the run branch
+Branch `archon/yph8j6jr-implement-spec-md-rate-limiter` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/65b8f946cb00035fcd4564d6/feature-token-bucket holds it (2 files changed, 128 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M882Z9H86EAFMEQVYPH8J6JR`; land it in `main`: `archon merge qi_01M882Z9H86EAFMEQVYPH8J6JR`.
+
+Restored the missing review/ship record for the existing rate limiter implementation; no source changes were needed. `python -m unittest -v` passed all 10 tests, reviewer `agt_01M8836ZK4NCW4AFAFGJXDGNZN` independently passed the full diff from base fb098811c62e33ac30fec8bb225af6defa2966e8 through HEAD, and `git diff --check` passed. Branch remains clean at f185d8cf896cf015a490af2a9225a2c163bedf9c. Reviewer noted positive infinity is accepted by positivity validation; this is nonblocking under the stated spec.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8836ZK4NCW4AFAFGJXDGNZN)
+
+SHIPPED: commit f185d8cf896cf015a490af2a9225a2c163bedf9c on the run branch

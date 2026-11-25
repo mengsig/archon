@@ -1,0 +1,15 @@
+{
+  "head": "c4bcaa9f8eff80ca81917f9ddaf65a866abb3690",
+  "arm": "old",
+  "model": "luna",
+  "parallel": "1",
+  "load5": 3.09765625,
+  "hashes": {
+    "archon": "c82005af40e2aed8fe2dae7d10d96d29b38228d5af2268c5f671ef965cf65f5c",
+    "aether": "3a795ff2a718e8c227ac66ad6bbefd2cfe1838bfcbf77b37eac10e56ca3cc923",
+    "archon-bench": "ef5186389d442b5e913b056a31e285d79c9321b25d5b54325caecc507b596632"
+  },
+  "start": "2026-11-25T00:49:21.321406+00:00",
+  "exit": 0,
+  "end": "2026-11-25T04:01:29.985946+00:00"
+}

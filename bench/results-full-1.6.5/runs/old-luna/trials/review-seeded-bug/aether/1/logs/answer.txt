@@ -1,0 +1,15 @@
+## Findings
+
+1. **Critical — `src/tokens.js`, `verify`: accepts truncated signatures.**  
+   `expected.startsWith(signature)` treats any prefix of the real HMAC as valid. A token with its signature removed entirely, such as `<valid-body>.`, passes this check because every string starts with the empty string. An attacker can also truncate a signature to a short prefix and forge tokens with roughly a 1-in-16 chance per guessed character. Require a full-length, correctly encoded signature and compare it to the expected MAC using a constant-time comparison.
+
+2. **High — `src/tokens.js`, `verify`: an invalid signature can throw instead of returning `null`.**  
+   The documented behavior says invalid tokens return `null`, but `JSON.parse(fromBase64Url(body))` runs after the signature check without error handling. For example, `not-json.x` reaches `JSON.parse` and throws. Callers that expect `null` may crash or return server errors for malformed input. Reject malformed tokens safely.
+
+3. **High — `src/tokens.js`, `verify`: does not validate the secret.**  
+   `verify` calls `mac` without checking `secret`. With `secret = undefined`, Node throws; with an empty or wrong secret, verification may behave inconsistently rather than fail cleanly. Apply a clear secret validation policy before computing the MAC.
+
+4. **Medium — `src/tokens.js`, `sign`: caller claims can override the intended structure.**  
+   Spreading claims before setting `iat` and `exp` prevents those two fields from being overridden, but it does not ensure claims are a plain object. For example, `sign('abc', secret)` produces numeric claim keys, and `sign(null, secret)` produces a token with only `iat` and `exp`. If callers assume only supplied object claims are signed, reject non-object or otherwise unsupported claims.
+
+No code was changed, and I did not run tests or builds.

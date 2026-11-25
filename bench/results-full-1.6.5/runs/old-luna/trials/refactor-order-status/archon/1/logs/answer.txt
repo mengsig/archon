@@ -1,0 +1,18 @@
+Queued as `qi_01M8869SQJE2Z330Y9BXJ5S09W` in the adaptive pipeline with strict review. It includes the behavior-preservation requirements, `cargo test`, and a commit.
+
+Codex quota is at 68% used at 46% of its window elapsed; at the current pace, it may run out before resetting on November 28. This item is queued, but the quota may affect when it runs.
+
+Done: Replace order status strings with OrderStatus. Replaced string order states with public OrderStatus and ParseStatusError; lifecycle operations use typed transitions, with report text and ordering preserved. Added exhaustive transition-matrix coverage. `cargo fmt --check`, `cargo test` (4 integration tests), `cargo clippy --all-targets -- -D warnings`, and `git diff --check` passed; the fix commit reran formatting, tests, and diff check. No follow-ups remain.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M886D8FRK2KPCA076KQCN5KY), codex/gpt-6-luna (agent agt_01M886D8GV37DG48HV69YZRA4Q), codex/gpt-6-luna (agent agt_01M886D8HYAJK0N6742RV8VMVD), codex/gpt-6-luna (agent agt_01M886FJXF41R03TMXY5PPPH7Q)
+
+SHIPPED: commit 8c965c9565f6da66f68aabc0fd8e7aad8f4b38a2 on the run branch
+Branch `archon/bxj5s09w-replace-order-status-strings-with-orders` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/b34f52b8435a86dc2dd3fca8/refactor-order-status holds it (7 files changed, 153 insertions(+), 26 deletions(-)). Review: `archon diff qi_01M8869SQJE2Z330Y9BXJ5S09W`; land it in `main`: `archon merge qi_01M8869SQJE2Z330Y9BXJ5S09W`.
+
+Freed 0.0 GiB of build output: item qi_01M8869SQJE2Z330Y9BXJ5S09W ended and its cargo target directory went.
+
+Replaced string order states with public OrderStatus and ParseStatusError; lifecycle operations use typed transitions, with report text and ordering preserved. Added exhaustive transition-matrix coverage. `cargo fmt --check`, `cargo test` (4 integration tests), `cargo clippy --all-targets -- -D warnings`, and `git diff --check` passed; the fix commit reran formatting, tests, and diff check. No follow-ups remain.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M886D8FRK2KPCA076KQCN5KY), codex/gpt-6-luna (agent agt_01M886D8GV37DG48HV69YZRA4Q), codex/gpt-6-luna (agent agt_01M886D8HYAJK0N6742RV8VMVD), codex/gpt-6-luna (agent agt_01M886FJXF41R03TMXY5PPPH7Q)
+
+SHIPPED: commit 8c965c9565f6da66f68aabc0fd8e7aad8f4b38a2 on the run branch

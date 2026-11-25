@@ -1,0 +1,3 @@
+Implemented the retry budget behavior and added boundary tests. All 10 tests pass, and the working tree is clean.
+
+Committed as `a830448` (`Implement bounded retry delay scheduling`).

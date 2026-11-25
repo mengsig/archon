@@ -1,0 +1,14 @@
+Queued as `qi_01M888ZDKFZQPK0B8P5Z0QRFG4`. It covers the documented API, specified errors and boundaries, focused tests, and a local commit. The daemon will report the outcome when the run finishes.
+
+Done: Implement retry_budget.py per SPEC with focused tests. Implemented retry_delay with validation before early returns, bounded exponential backoff, Retry-After minimum waits, and strict budget handling. Added focused boundary and invalid-input tests. Final checks passed: 9 unittest cases, compileall, and git diff --check. Committed as 7ac7a562b3be66116e394ba5683d2f71b96853f4; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88921P4KW4N66146HDTHKCY)
+
+SHIPPED: commit 7ac7a562b3be66116e394ba5683d2f71b96853f4 on the run branch
+Branch `archon/5z0qrfg4-implement-retry-budget-py-per-spec-with` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/c49024f97f3bfb55a4bd1983/quality-retry-budget holds it (2 files changed, 69 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M888ZDKFZQPK0B8P5Z0QRFG4`; land it in `main`: `archon merge qi_01M888ZDKFZQPK0B8P5Z0QRFG4`.
+
+Implemented retry_delay with validation before early returns, bounded exponential backoff, Retry-After minimum waits, and strict budget handling. Added focused boundary and invalid-input tests. Final checks passed: 9 unittest cases, compileall, and git diff --check. Committed as 7ac7a562b3be66116e394ba5683d2f71b96853f4; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88921P4KW4N66146HDTHKCY)
+
+SHIPPED: commit 7ac7a562b3be66116e394ba5683d2f71b96853f4 on the run branch

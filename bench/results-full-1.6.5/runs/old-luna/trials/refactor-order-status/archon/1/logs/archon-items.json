@@ -1,0 +1,298 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8869SQJE2Z330Y9BXJ5S09W",
+      "repo": "repo_01M886939X9QR5732JW3GSS3ES",
+      "pipeline": "adaptive",
+      "title": "Replace order status strings with OrderStatus",
+      "brief": "Refactor the orders crate to use a typed order status, preserving all observable behavior. Add src/status.rs with pub enum OrderStatus { Pending, Paid, Shipped, Cancelled } deriving at least Debug, Clone, Copy, PartialEq, Eq, Hash. Implement OrderStatus::as_str(self) -> &'static str returning lowercase names; Display prints the same. Implement FromStr with type Err = public ParseStatusError implementing std::error::Error, whose message names rejected input. Implement can_transition_to(self, next) for exactly pending->paid, pending->cancelled, paid->shipped, paid->cancelled. Change Order::status to OrderStatus; re-export OrderStatus and ParseStatusError at crate root; use enum everywhere so status string literals appear only in src/status.rs. Preserve observable behavior, including errors, report output/order, and parsing. Run cargo test and commit the work. Do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8869SQJE2Z330Y9BXJ5S09W",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-25T01:49:37.908791517Z"
+              },
+              "effort": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-25T01:49:37.908791517Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged: the learned route's effort"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8869SQVVTK8TP3PAK3F71GX",
+        "summary": "Replaced string order states with public OrderStatus and ParseStatusError; lifecycle operations use typed transitions, with report text and ordering preserved. Added exhaustive transition-matrix coverage. `cargo fmt --check`, `cargo test` (4 integration tests), `cargo clippy --all-targets -- -D warnings`, and `git diff --check` passed; the fix commit reran formatting, tests, and diff check. No follow-ups remain.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M886D8FRK2KPCA076KQCN5KY), codex/gpt-6-luna (agent agt_01M886D8GV37DG48HV69YZRA4Q), codex/gpt-6-luna (agent agt_01M886D8HYAJK0N6742RV8VMVD), codex/gpt-6-luna (agent agt_01M886FJXF41R03TMXY5PPPH7Q)\n\nSHIPPED: commit 8c965c9565f6da66f68aabc0fd8e7aad8f4b38a2 on the run branch"
+      },
+      "created_at": "2026-11-25T01:49:37.906439966Z",
+      "updated_at": "2026-11-25T01:53:45.682704673Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8869SQVVTK8TP3PAK3F71GX",
+        "item": "qi_01M8869SQJE2Z330Y9BXJ5S09W",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M8869SWXC6XGH5W3VKEQEG9H",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/b34f52b8435a86dc2dd3fca8/.archon/data/worktrees/refactor-order-status/qi_01M8869SQJE2Z330Y9BXJ5S09W",
+        "branch": "archon/bxj5s09w-replace-order-status-strings-with-orders",
+        "state": {
+          "state": "succeeded",
+          "summary": "Replaced string order states with public OrderStatus and ParseStatusError; lifecycle operations use typed transitions, with report text and ordering preserved. Added exhaustive transition-matrix coverage. `cargo fmt --check`, `cargo test` (4 integration tests), `cargo clippy --all-targets -- -D warnings`, and `git diff --check` passed; the fix commit reran formatting, tests, and diff check. No follow-ups remain.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M886D8FRK2KPCA076KQCN5KY), codex/gpt-6-luna (agent agt_01M886D8GV37DG48HV69YZRA4Q), codex/gpt-6-luna (agent agt_01M886D8HYAJK0N6742RV8VMVD), codex/gpt-6-luna (agent agt_01M886FJXF41R03TMXY5PPPH7Q)\n\nSHIPPED: commit 8c965c9565f6da66f68aabc0fd8e7aad8f4b38a2 on the run branch"
+        },
+        "cost_usd": 0.02871012000000001,
+        "started_at": "2026-11-25T01:49:38.051409240Z",
+        "finished_at": "2026-11-25T01:53:45.682704673Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8869SWP6MNAPSX77WH7KB6R",
+        "run": "prun_01M8869SQVVTK8TP3PAK3F71GX",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8869SX4934KEFTQJ68XMTNY",
+        "aether_task": "tsk_01M8869SX4WWZYNBEAJJWC94WQ",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "learned",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged: the learned route's effort",
+        "summary": "Replaced string order states with public OrderStatus and ParseStatusError; lifecycle operations use typed transitions, with report text and ordering preserved. Added exhaustive transition-matrix coverage. `cargo fmt --check`, `cargo test` (4 integration tests), `cargo clippy --all-targets -- -D warnings`, and `git diff --check` passed; the fix commit reran formatting, tests, and diff check. No follow-ups remain.",
+        "structured": {
+          "checks": [
+            "cargo fmt --check (pass on 81749a3 and 8c965c9)",
+            "cargo test (pass; 4 integration tests, on 81749a3 and 8c965c9)",
+            "cargo clippy --all-targets -- -D warnings (pass on 81749a3)",
+            "git diff --check (pass on 81749a3 and 8c965c9)"
+          ],
+          "commit": "8c965c9565f6da66f68aabc0fd8e7aad8f4b38a2",
+          "evidence": {
+            "none": "This is a pure API/type refactor with no meaningful visual or numeric before/after artifact; behavior is covered by the passing lifecycle and report tests."
+          },
+          "local_commit": "8c965c9565f6da66f68aabc0fd8e7aad8f4b38a2",
+          "pr": {
+            "body": "Added src/status.rs with OrderStatus formatting, parsing, ParseStatusError, and transition rules; changed order and lifecycle/report callers to use the enum; re-exported both public types. The status integration test now checks the full 4×4 transition matrix. Verified with cargo fmt --check, cargo test, cargo clippy --all-targets -- -D warnings, and git diff --check. Three whole-change reviews covered eea9a11..81749a3 (two passed; one raised a test-coverage finding, now fixed), and a delta review covered 81749a3..8c965c9 and passed. No advisory findings remain.",
+            "summary": "Made order lifecycle states typed. Before: status was an unrestricted string; now: OrderStatus encodes the four valid states and transitions while preserving reports and error text.",
+            "title": "refactor: use typed order statuses"
+          },
+          "review": {
+            "reviewed_head": "8c965c9565f6da66f68aabc0fd8e7aad8f4b38a2",
+            "reviewer_agents": [
+              "agt_01M886D8FRK2KPCA076KQCN5KY",
+              "agt_01M886D8GV37DG48HV69YZRA4Q",
+              "agt_01M886D8HYAJK0N6742RV8VMVD",
+              "agt_01M886FJXF41R03TMXY5PPPH7Q"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M886D8FRK2KPCA076KQCN5KY",
+                "base": "eea9a116c183f8073f8b57a5ff2009687c46b063",
+                "findings": 0,
+                "head": "81749a317c640254f9965de1249689b5aaf04f1e",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M886D8GV37DG48HV69YZRA4Q",
+                "base": "eea9a116c183f8073f8b57a5ff2009687c46b063",
+                "findings": 0,
+                "head": "81749a317c640254f9965de1249689b5aaf04f1e",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M886D8HYAJK0N6742RV8VMVD",
+                "base": "eea9a116c183f8073f8b57a5ff2009687c46b063",
+                "findings": 1,
+                "head": "81749a317c640254f9965de1249689b5aaf04f1e",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M886FJXF41R03TMXY5PPPH7Q",
+                "base": "81749a317c640254f9965de1249689b5aaf04f1e",
+                "findings": 0,
+                "head": "8c965c9565f6da66f68aabc0fd8e7aad8f4b38a2",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M886D8FRK2KPCA076KQCN5KY",
+              "agt_01M886D8GV37DG48HV69YZRA4Q",
+              "agt_01M886D8HYAJK0N6742RV8VMVD",
+              "agt_01M886FJXF41R03TMXY5PPPH7Q"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "low",
+            "why": "Contained type refactor and tests in the orders crate; observable parsing, report ordering/output, and lifecycle error text are preserved. Formatting, test suite, Clippy, and diff checks passed. Reviewers found no remaining issues; the one coverage finding was fixed and delta-reviewed."
+          },
+          "tree": "f33ce0a568d6c45222760d437898e26cec12d87f"
+        },
+        "cost_usd": 0.02871012000000001,
+        "started_at": "2026-11-25T01:49:38.070029155Z",
+        "finished_at": "2026-11-25T01:53:42.758999941Z"
+      }
+    ],
+    "spent_usd": 0.02871012000000001,
+    "gates": [],
+    "delegations": {
+      "stg_01M8869SWP6MNAPSX77WH7KB6R": {
+        "direct_usd": 0.014267140000000005,
+        "delegated_usd": 0.014442980000000005,
+        "agents": [
+          {
+            "agent": "agt_01M886D8FRK2KPCA076KQCN5KY",
+            "parent": "agt_01M8869SX4934KEFTQJ68XMTNY",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0024383
+          },
+          {
+            "agent": "agt_01M886D8GV37DG48HV69YZRA4Q",
+            "parent": "agt_01M8869SX4934KEFTQJ68XMTNY",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.003948000000000001
+          },
+          {
+            "agent": "agt_01M886D8HYAJK0N6742RV8VMVD",
+            "parent": "agt_01M8869SX4934KEFTQJ68XMTNY",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00412956
+          },
+          {
+            "agent": "agt_01M886FJXF41R03TMXY5PPPH7Q",
+            "parent": "agt_01M8869SX4934KEFTQJ68XMTNY",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.003927120000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-25T01:49:37.908791517Z"
+          },
+          "effort": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-25T01:49:37.908791517Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

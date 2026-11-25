@@ -1,0 +1,3 @@
+Implemented `retry_delay` with full argument validation, capped exponential backoff, Retry-After minimums, and the strict retry budget boundary. Added focused tests for invalid inputs and edge cases.
+
+All 8 tests pass. Committed as `d4e3473` (`Implement retry budget scheduling`); working tree is clean.

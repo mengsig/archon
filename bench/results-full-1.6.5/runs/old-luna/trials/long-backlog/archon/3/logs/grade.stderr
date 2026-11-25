@@ -1,0 +1,38 @@
+----------------------------------------------------------------------
+Ran 4 tests in 0.000s
+
+OK
+expect_tests: 4 unittest tests passed (minimum 4)
+----------------------------------------------------------------------
+Ran 5 tests in 0.000s
+
+OK
+expect_tests: 5 unittest tests passed (minimum 5)
+----------------------------------------------------------------------
+Ran 4 tests in 0.000s
+
+OK
+expect_tests: 4 unittest tests passed (minimum 4)
+======================================================================
+ERROR: test_hidden_search (unittest.loader._FailedTest.test_hidden_search)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_hidden_search
+Traceback (most recent call last):
+  File "/usr/lib/python3.14/unittest/loader.py", line 141, in loadTestsFromName
+    module = __import__(module_name)
+  File "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/600191e94e3b2e0568db9472/long-backlog/tests/test_hidden_search.py", line 4, in <module>
+    from tasktracker.search import QueryError, search
+ImportError: cannot import name 'QueryError' from 'tasktracker.search' (/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/600191e94e3b2e0568db9472/long-backlog/tasktracker/search.py)
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+FAILED (errors=1)
+expect_tests: python3 exited 1
+ticket search: FAIL
+----------------------------------------------------------------------
+Ran 5 tests in 0.000s
+
+OK
+expect_tests: 5 unittest tests passed (minimum 5)

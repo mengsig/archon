@@ -1,0 +1,62 @@
+diff --git a/README.md b/README.md
+index bfda2ff..819b8e6 100644
+--- a/README.md
++++ b/README.md
+@@ -3,7 +3,7 @@
+ Client for `inventory-api`. Every function takes a `transport`,
+ `async (request) => response`, so callers choose HTTP, IPC or a fake.
+ 
+-- `listItems(transport)` → every item, ordered by `id`.
++- `listItems(transport)` → every item, ordered by `id`; follows `next_cursor` pages from `GET /items` until it is null or absent. The API uses a default page size of 20 and accepts `limit` values from 1 to 100.
+ - `getItem(transport, id)` → one item; rejects on any non-200 response.
+ - `lowStock(items, threshold)` → SKUs with `qty` below the threshold.
+ 
+diff --git a/client.js b/client.js
+index 6825096..2cb7dd4 100644
+--- a/client.js
++++ b/client.js
+@@ -12,8 +12,16 @@ async function request(transport, path, query = {}) {
+ }
+ 
+ async function listItems(transport) {
+-  const body = await request(transport, '/items');
+-  return body.items;
++  const items = [];
++  let cursor;
++  do {
++    const query = { limit: 20 };
++    if (cursor !== undefined) query.cursor = cursor;
++    const body = await request(transport, '/items', query);
++    items.push(...body.items);
++    cursor = body.next_cursor;
++  } while (cursor !== null && cursor !== undefined);
++  return items;
+ }
+ 
+ async function getItem(transport, id) {
+diff --git a/test/client.test.js b/test/client.test.js
+index db0605e..038a698 100644
+--- a/test/client.test.js
++++ b/test/client.test.js
+@@ -20,6 +20,21 @@ test('lists items', async () => {
+   assert.deepEqual(await listItems(singlePage), ITEMS);
+ });
+ 
++test('follows cursors and preserves their values', async () => {
++  const seen = [];
++  const transport = async (request) => {
++    seen.push(request.query);
++    if (request.query.cursor === undefined) {
++      return { status: 200, body: { items: [ITEMS[0]], next_cursor: 'opaque-token' } };
++    }
++    assert.equal(request.query.cursor, 'opaque-token');
++    return { status: 200, body: { items: [ITEMS[1]], next_cursor: null } };
++  };
++  assert.deepEqual(await listItems(transport), ITEMS);
++  assert.equal(seen.length, 2);
++  assert.equal(seen[0].cursor, undefined);
++});
++
+ test('gets one item and reports failures', async () => {
+   assert.equal((await getItem(singlePage, 2)).sku, 'SKU-0002');
+   await assert.rejects(getItem(singlePage, 9), /404/);

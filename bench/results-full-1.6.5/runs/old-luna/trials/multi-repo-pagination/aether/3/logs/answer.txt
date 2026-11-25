@@ -1,0 +1,9 @@
+Implemented and committed in both repositories.
+
+- API: `GET /items` supports `limit` (default 20, range 1–100) and opaque cursors, returning ordered pages with `next_cursor`. Invalid inputs return 400.
+- Client: `listItems` follows cursors and returns all items in order.
+- Updated both READMEs and added pagination coverage.
+
+Tests pass: `python3 -m unittest` (4 tests) and `npm test` (4 tests). Both working trees are clean.
+
+Commits: API `3077bf7`; client `2da8860`.

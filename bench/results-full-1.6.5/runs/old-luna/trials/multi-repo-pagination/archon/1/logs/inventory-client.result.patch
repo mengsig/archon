@@ -1,0 +1,92 @@
+diff --git a/README.md b/README.md
+index bfda2ff..9be9fa3 100644
+--- a/README.md
++++ b/README.md
+@@ -3,7 +3,8 @@
+ Client for `inventory-api`. Every function takes a `transport`,
+ `async (request) => response`, so callers choose HTTP, IPC or a fake.
+ 
+-- `listItems(transport)` → every item, ordered by `id`.
++- `listItems(transport)` → every item, ordered by `id`; follows `next_cursor`
++  across all pages, starting without a cursor.
+ - `getItem(transport, id)` → one item; rejects on any non-200 response.
+ - `lowStock(items, threshold)` → SKUs with `qty` below the threshold.
+ 
+diff --git a/client.js b/client.js
+index 6825096..66e4168 100644
+--- a/client.js
++++ b/client.js
+@@ -12,8 +12,15 @@ async function request(transport, path, query = {}) {
+ }
+ 
+ async function listItems(transport) {
+-  const body = await request(transport, '/items');
+-  return body.items;
++  const items = [];
++  let query = {};
++
++  while (true) {
++    const body = await request(transport, '/items', query);
++    items.push(...body.items);
++    if (body.next_cursor == null) return items;
++    query = { cursor: body.next_cursor };
++  }
+ }
+ 
+ async function getItem(transport, id) {
+diff --git a/test/client.test.js b/test/client.test.js
+index db0605e..18b9cfb 100644
+--- a/test/client.test.js
++++ b/test/client.test.js
+@@ -11,13 +11,49 @@ const ITEMS = [
+ ];
+ 
+ async function singlePage(request) {
+-  if (request.path === '/items') return { status: 200, body: { items: ITEMS } };
++  if (request.path === '/items') return { status: 200, body: { items: ITEMS, next_cursor: null } };
+   if (request.path === '/items/2') return { status: 200, body: ITEMS[1] };
+   return { status: 404, body: { error: 'not found' } };
+ }
+ 
+ test('lists items', async () => {
+-  assert.deepEqual(await listItems(singlePage), ITEMS);
++  const requests = [];
++  const transport = async (request) => {
++    requests.push(request);
++    return singlePage(request);
++  };
++
++  assert.deepEqual(await listItems(transport), ITEMS);
++  assert.deepEqual(requests, [{ method: 'GET', path: '/items', query: {} }]);
++});
++
++test('follows cursors in order and appends every page', async () => {
++  const thirdPageItems = [{ id: 3, sku: 'SKU-0003', qty: 8 }];
++  const cursor = 'opaque cursor + /=';
++  const requests = [];
++  const transport = async (request) => {
++    requests.push(request);
++    if (request.path !== '/items') return { status: 404, body: { error: 'not found' } };
++    if (requests.length === 1) {
++      return { status: 200, body: { items: ITEMS.slice(0, 1), next_cursor: cursor } };
++    }
++    if (requests.length === 2) {
++      return { status: 200, body: { items: ITEMS.slice(1), next_cursor: 'second-page' } };
++    }
++    return { status: 200, body: { items: thirdPageItems, next_cursor: null } };
++  };
++
++  assert.deepEqual(await listItems(transport), [...ITEMS, ...thirdPageItems]);
++  assert.deepEqual(requests, [
++    { method: 'GET', path: '/items', query: {} },
++    { method: 'GET', path: '/items', query: { cursor } },
++    { method: 'GET', path: '/items', query: { cursor: 'second-page' } },
++  ]);
++});
++
++test('stops when next_cursor is absent', async () => {
++  const transport = async () => ({ status: 200, body: { items: ITEMS } });
++  assert.deepEqual(await listItems(transport), ITEMS);
+ });
+ 
+ test('gets one item and reports failures', async () => {

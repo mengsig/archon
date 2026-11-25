@@ -1,0 +1,35 @@
+Codex quota is projected to run out around 2026-11-26 13:22 UTC before its 2026-11-28 20:29 UTC reset. Claude Code appeared available in model discovery, but Archon's repository model policy refused it for this initiative (only codex: fast is allowed). I queued the two repo changes sequentially on codex fast at low effort to reduce concurrency and effort.
+
+The coordinated initiative is queued: ledger first, then reports, both as local commits. It requires currency validation and defaults, legacy CSV support, README updates, and the requested test commands.
+
+Claude Code was refused by the repository model policy, so both changes are set to run sequentially on codex fast at low effort. I’ve notified the operator about the projected quota exhaustion.
+
+Done: Add currency field to ledger TSV-to-CSV. Added optional currency handling to ledger TSV conversion, with USD as the default and CSV output now including currency. Invalid currency is reported with its line number and exit 2; other malformed input retains exit 1. Updated README and tests. `cargo fmt -- --check`, `cargo test`, `git diff --check`, and CLI checks passed. Committed locally as 0e77cdc821fab70c5db7433dc3acc71d2f58c475; worktree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 0e77cdc821fab70c5db7433dc3acc71d2f58c475 on the run branch
+Branch `archon/52js7dqq-add-currency-field-to-ledger-tsv-to-csv` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/c49bc717906bb1ae8f29d9d5/ledger holds it (4 files changed, 65 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M884BM76SQDCE10C52JS7DQQ`; land it in `main`: `archon merge qi_01M884BM76SQDCE10C52JS7DQQ`.
+
+Freed 0.0 GiB of build output: item qi_01M884BM76SQDCE10C52JS7DQQ ended and its cargo target directory went.
+
+Done: Group reports totals by account and currency. Recreated the existing reports change as commit 3fd8505 under the repository’s configured Git identity (mengsig <[redacted-email]>). The implementation groups by account and currency, defaults legacy CSV rows to USD, rejects malformed currency with stderr and exit 2, and updates the README. `python3 -B -m unittest` passed (3 tests); the final worktree is clean. No open issues.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 3fd8505fb3d0e10a9ce2469da9c8ff618b15b221 on the run branch
+Branch `archon/rdhhbhk6-group-reports-totals-by-account-and-curr` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/c49bc717906bb1ae8f29d9d5/reports holds it (3 files changed, 50 insertions(+), 19 deletions(-)). Review: `archon diff qi_01M884BM7BZTAR58B8RDHHBHK6`; land it in `main`: `archon merge qi_01M884BM7BZTAR58B8RDHHBHK6`.
+
+Initiative finished; coordinated result queued.
+
+Recreated the existing reports change as commit 3fd8505 under the repository’s configured Git identity (mengsig <[redacted-email]>). The implementation groups by account and currency, defaults legacy CSV rows to USD, rejects malformed currency with stderr and exit 2, and updates the README. `python3 -B -m unittest` passed (3 tests); the final worktree is clean. No open issues.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 3fd8505fb3d0e10a9ce2469da9c8ff618b15b221 on the run branch
+
+Added optional currency handling to ledger TSV conversion, with USD as the default and CSV output now including currency. Invalid currency is reported with its line number and exit 2; other malformed input retains exit 1. Updated README and tests. `cargo fmt -- --check`, `cargo test`, `git diff --check`, and CLI checks passed. Committed locally as 0e77cdc821fab70c5db7433dc3acc71d2f58c475; worktree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 0e77cdc821fab70c5db7433dc3acc71d2f58c475 on the run branch

@@ -1,0 +1,9 @@
+### Findings
+
+- **Critical — `src/tokens.js`, `verify()`**: The signature check accepts any prefix of the correct HMAC, including an empty string. An attacker can take a token’s payload and submit `<body>.` (empty signature); `expected.startsWith('')` is true, so the token is accepted without a MAC. Even a nonempty prefix permits forgery by guessing that many signature characters. Require an exact-length signature and compare it with a constant-time comparison.
+
+- **High — `src/tokens.js`, `verify()`**: Malformed input can throw instead of returning `null`. For example, a token like `e30.x` passes the prefix check with a one-character signature, then `JSON.parse('{}')` succeeds; malformed payload bytes such as `%%%.<matching-prefix>` can make parsing throw. An attacker may turn a rejected token into an uncaught exception or request failure wherever callers expect `null`. Reject malformed encodings and catch parse errors.
+
+- **High — `src/tokens.js`, `verify()`**: There is no validation of the secret. If the application passes an empty or missing secret, `createHmac` can compute a predictable MAC; with an empty secret, an attacker can generate valid tokens. Fail closed when the verification key is absent or invalid, and handle that failure consistently.
+
+I reviewed the checked-out mirror snapshot at `aac5d4b`; the configured `main` branch wasn’t available there, so I couldn’t compare it with the base branch. No code was changed.

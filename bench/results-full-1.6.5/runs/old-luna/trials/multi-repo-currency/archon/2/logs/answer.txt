@@ -1,0 +1,38 @@
+Quota pace is tight: codex primary is 68% used at 46% elapsed and is projected to run out around 2026-11-26 14:53 UTC, before reset on 2026-11-28 20:29 UTC. I queued both initiative members on the default balanced direct pipeline at normal priority; consider routing later work to another provider or reducing parallel Codex work.
+
+Queued initiative **ini_01M887WAYBCEGB082CSSQM1ADK** with two coordinated items:
+
+- `qi_01M887WAYDTAJ77F2XANH465N8` — `ledger`
+- `qi_01M887WAYT37F0VBHHC3AE63MR` — `reports`
+
+The shared contract covers currency validation, USD defaults and legacy CSV compatibility, output formats and sorting, and the requested exit statuses. Each item also requires its existing test command, README updates, and a commit. I’ve posted the quota pace update in chat.
+
+Done: Group report totals by account and currency. Implemented currency-aware report totals. reports.py now defaults legacy CSV rows to USD, validates three uppercase ASCII currency letters, groups and sorts totals by account and currency, and exits 2 with a stderr error for malformed codes. Updated README and tests. `python3 -m unittest` passed (3 tests) and `git diff --check` passed. Committed as 950e5fd269a5de3d9a6c17eeb8fa5341ff8da4eb; working tree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 950e5fd269a5de3d9a6c17eeb8fa5341ff8da4eb on the run branch
+Branch `archon/c3ae63mr-group-report-totals-by-account-and-curre` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/2eea7178133d24a9bdbcc84e/reports holds it (3 files changed, 56 insertions(+), 14 deletions(-)). Review: `archon diff qi_01M887WAYT37F0VBHHC3AE63MR`; land it in `main`: `archon merge qi_01M887WAYT37F0VBHHC3AE63MR`.
+
+Done: Add optional currency to ledger TSV and CSV. Added optional currency handling to ledger TSV exports. Legacy three-field input defaults to USD; supplied currency must be three uppercase ASCII letters, and malformed currency reports its input line and exits 2 while other input errors remain exit 1. The CLI emits the four-column CSV contract. Preserved the existing public Entry and to_csv_row API. Updated README and tests. `cargo fmt -- --check`, full `cargo test` (4 integration tests passed), and `git diff --check` passed. Committed as 652ce86ac3a4b52c4e652df38a4536525152489f; no work remains.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 652ce86ac3a4b52c4e652df38a4536525152489f on the run branch
+Branch `archon/anh465n8-add-optional-currency-to-ledger-tsv-and` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/2eea7178133d24a9bdbcc84e/ledger holds it (4 files changed, 129 insertions(+), 20 deletions(-)). Review: `archon diff qi_01M887WAYDTAJ77F2XANH465N8`; land it in `main`: `archon merge qi_01M887WAYDTAJ77F2XANH465N8`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M887WAYDTAJ77F2XANH465N8 ended and its cargo target directory went.
+
+Implemented currency-aware report totals. reports.py now defaults legacy CSV rows to USD, validates three uppercase ASCII currency letters, groups and sorts totals by account and currency, and exits 2 with a stderr error for malformed codes. Updated README and tests. `python3 -m unittest` passed (3 tests) and `git diff --check` passed. Committed as 950e5fd269a5de3d9a6c17eeb8fa5341ff8da4eb; working tree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 950e5fd269a5de3d9a6c17eeb8fa5341ff8da4eb on the run branch
+
+Added optional currency handling to ledger TSV exports. Legacy three-field input defaults to USD; supplied currency must be three uppercase ASCII letters, and malformed currency reports its input line and exits 2 while other input errors remain exit 1. The CLI emits the four-column CSV contract. Preserved the existing public Entry and to_csv_row API. Updated README and tests. `cargo fmt -- --check`, full `cargo test` (4 integration tests passed), and `git diff --check` passed. Committed as 652ce86ac3a4b52c4e652df38a4536525152489f; no work remains.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 652ce86ac3a4b52c4e652df38a4536525152489f on the run branch

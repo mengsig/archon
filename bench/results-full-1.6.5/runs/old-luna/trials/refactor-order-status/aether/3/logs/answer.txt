@@ -1,0 +1,5 @@
+Implemented and committed as `1fe95c5` (`Refactor order status to enum`).
+
+`OrderStatus` now handles lifecycle transitions, parsing, and display. `Order::status` uses the enum, and the crate root re-exports `OrderStatus` and `ParseStatusError`. Existing report output and error messages are preserved.
+
+`cargo test` passes (3 integration tests). Status string literals appear only in `src/status.rs`.

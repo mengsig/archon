@@ -1,0 +1,7 @@
+## Findings
+
+- **High — `src/tokens.js`, `verify` (line 27):** Signature validation accepts any prefix of the expected HMAC. For example, replacing a valid token’s signature with `A` makes verification pass whenever the expected signature starts with `A`; an empty signature also passes. An attacker can forge tokens by guessing a matching prefix. Require an exact-length, full signature comparison using a timing-safe comparison.
+
+- **High — `src/tokens.js`, `verify` (line 28):** Malformed input can throw instead of returning `null`. For example, `verify("a.A", secret)` passes the prefix check only if the expected MAC starts with `A`; if it does, decoding `a` and parsing it as JSON throws. Invalid base64url/JSON can cause uncaught exceptions on other inputs too. Catch decoding/parsing failures and reject malformed tokens.
+
+- **Medium — `src/tokens.js`, `sign` (line 16):** Caller claims can override neither `iat` nor `exp` because those fields are written afterward, but the TTL and clock inputs are unchecked. A negative `ttlSeconds` creates an already expired token; an enormous or nonnumeric TTL can produce an unusable expiry (including `Infinity`, which JSON serializes as `null`). Validate the time and TTL values and constrain TTL to the intended range.

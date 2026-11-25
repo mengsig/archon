@@ -1,0 +1,23 @@
+======================================================================
+FAIL: test_small_domain_matches_direct_formula (test_retry_budget_hidden.RetryEdges.test_small_domain_matches_direct_formula)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/ee1acc62fed079d8e53616e9/quality-retry-budget/test_retry_budget_hidden.py", line 86, in test_small_domain_matches_direct_formula
+    self.assertEqual(actual, expected)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 5
+
+======================================================================
+FAIL: test_zero_delay_still_needs_remaining_budget (test_retry_budget_hidden.RetryEdges.test_zero_delay_still_needs_remaining_budget)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/ee1acc62fed079d8e53616e9/quality-retry-budget/test_retry_budget_hidden.py", line 26, in test_zero_delay_still_needs_remaining_budget
+    self.assertEqual(retry_delay(1, 0, cap_ms=0, retry_after_ms=3), 3)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 3
+
+----------------------------------------------------------------------
+Ran 14 tests in 0.001s
+
+FAILED (failures=2)
+expect_tests: python3 exited 1

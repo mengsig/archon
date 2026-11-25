@@ -1,0 +1,14 @@
+Queued as `qi_01M886WPFEMDQQMRT0DEQYN5F2` in the `direct` pipeline. The implementation brief includes spec-derived edge-case checks, standard-library-only constraints, and your request to commit the work.
+
+Done: Implement SPEC.md rate limiter. Implemented the specified token bucket and keyed LRU limiter in ratelimit.py, including validation, continuous refill, backward clock handling, wait estimates, and eviction behavior. Added edge-case unit tests; all 6 tests and spec-derived checks pass. Committed as d7aab68befbb20f6eea0a6da07e8b4c893f853d1. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8870B610WER2AYX1QXWRQ0Y), codex/gpt-6-luna (agent agt_01M887439K76A24F2Y6JA92GKJ)
+
+SHIPPED: commit d7aab68befbb20f6eea0a6da07e8b4c893f853d1 on the run branch
+Branch `archon/deqyn5f2-implement-spec-md-rate-limiter` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/ee990fd2f7ad5f340fb49fa6/feature-token-bucket holds it (2 files changed, 108 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M886WPFEMDQQMRT0DEQYN5F2`; land it in `main`: `archon merge qi_01M886WPFEMDQQMRT0DEQYN5F2`.
+
+Implemented the specified token bucket and keyed LRU limiter in ratelimit.py, including validation, continuous refill, backward clock handling, wait estimates, and eviction behavior. Added edge-case unit tests; all 6 tests and spec-derived checks pass. Committed as d7aab68befbb20f6eea0a6da07e8b4c893f853d1. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8870B610WER2AYX1QXWRQ0Y), codex/gpt-6-luna (agent agt_01M887439K76A24F2Y6JA92GKJ)
+
+SHIPPED: commit d7aab68befbb20f6eea0a6da07e8b4c893f853d1 on the run branch

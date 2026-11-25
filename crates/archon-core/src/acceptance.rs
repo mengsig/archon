@@ -20,6 +20,10 @@ pub struct VisualPair {
     pub viewport: Viewport,
     pub theme: String,
     pub state: String,
+    /// How the built image was taken, as the builder declares it: a copy of
+    /// its reference's `capture`, which Archon refuses to see differ.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture: Option<crate::intent::ImageCapture>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

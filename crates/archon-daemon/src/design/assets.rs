@@ -139,19 +139,22 @@ pub(crate) struct NewAsset<'a> {
 
 /// How the preview browser took `picture`, as the ledger records it.
 pub(crate) fn capture_of(picture: &adb::Picture) -> ImageCapture {
-    let area = picture.area;
+    let taken = picture.capture;
     let capture = ImageCapture {
         method: CaptureMethod::PageScreenshot,
         viewport: ImageSize {
-            width: area.viewport_w,
-            height: area.viewport_h,
+            width: taken.viewport_w,
+            height: taken.viewport_h,
         },
+        device_scale_factor: taken.device_scale_factor,
+        mobile: taken.mobile,
         area: CaptureArea {
-            x: area.x,
-            y: area.y,
-            width: area.w,
-            height: area.h,
+            x: taken.x,
+            y: taken.y,
+            width: taken.w,
+            height: taken.h,
         },
+        screenshot_scale: taken.screenshot_scale,
         pixels: ImageSize {
             width: picture.width,
             height: picture.height,
@@ -446,27 +449,31 @@ pub(crate) fn caption_of(asset: &DesignAsset) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// A final picture of a 1440x900 viewport at scale 2 records exactly
-    /// that, and a GIF's size is read like the other formats'.
+    /// A final picture of a 1440x900 viewport, the page at DPR 1 and the clip
+    /// at scale 2, records both scales apart; a GIF's size is read too.
     #[test]
-    fn a_browser_picture_records_its_viewport_area_and_scale() {
+    fn a_browser_picture_records_its_viewport_area_and_scales() {
         let picture = adb::Picture {
             mime: "image/jpeg",
             bytes: vec![0xff, 0xd8, 0xff],
             width: 2880,
             height: 1800,
-            area: adb::PictureArea {
+            capture: adb::PictureCapture {
                 viewport_w: 1440,
                 viewport_h: 900,
+                device_scale_factor: 1.0,
+                mobile: false,
                 x: 0,
                 y: 0,
                 w: 1440,
                 h: 900,
+                screenshot_scale: 2.0,
             },
         };
         let capture = capture_of(&picture);
         assert!(capture.whole_viewport());
-        assert_eq!(capture.scale(), 2.0);
+        assert_eq!(capture.device_scale_factor, 1.0);
+        assert_eq!(capture.screenshot_scale, 2.0);
         assert_eq!((capture.pixels.width, capture.pixels.height), (2880, 1800));
         let gif = b"GIF89a\x40\x01\xf0\x00".to_vec();
         assert_eq!(dimensions("image/gif", &gif), Some((320, 240)));

@@ -922,9 +922,9 @@ mod tests {
         assert!(!json.contains("before") && !json.contains("after"));
     }
 
-    /// S4: the final picture was 2880x1800, taken at a 1440x900 viewport and
-    /// scale 2. The ledger keeps those conditions for acceptance to hold the
-    /// build to, not the viewport alone.
+    /// S4: the final picture was 2880x1800, the page at a 1440x900 viewport
+    /// and DPR 1, the clip at scale 2. The ledger keeps those conditions for
+    /// acceptance to hold the build to, not the viewport alone.
     #[test]
     fn a_picture_s_capture_conditions_reach_the_ledger() {
         use archon_core::intent::{CaptureArea, CaptureMethod};
@@ -932,12 +932,15 @@ mod tests {
         let capture = ImageCapture {
             method: CaptureMethod::PageScreenshot,
             viewport: image_viewport(),
+            device_scale_factor: 1.0,
+            mobile: false,
             area: CaptureArea {
                 x: 0,
                 y: 0,
                 width: 1440,
                 height: 900,
             },
+            screenshot_scale: 2.0,
             pixels: ImageViewport {
                 width: 2880,
                 height: 1800,
@@ -953,6 +956,8 @@ mod tests {
         draft.validate().unwrap();
         let json = serde_json::to_value(&draft).unwrap();
         assert_eq!(json["images"][0]["capture"]["pixels"]["width"], 2880);
+        assert_eq!(json["images"][0]["capture"]["device_scale_factor"], 1.0);
+        assert_eq!(json["images"][0]["capture"]["screenshot_scale"], 2.0);
     }
 
     #[test]

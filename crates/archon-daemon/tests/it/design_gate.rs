@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 
 const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 
-fn live_config() -> Config {
+pub(super) fn live_config() -> Config {
     let mut config = Config::default();
     config.review.auto_repair = false;
     config.learning.explore_rate = 0.0;
@@ -36,7 +36,7 @@ pub(super) fn live() -> AutonomyPatch {
     }
 }
 
-async fn enqueue(
+pub(super) async fn enqueue(
     h: &Harness,
     autonomy: AutonomyPatch,
     intent: Option<IntentBinding>,
@@ -111,7 +111,7 @@ fn commit(run: &PipelineRun, file: &str, body: &str) -> String {
 
 /// What a done note can carry besides its words and commit.
 #[derive(Default)]
-struct Pictures<'a> {
+pub(super) struct Pictures<'a> {
     before: Option<&'a [u8]>,
     after: Option<&'a [u8]>,
     fin: Option<&'a [u8]>,
@@ -180,7 +180,7 @@ fn target_named(name: &str) -> archon_core::design::Target {
 }
 
 /// A done change note with its commit and pictures, as the agent loop leaves it.
-async fn note_with(
+pub(super) async fn note_with(
     h: &Harness,
     session: &DesignSession,
     run: &PipelineRun,

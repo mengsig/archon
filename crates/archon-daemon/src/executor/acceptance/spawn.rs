@@ -496,12 +496,17 @@ selected requirement: {id, status: implemented|blocked|deviation, evidence,
 visual_pairs: []}; its contract shows the exact shape. Every visual requirement needs
 one pair per reference: {reference: <image id>, built: <workspace image path>,
 viewport: {width,height}, theme, state}. Match the approved viewport, theme and
-state. Where a reference records its `capture`, take the built image the same way:
-a page screenshot with no overlay, of the same area at the same viewport and
-device scale factor (`pixels` over `area`); Archon refuses a built image of
-another pixel size. A judge compares such a pair as taken alike, so a layout
-difference between them is real. Evidence must exist, and images must remain
-unchanged through acceptance.
+state. Where a reference records its `capture`, take the built image the same way
+and copy that `capture` into the pair unchanged: emulate the page at the recorded
+`viewport`, `device_scale_factor` and `mobile`, then take Chromium's
+Page.captureScreenshot of the recorded `area` at clip scale `screenshot_scale`, with
+no overlay. A larger page device scale factor in place of the clip scale can change
+the layout. Archon refuses a pair declaring another capture, or a built image of
+another pixel size, but it cannot see how an image was taken: a judge who sees that
+a pair was still taken differently (another crop, zoom, viewport, text scale,
+overlay or browser chrome) fails it with a reason beginning `capture mismatch:`
+that names what differs, not as a gap in the build. Evidence must exist, and images
+must remain unchanged through acceptance.
 Blocked requirements fail the build.
 
 A deviation needs a reason and the reference | proposed pair. Ask using
@@ -592,8 +597,8 @@ fn captures_owed(
     }
     format!(
         " Take each built image below exactly as its reference was taken, with nothing of \
-         Archon's design preview drawn over it; the gate refuses a built image of another pixel \
-         size:{}",
+         Archon's design preview drawn over it, and keep the pair's `capture` as shown; the gate \
+         refuses another capture, or a built image of another pixel size:{}",
         lines.concat()
     )
 }
@@ -614,10 +619,14 @@ fn result_pair(id: &str, image: Option<&ReferenceImage>) -> serde_json::Value {
         }
         None => (serde_json::json!("<theme>"), serde_json::json!("<state>")),
     };
-    serde_json::json!({
+    let mut pair = serde_json::json!({
         "reference": id, "built": "<workspace path of the built image>",
         "viewport": viewport, "theme": theme, "state": state,
-    })
+    });
+    if let Some(capture) = image.and_then(|i| i.capture.as_ref()) {
+        pair["capture"] = serde_json::json!(capture);
+    }
+    pair
 }
 
 fn materialize(
@@ -738,12 +747,15 @@ mod tests {
             capture: Some(ImageCapture {
                 method: CaptureMethod::PageScreenshot,
                 viewport: size,
+                device_scale_factor: 1.0,
+                mobile: false,
                 area: CaptureArea {
                     x: 0,
                     y: 0,
                     width: 1440,
                     height: 900,
                 },
+                screenshot_scale: 2.0,
                 pixels: Viewport {
                     width: 2880,
                     height: 1800,
@@ -759,16 +771,27 @@ mod tests {
         };
         let owed = results_owed(&[&requirement], Some(std::slice::from_ref(&image))).unwrap();
         assert!(
-            owed.contains("`D3-final`: a browser page screenshot"),
+            owed.contains("`D3-final`: a Chromium page screenshot"),
             "{owed}"
         );
-        assert!(owed.contains("device scale factor of 2, so the image is 2880x1800 pixels"));
+        assert!(
+            owed.contains("deviceScaleFactor 1 and mobile false"),
+            "{owed}"
+        );
+        assert!(owed.contains("scale: 2}"), "{owed}");
+        assert!(owed.contains("so the image is 2880x1800 pixels"), "{owed}");
+        let (_, shape) = owed.split_once("```json\n").unwrap();
+        let shape: serde_json::Value =
+            serde_json::from_str(shape.trim_end().trim_end_matches("```")).unwrap();
+        let pair = &shape["requirement_results"][0]["visual_pairs"][0];
+        assert_eq!(pair["capture"], serde_json::json!(image.capture));
         let unrecorded = ReferenceImage {
             capture: None,
             ..image
         };
         let owed = results_owed(&[&requirement], Some(&[unrecorded])).unwrap();
-        assert!(!owed.contains("device scale factor"), "{owed}");
+        assert!(!owed.contains("deviceScaleFactor"), "{owed}");
+        assert!(!owed.contains("\"capture\""), "{owed}");
     }
 
     #[test]

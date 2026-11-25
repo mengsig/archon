@@ -190,37 +190,44 @@ impl PreviewBrowser for FakeBrowser {
     ) -> Result<adb::Picture, adb::BrowserError> {
         self.calls.lock().unwrap().captures.push((clip, dpr));
         self.op("capture");
+        let page = self.calls.lock().unwrap().viewports.last().copied();
+        let page = page.unwrap_or(adb::Viewport {
+            width: 1440,
+            height: 900,
+            touch: false,
+            dpr: 1.0,
+        });
+        let clip = clip.unwrap_or(adb::ClipRect {
+            x: 0.0,
+            y: 0.0,
+            w: f64::from(page.width),
+            h: f64::from(page.height),
+        });
+        let (w, h) = ((clip.w as u32).max(1), (clip.h as u32).max(1));
+        // Unscripted, the picture has the size Chrome would give it.
+        let scaled = |n: u32| (f64::from(n) * dpr).round() as u16;
         let bytes = self
             .pictures
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or_else(|| jpeg(16, 16));
-        let (viewport_w, viewport_h) = self
-            .calls
-            .lock()
-            .unwrap()
-            .viewports
-            .last()
-            .map_or((1440, 900), |v| (v.width, v.height));
-        let clip = clip.unwrap_or(adb::ClipRect {
-            x: 0.0,
-            y: 0.0,
-            w: f64::from(viewport_w),
-            h: f64::from(viewport_h),
-        });
+            .unwrap_or_else(|| jpeg(scaled(w), scaled(h)));
+        let (width, height) = adb::jpeg_dims(&bytes).unwrap_or((16, 16));
         Ok(adb::Picture {
             mime: "image/jpeg",
             bytes,
-            width: 16,
-            height: 16,
-            area: adb::PictureArea {
-                viewport_w,
-                viewport_h,
+            width,
+            height,
+            capture: adb::PictureCapture {
+                viewport_w: page.width,
+                viewport_h: page.height,
+                device_scale_factor: page.dpr,
+                mobile: page.touch,
                 x: clip.x.max(0.0) as u32,
                 y: clip.y.max(0.0) as u32,
-                w: (clip.w as u32).max(1),
-                h: (clip.h as u32).max(1),
+                w,
+                h,
+                screenshot_scale: dpr,
             },
         })
     }

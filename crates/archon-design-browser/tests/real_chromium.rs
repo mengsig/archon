@@ -519,6 +519,67 @@ async fn whole_page_pictures_at_2x_are_not_tiled_while_the_stream_runs() {
     b.close().await.unwrap();
 }
 
+/// S4 review: a page DPR of 2 with clip scale 1 makes the same 2880x1800
+/// pixels as the preview's DPR 1 with clip scale 2, but a resolution query
+/// lays it out otherwise. Each picture records which it was.
+#[tokio::test]
+async fn a_picture_records_the_page_dpr_apart_from_the_screenshot_scale() {
+    let Some((binary, path)) = browser_options() else {
+        return;
+    };
+    let root = tempfile::tempdir().unwrap();
+    let at = |dpr| Viewport {
+        width: 1440,
+        height: 900,
+        touch: false,
+        dpr,
+    };
+    let body = "<html><head><style>body{margin:0}#card{width:420px;height:200px;background:#0a0}\
+        @media (min-resolution: 2dppx){#card{width:850px}}</style></head>\
+        <body><div id=\"card\"></div></body></html>";
+    let page = serve(move |_| page_body(body)).await;
+    let spec = LaunchSpec {
+        binary,
+        profile_dir: root.path().join("ds_dpr"),
+        sandbox: std::env::var("ARCHON_DESIGN_SANDBOX_OFF").as_deref() != Ok("1"),
+        preview_url: format!("http://127.0.0.1:{page}/"),
+        upstream_guard: TestUpstream::allowing(),
+        viewport: at(1.0),
+        path_env: path,
+        lang: "C.UTF-8".into(),
+        tz: "UTC".into(),
+    };
+    let Some(b) = launch(spec).await else { return };
+    let mut shots = Vec::new();
+    for (dpr, scale) in [(1.0, 2.0), (2.0, 1.0)] {
+        b.set_viewport(at(dpr)).await.unwrap();
+        b.navigate(&format!("http://127.0.0.1:{page}/"))
+            .await
+            .unwrap();
+        let _ = b
+            .wait_network_idle(Duration::from_millis(300), Duration::from_secs(10))
+            .await;
+        let card = b.resolve_selector("#card", None).await.unwrap().unwrap();
+        shots.push((card.w, b.capture(None, scale).await.unwrap()));
+    }
+    let [(preview_card, preview), (replayed_card, replayed)] = &shots[..] else {
+        unreachable!("two shots were taken");
+    };
+    assert_eq!((preview.width, preview.height), (2880, 1800));
+    assert_eq!((replayed.width, replayed.height), (2880, 1800));
+    assert_eq!(
+        (*preview_card, *replayed_card),
+        (420.0, 850.0),
+        "the layouts differ"
+    );
+    assert_eq!(preview.capture.device_scale_factor, 1.0);
+    assert_eq!(preview.capture.screenshot_scale, 2.0);
+    assert_eq!(replayed.capture.device_scale_factor, 2.0);
+    assert_eq!(replayed.capture.screenshot_scale, 1.0);
+    assert_ne!(preview.capture, replayed.capture);
+    b.close().await.unwrap();
+}
+
 #[tokio::test]
 async fn js_navigation_to_a_blob_stops_before_disclosure() {
     assert_disclosure_stops("location.assign(fixture())", &["main-frame document"]).await;

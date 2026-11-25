@@ -29,7 +29,7 @@ use crate::relay::{FrameRelay, RelayShared};
 use crate::sanitize::clean;
 use crate::{
     BrowserError, BrowserEvent, ClipRect, Input, KeyAction, LaunchSpec, MAX_IMAGE_BYTES,
-    MouseAction, MouseButton, Picture, PictureArea, TouchAction, Viewport, jpeg_dims,
+    MouseAction, MouseButton, Picture, PictureCapture, TouchAction, Viewport, jpeg_dims,
 };
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -364,21 +364,28 @@ impl Shared {
             (clip.w * scale).round() as u32,
             (clip.h * scale).round() as u32,
         ));
-        let area = PictureArea {
+        let capture = PictureCapture {
             viewport_w: vp.width,
             viewport_h: vp.height,
+            device_scale_factor: vp.dpr,
+            mobile: vp.touch,
             x: clip.x as u32,
             y: clip.y as u32,
             w: clip.w as u32,
             h: clip.h as u32,
+            screenshot_scale: scale,
         };
-        assert!(area.w > 0 && area.h > 0, "a picture shows a nonempty area");
+        assert!(
+            capture.w > 0 && capture.h > 0,
+            "a picture shows a nonempty area"
+        );
+        assert!(scale > 0.0, "the budget keeps a positive screenshot scale");
         Ok(Picture {
             mime: "image/jpeg",
             bytes,
             width,
             height,
-            area,
+            capture,
         })
     }
 

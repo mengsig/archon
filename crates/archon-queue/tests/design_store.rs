@@ -695,12 +695,15 @@ fn a_picture_keeps_its_capture_conditions() {
             width: 1440,
             height: 900,
         },
+        device_scale_factor: 1.0,
+        mobile: false,
         area: CaptureArea {
             x: 0,
             y: 0,
             width: 1440,
             height: 900,
         },
+        screenshot_scale: 2.0,
         pixels: Size {
             width: 2880,
             height: 1800,
@@ -719,6 +722,19 @@ fn a_picture_keeps_its_capture_conditions() {
         .unwrap();
     assert_ne!(unknown.id, stored.id);
     assert_eq!(unknown.capture, None);
+    let page_at_2x = ImageCapture {
+        device_scale_factor: 2.0,
+        screenshot_scale: 1.0,
+        ..capture
+    };
+    let other = DesignAsset {
+        capture: Some(page_at_2x),
+        ..asset(item, "cc", AssetSource::Final, 100)
+    };
+    let other = store.design_asset_put(other).unwrap();
+    assert!(other.id != stored.id && other.id != unknown.id);
+    let read = store.design_asset(item, &other.id).unwrap().unwrap();
+    assert_eq!(read.capture, Some(page_at_2x));
 }
 
 #[test]

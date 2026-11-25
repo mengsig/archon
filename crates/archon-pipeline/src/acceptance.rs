@@ -300,7 +300,7 @@ fn validate_pair_context(
     if differ.is_empty() {
         return Ok(());
     }
-    if !live {
+    if !live && differ.iter().all(|(field, _)| *field != "capture") {
         return Err(results_refused(&format!(
             "{id} reference and built viewport/theme/state differ"
         )));
@@ -342,7 +342,43 @@ fn context_differences(
             format!("the reference state is {s:?}, the built {:?}", pair.state),
         ));
     }
+    if let Some(taken) = image.capture.filter(|c| pair.capture != Some(*c)) {
+        out.push(("capture", capture_difference(&taken, pair.capture.as_ref())));
+    }
     out
+}
+
+/// How a pair's declared capture differs from its reference's, with the
+/// recipe to retake it.
+fn capture_difference(
+    reference: &archon_core::intent::ImageCapture,
+    built: Option<&archon_core::intent::ImageCapture>,
+) -> String {
+    assert!(reference.is_valid(), "a stored reference capture is valid");
+    let declared = match built {
+        None => "the built image declares none".to_owned(),
+        Some(b) => format!(
+            "the built image declares a {}x{} viewport at deviceScaleFactor {} and mobile {}, \
+             clip {}x{} at x={} y={} and scale {}, {}x{} pixels",
+            b.viewport.width,
+            b.viewport.height,
+            b.device_scale_factor,
+            b.mobile,
+            b.area.width,
+            b.area.height,
+            b.area.x,
+            b.area.y,
+            b.screenshot_scale,
+            b.pixels.width,
+            b.pixels.height
+        ),
+    };
+    assert!(!declared.is_empty());
+    format!(
+        "{declared}, but the reference was taken as {}; retake it so and copy the reference's \
+         capture unchanged",
+        reference.describe()
+    )
 }
 
 pub fn judge(
@@ -683,6 +719,44 @@ mod tests {
             "{error}"
         );
         assert!(error.starts_with(RESULTS_REFUSED), "{error}");
+    }
+
+    /// A live reference that records its capture owes a pair declaring that
+    /// capture: none, or the page DPR swapped for the clip scale, is refused.
+    #[test]
+    fn a_captured_reference_owes_its_capture_unchanged() {
+        let (mut intent, binding) = fixture();
+        let capture = json!({"method": "page_screenshot", "viewport": {"width": 1200, "height": 800},
+            "device_scale_factor": 1.0, "mobile": false,
+            "area": {"x": 0, "y": 0, "width": 1200, "height": 800},
+            "screenshot_scale": 2.0, "pixels": {"width": 2400, "height": 1600}});
+        intent.images[0].capture = Some(serde_json::from_value(capture.clone()).unwrap());
+        intent.validate().unwrap();
+        let mut data = implemented();
+        let refused = |data: &Value| match build_live_results(&intent, &binding, Some(data)) {
+            Err(ArchonError::Invalid(error)) => error,
+            other => panic!("refused: {other:?}"),
+        };
+        let error = refused(&data);
+        assert!(
+            error.contains("built capture differ: the built image declares none"),
+            "{error}"
+        );
+        let mut swapped = capture.clone();
+        swapped["device_scale_factor"] = json!(2.0);
+        swapped["screenshot_scale"] = json!(1.0);
+        data["requirement_results"][0]["visual_pairs"][0]["capture"] = swapped;
+        let error = refused(&data);
+        assert!(error.starts_with(RESULTS_REFUSED), "{error}");
+        assert!(
+            error.contains("deviceScaleFactor 2 and mobile false"),
+            "{error}"
+        );
+        assert!(error.contains("deviceScaleFactor 1"), "{error}");
+        assert!(error.contains("scale: 2}"), "{error}");
+        data["requirement_results"][0]["visual_pairs"][0]["capture"] = capture;
+        let results = build_live_results(&intent, &binding, Some(&data)).unwrap();
+        assert_eq!(results[0].visual_pairs[0].capture, intent.images[0].capture);
     }
 
     #[test]

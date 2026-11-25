@@ -8132,18 +8132,32 @@
       "type": "object"
     },
     "ImageCapture": {
-      "description": "The conditions a reference picture was taken in. Its device scale factor is\n`pixels` over `area`; a built picture taken the same way has its `pixels`.",
+      "description": "The conditions a reference picture was taken in: the page's emulation, the\narea shown, and the screenshot's own output scale, which is not the page's.",
       "properties": {
         "area": {
           "$ref": "#/$defs/CaptureArea",
           "description": "What the picture shows: the whole viewport, or a region of the page."
         },
+        "device_scale_factor": {
+          "description": "The page's emulated device pixel ratio, which CSS resolution queries,\n`srcset` and `window.devicePixelRatio` see.",
+          "format": "double",
+          "type": "number"
+        },
         "method": {
           "$ref": "#/$defs/CaptureMethod"
+        },
+        "mobile": {
+          "description": "Whether the page was emulated as a mobile, touch device.",
+          "type": "boolean"
         },
         "pixels": {
           "$ref": "#/$defs/Viewport",
           "description": "The picture's size in device pixels."
+        },
+        "screenshot_scale": {
+          "description": "The screenshot's `clip.scale`: device pixels per CSS px in the image.",
+          "format": "double",
+          "type": "number"
         },
         "viewport": {
           "$ref": "#/$defs/Viewport",
@@ -8153,7 +8167,10 @@
       "required": [
         "method",
         "viewport",
+        "device_scale_factor",
+        "mobile",
         "area",
+        "screenshot_scale",
         "pixels"
       ],
       "type": "object"

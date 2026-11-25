@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createInputBatcher, mouseEvent, wheelEvent, modifiersOf, BUSY_AFTER_MS } from '../../src/features/design/input.js';
+import { createInputBatcher, mouseEvent, wheelEvent, modifiersOf, BUSY_AFTER_MS, RETRY_MS, MAX_RETRIES } from '../../src/features/design/input.js';
 
 function clock() {
   let t = 0;
@@ -117,41 +117,94 @@ test('saturation preserves releases for all admitted presses and reports skipped
   assert.equal(sent.filter((e) => e.code === 'KeyB').length, 0);
 });
 
-// A send whose replies the test answers by hand.
+// A send whose replies the test answers, or refuses, by hand.
 function slowSend() {
   const batches = [];
   const replies = [];
+  const settle = async (how) => { replies.shift()[how](new Error('refused')); for (let i = 0; i < 3; i += 1) await Promise.resolve(); };
   return {
     batches, replies,
-    send: (events) => { batches.push(events); return new Promise((resolve) => replies.push(resolve)); },
-    answer: async () => { replies.shift()(); await Promise.resolve(); await Promise.resolve(); },
+    send: (events) => { batches.push(events); return new Promise((resolve, reject) => replies.push({ resolve, reject })); },
+    answer: () => settle('resolve'),
+    refuse: () => settle('reject'),
   };
 }
 
-test('at most two input requests await a reply; meanwhile wheel ticks add up and moves keep the latest', async () => {
+test('one input request awaits a reply at a time; meanwhile wheel ticks at a point add up', async () => {
   const c = clock();
   const s = slowSend();
   const b = createInputBatcher({ send: s.send, ...c });
   for (let i = 0; i < 300; i += 1) {
     b.push(wheelEvent({ x: 5, y: 5 }, 1, 10));
-    b.push(mouseEvent('move', { x: i, y: i }, { button: null }));
-    c.advance(4); // a fast trackpad: 250 events a second for 1.2 s
+    c.advance(4); // a fast trackpad: 250 ticks a second for 1.2 s, the pointer still
   }
-  assert.equal(s.batches.length, 2, 'no third request before a reply');
-  assert.equal(b.outstanding, 2);
+  assert.equal(s.batches.length, 1, 'no second request before the reply');
+  assert.equal(b.outstanding, 1);
   await s.answer();
   c.advance(20);
-  assert.equal(s.batches.length, 3);
-  const caughtUp = s.batches[2];
-  const sent = s.batches.slice(0, 2).flat();
-  assert.equal(caughtUp.length, 2, 'one summed wheel and the latest move');
-  const wheels = [...sent, ...caughtUp].filter((e) => e.type === 'wheel');
+  assert.equal(s.batches.length, 2);
+  assert.equal(s.batches[1].length, 1, 'the waiting ticks went as one summed wheel');
+  const wheels = s.batches.flat();
   assert.equal(wheels.reduce((sum, e) => sum + e.dy, 0), 3000, 'no scroll distance is lost');
   assert.equal(wheels.reduce((sum, e) => sum + e.dx, 0), 300);
-  assert.deepEqual(caughtUp.at(-1), mouseEvent('move', { x: 299, y: 299 }, { button: null }));
 });
 
-test('waiting on replies shows one quiet busy signal that clears when input flows again', async () => {
+test('only back-to-back events merge, so order and wheel targets stay as they were', async () => {
+  const c = clock();
+  const s = slowSend();
+  const b = createInputBatcher({ send: s.send, ...c });
+  b.push({ type: 'text', text: 'hold' }); c.advance(1);
+  const inside = { x: 100, y: 100 };
+  const outside = { x: 100, y: 99 }; // one pixel across a nested panel's edge
+  b.push(wheelEvent(inside, 0, 10));
+  b.push(wheelEvent(inside, 0, 10));
+  b.push(wheelEvent(outside, 0, 10));
+  b.push(mouseEvent('move', { x: 1, y: 1 }, { button: null }));
+  b.push(mouseEvent('move', { x: 2, y: 2 }, { button: null }));
+  b.push(wheelEvent(outside, 0, 10));
+  await s.answer();
+  c.advance(20);
+  assert.deepEqual(s.batches[1], [
+    wheelEvent(inside, 0, 20), wheelEvent(outside, 0, 10),
+    mouseEvent('move', { x: 2, y: 2 }, { button: null }), wheelEvent(outside, 0, 10),
+  ]);
+});
+
+test('a refused batch goes again first, in order, so a release is never lost', async () => {
+  const c = clock();
+  const s = slowSend();
+  const busy = [];
+  const b = createInputBatcher({ send: s.send, onBusy: (on) => busy.push(on), ...c });
+  const down = mouseEvent('down', { x: 1, y: 1 }, { button: 0, clickCount: 1 });
+  const up = mouseEvent('up', { x: 1, y: 1 }, { button: 0, clickCount: 1 });
+  b.push(down); c.advance(1);
+  b.push(up);
+  await s.refuse();
+  c.advance(RETRY_MS - 1);
+  assert.equal(s.batches.length, 1, 'a refusal waits before trying again');
+  assert.ok(busy.at(-1), 'a refusal says the preview is behind');
+  c.advance(1);
+  assert.deepEqual(s.batches[1], [down, up], 'the refused press goes before its release');
+  await s.answer();
+  assert.equal(b.pending, 0);
+  assert.deepEqual(busy, [true, false]);
+});
+
+test('a batch refused again and again is given up and reported once', async () => {
+  const c = clock();
+  const s = slowSend();
+  let overflows = 0;
+  const b = createInputBatcher({ send: s.send, onOverflow: () => { overflows += 1; }, ...c });
+  b.push({ type: 'text', text: 'a' }); c.advance(1);
+  for (let i = 0; i < MAX_RETRIES; i += 1) { await s.refuse(); c.advance(RETRY_MS); }
+  assert.equal(s.batches.length, MAX_RETRIES + 1);
+  await s.refuse();
+  c.advance(RETRY_MS * 4);
+  assert.equal(overflows, 1);
+  assert.equal(s.batches.length, MAX_RETRIES + 1, 'nothing is sent again after giving up');
+});
+
+test('waiting on a reply shows one quiet busy signal that clears when input flows again', async () => {
   const c = clock();
   const s = slowSend();
   const busy = [];
@@ -159,8 +212,6 @@ test('waiting on replies shows one quiet busy signal that clears when input flow
   b.push({ type: 'text', text: 'a' });
   c.advance(20);
   b.push({ type: 'text', text: 'b' });
-  c.advance(20);
-  b.push({ type: 'text', text: 'c' });
   c.advance(BUSY_AFTER_MS - 50);
   assert.deepEqual(busy, [], 'a short wait says nothing');
   for (let i = 0; i < 10; i += 1) { b.push({ type: 'text', text: String(i) }); c.advance(10); }
@@ -168,22 +219,22 @@ test('waiting on replies shows one quiet busy signal that clears when input flow
   assert.deepEqual(busy, [true], 'said once, however much input waits');
   await s.answer();
   c.advance(20);
-  assert.deepEqual(busy, [true, false]);
-  assert.equal(s.batches.length, 3);
+  assert.deepEqual(busy, [true], 'still behind while the rest is on its way');
+  assert.equal(s.batches.length, 2);
+  await s.answer();
+  assert.deepEqual(busy, [true, false], 'cleared once caught up');
 });
 
-test('a stop forgets outstanding replies, so late ones cannot unbalance the count', async () => {
+test('a stop forgets an outstanding reply, so a late one cannot unbalance the count', async () => {
   const c = clock();
   const s = slowSend();
   const b = createInputBatcher({ send: s.send, ...c });
   b.push({ type: 'text', text: 'a' }); c.advance(20);
-  b.push({ type: 'text', text: 'b' }); c.advance(20);
   b.stop();
   assert.equal(b.outstanding, 0);
-  await s.answer();
-  await s.answer();
-  assert.equal(b.outstanding, 0);
+  await s.refuse();
+  assert.equal(b.pending, 0, 'a late refusal does not requeue what a stop dropped');
   b.push({ type: 'text', text: 'c' }); c.advance(20);
   assert.equal(b.outstanding, 1);
-  assert.equal(s.batches.length, 3);
+  assert.equal(s.batches.length, 2);
 });

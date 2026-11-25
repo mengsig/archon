@@ -131,7 +131,11 @@ export function mountDesign(view, ctx) {
     send: (events) => {
       const id = session();
       if (!id || !state.frame || !isLive(state) || state.connection !== 'open') return undefined;
-      return ctx.design.input(id, events).catch((err) => { if (session() === id) refuse(err); });
+      return ctx.design.input(id, events).catch((err) => {
+        if (session() !== id) return;
+        if (isBackpressure(err)) throw err; // archond ran none of it: the batcher retries
+        refuse(err);
+      });
     },
     onOverflow: () => behind(BEHIND.skipped),
     onBusy: (on) => behind(on ? BEHIND.busy : null, null),

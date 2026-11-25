@@ -134,13 +134,14 @@ wider than the screen is shown zoomed out, as a phone shows it. Frames come
 ten a second while you scroll or type and four a second at rest, so the frame
 after a scroll stops is a fresh picture of where it stopped.
 
-Fast input is merged before it is sent: wheel and trackpad movement is added
-up, and only the latest pointer position is kept, with at most two input
-requests waiting for archond at a time. No scroll distance and no click or key
-is lost. When the preview falls behind, the status line under the frame says
-"Catching up with the preview…" until it catches up; nothing pops up. A web
-app connection keeps at most 16 requests in flight, archond's limit, and holds
-any more until a reply comes.
+Input goes to archond one request at a time, so it runs in the order you gave
+it. While a request is on its way, the next wheel ticks at the same point are
+added up and only the latest pointer position is kept; no scroll distance and
+no click or key is lost. Input archond turns away because it is busy is sent
+again, in order. When the preview falls behind, the status line under the
+frame says "Catching up with the preview…" until it catches up; nothing pops
+up. A web app connection keeps at most 16 requests in flight, archond's limit,
+and holds any more until a reply comes.
 
 ## Notes and their statuses
 
@@ -388,8 +389,8 @@ once only.
 | "Chromium's sandbox is unavailable on this host" | Fix as `archon doctor` says, or set `browser_sandbox = "off"` knowingly. |
 | "Preview down" / "The app stopped responding. The agent has been told and is restarting it." | The dev server died or hangs: it did not answer an HTTP request within about two seconds (checked every few seconds). Wait, or use **Reload** and **Tell agent again**. The label clears when the app answers again. |
 | "Reconnecting…" | The connection dropped; notes are kept and sent on reconnect. |
-| "Catching up with the preview…" (status line under the frame) | You scroll or move faster than archond answers. Input is merged and sent as replies come; nothing is lost and the line clears by itself. |
-| "The preview fell behind; some input was skipped." | So much input piled up while archond was busy that some of it was not sent. Check the frame and repeat what did not happen. |
+| "Catching up with the preview…" (status line under the frame) | You scroll or move faster than archond answers, or it turned input away for a moment. Input is merged and sent again as replies come; nothing is lost and the line clears by itself. |
+| "The preview fell behind; some input was skipped." | archond stayed too busy for about two seconds, or so much input piled up that some of it was not sent. Check the frame and repeat what did not happen. |
 | "Queued for a preview slot" | `max_sessions` browsers are running. Your notes still reach the agent. |
 | "The code history changed in a way Archon can't track; its edits may still show; add a note if something should change" (note **Failed: history changed**) | The agent made two commits, a merge, a reset below the base, or reported the wrong commit. Archon leaves the worktree as it is and moves on. |
 | "Can't undo automatically, later changes touch the same code; …" | See Undo. |

@@ -739,24 +739,29 @@ test.describe('scrolling', () => {
       const scale = rect.width / (await canvas.evaluate((c) => c.width));
       await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
       for (let i = 0; i < 60; i += 1) await page.mouse.wheel(0, 50);
-      const inputs = () => state.requests.filter((r) => r.cmd === 'design_input');
+      const inputs = () => state.requests.filter((r) => r.cmd === 'design_input' && !r.refused);
       const scrolled = () => inputs().flatMap((r) => r.events).filter((e) => e.type === 'wheel').reduce((sum, e) => sum + e.dy, 0);
       await expect(page.locator('.design-busy')).toHaveText('Catching up with the preview…');
       // Each tick is rounded to 0.1 app px; the rest of the distance arrives.
       await expect.poll(scrolled, { timeout: 15_000 }).toBeGreaterThan(60 * 50 / scale - 60 * 0.05);
       expect(scrolled()).toBeLessThan(60 * 50 / scale + 60 * 0.05);
-      expect(state.maxInputsInFlight).toBeLessThanOrEqual(2);
+      expect(state.maxInputsInFlight).toBe(1);
       expect(inputs().length).toBeLessThan(30);
       await expect(page.locator('.design-busy')).toBeHidden();
 
-      // archond's own in-flight refusal is backpressure: one quiet line, never a red toast.
+      // archond's own in-flight refusal is backpressure: one quiet line, never a red toast,
+      // and the refused input goes again until it is taken.
+      const before = scrolled();
       state.inputDelayMs = 0;
       state.refuseInputs = 3;
       for (let i = 0; i < 3; i += 1) { await page.mouse.wheel(0, 50); await page.waitForTimeout(40); }
       await expect(page.locator('.design-busy')).toBeVisible();
       await expect(page.locator('.design-busy')).toHaveCount(1);
-      await expect(page.locator('.toast-red')).toHaveCount(0);
       await page.screenshot({ path: `${EVIDENCE}/design-scroll-backpressure.png` });
+      await expect.poll(() => scrolled() - before).toBeGreaterThan(3 * 50 / scale - 3 * 0.05);
+      expect(state.refuseInputs).toBe(0);
+      await expect(page.locator('.design-busy')).toBeHidden();
+      await expect(page.locator('.toast-red')).toHaveCount(0);
     } finally { await harness.stop(); }
   });
 });

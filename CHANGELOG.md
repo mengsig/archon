@@ -20,11 +20,12 @@
   page steps and trackpad fractions are converted to the app's pixels, and
   frames come ten a second while you scroll.
 - Fast scrolling no longer floods archond with input or shows a red "at most
-  16 requests may be in flight" error. Wheel movement is added up and pointer
-  moves keep the latest, with at most two input requests awaiting a reply; the
-  web app holds any request past archond's in-flight limit until a reply
-  comes. A preview that falls behind shows one quiet status line instead of
-  toasts.
+  16 requests may be in flight" error. Input goes one request at a time, in
+  order; meanwhile wheel ticks at a point add up and pointer moves keep the
+  latest, and input archond turns away while busy is sent again. The web app
+  holds any request past archond's in-flight limit until a reply comes, and a
+  request that never gets a reply frees its place after 30 seconds. A preview
+  that falls behind shows one quiet status line instead of toasts.
 - A live design whose layout did not change no longer fails intent
   acceptance with a "layout gap". The ledger recorded only the CSS viewport
   of a picture shot at clip scale 2, so a 1440×900 reference was a 2880×1800

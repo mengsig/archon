@@ -179,6 +179,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
         if (state.refuseInputs > 0) {
           state.refuseInputs -= 1;
           state.inputsInFlight -= 1;
+          msg.refused = true;
           return refuse(ws, req, 'unavailable', 'at most 16 requests may be in flight; wait for a reply');
         }
         await new Promise((resolve) => setTimeout(resolve, state.inputDelayMs ?? 0)); // short; stop() waits it out

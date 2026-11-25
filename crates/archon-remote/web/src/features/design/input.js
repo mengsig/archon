@@ -1,20 +1,21 @@
 // Batches input events for design_input: at most 64 events per request, 60
-// requests per second and two awaiting a reply. While they wait, consecutive
-// moves keep only the latest and wheel ticks add up, so input never floods.
+// requests per second and one awaiting a reply, so archond runs them in order.
+// While it waits, consecutive moves keep the latest and wheel ticks add up.
 import { MAX_INPUT_EVENTS } from '../../core/design.js';
 
 export const MAX_REQUESTS_PER_SECOND = 60;
-export const MAX_OUTSTANDING = 2;
+export const MAX_OUTSTANDING = 1;
 // Waiting this long on replies is shown, quietly: the preview is behind.
 export const BUSY_AFTER_MS = 500;
 const MAX_QUEUED = 512;
-// Wheel ticks this close (app CSS px) scroll the same thing.
-const WHEEL_MERGE_PX = 24;
+// A refused batch is tried again this often, in order, before it is given up.
+export const RETRY_MS = 250;
+export const MAX_RETRIES = 8;
 
-const commutes = (e) => e.type === 'wheel' || (e.type === 'mouse' && e.action === 'move');
 const round = (v) => Math.round(v * 10) / 10;
 
-// `send(events)` may return a promise: the batch counts as outstanding until it settles.
+// `send(events)` may return a promise: the batch counts as outstanding until it
+// settles. A rejection means archond refused it unrun; it goes again first.
 export function createInputBatcher({
   send, now = () => performance.now(), setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t),
   perSecond = MAX_REQUESTS_PER_SECOND, maxEvents = MAX_INPUT_EVENTS, maxOutstanding = MAX_OUTSTANDING,
@@ -32,6 +33,7 @@ export function createInputBatcher({
   let epoch = 0; // a stop forgets replies still on their way
   let busy = false;
   let busyTimer = null;
+  let retries = 0;
 
   function setBusy(next) {
     if (busyTimer !== null && !next) { clearTimer(busyTimer); busyTimer = null; }
@@ -49,40 +51,55 @@ export function createInputBatcher({
     }, BUSY_AFTER_MS);
   }
 
-  function track(reply) {
+  function track(reply, events) {
     if (!reply || typeof reply.then !== 'function') return;
     const mine = epoch;
     outstanding += 1;
-    const settled = () => {
+    const settled = (refused) => {
       if (mine !== epoch) return;
       outstanding -= 1;
       console.assert(outstanding >= 0 && outstanding < maxOutstanding, 'Input replies outnumber their requests');
-      if (queue.length > 0 && timer === null) timer = setTimer(flush, 0);
+      if (refused) return retry(events);
+      retries = 0;
+      if (queue.length === 0) setBusy(false); // caught up
+      else if (timer === null) timer = setTimer(flush, 0);
     };
-    reply.then(settled, settled);
+    reply.then(() => settled(false), () => settled(true));
   }
 
-  // Pointer moves and wheel ticks commute: a new one folds into the trailing
-  // run of them. A move keeps only the latest; wheel ticks near each other add up.
+  // Releases must not be lost, so a refused batch goes first again, a few times.
+  function retry(events) {
+    console.assert(events.length > 0 && events.length <= maxEvents, 'Only a sent batch is retried');
+    if (retries >= MAX_RETRIES) {
+      retries = 0;
+      setBusy(false);
+      onOverflow();
+    } else {
+      retries += 1;
+      queue = events.concat(queue);
+      setBusy(true);
+    }
+    if (timer !== null) clearTimer(timer);
+    timer = queue.length > 0 ? setTimer(flush, RETRY_MS) : null;
+  }
+
+  // Only back-to-back events merge, so order and targets stay as they were:
+  // a move keeps the latest, wheel ticks at the same point add up.
   function merge(event) {
     const last = queue[queue.length - 1];
-    if (last && event.type === 'touch' && last.type === 'touch' && event.action === 'move' && last.action === 'move') {
+    if (!last || last.type !== event.type) return false;
+    const moves = event.action === 'move' && last.action === 'move';
+    if (event.type === 'touch' && moves) {
       queue[queue.length - 1] = event;
       return true;
     }
-    if (!commutes(event)) return false;
-    for (let i = queue.length - 1; i >= 0 && commutes(queue[i]); i -= 1) {
-      const earlier = queue[i];
-      if (event.type === 'mouse' && earlier.type === 'mouse' && earlier.button === event.button) {
-        queue.splice(i, 1);
-        queue.push(event);
-        return true;
-      }
-      if (event.type === 'wheel' && earlier.type === 'wheel' && earlier.modifiers === event.modifiers
-        && Math.hypot(earlier.x - event.x, earlier.y - event.y) <= WHEEL_MERGE_PX) {
-        queue[i] = { ...event, dx: round(earlier.dx + event.dx), dy: round(earlier.dy + event.dy) };
-        return true;
-      }
+    if (event.type === 'mouse' && moves && last.button === event.button && last.modifiers === event.modifiers) {
+      queue[queue.length - 1] = event;
+      return true;
+    }
+    if (event.type === 'wheel' && last.modifiers === event.modifiers && last.x === event.x && last.y === event.y) {
+      queue[queue.length - 1] = { ...event, dx: round(last.dx + event.dx), dy: round(last.dy + event.dy) };
+      return true;
     }
     return false;
   }
@@ -131,8 +148,7 @@ export function createInputBatcher({
     queue = queue.slice(maxEvents);
     if (queue.length === 0) overflowReported = false;
     lastSent = now();
-    setBusy(false);
-    track(send(events));
+    track(send(events), events);
     if (queue.length > 0 && timer === null && outstanding < maxOutstanding) timer = setTimer(flush, Math.ceil(gap));
     return events.length;
   }
@@ -154,6 +170,7 @@ export function createInputBatcher({
       overflowReported = false;
       epoch += 1;
       outstanding = 0;
+      retries = 0;
       setBusy(false);
     },
   };

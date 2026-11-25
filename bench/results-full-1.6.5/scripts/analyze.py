@@ -203,8 +203,9 @@ def trial_history(row):
             'items': hist, 'first_error': first_error or 'none recorded'}
 
 
-def findings(old_rows, new_rows, cmp_arm_tasks):
+def findings(old_rows, new_rows, cmp_arm_tasks, arm):
     """Tasks that flipped pass to fail or got slower, with item history."""
+    assert arm in ('archon', 'aether')
     assert cmp_arm_tasks, 'no tasks to compare'
     assert len({t['task'] for t in cmp_arm_tasks}) == len(cmp_arm_tasks), 'duplicate tasks'
     flips, slow = [], []
@@ -212,15 +213,15 @@ def findings(old_rows, new_rows, cmp_arm_tasks):
         o, n = t['old'], t['new']
         task_old = [r for r in old_rows if r['task'] == t['task']]
         task_new = [r for r in new_rows if r['task'] == t['task']]
-        pairs = paired(task_old, task_new, 'archon')
+        pairs = paired(task_old, task_new, arm)
         if pairs['old_only'] or pairs['new_only']:
-            rows = [r for r in task_new if r['arm'] == 'archon' and not r['infra']]
+            rows = [r for r in task_new if r['arm'] == arm and not r['infra']]
             flips.append({'task': t['task'], 'pairs': pairs,
                           'old': f"{o['pass']}/{o['graded']}", 'new': f"{n['pass']}/{n['graded']}",
                           'history': [trial_history(r) for r in rows]})
         slower = t['wall_ratio'] >= 1.5 and n['wall_mean'] - o['wall_mean'] >= 30
         if slower:
-            rows = [r for r in new_rows if r['arm'] == 'archon' and r['task'] == t['task'] and not r['infra']]
+            rows = [r for r in new_rows if r['arm'] == arm and r['task'] == t['task'] and not r['infra']]
             slow.append({'task': t['task'], 'ratio': t['wall_ratio'], 'p': t['wall_p'],
                          'old_mean': o['wall_mean'], 'new_mean': n['wall_mean'],
                          'history': [trial_history(r) for r in rows]})
@@ -253,7 +254,8 @@ def pair_entry(base, cand):
              'aether': compare(base['rows'], cand['rows'], 'aether'),
              'tasks_archon': task_table(base['rows'], cand['rows'], 'archon'),
              'tasks_aether': task_table(base['rows'], cand['rows'], 'aether')}
-    entry['flips'], entry['slow'] = findings(base['rows'], cand['rows'], entry['tasks_archon'])
+    entry['flips'], entry['slow'] = findings(base['rows'], cand['rows'], entry['tasks_archon'], 'archon')
+    entry['aether_flips'], entry['aether_slow'] = findings(base['rows'], cand['rows'], entry['tasks_aether'], 'aether')
     return entry
 
 
@@ -263,10 +265,17 @@ def analyze_model(runs_dir, model):
     assert old['meta']['tasks'] == new['meta']['tasks'], 'task sets differ between runs'
     assert old['meta']['trials'] == new['meta']['trials'] == 3
     assert all(run['meta']['completed'] == run['meta']['planned'] for run in (old, new)), 'incomplete run'
+    for run in (old, new):
+        keys = [(row['task'], row['arm'], row['trial']) for row in run['rows']]
+        assert len(keys) == run['meta']['planned'], 'missing trial records'
+        assert len(set(keys)) == len(keys), 'duplicate trial records'
     return {'comparison': pair_entry(old, new),
             'arms': {name: arm_summary(run['rows'], 'archon') for name, run in (('old', old), ('new', new))},
             'aether_arms': {name: arm_summary(run['rows'], 'aether') for name, run in (('old', old), ('new', new))},
-            'meta': {name: run['meta'] for name, run in (('old', old), ('new', new))}}
+            'meta': {name: run['meta'] for name, run in (('old', old), ('new', new))},
+            'infra_errors': {name: [{'task': row['task'], 'arm': row['arm'], 'trial': row['trial'], 'error': row['error']}
+                                    for row in run['rows'] if row['infra']]
+                             for name, run in (('old', old), ('new', new))}}
 
 
 def json_safe(value, depth=0):

@@ -87,7 +87,7 @@ def method(summary):
 
 Each run uses every task in `bench/tasks`, three trials per task and arm, medium effort, and Archon and direct-Aether arms. Design sessions remain at their default. Each run uses a private Aether daemon and isolated workspaces; concurrent runs each use `--parallel 1`.
 
-OLD is published Archon v1.6.4. NEW is built with `cargo build --release --locked -p archon -p archon-bench` at `c4bcaa9f8eff80ca81917f9ddaf65a866abb3690`. Both use published Aether v1.4.3. The x86_64 musl archives passed their release SHA256SUMS checks. OLD uses the v1.6.4-tag harness because the candidate harness speaks a newer incompatible Archon protocol; NEW uses the candidate harness. The candidate harness also includes the helper-event handling fix from #459, so observed differences may include harness effects. Task definitions are identical across those versions.
+OLD is published Archon v1.6.4. NEW is built with `cargo build --release --locked -p archon -p archon-bench` at `c4bcaa9f8eff80ca81917f9ddaf65a866abb3690`. The `archon_commit` in a run's metadata is the reporting checkout's HEAD at run time, which can include later report-only commits; the candidate binary is the recorded build at `c4bcaa9f`. Both use published Aether v1.4.3. The x86_64 musl archives passed their release SHA256SUMS checks. OLD uses the v1.6.4-tag harness because the candidate harness speaks a newer incompatible Archon protocol; NEW uses the candidate harness. The candidate harness also includes the helper-event handling fix from #459, so observed differences may include harness effects. Task definitions are identical across those versions.
 
 | Binary | SHA-256 |
 |---|---|

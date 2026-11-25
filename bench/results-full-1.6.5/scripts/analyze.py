@@ -228,12 +228,19 @@ def findings(old_rows, new_rows, cmp_arm_tasks, arm):
                           'old': f"{o['pass']}/{o['graded']}", 'new': f"{n['pass']}/{n['graded']}",
                           'old_history': [trial_history(r) for r in baseline],
                           'history': [trial_history(r) for r in rows]})
+        old_trials = {r['trial']: r for r in graded(task_old, arm)}
+        new_trials = {r['trial']: r for r in graded(task_new, arm)}
+        slow_pairs = []
+        for trial in sorted(old_trials.keys() & new_trials.keys()):
+            before, after = old_trials[trial]['wall_secs'], new_trials[trial]['wall_secs']
+            if before > 0 and after >= 2 * before and after - before >= 60:
+                slow_pairs.append({'trial': trial, 'old_wall': before, 'new_wall': after})
         slower = t['wall_ratio'] >= 1.5 and n['wall_mean'] - o['wall_mean'] >= 30
-        if slower:
+        if slower or slow_pairs:
             rows = [r for r in new_rows if r['arm'] == arm and r['task'] == t['task'] and not r['infra']]
             slow.append({'task': t['task'], 'ratio': t['wall_ratio'], 'p': t['wall_p'],
                          'old_mean': o['wall_mean'], 'new_mean': n['wall_mean'],
-                         'history': [trial_history(r) for r in rows]})
+                         'slow_pairs': slow_pairs, 'history': [trial_history(r) for r in rows]})
     return flips, slow
 
 

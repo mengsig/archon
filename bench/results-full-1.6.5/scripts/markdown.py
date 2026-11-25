@@ -66,6 +66,8 @@ def findings(data):
     for label, key in [('Archon', 'slow'), ('Direct Aether', 'aether_slow')]:
         for slow in data['comparison'][key]:
             lines.append(f"- {label}, {slow['task']}: mean wall {slow['old_mean']:.0f} s to {slow['new_mean']:.0f} s ({slow['ratio']:.2f}×, p={formatted(slow['p'], '.3f')}).")
+            for pair in slow['slow_pairs']:
+                lines.append(f"  - Trial {pair['trial']}: {pair['old_wall']:.0f} s to {pair['new_wall']:.0f} s.")
     for version, errors in data['infra_errors'].items():
         for error in errors:
             lines.append(f"- Infra, {version.upper()} {error['arm']} {error['task']} trial {error['trial']}: {error['error']}")

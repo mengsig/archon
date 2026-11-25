@@ -233,6 +233,8 @@ def verdict(per_model):
     reasons = []
     for m, d in per_model.items():
         c = d['archon']
+        assert all(math.isfinite(value) for value in c['diff']), f'{m}: ungraded comparison'
+        assert all(math.isfinite(value) for value in c['wall_ratio'] + c['cost_ratio']), f'{m}: unpriced or untimed comparison'
         if c['diff'][2] < 0:
             reasons.append(f'{m}: Archon pass rate fell significantly (diff interval entirely below 0)')
         if c['mcnemar']['p'] < 0.05 and c['mcnemar']['old_only'] > c['mcnemar']['new_only']:
@@ -267,6 +269,18 @@ def analyze_model(runs_dir, model):
             'meta': {name: run['meta'] for name, run in (('old', old), ('new', new))}}
 
 
+def json_safe(value, depth=0):
+    assert 0 <= depth < 32, 'summary nesting is too deep'
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, list):
+        return [json_safe(item, depth + 1) for item in value]
+    if isinstance(value, dict):
+        assert all(isinstance(key, str) for key in value), 'summary keys must be strings'
+        return {key: json_safe(item, depth + 1) for key, item in value.items()}
+    return value
+
+
 def main():
     runs_dir, out_dir = (Path(arg) for arg in sys.argv[1:3])
     selected = sys.argv[3:] or list(MODELS)
@@ -276,7 +290,7 @@ def main():
     word, reasons = verdict({model: {'archon': data['comparison']['archon']} for model, data in per_model.items()})
     summary = {'verdict': word, 'reasons': reasons, 'models': per_model, 'html': 'index.html'}
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / 'summary.json').write_text(json.dumps(summary, indent=2, allow_nan=False))
+    (out_dir / 'summary.json').write_text(json.dumps(json_safe(summary), indent=2, allow_nan=False))
     print(word, reasons)
 
 

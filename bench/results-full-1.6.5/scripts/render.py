@@ -48,12 +48,16 @@ def comparison_rows(comparison):
     return rows
 
 
+def seconds(value):
+    return 'n/a' if value is None else f'{value:.0f} s'
+
+
 def task_rows(comparison):
     tasks = comparison['tasks_archon']
     assert tasks and len({task['task'] for task in tasks}) == len(tasks)
     return [(task['task'], f"{task['old']['pass']}/{task['old']['graded']}",
              f"{task['new']['pass']}/{task['new']['graded']}",
-             f"{task['old']['wall_mean']:.0f} s", f"{task['new']['wall_mean']:.0f} s") for task in tasks]
+             seconds(task['old']['wall_mean']), seconds(task['new']['wall_mean'])) for task in tasks]
 
 
 def render_model(name, data):

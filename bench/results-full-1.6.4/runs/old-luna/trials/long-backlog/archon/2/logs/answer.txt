@@ -1,0 +1,57 @@
+Queued all four tickets as separate `direct` items in `long-backlog`, with TT-102 through TT-104 stacked behind the preceding ticket so each can ship in its own commit:
+
+- TT-101: `qi_01M7W667R4HHBXBGRDMNC30S7H`
+- TT-102: `qi_01M7W6680M1W84JVVBS889JGPP`
+- TT-103: `qi_01M7W668257PEDKYA31GXE6RB9`
+- TT-104: `qi_01M7W6683844QMZSCV9NQ5G67E`
+
+Each item includes its acceptance criteria, standard-library test requirements, and the requested unittest command.
+
+Done: TT-101: Reject impossible due dates. Implemented TT-101 in commit e8110ce2621af10a3b77053085a9073603f11b06. Invalid calendar dates, unsupported forms, and out-of-range offsets now raise InvalidDate with the original input; today/tomorrow and nonnegative +Nd offsets remain supported. Added accepted and rejected cases. The requested unittest suite and git diff check passed; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W6945Z97ZAZZTPS9PHG8T6)
+
+SHIPPED: commit e8110ce2621af10a3b77053085a9073603f11b06 on the run branch
+Branch `archon/mnc30s7h-tt-101-reject-impossible-due-dates` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/facb45479a7f5daa648cf1e0/long-backlog holds it (2 files changed, 48 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M7W667R4HHBXBGRDMNC30S7H`; land it in `main`: `archon merge qi_01M7W667R4HHBXBGRDMNC30S7H`.
+
+Done: TT-102: Implement RFC 4180 CSV export. Implemented RFC 4180 CSV serialization in tasktracker/export.py: fields are quoted only for comma, quote, CR, or LF, embedded quotes are doubled, rows stay in input order, dates are ISO or empty, and every line ends in CRLF. Added focused standard-library tests. Baseline suite passed 5 tests; final suite passed 7 tests, and diff check passed. Commit bf76903beb094b0fd3145d638ad023f2536addb7 (tree d5b58137a2a8240876bb335ef6db9fa0599fe2e1). Independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W6D2E6Y44JPAJXKPKY5H3F)
+
+SHIPPED: commit bf76903beb094b0fd3145d638ad023f2536addb7 on the run branch
+
+Done: TT-103: Implement search query syntax. Implemented TT-103 query parsing, title/tag/status matching, malformed-query errors, and standard-library tests. The requested unittest suite passed (13 tests), git diff --check passed, and independent review passed with no findings. Committed as a18b950d8b7c74ee31621206dd0c667f5b2b5527; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W6JCD8AVNC931ZV99SMRJY)
+
+SHIPPED: commit a18b950d8b7c74ee31621206dd0c667f5b2b5527 on the run branch
+
+Done: TT-104: Add undo to TaskStore. Implemented LIFO undo for successful TaskStore adds, completions, and deletes. Added NothingToUndo, exact deleted-task snapshots, monotonic IDs after add undo, and regression coverage including repeated completion. Final suite passed 20 tests; diff check passed. Committed as dadcb95 and fix commit 2a38370. Independent review found one blocking repeated-completion issue, which was fixed and passed focused re-review. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W6QGSSJPDV8TBR9Y2V2KJ8), codex/gpt-6-luna (agent agt_01M7W6TJC3BB4SDDFBTH7WXVVH)
+
+SHIPPED: commit 2a383700cf03b8ecea84605ddf47a10f48a02e22 on the run branch
+
+Implemented LIFO undo for successful TaskStore adds, completions, and deletes. Added NothingToUndo, exact deleted-task snapshots, monotonic IDs after add undo, and regression coverage including repeated completion. Final suite passed 20 tests; diff check passed. Committed as dadcb95 and fix commit 2a38370. Independent review found one blocking repeated-completion issue, which was fixed and passed focused re-review. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W6QGSSJPDV8TBR9Y2V2KJ8), codex/gpt-6-luna (agent agt_01M7W6TJC3BB4SDDFBTH7WXVVH)
+
+SHIPPED: commit 2a383700cf03b8ecea84605ddf47a10f48a02e22 on the run branch
+
+Implemented TT-103 query parsing, title/tag/status matching, malformed-query errors, and standard-library tests. The requested unittest suite passed (13 tests), git diff --check passed, and independent review passed with no findings. Committed as a18b950d8b7c74ee31621206dd0c667f5b2b5527; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W6JCD8AVNC931ZV99SMRJY)
+
+SHIPPED: commit a18b950d8b7c74ee31621206dd0c667f5b2b5527 on the run branch
+
+Implemented RFC 4180 CSV serialization in tasktracker/export.py: fields are quoted only for comma, quote, CR, or LF, embedded quotes are doubled, rows stay in input order, dates are ISO or empty, and every line ends in CRLF. Added focused standard-library tests. Baseline suite passed 5 tests; final suite passed 7 tests, and diff check passed. Commit bf76903beb094b0fd3145d638ad023f2536addb7 (tree d5b58137a2a8240876bb335ef6db9fa0599fe2e1). Independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W6D2E6Y44JPAJXKPKY5H3F)
+
+SHIPPED: commit bf76903beb094b0fd3145d638ad023f2536addb7 on the run branch
+
+Implemented TT-101 in commit e8110ce2621af10a3b77053085a9073603f11b06. Invalid calendar dates, unsupported forms, and out-of-range offsets now raise InvalidDate with the original input; today/tomorrow and nonnegative +Nd offsets remain supported. Added accepted and rejected cases. The requested unittest suite and git diff check passed; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W6945Z97ZAZZTPS9PHG8T6)
+
+SHIPPED: commit e8110ce2621af10a3b77053085a9073603f11b06 on the run branch

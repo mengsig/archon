@@ -1,0 +1,33 @@
+I queued the rate limiter work as item `qi_01M7W85WWTC3XEBPP4R2RT92AG`. I did not edit the repository myself, since the orchestrator does not change repositories directly.
+
+- **Repository:** `feature-token-bucket`, shipped locally (commit on a local branch, no push).
+- **Pipeline:** `direct`, one agent implements, tests and commits the change.
+- **Review:** `standard`. I chose this because a rate limiter is shared logic where a subtle error could hide, but it is one module.
+- **Scope in the brief:** implement `ratelimit.py` exactly per `SPEC.md`, including error and edge cases. Add tests in `test_ratelimit.py` for those cases, stay standard-library only, keep functions under 60 lines, and run the existing suite.
+
+I'll report the outcome when the item finishes. If it fails, I'll check the stage output before deciding on a retry.
+
+Done: Implement rate limiter in ratelimit.py per SPEC.md. Implemented the token-bucket rate limiter in ratelimit.py per SPEC.md (stdlib only) and added 18 tests in test_ratelimit.py for the spec's error and edge cases. Branch archon/r2rt92ag-implement-rate-limiter-in-ratelimit-py-p, head 7d5e2f6 (tree fe9340e1143812e76924003f33b29565d44f24e1), three commits on main's 93bf75d. Nothing pushed.
+
+Verification: before, the 3 existing tests errored with NotImplementedError. After, `python3 -I -m unittest` runs 21 tests, all OK, on the final head. A seeded large-scale test fails 25 subtests on the previous commit and passes on head. Review: the first full review (agt_01M7W882TESCQHX4Q4BMEEQY1J) failed on wait_time float rounding. Two delta reviews of the fixes (agt_01M7W8AQSMK46NGCV49B6SQRMR, failed on absolute tolerance at large capacity; agt_01M7W8DAFW1F8BGQT6D3ACZYNA, pass on head 7d5e2f6) finished the fix chain. Its one non-blocking follow-up is that the rounding slack grows with refill_per_sec * |clock|, admitting up to about 10 tokens early only at extreme rate and clock values (rate 1e6/s, clock 1e7). It stays below 1e-3 tokens for rate <= 50/s and clock <= 1e7.
+
+Open: the per-function assert quota from the user CLAUDE.md is not fully met; the code has one or two invariant asserts in each of the main methods, not two per function. Not padded with decorative asserts. No servers or stacks were started. The reviewer processes are gone.
+
+REVIEW: pass by agt_01M7W8DAFW1F8BGQT6D3ACZYNA on head 7d5e2f6, with earlier fail reviews agt_01M7W882TESCQHX4Q4BMEEQY1J and agt_01M7W8AQSMK46NGCV49B6SQRMR.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8DAFW1F8BGQT6D3ACZYNA), claude-code/claude-haiku-5-5 (agent agt_01M7W882TESCQHX4Q4BMEEQY1J)
+
+SHIPPED: commit 7d5e2f67bb3ffe91f7db4dce6c88bc1978caa85c on the run branch
+Branch `archon/r2rt92ag-implement-rate-limiter-in-ratelimit-py-p` in /home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084…
+
+Implemented the token-bucket rate limiter in ratelimit.py per SPEC.md (stdlib only) and added 18 tests in test_ratelimit.py for the spec's error and edge cases. Branch archon/r2rt92ag-implement-rate-limiter-in-ratelimit-py-p, head 7d5e2f6 (tree fe9340e1143812e76924003f33b29565d44f24e1), three commits on main's 93bf75d. Nothing pushed.
+
+Verification: before, the 3 existing tests errored with NotImplementedError. After, `python3 -I -m unittest` runs 21 tests, all OK, on the final head. A seeded large-scale test fails 25 subtests on the previous commit and passes on head. Review: the first full review (agt_01M7W882TESCQHX4Q4BMEEQY1J) failed on wait_time float rounding. Two delta reviews of the fixes (agt_01M7W8AQSMK46NGCV49B6SQRMR, failed on absolute tolerance at large capacity; agt_01M7W8DAFW1F8BGQT6D3ACZYNA, pass on head 7d5e2f6) finished the fix chain. Its one non-blocking follow-up is that the rounding slack grows with refill_per_sec * |clock|, admitting up to about 10 tokens early only at extreme rate and clock values (rate 1e6/s, clock 1e7). It stays below 1e-3 tokens for rate <= 50/s and clock <= 1e7.
+
+Open: the per-function assert quota from the user CLAUDE.md is not fully met; the code has one or two invariant asserts in each of the main methods, not two per function. Not padded with decorative asserts. No servers or stacks were started. The reviewer processes are gone.
+
+REVIEW: pass by agt_01M7W8DAFW1F8BGQT6D3ACZYNA on head 7d5e2f6, with earlier fail reviews agt_01M7W882TESCQHX4Q4BMEEQY1J and agt_01M7W8AQSMK46NGCV49B6SQRMR.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8DAFW1F8BGQT6D3ACZYNA), claude-code/claude-haiku-5-5 (agent agt_01M7W882TESCQHX4Q4BMEEQY1J)
+
+SHIPPED: commit 7d5e2f67bb3ffe91f7db4dce6c88bc1978caa85c on the run branch

@@ -1,0 +1,15 @@
+The `orders` crate now uses an `OrderStatus` enum instead of strings. The work is committed as `48533bc` on `main`, and `cargo test` passes: 3 new unit tests in `status.rs` plus the 3 existing integration tests.
+
+**What changed**
+- **`src/status.rs` (new):** `OrderStatus` with `as_str`, `Display`, `FromStr`, and `can_transition_to`. `ParseStatusError` implements `std::error::Error`, and its message is `unknown status "<input>"`. The status string literals live only in this file.
+- **`order.rs`, `billing.rs`, `shipping.rs`:** `pay`, `ship`, and `cancel` check `can_transition_to` instead of comparing strings. I checked that this allows exactly what the old checks allowed.
+- **`report.rs`:** `from_line` parses through `FromStr`, and its error text is unchanged.
+- **`lib.rs`:** re-exports `OrderStatus` and `ParseStatusError`.
+- **`tests/orders.rs`:** status comparisons use the enum. Expected error strings and the CSV line are unchanged, since they check observable output.
+
+**Decisions to review**
+- **`report::status_counts` return type** is now `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. The output order is still alphabetical by name (cancelled, paid, pending, shipped). I sort by `as_str()` rather than using the enum's derived `Ord`, because the derived order would be declaration order and would change the output.
+- **Commit message:** I left off the `Co-Authored-By` trailer from the system reminder, because the repo's CLAUDE.md says not to add Claude attribution to commits and that rule takes precedence.
+
+**Not done**
+- I did not run `cargo fmt` across the crate. The original code was already not rustfmt-clean, so formatting would have churned lines outside this refactor. Clippy is clean.

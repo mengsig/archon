@@ -375,3 +375,32 @@ fn a_change_is_what_its_commits_add_to_their_base() {
     let missing = affected_by(&tree, "nowhere").unwrap_err().to_string();
     assert!(missing.contains("nowhere"), "{missing}");
 }
+
+#[test]
+fn only_a_change_for_the_fork_base_short_of_the_release_branch_is_for_integration() {
+    let (_keep, tree) = dir();
+    git(&tree, &["init", "--quiet", "--initial-branch=trunk"]);
+    write(&tree, "README.md", "base\n");
+    git(&tree, &["add", "."]);
+    git(&tree, &["commit", "--quiet", "-m", "base"]);
+    git(&tree, &["branch", "next"]);
+    let plain = RepoTiers::default();
+    let target = |target: &str, tiers: &RepoTiers, fork: &str| {
+        integration_target(&tree, target, tiers, Some(fork)).unwrap()
+    };
+    assert_eq!(target("next", &plain, "next"), None, "no release branch");
+    let named = RepoTiers {
+        integration_branch: Some("next".into()),
+        ..RepoTiers::default()
+    };
+    assert_eq!(target("next", &named, "next").as_deref(), Some("next"));
+
+    git(&tree, &["branch", "main"]);
+    assert_eq!(target("next", &plain, "next").as_deref(), Some("next"));
+    assert_eq!(target("main", &plain, "main"), None, "a release");
+    assert_eq!(target("archon/parent", &plain, "next"), None, "stacked");
+    assert_eq!(
+        integration_target(&tree, "next", &plain, None).unwrap(),
+        None
+    );
+}

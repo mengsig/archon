@@ -1,0 +1,23 @@
+Queued the rate limiter as item `qi_01M7W9A440ZWVE09WMDS1TCZA3` on the `feature-token-bucket` repository.
+
+- **Pipeline:** `direct`. The spec is small and has no concurrency or locking requirements, so one author can build and check it.
+- **Review:** `standard`. It is new code with no shared callers, but the spec's edge cases are easy to get subtly wrong.
+- **Shipping:** the repository is set to `ship local`, so the work gets committed on the item's branch and is not pushed.
+- **Brief:** it follows the spec exactly, including error and edge cases. It asks for extra tests covering those cases, since `test_ratelimit.py` only covers the basics. It also requires standard library only and functions under 60 lines.
+
+I did not set a model plan, so the configured fallback applies. The claude-code seven-day quota is at 77% and would run out before its reset, so I am running this as one item at a time and not adding others on that provider for now. I will report when the item finishes.
+
+Done: Implement token-bucket rate limiter per SPEC.md in ratelimit.py. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, stdlib only, and committed on archon/ds1tcza3-implement-token-bucket-rate-limiter-per as 019c4bf (not pushed). Before, the three existing tests errored with NotImplementedError on the stubs. After, `python3 -B -m unittest -v test_ratelimit` runs 17 tests, all OK: the 3 original plus 14 new ones covering invalid capacity/refill/n/max_keys (including NaN and inf), fractional refill, capacity cap, wait_time semantics, a backwards clock at bucket level, LRU eviction with try_acquire and wait_time counting as use, evicted keys returning full, and len(). Invalid n does not create or evict keys. No linter or formatter config exists in the repo, so only the tests and a syntax check were run. Review: one reviewer (agt_01M7W9BX1TWZC0PTJR81RTG4MG) passed head 019c4bf with no blocking findings. Non-blocking follow-ups, not fixed: max_keys is not type-checked (2.5 is accepted); bool n is accepted as 1; the LRU test checks eviction only indirectly; there is no KeyedLimiter-level backwards-clock test. Nothing is left running.
+REVIEW: pass by agt_01M7W9BX1TWZC0PTJR81RTG4MG
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9BX1TWZC0PTJR81RTG4MG)
+
+SHIPPED: commit 019c4bf9ab56406f3abf276a9ae4c12df95c1c51 on the run branch
+Branch `archon/ds1tcza3-implement-token-bucket-rate-limiter-per` in /home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/ca10f4053acbc8dd6cbbde32/feature-token-bucket holds it (2 files changed, 197 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W9A440ZWVE09WMDS1TCZA3`; land it in `main`: `archon merge qi_01M7W9A440ZWVE09WMDS1TCZA3`.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, stdlib only, and committed on archon/ds1tcza3-implement-token-bucket-rate-limiter-per as 019c4bf (not pushed). Before, the three existing tests errored with NotImplementedError on the stubs. After, `python3 -B -m unittest -v test_ratelimit` runs 17 tests, all OK: the 3 original plus 14 new ones covering invalid capacity/refill/n/max_keys (including NaN and inf), fractional refill, capacity cap, wait_time semantics, a backwards clock at bucket level, LRU eviction with try_acquire and wait_time counting as use, evicted keys returning full, and len(). Invalid n does not create or evict keys. No linter or formatter config exists in the repo, so only the tests and a syntax check were run. Review: one reviewer (agt_01M7W9BX1TWZC0PTJR81RTG4MG) passed head 019c4bf with no blocking findings. Non-blocking follow-ups, not fixed: max_keys is not type-checked (2.5 is accepted); bool n is accepted as 1; the LRU test checks eviction only indirectly; there is no KeyedLimiter-level backwards-clock test. Nothing is left running.
+REVIEW: pass by agt_01M7W9BX1TWZC0PTJR81RTG4MG
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9BX1TWZC0PTJR81RTG4MG)
+
+SHIPPED: commit 019c4bf9ab56406f3abf276a9ae4c12df95c1c51 on the run branch

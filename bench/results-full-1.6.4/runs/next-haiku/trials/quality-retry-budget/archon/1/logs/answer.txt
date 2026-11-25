@@ -1,0 +1,28 @@
+Queued retry_budget.py per SPEC.md (item qi_01M7W5FMMMJ46NCRM3THD7ZQMJ, direct pipeline, standard review, local ship in quality-retry-budget). Quota: claude-code seven_day is at 76% with 31% elapsed and projects to run out 2026-11-21 02:04 UTC, before the 2026-11-25 reset. To spread that load I set this item to balanced tier at medium effort, and I queued nothing else on claude-code. Tell me if you want a different provider or to hold other work.
+
+I queued the work as item `qi_01M7W5FMMMJ46NCRM3THD7ZQMJ`. It is not done yet.
+
+- **Pipeline:** `direct`, in the `quality-retry-budget` repository, with local shipping (no push).
+- **Review:** `standard`, because the module is new and its budget logic could hide a slip.
+- **Model:** balanced tier at medium effort. The claude-code seven-day quota is at 76% with 31% of the window elapsed, and it projects to run out on 2026-11-21 02:04 UTC, before the 2026-11-25 reset. I queued nothing else on claude-code.
+- **Commits:** the brief tells the agent to use the repository's configured git identity and to add no AI attribution lines. Your CLAUDE.md says not to put Claude attribution in commits, which conflicts with the Co-Authored-By line the system asked for. I followed CLAUDE.md. Say if you want the Co-Authored-By line instead.
+- **Spec gaps:** if SPEC.md is ambiguous on a behaviour point, the agent picks the most reasonable reading and records it in the commit body.
+
+I posted the quota note to the operator's chat. I'll report the outcome when the item finishes.
+
+Done: Implement retry_budget.py per SPEC.md. Implemented retry_delay in retry_budget.py per SPEC.md and added focused tests. Committed as ddcbf8f on archon/thd7zqmj-implement-retry-budget-py-per-spec-md (tree 2fabf1f52bfced266e3815b255445d46df0140f2); not pushed. Before: the stub raised NotImplementedError and all 3 existing tests errored. After: 28 tests pass under `python3 -W error -m unittest -v`. The implementation is stdlib-only and validates all arguments before any early return. It rejects non-built-in-int values (bool, float, int subclasses) and out-of-range values with ValueError. Backoff saturates without building a large power. Retry-After is an uncapped floor, and the budget check is strict. Interpretation choices, recorded in the commit body: wrong-type inputs raise ValueError (per the spec's "invalid values raise ValueError", not TypeError), and the messages are my own. Review: one reviewer (agt_01M7W5HGFVCSVGG7XDYGEG79FN) passed head ddcbf8f with no findings and confirmed risk low. Open: the reviewer left a child process running (pid 3543249, a `claude -p` session it started). I did not start it and did not kill it; it stops when this run ends or can be stopped with `kill 3543249`. No servers were started by me.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W5HGFVCSVGG7XDYGEG79FN)
+
+SHIPPED: commit ddcbf8f97db758a60e6f2df1452146314cd7d782 on the run branch
+Branch `archon/thd7zqmj-implement-retry-budget-py-per-spec-md` in /home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/bfd7700c9e89fe16ced37aba/quality-retry-budget holds it (2 files changed, 171 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7W5FMMMJ46NCRM3THD7ZQMJ`; land it in `main`: `archon merge qi_01M7W5FMMMJ46NCRM3THD7ZQMJ`.
+
+retry_budget.py is implemented per SPEC.md and committed locally as ddcbf8f on archon/thd7zqmj-implement-retry-budget-py-per-spec-md. It is not pushed. The suite passes: 28 tests under `python3 -W error -m unittest -v`, up from 3 that errored on the stub. The implementation is stdlib-only and validates arguments before any early return. Wrong-type inputs raise ValueError, following the spec's wording, and the agent chose the messages. Interpretation choices are in the commit body. Review passed with no findings at ddcbf8f. Cost: $0.031.
+
+Leftover process: the reviewer left a `claude -p` child running, pid 3543249, and the agent's stream process 3546164 is still up. Both stop when the run ends, or you can `kill` them now. I have not killed them. Say if you want me to ask the daemon to stop them.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and added focused tests. Committed as ddcbf8f on archon/thd7zqmj-implement-retry-budget-py-per-spec-md (tree 2fabf1f52bfced266e3815b255445d46df0140f2); not pushed. Before: the stub raised NotImplementedError and all 3 existing tests errored. After: 28 tests pass under `python3 -W error -m unittest -v`. The implementation is stdlib-only and validates all arguments before any early return. It rejects non-built-in-int values (bool, float, int subclasses) and out-of-range values with ValueError. Backoff saturates without building a large power. Retry-After is an uncapped floor, and the budget check is strict. Interpretation choices, recorded in the commit body: wrong-type inputs raise ValueError (per the spec's "invalid values raise ValueError", not TypeError), and the messages are my own. Review: one reviewer (agt_01M7W5HGFVCSVGG7XDYGEG79FN) passed head ddcbf8f with no findings and confirmed risk low. Open: the reviewer left a child process running (pid 3543249, a `claude -p` session it started). I did not start it and did not kill it; it stops when this run ends or can be stopped with `kill 3543249`. No servers were started by me.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W5HGFVCSVGG7XDYGEG79FN)
+
+SHIPPED: commit ddcbf8f97db758a60e6f2df1452146314cd7d782 on the run branch

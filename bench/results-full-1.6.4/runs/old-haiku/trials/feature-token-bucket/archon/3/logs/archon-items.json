@@ -1,0 +1,217 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W85WWTC3XEBPP4R2RT92AG",
+      "repo": "repo_01M7W85NTVAG9YYVNC29ZT72V1",
+      "pipeline": "direct",
+      "title": "Implement rate limiter in ratelimit.py per SPEC.md",
+      "brief": "Operator request (authenticated local operator): Implement the rate limiter described in `SPEC.md` in `ratelimit.py`. The module currently only has stubs. Follow the spec exactly, including its error cases and edge cases. The tests in `test_ratelimit.py` only cover the basics, so add tests in `test_ratelimit.py` for the spec's error cases and edge cases. Keep the implementation dependency-free (standard library only). Commit the work on the local branch. Do not push. Keep functions under 60 lines, make errors explicit (no swallowed exceptions), and keep the code simple and readable. Run the existing test suite and report the result.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "operator-request"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W85X3Q2T6G0CR3RBAGYSBH",
+        "summary": "Implemented the token-bucket rate limiter in ratelimit.py per SPEC.md (stdlib only) and added 18 tests in test_ratelimit.py for the spec's error and edge cases. Branch archon/r2rt92ag-implement-rate-limiter-in-ratelimit-py-p, head 7d5e2f6 (tree fe9340e1143812e76924003f33b29565d44f24e1), three commits on main's 93bf75d. Nothing pushed.\n\nVerification: before, the 3 existing tests errored with NotImplementedError. After, `python3 -I -m unittest` runs 21 tests, all OK, on the final head. A seeded large-scale test fails 25 subtests on the previous commit and passes on head. Review: the first full review (agt_01M7W882TESCQHX4Q4BMEEQY1J) failed on wait_time float rounding. Two delta reviews of the fixes (agt_01M7W8AQSMK46NGCV49B6SQRMR, failed on absolute tolerance at large capacity; agt_01M7W8DAFW1F8BGQT6D3ACZYNA, pass on head 7d5e2f6) finished the fix chain. Its one non-blocking follow-up is that the rounding slack grows with refill_per_sec * |clock|, admitting up to about 10 tokens early only at extreme rate and clock values (rate 1e6/s, clock 1e7). It stays below 1e-3 tokens for rate <= 50/s and clock <= 1e7.\n\nOpen: the per-function assert quota from the user CLAUDE.md is not fully met; the code has one or two invariant asserts in each of the main methods, not two per function. Not padded with decorative asserts. No servers or stacks were started. The reviewer processes are gone.\n\nREVIEW: pass by agt_01M7W8DAFW1F8BGQT6D3ACZYNA on head 7d5e2f6, with earlier fail reviews agt_01M7W882TESCQHX4Q4BMEEQY1J and agt_01M7W8AQSMK46NGCV49B6SQRMR.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8DAFW1F8BGQT6D3ACZYNA), claude-code/claude-haiku-5-5 (agent agt_01M7W882TESCQHX4Q4BMEEQY1J)\n\nSHIPPED: commit 7d5e2f67bb3ffe91f7db4dce6c88bc1978caa85c on the run branch"
+      },
+      "created_at": "2026-11-20T10:31:34.242467538Z",
+      "updated_at": "2026-11-20T10:36:30.009898130Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W85X3Q2T6G0CR3RBAGYSBH",
+        "item": "qi_01M7W85WWTC3XEBPP4R2RT92AG",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W85XCDDFVXRN69YKTD1MTR",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/273a35f63433363c0f926e0c/.archon/data/worktrees/feature-token-bucket/qi_01M7W85WWTC3XEBPP4R2RT92AG",
+        "branch": "archon/r2rt92ag-implement-rate-limiter-in-ratelimit-py-p",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the token-bucket rate limiter in ratelimit.py per SPEC.md (stdlib only) and added 18 tests in test_ratelimit.py for the spec's error and edge cases. Branch archon/r2rt92ag-implement-rate-limiter-in-ratelimit-py-p, head 7d5e2f6 (tree fe9340e1143812e76924003f33b29565d44f24e1), three commits on main's 93bf75d. Nothing pushed.\n\nVerification: before, the 3 existing tests errored with NotImplementedError. After, `python3 -I -m unittest` runs 21 tests, all OK, on the final head. A seeded large-scale test fails 25 subtests on the previous commit and passes on head. Review: the first full review (agt_01M7W882TESCQHX4Q4BMEEQY1J) failed on wait_time float rounding. Two delta reviews of the fixes (agt_01M7W8AQSMK46NGCV49B6SQRMR, failed on absolute tolerance at large capacity; agt_01M7W8DAFW1F8BGQT6D3ACZYNA, pass on head 7d5e2f6) finished the fix chain. Its one non-blocking follow-up is that the rounding slack grows with refill_per_sec * |clock|, admitting up to about 10 tokens early only at extreme rate and clock values (rate 1e6/s, clock 1e7). It stays below 1e-3 tokens for rate <= 50/s and clock <= 1e7.\n\nOpen: the per-function assert quota from the user CLAUDE.md is not fully met; the code has one or two invariant asserts in each of the main methods, not two per function. Not padded with decorative asserts. No servers or stacks were started. The reviewer processes are gone.\n\nREVIEW: pass by agt_01M7W8DAFW1F8BGQT6D3ACZYNA on head 7d5e2f6, with earlier fail reviews agt_01M7W882TESCQHX4Q4BMEEQY1J and agt_01M7W8AQSMK46NGCV49B6SQRMR.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W8DAFW1F8BGQT6D3ACZYNA), claude-code/claude-haiku-5-5 (agent agt_01M7W882TESCQHX4Q4BMEEQY1J)\n\nSHIPPED: commit 7d5e2f67bb3ffe91f7db4dce6c88bc1978caa85c on the run branch"
+        },
+        "cost_usd": 0.09094602000000002,
+        "started_at": "2026-11-20T10:31:34.463852072Z",
+        "finished_at": "2026-11-20T10:36:30.009898130Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W85XBN3T1DPJE70VVW7XCV",
+        "run": "prun_01M7W85X3Q2T6G0CR3RBAGYSBH",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W85XDQMM0DCE4CWR18X6YV",
+        "aether_task": "tsk_01M7W85XDQMM0DCE4CWR18X6YW",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented the token-bucket rate limiter in ratelimit.py per SPEC.md (stdlib only) and added 18 tests in test_ratelimit.py for the spec's error and edge cases. Branch archon/r2rt92ag-implement-rate-limiter-in-ratelimit-py-p, head 7d5e2f6 (tree fe9340e1143812e76924003f33b29565d44f24e1), three commits on main's 93bf75d. Nothing pushed.\n\nVerification: before, the 3 existing tests errored with NotImplementedError. After, `python3 -I -m unittest` runs 21 tests, all OK, on the final head. A seeded large-scale test fails 25 subtests on the previous commit and passes on head. Review: the first full review (agt_01M7W882TESCQHX4Q4BMEEQY1J) failed on wait_time float rounding. Two delta reviews of the fixes (agt_01M7W8AQSMK46NGCV49B6SQRMR, failed on absolute tolerance at large capacity; agt_01M7W8DAFW1F8BGQT6D3ACZYNA, pass on head 7d5e2f6) finished the fix chain. Its one non-blocking follow-up is that the rounding slack grows with refill_per_sec * |clock|, admitting up to about 10 tokens early only at extreme rate and clock values (rate 1e6/s, clock 1e7). It stays below 1e-3 tokens for rate <= 50/s and clock <= 1e7.\n\nOpen: the per-function assert quota from the user CLAUDE.md is not fully met; the code has one or two invariant asserts in each of the main methods, not two per function. Not padded with decorative asserts. No servers or stacks were started. The reviewer processes are gone.\n\nREVIEW: pass by agt_01M7W8DAFW1F8BGQT6D3ACZYNA on head 7d5e2f6, with earlier fail reviews agt_01M7W882TESCQHX4Q4BMEEQY1J and agt_01M7W8AQSMK46NGCV49B6SQRMR.",
+        "structured": {
+          "checks": [
+            "python3 -I -m unittest -v (run in worktree, 21 tests OK on head 7d5e2f6)",
+            "python3 -I -m unittest (before: 3 errors, NotImplementedError, on base 93bf75d)",
+            "seeded wait-then-acquire test: 25 subtest failures on 94bc260, passes on 7d5e2f6"
+          ],
+          "commit": "7d5e2f67bb3ffe91f7db4dce6c88bc1978caa85c",
+          "evidence": [
+            {
+              "caption": "After: full suite on head 7d5e2f6",
+              "kind": "output",
+              "text": "Ran 21 tests in 0.003s\n\nOK"
+            },
+            {
+              "caption": "Before: existing tests on base 93bf75d, stubs only",
+              "kind": "output",
+              "text": "Ran 3 tests in 0.001s\n\nFAILED (errors=3)\nNotImplementedError (TokenBucket.__init__ and KeyedLimiter.__init__ raise)"
+            }
+          ],
+          "local_commit": "7d5e2f67bb3ffe91f7db4dce6c88bc1978caa85c",
+          "pr": {
+            "_note": "placeholder removed",
+            "body": "Approach: TokenBucket refills continuously from the injected clock, never above capacity; a clock that goes backwards adds nothing. KeyedLimiter keeps an OrderedDict of buckets in LRU order; try_acquire and wait_time both count as use; validation runs before any eviction or key creation.\n\nKey files: ratelimit.py, test_ratelimit.py.\n\nFloat rounding: wait_time returns (n - tokens) / rate, and try_acquire must accept that delay after sleeping it. The slack in TokenBucket._has_tokens is 1e-12 * (capacity + refill_per_sec * |last seen time|), shared by try_acquire and wait_time. The slack is the bound float rounding can reach; the first absolute 1e-9 tolerance failed at large capacity and clock values.\n\nChecks: 21 unit tests OK on head; seeded large-scale test covers the regression. Limits: slack grows linearly with refill_per_sec * clock; about 10 tokens at rate 1e6/s and clock 1e7 (review follow-up, non-blocking). Not thread-safe; no concurrency requirement in the spec.",
+            "summary": "Made token-bucket rate limiting available in ratelimit.py: TokenBucket and KeyedLimiter, stdlib only. Now: spec error and edge cases covered by 21 tests. Before: both classes were NotImplementedError stubs.",
+            "title": "Implement token-bucket rate limiter per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "7d5e2f67bb3ffe91f7db4dce6c88bc1978caa85c",
+            "reviewer_agents": [
+              "agt_01M7W8DAFW1F8BGQT6D3ACZYNA",
+              "agt_01M7W882TESCQHX4Q4BMEEQY1J"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W8DAFW1F8BGQT6D3ACZYNA",
+                "base": "94bc26012f4b74e04f87d4e52fb1744619bc20f8",
+                "findings": 1,
+                "head": "7d5e2f67bb3ffe91f7db4dce6c88bc1978caa85c",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W882TESCQHX4Q4BMEEQY1J",
+                "base": "93bf75d518b55e7d3f1efe2d373a515144d4a243",
+                "findings": 1,
+                "head": "741055b14693124266b7bf7dab2dad5fac62966d",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W8AQSMK46NGCV49B6SQRMR",
+                "base": "741055b14693124266b7bf7dab2dad5fac62966d",
+                "findings": 1,
+                "head": "94bc26012f4b74e04f87d4e52fb1744619bc20f8",
+                "verdict": "fail"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W8DAFW1F8BGQT6D3ACZYNA",
+              "agt_01M7W882TESCQHX4Q4BMEEQY1J",
+              "agt_01M7W8AQSMK46NGCV49B6SQRMR"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "New stdlib-only module with a new public API and no existing callers, so no behaviour change for current code. Covers the spec's error/edge cases with tests. Medium because the rate-limit timing contract depends on float arithmetic, which needed three review rounds to settle. Reviewer agt_01M7W8DAFW1F8BGQT6D3ACZYNA also rated it medium."
+          },
+          "risk_reviewer": "agt_01M7W8DAFW1F8BGQT6D3ACZYNA",
+          "tree": "fe9340e1143812e76924003f33b29565d44f24e1"
+        },
+        "cost_usd": 0.09094602000000002,
+        "started_at": "2026-11-20T10:31:34.517082795Z",
+        "finished_at": "2026-11-20T10:36:26.948889530Z"
+      }
+    ],
+    "spent_usd": 0.09094602000000002,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W85XBN3T1DPJE70VVW7XCV": {
+        "direct_usd": 0.06122394000000002,
+        "delegated_usd": 0.02972208,
+        "agents": [
+          {
+            "agent": "agt_01M7W882TESCQHX4Q4BMEEQY1J",
+            "parent": "agt_01M7W85XDQMM0DCE4CWR18X6YV",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.012074569999999998
+          },
+          {
+            "agent": "agt_01M7W8AQSMK46NGCV49B6SQRMR",
+            "parent": "agt_01M7W85XDQMM0DCE4CWR18X6YV",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.008236740000000001
+          },
+          {
+            "agent": "agt_01M7W8DAFW1F8BGQT6D3ACZYNA",
+            "parent": "agt_01M7W85XDQMM0DCE4CWR18X6YV",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00941077
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

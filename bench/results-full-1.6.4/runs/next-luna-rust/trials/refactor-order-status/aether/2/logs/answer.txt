@@ -1,0 +1,3 @@
+Implemented and committed as `ff1a1e1` (`Refactor order status to enum`).
+
+`OrderStatus` now represents order states throughout the crate, with parsing, display, and lifecycle transitions. Report ordering and existing error messages are preserved. `cargo test` passed (3 integration tests), and status string literals appear only in `src/status.rs`.

@@ -1,0 +1,26 @@
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and committed as ac80b11 on main. Added 13 tests to test_ratelimit.py covering validation errors, failed acquires not consuming tokens, refill capping, fractional tokens, wait_time not consuming, clock going backwards, and LRU eviction; all 16 tests pass with `python3 -m unittest test_ratelimit`.
+
+Choices made:
+- NaN is rejected for capacity, refill_per_sec, and n (written as `not (x > 0)` / `not (0 < n <= capacity)`), since NaN would otherwise slip past the spec's `<= 0` checks.
+- Infinite capacity or refill is not rejected; the spec does not forbid it and it behaves sensibly.
+- n is validated before a KeyedLimiter touches its key map, so a bad request cannot create or evict keys.
+- Bucket parameter validation is shared between TokenBucket and KeyedLimiter so both reject the same inputs.
+- wait_time returns exact float seconds; floating-point rounding can leave try_acquire failing by an epsilon right at the boundary.
+- No Co-Authored-By trailer was added: CLAUDE.md forbids Claude attribution in commits, which takes precedence over the attribution reminder.
+
+Not committed: an untracked __pycache__/ directory from the test run.
+
+The rate limiter is implemented in `ratelimit.py` per `SPEC.md` and committed as `ac80b11` on `main`. All 16 tests pass (`python3 -m unittest test_ratelimit`).
+
+- **Implementation:** `TokenBucket` and `KeyedLimiter` use only the standard library. Both reject invalid capacity, refill rate and `max_keys`. `KeyedLimiter` evicts the least recently used key when full.
+- **Tests:** I added 13 tests to `test_ratelimit.py` for the spec's error and edge cases: validation, failed acquires consuming nothing, refill capping, fractional tokens, `wait_time` not consuming, clock going backwards, and LRU eviction.
+
+Choices I made where the spec was silent:
+- **NaN is rejected** for capacity, refill rate and `n`. The spec's `<= 0` checks would let NaN through.
+- **Infinite capacity or refill is allowed**, since the spec doesn't forbid it.
+- **Bad `n` is rejected before a key is created**, so an invalid request cannot evict another key.
+- **No `Co-Authored-By` trailer**, because CLAUDE.md forbids Claude attribution in commits.
+
+Known limitation: `wait_time` returns exact float seconds, so at the boundary floating-point rounding can make `try_acquire` fail by a tiny epsilon.
+
+An untracked `__pycache__/` directory from the test run is left uncommitted.

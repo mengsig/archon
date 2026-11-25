@@ -1,0 +1,3 @@
+Implemented `extract()` with complete batch validation before filesystem changes, including name rules, duplicates and path collisions, root validation, symlink checks, and existing-target conflicts. Added focused tests for those cases and literal percent signs.
+
+All 8 tests pass. Working tree is clean. Commit: `bd35224` (`Implement safe extraction validation`).

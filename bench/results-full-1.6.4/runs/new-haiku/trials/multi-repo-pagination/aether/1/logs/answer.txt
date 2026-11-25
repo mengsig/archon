@@ -1,0 +1,29 @@
+Added cursor pagination to GET /items in inventory-api and updated inventory-client's listItems to follow it. Both changes are committed in their own repos (inventory-api 8509b7c, inventory-client 1e85627), with READMEs updated.
+
+API: `limit` (1..100, default 20) and `cursor` are optional. The cursor is base64url of the last returned id, and each page is the items with a larger id. The body is {"items", "next_cursor"}, and next_cursor is null on the last page. Invalid limit or cursor returns 400 with {"error"}. Tests: `python3 -m unittest` passes, 7/7, including full cursor walks and invalid-input cases.
+
+Client: listItems sends no cursor on the first request, then passes next_cursor back unchanged until it is null or absent. It throws if the response has no items array, or if the server repeats a cursor, so a faulty server cannot loop forever. Tests: `npm test` passes, 6/6, including multi-page, absent-cursor and repeated-cursor cases. An end-to-end run of the client against the real api_cli.py returns all 57 items in order.
+
+Decisions I made:
+- The cursor is opaque base64 of the last id, rather than a raw id, so clients can't rely on its format.
+- The commits have no Co-Authored-By trailer. The attribution reminder asked for one, but the repo's CLAUDE.md says not to attribute commits to Claude, and I followed the CLAUDE.md.
+- The repos are separate git repos, so I committed each one separately.
+
+Pagination is in place on `GET /items`, and `listItems` in the client follows it to return every item in order. Both repos are committed (inventory-api `8509b7c`, inventory-client `1e85627`), their READMEs are updated, and both test suites pass.
+
+**API (`inventory-api`)**
+- `limit` is 1..100, defaulting to 20. `cursor` is optional.
+- The body is `{"items": [...], "next_cursor": ...}`, and `next_cursor` is `null` on the last page.
+- An invalid `limit` or `cursor` returns 400 with `{"error": "..."}`.
+- `python3 -m unittest`: 7/7 pass. The new tests cover the default page size, a full cursor walk, and invalid `limit` and `cursor` values.
+
+**Client (`inventory-client`)**
+- `listItems` sends no cursor on the first request, then passes `next_cursor` back unchanged until it is `null` or absent.
+- It throws if a response has no `items` array, or if the server repeats a cursor, so a faulty server can't make it loop forever.
+- `npm test`: 6/6 pass, including multi-page, absent-cursor and repeated-cursor cases.
+- I also ran the client against the real `api_cli.py`, and it returned all 57 items in order.
+
+**Choices I made**
+- The cursor is base64url of the last returned id. Clients are told to treat it as opaque.
+- The commits have no `Co-Authored-By` trailer. The attribution reminder asked for one, but your CLAUDE.md says not to attribute commits to Claude, and I followed the CLAUDE.md.
+- I removed the `__pycache__/` that my test runs created in `inventory-api`.

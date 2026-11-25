@@ -1,0 +1,9 @@
+Implemented and committed cursor pagination in both repositories.
+
+- API accepts `limit` (default 20, range 1–100) and opaque cursors, returns ID-ordered pages with `next_cursor`, and rejects invalid parameters with 400.
+- Client follows cursors until `next_cursor` is null or absent, passing each cursor through unchanged.
+- Updated both READMEs and added pagination coverage.
+
+Checks passed: `python3 -m unittest` (5 tests) and `npm test` (4 tests).
+
+Commits: API `694cf7c`; client `8c9ba7f`. The API test run left an untracked `inventory-api/__pycache__/` directory.

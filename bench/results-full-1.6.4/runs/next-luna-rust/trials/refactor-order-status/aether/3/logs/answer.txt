@@ -1,0 +1,3 @@
+Implemented and committed as `958a75f` (`Refactor order status to enum`). `OrderStatus` now drives order lifecycle checks, parsing, and reports while preserving existing error messages and report ordering.
+
+`cargo test` passed (3 integration tests). The working tree is clean.

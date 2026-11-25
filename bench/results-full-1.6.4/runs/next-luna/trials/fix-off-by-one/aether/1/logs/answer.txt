@@ -1,0 +1,3 @@
+Fixed the window range so it includes the final valid window and returns an empty list when `size` exceeds the input length.
+
+`python3 -m unittest` passes all 3 tests. Committed as `243a6b9` (`Fix sliding window boundary`).

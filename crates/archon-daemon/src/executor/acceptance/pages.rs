@@ -107,7 +107,18 @@ fn pairs(
             &format!("{index}-{pair_index}-reference"),
         )?;
         let after = copy(&built, directory, &format!("{index}-{pair_index}-built"))?;
-        body.push_str(&format!("<p class=meta>{} × {} · {} · {}</p><div class=pair><figure><figcaption>Approved reference</figcaption><img src='{before}' alt='Approved reference for {}'></figure><figure><figcaption>Built / proposed</figcaption><img src='{after}' alt='Built evidence for {}'></figure></div>", pair.viewport.width, pair.viewport.height, escape(&pair.theme), escape(&pair.state), escape(&result.id), escape(&result.id)));
+        // A viewport-only reference (a live design's) owes no theme or
+        // state: the line names only what the pair records.
+        let meta = [
+            format!("{} × {}", pair.viewport.width, pair.viewport.height),
+            escape(&pair.theme),
+            escape(&pair.state),
+        ]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ");
+        body.push_str(&format!("<p class=meta>{meta}</p><div class=pair><figure><figcaption>Approved reference</figcaption><img src='{before}' alt='Approved reference for {}'></figure><figure><figcaption>Built / proposed</figcaption><img src='{after}' alt='Built evidence for {}'></figure></div>", escape(&result.id), escape(&result.id)));
     }
     Ok(())
 }

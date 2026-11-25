@@ -50,6 +50,7 @@ pub(super) async fn record(
         Request::SetSettings { repo, .. } | Request::ResetSettings { repo } => {
             let old: archon_core::settings::SettingsView = serde_json::from_value(before.clone())?;
             Some(Request::SetSettings {
+                legacy_proposals: false,
                 repo: repo.clone(),
                 settings: old.scoped,
             })
@@ -90,6 +91,7 @@ pub(super) async fn record(
         Request::SetCaps { .. } => {
             let old: archon_core::settings::SettingsView = serde_json::from_value(before.clone())?;
             Some(Request::SetSettings {
+                legacy_proposals: false,
                 repo: None,
                 settings: old.scoped,
             })

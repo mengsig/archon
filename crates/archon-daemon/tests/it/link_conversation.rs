@@ -335,6 +335,7 @@ async fn answer_from_the_phone(harness: &Harness, number: u64) {
         role: DeviceRole::Operator,
     };
     let say = Request::Say {
+        command_id: None,
         text: format!("/answer {number} yes"),
         images: Vec::new(),
     };
@@ -413,6 +414,55 @@ async fn a_socket_command_reaches_the_conversation_once() {
     );
     let last = harness.ctx.store.lock().await.last_feed_seq().unwrap();
     assert_eq!(harness.kv(posts::POSTED_KEY).await, Some(last.to_string()));
+    poster.abort();
+}
+
+#[tokio::test]
+async fn paired_commands_keep_their_ids_through_conversation_delivery() {
+    use archon_core::notify::FeedEntry;
+    let harness = harness().await;
+    let poster = start_posting(&harness).await;
+    for id in ["phone-one", "phone-two"] {
+        let device = WelcomeDevice {
+            id: id.into(),
+            name: id.into(),
+            role: DeviceRole::Operator,
+        };
+        let say = Request::Say {
+            command_id: Some(id.into()),
+            text: "/answer 99 yes".into(),
+            images: vec![],
+        };
+        assert!(matches!(
+            handlers::handle_device(&harness.ctx, &device, say).await,
+            Ok(Reply::Ok)
+        ));
+    }
+    harness
+        .eventually("both command echoes", || async {
+            appended(&harness).len() >= 4
+        })
+        .await;
+    let posted = appended(&harness);
+    assert_eq!(posted[0].0, "**Operator (phone-one):** /answer 99 yes");
+    assert_eq!(posted[2].0, "**Operator (phone-two):** /answer 99 yes");
+    let feed = harness.ctx.store.lock().await.feed_after(0, 50).unwrap();
+    let results: Vec<_> = feed
+        .iter()
+        .filter_map(|row| match &row.entry {
+            FeedEntry::System {
+                command_id,
+                command_result: Some(result),
+                text,
+            } => {
+                assert!(text.starts_with("Refused: /answer"), "{text}");
+                assert!(!result.is_empty());
+                command_id.as_deref()
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results, ["phone-one", "phone-two"]);
     poster.abort();
 }
 

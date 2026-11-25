@@ -12,7 +12,7 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelPlan};
 use archon_core::ports::{DescendantState, resumed_reply_outcome};
-use archon_core::protocol::Request;
+use archon_core::protocol::{Reply, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{PipelineRun, RecordRepair, StageOutcome, StageRun, StageState};
 use archon_core::steer::Steer;
@@ -222,6 +222,173 @@ async fn learned_as_three_attempts(h: &Harness, run: &PipelineRun) {
     assert_eq!(attempts("implement"), Some(3), "{outcome:?}");
     assert_eq!(outcome.review_rounds, 3);
     assert!(outcome.is_win(), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn a_review_stage_records_its_verdict_and_the_next_attempts_resolution() {
+    let h = harness().await;
+    add_origin(&h);
+    let _gh = FakeGh::install(&h);
+    let (item, _) = implemented(&h, "add a greeting").await;
+    let first = running(&h, "review").await;
+    let workspace = h.run(&item.id).await.workspace;
+    let head = git(&workspace, &["rev-parse", "HEAD"]);
+    let failed = StageOutcome::Completed {
+        summary: FINDINGS.into(),
+        structured: Some(serde_json::json!({
+            "verdict": "fail", "head": head,
+            "findings": [{"title": FINDINGS, "blocking": true}]
+        })),
+    };
+    h.settle_running(|_| failed.clone()).await;
+    h.dispatch().await;
+    let fix = running(&h, "implement").await;
+    answers(&h, &fix, "added tests/greet.rs").await;
+    let second = running(&h, "review").await;
+    let id = format!("{}:1", agent(&first));
+    let request = h.backend.requests().last().unwrap().objective.clone();
+    assert!(
+        request.contains(&format!("- {id}: {FINDINGS}")),
+        "{request}"
+    );
+    assert!(
+        request.contains(&head) && request.contains("new delta"),
+        "{request}"
+    );
+    let passed = StageOutcome::Completed {
+        summary: "The greeting is tested".into(),
+        structured: Some(serde_json::json!({
+            "verdict": "pass", "head": git(&workspace, &["rev-parse", "HEAD"]),
+            "base": head, "findings": [], "resolved_findings": [id]
+        })),
+    };
+    h.settle_running(|_| passed.clone()).await;
+    let store = h.ctx.store.lock().await;
+    let before = store.stage_run(&first.id).unwrap().structured.unwrap();
+    let after = store.stage_run(&second.id).unwrap().structured.unwrap();
+    let previous = &before["review_rounds"]["rounds"][0]["reviews"][0];
+    assert_eq!(previous["verdict"], "fail");
+    assert_eq!(previous["model"], REVIEW_MODEL);
+    assert_eq!(previous["finding_count"], 1);
+    assert_eq!(previous["next_round_resolved"], true);
+    let finding = &after["review_rounds"]["findings"][&id];
+    assert_eq!(finding["found_in"]["stage"], first.id.as_str());
+    assert_eq!(finding["resolved_in"]["stage"], second.id.as_str());
+    assert_eq!(finding["resolved_in"]["number"], 2);
+}
+
+#[tokio::test]
+async fn reopening_a_resolved_id_across_attempts_preserves_its_origin_and_severity() {
+    use serde_json::json;
+
+    let h = Harness::new().await;
+    h.add_pipeline(
+        REVIEWED,
+        &REVIEWED_TOML.replace("max_loops = 2", "max_loops = 3"),
+    );
+    add_origin(&h);
+    let _gh = FakeGh::install(&h);
+    let (item, _) = implemented(&h, "repair a recurring defect").await;
+    let workspace = h.run(&item.id).await.workspace;
+    let first = running(&h, "review").await;
+    let id = format!("{}:1", agent(&first));
+    let original = json!([{"title": FINDINGS, "blocking": true}]);
+    record_review_attempt(&h, &workspace, original, json!([]), false).await;
+    let other = running(&h, "review").await;
+    let other_id = format!("{}:1", agent(&other));
+    let different = json!([{"title": "another defect", "blocking": true}]);
+    let resolved = record_review_attempt(&h, &workspace, different, json!([id]), false).await;
+    assert_eq!(resolved["findings"][&id]["resolved_in"]["number"], 2);
+    let prompt = h.backend.requests().last().unwrap().objective.clone();
+    assert!(prompt.contains(&other_id));
+    assert!(!prompt.contains(&format!("- {id}:")));
+    let reopened = json!([{"title": FINDINGS, "blocking": false, "id": id}]);
+    let record = record_review_attempt(&h, &workspace, reopened, json!([other_id]), false).await;
+    assert_eq!(
+        record["rounds"][0]["reviews"][0]["finding_ids"],
+        json!([id])
+    );
+    let finding = &record["findings"][&id];
+    assert_eq!(finding["found_in"]["stage"], first.id.as_str());
+    assert_eq!(finding["blocking"], true);
+    assert!(finding["resolved_in"].is_null());
+    let record = record_review_attempt(&h, &workspace, json!([]), json!([id]), true).await;
+    assert_eq!(record["findings"][&id]["resolved_in"]["number"], 4);
+}
+
+async fn record_review_attempt(
+    h: &Harness,
+    workspace: &std::path::Path,
+    findings: serde_json::Value,
+    resolved: serde_json::Value,
+    pass: bool,
+) -> serde_json::Value {
+    let stage = running(h, "review").await;
+    let verdict = if pass { "pass" } else { "fail" };
+    let outcome = StageOutcome::Completed {
+        summary: verdict.into(),
+        structured: Some(serde_json::json!({
+            "verdict": verdict, "head": git(workspace, &["rev-parse", "HEAD"]),
+            "findings": findings, "resolved_findings": resolved,
+        })),
+    };
+    h.settle_running(|_| outcome.clone()).await;
+    let stored = h.ctx.store.lock().await.stage_run(&stage.id).unwrap();
+    assert!(stored.state.is_terminal());
+    if !pass {
+        h.dispatch().await;
+        answers(
+            h,
+            &running(h, "implement").await,
+            "fixed the reported issue",
+        )
+        .await;
+    }
+    let record = stored.structured.unwrap()["review_rounds"].clone();
+    assert!(record["findings"].is_object());
+    record
+}
+
+#[tokio::test]
+async fn evidence_counts_each_turn_of_the_kept_implementer_once() {
+    let h = harness().await;
+    let (item, first) = implemented(&h, "charge the repair").await;
+    let lead = agent(&first);
+    let usage = |cost_usd| archon_queue::store::SpendRow {
+        agent: lead.clone(),
+        item: Some(item.id.clone()),
+        cost_usd,
+        cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: Some(true),
+        estimated_cost_usd: 0.0,
+        input_tokens: 1,
+        output_tokens: 1,
+        at: archon_core::now(),
+    };
+    h.ctx.store.lock().await.record_spend(&usage(1.25)).unwrap();
+    let fix = sent_back(&h).await;
+    assert_eq!(agent(&fix), lead);
+    h.ctx.store.lock().await.record_spend(&usage(3.25)).unwrap();
+    answers(&h, &fix, "applied the findings").await;
+
+    let query = archon_core::model_evidence::ModelEvidenceQuery {
+        stage: Some("implement".into()),
+        ..Default::default()
+    };
+    let Reply::ModelEvidence(evidence) = h.cli(Request::ModelEvidence(query)).await.unwrap() else {
+        panic!("model evidence reply");
+    };
+    assert_eq!(evidence.rows[0].median_cost_usd, Some(1.625));
+    assert_eq!(evidence.rows[0].p90_cost_usd, Some(2.0));
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .unlinked_spend()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

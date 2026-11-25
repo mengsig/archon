@@ -1,0 +1,974 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W88ZZMXGVHXXZK6QV1R5QR",
+      "repo": "repo_01M7W87ZA3TPFHFT8S5P1TAJ3S",
+      "pipeline": "direct",
+      "title": "TT-101: reject impossible due dates",
+      "brief": "Implement TT-101 from BACKLOG.md in tasktracker.dates.parse_due(text, today).\n\nAcceptance criteria:\n- Impossible calendar dates (including 2026-02-30, 2025-02-29, 2026-04-31, 2026-13-01, 2026-00-10) raise InvalidDate, a ValueError subclass defined in tasktracker.dates; message contains original text.\n- Any unsupported form raises InvalidDate too.\n- +Nd means N days after today; +0d is today. Negative and unsigned offsets (-3d, 3d) raise InvalidDate.\n- today and tomorrow continue working; matching is case-insensitive and ignores surrounding whitespace.\n\nUse only Python's standard library. Add tests for this ticket and keep the existing suite passing. Run `python3 -m unittest discover -s tests -t .` before finishing. Commit this ticket's changes separately; do not bundle another ticket.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W88ZZMXGVHXXZK6QV1R5QR",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T10:33:15.530857606Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T10:33:15.552139925Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T10:33:15.530857606Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W891020CJM9WTPV5HJPTSB",
+        "summary": "Implemented TT-101: parse_due now raises InvalidDate for unsupported forms and impossible calendar dates while preserving today/tomorrow and nonnegative +Nd offsets. Added focused tests. The full unittest suite (7 tests) and git diff --check pass; committed as 889c59b5b1c65f47ecaff7b1124f602df925574a. Independent review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8ARRD43CE4YHTNW19Z1YG)\n\nSHIPPED: commit 889c59b5b1c65f47ecaff7b1124f602df925574a on the run branch"
+      },
+      "created_at": "2026-11-20T10:33:15.508622247Z",
+      "updated_at": "2026-11-20T10:35:11.893836137Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W891020CJM9WTPV5HJPTSB",
+        "item": "qi_01M7W88ZZMXGVHXXZK6QV1R5QR",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W891AZRPGHS8GE5JNJMAPX",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/ceb02364567b84d57402cd0c/.archon/data/worktrees/long-backlog/qi_01M7W88ZZMXGVHXXZK6QV1R5QR",
+        "branch": "archon/6qv1r5qr-tt-101-reject-impossible-due-dates",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TT-101: parse_due now raises InvalidDate for unsupported forms and impossible calendar dates while preserving today/tomorrow and nonnegative +Nd offsets. Added focused tests. The full unittest suite (7 tests) and git diff --check pass; committed as 889c59b5b1c65f47ecaff7b1124f602df925574a. Independent review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8ARRD43CE4YHTNW19Z1YG)\n\nSHIPPED: commit 889c59b5b1c65f47ecaff7b1124f602df925574a on the run branch"
+        },
+        "cost_usd": 0.01232144,
+        "started_at": "2026-11-20T10:33:16.722054873Z",
+        "finished_at": "2026-11-20T10:35:11.893836137Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W891A4FTZF62S2EM188SE7",
+        "run": "prun_01M7W891020CJM9WTPV5HJPTSB",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W891GH7ET6ZQ936Z9BF5N5",
+        "aether_task": "tsk_01M7W891GH92F5JE4PNG43RS57",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented TT-101: parse_due now raises InvalidDate for unsupported forms and impossible calendar dates while preserving today/tomorrow and nonnegative +Nd offsets. Added focused tests. The full unittest suite (7 tests) and git diff --check pass; committed as 889c59b5b1c65f47ecaff7b1124f602df925574a. Independent review passed with no findings. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest discover -s tests -t . (7 tests, pass)",
+            "git diff --check (pass)"
+          ],
+          "commit": "889c59b5b1c65f47ecaff7b1124f602df925574a",
+          "evidence": [
+            {
+              "after": ".......\n----------------------------------------------------------------------\nRan 7 tests in 0.001s\n\nOK",
+              "before": "2026-02-28\nValueError: unrecognised due date: 3d",
+              "caption": "Before: 2026-02-30 was silently clamped to 2026-02-28; unsupported 3d raised plain ValueError.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "889c59b5b1c65f47ecaff7b1124f602df925574a",
+          "pr": {
+            "body": "Defined InvalidDate as a ValueError subclass in tasktracker.dates. ISO dates are passed to datetime.date without clamping; invalid dates are wrapped in InvalidDate with the original text. Unsupported syntax raises InvalidDate directly. Added tests for the specified impossible dates, unsupported/negative/unsigned offsets, +0d, and case-insensitive trimmed keywords. Verified with the full unittest suite (7 tests) and git diff --check; both pass. No additional dependencies or assumptions.",
+            "summary": "Reject invalid and impossible due-date input with InvalidDate. Before: invalid calendar dates were silently clamped and unsupported input raised plain ValueError; now: due-date validation is strict and callers get a consistent exception.",
+            "title": "Reject impossible due dates"
+          },
+          "review": {
+            "reviewed_head": "889c59b5b1c65f47ecaff7b1124f602df925574a",
+            "reviewer_agents": [
+              "agt_01M7W8ARRD43CE4YHTNW19Z1YG"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W8ARRD43CE4YHTNW19Z1YG",
+                "base": "79ea1b430a3449714bc99e30fea141bdfc3b3588",
+                "findings": 0,
+                "head": "889c59b5b1c65f47ecaff7b1124f602df925574a",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W8ARRD43CE4YHTNW19Z1YG"
+            ],
+            "risk": {
+              "level": "medium",
+              "reviewer": "agt_01M7W8ARRD43CE4YHTNW19Z1YG",
+              "why": "Reviewer confirmed the contained due-date behavior change and test coverage; no findings."
+            },
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained due-date parsing behavior change in tasktracker/dates.py with focused tests in tests/test_basic.py. Full suite passes and independent review found no issues. The change refines an existing interface's exception behavior."
+          },
+          "tree": "b0bc342bb9c3ee674dcf089029d1a5ddb4f432cf"
+        },
+        "cost_usd": 0.01232144,
+        "started_at": "2026-11-20T10:33:16.868436547Z",
+        "finished_at": "2026-11-20T10:35:08.752923733Z"
+      }
+    ],
+    "spent_usd": 0.01232144,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W891A4FTZF62S2EM188SE7": {
+        "direct_usd": 0.00917366,
+        "delegated_usd": 0.0031477800000000006,
+        "agents": [
+          {
+            "agent": "agt_01M7W8ARRD43CE4YHTNW19Z1YG",
+            "parent": "agt_01M7W891GH7ET6ZQ936Z9BF5N5",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.0031477800000000006
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T10:33:15.530857606Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T10:33:15.552139925Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T10:33:15.530857606Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W88ZXHGQGQQ8SRZ3Y9C9MC",
+      "repo": "repo_01M7W87ZA3TPFHFT8S5P1TAJ3S",
+      "pipeline": "direct",
+      "title": "TT-104: add TaskStore undo",
+      "brief": "Implement TT-104 from BACKLOG.md in tasktracker.store.TaskStore.\n\nAcceptance criteria:\n- Add undo() that reverts the most recent not-yet-undone add, complete or delete; repeated calls walk backward across all operation kinds.\n- Undo add removes that task; undo complete reopens it; undo delete restores it exactly under the same id.\n- IDs are never reused, including after undoing an add.\n- With no history left, raise NothingToUndo defined in tasktracker.store.\n- Failed operations (for example completing an unknown id) are not recorded.\n\nUse only Python's standard library. Add tests for this ticket and keep the existing suite passing. Run `python3 -m unittest discover -s tests -t .` before finishing. Commit this ticket's changes separately; do not bundle another ticket.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W88ZXHGQGQQ8SRZ3Y9C9MC",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T10:33:15.444262333Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T10:33:15.465796196Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T10:33:15.444262333Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W890JNRG4KN84W7BSY3M2K",
+        "summary": "Implemented TaskStore undo across add, complete, and delete, with LIFO history, exact deleted-task restoration, monotonic IDs, and NothingToUndo. Added focused tests; the required unittest suite passes (7 tests), and git diff --check is clean. Committed as 7ab7228289a103b9be8b24f980c157b7e4fc783a; no open issues.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8B2F249HY76DMA645RTC8)\n\nSHIPPED: commit 7ab7228289a103b9be8b24f980c157b7e4fc783a on the run branch"
+      },
+      "created_at": "2026-11-20T10:33:15.441472053Z",
+      "updated_at": "2026-11-20T10:35:18.478786960Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W890JNRG4KN84W7BSY3M2K",
+        "item": "qi_01M7W88ZXHGQGQQ8SRZ3Y9C9MC",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W891BV5EX8F0AMS8YWT9S4",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/ceb02364567b84d57402cd0c/.archon/data/worktrees/long-backlog/qi_01M7W88ZXHGQGQQ8SRZ3Y9C9MC",
+        "branch": "archon/z3y9c9mc-tt-104-add-taskstore-undo",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TaskStore undo across add, complete, and delete, with LIFO history, exact deleted-task restoration, monotonic IDs, and NothingToUndo. Added focused tests; the required unittest suite passes (7 tests), and git diff --check is clean. Committed as 7ab7228289a103b9be8b24f980c157b7e4fc783a; no open issues.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8B2F249HY76DMA645RTC8)\n\nSHIPPED: commit 7ab7228289a103b9be8b24f980c157b7e4fc783a on the run branch"
+        },
+        "cost_usd": 0.01292094,
+        "started_at": "2026-11-20T10:33:16.312893152Z",
+        "finished_at": "2026-11-20T10:35:18.478786960Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W8918TDDAVNB2CGCSGVFFR",
+        "run": "prun_01M7W890JNRG4KN84W7BSY3M2K",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W891HD3VRMBNT38BSVVCMD",
+        "aether_task": "tsk_01M7W891HEW5M09N4XRG0M14TB",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented TaskStore undo across add, complete, and delete, with LIFO history, exact deleted-task restoration, monotonic IDs, and NothingToUndo. Added focused tests; the required unittest suite passes (7 tests), and git diff --check is clean. Committed as 7ab7228289a103b9be8b24f980c157b7e4fc783a; no open issues.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest discover -s tests -t . (7 tests passed; baseline: 4 passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "7ab7228289a103b9be8b24f980c157b7e4fc783a",
+          "evidence": [
+            {
+              "after": "Ran 7 tests in 0.000s\nOK",
+              "before": "Ran 4 tests in 0.000s\nOK",
+              "caption": "Baseline and final suite results show the new undo cases pass.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "7ab7228289a103b9be8b24f980c157b7e4fc783a",
+          "pr": {
+            "body": "Added a private operation history to tasktracker.store.TaskStore and NothingToUndo. Completion records the previous status; deletion retains the original Task object for restoration. Tests cover mixed operation order, exact object restoration, exhausted history, failed operations, and ID monotonicity. Verification: python3 -m unittest discover -s tests -t . (7 passed); git diff --check (passed). No dependencies added.",
+            "summary": "Added undo for task additions, completions, and deletions. Before: TaskStore operations could not be reversed; now they unwind in LIFO order, while IDs remain unique.",
+            "title": "Add TaskStore undo support"
+          },
+          "review": {
+            "reviewed_head": "7ab7228289a103b9be8b24f980c157b7e4fc783a",
+            "reviewer_agents": [
+              "agt_01M7W8B2F249HY76DMA645RTC8"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W8B2F249HY76DMA645RTC8",
+                "base": "79ea1b430a3449714bc99e30fea141bdfc3b3588",
+                "findings": 0,
+                "head": "7ab7228289a103b9be8b24f980c157b7e4fc783a",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W8B2F249HY76DMA645RTC8"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M7W8B2F249HY76DMA645RTC8",
+            "why": "Contained behavior change in TaskStore and focused tests; no persistence, concurrency, or cross-cutting changes. Independent review passed without findings."
+          },
+          "tree": "15ee6c84da02f614da7887efd04f6e662b40807d"
+        },
+        "cost_usd": 0.01292094,
+        "started_at": "2026-11-20T10:33:16.826399197Z",
+        "finished_at": "2026-11-20T10:35:14.934721753Z"
+      }
+    ],
+    "spent_usd": 0.01292094,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W8918TDDAVNB2CGCSGVFFR": {
+        "direct_usd": 0.00957544,
+        "delegated_usd": 0.0033455000000000004,
+        "agents": [
+          {
+            "agent": "agt_01M7W8B2F249HY76DMA645RTC8",
+            "parent": "agt_01M7W891HD3VRMBNT38BSVVCMD",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.0033455000000000004
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T10:33:15.444262333Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T10:33:15.465796196Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T10:33:15.444262333Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W88ZSYZXAMJZ5DR9TMJ1KY",
+      "repo": "repo_01M7W87ZA3TPFHFT8S5P1TAJ3S",
+      "pipeline": "direct",
+      "title": "TT-103: search query syntax",
+      "brief": "Implement TT-103 from BACKLOG.md in tasktracker.search.search(tasks, query).\n\nAcceptance criteria:\n- Split into whitespace-delimited terms except inside double quotes; a quoted phrase such as \"fix login\" is one term. All terms must match (AND).\n- Bare words and phrases match title case-insensitively.\n- tag:NAME matches an exact tag case-insensitively.\n- status:open and status:done filter by status.\n- Unknown field:value terms, unknown statuses and unterminated quotes raise QueryError defined in tasktracker.search.\n- Empty/blank query matches all; preserve input order.\n\nUse only Python's standard library. Add tests for this ticket and keep the existing suite passing. Run `python3 -m unittest discover -s tests -t .` before finishing. Commit this ticket's changes separately; do not bundle another ticket.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W88ZSYZXAMJZ5DR9TMJ1KY",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T10:33:15.348443218Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T10:33:15.388262111Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T10:33:15.348443218Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W8908JKDS66JP3WGAZN1N8",
+        "summary": "Implemented TT-103 query syntax in tasktracker.search: whitespace terms with quoted phrases, case-insensitive title/tag/status matching, AND semantics, QueryError validation, blank-query matching, and input-order preservation. Added focused regression tests, including quoted text containing a colon. Full unittest discovery passed (6 tests), and git diff --check passed on the final tree. Committed as 8e0141bde81dd7a6a201e5a247e621f9a31b0b4d; no known gaps.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8BGQ3D6G3F6142ANDRQ02), codex/gpt-6-luna (agent agt_01M7W8EASXSS9WX9Z71AZ42HCR)\n\nSHIPPED: commit 8e0141bde81dd7a6a201e5a247e621f9a31b0b4d on the run branch"
+      },
+      "created_at": "2026-11-20T10:33:15.326565946Z",
+      "updated_at": "2026-11-20T10:37:34.013698533Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W8908JKDS66JP3WGAZN1N8",
+        "item": "qi_01M7W88ZSYZXAMJZ5DR9TMJ1KY",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W891BNV1FPV0151PVPEP6T",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/ceb02364567b84d57402cd0c/.archon/data/worktrees/long-backlog/qi_01M7W88ZSYZXAMJZ5DR9TMJ1KY",
+        "branch": "archon/r9tmj1ky-tt-103-search-query-syntax",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TT-103 query syntax in tasktracker.search: whitespace terms with quoted phrases, case-insensitive title/tag/status matching, AND semantics, QueryError validation, blank-query matching, and input-order preservation. Added focused regression tests, including quoted text containing a colon. Full unittest discovery passed (6 tests), and git diff --check passed on the final tree. Committed as 8e0141bde81dd7a6a201e5a247e621f9a31b0b4d; no known gaps.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8BGQ3D6G3F6142ANDRQ02), codex/gpt-6-luna (agent agt_01M7W8EASXSS9WX9Z71AZ42HCR)\n\nSHIPPED: commit 8e0141bde81dd7a6a201e5a247e621f9a31b0b4d on the run branch"
+        },
+        "cost_usd": 0.02313056,
+        "started_at": "2026-11-20T10:33:16.093259588Z",
+        "finished_at": "2026-11-20T10:37:34.013698533Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W8917G4AX4JMEXDQZ312C1",
+        "run": "prun_01M7W8908JKDS66JP3WGAZN1N8",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W891H1Q627392YP3G0XGB2",
+        "aether_task": "tsk_01M7W891H1Q627392YP3G0XGB3",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented TT-103 query syntax in tasktracker.search: whitespace terms with quoted phrases, case-insensitive title/tag/status matching, AND semantics, QueryError validation, blank-query matching, and input-order preservation. Added focused regression tests, including quoted text containing a colon. Full unittest discovery passed (6 tests), and git diff --check passed on the final tree. Committed as 8e0141bde81dd7a6a201e5a247e621f9a31b0b4d; no known gaps.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest discover -s tests -t . — passed (6 tests)",
+            "git diff --check — passed"
+          ],
+          "commit": "8e0141bde81dd7a6a201e5a247e621f9a31b0b4d",
+          "evidence": [
+            {
+              "after": "Ran `python3 -m unittest discover -s tests -t .`: Ran 6 tests; OK.",
+              "before": "search(tasks, \"fix\") returned [] for a task titled \"Fix login\".",
+              "caption": "Before: case-sensitive title search missed a differently cased word; after: the full suite passes with query syntax and regression coverage.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "8e0141bde81dd7a6a201e5a247e621f9a31b0b4d",
+          "pr": {
+            "body": "Implemented a standard-library tokenizer and parser in tasktracker/search.py. Terms split on whitespace outside quotes; quoted terms remain title phrases even when they contain colons. Bare title terms use case-insensitive substring matching, tag filters compare exact tags case-insensitively, and status filters accept open/done. Added tests for phrase/AND matching, case-insensitivity, tags, statuses, blank queries, input order, malformed quotes, unknown fields, and unknown statuses. Full unittest discovery passed (6 tests); git diff --check passed. No deviations or known limitations.",
+            "summary": "Added structured search query matching. Before: title search was case-sensitive and had no query syntax; now: quoted phrases, AND terms, exact tags, and status filters work case-insensitively, with invalid syntax raising QueryError.",
+            "title": "Implement search query syntax"
+          },
+          "review": {
+            "reviewed_head": "8e0141bde81dd7a6a201e5a247e621f9a31b0b4d",
+            "reviewer_agents": [
+              "agt_01M7W8BGQ3D6G3F6142ANDRQ02",
+              "agt_01M7W8EASXSS9WX9Z71AZ42HCR"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W8BGQ3D6G3F6142ANDRQ02",
+                "base": "79ea1b430a3449714bc99e30fea141bdfc3b3588",
+                "findings": 1,
+                "head": "4c501a4cf1be675ac6ae085c7a549a56da12be3e",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M7W8EASXSS9WX9Z71AZ42HCR",
+                "base": "4c501a4cf1be675ac6ae085c7a549a56da12be3e",
+                "findings": 0,
+                "head": "8e0141bde81dd7a6a201e5a247e621f9a31b0b4d",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W8BGQ3D6G3F6142ANDRQ02",
+              "agt_01M7W8EASXSS9WX9Z71AZ42HCR"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "medium confirmed by both reviewers",
+            "why": "Contained search behavior feature in tasktracker/search.py with regression tests in tests/test_basic.py. No persistence, security, or concurrency impact. Full suite and diff checks passed; initial review's blocking quote-parsing finding was fixed and a delta review passed."
+          },
+          "tree": "ffb18437e02f1f4b05520e4855ff7952644eb292"
+        },
+        "cost_usd": 0.02313056,
+        "started_at": "2026-11-20T10:33:16.784369897Z",
+        "finished_at": "2026-11-20T10:37:30.944297204Z"
+      }
+    ],
+    "spent_usd": 0.02313056,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W8917G4AX4JMEXDQZ312C1": {
+        "direct_usd": 0.01489218,
+        "delegated_usd": 0.00823838,
+        "agents": [
+          {
+            "agent": "agt_01M7W8BGQ3D6G3F6142ANDRQ02",
+            "parent": "agt_01M7W891H1Q627392YP3G0XGB2",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0028976
+          },
+          {
+            "agent": "agt_01M7W8EASXSS9WX9Z71AZ42HCR",
+            "parent": "agt_01M7W891H1Q627392YP3G0XGB2",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.005340780000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T10:33:15.348443218Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T10:33:15.388262111Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T10:33:15.348443218Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W88ZQS9DHXMHB9JNKWMKMD",
+      "repo": "repo_01M7W87ZA3TPFHFT8S5P1TAJ3S",
+      "pipeline": "direct",
+      "title": "TT-102: RFC 4180 CSV export",
+      "brief": "Implement TT-102 from BACKLOG.md in tasktracker.export.to_csv(tasks).\n\nAcceptance criteria:\n- Header is id,title,tags,status,due; one row per task in input order.\n- Tags are joined with ;, due date is ISO YYYY-MM-DD or empty.\n- A field containing comma, double quote, CR or LF is quoted; embedded double quotes are doubled. Other fields remain unquoted.\n- Every line, including header, ends in CRLF.\n\nUse only Python's standard library. Add tests for this ticket and keep the existing suite passing. Run `python3 -m unittest discover -s tests -t .` before finishing. Commit this ticket's changes separately; do not bundle another ticket.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W88ZQS9DHXMHB9JNKWMKMD",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T10:33:15.260714514Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T10:33:15.296546013Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T10:33:15.260714514Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W88ZSYZXAMJZ5DR9TMJ1KX",
+        "summary": "Implemented RFC 4180 CSV export with minimal field quoting and CRLF records, and added escaping and line-ending regression tests. The full unittest suite passes (6 tests); independent review passed with no findings. Committed as 5de688ec4725821df20cdc17354d765ed45ebf66; no work remains.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8AVY2KM3MYM16C63XPYQC)\n\nSHIPPED: commit 5de688ec4725821df20cdc17354d765ed45ebf66 on the run branch"
+      },
+      "created_at": "2026-11-20T10:33:15.257959763Z",
+      "updated_at": "2026-11-20T10:35:07.423591597Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W88ZSYZXAMJZ5DR9TMJ1KX",
+        "item": "qi_01M7W88ZQS9DHXMHB9JNKWMKMD",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W8906D86GMJG8F7NHQE84M",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/ceb02364567b84d57402cd0c/.archon/data/worktrees/long-backlog/qi_01M7W88ZQS9DHXMHB9JNKWMKMD",
+        "branch": "archon/jnkwmkmd-tt-102-rfc-4180-csv-export",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented RFC 4180 CSV export with minimal field quoting and CRLF records, and added escaping and line-ending regression tests. The full unittest suite passes (6 tests); independent review passed with no findings. Committed as 5de688ec4725821df20cdc17354d765ed45ebf66; no work remains.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8AVY2KM3MYM16C63XPYQC)\n\nSHIPPED: commit 5de688ec4725821df20cdc17354d765ed45ebf66 on the run branch"
+        },
+        "cost_usd": 0.011563620000000004,
+        "started_at": "2026-11-20T10:33:15.609583721Z",
+        "finished_at": "2026-11-20T10:35:07.423591597Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W89046CEYN09F6Z2V24PR6",
+        "run": "prun_01M7W88ZSYZXAMJZ5DR9TMJ1KX",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W89077HD37ZMVQHCW2A013",
+        "aether_task": "tsk_01M7W89077HD37ZMVQHCW2A014",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented RFC 4180 CSV export with minimal field quoting and CRLF records, and added escaping and line-ending regression tests. The full unittest suite passes (6 tests); independent review passed with no findings. Committed as 5de688ec4725821df20cdc17354d765ed45ebf66; no work remains.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest discover -s tests -t . (6 tests, OK)",
+            "git diff --check (passed)"
+          ],
+          "commit": "5de688ec4725821df20cdc17354d765ed45ebf66",
+          "evidence": [
+            {
+              "after": "'id,title,tags,status,due\\r\\n1,\"comma, quote \"\" and line\\nbreak\",a;b,open,2026-04-01\\r\\n2,plain,x,open,\\r\\n'",
+              "before": "'id,title,tags,status,due\\n1,plain,a,open,\\n'",
+              "caption": "Sample output before and after implementation, showing CRLF and quoted line breaks.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "5de688ec4725821df20cdc17354d765ed45ebf66",
+          "pr": {
+            "body": "`tasktracker/export.py` now uses the Python standard-library `csv.writer` with `lineterminator=\"\\r\\n\"` and `StringIO(newline=\"\")`, retaining the existing header, input order, semicolon-separated tags, and ISO due dates. `tests/test_basic.py` adds exact-output cases for commas, doubled quotes, LF, CR, unquoted plain fields, ordering, tags, due dates, and CRLF. Verified with `python3 -m unittest discover -s tests -t .` (6 tests, OK) and `git diff --check`. Assumption: the CSV interface continues to return a string as before. Independent review passed with no findings.",
+            "summary": "Made task CSV exports preserve fields containing commas, quotes, and line breaks. Now emits minimal RFC 4180 quoting and CRLF records; before, fields were joined directly and lines used LF.",
+            "title": "Implement RFC 4180 CSV export"
+          },
+          "review": {
+            "reviewed_head": "5de688ec4725821df20cdc17354d765ed45ebf66",
+            "reviewer_agents": [
+              "agt_01M7W8AVY2KM3MYM16C63XPYQC"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W8AVY2KM3MYM16C63XPYQC",
+                "base": "79ea1b430a3449714bc99e30fea141bdfc3b3588",
+                "findings": 0,
+                "head": "5de688ec4725821df20cdc17354d765ed45ebf66",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W8AVY2KM3MYM16C63XPYQC"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M7W8AVY2KM3MYM16C63XPYQC",
+            "why": "Contained behavior change to tasktracker.export.to_csv and its tests. The implementation uses only the standard library; no persistence, concurrency, or security areas were touched. Full suite passed and review found no issues."
+          },
+          "tree": "2ebe309475b7db44dc4e9a21473f70b7c060a46e"
+        },
+        "cost_usd": 0.011563620000000004,
+        "started_at": "2026-11-20T10:33:15.654793235Z",
+        "finished_at": "2026-11-20T10:35:05.684894383Z"
+      }
+    ],
+    "spent_usd": 0.011563620000000004,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W89046CEYN09F6Z2V24PR6": {
+        "direct_usd": 0.009368960000000004,
+        "delegated_usd": 0.00219466,
+        "agents": [
+          {
+            "agent": "agt_01M7W8AVY2KM3MYM16C63XPYQC",
+            "parent": "agt_01M7W89077HD37ZMVQHCW2A013",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.00219466
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T10:33:15.260714514Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T10:33:15.296546013Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T10:33:15.260714514Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

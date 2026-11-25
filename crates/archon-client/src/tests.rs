@@ -88,6 +88,8 @@ fn feed_item(seq: u64) -> FeedItem {
         seq,
         at: archon_core::now(),
         entry: FeedEntry::System {
+            command_id: None,
+            command_result: None,
             text: format!("item {seq}"),
         },
     }
@@ -216,6 +218,10 @@ fn a_refusal_reads_as_the_daemons_own_error() {
         ArchonError::Forbidden("operator only".into()),
         ArchonError::InvalidTransition("item is done".into()),
         ArchonError::Unavailable("not connected to aetherd".into()),
+        ArchonError::Design {
+            code: archon_core::error::DesignRefusal::Stale,
+            message: "the page changed since capture".into(),
+        },
     ];
     for daemon_error in daemon_errors {
         let local = refusal_error(ErrorReply::from(&daemon_error));
@@ -469,6 +475,7 @@ async fn a_daemon_that_stops_reading_times_out_queued_requests() {
     let mut stalled = tokio::task::JoinSet::new();
     // Far over the socket buffer, so the writer blocks on it...
     let big = Request::Say {
+        command_id: None,
         text: "x".repeat(8 << 20),
         images: Vec::new(),
     };

@@ -1,0 +1,311 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W76J0G7EH0WTTBBNBYVGY8",
+      "repo": "repo_01M7W75QDZK3F3MHYY6QWC7V0B",
+      "pipeline": "direct",
+      "title": "Implement the specified thread-safe ledger API",
+      "brief": "Implement ledger.py exactly according to SPEC.md, preserve documented API and every specified error/boundary case, and add focused tests beyond the existing basics. Use only the Python standard library. Run the focused test suite and commit the work on the assigned branch. Acceptance: constructor validation/copy behavior, amount validation before account lookup, unknown-account KeyError, atomic successful/failed transfers, same-account semantics, snapshot copy isolation, per-account overflow ceiling, and linearizable thread-safe transfers/snapshots without deadlock. Do not push or override git identity.\n\n## Amendment (2026-11-20 10:15 UTC)\n\nImplement SPEC.md including linearizable thread-safe transfers and snapshots; use a single per-ledger lock to make checks and writes atomic and avoid lock ordering/deadlock issues. Add focused tests for all specified validation, copy isolation, boundaries, same-account behavior and concurrency. Run the tests and commit on the assigned branch. Effort is capped at medium by model policy.\n\n## Amendment (2026-11-20 10:15 UTC)\n\nThis item continues with the stages of pipeline `adaptive` after its run failed at stage `implement`: ESCALATE: re-queue on adaptive. The requested implementation centers on thread-safety, locking, linearizable atomic transfers/snapshots, and opposite-transfer deadlock avoidance, which the stage contract explicitly requires escalating before edits or commits. Read SPEC.md, ledger.py, test_ledger.py; no AGENTS.md or contributor guidance files are present. Baseline `python -m unittest -v` ran 2 existing tests and both errored with NotImplementedError in Ledger.__init__. Worktree remains unchanged at base a6daf489f7ee8b436270712eddeba0ad3ec6b38f; no commit made. Please re-queue on adaptive for a…\nThe work that run committed is on branch `archon/bnbyvgy8-implement-the-specified-thread-safe-ledg` in this worktree. Continue from it; do not start over.\n",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W76J0G7EH0WTTBBNBYVGY8",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T10:15:13.972150454Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T10:15:13.972864440Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T10:15:13.972150454Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:concurrency",
+          "scope:api"
+        ],
+        "size": "small",
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:concurrency",
+              "scope:api"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W77ZTF16TNT81S59NGN5QB",
+        "summary": "Implemented the bounded thread-safe ledger and added validation, boundary, isolation, atomicity, and concurrency tests in ledger.py and test_ledger.py. `python -m unittest -v` passed all 9 tests; `git diff --check` passed. Committed as 4650be34574a417c2db3c359c9703886f74fbd8f with a clean worktree. Independent whole-change review passed with no findings.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W7B6803D9E2AA8XCM3P44X)\n\nSHIPPED: commit 4650be34574a417c2db3c359c9703886f74fbd8f on the run branch"
+      },
+      "created_at": "2026-11-20T10:14:27.088783818Z",
+      "updated_at": "2026-11-20T10:17:49.836134400Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W76J21BEXPV9Y6ETS98P1V",
+        "item": "qi_01M7W76J0G7EH0WTTBBNBYVGY8",
+        "pipeline": "direct",
+        "shipped": false,
+        "aether_run": "run_01M7W76KADCVAVJ003D6J65163",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/5e93df927f0af0122e4c902b/.archon/data/worktrees/quality-ledger-transfer/qi_01M7W76J0G7EH0WTTBBNBYVGY8",
+        "branch": "archon/bnbyvgy8-implement-the-specified-thread-safe-ledg",
+        "state": {
+          "state": "failed",
+          "stage_id": "implement",
+          "error": "ESCALATE: re-queue on adaptive. The requested implementation centers on thread-safety, locking, linearizable atomic transfers/snapshots, and opposite-transfer deadlock avoidance, which the stage contract explicitly requires escalating before edits or commits. Read SPEC.md, ledger.py, test_ledger.py; no AGENTS.md or contributor guidance files are present. Baseline `python -m unittest -v` ran 2 existing tests and both errored with NotImplementedError in Ledger.__init__. Worktree remains unchanged at base a6daf489f7ee8b436270712eddeba0ad3ec6b38f; no commit made. Please re-queue on adaptive for a concurrency-capable implementation stage."
+        },
+        "cost_usd": 0.0035691000000000004,
+        "started_at": "2026-11-20T10:14:27.363970127Z",
+        "finished_at": "2026-11-20T10:14:56.003401183Z"
+      },
+      {
+        "id": "prun_01M7W77ZTF16TNT81S59NGN5QB",
+        "item": "qi_01M7W76J0G7EH0WTTBBNBYVGY8",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W77ZZME2BGD62TRDJH4RVP",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/5e93df927f0af0122e4c902b/.archon/data/worktrees/quality-ledger-transfer/qi_01M7W76J0G7EH0WTTBBNBYVGY8",
+        "branch": "archon/bnbyvgy8-implement-the-specified-thread-safe-ledg",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the bounded thread-safe ledger and added validation, boundary, isolation, atomicity, and concurrency tests in ledger.py and test_ledger.py. `python -m unittest -v` passed all 9 tests; `git diff --check` passed. Committed as 4650be34574a417c2db3c359c9703886f74fbd8f with a clean worktree. Independent whole-change review passed with no findings.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W7B6803D9E2AA8XCM3P44X)\n\nSHIPPED: commit 4650be34574a417c2db3c359c9703886f74fbd8f on the run branch"
+        },
+        "cost_usd": 0.011897420000000006,
+        "started_at": "2026-11-20T10:15:14.068983250Z",
+        "finished_at": "2026-11-20T10:17:49.836134400Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W76K9752ZKP8J0E3E0BPAF",
+        "run": "prun_01M7W76J21BEXPV9Y6ETS98P1V",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W76KBGZ3PYJWMG1H2YQ6VJ",
+        "aether_task": "tsk_01M7W76KBGZ3PYJWMG1H2YQ6VK",
+        "state": {
+          "state": "failed",
+          "error": "ESCALATE: re-queue on adaptive. The requested implementation centers on thread-safety, locking, linearizable atomic transfers/snapshots, and opposite-transfer deadlock avoidance, which the stage contract explicitly requires escalating before edits or commits. Read SPEC.md, ledger.py, test_ledger.py; no AGENTS.md or contributor guidance files are present. Baseline `python -m unittest -v` ran 2 existing tests and both errored with NotImplementedError in Ledger.__init__. Worktree remains unchanged at base a6daf489f7ee8b436270712eddeba0ad3ec6b38f; no commit made. Please re-queue on adaptive for a concurrency-capable implementation stage."
+        },
+        "verdict": null,
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": null,
+        "structured": null,
+        "cost_usd": 0.0035691000000000004,
+        "started_at": "2026-11-20T10:14:28.391277784Z",
+        "finished_at": "2026-11-20T10:14:55.987779620Z"
+      },
+      {
+        "id": "stg_01M7W77ZYA861VMJFS53Y5CXB8",
+        "run": "prun_01M7W77ZTF16TNT81S59NGN5QB",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W7800X7VD8QME7ARJXEN4C",
+        "aether_task": "tsk_01M7W7800XN3PX7RQQ9P3SVP7P",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented the bounded thread-safe ledger and added validation, boundary, isolation, atomicity, and concurrency tests in ledger.py and test_ledger.py. `python -m unittest -v` passed all 9 tests; `git diff --check` passed. Committed as 4650be34574a417c2db3c359c9703886f74fbd8f with a clean worktree. Independent whole-change review passed with no findings.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (9 tests passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "4650be34574a417c2db3c359c9703886f74fbd8f",
+          "evidence": [
+            {
+              "caption": "Focused suite and diff validation on the final committed tree.",
+              "kind": "output",
+              "text": "Ran 9 tests in 0.005s\nOK\ngit diff --check: passed"
+            }
+          ],
+          "local_commit": "4650be34574a417c2db3c359c9703886f74fbd8f",
+          "pr": {
+            "body": "`ledger.py` validates built-in integer balances and transfer amounts, copies constructor input, and uses one per-ledger lock for account lookup, transfer checks and writes, and snapshots. `test_ledger.py` covers invalid inputs, validation order, unknown accounts, insufficient funds, overflow, same-account transfers, copy isolation, and bounded concurrent opposite transfers with concurrent snapshots. Verified with `python -m unittest -v` (9 passed) and `git diff --check` (passed) on 4650be34574a417c2db3c359c9703886f74fbd8f. A whole-change review read base a6daf489f7ee8b436270712eddeba0ad3ec6b38f through that head and passed with no findings. Assumes callers do not mutate the supplied dict concurrently during construction.",
+            "summary": "Implemented a thread-safe bounded ledger. Before: API raised NotImplementedError; now: validation, atomic transfers, safe snapshots, and concurrency behavior are implemented and covered.",
+            "title": "feat: implement thread-safe ledger transfers"
+          },
+          "review": {
+            "reviewed_head": "4650be34574a417c2db3c359c9703886f74fbd8f",
+            "reviewer_agents": [
+              "agt_01M7W7B6803D9E2AA8XCM3P44X"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W7B6803D9E2AA8XCM3P44X",
+                "base": "a6daf489f7ee8b436270712eddeba0ad3ec6b38f",
+                "findings": 0,
+                "head": "4650be34574a417c2db3c359c9703886f74fbd8f",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W7B6803D9E2AA8XCM3P44X"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "Concurrency and locking behavior changed in ledger.py. The focused suite covers atomic transfers, snapshots, boundaries, and opposite-transfer completion; the independent review found no issues."
+          },
+          "tree": "0aa28d906cd191ceeadb335f37064fca265ca257"
+        },
+        "cost_usd": 0.011897420000000006,
+        "started_at": "2026-11-20T10:15:14.122277137Z",
+        "finished_at": "2026-11-20T10:17:47.408499533Z"
+      }
+    ],
+    "spent_usd": 0.015466520000000006,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W77ZYA861VMJFS53Y5CXB8": {
+        "direct_usd": 0.010020580000000005,
+        "delegated_usd": 0.0018768400000000005,
+        "agents": [
+          {
+            "agent": "agt_01M7W7B6803D9E2AA8XCM3P44X",
+            "parent": "agt_01M7W7800X7VD8QME7ARJXEN4C",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0018768400000000005
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T10:15:13.972150454Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T10:15:13.972864440Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T10:15:13.972150454Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "steers": [
+      {
+        "at": "2026-11-20T10:15:13.972906517Z",
+        "by": "orchestrator",
+        "what": "amended the brief; switched the stages still to run to `adaptive`; queued it again on its branch",
+        "note": "Implement SPEC.md including linearizable thread-safe transfers and snapshots; use a single per-ledger lock to make checks and writes atomic and avoid lock ordering/deadlock issues. Add focused tests for all specified validation, copy isolation, boundaries, same-account behavior and concurrency. Run the tests and commit on the assigned branch. Effort is capped at medium by model policy."
+      }
+    ],
+    "switched_to": "adaptive"
+  }
+]

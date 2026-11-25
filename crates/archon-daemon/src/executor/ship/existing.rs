@@ -46,14 +46,14 @@ impl Locks {
 
 /// Push `commit` onto the head branch of `onto`'s pull request, which must
 /// still be at its frozen head or one `commit` holds, as the repository's
-/// GitHub login when it has one, and return that pull request's URL once
+/// GitHub login when it has one, and return the pull request once
 /// GitHub shows `commit` as its head.
 pub(super) async fn deliver(
     ctx: &DaemonContext,
     repo: &Repo,
     onto: &OntoPullRequest,
     commit: &str,
-) -> Result<Result<String, String>, ArchonError> {
+) -> Result<Result<gh::PullRequest, String>, ArchonError> {
     assert!(stack::is_commit_id(commit), "the checked commit");
     assert!(stack::is_commit_id(&onto.head_sha), "frozen at enqueue");
     assert_ne!(
@@ -255,7 +255,7 @@ async fn confirm(
     repo: &Repo,
     onto: &OntoPullRequest,
     commit: &str,
-) -> Result<Result<String, String>, ArchonError> {
+) -> Result<Result<gh::PullRequest, String>, ArchonError> {
     let url = onto.pr.url();
     let viewed = match gh::view_headed(binary, repo, &url).await {
         Ok(viewed) => viewed,
@@ -270,15 +270,15 @@ async fn confirm(
             onto.head_ref, viewed.pr.state, viewed.pr.head_ref_name
         )));
     }
-    let Some(head) = viewed.pr.head_ref_oid else {
+    let Some(head) = viewed.pr.head_ref_oid.as_deref() else {
         return Err(ArchonError::Unavailable(format!(
             "GitHub gave no head commit for {url}"
         )));
     };
     if head == commit {
-        return Ok(Ok(url));
+        return Ok(Ok(viewed.pr));
     }
-    if head == onto.head_sha || held_by(&repo.path, &head, commit).await? {
+    if head == onto.head_sha || held_by(&repo.path, head, commit).await? {
         return Err(ArchonError::Unavailable(format!(
             "GitHub still shows {head} as the head of {url} after the push of {commit}"
         )));

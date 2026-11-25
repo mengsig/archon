@@ -1,0 +1,14 @@
+Queued as **qi_01M7W301RRKGSQA7KYWRZM33W6** on the `feature-token-bucket` local-ship repository. The work includes implementing the spec, adding tests for uncovered edge cases, running the suite, and committing the change.
+
+Done: Implement SPEC.md rate limiter in ratelimit.py. Implemented TokenBucket and KeyedLimiter in ratelimit.py with validation, fractional refill, backwards-clock handling, non-consuming waits, keyed independence, LRU eviction, and full restart after eviction. Added targeted spec coverage. `python -B -m unittest -v` passed all 7 tests and `git diff --check` passed on tree 7fffbb9a06e95dbf42c37b9521cf72a9c2c90d7f. Independent review passed with no findings. No known gaps.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W32PZTFZ9AGT022MEEF87J)
+
+SHIPPED: commit 8998994c9d4da07135c30124a9ea07f4f845733a on the run branch
+Branch `archon/wrzm33w6-implement-spec-md-rate-limiter-in-rateli` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/88b6946dcc9794cc55d357cb/feature-token-bucket holds it (2 files changed, 105 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W301RRKGSQA7KYWRZM33W6`; land it in `main`: `archon merge qi_01M7W301RRKGSQA7KYWRZM33W6`.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py with validation, fractional refill, backwards-clock handling, non-consuming waits, keyed independence, LRU eviction, and full restart after eviction. Added targeted spec coverage. `python -B -m unittest -v` passed all 7 tests and `git diff --check` passed on tree 7fffbb9a06e95dbf42c37b9521cf72a9c2c90d7f. Independent review passed with no findings. No known gaps.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W32PZTFZ9AGT022MEEF87J)
+
+SHIPPED: commit 8998994c9d4da07135c30124a9ea07f4f845733a on the run branch

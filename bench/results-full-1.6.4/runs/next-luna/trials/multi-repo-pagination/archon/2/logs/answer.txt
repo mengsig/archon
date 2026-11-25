@@ -1,0 +1,29 @@
+Queued initiative **ini_01M7W969E205RGS4CPZ82T48WF** with two parallel members: API pagination and client page-following. Both include README updates, their requested test suites, and commits. The initiative is open; no repository changes have been made yet.
+
+Done: Implement cursor pagination for GET /items. Added cursor pagination to GET /items with a default limit of 20, validated limits from 1 to 100, opaque continuation cursors, ordered pages, and null next_cursor at the end. Updated README and pagination tests. `python3 -m unittest` passed (5 tests); `git diff --check` passed. Independent review passed with no findings. Committed as 4d5f71573e1d96959c7745f7de6e9dd892de0332; nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W99G5QTQAR6JGTQ5P80V1Q)
+
+SHIPPED: commit 4d5f71573e1d96959c7745f7de6e9dd892de0332 on the run branch
+Branch `archon/ncghntq5-implement-cursor-pagination-for-get-item` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/1ff4cfd41f0f069d62c8b528/inventory-api holds it (3 files changed, 62 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M7W969E369ZMX44HNCGHNTQ5`; land it in `main`: `archon merge qi_01M7W969E369ZMX44HNCGHNTQ5`.
+
+Done: Follow cursor pages in inventory client. Updated listItems to fetch every cursor page in order, forwarding opaque cursors unchanged and stopping on null or absent next_cursor. Updated README and added multi-page coverage. npm test passes (4/4); git diff --check passes. Committed as 867310022997b3cb2f397cfeec9f0925de4e3386; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W98MVR6NW5D3MSKYKRSBPV), codex/gpt-6-luna (agent agt_01M7W99YCQJSF28ZGESZN3RXPH)
+
+SHIPPED: commit 867310022997b3cb2f397cfeec9f0925de4e3386 on the run branch
+Branch `archon/g5mz0bca-follow-cursor-pages-in-inventory-client` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/1ff4cfd41f0f069d62c8b528/inventory-client holds it (3 files changed, 37 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M7W969ENXC8J3453G5MZ0BCA`; land it in `main`: `archon merge qi_01M7W969ENXC8J3453G5MZ0BCA`.
+
+Initiative finished; coordinated result queued.
+
+Updated listItems to fetch every cursor page in order, forwarding opaque cursors unchanged and stopping on null or absent next_cursor. Updated README and added multi-page coverage. npm test passes (4/4); git diff --check passes. Committed as 867310022997b3cb2f397cfeec9f0925de4e3386; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W98MVR6NW5D3MSKYKRSBPV), codex/gpt-6-luna (agent agt_01M7W99YCQJSF28ZGESZN3RXPH)
+
+SHIPPED: commit 867310022997b3cb2f397cfeec9f0925de4e3386 on the run branch
+
+Added cursor pagination to GET /items with a default limit of 20, validated limits from 1 to 100, opaque continuation cursors, ordered pages, and null next_cursor at the end. Updated README and pagination tests. `python3 -m unittest` passed (5 tests); `git diff --check` passed. Independent review passed with no findings. Committed as 4d5f71573e1d96959c7745f7de6e9dd892de0332; nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W99G5QTQAR6JGTQ5P80V1Q)
+
+SHIPPED: commit 4d5f71573e1d96959c7745f7de6e9dd892de0332 on the run branch

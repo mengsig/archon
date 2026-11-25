@@ -1,0 +1,31 @@
+Queued initiative **ini_01M7WFW17MTMP0GQ6F7TZCKQZC** with one `direct` item per repository. The shared contract covers currency validation and defaults, legacy CSV support, output sorting, error exit codes, README updates, requested test suites, and a commit in each repository.
+
+Done: Group reports by account and currency. Updated reports.py to accept currency-aware and legacy CSV, default legacy rows to USD, validate currency codes, and emit totals grouped and sorted by account and currency. Updated README and added coverage for the new behavior; python3 -m unittest passed (3 tests), and git diff --check passed. Committed as 083f34cdf0ffca0f733b0c03326bd3c5416aed3c; worktree is clean. No open issues.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 083f34cdf0ffca0f733b0c03326bd3c5416aed3c on the run branch
+Branch `archon/qrytgjfy-group-reports-by-account-and-currency` in /home/mengsig/.local/share/archon-bench/f164-ngf165q5/archon-bench/work/20261120T123310Z/08db11786bc9406da143ea59/reports holds it (3 files changed, 59 insertions(+), 14 deletions(-)). Review: `archon diff qi_01M7WFW17SEECMV2C8QRYTGJFY`; land it in `main`: `archon merge qi_01M7WFW17SEECMV2C8QRYTGJFY`.
+
+Done: Add transaction currency to ledger TSV and CSV. Added optional TSV currency with USD default, four-column CSV output, and currency validation that reports the source line and exits 2; other input errors still exit 1. Updated README and tests. `cargo test`, `cargo fmt -- --check`, `git diff --check`, and CLI checks for default/custom currency plus exit codes all passed. Committed as 0aea7d45c68ed281c5e86706bc53fb0477778d82; no work remains.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 0aea7d45c68ed281c5e86706bc53fb0477778d82 on the run branch
+Branch `archon/7tzckqzd-add-transaction-currency-to-ledger-tsv-a` in /home/mengsig/.local/share/archon-bench/f164-ngf165q5/archon-bench/work/20261120T123310Z/08db11786bc9406da143ea59/ledger holds it (4 files changed, 68 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M7WFW17MTMP0GQ6F7TZCKQZD`; land it in `main`: `archon merge qi_01M7WFW17MTMP0GQ6F7TZCKQZD`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M7WFW17MTMP0GQ6F7TZCKQZD ended and its cargo target directory went.
+
+Updated reports.py to accept currency-aware and legacy CSV, default legacy rows to USD, validate currency codes, and emit totals grouped and sorted by account and currency. Updated README and added coverage for the new behavior; python3 -m unittest passed (3 tests), and git diff --check passed. Committed as 083f34cdf0ffca0f733b0c03326bd3c5416aed3c; worktree is clean. No open issues.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 083f34cdf0ffca0f733b0c03326bd3c5416aed3c on the run branch
+
+Added optional TSV currency with USD default, four-column CSV output, and currency validation that reports the source line and exits 2; other input errors still exit 1. Updated README and tests. `cargo test`, `cargo fmt -- --check`, `git diff --check`, and CLI checks for default/custom currency plus exit codes all passed. Committed as 0aea7d45c68ed281c5e86706bc53fb0477778d82; no work remains.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 0aea7d45c68ed281c5e86706bc53fb0477778d82 on the run branch

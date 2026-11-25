@@ -1,0 +1,14 @@
+Queued as `qi_01M7W6SB85QC3RGSQ4W1738X8T` in the `adaptive` pipeline with strict review. The task requires complete SPEC.md coverage, focused tests, and a commit; local shipping means no push or merge.
+
+Done: Implement safe_extract.py to SPEC.md with edge-case tests. Implemented SPEC-compliant safe extraction with whole-batch validation, filesystem boundary checks, exclusive writes, and focused tests. `python -B -m unittest discover -v` passes (11 tests); `git diff --check` passes. Committed as 39e882b5158c07e1ad456b980c1670e51fbc29c8; no follow-ups remain.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W6X503D8BE05E53J414DAG), codex/gpt-6-luna (agent agt_01M7W6X516JDHN1G8XVAHCXKFR), codex/gpt-6-luna (agent agt_01M7W6X52471VJK92E8A6ZN9V0), codex/gpt-6-luna (agent agt_01M7W6Z5VKZJH89TBSJ30JSV4E)
+
+SHIPPED: commit 39e882b5158c07e1ad456b980c1670e51fbc29c8 on the run branch
+Branch `archon/w1738x8t-implement-safe-extract-py-to-spec-md-wit` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/1b353968940dcdb62dd7d311/quality-safe-extract holds it (2 files changed, 183 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M7W6SB85QC3RGSQ4W1738X8T`; land it in `main`: `archon merge qi_01M7W6SB85QC3RGSQ4W1738X8T`.
+
+Implemented SPEC-compliant safe extraction with whole-batch validation, filesystem boundary checks, exclusive writes, and focused tests. `python -B -m unittest discover -v` passes (11 tests); `git diff --check` passes. Committed as 39e882b5158c07e1ad456b980c1670e51fbc29c8; no follow-ups remain.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W6X503D8BE05E53J414DAG), codex/gpt-6-luna (agent agt_01M7W6X516JDHN1G8XVAHCXKFR), codex/gpt-6-luna (agent agt_01M7W6X52471VJK92E8A6ZN9V0), codex/gpt-6-luna (agent agt_01M7W6Z5VKZJH89TBSJ30JSV4E)
+
+SHIPPED: commit 39e882b5158c07e1ad456b980c1670e51fbc29c8 on the run branch

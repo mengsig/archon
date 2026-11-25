@@ -1,0 +1,5 @@
+`updatePrice` updates the store and deletes only the product cache entry. Product detail reads use that entry, so they see the new price immediately. Category pages use separate `listing:<category>:<page>` cache entries, which `updatePrice` leaves untouched.
+
+Those listings expire after `LISTING_TTL_SECONDS`, set to 600 seconds in [config.js](/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/5746ae9d1489e1f18b2a8a92/.archon/data/orchestrator/repos/ask-cache-invalidation/src/config.js:7). The next listing request rebuilds them from the store, explaining the delay of up to about ten minutes.
+
+The fix is to invalidate the affected category listing cache entries when a price changes—for every page of that category—or use a broader invalidation/versioning strategy. The current `updatePrice` path has the product’s SKU but not its category, so it would need to retrieve the product’s category before updating, or the caller would need to provide it.

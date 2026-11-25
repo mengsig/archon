@@ -1,0 +1,6 @@
+Implemented and committed both repositories:
+
+- `ledger`: optional TSV currency defaults to `USD`; CSV now includes currency; malformed currency reports the line number and exits 2. Commit `cf446ef`.
+- `reports`: totals group by account and currency, legacy CSV defaults to `USD`, and malformed currency exits 2. Commit `4076ed2`.
+
+`python3 -m unittest` passed. I couldn’t run `cargo test` because `cargo` (and `rustc`) aren’t installed in the environment. Both repositories are clean.

@@ -322,6 +322,12 @@ impl Router {
                     change.seq
                 ));
             }
+            // Likewise for design sessions: only the web app subscribes.
+            ServerFrame::Design { sub, .. } => {
+                return ControlFlow::Break(format!(
+                    "archond sent a design event for subscription {sub}, which this client never opened"
+                ));
+            }
         }
         ControlFlow::Continue(())
     }

@@ -1,0 +1,127 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WG233D7RPMBBRZHERKQ7TD",
+      "repo": "repo_01M7WG1J7YPAD9BQA5X5K8287G",
+      "pipeline": "direct",
+      "title": "Refactor order status strings into OrderStatus",
+      "brief": "Refactor the orders crate as requested. Add src/status.rs with public enum OrderStatus { Pending, Paid, Shipped, Cancelled } deriving at least Debug, Clone, Copy, PartialEq, Eq, Hash. Implement as_str(self) returning lowercase names, Display with same strings, FromStr<Err=ParseStatusError> where the public error implements std::error::Error and its message names the rejected input. Implement can_transition_to(self, next) for pending->paid, pending->cancelled, paid->shipped, paid->cancelled only. Change Order::status to OrderStatus; re-export OrderStatus and ParseStatusError at crate root; use enum everywhere so status string literals appear only in src/status.rs. Preserve observable behavior exactly (errors, report output and ordering, parsing). Run cargo test and commit the work. Acceptance: cargo test passes; all status names are encoded as string literals only in src/status.rs; implementation committed.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WG239XF2JF07CT62J7HVA8",
+        "summary": "Added public OrderStatus and ParseStatusError, changed Order and lifecycle/reporting code to use the enum, and retained lowercase serialization, parsing errors, report ordering, and lifecycle error text. Added focused parsing/display/transition tests. cargo fmt -- --check and cargo test pass; status-name source scan and git diff --check pass. Committed as 60fc93a23e18b3011e0a766287dec30e00559a40. Nothing remains open.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 60fc93a23e18b3011e0a766287dec30e00559a40 on the run branch"
+      },
+      "created_at": "2026-11-20T12:49:18.120267175Z",
+      "updated_at": "2026-11-20T12:52:38.733940622Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WG239XF2JF07CT62J7HVA8",
+        "item": "qi_01M7WG233D7RPMBBRZHERKQ7TD",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WG23KTWEBR4SSEGQDJRY3A",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-ezf9wwc6/archon-bench/work/20261120T123040Z/af799d50ba0dec1fb6c85514/.archon/data/worktrees/refactor-order-status/qi_01M7WG233D7RPMBBRZHERKQ7TD",
+        "branch": "archon/herkq7td-refactor-order-status-strings-into-order",
+        "state": {
+          "state": "succeeded",
+          "summary": "Added public OrderStatus and ParseStatusError, changed Order and lifecycle/reporting code to use the enum, and retained lowercase serialization, parsing errors, report ordering, and lifecycle error text. Added focused parsing/display/transition tests. cargo fmt -- --check and cargo test pass; status-name source scan and git diff --check pass. Committed as 60fc93a23e18b3011e0a766287dec30e00559a40. Nothing remains open.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 60fc93a23e18b3011e0a766287dec30e00559a40 on the run branch"
+        },
+        "cost_usd": 0.016292,
+        "started_at": "2026-11-20T12:49:18.406081108Z",
+        "finished_at": "2026-11-20T12:52:38.733940622Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WG23K7KHCZG04WZKT8DCN2",
+        "run": "prun_01M7WG239XF2JF07CT62J7HVA8",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7WG23MZ2CJARN9YJ2F0E2DW",
+        "aether_task": "tsk_01M7WG23MZG6A7FPQ9BQD5PKBS",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Added public OrderStatus and ParseStatusError, changed Order and lifecycle/reporting code to use the enum, and retained lowercase serialization, parsing errors, report ordering, and lifecycle error text. Added focused parsing/display/transition tests. cargo fmt -- --check and cargo test pass; status-name source scan and git diff --check pass. Committed as 60fc93a23e18b3011e0a766287dec30e00559a40. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "cargo fmt -- --check (passed)",
+            "cargo test (passed: 5 tests, 0 failed)",
+            "rg -n '\"(pending|paid|shipped|cancelled)\"' src (all hits in src/status.rs)",
+            "git diff --check (passed)"
+          ],
+          "commit": "60fc93a23e18b3011e0a766287dec30e00559a40",
+          "evidence": {
+            "none": "Pure refactor with behavior and serialized output intentionally unchanged; test results and source scan provide verification rather than visual before/after evidence."
+          },
+          "local_commit": "60fc93a23e18b3011e0a766287dec30e00559a40",
+          "pr": {
+            "body": "Added OrderStatus with parsing, display, and transition logic in src/status.rs; re-exported OrderStatus and ParseStatusError. Updated order, billing, shipping, and reporting code to use it. Added focused unit tests. cargo fmt -- --check and cargo test passed. Status string literals are confined to src/status.rs.",
+            "summary": "Made order lifecycle states a public enum. Callers now use typed statuses while CSV output, parsing, report ordering, and error messages retain their prior behavior.",
+            "title": "Refactor order statuses into enum"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained public API type change: Order.status is now OrderStatus instead of String. Lifecycle/report behavior is covered by existing tests and new enum tests; no persistence format or concurrency behavior changed."
+          },
+          "tree": "8b25745cbbda5da4cb14db02feaa123ab17088db"
+        },
+        "cost_usd": 0.016292,
+        "started_at": "2026-11-20T12:49:18.439322150Z",
+        "finished_at": "2026-11-20T12:52:38.429945256Z"
+      }
+    ],
+    "spent_usd": 0.016292,
+    "gates": [],
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

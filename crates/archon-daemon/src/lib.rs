@@ -11,6 +11,7 @@ pub mod clarifications;
 mod command_notice;
 pub mod compose;
 pub mod context;
+pub mod design;
 pub mod disk;
 pub mod dispatcher;
 pub mod engine_login;
@@ -115,6 +116,7 @@ async fn run_until_stopped(options: DaemonOptions) -> Result<(), ArchonError> {
     // store is dropped with the context, after the socket is gone.
     let ctx = build_context(options)?;
     let ctx = Arc::new(ctx);
+    ctx.design.bind(&ctx);
     // Bound under the daemon lock before recovery, so a second daemon never
     // touches live runs. The lock is released only once the socket is gone.
     let (listener, lock) = server::bind(&ctx)?;
@@ -125,6 +127,10 @@ async fn run_until_stopped(options: DaemonOptions) -> Result<(), ArchonError> {
     let server: standby::Server = tokio::spawn(server::serve(ctx.clone(), listener));
     let result = match recover(&ctx).await {
         Ok(()) => {
+            if let Err(error) = design::recover(&ctx).await {
+                ctx.design.shutdown().await;
+                tracing::error!(%error, "live design disabled until restart because recovery failed");
+            }
             ctx.recovery.finish();
             remote::start(&ctx).await;
             supervise(ctx.clone(), server, endpoint, starter, &mut signals).await
@@ -142,6 +148,7 @@ async fn run_until_stopped(options: DaemonOptions) -> Result<(), ArchonError> {
         }
     };
     ctx.remote.shutdown().await;
+    ctx.design.shutdown().await;
     remove_socket(&ctx.paths.socket);
     drop(lock);
     match &result {
@@ -485,6 +492,7 @@ fn spawn_workers(
     worker!("github sync", github_sync::run);
     worker!("github outbox", github::outbox::run);
     worker!("upgrades", ops::run);
+    worker!("design delivery", design::sweep);
     let auto_gc = ctx.config.worktrees.auto_gc;
     if auto_gc {
         worker!("worktree gc", gc::run);
@@ -495,7 +503,7 @@ fn spawn_workers(
     }
     assert_eq!(
         workers.len(),
-        24 + usize::from(auto_gc) + usize::from(verifies),
+        25 + usize::from(auto_gc) + usize::from(verifies),
         "every daemon worker is supervised"
     );
 }
@@ -613,6 +621,10 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         store.last_change_seq()?,
     );
     let dispatch = Arc::new(Notify::new());
+    let design = Arc::new(design::DesignService::new(
+        &config.design,
+        paths.data_dir.clone(),
+    ));
     let ctx = DaemonContext {
         storage: Default::default(),
         status_probes: Default::default(),
@@ -656,6 +668,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         collecting: gc::Collecting::new(dispatch),
         ops: ops::OpsState::new(ops_port, ops::DRAIN_POLL),
         remote,
+        design,
     };
     Ok(ctx)
 }

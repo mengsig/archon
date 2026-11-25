@@ -17,6 +17,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use archon_core::repo::{GH_HOST, Repo};
+use archon_queue::store::PullRequestTimes;
 
 use super::dependencies::{is_plain_branch, is_plain_url};
 use crate::gh_account::{self, Token};
@@ -34,12 +35,10 @@ const MAX_DETAIL_CHARS: usize = 1_500;
 const MAX_OPEN: &str = "1000";
 const MAX_OF_BRANCH: &str = "20";
 /// Everything archond reads of a pull request.
-const FIELDS: &str =
-    "id,number,url,state,headRefName,headRefOid,baseRefName,body,isDraft,reviewDecision";
+const FIELDS: &str = "id,number,url,state,headRefName,headRefOid,baseRefName,body,isDraft,reviewDecision,createdAt,mergedAt";
 
 /// Everything a merge decision reads of a pull request (§18.6).
-const MERGE_FIELDS: &str =
-    "state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup,mergedBy,autoMergeRequest";
+const MERGE_FIELDS: &str = "state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup,mergedBy,autoMergeRequest,createdAt,mergedAt";
 
 /// What git or `gh` says when only a person can let the delivery through.
 const NEEDS_OPERATOR: [&str; 14] = [
@@ -66,6 +65,10 @@ pub(crate) struct PullRequest {
     /// GitHub's node id, which older `gh` may not give.
     #[serde(default)]
     pub id: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<archon_core::Timestamp>,
+    #[serde(default)]
+    pub merged_at: Option<archon_core::Timestamp>,
     pub number: u64,
     pub url: String,
     /// `OPEN`, `CLOSED` or `MERGED`.
@@ -84,6 +87,14 @@ pub(crate) struct PullRequest {
 }
 
 impl PullRequest {
+    pub(super) fn times(&self) -> PullRequestTimes {
+        PullRequestTimes {
+            created_at: self.created_at,
+            merged_at: self.merged_at,
+            ..PullRequestTimes::default()
+        }
+    }
+
     pub(crate) fn is_open(&self) -> bool {
         self.state == "OPEN"
     }
@@ -142,6 +153,8 @@ struct MergeView {
     status_check_rollup: Option<Vec<Rollup>>,
     merged_by: Option<MergeActor>,
     auto_merge_request: Option<serde_json::Value>,
+    created_at: Option<archon_core::Timestamp>,
+    merged_at: Option<archon_core::Timestamp>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,6 +164,7 @@ struct MergeActor {
 
 /// One entry of `statusCheckRollup`: a check run, or a commit status.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Rollup {
     #[serde(rename = "__typename", default)]
     kind: String,
@@ -164,6 +178,8 @@ struct Rollup {
     conclusion: Option<String>,
     #[serde(default)]
     state: String,
+    started_at: Option<archon_core::Timestamp>,
+    completed_at: Option<archon_core::Timestamp>,
 }
 
 impl Rollup {
@@ -198,6 +214,14 @@ pub(crate) async fn merge_facts(
     repo: &Repo,
     url: &str,
 ) -> Result<PullRequestFacts, ArchonError> {
+    Ok(merge_facts_with_times(binary, repo, url).await?.0)
+}
+
+pub(super) async fn merge_facts_with_times(
+    binary: &Path,
+    repo: &Repo,
+    url: &str,
+) -> Result<(PullRequestFacts, PullRequestTimes), ArchonError> {
     if !is_plain_url(url) {
         return Err(ArchonError::Invalid(format!(
             "the recorded pull request URL {url:?} is not a plain URL; `archon queue show` names the run's pull request"
@@ -214,8 +238,22 @@ pub(crate) async fn merge_facts(
             view.state, view.head_ref_oid, view.base_ref_name
         )));
     }
-    let checks = view.status_check_rollup.unwrap_or_default();
-    Ok(PullRequestFacts {
+    Ok(merge_observation(view))
+}
+
+fn merge_observation(view: MergeView) -> (PullRequestFacts, PullRequestTimes) {
+    let rollup = view.status_check_rollup.unwrap_or_default();
+    let checks: Vec<Check> = rollup.iter().map(Rollup::check).collect();
+    assert_eq!(checks.len(), rollup.len(), "each check maps to one outcome");
+    let (checks_started_at, checks_finished_at) =
+        checks::observed_times(rollup.iter().zip(&checks).map(|(timed, check)| {
+            (
+                timed.started_at,
+                timed.completed_at,
+                check.outcome != CheckOutcome::Pending,
+            )
+        }));
+    let facts = PullRequestFacts {
         merged_by: view.merged_by.map(|actor| actor.login),
         auto_merge: view.auto_merge_request.is_some(),
         state: view.state,
@@ -223,8 +261,15 @@ pub(crate) async fn merge_facts(
         head: view.head_ref_oid,
         base: view.base_ref_name,
         mergeable: view.mergeable,
-        checks: checks.iter().map(Rollup::check).collect(),
-    })
+        checks,
+    };
+    let times = PullRequestTimes {
+        created_at: view.created_at,
+        merged_at: view.merged_at,
+        checks_started_at,
+        checks_finished_at,
+    };
+    (facts, times)
 }
 
 /// What a finished `gh` printed.
@@ -544,7 +589,7 @@ pub(crate) async fn view_number(
 /// What `gh pr view` shows of a pull request to deliver into: [`FIELDS`]
 /// and where its head branch lives.
 const HEADED_FIELDS: &str = "id,number,url,state,headRefName,headRefOid,baseRefName,body,isDraft,\
-     reviewDecision,isCrossRepository,headRepository,headRepositoryOwner";
+     reviewDecision,createdAt,mergedAt,isCrossRepository,headRepository,headRepositoryOwner";
 
 /// A pull request with the repository its head branch is in.
 #[derive(Debug, Clone, Deserialize)]
@@ -776,6 +821,7 @@ pub(crate) fn settled(
 
 /// Remember `pr` when it ended, so no later pass asks about it.
 pub(crate) fn settle(store: &mut archon_queue::Store, pr: &PullRequest) -> Result<(), ArchonError> {
+    store.observe_pull_request_times(&pr.identity(), pr.times())?;
     if pr.is_open() {
         return Ok(());
     }
@@ -793,6 +839,8 @@ mod tests {
     fn pr(state: &str, head: &str) -> PullRequest {
         PullRequest {
             id: None,
+            created_at: None,
+            merged_at: None,
             number: 7,
             url: "https://github.com/o/r/pull/7".into(),
             state: state.into(),

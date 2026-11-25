@@ -2,18 +2,20 @@
 //! latest by default), or a stage's whole summary and structured output,
 //! paged (§11).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::protocol::{
-    Reply, StageDelegation, StageDetail, StageQuery, StageRunView, TextPage,
+    DelegatedAgent, Reply, StageDelegation, StageDetail, StageQuery, StageRunView, TextPage,
 };
 use archon_core::queue::QueueItem;
 use archon_core::run::{PipelineRun, StageRun, StageState};
 use archon_queue::Store;
+use archon_queue::store::AgentHandoff;
 
 use crate::context::DaemonContext;
+use crate::executor::swarm;
 
 pub(super) async fn get(ctx: &DaemonContext, query: &StageQuery) -> Result<Reply, ArchonError> {
     query.check().map_err(ArchonError::Invalid)?;
@@ -25,7 +27,7 @@ pub(super) async fn get(ctx: &DaemonContext, query: &StageQuery) -> Result<Reply
     let all = store.stage_runs(&run.id)?;
     let picked = match &query.stage {
         None => all,
-        Some(stage) => pick(all, stage, &run, query)?,
+        Some(stage) => pick(&store, all, stage, &run, query)?,
     };
     // Stage costs come from the spend ledger, as in `GetItem`.
     let mut costed = Vec::with_capacity(picked.len());
@@ -83,6 +85,7 @@ fn chosen_run(
 /// in one slot or all of them. Nothing matching is `NotFound`, naming what
 /// does exist.
 fn pick(
+    store: &Store,
     all: Vec<StageRun>,
     stage: &str,
     run: &PipelineRun,
@@ -103,16 +106,14 @@ fn pick(
     let attempts: BTreeSet<u32> = of_stage.iter().map(|s| s.attempt).collect();
     let latest = *attempts.last().expect("the stage ran at least once");
     let attempt = query.attempt.unwrap_or(latest);
-    if !attempts.contains(&attempt) {
+    let carried = swarm::carried_slots(store, &run.id, stage, attempt)?;
+    if !attempts.contains(&attempt) && carried.is_empty() {
         return Err(ArchonError::NotFound(format!(
             "attempt {attempt} of stage {stage:?} (attempts: {})",
             joined(attempts)
         )));
     }
-    let of_attempt: Vec<StageRun> = of_stage
-        .into_iter()
-        .filter(|s| s.attempt == attempt)
-        .collect();
+    let of_attempt = attempt_results(&carried, of_stage, run, stage, attempt)?;
     let Some(slot) = query.slot else {
         return Ok(of_attempt);
     };
@@ -131,9 +132,44 @@ fn pick(
     Ok(picked)
 }
 
-/// Set `stage`'s cost to what the ledger charged its agent and every agent beneath it
-/// during this attempt, from hand-off to hand-off of a kept or woken agent; the split, when it
-/// delegated.
+/// Carry references keep the original attempt and charge alongside the output.
+fn attempt_results(
+    carried: &BTreeMap<u32, u32>,
+    of_stage: Vec<StageRun>,
+    run: &PipelineRun,
+    stage: &str,
+    attempt: u32,
+) -> Result<Vec<StageRun>, ArchonError> {
+    assert!(
+        of_stage
+            .iter()
+            .all(|s| s.stage_id == stage && s.run == run.id)
+    );
+    let mut results = Vec::new();
+    for (slot, source) in carried {
+        let prior = of_stage
+            .iter()
+            .filter(|s| s.attempt == *source && s.fan_index == *slot)
+            .max_by_key(|s| (s.started_at, &s.id));
+        let Some(prior) = prior.filter(|s| s.state == StageState::Completed) else {
+            return Err(ArchonError::Corrupt(format!(
+                "run {} stage {stage:?} has no completed slot {slot} in carried attempt {source}",
+                run.id
+            )));
+        };
+        results.push(prior.clone());
+    }
+    assert_eq!(results.len(), carried.len());
+    results.extend(of_stage.into_iter().filter(|s| s.attempt == attempt));
+    if !carried.is_empty() {
+        results.sort_by_key(|s| s.fan_index);
+    }
+    Ok(results)
+}
+
+/// Set `stage`'s cost to what the ledger charged its agent during this attempt, from hand-off
+/// to hand-off of a kept or woken agent, and its delegates, as model evidence attributes them;
+/// the split, when it delegated.
 pub(super) fn charge(
     store: &Store,
     stage: &mut StageRun,
@@ -145,29 +181,17 @@ pub(super) fn charge(
     let handoffs = store.agent_handoffs(agent, estimates)?;
     // A run starts at its own hand-off (none for a fresh agent) and ends at the next.
     let at = (stage.attempt, store.wakes_before(stage)?);
-    let from = handoffs.iter().find(|h| h.at() == at);
-    let until = handoffs.iter().find(|h| h.at() > at);
+    let span = Span {
+        from: handoffs.iter().find(|h| h.at() == at),
+        until: handoffs.iter().find(|h| h.at() > at),
+    };
     assert!(
-        from.is_none_or(|h| until.is_none_or(|u| h.at() < u.at())),
+        span.from
+            .is_none_or(|h| span.until.is_none_or(|u| h.at() < u.at())),
         "a run ends after it starts"
     );
-    let span = |agent: &AetherAgentId, now: f64| {
-        let start = from.map_or(0.0, |h| h.spent_by(agent));
-        let end = until.map_or(now, |h| h.spent_by(agent));
-        // A provider's settled total may land below an interim charge.
-        (end - start).max(0.0)
-    };
-    let direct_usd = span(agent, store.spend_for_agent(agent, estimates)?);
-    let mut agents = store.delegated_beneath(agent, estimates)?;
-    assert!(
-        agents.iter().all(|delegated| delegated.agent != *agent),
-        "a stage agent is not beneath itself"
-    );
-    agents.retain_mut(|delegated| {
-        let earlier = from.is_some_and(|h| h.spent.contains_key(&delegated.agent));
-        delegated.cost_usd = span(&delegated.agent, delegated.cost_usd);
-        delegated.cost_usd > 0.0 || (until.is_none() && !earlier)
-    });
+    let direct_usd = span.of(agent, store.spend_for_agent(agent, estimates)?);
+    let agents = delegates(store, stage, agent, &span, estimates)?;
     if agents.is_empty() {
         stage.cost_usd = direct_usd;
         return Ok(None);
@@ -176,6 +200,58 @@ pub(super) fn charge(
     stage.cost_usd = delegation.total_usd();
     debug_assert!(stage.cost_usd.is_finite() && stage.cost_usd >= 0.0);
     Ok(Some(delegation))
+}
+
+/// The hand-offs a stage run's agent passed into it and on from it.
+struct Span<'a> {
+    from: Option<&'a AgentHandoff>,
+    until: Option<&'a AgentHandoff>,
+}
+
+impl Span<'_> {
+    /// What `agent` was charged between the hand-offs, `now` its running total.
+    fn of(&self, agent: &AetherAgentId, now: f64) -> f64 {
+        let start = self.from.map_or(0.0, |h| h.spent_by(agent));
+        let end = self.until.map_or(now, |h| h.spent_by(agent));
+        // A provider's settled total may land below an interim charge.
+        (end - start).max(0.0)
+    }
+}
+
+/// The agents beneath `agent` charged on `stage`. One the spend ledger fully attributes keeps
+/// the attempt that delegated it, late usage included, as in model evidence; others split at
+/// the hand-offs.
+fn delegates(
+    store: &Store,
+    stage: &StageRun,
+    agent: &AetherAgentId,
+    span: &Span<'_>,
+    estimates: bool,
+) -> Result<Vec<DelegatedAgent>, ArchonError> {
+    let mut agents = store.delegated_beneath(agent, estimates)?;
+    assert!(
+        agents.iter().all(|delegated| delegated.agent != *agent),
+        "a stage agent is not beneath itself"
+    );
+    let attributed = store.delegated_stage_spend(agent, &stage.id, estimates)?;
+    assert!(
+        attributed
+            .keys()
+            .all(|a| agents.iter().any(|d| d.agent == *a)),
+        "attributed agents are beneath the stage agent"
+    );
+    agents.retain_mut(|delegated| {
+        if let Some(on_stage) = attributed.get(&delegated.agent) {
+            delegated.cost_usd = on_stage.unwrap_or(0.0);
+            return on_stage.is_some();
+        }
+        let earlier = span
+            .from
+            .is_some_and(|h| h.spent.contains_key(&delegated.agent));
+        delegated.cost_usd = span.of(&delegated.agent, delegated.cost_usd);
+        delegated.cost_usd > 0.0 || (span.until.is_none() && !earlier)
+    });
+    Ok(agents)
 }
 
 /// A stage run for the reply; `page` characters of its output when a stage
@@ -257,6 +333,7 @@ mod tests {
             autonomy: Default::default(),
             origin: None,
             stage_timeouts: Default::default(),
+            supersedes: None,
             fresh_retries: 0,
             routed_provider: None,
             provider_switch: None,

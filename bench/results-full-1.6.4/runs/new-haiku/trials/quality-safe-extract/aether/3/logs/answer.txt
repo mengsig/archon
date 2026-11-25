@@ -1,0 +1,16 @@
+`safe_extract.extract` is implemented per SPEC.md, with focused tests, and committed on branch `implement-safe-extract` (commit `e85a6b0`). All 29 tests pass (`python3 -m unittest test_safe_extract`).
+
+**How it works**
+- The batch is validated in full before any write: list type, entry shape, name rules, duplicates and file/directory collisions in either order, root checks, and every path component on disk (symlinks, non-directory ancestors, existing targets).
+- Files are created with exclusive mode (`"xb"`), so an existing file is never overwritten and a symlink is never followed.
+- Filesystem I/O errors are not caught, so they stay visible.
+
+**Choices I made where the spec was open**
+- **Branch:** I committed to a new branch, not `main`, because the repo was on `main`. Merge or rename it as you prefer.
+- **No Co-Authored-By trailer:** the attribution reminder asked for one, but CLAUDE.md says not to put anything like that in commits, so I left it out.
+- **Entries must be tuples:** a `["name", data]` list is rejected as malformed.
+- **Names must be strict UTF-8:** a name with lone surrogates is rejected up front, rather than failing partway through writing.
+- **Root:** an empty string is rejected. Symlinks above the root are not checked; only the root itself and components below it are.
+
+**Tests**
+The two original tests are unchanged. I added coverage for non-list batches (including unconsumed iterators and generators), malformed entries, root errors, name rules, percent-literal names, collisions, existing targets, symlinks (inside and outside root, dangling, and not followed), whole-batch atomicity, exact bytes, and input-order return. The symlink tests are skipped where symlinks are unsupported.

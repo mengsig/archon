@@ -1,6 +1,6 @@
 // Caches the app shell so Archon opens without a network. Never caches
 // the API or the live socket: those are always fresh or fail visibly.
-const CACHE = 'archon-shell-v7';
+const CACHE = 'archon-shell-v13';
 // CacheStorage is shared by the whole origin, so only caches with this prefix are ours.
 const CACHE_PREFIX = 'archon-shell-';
 // The worker sits at the app's root, "" or the mount prefix.
@@ -20,6 +20,7 @@ const SHELL = [
   `${BASE}/src/core/changes.js`,
   `${BASE}/src/core/conversation.js`,
   `${BASE}/src/core/daemon.js`,
+  `${BASE}/src/core/design.js`,
   `${BASE}/src/core/device-name.js`,
   `${BASE}/src/core/feed.js`,
   `${BASE}/src/core/format.js`,
@@ -36,6 +37,29 @@ const SHELL = [
   `${BASE}/src/features/chat/entries.js`,
   `${BASE}/src/features/chat/outbox.js`,
   `${BASE}/src/features/commands/commands.js`,
+  `${BASE}/src/features/design/chrome.js`,
+  `${BASE}/src/features/design/compare.js`,
+  `${BASE}/src/features/design/composer.js`,
+  `${BASE}/src/features/design/details.js`,
+  `${BASE}/src/features/design/finish.js`,
+  `${BASE}/src/features/design/input.js`,
+  `${BASE}/src/features/design/keymap.js`,
+  `${BASE}/src/features/design/notes.js`,
+  `${BASE}/src/features/design/chains.js`,
+  `${BASE}/src/features/design/followup.js`,
+  `${BASE}/src/features/design/thumbs.js`,
+  `${BASE}/src/features/design/tree.js`,
+  `${BASE}/src/features/design/viewer.js`,
+  `${BASE}/src/features/design/outbox.js`,
+  `${BASE}/src/features/design/overlay.js`,
+  `${BASE}/src/features/design/scale.js`,
+  `${BASE}/src/features/design/screen.js`,
+  `${BASE}/src/features/design/sheet-state.js`,
+  `${BASE}/src/features/design/sketch-model.js`,
+  `${BASE}/src/features/design/sketch.js`,
+  `${BASE}/src/features/design/state.js`,
+  `${BASE}/src/features/design/stream.js`,
+  `${BASE}/src/features/design/switching.js`,
   `${BASE}/src/features/graph/data.js`,
   `${BASE}/src/features/graph/graph.js`,
   `${BASE}/src/features/graph/model.js`,
@@ -78,6 +102,7 @@ const SHELL = [
   `${BASE}/src/version.js`,
   `${BASE}/styles/base.css`,
   `${BASE}/styles/components.css`,
+  `${BASE}/styles/design.css`,
   `${BASE}/styles/graph.css`,
   `${BASE}/styles/layout.css`,
   `${BASE}/styles/screens.css`,

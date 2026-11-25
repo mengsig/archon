@@ -41,7 +41,7 @@ export function daemonCommands(request) {
     pause: (target) => request('pause', pauseFields(target)).then(expect('ok')),
     resume: (target) => request('resume', pauseFields(target)).then(expect('ok')),
     answer: (question, text) => request('answer', { question, text }).then(expect('question')),
-    say: (text) => request('say', { text }).then(expect('ok', 'message_receipt')),
+    say: (text, commandId = null) => request('say', { text, ...(commandId ? { command_id: commandId } : {}) }).then(expect('ok', 'message_receipt')),
   };
 }
 
@@ -64,6 +64,6 @@ function enqueueFields(draft) {
     budget_usd: null,
     idempotency_key: draft.idempotencyKey ?? null,
   };
-  if (draft.review) fields.autonomy = { review: draft.review };
+  if (draft.review || draft.designLive) fields.autonomy = { ...(draft.review ? { review: draft.review } : {}), ...(draft.designLive ? { proposal: 'live' } : {}) };
   return fields;
 }

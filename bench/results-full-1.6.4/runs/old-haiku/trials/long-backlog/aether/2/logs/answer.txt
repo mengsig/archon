@@ -1,0 +1,16 @@
+All four tickets (TT-101 to TT-104) are implemented and committed separately on `main`. The full suite passes at HEAD: 40 tests, standard library only.
+
+Commits:
+- `7ea68b9` TT-101: reject impossible due dates
+- `b6a2eef` TT-102: RFC 4180 CSV export
+- `a759799` TT-103: search query syntax
+- `89e2a95` TT-104: undo
+
+Each commit has its own test file (`test_dates.py`, `test_export.py`, `test_search.py`, `test_undo.py`). The commits use the configured `mengsig` identity and the Co-Authored-By trailer from the attribution reminder.
+
+Choices I made where the ticket was silent:
+- **TT-101:** an offset too large for a date (e.g. `+99999999999d`) raises `InvalidDate` rather than an `OverflowError`.
+- **TT-103:** `""` is skipped as an empty term, so it behaves like a blank query. `status:` values are case-insensitive. `tag:"x y"` works. A quoted `"note: x"` is treated as literal text, not a field. `QueryError` subclasses `ValueError`.
+- **TT-104:** `undo()` returns the affected `Task`. `NothingToUndo` subclasses `Exception`. A deleted task is restored as the same object, so any later mutation through an outside reference carries over.
+
+I left the `__pycache__/` directories untracked and did not commit them.

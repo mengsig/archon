@@ -1,0 +1,3 @@
+Implemented and committed as `0731f42` (`Refactor order status to enum`). `OrderStatus` now drives order state, transitions, billing, shipping, and report parsing; the status-name literals are confined to `src/status.rs`.
+
+`git diff --check` passed and the working tree is clean. I couldn’t run `cargo test` because `cargo` isn’t installed in this environment.

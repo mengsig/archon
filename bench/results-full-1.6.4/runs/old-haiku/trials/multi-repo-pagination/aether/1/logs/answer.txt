@@ -1,0 +1,28 @@
+Added cursor pagination to GET /items in inventory-api and updated inventory-client's listItems to follow next_cursor. Both repos are committed (api: 59d0acb, client: a40bd29) with clean trees. Tests: `python3 -m unittest` 9/9 pass; `npm test` 7/7 pass. An end-to-end check (client transport calling api_cli.py) returned all 57 items in id order.
+
+API details: `limit` must match ^[0-9]+$ and be 1..100 (default 20). `cursor` is base64url of the last id returned, decoded strictly; this is keyset pagination on id, so the cursor stays valid if items are added or removed. Invalid values return 400 with {"error": ...}. next_cursor is null on the last page.
+
+Client details: the first request sends no cursor, and each later request sends the previous next_cursor unchanged. A missing or null next_cursor ends the loop. It throws on a non-200 response, on a page with no items array, or if the server repeats a cursor (to avoid an infinite loop).
+
+Both READMEs document the change. Commit identity is the repo's configured user; commit messages carry the Co-Authored-By line from the session instructions.
+
+Judgment calls: the cursor encoding and keyset-on-id design were my choice; the client sends no `limit`, so it uses the server default of 20 (three requests for 57 items).
+
+Cursor pagination is in `inventory-api`, and `inventory-client`'s `listItems` now follows `next_cursor` to the end. Both repos are committed with clean trees. Both suites pass: `python3 -m unittest` 9/9 and `npm test` 7/7. An end-to-end run with the client calling the real API through `api_cli.py` returned all 57 items in id order.
+
+**API (`inventory-api`, commit `59d0acb`)**
+- `limit` must be an integer from 1 to 100, default 20. `cursor` is opaque, and each one encodes the last id returned.
+- Invalid `limit` or `cursor` returns 400 with `{"error": "..."}`.
+- `next_cursor` is `null` on the last page.
+- Pagination is keyset on `id`, so a cursor stays valid if items are added or removed.
+
+**Client (`inventory-client`, commit `a40bd29`)**
+- The first request sends no cursor. Each later request sends the previous `next_cursor` back unchanged.
+- The loop ends when `next_cursor` is null or absent.
+- It throws on a non-200 response, on a page without an `items` array, or when the server repeats a cursor, so a faulty server can't loop forever.
+
+**Choices I made that you may want to change**
+- The cursor is base64url of the last id. Clients must treat it as opaque, but it is not signed or encrypted.
+- The client sends no `limit`, so it uses the server default of 20. That is three requests for 57 items.
+
+Both READMEs document the new behaviour. Commits use the repo's configured git identity and carry the Co-Authored-By line from the session instructions. I removed a `__pycache__/` directory my test runs had created in `inventory-api`.

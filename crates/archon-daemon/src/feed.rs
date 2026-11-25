@@ -54,11 +54,59 @@ pub async fn notify(
     append(ctx, FeedEntry::Notification(notification)).await
 }
 
+tokio::task_local! {
+    /// Only the paired operator's host-command future sets this correlation ID.
+    pub(crate) static COMMAND_ID: String;
+}
+
 /// Daemon lifecycle notes: reconnects, orchestrator restarts, degraded plugins.
 pub async fn system(ctx: &DaemonContext, text: impl Into<String>) -> Result<FeedItem, ArchonError> {
-    let text = text.into();
+    system_line(ctx, text.into(), None).await
+}
+
+pub(crate) async fn command_result(
+    ctx: &DaemonContext,
+    display: impl Into<String>,
+    result: &str,
+) -> Result<FeedItem, ArchonError> {
+    assert!(
+        !result.trim().is_empty(),
+        "a command result says what happened"
+    );
+    system_line(ctx, display.into(), Some(result)).await
+}
+
+/// Record a result that the legacy host command only sent to the orchestrator.
+pub(crate) async fn paired_command_result(
+    ctx: &DaemonContext,
+    result: &str,
+) -> Result<(), ArchonError> {
+    if COMMAND_ID.try_with(|_| ()).is_ok() {
+        command_result(ctx, result, result).await?;
+    }
+    Ok(())
+}
+
+async fn system_line(
+    ctx: &DaemonContext,
+    text: String,
+    result: Option<&str>,
+) -> Result<FeedItem, ArchonError> {
     assert!(!text.trim().is_empty(), "a system note says something");
-    append(ctx, FeedEntry::System { text }).await
+    let command_id = COMMAND_ID.try_with(Clone::clone).ok();
+    let command_result = command_id
+        .as_ref()
+        .and(result)
+        .map(|value| crate::executor::clip(value, 2048));
+    append(
+        ctx,
+        FeedEntry::System {
+            text,
+            command_id,
+            command_result,
+        },
+    )
+    .await
 }
 
 /// An Archon-side question (no Aether `ask_user` behind it): its answer

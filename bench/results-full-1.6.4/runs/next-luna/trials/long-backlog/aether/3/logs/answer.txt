@@ -1,0 +1,8 @@
+Implemented TT-101 through TT-104, with tests for each ticket. All 9 tests pass, and the worktree is clean.
+
+Commits:
+
+- `dd2e0d3` TT-101 reject impossible due dates
+- `33e7f1d` TT-102 emit RFC 4180 CSV
+- `931412e` TT-103 support structured search queries
+- `91083de` TT-104 add task operation undo

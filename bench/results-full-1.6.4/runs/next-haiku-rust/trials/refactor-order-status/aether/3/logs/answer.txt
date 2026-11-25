@@ -1,0 +1,13 @@
+The `orders` crate now uses an `OrderStatus` enum instead of `String`, and it's committed as `fd845d4` on `main`. `cargo test` passes (3 original tests plus 3 new ones) and `cargo clippy --all-targets` is clean.
+
+What changed:
+- **`src/status.rs` (new):** `OrderStatus` with `as_str`, `Display`, `FromStr`, and `can_transition_to`. `ParseStatusError` implements `std::error::Error` and its message is `unknown status "<input>"`. The status string literals appear only in this file.
+- **`src/order.rs`, `billing.rs`, `shipping.rs`:** `pay`, `ship` and `cancel` check `can_transition_to` instead of comparing strings. The error messages are unchanged.
+- **`src/report.rs`:** `from_line` parses through `FromStr`, and its error text still matches the old message exactly.
+- **`src/lib.rs`:** re-exports `OrderStatus` and `ParseStatusError`.
+- **Tests:** `tests/orders.rs` compares against enum variants. The new `tests/status.rs` covers round-trip parsing, the error message, and every transition pair.
+
+Decisions to check:
+- **`report::status_counts` return type changed** from `Vec<(String, usize)>` to `Vec<(OrderStatus, usize)>`. The output is still sorted by status name (cancelled, paid, pending, shipped). I did not key a map by the enum, because its derived `Ord` would sort by declaration order instead.
+- **`cancel` now goes through `can_transition_to(Cancelled)`.** This allows exactly the same states as before (pending and paid).
+- **`tests/orders.rs` still contains literal error messages and CSV lines.** These are observable output, so I left them alone. Read "literals only in `src/status.rs`" as applying to the library code.

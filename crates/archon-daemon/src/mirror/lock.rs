@@ -97,6 +97,8 @@ mod tests {
         std::fs::set_permissions(root.join("run.sh"), PermissionsExt::from_mode(0o755)).unwrap();
         let outside = dir.path().join("outside.txt");
         std::fs::write(&outside, "kept writable\n").unwrap();
+        // Not the umask's choice: the check below is on this exact mode.
+        std::fs::set_permissions(&outside, PermissionsExt::from_mode(0o644)).unwrap();
         std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
 
         close(&root).unwrap();

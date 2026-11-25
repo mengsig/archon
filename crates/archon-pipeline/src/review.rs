@@ -2,6 +2,7 @@
 //! agent must put on record, what Archon checked of it, and the line later stages get.
 
 use archon_core::run::{LineKind, Verdict as Said, markdown_lines, strip_label, summary_json};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::spec::ReviewDuty;
@@ -62,6 +63,48 @@ pub struct Verdict {
     pub blocking: Option<usize>,
     /// Each blocking finding as one line: what, where and the remedy given.
     pub blocking_findings: Vec<String>,
+    pub listed_findings: Vec<ReviewFinding>,
+    pub resolved_findings: Vec<String>,
+}
+
+/// A listed finding, optionally referring to an ID from an earlier review.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ReviewFinding {
+    pub description: String,
+    pub blocking: bool,
+    pub id: Option<String>,
+}
+
+impl ReviewFinding {
+    /// Read finding metadata from a standalone review, even if it named no commit.
+    pub fn listed(structured: &Value) -> Option<Vec<Self>> {
+        Some(
+            structured
+                .get("findings")?
+                .as_array()?
+                .iter()
+                .map(Self::from_value)
+                .collect(),
+        )
+    }
+
+    pub fn resolved(value: Option<&Value>) -> Vec<String> {
+        value
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(finding_id)
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn from_value(value: &Value) -> Self {
+        Self {
+            description: describe(value).unwrap_or_else(|| one_line(&value.to_string())),
+            blocking: !Said::is_follow_up(value),
+            id: value.get("id").and_then(finding_id).map(str::to_owned),
+        }
+    }
 }
 
 /// What a reviewer must do when its result gives no verdict Archon can read.
@@ -136,7 +179,7 @@ impl Verdict {
             "a structured verdict is read first"
         );
         let stated = |value: Option<&Value>| value.filter(|value| !value.is_null()).cloned();
-        for key in ["head", "base", "findings"] {
+        for key in ["head", "base", "findings", "resolved_findings"] {
             if stated(fields.get(key)).is_some() {
                 continue;
             }
@@ -168,7 +211,7 @@ impl Verdict {
         };
         let listed = field("findings").and_then(Value::as_array);
         validate_findings(listed)?;
-        let read = Self::judged(pass, head, base, listed);
+        let read = Self::judged(pass, head, base, listed, field("resolved_findings"));
         read.claims_agree(summary, structured)?;
         Ok(read)
     }
@@ -231,46 +274,69 @@ impl Verdict {
         };
         assert!(head.len() >= MIN_COMMIT_CHARS, "a checked commit id");
         let listed = data.get("findings").and_then(Value::as_array);
-        Ok(Self::judged(pass, head, base, listed))
+        Ok(Self::judged(
+            pass,
+            head,
+            base,
+            listed,
+            data.get("resolved_findings"),
+        ))
     }
 
     /// The verdict a reviewer stated, `pass` or not, with the findings it `listed`.
-    fn judged(pass: bool, head: String, base: Option<String>, listed: Option<&Vec<Value>>) -> Self {
-        let blocking: Option<Vec<&Value>> =
-            listed.map(|all| all.iter().filter(|f| !Said::is_follow_up(f)).collect());
+    fn judged(
+        pass: bool,
+        head: String,
+        base: Option<String>,
+        listed: Option<&Vec<Value>>,
+        resolved: Option<&Value>,
+    ) -> Self {
+        let listed_findings: Vec<_> = listed
+            .into_iter()
+            .flatten()
+            .map(ReviewFinding::from_value)
+            .collect();
+        let blocking_findings: Vec<_> = listed_findings
+            .iter()
+            .filter(|f| f.blocking)
+            .map(|f| f.description.clone())
+            .collect();
+        let resolved_findings = ReviewFinding::resolved(resolved);
         let read = Self {
             pass,
             head,
             base,
             findings: listed.map(Vec::len),
-            blocking: blocking.as_ref().map(Vec::len),
-            blocking_findings: blocking.as_deref().map(described).unwrap_or_default(),
+            blocking: listed.map(|_| blocking_findings.len()),
+            blocking_findings,
+            listed_findings,
+            resolved_findings,
         };
         assert!(
             read.blocking <= read.findings,
             "blocking findings are among those listed"
         );
         assert_eq!(
-            read.blocking_findings.len(),
-            read.blocking.unwrap_or(0),
-            "one line per blocking finding"
+            read.listed_findings.len(),
+            read.findings.unwrap_or(0),
+            "one description per listed finding"
         );
         read
     }
 }
 
-/// Each finding of `list` as one line, after validation.
-fn described(list: &[&Value]) -> Vec<String> {
-    let lines: Vec<String> = list
-        .iter()
-        .map(|finding| describe(finding).expect("validated finding"))
-        .collect();
-    assert_eq!(lines.len(), list.len(), "one line per finding");
-    assert!(
-        lines.iter().all(|l| !l.is_empty()),
-        "every line names its finding"
-    );
-    lines
+fn finding_id(value: &Value) -> Option<&str> {
+    let id = value.as_str()?;
+    let (agent, ordinal) = id.split_once(':')?;
+    let suffix = agent.strip_prefix("agt_")?;
+    let valid_agent = !suffix.is_empty()
+        && suffix
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    let valid_ordinal = !ordinal.starts_with('0')
+        && ordinal.parse::<std::num::NonZeroUsize>().is_ok()
+        && ordinal.bytes().all(|b| b.is_ascii_digit());
+    (valid_agent && valid_ordinal).then_some(id)
 }
 
 fn validate_findings(list: Option<&Vec<Value>>) -> Result<(), String> {
@@ -1167,6 +1233,8 @@ mod tests {
             findings: Some(3),
             blocking: Some(3),
             blocking_findings: vec!["a".into(), "b".into(), "c".into()],
+            listed_findings: Vec::new(),
+            resolved_findings: Vec::new(),
         };
         record_reads(&mut result, &[("agt_r".into(), read)]);
         record_corrections(&mut result, &["agt_x -> agt_r".to_owned()]);
@@ -1179,6 +1247,33 @@ mod tests {
             verdict_lines(Some(&result)).is_empty(),
             "Archon's finding replaces it"
         );
+    }
+
+    #[test]
+    fn finding_links_are_optional_in_every_verdict_form() {
+        let metadata = json!({
+            "head": HEAD,
+            "findings": [
+                {"title": "still open", "blocking": true, "id": "agt_prior:1"},
+                {"title": "another blocker", "blocking": true, "id": "agt_prior:0"}
+            ],
+            "resolved_findings": ["agt_prior:2", "invalid", null]
+        });
+        let mut structured = metadata.clone();
+        structured["verdict"] = json!("fail");
+        let summary = structured.to_string();
+        for (summary, result) in [
+            ("", Some(&structured)),
+            (summary.as_str(), None),
+            ("VERDICT: FAIL", Some(&metadata)),
+        ] {
+            let read = Verdict::read_result(summary, result).unwrap();
+            assert!(!read.pass);
+            assert_eq!(read.blocking, Some(2));
+            assert_eq!(read.listed_findings[0].id.as_deref(), Some("agt_prior:1"));
+            assert_eq!(read.listed_findings[1].id, None);
+            assert_eq!(read.resolved_findings, ["agt_prior:2"]);
+        }
     }
 
     #[test]

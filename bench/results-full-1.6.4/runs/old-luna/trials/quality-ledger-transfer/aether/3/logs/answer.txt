@@ -1,0 +1,3 @@
+Implemented the thread-safe ledger and added focused validation, boundary, copy-isolation, and concurrency tests. All 7 tests pass, and the working tree is clean.
+
+Commit: `e070a99` — `Implement atomic thread-safe ledger`

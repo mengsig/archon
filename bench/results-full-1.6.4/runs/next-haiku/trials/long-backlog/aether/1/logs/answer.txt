@@ -1,0 +1,19 @@
+Implemented TT-101 to TT-104 in the tasktracker repo, one commit each on main: c741f4a (TT-101 due dates: InvalidDate for impossible/unsupported dates and out-of-range offsets), b73eea8 (TT-102 RFC 4180 CSV via the csv module, CRLF endings), ca4cd70 (TT-103 search query language: quoted phrases, AND, tag:/status:, QueryError on bad input), c3fdb43 (TT-104 LIFO undo for add/complete/delete, NothingToUndo, ids never reused). Each ticket has its own test file (tests/test_dates.py, test_export.py, test_search.py, test_undo.py). `python3 -m unittest discover -s tests -t .` passes: 37 tests (4 original + 33 new). Standard library only. Choices made where the ticket was silent: undoing a complete restores the previous status (so re-completing a done task and undoing keeps it done); query field names and status values are matched case-insensitively; an empty field value (e.g. `tag:`) raises QueryError; undo methods return the affected task. Commits use the repo's configured git identity (mengsig), with no Co-Authored-By or generated-by lines, per the CLAUDE.md. Untracked __pycache__ directories were left uncommitted (the repo has no .gitignore).
+
+All four tickets (TT-101 to TT-104) are implemented, each in its own commit on `main`. `python3 -m unittest discover -s tests -t .` passes with 37 tests: the 4 original ones plus 33 new ones in four test files. Only the standard library is used.
+
+| Commit | Ticket | Change |
+|---|---|---|
+| `c741f4a` | TT-101 | `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible dates, unsupported text and out-of-range offsets. Messages include the original text. |
+| `b73eea8` | TT-102 | `to_csv` uses the `csv` module with CRLF endings, so commas, quotes and line breaks are quoted and escaped. |
+| `ca4cd70` | TT-103 | `search` supports quoted phrases, AND-combined terms, `tag:NAME` and `status:open|done`. Bad fields, unknown statuses and unterminated quotes raise `QueryError`. |
+| `c3fdb43` | TT-104 | `TaskStore.undo()` reverts the latest add, complete or delete (LIFO). It raises `NothingToUndo` when the history is empty. Ids are never reused, and failed operations are not recorded. |
+
+Choices where the tickets were silent:
+- **Undoing a complete** restores the task's previous status, not always "open". So completing an already-done task and then undoing leaves it done.
+- **Search field names and status values** are case-insensitive. An empty value such as `tag:` raises `QueryError`.
+- **`undo()`** returns the task it affected.
+
+The repo has no `.gitignore`, so the `__pycache__/` directories are left untracked and uncommitted.
+
+Commits use the repo's configured git identity, `mengsig`. The ticket's Co-Authored-By line from the harness reminder is omitted, because the CLAUDE.md says not to add Claude attribution.

@@ -1,0 +1,20 @@
+`python3 -m unittest` now passes all 3 tests, and the fix is committed as `e8b6f42`.
+
+**The bug:** `sliding_windows` built its range as `range(len(items) - size)`, which leaves out the final window. The correct count is `len(items) - size + 1`. I changed that one line in `window.py`:
+
+```python
+return [items[i : i + size] for i in range(len(items) - size + 1)]
+```
+
+**Edge cases:** I checked these by hand, and they all return the expected result:
+- Empty input returns `[]`.
+- `size` larger than the input returns `[]`. The range is empty, so no guard was needed.
+- `size` equal to the input length returns one window.
+- Size 1 returns each item as its own window.
+- Strings work as well as lists, e.g. `'abc'` with size 2 gives `['ab', 'bc']`.
+- `size <= 0` still raises `ValueError`.
+
+**Choices I made:**
+- I left the tests unchanged, as the task asked.
+- The commit uses the repo's configured git identity (mengsig) and ends with the `Co-Authored-By: Claude Haiku 5.5` line from the attribution reminder. It has no "generated with Claude Code" line.
+- I removed the `__pycache__/` directory my test runs created, so it isn't left in the working tree.

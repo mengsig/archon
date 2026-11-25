@@ -1,0 +1,235 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W80YWN87PGZAWQCEWR210E",
+      "repo": "repo_01M7W80MTH71B8D2Q5BD55TRJF",
+      "pipeline": "direct",
+      "title": "Implement ledger.py per SPEC.md with focused tests",
+      "brief": "Operator request, verbatim: \"Implement `ledger.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nContext: repository quality-ledger-transfer, base branch main. Read SPEC.md in full first and treat it as the contract: implement every documented function, class and behaviour, keep the documented API exactly as written, and handle every specified error and boundary case explicitly (raise the specified exception types; do not swallow errors).\n\nTests: extend the existing test suite with focused tests covering each specified error path and boundary case, not only the basics. Use the standard library only (unittest or pytest-free unittest; no new third-party dependencies). Run the full test suite and make sure it passes before committing.\n\nCode rules: keep functions under 60 lines, validate inputs at boundaries with clear errors, no bare or silent except blocks, no unnecessary comments, no unneeded abstractions.\n\nGit: commit the work on the current branch with the repository's configured git identity. Do not override the git user, and do not add any attribution line such as \"Co-Authored-By\" or \"Generated with\" to the commit message. Push nothing.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W80YWN87PGZAWQCEWR210E",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T10:28:52.250704364Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T10:28:52.271912974Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T10:28:52.250704364Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": 3.0,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W80YZ9BB70X0007CB188Y3",
+        "summary": "Implemented ledger.py per SPEC.md and extended test_ledger.py to cover every specified error path, boundary and threading case. Committed as 65b8fa5 on archon/cewr210e-implement-ledger-py-per-spec-md-with-foc under the configured identity (mengsig); nothing pushed.\n\nWhat changed: Ledger validates balances at construction (dict only, nonempty string names, built-in ints in [0, MAX_BALANCE], bools rejected) and copies its input. transfer validates the amount first (built-in int in [1, MAX_BALANCE]), then raises KeyError for unknown accounts, then returns False on insufficient funds or destination overflow without changing anything. Same-account transfers return True iff funds suffice and never change balances. All operations take one per-ledger lock, so transfers are atomic and opposite transfers cannot deadlock. snapshot returns a copy.\n\nChecks: `python3 -B -m unittest test_ledger` ran 30 tests, all OK, three runs in my worktree; the reviewer also ran it three times and once under -O, all OK. No linter is installed here, so no lint was run. Full tree 786cdebd127c78476ac16819f4808ac7e32506a7.\n\nRisk: high. The change adds a lock around all balance mutation and snapshot. Threaded tests are sized to finish in seconds, but they were not stress-tested on free-threaded CPython. I proceeded rather than escalating because the module is new and self-contained, and the lock is the spec's own requirement.\n\nReview: one reviewer (agt_01M7W82RG63FHJ9TA228SZA6RM) passed the head with no blocking findings. Two non-blocking follow-ups: add a test that a non-string destination (e.g. None) raises KeyError; rename test_failed_transfer_keeps_total, which duplicates the overflow case.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W82RG63FHJ9TA228SZA6RM)\n\nSHIPPED: commit 65b8fa5c7b64ce098bdc5daae1ae5045c346b515 on the run branch"
+      },
+      "created_at": "2026-11-20T10:28:52.245695328Z",
+      "updated_at": "2026-11-20T10:30:22.403353011Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W80YZ9BB70X0007CB188Y3",
+        "item": "qi_01M7W80YWN87PGZAWQCEWR210E",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W80Z9Z272X2XW3SHM03DQ4",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/d3e8987b0575050f8d2b17fa/.archon/data/worktrees/quality-ledger-transfer/qi_01M7W80YWN87PGZAWQCEWR210E",
+        "branch": "archon/cewr210e-implement-ledger-py-per-spec-md-with-foc",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented ledger.py per SPEC.md and extended test_ledger.py to cover every specified error path, boundary and threading case. Committed as 65b8fa5 on archon/cewr210e-implement-ledger-py-per-spec-md-with-foc under the configured identity (mengsig); nothing pushed.\n\nWhat changed: Ledger validates balances at construction (dict only, nonempty string names, built-in ints in [0, MAX_BALANCE], bools rejected) and copies its input. transfer validates the amount first (built-in int in [1, MAX_BALANCE]), then raises KeyError for unknown accounts, then returns False on insufficient funds or destination overflow without changing anything. Same-account transfers return True iff funds suffice and never change balances. All operations take one per-ledger lock, so transfers are atomic and opposite transfers cannot deadlock. snapshot returns a copy.\n\nChecks: `python3 -B -m unittest test_ledger` ran 30 tests, all OK, three runs in my worktree; the reviewer also ran it three times and once under -O, all OK. No linter is installed here, so no lint was run. Full tree 786cdebd127c78476ac16819f4808ac7e32506a7.\n\nRisk: high. The change adds a lock around all balance mutation and snapshot. Threaded tests are sized to finish in seconds, but they were not stress-tested on free-threaded CPython. I proceeded rather than escalating because the module is new and self-contained, and the lock is the spec's own requirement.\n\nReview: one reviewer (agt_01M7W82RG63FHJ9TA228SZA6RM) passed the head with no blocking findings. Two non-blocking follow-ups: add a test that a non-string destination (e.g. None) raises KeyError; rename test_failed_transfer_keeps_total, which duplicates the overflow case.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W82RG63FHJ9TA228SZA6RM)\n\nSHIPPED: commit 65b8fa5c7b64ce098bdc5daae1ae5045c346b515 on the run branch"
+        },
+        "cost_usd": 0.02912079,
+        "started_at": "2026-11-20T10:28:52.569576335Z",
+        "finished_at": "2026-11-20T10:30:22.403353011Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W80Z84GTDJE3WV2NW26GNH",
+        "run": "prun_01M7W80YZ9BB70X0007CB188Y3",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W80ZBETCM4RP777P5NVTTZ",
+        "aether_task": "tsk_01M7W80ZBETCM4RP777P5NVTV0",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented ledger.py per SPEC.md and extended test_ledger.py to cover every specified error path, boundary and threading case. Committed as 65b8fa5 on archon/cewr210e-implement-ledger-py-per-spec-md-with-foc under the configured identity (mengsig); nothing pushed.\n\nWhat changed: Ledger validates balances at construction (dict only, nonempty string names, built-in ints in [0, MAX_BALANCE], bools rejected) and copies its input. transfer validates the amount first (built-in int in [1, MAX_BALANCE]), then raises KeyError for unknown accounts, then returns False on insufficient funds or destination overflow without changing anything. Same-account transfers return True iff funds suffice and never change balances. All operations take one per-ledger lock, so transfers are atomic and opposite transfers cannot deadlock. snapshot returns a copy.\n\nChecks: `python3 -B -m unittest test_ledger` ran 30 tests, all OK, three runs in my worktree; the reviewer also ran it three times and once under -O, all OK. No linter is installed here, so no lint was run. Full tree 786cdebd127c78476ac16819f4808ac7e32506a7.\n\nRisk: high. The change adds a lock around all balance mutation and snapshot. Threaded tests are sized to finish in seconds, but they were not stress-tested on free-threaded CPython. I proceeded rather than escalating because the module is new and self-contained, and the lock is the spec's own requirement.\n\nReview: one reviewer (agt_01M7W82RG63FHJ9TA228SZA6RM) passed the head with no blocking findings. Two non-blocking follow-ups: add a test that a non-string destination (e.g. None) raises KeyError; rename test_failed_transfer_keeps_total, which duplicates the overflow case.",
+        "structured": {
+          "checks": [
+            "python3 -B -m unittest -v test_ledger (x3, 30 tests OK)",
+            "python3 -B -m unittest test_ledger (reviewer, x3 plus -O run, OK)"
+          ],
+          "commit": "65b8fa5c7b64ce098bdc5daae1ae5045c346b515",
+          "evidence": {
+            "none": "Pure library implementation with no visible or measurable change; behaviour is covered by unit tests."
+          },
+          "local_commit": "65b8fa5c7b64ce098bdc5daae1ae5045c346b515",
+          "pr": {
+            "body": "Approach: single per-ledger threading.Lock guards transfer and snapshot; account membership checks run before the lock (keys are never removed). Key files: ledger.py, test_ledger.py. Checks: unittest, 30 tests OK across repeated runs. No linter installed. Assumptions: non-str account names raise KeyError on transfer (unhashable included); whitespace-only names are accepted as nonempty. Follow-ups (non-blocking): test None destination -> KeyError; rename test_failed_transfer_keeps_total. Not verified: free-threaded CPython stress.",
+            "summary": "Made atomic, validated account transfers possible. Now: Ledger enforces SPEC error types, bounds and same-account rules under one lock, with 30 tests. Before: ledger.py was a NotImplementedError stub with 2 basic tests.",
+            "title": "Implement thread-safe Ledger per SPEC.md with focused tests"
+          },
+          "review": {
+            "reviewed_head": "65b8fa5c7b64ce098bdc5daae1ae5045c346b515",
+            "reviewer_agents": [
+              "agt_01M7W82RG63FHJ9TA228SZA6RM"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W82RG63FHJ9TA228SZA6RM",
+                "base": "e102ffa1aa341dec89062363b926ad4a647427c1",
+                "findings": 2,
+                "head": "65b8fa5c7b64ce098bdc5daae1ae5045c346b515",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W82RG63FHJ9TA228SZA6RM"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "Concurrency and locking around all balance mutation. Lock use reviewed for deadlock; threaded tests pass but no stress beyond test sizes. Only ledger.py and test_ledger.py touched; new module, no existing code depends on it."
+          },
+          "tree": "786cdebd127c78476ac16819f4808ac7e32506a7"
+        },
+        "cost_usd": 0.02912079,
+        "started_at": "2026-11-20T10:28:52.612882335Z",
+        "finished_at": "2026-11-20T10:30:19.456435268Z"
+      }
+    ],
+    "spent_usd": 0.02912079,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W80Z84GTDJE3WV2NW26GNH": {
+        "direct_usd": 0.020962679999999997,
+        "delegated_usd": 0.008158110000000001,
+        "agents": [
+          {
+            "agent": "agt_01M7W82RG63FHJ9TA228SZA6RM",
+            "parent": "agt_01M7W80ZBETCM4RP777P5NVTTZ",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.008158110000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T10:28:52.250704364Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T10:28:52.271912974Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T10:28:52.250704364Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

@@ -1,0 +1,26 @@
+Refactored the orders crate to use an OrderStatus enum and committed as bf0c576 on main. `cargo test` passes (3 integration tests and 3 new unit tests in src/status.rs) and `cargo clippy --all-targets` is clean.
+
+Changes:
+- src/status.rs (new): OrderStatus {Pending, Paid, Shipped, Cancelled} with Debug, Clone, Copy, PartialEq, Eq, Hash; as_str; Display; can_transition_to; FromStr with Err = ParseStatusError. ParseStatusError implements std::error::Error and its message is `unknown status "<input>"`. This is the only file with status string literals.
+- src/order.rs, billing.rs, shipping.rs: Order.status is OrderStatus. pay, ship and cancel check can_transition_to, which allows exactly the same transitions as the old checks.
+- src/report.rs: from_line parses via FromStr and keeps the same error text and check order.
+- src/lib.rs: re-exports OrderStatus and ParseStatusError from the crate root.
+- tests/orders.rs: compares against the enum; expected messages use Display.
+
+Decisions to review:
+- status_counts now returns Vec<(OrderStatus, usize)> instead of Vec<(String, usize)>. This is a public signature change. Ordering is still by name (cancelled, paid, pending, shipped), done with sort_by_key(as_str). I did not derive Ord, because derived ordering would follow declaration order.
+- The commit has no Co-Authored-By line. Your CLAUDE.md says not to add anything that attributes the work to Claude Code, which conflicts with the attribution reminder. Tell me if you want the line added.
+- I did not add asserts to every function, because the existing code had none and the refactor only preserves behaviour. Adding decorative asserts would go against the CLAUDE.md rules.
+
+The `orders` crate now uses an `OrderStatus` enum instead of strings, and the work is committed as `bf0c576` on `main`. `cargo test` passes, with the 3 existing integration tests plus 3 new unit tests in `src/status.rs`. `cargo clippy --all-targets` is clean.
+
+- **`src/status.rs` (new):** `OrderStatus` with `as_str`, `Display`, `FromStr`, and `can_transition_to`. `ParseStatusError` implements `std::error::Error`, and its message is `unknown status "<input>"`. This is the only file with status string literals.
+- **`Order::status`** is now an `OrderStatus`. `pay`, `ship`, and `cancel` check `can_transition_to`, which allows exactly the old transitions.
+- **`from_line`** parses through `FromStr`. It keeps the same check order and the same error text.
+- **Crate root** re-exports `OrderStatus` and `ParseStatusError`.
+- **`tests/orders.rs`** compares against the enum. The expected messages and the CSV line use `Display`, so no literals remain outside `status.rs`.
+
+Decisions to review:
+- **Public signature change:** `report::status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. Ordering is still alphabetical by status name. I did not derive `Ord`, since derived ordering would follow declaration order and change the output.
+- **No `Co-Authored-By` line:** your `CLAUDE.md` says not to add anything that attributes the work to Claude Code, and that conflicts with the attribution reminder. I followed `CLAUDE.md`. Tell me if you want the line added and I'll amend the commit.
+- **No extra asserts:** I did not add assertions to every function. The existing code had none, and this refactor only preserves behaviour.

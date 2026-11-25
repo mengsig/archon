@@ -5,14 +5,25 @@ that needs more than `archon update --yes` changes. The update command
 itself is in [install.md](install.md#updating), and every release's changes
 are in the [changelog](../CHANGELOG.md).
 
+## Live design sessions in 1.6.5
+
+Store migrations V29 through V31 follow V28. V31 preserves existing picture IDs and
+links while allowing equal images to carry separate capture metadata. Opening an earlier live-design
+branch store preserves its sessions, notes, and pictures while reconciling its
+V25/V26 version numbers. Back up the stopped daemon’s database, WAL and design
+asset files before upgrading if you need a downgrade path. Live design is opt-in. Remove any repository
+`[design] allow_hosts` list and serve fonts, styles and other assets through
+the item's own dev server. Protocol 25 adds design sessions and 26 adds
+iteration history. The web handshake still negotiates back to 23.
+
 ## From 1.5.x to 1.6.x
 
-Archon 1.6.4 requires Aether 1.4.2 or later. Upgrade an older Aether with
-`aether update --version v1.4.2` and restart aetherd, then run
-`archon update --yes --version v1.6.4`. Upgrade Aether first: the update
-from 1.6.3 runs 1.6.3's own Aether step, which does not pin 1.4.2.
-Confirmed updates run by 1.6.4 select Aether 1.4.2 only for an older
-installation; at 1.4.2 or later they use
+Archon 1.6.5 requires Aether 1.4.3 or later. Upgrade an older Aether with
+`aether update --version v1.4.3` and restart aetherd, then run
+`archon update --yes --version v1.6.5`. Upgrade Aether first: the update
+from 1.6.4 runs 1.6.4's own Aether step, which does not pin 1.4.3.
+Confirmed updates run by 1.6.5 select Aether 1.4.3 only for an older
+installation; at 1.4.3 or later they use
 Aether's normal update, without pinning it to an older release. Keep a backup before the first daemon start: approved intent
 adds persistent requirement and clarification records. Existing queue items
 without intent keep their previous behavior.
@@ -69,7 +80,8 @@ default `[review] default_effort` change as above.
 
 To keep 1.6.3's effort rules, set `effort_sizing = false` under the global
 `[models]` and restart archond; new spawns then get 1.6.3's effort rules,
-byte for byte (a stage with a verdict still gets the `submit_verdict` rule above).
+byte for byte. Current contracts ask stages with a verdict or required review
+or ship records to call `submit_verdict` before finishing.
 A running orchestrator keeps the prompt it was created with until
 `archon orchestrator restart`; archond refreshes it by itself only after an
 upgrade to another build. A repository config may still say `effort_sizing =
@@ -210,12 +222,10 @@ commit that reviewer read and its findings).
 archond logs, per class, the old count, the new count and the rows left on the
 1.6.3 class. When a recomputed class changes whether a run is scored, V24
 rescores the run's lesson uses and holdout trials and recounts the lessons it
-used, so lesson confidence and holdout lift follow the new classes. A lesson
-V24 cannot recount (its row, its use or its epoch is unreadable, or it holds
-what no lesson holds) keeps its stored counts, and the lesson clusters stay as
-they were when any stored lesson is unfit to write back or holds the record of
-another lesson: neither stops the
-migration, and archond logs each. V24 also
+used. It preserves lesson state, confidence, and clusters. A lesson V24
+cannot recount (its row, use, or epoch is unreadable, or its record is
+invalid) keeps its stored counts, and archond logs the skip. Live scoring
+and maintenance apply the configured retirement policy after startup. V24 also
 stores, in each outcome whose item is still stored and whose run holds a
 recorded reviewer verdict (a review stage's pass or fail, the pass or fail of
 the review a stage's result carries, read as the gate reads it, or a
@@ -223,9 +233,15 @@ reviewer's fail in archond's review tally), the pull request it reviewed. Outcom
 pull request, so the model evidence report leaves them out of its pull request
 counts.
 
-**Downgrading the binary is not supported after V24 has run.** The schema
-check of an older archond refuses a newer store ("store schema version 24 is
-newer than this archon supports (23); upgrade archon"), so no older daemon can
+V25 attributes spend to stage runs. V26 adds indexes for evidence snapshots.
+V27 adds an index for near-duplicate enqueue detection. V28 records queue-reason
+intervals and pull request event times. V29 adds the live design session
+tables. V30 adds follow-ups and references to design notes. V31 separates
+capture metadata for pictures that share image bytes.
+
+**Downgrading the binary is not supported after V25 has run.** The schema
+check of an older archond refuses a newer store ("store schema version 31 is
+newer than this archon supports (24); upgrade archon"), so no older daemon can
 read the upgraded store. Before the update, stop archond and copy `archon.db`
 and any `archon.db-wal`. Going back means stopping archond, installing the
 older release and restoring that copy. Everything recorded since the copy is

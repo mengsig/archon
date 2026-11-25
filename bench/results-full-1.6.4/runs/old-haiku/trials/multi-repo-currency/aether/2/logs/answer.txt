@@ -1,0 +1,20 @@
+Both repositories are changed, tested, and committed on `main`, and the two tools work together end to end.
+
+**`ledger`** (commit `bd1b789`)
+- Lines take an optional fourth column for the currency. Without it the currency is `USD`. The header is `date,account,amount_cents,currency`.
+- A malformed code (anything but three uppercase ASCII letters, including an empty fourth column) prints `line N: bad currency ...` to stderr and exits 2. Other bad lines still exit 1.
+- `cargo test`: 10 passing, including tests that run the real binary for the exit codes. Clippy is clean.
+
+**`reports`** (commit `ac36c0a`)
+- Totals are per (account, currency), sorted by account then currency, with header `account,currency,total_cents`.
+- CSV without a `currency` column counts as `USD`. A malformed code prints an error to stderr, exits 2, and prints no totals.
+- `python3 -m unittest`: 4 passing, including the old-format case and the error case.
+
+Both READMEs are updated. `ledger ... | reports.py` on a mixed-currency input gives the expected per-currency totals.
+
+Choices I made that you may want to change:
+- **Currency whitespace:** the code is trimmed like the other fields, so ` EUR` is accepted. An empty fourth column is a bad currency, not a missing one.
+- **Commit trailers:** I left out the `Co-Authored-By: Claude Haiku 5.5` line the attribution reminder asked for. The repo's CLAUDE.md says not to add anything like "by claude code", and that takes precedence.
+- **Commit identity:** the commits use each repo's configured git user, `mengsig <marcus.engsig@tii.ae>`. That address differs from the `mengsig@icloud.com` in your context, so check it is the one you want.
+
+Also, `ledger` writes the header before it validates lines, so a bad line late in the input leaves a header on stdout. That was already the case, and I didn't change it.

@@ -1,0 +1,19 @@
+The `OrderStatus` refactor is committed as `5df26f7` on `main`. `cargo test` passes (3 integration tests, 3 unit tests in `status.rs`, 0 doc-tests), and clippy reports no warnings.
+
+**What changed**
+- **`src/status.rs`** (new): the `OrderStatus` enum with `as_str`, `Display`, `can_transition_to`, and `FromStr`, plus the public `ParseStatusError`. The status strings now appear only in this file.
+- **`Order::status`** is an `OrderStatus`. `pay`, `ship`, and `cancel` check `can_transition_to`, which allows exactly the moves the old string checks allowed.
+- **`src/lib.rs`** re-exports `OrderStatus` and `ParseStatusError`.
+- **`tests/orders.rs`** compares enum values instead of strings. I added unit tests in `status.rs` for the transition table, the parse round-trip, and the error message.
+
+**Behaviour kept the same**
+- Error texts for pay, ship, and cancel are unchanged.
+- `from_line` still returns `unknown status "lost"` for a bad status name.
+- The report sorts by status name (cancelled, paid, pending, shipped), not by enum declaration order.
+
+**Decisions to review**
+- **`report::status_counts` now returns `Vec<(OrderStatus, usize)>`** instead of `Vec<(String, usize)>`. This is a public signature change. The printed output is identical. If callers depend on the `String` type, say so and I'll switch it back.
+- **I left out the `Co-Authored-By` trailer** from the commit. CLAUDE.md says not to attribute commits to Claude, and it takes precedence over the attribution reminder.
+- **The commit uses the repo's configured git identity**, `mengsig` with `marcus.engsig@tii.ae`. That email is not the `mengsig@icloud.com` address you gave me. If you want the commit under the iCloud address, the author needs amending.
+- **The `"lost"` input in one test** is an invalid status, not one of the four names, so I kept it as a literal.
+- **Toolchain:** `cargo` is not on the default PATH here, so I ran it from `~/.cargo/bin`.

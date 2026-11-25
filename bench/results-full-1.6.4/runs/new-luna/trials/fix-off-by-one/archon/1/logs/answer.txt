@@ -1,0 +1,14 @@
+Queued as **qi_01M7W2GM11NKQNWV8AVZ58WGCA**. The worker will fix `window.py` without changing tests, run `python3 -m unittest`, and commit the fix locally.
+
+Done: Fix window.py for all inputs and pass unittest. Fixed sliding_windows by including the final valid start index. Before: python3 -m unittest had 2 failures; after: all 3 tests pass. Boundary reasoning and independent review passed. Commit ba92a00ff08c495f985268c4ed85276a14e5ba83; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W2HPYANWB2914PG32KH4EJ)
+
+SHIPPED: commit ba92a00ff08c495f985268c4ed85276a14e5ba83 on the run branch
+Branch `archon/vz58wgca-fix-window-py-for-all-inputs-and-pass-un` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/e2e539e3a45edc9da2d38539/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7W2GM11NKQNWV8AVZ58WGCA`; land it in `main`: `archon merge qi_01M7W2GM11NKQNWV8AVZ58WGCA`.
+
+Fixed sliding_windows by including the final valid start index. Before: python3 -m unittest had 2 failures; after: all 3 tests pass. Boundary reasoning and independent review passed. Commit ba92a00ff08c495f985268c4ed85276a14e5ba83; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W2HPYANWB2914PG32KH4EJ)
+
+SHIPPED: commit ba92a00ff08c495f985268c4ed85276a14e5ba83 on the run branch

@@ -63,7 +63,72 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         request_status(),
         approve_intent(),
         watch_repo(),
+        timing_report(),
+        design_preview(),
+        design_note(),
+        design_history(),
     ]
+}
+
+fn design_preview() -> ToolDefinition {
+    define(
+        "design_preview",
+        "Design preview",
+        "Stage agent of a live design stage: point the operator's preview at your dev server. \
+         `url` is an http:// URL whose host is 127.0.0.1, localhost or [::1], with any port; \
+         anything else is refused. Call it again after a server restart.",
+        object(
+            json!({"url": {"type": "string", "minLength": 1, "description": "For example http://127.0.0.1:5173/."}}),
+            &["url"],
+        ),
+        false,
+    )
+}
+
+fn design_history() -> ToolDefinition {
+    define(
+        "design_history",
+        "Design history",
+        "Stage agent of a live design stage: read the chains of follow-ups of the operator's \
+         notes, each version with its words, commit, status and your reply, or only the chain \
+         of note `id`. Each follow-up is its own note: report it with `design_note`.",
+        object(
+            json!({"id": {"type": "string", "description": "A note id like D3; omit for every chain."}}),
+            &[],
+        ),
+        false,
+    )
+}
+
+fn design_note() -> ToolDefinition {
+    define(
+        "design_note",
+        "Design note status",
+        "Stage agent of a live design stage: report the status of the operator's note `id` \
+         (D<n>) that was sent to you. For `done`, commit the change first with the trailer \
+         `Archon-Note: <id>` and pass `commit`; pass `no_change: true` when nothing needed \
+         changing. `needs_reply` asks the operator a question in `reply`; `failed` and \
+         `cancelled` leave the tree at the commit the note started from. For a page note whose \
+         change shows on its own page (a new screen), pass that page's `path` with `done`. \
+         For a change seen only in a state (a dialog, a hovered menu), pass `steps` to reach \
+         it: with `working` they retake the before picture there, with `done` the after one. If \
+         the pictures match, say in `reply` what changed and report `done` again with better \
+         `steps`.",
+        object(
+            json!({
+                "id": {"type": "string", "description": "The note's id, e.g. D3."},
+                "status": {"enum": ["working", "done", "needs_reply", "failed", "cancelled"]},
+                "reply": {"type": "string", "minLength": 1, "description": "A question for the operator, or a short explanation."},
+                "commit": {"type": "string", "description": "The full commit id, for `done`."},
+                "no_change": {"type": "boolean"},
+                "path": {"type": "string", "minLength": 1, "description": "For `done` on a page note (one with no element, such as a New screen sketch): the app path that shows the change, e.g. /settings. The operator's preview goes there and the pictures are taken there."},
+                "steps": {"type": "array", "description": "From a fresh load to the state that shows the change: {\"do\":\"open\",\"path\"}, {\"do\":\"click\" or \"hover\",\"selector\"}, {\"do\":\"wait\",\"ms\"}.",
+                    "items": {"type": "object", "properties": {"do": {"enum": ["open", "click", "hover", "wait"]}}, "required": ["do"]}}
+            }),
+            &["id", "status"],
+        ),
+        false,
+    )
 }
 
 fn approve_intent() -> ToolDefinition {
@@ -177,8 +242,8 @@ fn submit_verdict() -> ToolDefinition {
     define(
         "submit_verdict",
         "Submit verdict",
-        "Stage agents with a Verdict section: have the result you will finish with read \
-         first. An unreadable verdict is asked back; the `restating` one is final.",
+        "Check your stage's verdict and required records before completion. Correct refused \
+         records and resubmit. Restate an unreadable verdict once if asked.",
         object(
             json!({
                 "summary": {"type": "string", "minLength": 1, "description": "The `summary` you will finish with."},
@@ -559,6 +624,22 @@ fn cost_report() -> ToolDefinition {
                 "since": {"type": "string", "minLength": 1, "description": format!("First day: `YYYY-MM-DD`, or days back as `7d` (the last 7 days, with today) or `2w`. Default: {DEFAULT_DAYS}d.")},
                 "until": {"type": "string", "minLength": 1, "description": "Last day likewise; `1d` = yesterday. Default: today."},
                 "by": {"type": "string", "enum": groups, "description": "Default: day."},
+            }),
+            &[],
+        ),
+        false,
+    )
+}
+
+fn timing_report() -> ToolDefinition {
+    define(
+        "timing_report",
+        "Timing report",
+        "Queue by reason, stages, gaps, retries, CI and merge wait over UTC days.",
+        object(
+            json!({
+                "since": {"type": "string", "minLength": 1, "description": format!("First day as YYYY-MM-DD or 7d. Defaults to {DEFAULT_DAYS}d.")},
+                "until": {"type": "string", "minLength": 1, "description": "Last day in the same format. Defaults to today."}
             }),
             &[],
         ),

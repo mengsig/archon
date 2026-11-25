@@ -1,0 +1,268 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W5GZY8BY461EBGZ4NT35HK",
+      "repo": "repo_01M7W5G2YEZBZ4YJJVPB2ENMQY",
+      "pipeline": "direct",
+      "title": "Implement the specified token bucket and keyed rate limiter",
+      "brief": "Implement `TokenBucket` and `KeyedLimiter` in `ratelimit.py` according to `SPEC.md`, including all stated validation, continuous fractional refill, backwards-clock behavior, LRU eviction (with both wait_time and try_acquire counting as use), and length semantics. Keep it dependency-free using only the Python standard library. Preserve the public API and match the spec exactly. The existing `test_ratelimit.py` covers basics only; account for edge cases in the implementation. The operator explicitly requests that the work be committed. Commit the implementation on the task branch. Do not expand scope beyond the specified module/API.\n\n## Amendment (2026-11-20 09:49 UTC)\n\nAutomatic repair (archond retries a refused record once). The gate refused your finished work: the review this pipeline declares is not on record: reviewer agt_01M7W5KVMCZ7EM4XQB844P9DTM its finding is unreadable: {\"blocking\":true,\"risk_level\":\"medium\",\"why\":\"The changed API's checked-in tests cover basic acquire/refill and keyed independence, but omit wait_time behavior, invalid argument validation, backwards-clock behavior, and both LRU recency and eviction/recreation. These are explicit spec requirements and key new behavior; the implemen\n\nRepair the record only. Do not change code unless a reviewer finds a defect. Delegate one reviewer over the whole change from the merge base, copy its agent id exactly, and return the review object and ship record the gate requires.\n\nRun any check in the foreground or wait on it, and never end your turn while one runs: Archon reads the end of your turn as your result.\n",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W5RGJZ83T72CRBYP8EBC50",
+        "summary": "Recorded the required independent whole-change review for the committed token bucket and keyed limiter. The reviewer found no issues; all 8 focused tests passed. No code changes were needed.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W5S9GHQBGZ5D53WPAGC85S)\n\nSHIPPED: commit 27bdab0a45d57e9dcfcc66dbd11ce1df1fe34862 on the run branch"
+      },
+      "created_at": "2026-11-20T09:45:12.037691049Z",
+      "updated_at": "2026-11-20T09:50:49.658376240Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W5H040HTT3CHXH6H9VYKZC",
+        "item": "qi_01M7W5GZY8BY461EBGZ4NT35HK",
+        "pipeline": "direct",
+        "shipped": false,
+        "aether_run": "run_01M7W5H0BWNSNKNZWZQK1KZPEK",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/36319f979210026edcea381f/.archon/data/worktrees/feature-token-bucket/qi_01M7W5GZY8BY461EBGZ4NT35HK",
+        "branch": "archon/z4nt35hk-implement-the-specified-token-bucket-and",
+        "state": {
+          "state": "failed",
+          "stage_id": "implement",
+          "error": "stage `implement` failed: the review this pipeline declares is not on record: reviewer agt_01M7W5KVMCZ7EM4XQB844P9DTM its finding is unreadable: {\"blocking\":true,\"risk_level\":\"medium\",\"why\":\"The changed API's checked-in tests cover basic acquire/refill and keyed independence, but omit wait_time behavior, invalid argument validation, backwards-clock behavior, and both LRU recency and eviction/recreation. These are explicit spec requirements and key new behavior; the implemen\n\n**Stage `implement` attempt 1: the review this pipeline declares is not on record: reviewer agt_01M7W5KVMCZ7EM4XQB844P9DTM its finding is unreadable: {\"blocking\":true,\"risk_level\":\"medium\",\"why\":\"The changed API's checked-in tests cover basic acquire/refill and keyed independence, but omit wait_time behavior, invalid argument validation, backwards-clock behavior, and both LRU recency and eviction/recreation. These are explicit spec requirements and key new behavior; the implemen**\n\nImplemented TokenBucket and KeyedLimiter in ratelimit.py with validation, continuous fractional refill, backwards-clock handling, and LRU eviction. Added focused edge-case tests; all 8 tests pass, compilation and diff checks are clean, and the worktree is clean. Committed as 55f5a56 and 27bdab0. Independent review passed after adding the regression coverage.\n"
+        },
+        "cost_usd": 0.022463800000000003,
+        "started_at": "2026-11-20T09:45:12.290002166Z",
+        "finished_at": "2026-11-20T09:49:18.027831650Z"
+      },
+      {
+        "id": "prun_01M7W5RGJZ83T72CRBYP8EBC50",
+        "item": "qi_01M7W5GZY8BY461EBGZ4NT35HK",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W5RGQ88BCCPPV790XWPGWY",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/36319f979210026edcea381f/.archon/data/worktrees/feature-token-bucket/qi_01M7W5GZY8BY461EBGZ4NT35HK",
+        "branch": "archon/z4nt35hk-implement-the-specified-token-bucket-and",
+        "state": {
+          "state": "succeeded",
+          "summary": "Recorded the required independent whole-change review for the committed token bucket and keyed limiter. The reviewer found no issues; all 8 focused tests passed. No code changes were needed.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W5S9GHQBGZ5D53WPAGC85S)\n\nSHIPPED: commit 27bdab0a45d57e9dcfcc66dbd11ce1df1fe34862 on the run branch"
+        },
+        "cost_usd": 0.009926360000000002,
+        "started_at": "2026-11-20T09:49:18.361443826Z",
+        "finished_at": "2026-11-20T09:50:49.658376240Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W5H0B7MHQ4NTVFCNFQ1B2P",
+        "run": "prun_01M7W5H040HTT3CHXH6H9VYKZC",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W5H0C5XD57WBW5XBEAXNH0",
+        "aether_task": "tsk_01M7W5H0C5XD57WBW5XBEAXNH1",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py with validation, continuous fractional refill, backwards-clock handling, and LRU eviction. Added focused edge-case tests; all 8 tests pass, compilation and diff checks are clean, and the worktree is clean. Committed as 55f5a56 and 27bdab0. Independent review passed after adding the regression coverage.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (8 passed)",
+            "python -m py_compile ratelimit.py test_ratelimit.py (passed)",
+            "git diff --check (passed)",
+            "manual edge probes for fractional refill, backwards clock, wait_time LRU, eviction reset, and request validation (passed)"
+          ],
+          "commit": "27bdab0a45d57e9dcfcc66dbd11ce1df1fe34862",
+          "evidence": [
+            {
+              "after": "Ran 8 tests in 0.002s\nOK",
+              "before": "Ran 3 tests; all errored with NotImplementedError in TokenBucket or KeyedLimiter constructors.",
+              "caption": "Baseline failed because the classes were unimplemented; after the implementation and edge-case tests, the full suite passed.",
+              "kind": "output"
+            }
+          ],
+          "pr": {
+            "body": "Implemented the dependency-free API in ratelimit.py: buckets start full, accrue fractional tokens continuously, clamp refill after backwards clock readings, validate requests, and report non-consuming wait times. KeyedLimiter maintains independent buckets and updates LRU order for both wait_time and try_acquire. Added regression coverage in test_ratelimit.py for validation, fractional refill, backwards time, wait_time semantics, LRU updates, eviction, and full state after recreation. Final checks: python -m unittest -v (8 passed), python -m py_compile ratelimit.py test_ratelimit.py (passed), git diff --check (passed). The whole change and the test-only fix were independently reviewed; final review passed. No known open issues.",
+            "summary": "Implemented the specified token bucket and keyed limiter. Before: both APIs raised NotImplementedError and all existing tests failed. Now: continuous refill, validation, backwards-clock behavior, and LRU tracking work, with edge cases covered by tests.",
+            "title": "Implement token bucket and keyed limiter"
+          },
+          "review": {
+            "reviewers": [
+              "agt_01M7W5KVMCZ7EM4XQB844P9DTM",
+              "agt_01M7W5PNMM9MMXSV4YN62DSACR"
+            ],
+            "unverified": "reviewer agt_01M7W5KVMCZ7EM4XQB844P9DTM its finding is unreadable: {\"blocking\":true,\"risk_level\":\"medium\",\"why\":\"The changed API's checked-in tests cover basic acquire/refill and keyed independence, but omit wait_time behavior, invalid argument validation, backwards-clock behavior, and both LRU recency and eviction/recreation. These are explicit spec requirements and key new behavior; the implementation looks consistent on inspection, but it is not regression-tes",
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M7W5PNMM9MMXSV4YN62DSACR",
+            "why": "Contained behavior change to the two specified rate-limiter classes plus focused tests. It changes runtime behavior behind the existing API. Eight unit tests and edge probes pass; independent whole-change review found no implementation defect, and the follow-up review passed after coverage was added."
+          },
+          "tree": "4dfe82e65726d30dac963a36e6862acb1d51348b"
+        },
+        "cost_usd": 0.022463800000000003,
+        "started_at": "2026-11-20T09:45:12.295733419Z",
+        "finished_at": "2026-11-20T09:49:18.023377055Z"
+      },
+      {
+        "id": "stg_01M7W5RGPNBN9186QPKJ717TQ5",
+        "run": "prun_01M7W5RGJZ83T72CRBYP8EBC50",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W5RGR3BK7SG99EETMSQ5RX",
+        "aether_task": "tsk_01M7W5RGR3S7KEHT9Z750ZX7EP",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Recorded the required independent whole-change review for the committed token bucket and keyed limiter. The reviewer found no issues; all 8 focused tests passed. No code changes were needed.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v",
+            "python -m unittest -v test_ratelimit.py"
+          ],
+          "commit": "27bdab0a45d57e9dcfcc66dbd11ce1df1fe34862",
+          "evidence": [
+            {
+              "caption": "Focused rate limiter tests passed",
+              "kind": "output",
+              "text": "Ran 8 tests in 0.000s\nOK"
+            }
+          ],
+          "local_commit": "27bdab0a45d57e9dcfcc66dbd11ce1df1fe34862",
+          "pr": {
+            "body": "Implementation is in ratelimit.py; edge-case coverage is in test_ratelimit.py. Verified with `python -m unittest -v` (8 tests passed); independent reviewer also ran `python -m unittest -v test_ratelimit.py` (8 passed). The whole change was reviewed from base 9983f0b351d8c7f172d6f85d4ec3db8eee11eeab to head 27bdab0a45d57e9dcfcc66dbd11ce1df1fe34862 with no findings. No further edits were made for this repair.",
+            "summary": "Implemented continuous token bucket refill and per-key LRU rate limiting. Before: the specified limiter behavior was absent; now callers get validation, wait-time estimation, rollback-safe refill, and bounded keyed tracking.",
+            "title": "Implement token bucket and keyed rate limiter"
+          },
+          "review": {
+            "reviewed_head": "27bdab0a45d57e9dcfcc66dbd11ce1df1fe34862",
+            "reviewer_agents": [
+              "agt_01M7W5S9GHQBGZ5D53WPAGC85S"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W5S9GHQBGZ5D53WPAGC85S",
+                "base": "9983f0b351d8c7f172d6f85d4ec3db8eee11eeab",
+                "findings": 0,
+                "head": "27bdab0a45d57e9dcfcc66dbd11ce1df1fe34862",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W5S9GHQBGZ5D53WPAGC85S"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M7W5S9GHQBGZ5D53WPAGC85S",
+            "why": "Contained runtime behavior change in ratelimit.py with specified validation, continuous refill, backwards-clock handling, keyed isolation, and LRU behavior; edge cases are covered by passing tests. Independent review found no findings."
+          },
+          "tree": "4dfe82e65726d30dac963a36e6862acb1d51348b"
+        },
+        "cost_usd": 0.009926360000000002,
+        "started_at": "2026-11-20T09:49:18.421704390Z",
+        "finished_at": "2026-11-20T09:50:47.931836697Z"
+      }
+    ],
+    "spent_usd": 0.03239016,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W5H0B7MHQ4NTVFCNFQ1B2P": {
+        "direct_usd": 0.01482926,
+        "delegated_usd": 0.007634540000000001,
+        "agents": [
+          {
+            "agent": "agt_01M7W5KVMCZ7EM4XQB844P9DTM",
+            "parent": "agt_01M7W5H0C5XD57WBW5XBEAXNH0",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.005231360000000001
+          },
+          {
+            "agent": "agt_01M7W5PNMM9MMXSV4YN62DSACR",
+            "parent": "agt_01M7W5H0C5XD57WBW5XBEAXNH0",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0024031800000000004
+          }
+        ]
+      },
+      "stg_01M7W5RGPNBN9186QPKJ717TQ5": {
+        "direct_usd": 0.006042100000000001,
+        "delegated_usd": 0.003884260000000001,
+        "agents": [
+          {
+            "agent": "agt_01M7W5S9GHQBGZ5D53WPAGC85S",
+            "parent": "agt_01M7W5RGR3BK7SG99EETMSQ5RX",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.003884260000000001
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

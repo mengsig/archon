@@ -1,0 +1,29 @@
+Queued initiative [ini_01M7W3K9T67JY2A9DVD3NEW384] with separate API and client items. Both will update their README, run the requested tests, and commit locally. The client can proceed against the shared contract while the API work runs.
+
+Done: Follow cursor pages in inventory client. Implemented cursor pagination for listItems: it omits cursor on the first request, passes each returned cursor unchanged, accumulates items in order, and stops when next_cursor is null or absent. Updated README and added pagination tests. Baseline npm test passed 3/3; final npm test passed 5/5 and git diff --check passed. Committed as cdb9e97d75d2b7d907d5d733455bfd73119dceab; tree 45f7f7d07710a6d76b35f767039b808eb2a6812f. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W3MP29AJ545KDBCK28M0NE)
+
+SHIPPED: commit cdb9e97d75d2b7d907d5d733455bfd73119dceab on the run branch
+Branch `archon/w8w3nd22-follow-cursor-pages-in-inventory-client` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/29ba47acd43b190a2885ecc1/inventory-client holds it (3 files changed, 41 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M7W3K9TXC1ASKCNTW8W3ND22`; land it in `main`: `archon merge qi_01M7W3K9TXC1ASKCNTW8W3ND22`.
+
+Done: Implement cursor pagination for GET /items. Implemented and committed GET /items cursor pagination. The endpoint defaults to 20 items, validates limits from 1 through 100, returns stable ID-ordered pages with opaque continuation cursors, and reports invalid limits/cursors as HTTP 400 JSON errors. README and tests were updated. Final checks passed: python3 -m unittest (6 tests) and git diff --check. Independent review found an oversized-cursor exception; it was fixed, regression-tested, and passed focused re-review. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W3NE69AWS8WFZ830P07NB4), codex/gpt-6-luna (agent agt_01M7W3QZK6ECPX8BWJGW3W3ZSJ)
+
+SHIPPED: commit 4a80bd053d970a5f819e55f562aa7d9c693c098b on the run branch
+Branch `archon/1r6bwzad-implement-cursor-pagination-for-get-item` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/29ba47acd43b190a2885ecc1/inventory-api holds it (3 files changed, 90 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M7W3K9T7D74848E11R6BWZAD`; land it in `main`: `archon merge qi_01M7W3K9T7D74848E11R6BWZAD`.
+
+Initiative finished; coordinated result queued.
+
+Implemented cursor pagination for listItems: it omits cursor on the first request, passes each returned cursor unchanged, accumulates items in order, and stops when next_cursor is null or absent. Updated README and added pagination tests. Baseline npm test passed 3/3; final npm test passed 5/5 and git diff --check passed. Committed as cdb9e97d75d2b7d907d5d733455bfd73119dceab; tree 45f7f7d07710a6d76b35f767039b808eb2a6812f. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W3MP29AJ545KDBCK28M0NE)
+
+SHIPPED: commit cdb9e97d75d2b7d907d5d733455bfd73119dceab on the run branch
+
+Implemented and committed GET /items cursor pagination. The endpoint defaults to 20 items, validates limits from 1 through 100, returns stable ID-ordered pages with opaque continuation cursors, and reports invalid limits/cursors as HTTP 400 JSON errors. README and tests were updated. Final checks passed: python3 -m unittest (6 tests) and git diff --check. Independent review found an oversized-cursor exception; it was fixed, regression-tested, and passed focused re-review. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W3NE69AWS8WFZ830P07NB4), codex/gpt-6-luna (agent agt_01M7W3QZK6ECPX8BWJGW3W3ZSJ)
+
+SHIPPED: commit 4a80bd053d970a5f819e55f562aa7d9c693c098b on the run branch

@@ -205,6 +205,7 @@ fn arguments_the_handler_accepts_satisfy_the_schema() {
     ));
     accepted.push(("queue_status", json!({})));
     accepted.push(("cost_report", json!({})));
+    accepted.push(("timing_report", json!({})));
     accepted.push(("model_evidence", json!({})));
     for tool in ["enqueue", "update_item", "retry_item"] {
         let mut arguments = if tool == "enqueue" {

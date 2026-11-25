@@ -44,6 +44,7 @@ async fn say(
     images: Vec<ImageAttachment>,
 ) -> Result<Reply, ArchonError> {
     let request = Request::Say {
+        command_id: None,
         text: text.into(),
         images,
     };

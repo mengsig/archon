@@ -30,11 +30,32 @@ use crate::worktree::WorktreeManager;
 use crate::{executor, knobs, learned, sizing};
 use archon_core::autonomy::MergeMode;
 
+mod advice;
+
 pub(super) async fn enqueue(
+    ctx: &DaemonContext,
+    req: EnqueueRequest,
+    by: Authority,
+) -> Result<Reply, ArchonError> {
+    let set_budget = req.budget_usd.is_some();
+    let item = enqueue_item(ctx, req, by).await?;
+    let notices = advice::notices(&item);
+    if notices.is_empty() {
+        return Ok(item_reply(ctx, item, set_budget).await);
+    }
+    let budgets_off = budget_unenforced(ctx, &item, set_budget);
+    Ok(Reply::EnqueueAdvised {
+        item: Box::new(item),
+        notices,
+        budgets_off,
+    })
+}
+
+pub(super) async fn enqueue_item(
     ctx: &DaemonContext,
     mut req: EnqueueRequest,
     by: Authority,
-) -> Result<Reply, ArchonError> {
+) -> Result<QueueItem, ArchonError> {
     req.intent = resolve_intent(ctx, req.intent.as_ref(), req.onto.as_ref()).await?;
     check_enqueue(&req.title, &req.brief, &req.tags, req.budget_usd)?;
     let (env, mut resolved) = enqueue_context(ctx, &req).await?;
@@ -46,7 +67,10 @@ pub(super) async fn enqueue(
     let onto = enqueue_onto(ctx, &env, &resolved.spec, target, key).await?;
     req.intent = resolve_pull_request_intent(ctx, req.intent.as_ref(), onto.as_ref()).await?;
     if req.intent.is_some()
-        || resolved.autonomy.proposal == archon_core::autonomy::ProposalMode::Lavish
+        || matches!(
+            resolved.autonomy.proposal,
+            archon_core::autonomy::ProposalMode::Lavish | archon_core::autonomy::ProposalMode::Live
+        )
     {
         resolved.spec = archon_pipeline::acceptance::augment(&resolved.spec)?;
     }
@@ -60,8 +84,7 @@ pub(super) async fn enqueue(
         let local = local_onto(&env, target.0);
         let replay = ctx.store.lock().await;
         if let Some(stored) = replay.replayed_enqueue(&item, key, (&asked, local))? {
-            drop(replay);
-            return Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await);
+            return Ok(stored);
         }
         legacy = replay.legacy_replay_plan(key)?;
     }
@@ -79,8 +102,7 @@ pub(super) async fn enqueue(
     let (plan, replays) = keyed_plan(ctx, &req, scope, (route, by), legacy.as_ref()).await?;
     item.model_plan = plan;
     if let (Some(key), true) = (key, replays) {
-        let stored = legacy_replay(ctx, (&env, target.0), &item, (key, &asked)).await?;
-        return Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await);
+        return legacy_replay(ctx, (&env, target.0), &item, (key, &asked)).await;
     }
     let stored = store_enqueued(ctx, (&env, &resolved.spec), target, &item, (key, &asked)).await?;
     assert!(
@@ -88,7 +110,7 @@ pub(super) async fn enqueue(
         "only a key returns an older item"
     );
     ctx.dispatch.notify_one();
-    Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await)
+    Ok(stored)
 }
 
 /// The item `req` asks for, before routing and the model plan: what a
@@ -120,6 +142,7 @@ fn unplanned_item(
         stage_timeouts: req.stage_timeouts.clone(),
         autonomy: resolved.autonomy,
         origin: req.origin.clone(),
+        supersedes: None,
         fresh_retries: 0,
         routed_provider: None,
         provider_switch: None,
@@ -232,10 +255,14 @@ pub(super) async fn resolve_pull_request_intent(
 /// `Reply::Item`, or `ItemBudgetsOff` when the change set a budget that
 /// is not enforced while budgets are off for the item's repository.
 pub(super) async fn item_reply(ctx: &DaemonContext, item: QueueItem, set_budget: bool) -> Reply {
-    match set_budget && !resolve::item_caps(ctx, item.repo.as_ref()).budgets_enabled {
+    match budget_unenforced(ctx, &item, set_budget) {
         true => Reply::ItemBudgetsOff(item),
         false => Reply::Item(item),
     }
+}
+
+fn budget_unenforced(ctx: &DaemonContext, item: &QueueItem, set_budget: bool) -> bool {
+    set_budget && !resolve::item_caps(ctx, item.repo.as_ref()).budgets_enabled
 }
 
 async fn enqueue_context(
@@ -1228,7 +1255,11 @@ pub(super) async fn retry(
         };
         let kept = fresh.as_ref().and_then(|f| f.kept.as_deref());
         let mut store = ctx.store.lock().await;
-        let mut queued = queue_again(&mut store, &loaded, item).map_err(|error| match kept {
+        let now = archon_core::now();
+        if item != loaded {
+            item.updated_at = now.max(item.updated_at);
+        }
+        let mut queued = store.requeue_item(&item, now).map_err(|error| match kept {
             Some(kept) => error.with_detail(&format!("the retry was not queued, but: {kept}")),
             None => error,
         })?;
@@ -1465,24 +1496,6 @@ async fn start_fresh(
     })
 }
 
-/// Store what a retry changed on `loaded` and queue it again, with the
-/// dependents it alone blocked. The caller holds the run table.
-pub(super) fn queue_again(
-    store: &mut archon_queue::Store,
-    loaded: &QueueItem,
-    mut item: QueueItem,
-) -> Result<QueueItem, ArchonError> {
-    assert_eq!(loaded.id, item.id, "a retry changes its own item");
-    assert_eq!(loaded.state, item.state, "the state changes by transition");
-    if item != *loaded {
-        item.updated_at = archon_core::now().max(item.updated_at);
-        store.update_item(&item)?;
-    }
-    let item = store.transition_item(&item.id, QueueState::Queued, archon_core::now())?;
-    unblock_dependents(store, &item.id)?;
-    Ok(item)
-}
-
 /// Record an amendment of the item's brief in its feed history.
 async fn note_amendment(ctx: &DaemonContext, id: &QueueItemId, text: &str, via: &str) {
     let text = format!("Amended the brief of {id} ({via}): {}", text.trim());
@@ -1498,36 +1511,6 @@ pub(super) async fn post_note(ctx: &DaemonContext, id: &QueueItemId, text: &str)
     if let Err(error) = posted {
         tracing::error!(item = %id, %error, note = %text, "item note not posted");
     }
-}
-
-/// Blocked dependents of `id` whose dependencies are no longer broken.
-fn unblock_dependents(
-    store: &mut archon_queue::Store,
-    id: &QueueItemId,
-) -> Result<(), ArchonError> {
-    assert_eq!(
-        store.item(id)?.state,
-        QueueState::Queued,
-        "the retried item is queued"
-    );
-    for dependent in store.dependents(id)? {
-        let item = store.item(&dependent)?;
-        if !matches!(item.state, QueueState::Blocked { .. }) || item.state.is_model_pin_block() {
-            continue;
-        }
-        let mut broken = false;
-        for dep in &item.dependencies {
-            let state = store.item(dep)?.state;
-            broken |= matches!(
-                state,
-                QueueState::Failed { .. } | QueueState::Cancelled { .. }
-            );
-        }
-        if !broken {
-            store.transition_item(&dependent, QueueState::Queued, archon_core::now())?;
-        }
-    }
-    Ok(())
 }
 
 /// The item's repository environment and the pipeline it would run now: as

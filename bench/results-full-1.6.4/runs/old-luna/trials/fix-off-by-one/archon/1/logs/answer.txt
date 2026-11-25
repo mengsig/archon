@@ -1,0 +1,14 @@
+Queued as `qi_01M7W2J8VV17969VKB85H0YNRJ` on `fix-off-by-one`. The direct pipeline will fix `window.py`, run `python3 -m unittest`, and commit the fix on its branch.
+
+Done: Fix window.py for all inputs. Fixed the sliding window stop bound so the function includes the final valid window. `python3 -m unittest` passed all 3 tests and `git diff --check` passed. Committed as ba198cb0354d8355827245884e16e58464654231. No open issues. Review: pass.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W2M8AWD83EG4G857DZWQNY)
+
+SHIPPED: commit ba198cb0354d8355827245884e16e58464654231 on the run branch
+Branch `archon/85h0ynrj-fix-window-py-for-all-inputs` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/f7816cca57f96bae336c623a/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7W2J8VV17969VKB85H0YNRJ`; land it in `main`: `archon merge qi_01M7W2J8VV17969VKB85H0YNRJ`.
+
+Fixed the sliding window stop bound so the function includes the final valid window. `python3 -m unittest` passed all 3 tests and `git diff --check` passed. Committed as ba198cb0354d8355827245884e16e58464654231. No open issues. Review: pass.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W2M8AWD83EG4G857DZWQNY)
+
+SHIPPED: commit ba198cb0354d8355827245884e16e58464654231 on the run branch

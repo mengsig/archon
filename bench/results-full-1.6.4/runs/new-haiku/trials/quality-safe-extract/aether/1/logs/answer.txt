@@ -1,0 +1,32 @@
+Implemented `extract(entries, root)` in safe_extract.py per SPEC.md and added focused tests in test_safe_extract.py. All 29 tests pass (python3 -m unittest, stdlib only). Committed as bbbb86c on main, authored as the configured git user (mengsig), with no attribution lines because CLAUDE.md forbids them.
+
+Behavior:
+- Batch must be a `list` (tuples, iterators, generators, and empty non-lists rejected without consuming them).
+- Entries must be 2-tuples with str name and exact `bytes` data (bytearray rejected).
+- Names: nonempty str, no `\`, `:`, NUL, empty/`.`/`..` components, and strictly UTF-8-encodable, so lone surrogates fail at validation instead of mid-write. No normalization; `%` is literal.
+- Duplicate names and file/directory collisions are rejected in either order.
+- Root: str or PathLike, nonempty, must be a real directory (lstat, so a symlink root is rejected). Missing or non-directory roots raise ValueError.
+- Each target is checked with lstat along its path: any symlink ancestor, file ancestor, or existing target (including dangling symlinks) raises ValueError.
+- All validation completes before the first create. Files are written with exclusive `"xb"` opens, so nothing is overwritten even on a race. Other OSErrors propagate.
+
+Choices I made that the spec left open:
+- A list `["a", b""]` is rejected as malformed, since the spec says entries are tuples.
+- Root paths above the root (e.g. a symlinked `/tmp`) are not checked, per "components below root".
+- An empty string root is rejected as invalid.
+- The code uses explicit ValueError checks at the boundary plus one invariant assert (`len(planned) == len(entries)`). I did not add more asserts, to avoid decorative ones.
+
+Limitations: the unwritable-directory test is skipped when running as root. Nothing was run outside the sandboxed repo.
+
+`extract` is implemented in `safe_extract.py` and committed as `bbbb86c` on `main`. All 29 tests pass under the standard library's `unittest`. The commit is authored as the configured git user, with no attribution lines, because the project CLAUDE.md forbids them.
+
+- **Batch validation:** every entry, name and root is checked before anything is created. A failure in any of them leaves the filesystem untouched.
+- **Conflicts:** symlinks, existing files or directories at the target, and file or symlink ancestors are all rejected, including dangling symlinks.
+- **Writes:** files are created with exclusive opens, so nothing is overwritten even if something appears mid-batch. Other I/O errors propagate.
+
+Choices I made where the spec was open:
+- A list such as `["a", b""]` counts as a malformed entry, because the spec says entries are tuples.
+- An empty string root is rejected.
+- Symlinks above the root (for example a symlinked `/tmp`) are not checked, following the spec's "below root" wording.
+- I added only one invariant assert. I did not add more, to avoid decorative asserts.
+
+The unwritable-directory test is skipped when running as root.

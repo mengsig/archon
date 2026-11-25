@@ -1,0 +1,243 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W754A99NR91T65PHA707H4",
+      "repo": "repo_01M7W74QH4CR6J3JRHTNBYB81W",
+      "pipeline": "direct",
+      "title": "Implement retry_budget.py per SPEC.md with focused tests",
+      "brief": "Operator instruction: Implement `retry_budget.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\n\nRead SPEC.md in the repository first; it is authoritative. Summary of the spec: implement `retry_delay(attempt, elapsed_ms, *, max_attempts=4, budget_ms=1000, base_ms=100, cap_ms=400, retry_after_ms=None) -> int | None`. Validate all arguments before any early return: every number must be a built-in int (reject bool and float), attempt and max_attempts >= 1, elapsed_ms/budget_ms/base_ms/cap_ms and non-None retry_after_ms >= 0, otherwise ValueError. If attempt >= max_attempts return None. Backoff is min(cap_ms, base_ms * 2**(attempt-1)) computed without allocating huge powers of two for large attempt values. retry_after_ms, if given, is a floor not limited by cap_ms: delay = max(backoff, retry_after_ms). Return None if elapsed_ms + delay >= budget_ms, else return delay. Never sleep, read a clock, use randomness, or mutate inputs. Standard library only.\n\nAdd focused tests in test_retry_budget.py covering every validation error (bool, float, out-of-range), the boundary cases (attempt == max_attempts, attempt > max_attempts, zero base, zero cap, huge attempt, base above cap, retry_after above cap, budget exactly reached), and keep the existing tests passing. Keep functions short and the code simple. Commit the work.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "operator",
+        "retry-budget"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W754A99NR91T65PHA707H4",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T10:13:40.301133062Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-20T10:13:40.301133062Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-20T10:13:40.301133062Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Small pure function with precise boundary rules; medium effort is enough for the spec and tests."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W754B31G4JJNTNGRT9QZ7V",
+        "summary": "Implemented retry_delay in retry_budget.py per SPEC.md and added focused tests in test_retry_budget.py. Committed fb1db7b on archon/pha707h4-implement-retry-budget-py-per-spec-md-wi (not pushed). Before: retry_budget.py was a stub raising NotImplementedError, so the three existing tests could not pass (from reading the stub; I did not run the stub). After: `python3 -B -m unittest -v test_retry_budget` runs 23 tests, all OK. The tests cover every validation error (bool, float, below minimum, validation ordered before the early returns), attempt == and > max_attempts, zero base and zero cap, huge attempt, base above cap, retry_after above cap, and budget exactly reached. Assumption: the spec's \"invalid values raise ValueError\" applies to wrong types too, so bool and float raise ValueError. Non-blocking follow-up: no test pins the exact shift-threshold boundary in _backoff (e.g. cap=400, attempt 9 vs 10); the logic is correct per review. Nothing left running; no servers started. Review: one reviewer (agt_01M7W767Y8VXEPZ0EAV43MR0FD) passed the head fb1db7b with no blocking findings; risk low.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W767Y8VXEPZ0EAV43MR0FD)\n\nSHIPPED: commit fb1db7b2553066a5c34f08755b2a1b458f642bf5 on the run branch"
+      },
+      "created_at": "2026-11-20T10:13:40.297248748Z",
+      "updated_at": "2026-11-20T10:14:40.355495615Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W754B31G4JJNTNGRT9QZ7V",
+        "item": "qi_01M7W754A99NR91T65PHA707H4",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W754HH0R1HCN3K37MPD6Z9",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/ef15769cbc26f5ee9b8ab260/.archon/data/worktrees/quality-retry-budget/qi_01M7W754A99NR91T65PHA707H4",
+        "branch": "archon/pha707h4-implement-retry-budget-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented retry_delay in retry_budget.py per SPEC.md and added focused tests in test_retry_budget.py. Committed fb1db7b on archon/pha707h4-implement-retry-budget-py-per-spec-md-wi (not pushed). Before: retry_budget.py was a stub raising NotImplementedError, so the three existing tests could not pass (from reading the stub; I did not run the stub). After: `python3 -B -m unittest -v test_retry_budget` runs 23 tests, all OK. The tests cover every validation error (bool, float, below minimum, validation ordered before the early returns), attempt == and > max_attempts, zero base and zero cap, huge attempt, base above cap, retry_after above cap, and budget exactly reached. Assumption: the spec's \"invalid values raise ValueError\" applies to wrong types too, so bool and float raise ValueError. Non-blocking follow-up: no test pins the exact shift-threshold boundary in _backoff (e.g. cap=400, attempt 9 vs 10); the logic is correct per review. Nothing left running; no servers started. Review: one reviewer (agt_01M7W767Y8VXEPZ0EAV43MR0FD) passed the head fb1db7b with no blocking findings; risk low.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W767Y8VXEPZ0EAV43MR0FD)\n\nSHIPPED: commit fb1db7b2553066a5c34f08755b2a1b458f642bf5 on the run branch"
+        },
+        "cost_usd": 0.02284538,
+        "started_at": "2026-11-20T10:13:40.499673776Z",
+        "finished_at": "2026-11-20T10:14:40.355495615Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W754GRHQNWBKB4NDRHD87G",
+        "run": "prun_01M7W754B31G4JJNTNGRT9QZ7V",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W754HSZVNTKENZN78VPRMW",
+        "aether_task": "tsk_01M7W754HSZVNTKENZN78VPRMX",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "Implemented retry_delay in retry_budget.py per SPEC.md and added focused tests in test_retry_budget.py. Committed fb1db7b on archon/pha707h4-implement-retry-budget-py-per-spec-md-wi (not pushed). Before: retry_budget.py was a stub raising NotImplementedError, so the three existing tests could not pass (from reading the stub; I did not run the stub). After: `python3 -B -m unittest -v test_retry_budget` runs 23 tests, all OK. The tests cover every validation error (bool, float, below minimum, validation ordered before the early returns), attempt == and > max_attempts, zero base and zero cap, huge attempt, base above cap, retry_after above cap, and budget exactly reached. Assumption: the spec's \"invalid values raise ValueError\" applies to wrong types too, so bool and float raise ValueError. Non-blocking follow-up: no test pins the exact shift-threshold boundary in _backoff (e.g. cap=400, attempt 9 vs 10); the logic is correct per review. Nothing left running; no servers started. Review: one reviewer (agt_01M7W767Y8VXEPZ0EAV43MR0FD) passed the head fb1db7b with no blocking findings; risk low.",
+        "structured": {
+          "checks": [
+            "python3 -B -m unittest -v test_retry_budget (23 tests, OK)"
+          ],
+          "commit": "fb1db7b2553066a5c34f08755b2a1b458f642bf5",
+          "evidence": [
+            {
+              "caption": "Unit test run on the final head fb1db7b (tree cac5bbdf): all 23 tests pass",
+              "kind": "output",
+              "text": "Ran 23 tests in 0.000s\n\nOK"
+            }
+          ],
+          "local_commit": "fb1db7b2553066a5c34f08755b2a1b458f642bf5",
+          "pr": {
+            "body": "Approach: validate every argument first (exact int type, minimums), then attempt-limit check, then backoff min(cap, base<<(attempt-1)) with a shortcut once the shift reaches cap.bit_length() so no huge power of two is built, then max with retry_after_ms, then budget check elapsed+delay >= budget returns None. Key files: retry_budget.py, test_retry_budget.py. Checks: python3 -B -m unittest -v test_retry_budget, 23 tests OK. Assumption: wrong types raise ValueError as the spec says invalid values do. Open (non-blocking): no test pins the exact shift-threshold boundary of _backoff.",
+            "risk": "low",
+            "summary": "Made retry_delay work per SPEC.md. Now validates all args, caps backoff, honours Retry-After as an uncapped floor, and enforces the budget. Before: stub raising NotImplementedError; now: 23 passing unit tests.",
+            "title": "Implement retry_delay per SPEC.md with focused tests"
+          },
+          "review": {
+            "reviewed_head": "fb1db7b2553066a5c34f08755b2a1b458f642bf5",
+            "reviewer_agents": [
+              "agt_01M7W767Y8VXEPZ0EAV43MR0FD"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W767Y8VXEPZ0EAV43MR0FD",
+                "base": "1282d13a4f2e52dcad19ce963554aa71cd402d6b",
+                "findings": 1,
+                "head": "fb1db7b2553066a5c34f08755b2a1b458f642bf5",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W767Y8VXEPZ0EAV43MR0FD"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "low",
+            "reviewer": "agt_01M7W767Y8VXEPZ0EAV43MR0FD",
+            "why": "Pure function with no I/O, clock, randomness or concurrency; changes limited to retry_budget.py and its unit tests; 23 tests pass. Reviewer agt_01M7W767Y8VXEPZ0EAV43MR0FD confirmed low."
+          },
+          "tree": "cac5bbdf50eb305f61f7a307c91ee799ccef03ee"
+        },
+        "cost_usd": 0.02284538,
+        "started_at": "2026-11-20T10:13:40.504839378Z",
+        "finished_at": "2026-11-20T10:14:36.848957355Z"
+      }
+    ],
+    "spent_usd": 0.02284538,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W754GRHQNWBKB4NDRHD87G": {
+        "direct_usd": 0.01693765,
+        "delegated_usd": 0.00590773,
+        "agents": [
+          {
+            "agent": "agt_01M7W767Y8VXEPZ0EAV43MR0FD",
+            "parent": "agt_01M7W754HSZVNTKENZN78VPRMW",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "low",
+            "cost_usd": 0.00590773
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T10:13:40.301133062Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-20T10:13:40.301133062Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-20T10:13:40.301133062Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

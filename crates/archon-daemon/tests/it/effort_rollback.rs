@@ -1,7 +1,9 @@
 //! `[models] effort_sizing = false` is the rollback to 1.6.3: for the same
 //! inputs the daemon issues byte for byte what 1.6.3 issued. The files under
 //! `effort_rollback/` were written by 1.6.3's code (`ARCHON_BLESS=1` there),
-//! then re-blessed for the review-carry wording (C3), which is not effort sizing.
+//! then re-blessed for the review-carry wording (C3) and the review holder's
+//! reviewer-count, verbatim-JSON and risk wording, and for the orchestrator's
+//! retry-or-report rule. These changes apply with and without effort sizing.
 //! One input differs since: dispatch holds an item while the catalog lists no
 //! model, so the harness lists some, and the contracts' worker line reads as
 //! 1.6.3 worded it for such a catalog ("places none of", not "is empty").

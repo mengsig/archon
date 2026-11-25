@@ -1,0 +1,27 @@
+Reviewed src/tokens.js (plus encoding.js, index.js, tests). Verdict: NOT safe to ship. verify() accepts forged tokens. Confirmed by running the module: a token with an empty signature (`<base64url payload>.`) verifies and returns attacker-chosen claims. Root cause is `expected.startsWith(signature)` at src/tokens.js:27, which is a prefix check (and not constant-time). Full findings are in the final message. No code was changed; the existing 4 tests pass, but they do not cover empty or truncated signatures.
+
+**Verdict: do not ship `src/tokens.js` as it is.** `verify()` accepts forged tokens. I checked the findings below by running the module with `node -e`. I changed no files. The existing 4 tests pass, but none of them covers the failing cases.
+
+**Critical**
+
+1. **`src/tokens.js:27`, `verify`: an empty signature passes.** The check is `expected.startsWith(signature)`. An empty string is a prefix of every string, so a token with no signature verifies. Confirmed: `verify(base64url('{"user":"root","exp":9e15}') + ".", SECRET, {now: 2000})` returns `{ user: 'root', exp: 9e15 }`. This is a full authentication bypass that needs no secret.
+
+2. **`src/tokens.js:27`, `verify`: prefix matching is a per-character oracle.** The comparison is also not constant-time. An attacker can recover the MAC of a chosen payload one character at a time, about 64 guesses per position and roughly 2.8k requests in total, unless the endpoint rate-limits. Fix: require the full signature and compare it with `crypto.timingSafeEqual` on equal-length buffers.
+
+**Medium**
+
+3. **`src/tokens.js:28-29`, `verify`: attacker-controlled input throws instead of returning `null`.** The function contract is "payload or null", but `JSON.parse` throws on bad JSON. A `null` payload then throws a `TypeError` at `payload.exp`. Confirmed: `verify('!!!.', SECRET)` throws `SyntaxError`, and so does a token whose payload is `base64url('null')`. This is a crash path, and the caller's error handling may not expect it.
+
+4. **`src/tokens.js:22`, `verify`: the secret is not validated.** `sign` enforces a minimum length, but `verify` does not. With an empty secret, `createHmac` accepts the empty key, so a forgery made with an empty key verifies. Confirmed: `verify(forged, '')` returns the payload. If the verifier is misconfigured with an empty or missing secret, every token is forgeable.
+
+**Low**
+
+5. **`src/tokens.js:24`, `verify`: extra segments are ignored.** `split('.')` drops anything after the second segment, so `validToken + ".zzz"` verifies. Tokens become malleable. This matters if tokens are used as revocation or dedupe keys.
+
+6. **`src/tokens.js:14`, `sign`: `ttlSeconds` is not validated.** A negative TTL issues an already-expired token, which I confirmed fails `verify`. A NaN or string TTL produces an `exp` that is `null` after JSON encoding, so the token is rejected silently.
+
+7. **`src/tokens.js:15`, `sign`: the secret length check counts characters, not entropy.** `'k'.repeat(32)` passes, so the check does not enforce real key strength.
+
+**Test coverage gap.** `test/tokens.test.js` checks a tampered payload only with the original, correct signature. It never tests an empty or truncated signature, a malformed body, or an empty secret in `verify`. Those are the cases that fail.
+
+**Suggested order before tomorrow's release:** fix finding 1 and finding 2 together (exact, constant-time signature comparison that rejects empty signatures), then add regression tests for the empty-signature, truncated-signature, and malformed-JSON cases. Findings 3 and 4 should follow before release. Findings 5–7 can wait.

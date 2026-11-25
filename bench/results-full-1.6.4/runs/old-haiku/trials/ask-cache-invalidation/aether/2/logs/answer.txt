@@ -1,0 +1,38 @@
+## Root cause
+
+Category listings are cached separately from products, and a price change only invalidates the product entry. The listing entry keeps the old price until its 600-second TTL expires.
+
+- **Write path:** `updatePrice` in `src/pricing.js:6-13` updates the store, then calls `catalog.cache.delete(productKey(sku))`. It deletes only `product:<sku>`.
+- **Product read path:** `Catalog.product` in `src/catalog.js:12-20` misses the cache, reads the store, and gets the new price. That is why product pages update immediately.
+- **Listing read path:** `Catalog.listing` in `src/catalog.js:22-33` caches a page of rows under `listing:<category>:<page>` with `LISTING_TTL_SECONDS` (600 s, `src/config.js:7`). Each row copies `priceCents` into the cached data (`catalog.js:29`), so the listing holds its own copy of the price.
+- **Why nothing else clears it:** `updatePrice` has no way to find the listing keys. It knows the SKU, not the category, and the listing keys are per category and per page. Nothing else in the code deletes `listing:*` keys.
+
+So a category page can serve the old price until its entry expires, which is up to 600 s after it was last built. The 10-minute figure in the report matches `LISTING_TTL_SECONDS`.
+
+The `config.js` comment says listings are cached separately because they are expensive to build. That reason is valid for the sorting and joining work, but it does not justify caching the price, which is the field that changes.
+
+## Reproduction
+
+I ran a short script against the code with an injected clock. It wrote no files.
+
+```
+listing before 5000
+product before 5000
+product after 4500
+listing after (t=0) 5000     <- stale
+listing at 599s 5000         <- stale
+listing at 600s 4500         <- refreshed on TTL expiry
+```
+
+The existing tests in `test/catalog.test.js` check that product pages update immediately, but nothing checks listings after a price change, so this gap is not covered.
+
+## Fix options
+
+1. **Invalidate the affected listings on price change (smallest change).** In `updatePrice`, read the product's category and delete every `listing:<category>:<page>` entry. The cache is a plain `Map`, so this could be a prefix scan. A cleaner version is to have the cache track which keys belong to each category.
+2. **Version the listing key by category.** Keep a `categoryVersion` per category, include it in `listingKey`, and bump it on a price change. Old entries then stop being read. This avoids scanning but needs a small amount of extra state.
+3. **Keep prices out of the cached listing.** Cache only the sku/name ordering and join the current price from the product lookup at read time. Prices are then always current, at the cost of one product lookup per row. Given how the code is structured, this is the cleanest option if the join cost is acceptable.
+4. **Lower `LISTING_TTL_SECONDS`.** This is a mitigation only. It shrinks the window but keeps the staleness and adds rebuild cost.
+
+I'd recommend option 1 or 2 for the immediate fix, with a test that changes a price and then asserts the listing shows the new value. Option 3 is the better long-term design if listing reads are not very hot.
+
+I made no changes to the repository.

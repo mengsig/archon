@@ -1,0 +1,16 @@
+Implemented ledger.py per SPEC.md and expanded test_ledger.py; committed as 559b698 on main (author mengsig). All 22 tests pass across repeated runs with `python3 -m unittest test_ledger`.
+
+Implementation: validated construction (dict only, nonempty str names, exact-int balances in [0, MAX_BALANCE], bools rejected, input copied). transfer validates the amount before any account lookup, raises KeyError for unknown accounts, returns False on insufficient funds or destination overflow with no changes, and handles same-account transfers as specified, including at MAX_BALANCE. snapshot returns a copy. One threading.Lock per ledger makes every operation atomic and linearizable, and with no nested locks opposite transfers cannot deadlock.
+
+Choices to review: an unhashable account name (e.g. a list) surfaces as TypeError from the dict lookup rather than KeyError. The spec does not cover it, so I left it. Concurrency tests use thread joins with a 60s guard only to detect hangs, not for timing.
+
+I implemented `ledger.py` against `SPEC.md`, added focused tests, and committed both as `559b698` on `main`, authored as `mengsig`. All 22 tests pass across repeated runs with `python3 -m unittest test_ledger`.
+
+- **Construction:** accepts only a dict with nonempty string names and exact-`int` balances in `[0, MAX_BALANCE]`. Booleans, floats and non-dict inputs raise `ValueError`. The input is copied.
+- **`transfer`:** validates the amount before looking up accounts, then raises `KeyError` for an unknown account. Insufficient funds or destination overflow return `False` and change nothing. Same-account transfers return `True` iff funds suffice and never change the balance, including at `MAX_BALANCE`.
+- **`snapshot`:** returns a copy.
+- **Thread safety:** one `threading.Lock` per ledger makes every operation atomic. With no nested locks, opposite transfers cannot deadlock.
+
+One choice to review: an unhashable account name such as a list raises `TypeError` from the dict lookup, not `KeyError`. The spec doesn't cover that case, so I left it.
+
+The concurrency tests use thread joins with a 60-second timeout only to detect hangs.

@@ -84,6 +84,15 @@ its own, set by risk rather than size: see
 of a pipeline, and when work was split into parts it has the integrated
 result reviewed once, with a depth that follows the risk.
 
+Enqueue may return advice alongside the queued item. For `direct`, Archon
+suggests the `adaptive` pipeline when the title or brief puts a change verb near
+wording about concurrency, locking, migrations, security, or a breaking
+public format change. A risk word on its own is insufficient. For any
+pipeline, Archon suggests one item per fix when the title or brief lists
+at least two distinct numbered or bulleted fix entries, or distinct
+change labels such as `R2-3` and `R2-5`. The advice is part of the
+enqueue response only.
+
 What to know about helper agents:
 
 - A helper works in one mirror, or in the orchestrator's scratch directory
@@ -209,16 +218,14 @@ pipeline lines also leave out runs a stage ended with `BLOCKED:` or
 `ESCALATE:`, counted in `blocked=` and `escalated=` instead. A run's failure
 class comes from its stage records (the stage that ended it timed out, failed
 on infrastructure, hit a cost cap, or held a review that did not pass), never
-from words in its error. Five or
-more scored uses can retract a lesson whose raw Wilson lower bound (z = 1.96)
-drops below 0.3, and that bound is strict: 2 wins in 5 retract, and so do 3
-wins in 5 (bound 0.23); 4 wins in 5 (0.38) keep the lesson. For example, a
-lesson given to five runs of which two succeed, one is cancelled, one hits
-its budget cap and one times out has 2 scored uses and 2 wins and stays
-active. When scoring activates or retracts a lesson by itself, the feed says
-so and the lesson's `updated_at` moves. Confidence decays since last use; age
-alone never retracts a winning lesson. Pinning prevents automatic retraction
-and decay; `pin --unpin` releases the pin.
+from words in its error. The Wilson lower bound determines confidence, which
+decays since last use. After 20 scored uses by default, a learned lesson at or
+below its baseline retires. The baseline uses that lesson's held-out win rate
+once there are enough samples, and 50% until then. Pinned and operator-accepted
+lessons are exempt. The feed records automatic activation and retirement.
+`archon lessons` shows retired advice with the baseline and sample floor that
+triggered the decision. `archon lessons accept <id>` restores it. Earlier
+retractions are listed with `archon lessons --all`.
 
 Archon does not turn outcomes into Aether memories. A failed or corrected run
 asks the orchestrator to record a lesson; Aether's memory holds only what an
@@ -233,6 +240,7 @@ penalized. Run-level retry, gate and GitHub observations remain visible as audit
 history and can revoke lesson wins.
 
 The orchestrator's lessons require a source item and stay scoped to its repository.
+Archon records the item's latest known failure class when it records the advice.
 They begin Proposed with low weight until a confirming win or your acceptance.
 Distilled proposals wait for `archon lessons accept`. Lessons are one plain sentence
 without markup, links, external paths or instruction overrides. Use `lessons --all`
@@ -857,7 +865,7 @@ with `/`.
 ### Images
 
 The orchestrator sees the images you send it when aetherd speaks protocol 19
-or later. Archon 1.6.4 requires Aether 1.4.2, which supports image paste
+or later. Archon 1.6.5 requires Aether 1.4.3, which supports image paste
 and reference attachments. An older aetherd without image support refuses
 a message with images and says so.
 In `archon chat`:
@@ -1111,6 +1119,13 @@ at all until it is retried. `archon queue retry` queues a succeeded item
 again on its branch, delivering into the pull request it has; an item
 waiting on it waits for it to succeed again, and the retry counts against
 the run that passed.
+
+`archon model-evidence` counts a routing miss when `--switch` revives an
+escalated run on a different pipeline. Each miss belongs to the pipeline the
+failed run was using and the local day it finished. A count covers the
+recorded routing decisions in that repository and pipeline. The report
+shows `misses=unknown` when it has no classified decisions and lists failed
+runs with missing evidence as `unclassified`.
 
 Every steer is recorded with who made it (`operator` or `orchestrator`) and
 what it changed. `archon queue show <id>` lists them, and the feed has a
@@ -1448,8 +1463,8 @@ that moved since keeps the review only when every commit after it is a
 merge of a commit the pull request's base holds, made as `archond` makes
 them when a parent landed as a squash or a refresh merged the base in
 place: git's own merge with no conflict, or one that keeps the branch's
-tree over the landing of a stack parent whose exact content the review
-read on top of. The merge then
+tree over a landing whose exact content is in recorded stack ancestry outside
+the base, or in an ancestor merged earlier in the checked chain. The merge then
 goes ahead at the new head and its record says the review carried over and
 why; a resolved conflict, an added change or any other commit is refused
 as before, and needs a retry. Checks
@@ -1584,12 +1599,20 @@ or malformed result, empty evidence or a bad visual pair gets the one automatic
 repair (`[review] auto_repair`), whose note quotes the allowed values; a blocked
 requirement fails. With no build evidence on record, as in a validation-only
 pipeline, the `intent-acceptance` stage reports the results itself under the same
-contract and repair. The `intent-acceptance` stage
-runs on a model apart from every builder and prefers a different vendor. That model
-must be a vision model when approved reference images exist. If none is permitted
-and connected, the strongest permitted model judges instead. The readiness report
-and the item's outcome then say `acceptance: not independent`. Set `[review]
-independent_acceptance = true` to refuse such a run instead. Missing or blocked
+contract and repair. Archon prefers a judge apart from every builder and a
+different vendor. Approved reference images require a vision model. If no
+independent model is available, the strongest permitted model judges and the
+outcome records `acceptance: not independent`. Enabling
+`[review] independent_acceptance` refuses that fallback.
+
+For a live design item, a permitted, capable judge pinned to
+`intent-acceptance` takes precedence. A judge that shares a builder’s model
+or vendor counts as dependent, including a pinned judge. Archon skips spent
+providers and tries another eligible judge after a quota failure. When all
+eligible providers are spent, the first attempt fails and a retry waits for
+available quota.
+
+Missing or blocked
 requirements, changed images, unexplained gaps and unapproved deviations cannot
 pass.
 

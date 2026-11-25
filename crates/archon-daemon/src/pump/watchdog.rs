@@ -97,12 +97,7 @@ pub(super) async fn agent_created(
     let belongs_to_run = {
         let mut store = ctx.store.lock().await;
         let run = store.agent_run(parent)?;
-        if let Some(run) = &run {
-            store.link_agent_run(agent, run)?;
-        }
-        if run.is_some() || item.is_none() {
-            store.record_delegated(agent, parent, model, None)?;
-        }
+        store.record_delegation_event(agent, parent, model, event.seq)?;
         run.is_some()
     };
     if belongs_to_run {

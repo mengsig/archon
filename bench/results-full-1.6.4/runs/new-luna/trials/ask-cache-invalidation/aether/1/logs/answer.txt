@@ -1,0 +1,5 @@
+The stale prices come from the category listing cache. `Catalog.listing()` caches each category and page under `listing:<category>:<page>`. When a merchant changes a price, `updatePrice()` updates the store and deletes only `product:<sku>`, so the product page fetches the new price immediately while cached listings remain untouched.
+
+Listings have a 600-second TTL in [config.js](/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/76d4cf30ba8273f2ef01c94e/ask-cache-invalidation/src/config.js:5). The cache checks expiry on read, so an affected listing can show the old price for up to ten minutes after it was cached.
+
+The fix is to invalidate the listing cache entries affected by a price update—at minimum, every page for that product’s category—alongside the product key in `updatePrice()`. Alternatively, use a broader category cache invalidation mechanism.

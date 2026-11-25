@@ -263,6 +263,40 @@ async fn pause_reasons_refresh_at_read_time_in_all_views() {
 }
 
 #[tokio::test]
+async fn dispatch_persists_the_pause_reason_until_the_item_leaves_the_queue() {
+    let h = Harness::new().await;
+    let item = h.enqueue("observed pause").await;
+    let target = PauseTarget::Global { hard: false };
+    h.cli(Request::Pause(target.clone())).await.unwrap();
+    h.dispatch().await;
+    h.dispatch().await;
+    {
+        let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+        let observed: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM queue_reason_intervals
+             WHERE item = ?1 AND reason = 'pause' AND ended_at IS NULL",
+                [item.id.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(observed, 1);
+    }
+    h.cli(Request::Resume(target)).await.unwrap();
+    h.dispatch().await;
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let (paused, open): (i64, i64) = conn
+        .query_row(
+            "SELECT sum(reason = 'pause' AND ended_at IS NOT NULL), sum(ended_at IS NULL)
+         FROM queue_reason_intervals WHERE item = ?1",
+            [item.id.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((paused, open), (1, 0));
+}
+
+#[tokio::test]
 async fn budget_reasons_use_dispatch_spend_and_precedence() {
     let h = Harness::new().await;
     let active = h.enqueue("active").await;

@@ -19,7 +19,7 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::autonomy::Directive;
 use archon_core::error::ArchonError;
 use archon_core::github::GithubThread;
-use archon_core::id::{QuestionId, QueueItemId, ReportId, StoreId};
+use archon_core::id::{QuestionId, QueueItemId, ReportId, StageRunId, StoreId};
 use archon_core::run::GateSubject;
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
@@ -71,6 +71,14 @@ pub enum TriggerEvent {
     MessageCapReached {
         #[serde(flatten)]
         cap: archon_core::agent_message::MessageCap,
+    },
+    /// An advisory once per stage run, whether or not learned limits are enabled.
+    StageOverrun {
+        item: QueueItemId,
+        stage: String,
+        stage_run: StageRunId,
+        elapsed_seconds: u64,
+        p90_seconds: u64,
     },
     ItemFinished {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -290,6 +298,7 @@ impl TriggerEvent {
             Self::OrchestratorBriefing { .. } => "orchestrator_briefing",
             Self::AgentMessage { .. } => "agent_message",
             Self::MessageCapReached { .. } => "message_cap_reached",
+            Self::StageOverrun { .. } => "stage_overrun",
             Self::ItemFinished { .. } => "item_finished",
             Self::InitiativeFinished { .. } => "initiative_finished",
             Self::ItemBlocked { .. } => "item_blocked",
@@ -333,6 +342,7 @@ impl TriggerEvent {
                 MessageKind::Escalation | MessageKind::Question
             ),
             Self::ItemFinished { .. }
+            | Self::StageOverrun { .. }
             | Self::InitiativeFinished { .. }
             | Self::PolicyViolation { .. }
             | Self::NewsDigest { .. }
@@ -537,6 +547,8 @@ pub(crate) async fn push_once(
     }
     let raw = serde_json::to_string(&outbox)?;
     let entry = archon_core::notify::FeedEntry::System {
+        command_id: None,
+        command_result: None,
         text: "Initiative finished; coordinated result queued.".into(),
     };
     let saved = store.append_feed_with_kv(
@@ -612,6 +624,23 @@ pub(crate) fn hold_at_once(store: &mut Store, event: TriggerEvent) -> Result<(),
 }
 
 fn hold_as(store: &mut Store, news: Held) -> Result<(), ArchonError> {
+    let outbox = with_held(store, news)?;
+    write_outbox(store, &outbox)
+}
+
+pub(crate) fn hold_stage_overrun(
+    store: &mut Store,
+    event: TriggerEvent,
+    receipt: (&str, &str),
+) -> Result<(), ArchonError> {
+    assert!(matches!(event, TriggerEvent::StageOverrun { .. }));
+    assert!(receipt.0 != OUTBOX_KEY && !receipt.0.is_empty());
+    let outbox = with_held(store, Held::new(event, archon_core::now(), false))?;
+    let raw = serde_json::to_string(&outbox)?;
+    store.kv_update(&[(OUTBOX_KEY, &raw), receipt], &[])
+}
+
+fn with_held(store: &mut Store, news: Held) -> Result<Outbox, ArchonError> {
     assert!(
         !matches!(
             news.event,
@@ -629,7 +658,7 @@ fn hold_as(store: &mut Store, news: Held) -> Result<(), ArchonError> {
         outbox.pending.len() <= before + 1,
         "holding one event adds at most one"
     );
-    write_outbox(store, &outbox)
+    Ok(outbox)
 }
 
 /// Record a stage's or run node's message as one feed entry and the
@@ -1147,10 +1176,10 @@ async fn deliver(ctx: &DaemonContext, batch: &Batch) -> Result<(), ArchonError> 
             Ok(()) => return Ok(()),
             Err(error) if error.is_store() => return Err(error),
             Err(ArchonError::Invalid(refusal)) => {
+                tracing::error!("Aether refused trigger {key} ({refusal}): {payload}");
                 let text = format!(
-                    "Aether refused trigger {key} ({refusal}); its news was not delivered: {payload}"
+                    "Aether refused to take Archon's news ({refusal}); it was not delivered."
                 );
-                tracing::error!("{text}");
                 feed::system(ctx, text).await?;
                 return Ok(());
             }

@@ -1,0 +1,3 @@
+Implemented and committed as `e2bdb47` (`Refactor order status to enum`). Status is now `OrderStatus` throughout the crate, with parsing, display, transitions, and root re-exports. Report sorting and output formats are preserved.
+
+`git diff --check` passed. I couldn’t run `cargo test` because `cargo` is not installed or available on PATH in this environment.

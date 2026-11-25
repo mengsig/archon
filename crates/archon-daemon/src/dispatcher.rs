@@ -264,9 +264,15 @@ async fn admit(
     }
     ctx.host.check(ctx.config.limits.host_limits());
     let mut table = ctx.runs.lock().await;
+    let observed_at = archon_core::now();
     let snapshot =
         snapshot::build(ctx, ReadOn::Writer, &table, caps.clone(), envs, catalog).await?;
     let mut plan = archon_queue::plan_dispatch(&snapshot);
+    let reasons = archon_queue::dispatch::waiting_reasons_for_plan(&snapshot, &plan);
+    ctx.store
+        .lock()
+        .await
+        .observe_queue_reasons(&reasons, observed_at)?;
     let budget = BudgetView {
         caps,
         today_usd: snapshot.spend_today_usd,

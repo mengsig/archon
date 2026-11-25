@@ -131,7 +131,11 @@ pub(super) async fn run_plan(
             return finished_plan(ctx, &now).await;
         }
     };
-    let plan = plan_view::plan_of(run, &spec, &edits, &item)?;
+    let mut plan = plan_view::plan_of(run, &spec, &edits, &item)?;
+    if ctx.config.limits.learned_stage_timeouts() {
+        let store = ctx.read_store().await?;
+        plan_view::set_learned_timeouts(&store, &stored.pipeline, &mut plan)?;
+    }
     assert!(!plan.finished, "a live run's plan");
     Ok(Reply::RunPlan(Box::new(plan)))
 }

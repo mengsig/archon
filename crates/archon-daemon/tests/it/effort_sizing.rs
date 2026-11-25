@@ -69,7 +69,10 @@ effort = "high"
 timeout_minutes = 30
 "#;
 
-pub(crate) async fn harness(config: Config) -> Harness {
+pub(crate) async fn harness(mut config: Config) -> Harness {
+    // Learned routing explores for a share of item ids, and an explored route
+    // keeps its own effort: no exploring keeps a test from depending on its id.
+    config.learning.explore_rate = 0.0;
     let h = Harness::with_config(config).await;
     h.add_pipeline(SIZED, SIZED_TOML);
     h.add_pipeline(DONOR, DONOR_TOML);

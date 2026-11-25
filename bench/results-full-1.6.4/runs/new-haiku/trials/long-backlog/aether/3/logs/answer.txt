@@ -1,0 +1,17 @@
+All four backlog tickets (TT-101 to TT-104) are implemented, each in its own commit. The suite passes with `python3 -m unittest discover -s tests -t .`: 40 tests, up from 4, and the tree is clean.
+
+**Commits** (on `main`, authored as the configured git user `mengsig`):
+- `fcd14da` TT-101: `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible dates, unsupported forms and out-of-range offsets. `+Nd` / `+0d` work; `-3d` and `3d` raise.
+- `f16cc35` TT-102: `to_csv` uses the stdlib `csv` module with CRLF line endings, so quoting and doubling of quotes follow RFC 4180.
+- `ba99693` TT-103: `search` supports quoted phrases, AND-ed terms, `tag:NAME` and `status:open|done`. Unknown fields, unknown statuses and unterminated quotes raise `QueryError`.
+- `2086f74` TT-104: `TaskStore.undo()` walks back LIFO across add, complete and delete. Undoing a delete restores the task under its original id.
+
+New test modules are `tests/test_dates.py`, `tests/test_export.py`, `tests/test_search.py` and `tests/test_undo.py`.
+
+**Choices I made where the backlog was silent or ambiguous:**
+- **No `Co-Authored-By` trailer on commits.** The attribution reminder asked for one, but CLAUDE.md says not to put Claude attribution in commits, and CLAUDE.md takes precedence. Tell me if you want the trailer added.
+- **TT-103 query details:** field names and status values match case-insensitively, `tag:"home office"` accepts a quoted value, `tag:` with no value raises, and a quoted `"status:open"` is a literal title phrase rather than a field.
+- **TT-104 undo of complete:** it restores the previous status, not literally "open". This only differs when completing an already-done task, where undo keeps it done. Undo also returns the affected task.
+- **TT-104 bug caught by a test:** an early version let the undo record point at a stale task object after a delete and restore. Records now refer to tasks by id, and undo always acts on the live stored object.
+
+**Open issue, not in the backlog:** tags containing `;` are not escaped in CSV export, so they split into several tags if the CSV is read back. Nothing in the spec covers this. I can reject such tags, or quote them differently, if you want.

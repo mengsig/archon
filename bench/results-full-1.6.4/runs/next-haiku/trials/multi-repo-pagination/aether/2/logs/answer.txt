@@ -1,0 +1,20 @@
+Both repositories now have pagination committed, and both test suites pass.
+
+**Commits**
+- `inventory-api` `d33c16b`: `GET /items` takes `limit` (1..100, default 20) and `cursor`, and returns `{"items", "next_cursor"}`. Invalid values get a 400 with `{"error": ...}`.
+- `inventory-client` `8ca23a6`: `listItems` follows `next_cursor` until it is null or absent, sending no cursor on the first request.
+
+**Verification**
+- `inventory-api`: `python3 -m unittest` runs 10 tests, all passing (3 original plus 7 new covering paging, the last and exact-fit pages, a cursor past the end, and invalid `limit` and `cursor` values).
+- `inventory-client`: `npm test` runs 7 tests, all passing (3 original plus 4 new).
+- End-to-end: a throwaway script drove `listItems` against the real `api_cli.py`. It returned all 57 items in order. I deleted the script afterward.
+
+**Choices I made**
+- **Cursor format:** base64url of the last item's `id` on the page. A page returns items with `id` greater than the cursor's id, so inserts don't shift pages. Decoding is strict, so anything that isn't a valid encoded integer is a 400.
+- **Client loop guard:** `listItems` throws if the server returns the same non-null cursor twice, rather than looping forever. This was not in the spec.
+- **Client requests:** it doesn't send `limit`, so it uses the server default of 20 per page. Passing `limit=100` would cut round trips, but the spec didn't ask for that.
+- **READMEs:** both document the new parameters, the response shape, the 400 behaviour, and the client's paging.
+
+**Bug found and fixed during testing:** my first version of the repeated-cursor check compared `null` to `null` on the first page and failed every call. The check now applies only to non-null cursors.
+
+**Not changed:** `GET /items/<id>` still uses `str.isdigit()`, which accepts non-ASCII digits such as `²` and would raise on them. That's a pre-existing issue, outside this task, so I left it alone.

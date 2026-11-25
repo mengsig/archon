@@ -1,0 +1,21 @@
+**Root cause:** `updatePrice` invalidates only the product-page cache entry. Category listings are cached separately for 10 minutes and are never invalidated, so they keep the old price until their TTL expires. That is the delay Support sees.
+
+I read the code without changing anything. One caveat: the registered repository's name is redacted in `list_repos`, and the only mirror in the workspace is `repos/ask-cache-invalidation` (HEAD `6e5d2bb`, "bench fixture"). There is no `catalog-service` directory, so I'm assuming this is the code Support means. If not, tell me the right repo and I'll look again.
+
+**The code path (`src/`):**
+
+- `pricing.js` `updatePrice(catalog, sku, priceCents)`: validates the price, calls `store.update`, then runs `catalog.cache.delete(productKey(sku))`. It is the only invalidation, and it deletes only `product:<sku>`.
+- `catalog.js` `product(sku)`: reads `product:<sku>` from the cache and falls back to the store on a miss, with a 3600s TTL. After `updatePrice` the entry is gone, so the next product-page view reads the store. That is why product pages update immediately.
+- `catalog.js` `listing(category, page)`: caches the full rows, including `priceCents`, under `listing:<category>:<page>` with `LISTING_TTL_SECONDS = 600`. Nothing deletes these keys. Until expiry, every category page gets the stale price.
+- `cache.js`: a plain TTL map with no prefix or tag invalidation, so `updatePrice` cannot easily clear all pages of a category.
+- `config.js`: the comment says listings are cached separately because they are expensive to build (join and sort). That is the reason the listing cache exists, and it is also why its copy of the price can diverge.
+
+**Why it is exactly about ten minutes:** a listing entry is written at most 600s before it expires, so a price change can be hidden for up to 600s. The test suite only checks product pages (`test/catalog.test.js`); no test covers a listing after a price change.
+
+**Fix options, in order of preference:**
+
+1. **Cache listings as SKU order only and hydrate prices at read time.** `listing` caches the sorted SKU list per page and fetches each price via `this.product(sku)`, which the price update already keeps fresh. This removes the duplicated price and the stale window with no new invalidation logic. It costs one product lookup per row, which is cheap with the product cache in place.
+2. **Bump a per-category version on price change.** `updatePrice` looks up the SKU's category and increments a version, and listing keys include that version. Old entries age out by TTL. This is small, but it adds a new piece of state.
+3. **Delete listing keys on update.** `updatePrice` deletes every `listing:<category>:<page>` for the affected category. The cache has no way to enumerate keys by prefix, so this would need one added. It is the most fragile of the three.
+
+I'd recommend option 1. It fixes the cause, not just the timing, and also keeps listings correct for other field changes. I'd add a test that updates a price and then reads the listing. Nothing has been queued, and no code has been changed.

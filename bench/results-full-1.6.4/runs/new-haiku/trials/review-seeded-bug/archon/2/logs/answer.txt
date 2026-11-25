@@ -1,0 +1,38 @@
+**Verdict: not safe to ship.** The verifier accepts forged tokens. The bug is in `verify`, and the fix is small.
+
+I did not change any code. The repo is registered as `review-seeded-bug` (its `package.json` name is `session-lib`), so I read `src/tokens.js` from its mirror there. I ran read-only checks in `/tmp` against that copy.
+
+**Findings, most severe first**
+
+1. **Critical: `verify` accepts a token with an empty signature.** `src/tokens.js:24-27`, `verify`.
+   - Input: `base64url('{"user":"root","exp":9e15}') + "."`. The split gives `signature === ""`, and `expected.startsWith("")` is always true.
+   - Verified: this returns `{ user: 'root', exp: 9000000000000000 }` with no secret.
+   - Anyone can mint an admin token without the key.
+
+2. **High: the signature is compared by prefix, not in full and not in constant time.** `src/tokens.js:27`, `verify`.
+   - `expected.startsWith(signature)` accepts any truncated prefix of the real MAC. The timing also depends on how many leading characters match.
+   - Fix: require the full length, then compare with `crypto.timingSafeEqual` on equal-length buffers.
+
+3. **Medium: `verify` does not validate the secret.** `src/tokens.js:22-26`, `verify`.
+   - `sign` refuses secrets under 32 characters, but `verify` does not check. If the verifier's secret is empty or undefined, tokens signed with an empty key are accepted.
+   - Verified: a token signed with `""` verifies under `""`.
+   - Whether this is reachable depends on how the verifier's secret is loaded. The code does not guard it.
+
+4. **Medium: malformed payloads throw instead of returning `null`.** `src/tokens.js:28-29`, `verify`.
+   - `JSON.parse` throws on non-JSON, and a body that parses to `null` makes `payload.exp` throw a TypeError.
+   - Verified: `"notjson"` throws `SyntaxError`. The documented contract is `null` for invalid tokens, so callers may not expect a throw.
+   - Today this is reached only after the MAC check, so it matters mainly if finding 1 or 2 is exploited or the MAC check changes.
+
+5. **Low: `sign` does not validate `ttlSeconds`.** `src/tokens.js:14-16`, `sign`.
+   - `NaN`, `0` or negative values produce tokens that never verify. A huge value gives a far-future expiry.
+   - Fix: check it is a positive finite number.
+
+6. **Low: trailing segments are ignored.** `src/tokens.js:24`, `verify`.
+   - `body.sig.junk` verifies because `split('.')` drops everything after the second part. Tokens are then not canonical, so anything keyed on the token string (revocation lists, caches) can be bypassed by appending a segment.
+
+7. **Test gap.** `test/tokens.test.js`.
+   - The tamper test passes because the forged body does not match the signature. The suite does not test an empty signature, a truncated signature, malformed JSON, or an empty secret. That is why finding 1 got through.
+
+**Before tomorrow**
+
+Fix findings 1 to 4 and add tests for the cases above. Findings 5 and 6 are worth fixing in the same change. I did not run the existing test suite; the claims above come from reading the code and the targeted `/tmp` checks.

@@ -10,52 +10,101 @@ pub(super) fn extract(
     workspace: &Path,
     destination: &Path,
     record: &mut ApprovedIntent,
-) -> Result<(), ArchonError> {
-    let mut urls = image_urls(html)?;
-    urls.extend(css_image_urls(html)?);
-    for url in urls {
-        if url.starts_with("data:") {
-            continue;
-        }
-        let source = local_path(&url, page, workspace)?;
-        let metadata = std::fs::metadata(&source)
-            .map_err(|e| ArchonError::io(format!("inspect image {}", source.display()), e))?;
-        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 32 * 1024 * 1024 {
-            return Err(ArchonError::Invalid(format!(
-                "image {} exceeds the size limit or is empty",
-                source.display()
-            )));
-        }
-        let bytes = std::fs::read(&source)
-            .map_err(|e| ArchonError::io(format!("read image {}", source.display()), e))?;
-        if bytes.is_empty() || bytes.len() > 32 * 1024 * 1024 {
-            return Err(ArchonError::Invalid(format!(
-                "image {} exceeds the size limit or is empty",
-                source.display()
-            )));
-        }
-        let hash = Sha256::digest(&bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        if record.images.iter().any(|image| image.sha256 == hash) {
-            continue;
-        }
-        let path = crate::handlers::intent::preserve(destination, &source, &hash)?;
-        let id = next_id(record);
-        record.images.push(ReferenceImage {
-            id,
-            path,
-            sha256: hash,
-            viewport: None,
-            theme: None,
-            state: None,
-        });
+) -> Result<String, ArchonError> {
+    let PreviewUrls { mut images, bases } = preview_urls(html)?;
+    images.extend(css_image_urls(html)?);
+    let mut replacements: Vec<_> = bases
+        .into_iter()
+        .map(|base| (source_range(html, base), "./".to_owned()))
+        .collect();
+    for url in images.into_iter().filter(|url| !url.starts_with("data:")) {
+        let range = source_range(html, url);
+        let source = local_path(url, page, workspace)?;
+        let name = preserve_local_image(&source, destination, record)?;
+        let suffix = url.find(['?', '#']).map_or("", |start| &url[start..]);
+        replacements.push((range, format!("./{name}{suffix}")));
     }
-    Ok(())
+    replacements.sort_unstable_by_key(|(range, _)| (range.start, std::cmp::Reverse(range.end)));
+    let mut rewritten = String::new();
+    let mut position = 0;
+    for (range, replacement) in replacements {
+        if range.end <= position {
+            continue;
+        }
+        if range.start < position {
+            return Err(ArchonError::Invalid(
+                "overlapping proposal image URLs".into(),
+            ));
+        }
+        assert!(range.start < range.end, "parsed image URLs are nonempty");
+        assert!(
+            range.end <= html.len(),
+            "a replacement lies within the HTML"
+        );
+        rewritten.push_str(&html[position..range.start]);
+        rewritten.push_str(&replacement);
+        position = range.end;
+    }
+    rewritten.push_str(&html[position..]);
+    Ok(rewritten)
 }
 
-fn css_image_urls(html: &str) -> Result<Vec<String>, ArchonError> {
+fn source_range(html: &str, value: &str) -> std::range::Range<usize> {
+    html.substr_range(value)
+        .expect("parsed URLs borrow the source HTML")
+}
+
+fn preserve_local_image(
+    source: &Path,
+    destination: &Path,
+    record: &mut ApprovedIntent,
+) -> Result<String, ArchonError> {
+    let metadata = std::fs::metadata(source)
+        .map_err(|e| ArchonError::io(format!("inspect image {}", source.display()), e))?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 32 * 1024 * 1024 {
+        return Err(ArchonError::Invalid(format!(
+            "image {} exceeds the size limit or is empty",
+            source.display()
+        )));
+    }
+    let bytes = std::fs::read(source)
+        .map_err(|e| ArchonError::io(format!("read image {}", source.display()), e))?;
+    if bytes.is_empty() || bytes.len() > 32 * 1024 * 1024 {
+        return Err(ArchonError::Invalid(format!(
+            "image {} exceeds the size limit or is empty",
+            source.display()
+        )));
+    }
+    let hash = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    if let Some(image) = record.images.iter().find(|image| image.sha256 == hash) {
+        return Ok(crate::handlers::intent::preserved_filename(
+            &image.path,
+            &hash,
+        ));
+    }
+    let path = crate::handlers::intent::preserve(destination, source, &hash)?;
+    let name = crate::handlers::intent::preserved_filename(source, &hash);
+    assert_eq!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(name.as_str())
+    );
+    assert!(path.starts_with(destination));
+    let id = next_id(record);
+    record.images.push(ReferenceImage {
+        id,
+        path,
+        sha256: hash,
+        viewport: None,
+        theme: None,
+        state: None,
+    });
+    Ok(name)
+}
+
+fn css_image_urls(html: &str) -> Result<Vec<&str>, ArchonError> {
     let mut urls = Vec::new();
     let mut rest = html;
     while let Some(start) = rest.to_ascii_lowercase().find("url(") {
@@ -73,7 +122,7 @@ fn css_image_urls(html: &str) -> Result<Vec<String>, ArchonError> {
             .iter()
             .any(|ext| path.ends_with(ext))
         {
-            urls.push(value.to_owned());
+            urls.push(value);
         }
         rest = &rest[end + 1..];
     }
@@ -97,7 +146,11 @@ fn local_path(url: &str, page: &Path, workspace: &Path) -> Result<PathBuf, Archo
             "proposal image URL {url:?} must name a local file"
         )));
     }
-    let raw = url.split(['?', '#']).next().unwrap_or_default();
+    let raw = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('/');
     let decoded = decode_path(&raw.replace("&amp;", "&"))?;
     let parent = page
         .parent()
@@ -141,8 +194,14 @@ fn decode_path(raw: &str) -> Result<String, ArchonError> {
     String::from_utf8(out).map_err(|_| ArchonError::Invalid("image URL must be UTF-8".into()))
 }
 
-fn image_urls(html: &str) -> Result<Vec<String>, ArchonError> {
-    let mut urls = Vec::new();
+#[derive(Default)]
+struct PreviewUrls<'a> {
+    images: Vec<&'a str>,
+    bases: Vec<&'a str>,
+}
+
+fn preview_urls(html: &str) -> Result<PreviewUrls<'_>, ArchonError> {
+    let mut urls = PreviewUrls::default();
     let mut rest = html;
     while let Some(start) = rest.find('<') {
         rest = &rest[start + 1..];
@@ -170,14 +229,22 @@ fn image_urls(html: &str) -> Result<Vec<String>, ArchonError> {
             rest = &rest[end..];
             continue;
         }
+        if name.eq_ignore_ascii_case("base") {
+            for (name, href) in attributes(&tag[name_end..])? {
+                if name.eq_ignore_ascii_case("href") && !href.is_empty() {
+                    urls.bases.push(href);
+                }
+            }
+            continue;
+        }
         if !name.eq_ignore_ascii_case("img") && !name.eq_ignore_ascii_case("source") {
             continue;
         }
         for (name, value) in attributes(&tag[name_end..])? {
             if name.eq_ignore_ascii_case("src") && !value.is_empty() {
-                urls.push(value);
+                urls.images.push(value);
             } else if name.eq_ignore_ascii_case("srcset") {
-                urls.extend(srcset(&value)?);
+                urls.images.extend(srcset(value)?);
             }
         }
     }
@@ -197,7 +264,7 @@ fn tag_end(text: &str) -> Option<usize> {
     None
 }
 
-fn attributes(mut text: &str) -> Result<Vec<(String, String)>, ArchonError> {
+fn attributes(mut text: &str) -> Result<Vec<(&str, &str)>, ArchonError> {
     let mut result = Vec::new();
     while !text
         .trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '/')
@@ -217,7 +284,7 @@ fn attributes(mut text: &str) -> Result<Vec<(String, String)>, ArchonError> {
         }
         text = text[1..].trim_start();
         let (value, remaining) = attribute_value(text)?;
-        result.push((name.to_owned(), value.to_owned()));
+        result.push((name, value));
         text = remaining;
     }
     Ok(result)
@@ -238,10 +305,10 @@ fn attribute_value(text: &str) -> Result<(&str, &str), ArchonError> {
     let end = text
         .find(|c: char| c.is_ascii_whitespace())
         .unwrap_or(text.len());
-    Ok((text[..end].trim_end_matches('/'), &text[end..]))
+    Ok((&text[..end], &text[end..]))
 }
 
-fn srcset(mut value: &str) -> Result<Vec<String>, ArchonError> {
+fn srcset(mut value: &str) -> Result<Vec<&str>, ArchonError> {
     let mut urls = Vec::new();
     while !value
         .trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',')
@@ -266,7 +333,7 @@ fn srcset(mut value: &str) -> Result<Vec<String>, ArchonError> {
             return Err(ArchonError::Invalid("empty srcset image".into()));
         }
         if !data {
-            urls.push(url.to_owned());
+            urls.push(url);
         }
         value = &value[end..];
         if value.starts_with(',') {
@@ -342,7 +409,7 @@ mod tests {
             .is_err()
         );
         assert!(local_path("../outside.png", &page, dir.path()).is_err());
-        assert!(image_urls("<img src='unclosed>").is_err());
+        assert!(preview_urls("<img src='unclosed>").is_err());
         assert_eq!(
             css_image_urls(".hero { background: url('../cover.png') }").unwrap(),
             vec!["../cover.png"]

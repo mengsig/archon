@@ -1,0 +1,25 @@
+Queued qi_01M7W3MSV25H5P5HR63HT94YD8: implement ledger.py per SPEC.md with focused tests, in quality-ledger-transfer (direct pipeline, Haiku 5.5 at medium, standard review, committed locally, no push). I chose Haiku at medium because the claude-code seven-day quota is 76% used and projected to run out before its reset, and the model policy caps effort at medium. Expect slower progress if quota runs out.
+
+I queued the `ledger.py` work as item `qi_01M7W3MSV25H5P5HR63HT94YD8` in `quality-ledger-transfer`. I did not edit the repository myself.
+
+- **Pipeline:** `direct`, one agent that implements, tests and commits the change.
+- **Model:** Claude Haiku 5.5 at medium effort. That is the only model the repository's policy allows, and its effort cap is medium.
+- **Review:** standard, which adds one reviewer.
+- **Shipping:** local commit only, with no push, because the repository ships local.
+
+I chose this cheap setup because the claude-code seven-day quota is 76% used at 30% elapsed and is projected to run out on 2026-11-21 at about 01:22 UTC, before its 2026-11-25 reset. The only other connection that is available is Codex, and the policy does not allow it for this repository. If the quota runs out mid-run, the item will stall until the reset or until you approve another model.
+
+I haven't read `SPEC.md` or the existing tests, so I can't yet say how large the change is.
+
+Done: Implement ledger.py per SPEC.md with focused tests. Implemented ledger.py per SPEC.md (stdlib only, one threading.Lock per ledger) and expanded test_ledger.py to 27 focused tests. Head 1dc92cb on archon/3ht94yd8-implement-ledger-py-per-spec-md-with-foc (tree d4efc38f299748cff8bf31a51f509fc5a0c8d7fc), on top of d42baaa. Before: both existing tests errored with NotImplementedError. After: 27/27 pass (python3 -m unittest), and 30/30 repeated runs passed with no failures. Review: first whole-change review (agt_01M7W3PJB8PK2GVG2PH46DRTJ0) failed on two blocking findings, a dict-subclass items() bypass of balance validation and non-daemon concurrency test threads that could hang on deadlock. Fixed in 1dc92cb with a regression test, daemon threads and an exact-balance assertion. Delta review (agt_01M7W3RFM48JB50V5KVE8CD8G4) of 71c751f..1dc92cb passed with no findings. Left open (non-blocking): unhashable account names such as lists raise TypeError rather than KeyError; SPEC does not define that case. Risk is high because the change adds locking. The change is isolated, with no dependents in the repo. No servers or Compose stacks were started; the reviewer processes exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W3RFM48JB50V5KVE8CD8G4), claude-code/claude-haiku-5-5 (agent agt_01M7W3PJB8PK2GVG2PH46DRTJ0)
+
+SHIPPED: commit 1dc92cb8a507c4fa44ebef3d9cc35edd6a067ce6 on the run branch
+Branch `archon/3ht94yd8-implement-ledger-py-per-spec-md-with-foc` in /home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/b1393224a3f7ef4e419edf8c/quality-ledger-transfer holds it (2 files changed, 225 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M7W3MSV25H5P5HR63HT94YD8`; land it in `main`: `archon merge qi_01M7W3MSV25H5P5HR63HT94YD8`.
+
+Implemented ledger.py per SPEC.md (stdlib only, one threading.Lock per ledger) and expanded test_ledger.py to 27 focused tests. Head 1dc92cb on archon/3ht94yd8-implement-ledger-py-per-spec-md-with-foc (tree d4efc38f299748cff8bf31a51f509fc5a0c8d7fc), on top of d42baaa. Before: both existing tests errored with NotImplementedError. After: 27/27 pass (python3 -m unittest), and 30/30 repeated runs passed with no failures. Review: first whole-change review (agt_01M7W3PJB8PK2GVG2PH46DRTJ0) failed on two blocking findings, a dict-subclass items() bypass of balance validation and non-daemon concurrency test threads that could hang on deadlock. Fixed in 1dc92cb with a regression test, daemon threads and an exact-balance assertion. Delta review (agt_01M7W3RFM48JB50V5KVE8CD8G4) of 71c751f..1dc92cb passed with no findings. Left open (non-blocking): unhashable account names such as lists raise TypeError rather than KeyError; SPEC does not define that case. Risk is high because the change adds locking. The change is isolated, with no dependents in the repo. No servers or Compose stacks were started; the reviewer processes exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W3RFM48JB50V5KVE8CD8G4), claude-code/claude-haiku-5-5 (agent agt_01M7W3PJB8PK2GVG2PH46DRTJ0)
+
+SHIPPED: commit 1dc92cb8a507c4fa44ebef3d9cc35edd6a067ce6 on the run branch

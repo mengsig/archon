@@ -62,6 +62,20 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
             item_line(item, CLIP_CHARS),
             archon_core::protocol::BUDGETS_OFF_NOTE
         ),
+        Reply::EnqueueAdvised {
+            item,
+            notices,
+            budgets_off,
+        } => {
+            let mut text = format!("{}{}", item_verb(tool, item), item_line(item, CLIP_CHARS));
+            if *budgets_off {
+                let _ = write!(text, "\nNote: {}", archon_core::protocol::BUDGETS_OFF_NOTE);
+            }
+            for notice in notices {
+                let _ = write!(text, "\nNote: {}", notice.text());
+            }
+            text
+        }
         Reply::Items(items) => listing("items", items.iter().map(|i| item_line(i, LINE_CHARS))),
         Reply::ItemDetail(detail) => item_detail(detail),
         Reply::ItemSummaries(rows) => item_summaries(rows),
@@ -78,6 +92,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
             listing("watched repositories", watches.iter().map(watch_line))
         }
         Reply::CostReport(report) => cost::report(report),
+        Reply::TimingReport(report) => report.text(),
         Reply::ModelEvidence(report) => report.text(),
         Reply::Initiatives(all) => initiatives::list(all),
         Reply::Initiative(detail) => initiatives::detail(tool, detail),
@@ -90,6 +105,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::ArtifactPage(page) => artifacts::page(page),
         Reply::VerdictCheck(check) => check.message(),
         Reply::RequestStatus(status) => tracked::status(status),
+        Reply::DesignAgent { message } => message.clone(),
         // Replies without a prose view retain their complete wire representation.
         _ => serde_json::to_string(reply)
             .unwrap_or_else(|e| format!("(reply could not be encoded: {e})")),
@@ -140,6 +156,9 @@ fn ok(tool: &str) -> &'static str {
         "update_item" => "Updated.",
         "retry_item" => "Re-queued.",
         "refresh_item" => "Refresh queued.",
+        "submit_verdict" => {
+            "Precheck complete. Finish as your instructions say with the submitted `summary` and `structured`."
+        }
         _ => "Done.",
     }
 }
@@ -224,6 +243,9 @@ fn item_line(item: &QueueItem, reason_chars: usize) -> String {
     );
     if let Some(repo) = &item.repo {
         let _ = write!(line, ", repo {repo}");
+    }
+    if let Some(id) = &item.supersedes {
+        let _ = write!(line, ", supersedes {id}");
     }
     if !item.dependencies.is_empty() {
         let deps: Vec<String> = item.dependencies.iter().map(ToString::to_string).collect();

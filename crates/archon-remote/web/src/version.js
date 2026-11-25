@@ -1,2 +1,2 @@
-// The web app's own release, shown in settings and sent in hello.
-export const APP_VERSION = '1.6.2';
+// The embedded app serves this module with the binary's Cargo package version.
+export const APP_VERSION = 'development';

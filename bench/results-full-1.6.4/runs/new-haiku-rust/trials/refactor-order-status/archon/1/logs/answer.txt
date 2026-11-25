@@ -1,0 +1,35 @@
+Queued the OrderStatus refactor of the orders crate (qi_01M7WF7A4RQSH1V82F3VF7P3V9) on the direct pipeline with standard review. It ships local, so the commit stays on the local branch and nothing is pushed. Quota: claude-code is at 77% of its seven-day window with 32% elapsed. I am keeping to this one item at a time and not running extra claude-code work in parallel until the quota paces back.
+
+The refactor is queued as one item, qi_01M7WF7A4RQSH1V82F3VF7P3V9, in the `refactor-order-status` repository. I did not change the code myself, because the orchestrator doesn't edit repositories.
+
+- **Pipeline:** `direct`, one agent that makes, checks and commits the change.
+- **Review:** `standard`. The `refactor` pipeline fixes its own review at `strict`, so I did not use it.
+- **Shipping:** the repository ships `local`, so the commit lands on the local branch and nothing is pushed.
+- **Brief:** your request verbatim, plus the constraints that report output and ordering stay byte-identical and that the commit uses the repository's configured git identity with no attribution lines.
+
+I also posted a decision to the operator about the quota pace: one item at a time on claude-code until the seven-day window paces back.
+
+I'll act on the item's outcome when it finishes. If it fails, I'll read the stage output before retrying.
+
+Done: Refactor orders crate: OrderStatus enum replaces string status. Replaced the orders crate's string order status with a typed OrderStatus enum (commit 50af636 on archon/3vf7p3v9-refactor-orders-crate-orderstatus-enum-r, not pushed). Added src/status.rs with OrderStatus (as_str, Display, FromStr, can_transition_to) and the public ParseStatusError; Order::status is now OrderStatus; pay/ship/cancel guard on can_transition_to with the same transitions as before; status_counts returns (OrderStatus, usize) still sorted by status name. Status literals now appear only in src/status.rs. Verified: cargo clippy --all-targets -D warnings clean, cargo test 7 passing (3 existing, 4 new in tests/status.rs), cargo fmt --check clean. A scratch characterization run captured report output before and after: Display, CSV lines, error texts and parse results are byte-identical; only Debug renderings differ (Order and status_counts), as expected from the typed fields. Reviewer agt_01M7WFBTT3TE57QJ9GXEY7DH2P passed the head by reading the change (its shell failed, so it ran no checks); first reviewer agt_01M7WFAKRYYB32GZH7T9MBJ9C3 failed on the same sandbox problem with no blocking finding, and its two non-blocking points were checked against the base by me. Left open: the public API break (Order::status and status_counts types, ParseStatusError now public) is intentional per the request but affects downstream callers; the Debug output change is a consequence. No servers or processes left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFBTT3TE57QJ9GXEY7DH2P)
+
+SHIPPED: commit 50af63611e79c3fd538ac930442693e377186ce7 on the run branch
+Branch `archon/3vf7p3v9-refactor-orders-crate-orderstatus-enum-r` in /home/mengsig/.local/share/archon-bench/f164-d_m8pmpw/archon-bench/work/20261120T122950Z/cfb98503160c2e3a745b13dd/refactor-order-status holds it (8 files changed, 172 insertions(+), 42 deletions(-)). Review: `archon diff qi_01M7WF7A4RQSH1V82F3VF7P3V9`; land it in …
+
+Freed 0.0 GiB of build output: item qi_01M7WF7A4RQSH1V82F3VF7P3V9 ended and its cargo target directory went.
+
+OrderStatus refactor of the orders crate succeeded and passed review. Commit 50af636 ("Replace string order status with OrderStatus enum") is on branch archon/3vf7p3v9-refactor-orders-crate-orderstatus-enum-r, local only, not pushed. The agent reports clippy -D warnings clean, cargo test 7 passing (3 existing, 4 new in tests/status.rs) and fmt clean.
+
+Two things to know before you rely on it:
+- Debug output changes for Order and status_counts, because the fields are now typed. Display, CSV lines, error texts and parse results are byte-identical in the agent's characterization run. Your request asked for observable behaviour to stay the same, so tell me if Debug output counts.
+- The public API changes: Order::status and status_counts take the new types, and ParseStatusError is now public. This is intentional per the request, but downstream callers must update.
+
+One reviewer's shell failed, so that pass was by reading the diff without running checks. The agent ran the checks itself. I have not re-run them.
+
+Replaced the orders crate's string order status with a typed OrderStatus enum (commit 50af636 on archon/3vf7p3v9-refactor-orders-crate-orderstatus-enum-r, not pushed). Added src/status.rs with OrderStatus (as_str, Display, FromStr, can_transition_to) and the public ParseStatusError; Order::status is now OrderStatus; pay/ship/cancel guard on can_transition_to with the same transitions as before; status_counts returns (OrderStatus, usize) still sorted by status name. Status literals now appear only in src/status.rs. Verified: cargo clippy --all-targets -D warnings clean, cargo test 7 passing (3 existing, 4 new in tests/status.rs), cargo fmt --check clean. A scratch characterization run captured report output before and after: Display, CSV lines, error texts and parse results are byte-identical; only Debug renderings differ (Order and status_counts), as expected from the typed fields. Reviewer agt_01M7WFBTT3TE57QJ9GXEY7DH2P passed the head by reading the change (its shell failed, so it ran no checks); first reviewer agt_01M7WFAKRYYB32GZH7T9MBJ9C3 failed on the same sandbox problem with no blocking finding, and its two non-blocking points were checked against the base by me. Left open: the public API break (Order::status and status_counts types, ParseStatusError now public) is intentional per the request but affects downstream callers; the Debug output change is a consequence. No servers or processes left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFBTT3TE57QJ9GXEY7DH2P)
+
+SHIPPED: commit 50af63611e79c3fd538ac930442693e377186ce7 on the run branch

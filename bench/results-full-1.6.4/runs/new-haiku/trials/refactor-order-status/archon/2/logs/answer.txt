@@ -1,0 +1,38 @@
+Queued the OrderStatus refactor (qi_01M7W7NSH6AKB99S4X54ATBDCH) on repo refactor-order-status using the `direct` pipeline with one standard reviewer, ship local, no merge. I chose `direct` because the `refactor` pipeline fixes strict review and can't take a per-item review level. Quota: claude-code's seven-day window is at 77% and projected to run out before reset, so this runs as a single item at default effort and nothing else is queued behind it.
+
+The refactor is queued as one item, `qi_01M7W7NSH6AKB99S4X54ATBDCH`, on `refactor-order-status`. I haven't changed the repository myself, and I'll hear back when the item finishes.
+
+- **Pipeline:** `direct`, one author with one standard reviewer. The `refactor` pipeline fixes its review level at strict, and the item can't override that.
+- **Ship mode:** local, so the work is committed on a local branch and nothing is pushed or merged.
+- **Quota:** claude-code's seven-day window is at 77% and projected to run out before reset, so this is the only item queued and it runs at default effort. I've told the operator in chat.
+
+Done: Refactor order status String into OrderStatus enum. Refactored the orders crate's order status from String to an OrderStatus enum, committed locally as 348e37c on archon/54atbdch-refactor-order-status-string-into-orders (based on 695b7d7). Nothing pushed.
+
+What changed: new src/status.rs with OrderStatus (Pending, Paid, Shipped, Cancelled; as_str, Display, FromStr, can_transition_to) and ParseStatusError (message names the rejected input). Order::status is now OrderStatus. billing, shipping and order transitions go through can_transition_to, which encodes the same guards as before. report::status_counts now returns Vec<(OrderStatus, usize)>, sorted by status name as before. from_line keeps its old error text. The crate root re-exports OrderStatus and ParseStatusError. Status string literals appear only in src/status.rs. The CSV format is unchanged.
+
+Checks on the final head: cargo fmt --check clean; cargo clippy --all-targets -- -D warnings clean; cargo test 5/5 pass (baseline was 3/3). Two tests were added for FromStr/Display round-trip and the lifecycle edge table.
+
+Review: one reviewer (agt_01M7W7R8NTTNXY1NHMW6DXYP0A, task tsk_01M7W7R8NTTNXY1NHMW6DXYP0A) read the whole diff 695b7d7..348e37c and passed it with no blocking findings. It compared old and new behaviour by reading the base code, and confirmed the same accepted transitions, messages, report ordering, parsing and filters.
+
+Open items: the public API break (Order::status type, status_counts return type) is what the operator requested. Risk is rated high under the rubric. The crate's rustfmt baseline was not clean, so cargo fmt reformatted the touched files. No services were started, so nothing is left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W7R8NTTNXY1NHMW6DXYP09)
+
+SHIPPED: commit 348e37cdf48fc3efb208a290b3ea130df903f517 on the run branch
+Branch `archon/54atbdch-refactor-order-status-string-into-orders` in /home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-b…
+
+Freed 0.0 GiB of build output: item qi_01M7W7NSH6AKB99S4X54ATBDCH ended and its cargo target directory went.
+
+Refactored the orders crate's order status from String to an OrderStatus enum, committed locally as 348e37c on archon/54atbdch-refactor-order-status-string-into-orders (based on 695b7d7). Nothing pushed.
+
+What changed: new src/status.rs with OrderStatus (Pending, Paid, Shipped, Cancelled; as_str, Display, FromStr, can_transition_to) and ParseStatusError (message names the rejected input). Order::status is now OrderStatus. billing, shipping and order transitions go through can_transition_to, which encodes the same guards as before. report::status_counts now returns Vec<(OrderStatus, usize)>, sorted by status name as before. from_line keeps its old error text. The crate root re-exports OrderStatus and ParseStatusError. Status string literals appear only in src/status.rs. The CSV format is unchanged.
+
+Checks on the final head: cargo fmt --check clean; cargo clippy --all-targets -- -D warnings clean; cargo test 5/5 pass (baseline was 3/3). Two tests were added for FromStr/Display round-trip and the lifecycle edge table.
+
+Review: one reviewer (agt_01M7W7R8NTTNXY1NHMW6DXYP0A, task tsk_01M7W7R8NTTNXY1NHMW6DXYP0A) read the whole diff 695b7d7..348e37c and passed it with no blocking findings. It compared old and new behaviour by reading the base code, and confirmed the same accepted transitions, messages, report ordering, parsing and filters.
+
+Open items: the public API break (Order::status type, status_counts return type) is what the operator requested. Risk is rated high under the rubric. The crate's rustfmt baseline was not clean, so cargo fmt reformatted the touched files. No services were started, so nothing is left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W7R8NTTNXY1NHMW6DXYP09)
+
+SHIPPED: commit 348e37cdf48fc3efb208a290b3ea130df903f517 on the run branch

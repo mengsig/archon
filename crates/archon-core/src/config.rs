@@ -79,6 +79,63 @@ pub struct Config {
     pub notify: crate::push::NotifyConfig,
     pub update: UpdateConfig,
     pub remote: crate::remote::RemoteConfig,
+    pub design: DesignConfig,
+}
+
+/// Whether the preview browser must run in Chromium's sandbox.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserSandbox {
+    /// Refuse to start without the sandbox.
+    #[default]
+    Required,
+    /// Allow `--no-sandbox`; the UI shows a badge.
+    Off,
+}
+
+/// An empty or blank path means "not set".
+fn empty_path_is_unset<'de, D: serde::Deserializer<'de>>(
+    de: D,
+) -> Result<Option<PathBuf>, D::Error> {
+    let value = Option::<PathBuf>::deserialize(de)?;
+    Ok(value.filter(|p| !p.as_os_str().to_string_lossy().trim().is_empty()))
+}
+
+/// `[design]`: live design sessions (design §8.7).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DesignConfig {
+    /// Whether design stages may start a preview.
+    pub enabled: bool,
+    /// The browser executable; unset (or empty) detects one.
+    #[serde(deserialize_with = "empty_path_is_unset")]
+    pub browser: Option<PathBuf>,
+    /// Whether the browser's sandbox is required.
+    pub browser_sandbox: BrowserSandbox,
+    /// Live headless browsers on this host, 1 to 16.
+    pub max_sessions: u32,
+}
+
+impl Default for DesignConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            browser: None,
+            browser_sandbox: BrowserSandbox::Required,
+            max_sessions: 2,
+        }
+    }
+}
+
+impl DesignConfig {
+    fn validate(&self) -> Result<(), ArchonError> {
+        if !(1..=16).contains(&self.max_sessions) {
+            return Err(ArchonError::Config(
+                "design.max_sessions must be 1 to 16".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// How archond verifies each repository's integration branch off the items'
@@ -169,6 +226,8 @@ pub struct LearningConfig {
     /// Share of (lesson, item) pairs whose lesson is withheld to measure its
     /// lift; 0, the default, holds nothing out.
     pub holdout_rate: f64,
+    /// Minimum scored uses before a lesson can be retired for poor outcomes.
+    pub retire_min_uses: u32,
 }
 
 impl Default for LearningConfig {
@@ -179,6 +238,7 @@ impl Default for LearningConfig {
             distill_daily_budget_usd: 3.0,
             explore_rate: 0.1,
             holdout_rate: 0.0,
+            retire_min_uses: 20,
         }
     }
 }
@@ -203,6 +263,11 @@ impl LearningConfig {
         if !self.holdout_rate.is_finite() || !(0.0..=0.2).contains(&self.holdout_rate) {
             return Err(ArchonError::Config(
                 "learning.holdout_rate must be between 0 and 0.2".into(),
+            ));
+        }
+        if self.retire_min_uses == 0 {
+            return Err(ArchonError::Config(
+                "learning.retire_min_uses must be positive".into(),
             ));
         }
         Ok(())
@@ -659,6 +724,9 @@ pub struct LimitsConfig {
     pub max_delegation_depth: u32,
     /// Longest per-stage timeout an item may ask for (`stage_timeouts`).
     pub max_stage_timeout_minutes: u32,
+    /// Shorten new stage deadlines when enough timing history is available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub learned_stage_timeouts: Option<bool>,
     /// Each stage's timeout in a refresh the request gives none for.
     pub refresh_stage_timeout_minutes: u32,
     /// Messages one agent may send the orchestrator, and one run node's
@@ -693,6 +761,7 @@ impl Default for LimitsConfig {
             per_pipeline: BTreeMap::new(),
             max_delegation_depth: DEFAULT_DELEGATION_DEPTH,
             max_stage_timeout_minutes: DEFAULT_STAGE_TIMEOUT_MINUTES,
+            learned_stage_timeouts: None,
             refresh_stage_timeout_minutes: DEFAULT_REFRESH_STAGE_TIMEOUT_MINUTES,
             max_agent_messages: DEFAULT_AGENT_MESSAGES,
             clarification_timeout_minutes: 30,
@@ -703,6 +772,10 @@ impl Default for LimitsConfig {
 }
 
 impl LimitsConfig {
+    pub fn learned_stage_timeouts(&self) -> bool {
+        self.learned_stage_timeouts.unwrap_or(false)
+    }
+
     /// `min_free_gb` in bytes; 0 when the disk hold is off.
     pub fn min_free_bytes(&self) -> u64 {
         self.min_free_gb.saturating_mul(1 << 30)
@@ -1303,6 +1376,7 @@ impl Config {
         self.artifacts.validate()?;
         self.storage.validate()?;
         self.integration.validate()?;
+        self.design.validate()?;
         self.notify.validate()?;
         self.remote.validate()?;
         self.models.check_weights()?;
@@ -1408,6 +1482,48 @@ fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retirement_sample_floor_defaults_and_requires_a_positive_value() {
+        let old: Config = toml::from_str("[learning]\nenabled = true").unwrap();
+        let custom: Config = toml::from_str("[learning]\nretire_min_uses = 42").unwrap();
+        let invalid: Config = toml::from_str("[learning]\nretire_min_uses = 0").unwrap();
+        assert_eq!(old.learning.retire_min_uses, 20);
+        assert_eq!(custom.learning.retire_min_uses, 42);
+        custom.learning.validate().unwrap();
+        let error = invalid.learning.validate().unwrap_err();
+        assert!(
+            error.to_string().contains("learning.retire_min_uses"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn design_defaults_and_parse() {
+        let default: Config = toml::from_str("").unwrap();
+        assert_eq!(default.design, DesignConfig::default());
+        assert!(!default.design.enabled);
+        assert_eq!(default.design.browser_sandbox, BrowserSandbox::Required);
+        assert_eq!(default.design.max_sessions, 2);
+        let set: Config = toml::from_str(
+            "[design]\nenabled = true\nbrowser = '/usr/bin/chromium'\nbrowser_sandbox = 'off'\nmax_sessions = 4",
+        )
+        .unwrap();
+        assert!(set.design.enabled);
+        for blank in ["''", "'  '"] {
+            let c: Config = toml::from_str(&format!("[design]\nbrowser = {blank}")).unwrap();
+            assert_eq!(c.design.browser, None);
+        }
+        assert_eq!(set.design.browser, Some(PathBuf::from("/usr/bin/chromium")));
+        assert_eq!(set.design.browser_sandbox, BrowserSandbox::Off);
+        assert_eq!(set.design.max_sessions, 4);
+        set.validate().unwrap();
+        for bad in [0, 17] {
+            let config: Config =
+                toml::from_str(&format!("[design]\nmax_sessions = {bad}")).unwrap();
+            assert!(config.validate().is_err());
+        }
+    }
 
     #[test]
     fn repository_effort_cap_only_narrows_global_policy() {
@@ -1847,6 +1963,7 @@ mod tests {
         assert_eq!(limits.max_delegation_depth, 2);
         assert_eq!(limits.max_agent_messages, 20);
         assert_eq!(limits.max_stage_timeout_minutes, 1440);
+        assert!(!limits.learned_stage_timeouts());
         assert_eq!(limits.refresh_stage_timeout_minutes, 30);
         assert_eq!(
             limits.initiatives(),

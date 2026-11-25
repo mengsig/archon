@@ -1,0 +1,24 @@
+Both repositories now handle currency, with tests passing and one commit each. The ledger commit is `0c19ab0` and the reports commit is `a6a8e3e`.
+
+**ledger (Rust)**
+- Lines take an optional fourth column. A missing column means `USD`.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- Malformed currency codes (anything other than three uppercase ASCII letters, including an empty fourth column) print `line N: bad currency ...` and exit 2. Other input errors still exit 1.
+- `parse_line` now returns a `ParseError` enum (`Malformed` / `BadCurrency`) so the binary can pick the exit code.
+- `cargo test`: 6 passed, including a test that runs the binary and checks the exit codes 0, 1 and 2.
+
+**reports (Python)**
+- Output is `account,currency,total_cents`, sorted by account then currency.
+- CSV without a `currency` column counts as `USD`.
+- A malformed code, including an empty value in a short row, prints `error: line N: ...` to stderr and exits 2.
+- `python3 -I -m unittest`: 5 passed. The two existing tests pass unchanged. I added tests for per-currency totals, legacy input and the exit-2 cases.
+
+Both READMEs describe the new formats and exit codes.
+
+**Choices I made**
+- The line number in ledger errors counts every input line, as before, so comment and blank lines are included in the count.
+- I trimmed whitespace around the currency code, like the other fields.
+- I did not add the Claude co-author or generated-by lines to the commits, because your CLAUDE.md says not to. The commits use the `mengsig` identity already set in each repo.
+- I did not reformat code I didn't touch. `cargo fmt --check` still reports diffs in `is_iso_date` and `parse_cents`, which were already there.
+
+`cargo` was not on the default PATH here, so I ran it from `~/.cargo/bin`.

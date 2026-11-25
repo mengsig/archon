@@ -1,0 +1,25 @@
+**Root cause:** the price update invalidates only the product cache entry, not the category listing entries that also contain the price. Category pages keep serving cached rows for up to `LISTING_TTL_SECONDS` (600 s, about ten minutes) after the change.
+
+I read the code in the mirror `repos/ask-cache-invalidation` (package `catalog-service` 2.3.1, HEAD `9208e32`). I did not change anything and did not run the tests.
+
+**The code path**
+
+- `src/pricing.js:6-13`, `updatePrice`: writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That is the only invalidation. No listing key is touched.
+- `src/catalog.js:14-24`, `product(sku)`: reads `product:<sku>` from the cache. Deleting that key forces a store read, so product pages update immediately.
+- `src/catalog.js:26-40`, `listing(category, page)`: caches the projected rows `{sku, name, priceCents}` under `listing:<category>:<page>` with `LISTING_TTL_SECONDS`. A cache hit returns the old `priceCents` until the entry expires.
+- `src/config.js:5-7`: `LISTING_TTL_SECONDS: 600`. The comment says listings are cached separately because they are expensive to build. That is the source of the ten-minute window.
+
+**Why the delay is what it is**
+
+The listing cache stores copies of price data, but nothing ties those copies to the product they came from. The product key is the only thing invalidated, so the listing entries live until their own TTL runs out. The delay is therefore the listing TTL, 600 seconds, which matches the report.
+
+**Fix options**
+
+1. **Smallest fix:** in `updatePrice`, also drop the listing entries for the product's category. The cache needs a prefix delete, for example `deleteByPrefix('listing:<category>:')`, since page count isn't known. This is a small addition to `TtlCache`. Read the product's category before the store update, or from the returned product.
+2. **Cleaner fix:** keep prices out of the cached listing rows. Cache only SKUs and names per page, then look up the current price from the product cache or store when the listing is returned. A price change then needs only the product invalidation that already exists. This costs one lookup per row on a cache hit, so it needs checking against the listing build cost the config comment describes.
+3. **Tradeoff to decide:** shortening `LISTING_TTL_SECONDS` only narrows the window. It does not fix it, and it increases rebuild load.
+
+**Other notes**
+
+- The existing test `product pages see price updates immediately` covers only the product path. Nothing tests that a listing reflects a price change, which is why this went unnoticed. The fix should add that test.
+- The cache is an in-process `Map` (`src/cache.js`). If the deployed service runs several instances, a delete in one process won't clear the others. I can't see the deployment setup from this repo, so check that before choosing between the options.

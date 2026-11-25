@@ -396,6 +396,7 @@ fn a_registration_without_caller_naming_is_repaired_keeping_what_the_operator_se
     assert_eq!(archon["env"]["ARCHON_LOG"].as_str(), Some("debug"));
     let classes = archon["classes"].as_table().unwrap();
     assert_eq!(classes["message_orchestrator"].as_str(), Some("mutation"));
+    assert_eq!(classes["queue_status"].as_str(), Some("read_only"));
     assert_eq!(classes.len(), archon_core::mcp_tools::TOOLS.len());
 
     assert!(

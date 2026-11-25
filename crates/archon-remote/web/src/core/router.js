@@ -3,6 +3,7 @@ const ROUTES = [
   { name: 'queue', pattern: /^#\/queue$/, depth: 0, tab: 'queue' },
   { name: 'graph', pattern: /^#\/graph$/, depth: 0, tab: 'graph' },
   { name: 'item', pattern: /^#\/item\/([A-Za-z0-9_]{1,64})$/, depth: 1, tab: 'queue' },
+  { name: 'design', pattern: /^#\/design\/([A-Za-z0-9_]{1,64})$/, depth: 1, tab: 'queue' },
   { name: 'inbox', pattern: /^#\/inbox$/, depth: 0, tab: 'inbox' },
   { name: 'chat', pattern: /^#\/chat$/, depth: 0, tab: 'chat' },
   { name: 'overview', pattern: /^#\/(?:overview)?$/, depth: 0, tab: 'overview' },

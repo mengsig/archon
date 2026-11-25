@@ -4,6 +4,7 @@
 
 pub mod catalog;
 pub mod delivery;
+pub mod design;
 pub mod fake_ops;
 pub mod team;
 pub mod team_worktree;
@@ -272,8 +273,9 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         let disk = fake_disk(&free_bytes);
         let ops = Arc::new(fake_ops::FakeOps::default());
         let ctx = context(&root, config, aether, backend, lavish, disk, &ops);
+        let ctx = bound(ctx);
         let harness = Self {
-            ctx: Arc::new(ctx),
+            ctx,
             backend: fake,
             catalog_server,
             repo,
@@ -479,7 +481,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
             link.replace(Some(client)).unwrap();
         }
         let ctx = context(&root, config, link, backend, lavish, disk, &self.ops);
-        self.ctx = Arc::new(ctx);
+        self.ctx = bound(ctx);
     }
 
     /// The effort rule `request`'s stored spawn records as issued.
@@ -576,6 +578,18 @@ pub fn without_host_docker(mut config: Config) -> Config {
     config
 }
 
+/// The context in an `Arc`, with the design service bound to it when design
+/// sessions are on. Unbound, the context has no weak reference, so tests that
+/// edit it in place through `Arc::get_mut` keep working; only design stages
+/// reach `DaemonContext::arc`.
+pub fn bound(ctx: DaemonContext) -> Arc<DaemonContext> {
+    let ctx = Arc::new(ctx);
+    if ctx.design.enabled() {
+        ctx.design.bind(&ctx);
+    }
+    ctx
+}
+
 /// Build a context like `archon_daemon::run` does, rooted at `root`.
 pub fn context(
     root: &Path,
@@ -612,7 +626,12 @@ pub fn context(
     let dispatch = Arc::new(Notify::new());
     let remote =
         archon_remote::Remote::open(Default::default(), &paths.data_dir, "test").expect("remote");
+    let design = Arc::new(archon_daemon::design::DesignService::new(
+        &config.design,
+        paths.data_dir.clone(),
+    ));
     DaemonContext {
+        design,
         storage: Default::default(),
         status_probes: Default::default(),
         quota: Default::default(),
@@ -803,6 +822,8 @@ pub struct FakeBackend {
 #[derive(Default)]
 struct FakeState {
     host_context_supported: bool,
+    /// The last Aether event sequence a kept agent's spend window opens after.
+    event_watermark: Option<u64>,
     /// Aether's `[network] default` is `denied`; `allowed`, as Aether
     /// ships, until a test says otherwise.
     network_denied: bool,
@@ -832,6 +853,7 @@ struct FakeState {
     unreadable: BTreeMap<AetherTaskId, String>,
     lost_replies: u32,
     outcomes: BTreeMap<AetherTaskId, StageOutcome>,
+    review_models: BTreeMap<AetherTaskId, archon_core::model::ModelRef>,
     cancelled: Vec<AetherAgentId>,
     /// The reason each cancel call gave, refused ones included, in order.
     cancel_reasons: Vec<(AetherAgentId, String)>,
@@ -843,6 +865,7 @@ struct FakeState {
     /// Every accepted `update_agent`, in order.
     updates: Vec<(AetherAgentId, AgentUpdate)>,
     update_failures: VecDeque<ArchonError>,
+    update_calls: Vec<String>,
     /// The key of every accepted keyed update: Aether makes a repeat once.
     update_keys: BTreeSet<String>,
     /// Every `interrupt` call, in order.
@@ -883,6 +906,8 @@ struct FakeState {
     delivered: Vec<(String, AetherAgentId, String)>,
     /// Every `send_message` call's key, including repeats and refused ones.
     message_calls: Vec<String>,
+    /// The images each keyed message carried (the latest call's).
+    attachments: BTreeMap<String, Vec<archon_core::attachment::ImageAttachment>>,
     message_failures: VecDeque<ArchonError>,
     /// Agents a stage agent delegated to, as Aether holds them.
     delegated: Vec<Descendant>,
@@ -1132,6 +1157,10 @@ impl FakeBackend {
         self.state().updates.clone()
     }
 
+    pub fn keyed_update_calls(&self) -> Vec<String> {
+        self.state().update_calls.clone()
+    }
+
     /// Every agent `interrupt` was asked to stop, in order.
     pub fn interrupts(&self) -> Vec<AetherAgentId> {
         self.state().interrupts.clone()
@@ -1350,6 +1379,15 @@ impl FakeBackend {
         content.clone()
     }
 
+    /// The images the message under `key` carried.
+    pub fn message_attachments(&self, key: &str) -> Vec<archon_core::attachment::ImageAttachment> {
+        self.state()
+            .attachments
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// Every `send_message` call's idempotency key, including repeats.
     pub fn message_calls(&self) -> Vec<String> {
         self.state().message_calls.clone()
@@ -1400,6 +1438,13 @@ impl FakeBackend {
                 structured: Some(structured),
             },
         );
+    }
+
+    /// The model of an in-flight turn may differ from the agent's current model.
+    pub fn record_review_model(&self, task: &AetherTaskId, model: &str) {
+        self.state()
+            .review_models
+            .insert(task.clone(), model.parse().expect("a review model"));
     }
 
     /// The delegated `agent` completed with Aether's recorded outcome.
@@ -1494,6 +1539,12 @@ impl FakeBackend {
     pub fn descendant_checks(&self) -> Vec<AetherAgentId> {
         self.state().descendant_checks.clone()
     }
+
+    /// Aether's event head is `seq`, as a kept agent's resume reads it.
+    pub fn set_event_watermark(&self, seq: u64) {
+        assert!(seq > 0, "Aether event sequences are one-based");
+        self.state().event_watermark = Some(seq);
+    }
 }
 
 /// A plain enqueue of `title` into `pipeline` of the repository `repo`.
@@ -1525,6 +1576,9 @@ pub fn enqueue_request(
 
 #[async_trait]
 impl AgentBackend for FakeBackend {
+    async fn event_watermark(&self) -> Result<Option<u64>, ArchonError> {
+        Ok(self.state().event_watermark)
+    }
     async fn find_spawn(
         &self,
         request: &SpawnRequest,
@@ -1792,6 +1846,12 @@ impl AgentBackend for FakeBackend {
                 "aether: no live agent {agent}"
             )));
         }
+        if let Some(choice) = &update.choice
+            && let Some(child) = state.delegated.iter_mut().find(|d| d.agent == *agent)
+        {
+            child.model = choice.model.clone();
+            child.effort = Some(choice.effort);
+        }
         state.updates.push((agent.clone(), update));
         let hook = state.update_hook.take();
         drop(state);
@@ -1808,7 +1868,12 @@ impl AgentBackend for FakeBackend {
         key: &str,
     ) -> Result<(), ArchonError> {
         assert!(!key.is_empty(), "a keyed update has a key");
-        if self.state().update_keys.contains(key) {
+        let seen = {
+            let mut state = self.state();
+            state.update_calls.push(key.to_owned());
+            state.update_keys.contains(key)
+        };
+        if seen {
             return Ok(());
         }
         self.update_agent(agent, update).await?;
@@ -1977,11 +2042,30 @@ impl AgentBackend for FakeBackend {
         Ok(state.answers.get(agent).cloned())
     }
 
+    async fn review_model(
+        &self,
+        _agent: &AetherAgentId,
+        task: &AetherTaskId,
+    ) -> Result<Option<archon_core::model::ModelRef>, ArchonError> {
+        Ok(self.state().review_models.get(task).cloned())
+    }
+
     async fn send_message(
         &self,
         to: &AetherAgentId,
         content: &str,
         idempotency_key: &str,
+    ) -> Result<(), ArchonError> {
+        self.send_message_with_attachments(to, content, idempotency_key, &[])
+            .await
+    }
+
+    async fn send_message_with_attachments(
+        &self,
+        to: &AetherAgentId,
+        content: &str,
+        idempotency_key: &str,
+        attachments: &[archon_core::attachment::ImageAttachment],
     ) -> Result<(), ArchonError> {
         // A real call leaves the task, so deliveries to one stage interleave.
         tokio::task::yield_now().await;
@@ -2000,6 +2084,9 @@ impl AgentBackend for FakeBackend {
         }
         let mut state = self.state();
         state.message_calls.push(idempotency_key.to_owned());
+        state
+            .attachments
+            .insert(idempotency_key.to_owned(), attachments.to_vec());
         if let Some(error) = state.message_failures.pop_front() {
             return Err(error);
         }
@@ -2019,6 +2106,12 @@ impl AgentBackend for FakeBackend {
             None => {
                 let delivery = (idempotency_key.to_owned(), to.clone(), content.to_owned());
                 state.delivered.push(delivery);
+                if let Some(pulse) = state.pulses.get_mut(to).filter(|pulse| pulse.quota_blocked) {
+                    pulse.quota_blocked = false;
+                    pulse.held = false;
+                    pulse.held_for_cause = false;
+                    pulse.running = true;
+                }
                 // A new message starts a new turn: the last answer is history.
                 state.answers.remove(to);
                 Ok(())

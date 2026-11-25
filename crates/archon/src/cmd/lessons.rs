@@ -11,7 +11,7 @@ pub struct LessonsArgs {
     /// Repository name or repo_… ID; global lessons are included.
     #[arg(long, global = true)]
     pub repo: Option<String>,
-    /// Include proposed and retracted lessons.
+    /// Also include proposed and manually retracted lessons.
     #[arg(long)]
     pub all: bool,
     #[command(subcommand)]
@@ -42,7 +42,7 @@ pub enum LessonCommand {
     Pin {
         /// The lsn_… lesson ID.
         lesson: String,
-        /// Restore automatic decay and retraction.
+        /// Restore automatic confidence decay.
         #[arg(long)]
         unpin: bool,
     },
@@ -91,11 +91,19 @@ pub async fn run(args: LessonsArgs, json: bool) -> anyhow::Result<ExitCode> {
         emit(json, || to_json(&lesson), &text)?;
         return Ok(ExitCode::SUCCESS);
     }
+    let show_all = args.all;
     let request = request(args)?;
     let reply = send(request).await?;
     let (value, text) = match reply {
         Reply::Lesson(lesson) => (to_json(&lesson)?, line(&lesson)),
-        Reply::Lessons(lessons) => (to_json(&lessons)?, lesson_lines(&lessons)),
+        Reply::Lessons(mut lessons) => {
+            if !show_all {
+                lessons.retain(|lesson| {
+                    lesson.state == LessonState::Active || lesson.retirement.is_some()
+                });
+            }
+            (to_json(&lessons)?, lesson_lines(&lessons))
+        }
         Reply::LessonsWhy(why) => {
             let mut lines = vec![format!(
                 "Item {} run {}",
@@ -132,6 +140,11 @@ fn stats_text(stats: &archon_core::lesson::LessonStats) -> String {
         "{} runs, {} corrected; lessons: {} active, {} proposed, {} retracted\n",
         stats.outcomes, stats.corrected, stats.active, stats.proposed, stats.retracted
     );
+    if let Some(min_uses) = stats.retire_min_uses {
+        text.push_str(&format!(
+            "Automatic retirement requires {min_uses} scored uses.\n"
+        ));
+    }
     for p in &stats.pipelines {
         let prs = p.review_prs.as_ref().map_or(String::new(), |prs| {
             let rounds = prs
@@ -189,7 +202,7 @@ fn request(args: LessonsArgs) -> anyhow::Result<Request> {
     Ok(match args.command {
         None => Request::Lessons(LessonQuery {
             repo,
-            state: (!args.all).then_some(LessonState::Active),
+            state: None,
             kind: None,
         }),
         Some(LessonCommand::Add {
@@ -271,10 +284,23 @@ fn line(l: &archon_core::lesson::Lesson) -> String {
     if let Some(cluster) = &l.cluster {
         provenance.push_str(&format!(" cluster={cluster}"));
     }
+    if let Some(class) = l.failure_class {
+        provenance.push_str(&format!(" failure={}", class.as_str()));
+    }
+    let state = if let Some(retirement) = l.retirement {
+        provenance.push_str(&format!(
+            " retirement_floor={} baseline={:.0}%",
+            retirement.min_uses,
+            retirement.baseline * 100.0
+        ));
+        "retired"
+    } else {
+        l.state.as_str()
+    };
     format!(
         "{} [{}{}] {} confidence={:.2} wins={}/{}{provenance}: {}",
         l.id,
-        l.state.as_str(),
+        state,
         if l.pinned { ", pinned" } else { "" },
         l.kind.as_str(),
         l.confidence,
@@ -407,5 +433,13 @@ mod proposed_tests {
             "{}",
             stats_text(&stats)
         );
+    }
+
+    #[test]
+    fn stats_show_the_running_daemons_retirement_sample_floor() {
+        let mut stats = archon_core::lesson::LessonStats::default();
+        assert!(!stats_text(&stats).contains("Automatic retirement"));
+        stats.retire_min_uses = Some(42);
+        assert!(stats_text(&stats).contains("Automatic retirement requires 42 scored uses."));
     }
 }

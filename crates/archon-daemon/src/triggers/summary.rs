@@ -75,6 +75,7 @@ fn label(event: &TriggerEvent) -> String {
             initiative, state, ..
         } => format!("initiative finished: {initiative} {state}"),
         TriggerEvent::ItemBlocked { item, .. } => format!("item blocked: {item}"),
+        TriggerEvent::StageOverrun { item, stage, .. } => format!("stage overrun: {item} {stage}"),
         TriggerEvent::MessageCapReached { cap } => {
             format!("message cap reached: {} ({})", cap.agent, cap.item)
         }

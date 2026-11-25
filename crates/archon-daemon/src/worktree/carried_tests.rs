@@ -172,6 +172,54 @@ fn a_stack_parents_squash_merged_with_the_branchs_tree_carries_it_over() {
     );
 }
 
+#[test]
+fn chained_squash_landings_with_the_reviewed_tree_carry_it_over() {
+    let f = fixture();
+    let (dep, reviewed, second_landing, _, head) = chained_landings(&f);
+    assert_eq!(f.tree(&head), f.tree(&reviewed));
+
+    f.check_stacked(&reviewed, &head, &second_landing, &[&dep])
+        .expect("chained landings carry over");
+}
+
+#[test]
+fn a_chained_landing_that_changes_a_file_is_not_carried_over() {
+    let f = fixture();
+    let (dep, reviewed, second_landing, first_merge, _) = chained_landings(&f);
+    let changed = f.commit("unreviewed.txt", "unreviewed\n");
+    let head = f.merge_commit(&f.tree(&changed), &first_merge, &second_landing);
+    assert_ne!(f.tree(&head), f.tree(&reviewed));
+    let why = f
+        .check_stacked(&reviewed, &head, &second_landing, &[&dep])
+        .expect_err("changed landing is refused");
+    assert!(
+        why.contains("resolves a conflict or adds a change"),
+        "{why}"
+    );
+}
+
+fn chained_landings(f: &Fixture) -> (String, String, String, String, String) {
+    f.on("item");
+    let grandparent = f.commit("dep.txt", "grandparent\n");
+    let dep = f.commit("parent.txt", "parent\n");
+    let reviewed = f.commit("dep.txt", "edited by item\n");
+    f.on("main");
+    git(
+        &f.repo,
+        &["checkout", "--quiet", &grandparent, "--", "dep.txt"],
+    );
+    git(&f.repo, &["commit", "--quiet", "-m", "first squash"]);
+    let first_landing = f.head();
+    git(&f.repo, &["checkout", "--quiet", &dep, "--", "parent.txt"]);
+    git(&f.repo, &["commit", "--quiet", "-m", "second squash"]);
+    let second_landing = f.head();
+    assert_eq!(f.tree(&first_landing), f.tree(&grandparent));
+    assert_eq!(f.tree(&second_landing), f.tree(&dep));
+    let first_merge = f.merge_commit(&f.tree(&reviewed), &reviewed, &first_landing);
+    let head = f.merge_commit(&f.tree(&reviewed), &first_merge, &second_landing);
+    (dep, reviewed, second_landing, first_merge, head)
+}
+
 /// The same shape where no stack parent is recorded at that content.
 #[test]
 fn a_squash_of_no_recorded_stack_parent_is_not_carried_over() {
@@ -206,6 +254,60 @@ fn a_base_merge_kept_as_the_branch_over_a_matching_tree_is_not_carried_over() {
     let head = f.head();
 
     let why = f.check(&reviewed, &head, &added).expect_err("refused");
+    assert!(why.contains("resolves a conflict"), "{why}");
+}
+
+#[test]
+fn a_base_revert_matching_pre_fork_history_is_not_a_stack_landing() {
+    let f = fixture();
+    f.commit("base.txt", "base change\n");
+    git(&f.repo, &["branch", "-f", "item", "main"]);
+    f.on("item");
+    let dep = f.commit("dep.txt", "parent\n");
+    let reviewed = f.commit("item.txt", "reviewed\n");
+    f.on("main");
+    git(&f.repo, &["rm", "--quiet", "base.txt"]);
+    git(&f.repo, &["commit", "--quiet", "-m", "revert base change"]);
+    let base = f.head();
+    assert_eq!(f.tree(&base), f.tree(&f.fork));
+    let head = f.merge_commit(&f.tree(&reviewed), &reviewed, &base);
+    let why = f
+        .check_stacked(&reviewed, &head, &base, &[&dep])
+        .expect_err("an unread base revert must be refused");
+    assert!(why.contains("resolves a conflict"), "{why}");
+}
+
+#[test]
+fn an_unrelated_commit_matching_an_earlier_merge_is_not_a_landing() {
+    let f = fixture();
+    f.on("item");
+    let dep = f.commit("dep.txt", "parent\n");
+    let reviewed = f.commit("dep.txt", "edited by item\n");
+    f.on("main");
+    let main = f.commit("base.txt", "base\n");
+    let parent_tree = stack::merge_tree(&f.shadow, None, &dep, &main)
+        .unwrap()
+        .expect("parent merge is clean");
+    let first_landing = f.merge_commit(&parent_tree, &dep, &main);
+    let first_tree = stack::merge_tree(&f.shadow, None, &reviewed, &first_landing)
+        .unwrap()
+        .expect("first merge is clean");
+    let first_merge = f.merge_commit(&first_tree, &reviewed, &first_landing);
+    let unrelated = git(
+        &f.repo,
+        &["commit-tree", &parent_tree, "-p", &main, "-m", "unrelated"],
+    );
+    let base = f.merge_commit(&parent_tree, &first_landing, &unrelated);
+    assert!(!contains(&f.repo, &first_landing, &unrelated).unwrap());
+    assert!(
+        stack::merge_tree(&f.shadow, None, &first_merge, &unrelated)
+            .unwrap()
+            .is_err()
+    );
+    let head = f.merge_commit(&first_tree, &first_merge, &unrelated);
+    let why = f
+        .check_stacked(&reviewed, &head, &base, &[&dep])
+        .expect_err("unrelated matching tree is refused");
     assert!(why.contains("resolves a conflict"), "{why}");
 }
 

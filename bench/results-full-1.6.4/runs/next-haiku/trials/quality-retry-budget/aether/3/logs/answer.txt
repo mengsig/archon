@@ -1,0 +1,26 @@
+Implemented `retry_delay` in retry_budget.py per SPEC.md and added focused tests; committed as "Implement retry_delay per SPEC with validation and tests" (author mengsig). All 20 tests pass via `python3 -m unittest test_retry_budget`.
+
+Implementation:
+- `_validate` runs first on every argument: `type(x) is int` (rejects bool/float), minimums of 1 for attempt/max_attempts and 0 for the rest, retry_after optional. Invalid values raise ValueError before any early return.
+- `attempt >= max_attempts` returns None.
+- `_backoff` returns 0 for zero base or cap. If `attempt-1 >= cap.bit_length()` it returns cap directly, so huge attempts never build a huge power of two. Otherwise it returns `min(cap, base << shift)`.
+- retry_after acts as a floor via max(), not limited by cap.
+- Budget check is `elapsed + delay >= budget` → None, otherwise the delay is returned, including zero.
+
+Choices and notes:
+- Committed without a Co-Authored-By line. The project CLAUDE.md says not to add Claude attribution, and it takes precedence over the attribution reminder.
+- Left an untracked `__pycache__/` in the workspace; it is not committed.
+- Running tests with `python3 -I` finds no tests because it drops the working directory from sys.path. Use plain `python3 -m unittest`.
+
+I implemented `retry_delay` in `retry_budget.py` per SPEC.md, added focused tests, and committed the work as "Implement retry_delay per SPEC with validation and tests". All 20 tests pass with `python3 -m unittest test_retry_budget`.
+
+- **Validation:** every argument is checked before any early return. Bools and floats are rejected, and each number has its minimum.
+- **Attempt limit:** `attempt >= max_attempts` returns None.
+- **Backoff:** zero base or zero cap gives 0. Huge attempts saturate to the cap without building a large power of two.
+- **Retry-After:** it acts as a floor via `max()` and is not limited by the cap.
+- **Budget:** the function returns None when `elapsed + delay >= budget`, and otherwise returns the delay, including zero.
+
+Choices to review:
+- I committed without a `Co-Authored-By` line. The project CLAUDE.md forbids Claude attribution, and it takes precedence over the attribution reminder.
+- An untracked `__pycache__/` remains in the workspace and is not committed.
+- `python3 -I` finds no tests because it drops the working directory from `sys.path`. Use plain `python3 -m unittest`.

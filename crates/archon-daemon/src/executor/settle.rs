@@ -8,8 +8,10 @@ use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::model_tier::ModelCatalog;
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
+use archon_core::plan_origin::TierMove;
+use archon_core::queue::QueueItem;
 use archon_core::run::{
-    PipelineRun, RecordRepair, RunState, StageOutcome, StageRun, StageState, Verdict,
+    PipelineRun, RecordRepair, RunState, StageOutcome, StageRun, StageState, Verdict, VerdictNote,
 };
 use archon_core::steer::RunEdit;
 use archon_pipeline::{EngineAction, PipelineSpec, SpawnPlan};
@@ -44,6 +46,7 @@ pub(super) async fn settle(
     } else {
         None
     };
+    let outcome = failure_at_review_cap(ctx, id, outcome).await?;
     match settle_verified(ctx, id, outcome).await {
         Err(error) if super::gh::is_failure(&error) => {
             hold_for_retry(
@@ -70,6 +73,24 @@ pub(super) async fn settle(
             Ok(follow)
         }
     }
+}
+
+async fn failure_at_review_cap(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+    outcome: StageOutcome,
+) -> Result<StageOutcome, ArchonError> {
+    if matches!(outcome, StageOutcome::Failed { .. })
+        && let Some(capped) = super::review::capped_on_failure(ctx, id).await?
+    {
+        assert_eq!(capped.stage, *id, "the cap belongs to the failed stage");
+        assert!(StageOutcome::ends_run(&capped.reason));
+        return Ok(StageOutcome::Failed {
+            error: capped.reason,
+            infra: false,
+        });
+    }
+    Ok(outcome)
 }
 
 async fn claim_verification(
@@ -153,7 +174,7 @@ async fn settle_verified(
         };
         return settle_locked(ctx, &mut table, id, outcome).await;
     }
-    let (stage, run, review, daemon_ships, planner, record_stage, records_build, as_sent) = {
+    let (stage, run, owed, daemon_ships, planner, record_stage, records_build, as_sent) = {
         let table = ctx.runs.lock().await;
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
@@ -162,10 +183,13 @@ async fn settle_verified(
         }
         let run = store.run(&stage.run)?;
         let driver = table.drivers.get(&run.id);
-        let review = super::review::Owed {
-            reviewers: driver.map_or(0, |d| d.reviewers_owed(&stage.stage_id)),
-            records_ship: driver.is_some_and(|d| d.records_ship(&stage.stage_id)),
-        };
+        let owed = driver
+            .and_then(|d| {
+                d.spec()
+                    .stage(&stage.stage_id)
+                    .map(|spec| d.spec().owed(spec))
+            })
+            .unwrap_or_default();
         let daemon_ships = driver.is_some_and(|d| d.ships_by_daemon());
         let planner = driver.and_then(|d| swarm::Planner::of(d.spec(), &stage.stage_id));
         let record_stage = driver.and_then(|d| {
@@ -181,7 +205,7 @@ async fn settle_verified(
         (
             stage,
             run,
-            review,
+            owed,
             daemon_ships,
             planner,
             record_stage,
@@ -189,7 +213,7 @@ async fn settle_verified(
             as_sent,
         )
     };
-    if review.reviewers > 0
+    if owed.review.is_some_and(|duty| duty.reviewers > 0)
         && let Some(capped) = super::review::capped_at_completion(ctx, &stage).await?
     {
         return settle_capped(ctx, id, capped).await;
@@ -203,11 +227,8 @@ async fn settle_verified(
     let proposal_refused = matches!(&outcome, StageOutcome::Failed { error, .. }
         if super::intent::is_refusal(error));
     let outcome = ship::verify(ctx, &run, &stage, daemon_ships, outcome).await?;
-    let outcome = match (review.records_ship, &record_stage) {
-        (true, _) => {
-            let outcome = ship::with_full_ids(&run, outcome).await?;
-            ship::verify_no_change(ctx, &run, outcome).await?
-        }
+    let outcome = match (owed.ship_record, &record_stage) {
+        (true, _) => ship::verify_record(ctx, &run, outcome).await?,
         (false, Some(record)) => {
             ship::verify_standing_no_change(ctx, &run, record, &stage, outcome).await?
         }
@@ -224,8 +245,8 @@ async fn settle_verified(
     else {
         return Ok(FollowUp::default());
     };
-    let outcome = super::refresh::verify_unreviewed(ctx, &run, review, outcome).await?;
-    let (outcome, verified) = super::review::verify(ctx, &run, &stage, review, outcome).await?;
+    let outcome = super::refresh::verify_unreviewed(ctx, &run, owed, outcome).await?;
+    let (outcome, verified) = super::review::verify(ctx, &run, &stage, owed, outcome).await?;
     let planned = planner.is_some();
     let was_completed = matches!(outcome, StageOutcome::Completed { .. });
     let (outcome, assigned) = swarm::verify(ctx, &run, &stage, planner, outcome).await?;
@@ -327,8 +348,7 @@ async fn assign_roles(
     progress(ctx, run, text).await
 }
 
-/// Whether the gate decides `stage`'s completed `outcome` as its agent sent
-/// it: a stated failure, or no `structured`, of a stage that owes a record.
+/// Whether the driver decides a completed outcome as sent, before verification.
 fn decided_as_sent(
     driver: &archon_pipeline::RunDriver,
     stage: &StageRun,
@@ -345,8 +365,7 @@ fn decided_as_sent(
     driver.decides_as_sent(&stage.stage_id, summary, structured.as_ref())
 }
 
-/// Persist a completed `outcome` unverified, for the gate to decide as sent:
-/// it fails or repairs it and passes neither, so nothing unverified ships.
+/// Persist a completed outcome for the driver to fail, loop or repair as sent.
 async fn settle_as_sent(
     ctx: &DaemonContext,
     seen: &StageRun,
@@ -469,6 +488,47 @@ fn recorded(outcome: StageOutcome, flagged: bool) -> StageOutcome {
     }
 }
 
+/// End every design session of `run` still open: a run that finishes or is
+/// cancelled while its proposal gate is open leaves a Confirmed session whose
+/// browser would otherwise keep running and hold a `max_sessions` slot.
+pub(super) async fn end_designs(ctx: &DaemonContext, run: &PipelineRun) {
+    let sessions = {
+        let store = ctx.store.lock().await;
+        let found = store.item(&run.item).and_then(|item| {
+            if item.autonomy.proposal == archon_core::autonomy::ProposalMode::Live {
+                store.design_sessions(&run.item)
+            } else {
+                Ok(Vec::new())
+            }
+        });
+        match found {
+            Ok(all) => all
+                .into_iter()
+                .filter(|s| s.run == run.id && s.state != archon_core::design::SessionState::Ended)
+                .collect::<Vec<_>>(),
+            Err(error) => {
+                tracing::warn!(%error, run = %run.id, "could not find the run's open design sessions");
+                return;
+            }
+        }
+    };
+    for session in sessions {
+        if let Err(error) = ctx
+            .design
+            .stage_settled(
+                &ctx.arc(),
+                &session.run,
+                &session.stage_id,
+                session.attempt,
+                crate::design::StageEnd::Cancelled,
+            )
+            .await
+        {
+            tracing::warn!(%error, session = %session.id, "design session did not end");
+        }
+    }
+}
+
 /// Record a final outcome and apply the driver's resulting decision.
 async fn persist(
     ctx: &DaemonContext,
@@ -478,18 +538,59 @@ async fn persist(
     all: &[StageRun],
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
-    let settled = settled_stage(stage, outcome, archon_core::now());
+    let design_end =
+        (stage.kind == Some(archon_core::catalog::StageKind::Design)).then_some(match &outcome {
+            StageOutcome::Completed { .. } => crate::design::StageEnd::Completed,
+            StageOutcome::Failed { .. } => crate::design::StageEnd::Failed,
+            StageOutcome::Cancelled { .. } => crate::design::StageEnd::Cancelled,
+            StageOutcome::TimedOut => crate::design::StageEnd::TimedOut,
+        });
+    let mut settled = settled_stage(stage, outcome, archon_core::now());
+    if let Some(driver) = table.drivers.get(&run.id) {
+        let holds = driver.holds_verdict(&settled.stage_id);
+        unnote_missing_verdict(&mut settled, holds);
+    }
     let (settled, owes_stop, kept) = {
         let mut store = ctx.store.lock().await;
         // A final restated verdict that is no pass stands over the result.
-        let settled = restatement::bound(&store, settled)?;
+        let mut settled = restatement::bound(&store, settled)?;
+        let previous_review = super::review::attach_rounds(&store, &mut settled)?;
         let kept = resume::after_settle(&store, &settled)?;
         let owes_stop = descendants::owe(&mut store, &settled, false)?;
-        store.upsert_stage_run(&settled)?;
+        if let Some((stage, rounds)) = previous_review {
+            store.upsert_stage_with_previous_review(&settled, &stage, &rounds)?;
+        } else {
+            store.upsert_stage_run(&settled)?;
+        }
         restatement::forget(&mut store, &settled)?;
         (settled, owes_stop, kept)
     };
     table.spawn_errors.remove(&settled.id);
+    // A confirmed session outlives its completed stage: the gate builds the
+    // ledger from it, and ends it when the operator decides (proposal.rs).
+    let awaiting_gate = match design_end {
+        Some(crate::design::StageEnd::Completed) => {
+            let store = ctx.store.lock().await;
+            let confirmed = ctx
+                .design
+                .session_of(&store, &run.id, &settled.stage_id, settled.attempt)?
+                .filter(|s| s.state == archon_core::design::SessionState::Confirmed);
+            if let Some(session) = &confirmed {
+                // Its browser is not needed while the gate waits.
+                ctx.design.park_browser(&session.id, "stage completed");
+            }
+            confirmed.is_some()
+        }
+        _ => false,
+    };
+    if let Some(end) = design_end.filter(|_| !awaiting_gate)
+        && let Err(error) = ctx
+            .design
+            .stage_settled(&ctx.arc(), &run.id, &settled.stage_id, settled.attempt, end)
+            .await
+    {
+        tracing::warn!(%error, stage = %settled.id, "design session did not settle");
+    }
     let mut follow = decide(ctx, table, run, &settled, all).await?;
     follow.kept.extend(kept);
     follow.reap.push(settled.id.clone());
@@ -497,6 +598,21 @@ async fn persist(
         follow.descendant_stops.push(settled.id);
     }
     Ok(follow)
+}
+
+/// Drop the `missing_verdict_line` note of a stage whose contract asks for no
+/// verdict (`holds`): it gave none because none was owed, so the note says nothing.
+fn unnote_missing_verdict(settled: &mut StageRun, holds: bool) {
+    assert!(settled.state.is_terminal(), "only an outcome is noted");
+    if holds || settled.verdict_note != Some(VerdictNote::MissingVerdictLine) {
+        return;
+    }
+    assert_eq!(
+        settled.verdict,
+        Some(Verdict::Unknown),
+        "a note explains an unknown verdict"
+    );
+    settled.verdict_note = None;
 }
 
 /// Feed a stored settle to the run's driver and apply what it decides.
@@ -720,6 +836,9 @@ pub(super) async fn deadline_stopped(
     ctx: &DaemonContext,
     id: &StageRunId,
 ) -> Result<FollowUp, ArchonError> {
+    if let Some(capped) = super::review::capped_on_failure(ctx, id).await? {
+        return settle_capped(ctx, id, capped).await;
+    }
     let mut table = ctx.runs.lock().await;
     let (stage, run, all, outcome) = {
         let store = ctx.store.lock().await;
@@ -902,7 +1021,9 @@ async fn slot_retry(
         slot.iter().any(|s| s.id == failed.id),
         "the slot holds the failure"
     );
-    let earlier = slot.iter().filter(|s| s.id != failed.id);
+    let earlier = slot
+        .iter()
+        .filter(|s| s.id != failed.id && !create_model_refusal(s));
     let replaced = earlier
         .filter(|s| RetryKind::of_replaced(s, planner) == kind)
         .count();
@@ -1002,14 +1123,19 @@ async fn replace(
     // Owed before the replacement exists, so it never starts beside them.
     let woken = retry.wake.is_some();
     descendants::owe(&mut store, failed, woken)?;
-    let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, retry)? else {
+    let mut failed = restatement::bound(&store, failed.clone())?;
+    let previous_review = super::review::attach_rounds(&store, &mut failed)?;
+    let Some(id) = spawn::reserve_replacement(ctx, &mut store, &failed, &plan, retry)? else {
         return Ok(None);
     };
     // Replacement first: a crash in between leaves a superseded live
     // stage run, never a failure that looks final on resume.
     // The attempt goes on, so its restatement is kept for the replacement too.
-    let failed = restatement::bound(&store, failed.clone())?;
-    store.upsert_stage_run(&failed)?;
+    if let Some((stage, rounds)) = previous_review {
+        store.upsert_stage_with_previous_review(&failed, &stage, &rounds)?;
+    } else {
+        store.upsert_stage_run(&failed)?;
+    }
     Ok(Some((id, woken)))
 }
 
@@ -1039,12 +1165,17 @@ fn retry_choice(
     // The agent a wake keeps runs the model it was last steered to.
     let kept = catalog.canonical_alias(&ran.model);
     let woken = retry.wake.is_some().then_some(kept);
-    retry_judge(ctx, store, run, &mut plan, woken)?;
+    retry_judge(ctx, store, run, &mut plan, (woken, failed))?;
     if plan.choice.model != *kept {
         retry.wake = None;
     }
     if retry.wake.is_none() {
         route_fresh(ctx, (store, table), (run, spec), &mut plan, catalog)?;
+    }
+    if create_model_refusal(failed) && plan.choice.model == failed.choice.model {
+        return Err(ArchonError::Unavailable(
+            "the refreshed catalog still selects the refused model".into(),
+        ));
     }
     Ok(plan)
 }
@@ -1080,20 +1211,22 @@ fn route_fresh(
 }
 
 /// An acceptance retry is judged by the `woken` judge while it is still
-/// eligible, else by one selected as its first attempt was, never the placeholder.
+/// eligible, else by one selected as its first attempt was, never the placeholder
+/// and never on a provider the `failed` attempt just ran out of quota on.
 fn retry_judge(
     ctx: &DaemonContext,
     store: &mut archon_queue::Store,
     run: &PipelineRun,
     plan: &mut SpawnPlan,
-    woken: Option<&archon_core::model::ModelRef>,
+    judged: (Option<&archon_core::model::ModelRef>, &StageRun),
 ) -> Result<(), ArchonError> {
     if plan.stage_id != archon_pipeline::acceptance::STAGE {
         return Ok(());
     }
     let item = store.item(&run.item)?;
     let plans = std::slice::from_mut(plan);
-    let selected = super::acceptance::select_model(ctx, store, &item, run, plans, woken);
+    let selected =
+        super::acceptance::select_model(ctx, store, &item, run, plans, (judged.0, Some(judged.1)));
     match selected {
         Ok(()) => {
             assert_eq!(plan.choice.tier, None, "a judge is selected, never tiered");
@@ -1107,17 +1240,60 @@ fn retry_judge(
     }
 }
 
+pub(super) enum ModelRefusal {
+    Frozen(String),
+    Create {
+        reason: String,
+        refresh_error: Option<String>,
+    },
+}
+
+// The earlier failed stage records that its slot already used a catalog repair.
+const CREATE_MODEL_REFUSAL: &str = "cannot create agent: Aether refused model ";
+
+fn create_model_refusal(stage: &StageRun) -> bool {
+    stage.aether_agent.is_none()
+        && matches!(&stage.state, StageState::Failed { error } if error.starts_with(CREATE_MODEL_REFUSAL))
+}
+
 pub(super) async fn replace_refused_model(
     ctx: &DaemonContext,
     table: &mut RunTable,
     stage: &StageRun,
-    reason: String,
+    refusal: ModelRefusal,
 ) -> Result<FollowUp, ArchonError> {
-    let (run, all) = {
+    assert_eq!(stage.state, StageState::Spawning);
+    assert!(
+        stage.aether_agent.is_none(),
+        "the refused create has no agent"
+    );
+    let (run, all, block) = {
         let store = ctx.store.lock().await;
-        (store.run(&stage.run)?, store.stage_runs(&stage.run)?)
+        let run = store.run(&stage.run)?;
+        let all = store.stage_runs(&stage.run)?;
+        let block = match &refusal {
+            ModelRefusal::Create { refresh_error, .. } if !run.state.is_terminal() => {
+                let item = store.item(&run.item)?;
+                create_repair_block(&item, stage, &all).or_else(|| {
+                    refresh_error
+                        .as_ref()
+                        .map(|error| format!("catalog refresh failed: {error}"))
+                })
+            }
+            _ => None,
+        };
+        (run, all, block)
     };
-    let error = format!("cannot create agent: {reason}");
+    let (error, create) = match refusal {
+        ModelRefusal::Frozen(reason) => (format!("cannot create agent: {reason}"), false),
+        ModelRefusal::Create { reason, .. } => {
+            table.spawn_errors.remove(&stage.id);
+            (
+                format!("{CREATE_MODEL_REFUSAL}{} ({reason})", stage.choice.model),
+                true,
+            )
+        }
+    };
     if run.state.is_terminal() {
         return settle_locked(
             ctx,
@@ -1129,6 +1305,45 @@ pub(super) async fn replace_refused_model(
         )
         .await;
     }
+    if let Some(block) = block {
+        let message = format!("{error}. {block}. Re-plan this item and retry");
+        return spawn::fail_stage_and_run(ctx, table, stage, message, false).await;
+    }
+    replace_model_slot(ctx, table, (stage, &run, &all), error, create).await
+}
+
+fn create_repair_block(item: &QueueItem, stage: &StageRun, all: &[StageRun]) -> Option<String> {
+    assert!(all.iter().any(|earlier| earlier.id == stage.id));
+    assert!(all.iter().all(|earlier| earlier.run == stage.run));
+    if let Some(choices) = item
+        .model_plan
+        .choices_for(&stage.stage_id)
+        .filter(|c| !c.is_empty())
+        && stage.stage_id != archon_pipeline::acceptance::STAGE
+    {
+        let slot = stage.fan_index as usize % choices.len();
+        let origin = item.model_plan.origin(&item.id, &stage.stage_id, slot);
+        if !origin.may_replace(TierMove::InRun) {
+            return Some("the plan pins this model".to_owned());
+        }
+    }
+    all.iter()
+        .any(|earlier| spawn::same_slot_as(earlier, stage) && create_model_refusal(earlier))
+        .then(|| "the slot already retried with a repaired model".to_owned())
+}
+
+async fn replace_model_slot(
+    ctx: &DaemonContext,
+    table: &mut RunTable,
+    (stage, run, all): (&StageRun, &PipelineRun, &[StageRun]),
+    error: String,
+    create: bool,
+) -> Result<FollowUp, ArchonError> {
+    assert_eq!(stage.run, run.id, "the slot belongs to the run");
+    assert!(
+        !run.state.is_terminal(),
+        "only a live run can replace a slot"
+    );
     let outcome = StageOutcome::Failed {
         error: error.clone(),
         infra: true,
@@ -1141,14 +1356,22 @@ pub(super) async fn replace_refused_model(
         extension: None,
         engine_login: false,
     };
-    match replace(ctx, table, &run, &all, &failed, retry, None).await {
+    match replace(ctx, table, run, all, &failed, retry, None).await {
         Ok(Some((id, _))) => Ok(FollowUp {
             issue: vec![id],
             descendant_stops: vec![stage.id.clone()],
             ..FollowUp::default()
         }),
-        // The model was refused, not the machine: no infrastructure failure.
+        Ok(None) if create => {
+            let message =
+                format!("{error}. No replacement was reserved. Re-plan this item and retry");
+            spawn::fail_stage_and_run(ctx, table, stage, message, false).await
+        }
         Ok(None) => spawn::fail_stage_and_run(ctx, table, stage, error, false).await,
+        Err(ArchonError::Unavailable(why)) if create => {
+            let message = format!("{error}. {why}. Re-plan this item and retry");
+            spawn::fail_stage_and_run(ctx, table, stage, message, false).await
+        }
         Err(ArchonError::Unavailable(why)) => {
             let subject = format!("stage:{}", stage.id);
             let what = format!(
@@ -1410,13 +1633,22 @@ async fn queue_spawns(
             .all(|s| s.stage_id == first.stage_id && s.attempt == first.attempt),
         "a driver emits one stage group at a time"
     );
+    assert!(
+        spawns
+            .iter()
+            .all(|s| s.carried_slots == first.carried_slots)
+    );
     let now_in = RunState::Running {
         stage_id: first.stage_id.clone(),
         attempt: first.attempt,
     };
-    if run.state != now_in {
-        run.state = now_in;
-        ctx.store.lock().await.update_run(&run)?;
+    if run.state != now_in || !first.carried_slots.is_empty() {
+        let mut store = ctx.store.lock().await;
+        swarm::record_carry(&mut store, &run.id, first)?;
+        if run.state != now_in {
+            run.state = now_in;
+            store.update_run(&run)?;
+        }
     }
     let queue = table.pending.entry(run.id.clone()).or_default();
     for plan in spawns {
@@ -1460,6 +1692,70 @@ async fn open_gate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn running(stage: &str) -> StageRun {
+        let now = archon_core::now();
+        StageRun {
+            only_reviews: None,
+            id: StageRunId::new(),
+            run: archon_core::id::PipelineRunId::new(),
+            stage_id: stage.to_owned(),
+            kind: None,
+            attempt: 1,
+            fan_index: 0,
+            model_segments: Vec::new(),
+            infrastructure_failure: false,
+            record_repair: None,
+            host_context: Default::default(),
+            choice: archon_core::model::ModelChoice {
+                model: "claude-code/claude-sonnet-5".parse().unwrap(),
+                effort: archon_core::model::Effort::Medium,
+                tier: None,
+            },
+            aether_agent: None,
+            aether_task: None,
+            state: StageState::Running,
+            verdict: None,
+            verdict_note: None,
+            sizing: Default::default(),
+            restatement: None,
+            summary: None,
+            structured: None,
+            cost_usd: 0.0,
+            started_at: now,
+            finished_at: None,
+        }
+    }
+
+    /// A `direct` implement owes no verdict line, so its result's lack of one
+    /// is not noted; a stage whose contract asks for one keeps the note.
+    #[test]
+    fn only_a_stage_that_owes_a_verdict_notes_a_missing_one() {
+        let done = || StageOutcome::Completed {
+            summary: "Implemented it.".to_owned(),
+            structured: Some(serde_json::json!({"review": {"verdict": "pass"}})),
+        };
+        let now = archon_core::now();
+        let mut ungated = settled_stage(running("implement"), done(), now);
+        assert_eq!(ungated.verdict_note, Some(VerdictNote::MissingVerdictLine));
+        unnote_missing_verdict(&mut ungated, false);
+        assert_eq!(
+            (ungated.verdict, ungated.verdict_note),
+            (Some(Verdict::Unknown), None)
+        );
+        let mut gated = settled_stage(running("review"), done(), now);
+        unnote_missing_verdict(&mut gated, true);
+        assert_eq!(gated.verdict_note, Some(VerdictNote::MissingVerdictLine));
+        let hedged = StageOutcome::Completed {
+            summary: "Mostly fine.\nVERDICT: PASS or FAIL".to_owned(),
+            structured: None,
+        };
+        let mut other = settled_stage(running("implement"), hedged, now);
+        let note = other.verdict_note;
+        assert_ne!(note, Some(VerdictNote::MissingVerdictLine), "{note:?}");
+        unnote_missing_verdict(&mut other, false);
+        assert_eq!(other.verdict_note, note, "only a missing line is dropped");
+    }
 
     #[test]
     fn only_a_cause_that_clears_with_time_is_waited_out() {

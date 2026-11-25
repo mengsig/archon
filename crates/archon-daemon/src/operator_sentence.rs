@@ -52,8 +52,8 @@ pub(crate) fn command_sentence(text: &str) -> String {
         [_, "reset", "--repo", name] => format!("Reset the settings of repository {name}."),
         [_, "repo", "remove", name] => format!("Removed repository {name}."),
         [_, "undo", seq] => format!("Undid authority change {seq}."),
-        [_, verb, ..] => format!("Applied /archon {verb}."),
-        _ => "Applied the command.".to_owned(),
+        // The command's own line sits just above; its name is not repeated.
+        _ => "Applied.".to_owned(),
     }
 }
 
@@ -77,6 +77,17 @@ mod tests {
             command_sentence("/archon set --repo scratch base_branch=main"),
             "Set base_branch=main for repository scratch."
         );
+    }
+
+    #[test]
+    fn other_commands_confirm_without_repeating_the_command() {
+        for text in [
+            r#"/archon apply {"cmd":"set_directive","text":"docs only"}"#,
+            "/archon apply",
+            "/archon",
+        ] {
+            assert_eq!(command_sentence(text), "Applied.", "{text}");
+        }
     }
 
     #[test]

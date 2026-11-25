@@ -232,6 +232,7 @@ pub(super) fn finish(
     plan: Option<&RunPlan>,
     next: QueueState,
     at: Timestamp,
+    min_uses: u32,
 ) -> Result<FinishedRun, ArchonError> {
     check_run_shape(run)?;
     if !run.state.is_terminal() || !next.is_terminal() {
@@ -265,7 +266,7 @@ pub(super) fn finish(
     super::run_plans::keep(&tx, &run.id, plan)?;
     super::changes::record_run(&tx, run, Some(&stored.state))?;
     let answers = gates::withdraw_open(&tx, run, at)?;
-    let item = items::transition_in(&tx, &run.item, next, at)?;
+    let item = items::transition_in(&tx, &run.item, next, at, min_uses)?;
     debug_assert!(active_run_of(&tx, &item.id)?.is_none());
     tx.commit().ctx("commit finished run")?;
     Ok(FinishedRun { item, answers })
@@ -647,18 +648,54 @@ pub(super) fn upsert_stage(
     conn: &mut Connection,
     stage: &StageRun,
     updates: &[(&str, &str)],
+    previous_review: Option<(&StageRunId, &serde_json::Value)>,
 ) -> Result<(), ArchonError> {
-    check_stage_shape(stage)?;
     let tx = write_tx(conn)?;
+    store_stage(&tx, stage)?;
+    if let Some((previous, rounds)) = previous_review {
+        update_review_rounds(&tx, previous, rounds)?;
+    }
+    for (key, value) in updates {
+        super::settings::kv_set(&tx, key, value)?;
+    }
+    tx.commit().ctx("commit stage run")
+}
+
+fn update_review_rounds(
+    tx: &rusqlite::Transaction<'_>,
+    id: &StageRunId,
+    rounds: &serde_json::Value,
+) -> Result<(), ArchonError> {
+    let mut previous = stage(tx, id)?;
+    assert!(previous.state.is_terminal(), "the preceding review settled");
+    let recorded = previous
+        .structured
+        .as_mut()
+        .and_then(|s| s.get_mut("review_rounds"))
+        .expect("the preceding review has rounds");
+    assert!(rounds.is_object() && recorded.is_object());
+    recorded.clone_from(rounds);
+    let rows = tx
+        .execute(
+            "UPDATE stage_runs SET data = ?1 WHERE id = ?2",
+            params![to_json(&previous, "stage run")?, id.as_str()],
+        )
+        .ctx("update review rounds")?;
+    assert_eq!(rows, 1, "one preceding review was updated");
+    Ok(())
+}
+
+fn store_stage(tx: &rusqlite::Transaction<'_>, stage: &StageRun) -> Result<(), ArchonError> {
+    check_stage_shape(stage)?;
     let mut stage = stage.clone();
-    let before = load_stage(&tx, &stage.id)?;
+    let before = load_stage(tx, &stage.id)?;
     match &before {
         Some(stored) => {
             stage.model_segments = stored.model_segments.clone();
             check_stage_change(stored, &stage)?;
         }
         None => {
-            if load(&tx, &stage.run)?.state.is_terminal() {
+            if load(tx, &stage.run)?.state.is_terminal() {
                 return Err(ArchonError::InvalidTransition(format!(
                     "run {} already finished; stage run {} cannot start",
                     stage.run, stage.id
@@ -666,13 +703,17 @@ pub(super) fn upsert_stage(
             }
         }
     }
-    let holds_agent = claim_agent(&tx, &stage)?;
-    write_stage(&tx, &stage, holds_agent)?;
-    super::changes::record_stage(&tx, &stage, before.as_ref())?;
-    for (key, value) in updates {
-        super::settings::kv_set(&tx, key, value)?;
+    let holds_agent = claim_agent(tx, &stage)?;
+    write_stage(tx, &stage, holds_agent)?;
+    if let Some(agent) = &stage.aether_agent
+        && before
+            .as_ref()
+            .and_then(|stored| stored.aether_agent.as_ref())
+            != Some(agent)
+    {
+        super::stage_spend::bind(tx, agent, &stage, &stage.started_at, None)?;
     }
-    tx.commit().ctx("commit stage run")
+    super::changes::record_stage(tx, &stage, before.as_ref())
 }
 
 /// Stage runs still `spawning` or `running`, under any run: a cancelled

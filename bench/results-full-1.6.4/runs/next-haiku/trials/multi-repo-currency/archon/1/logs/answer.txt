@@ -1,0 +1,50 @@
+Queued the multi-currency change as initiative ini_01M7W4FQ6ARM91DRBKRG173RT1: two `direct` items, one for ledger (qi_01M7W4FQ6E0C9FAXRG2EP4NP5H) and one for reports (qi_01M7W4FQ7JVRK9N7FWTDTC5FXP). They run in parallel against a shared CSV contract, commit locally, and do not push. Quota note: claude-code's seven-day window is 76% used at 31% elapsed and projects to run out on 2026-11-21 before its 2026-11-25 reset. Both items use the default model tier, not the frontier one, and nothing else is queued. Tell me if you want them held or moved to another provider.
+
+The multi-currency change is queued as one initiative with two items, one per repository. Nothing has run yet, and I haven't touched either repository myself.
+
+- **Initiative:** `ini_01M7W4FQ6ARM91DRBKRG173RT1`, with a shared contract covering the TSV input, the CSV headers, the USD default, and the exit codes (2 for a malformed currency, 1 for other ledger input errors).
+- **`ledger`:** item `qi_01M7W4FQ6E0C9FAXRG2EP4NP5H`, pipeline `direct`.
+- **`reports`:** item `qi_01M7W4FQ7JVRK9N7FWTDTC5FXP`, pipeline `direct`.
+
+Both items commit locally and do not push, since both repositories ship as `local`. The two items run in parallel because the contract fixes the formats.
+
+On quota, I notified the operator. claude-code's seven-day window is projected to run out on 2026-11-21, before its 2026-11-25 reset. Both items use the default balanced tier, nothing else is queued, and I've asked whether they should be held or moved to another provider.
+
+I haven't set `autonomy.review`, so the default `standard` review applies. I didn't set a lower effort either, so the quota risk is not fully addressed.
+
+Done: reports: per-account, per-currency totals. Changed reports to total per account and currency. Committed fceefe0 on archon/tdtc5fxp-reports-per-account-per-currency-totals (not pushed). Before, the currency column was ignored, so EUR and USD rows merged into one total. Now output is account,currency,total_cents sorted by account then currency; input without a currency column counts as USD; a malformed code (not exactly three uppercase ASCII letters) prints to stderr and exits 2. Tests: python3 -I -m unittest on the final head: 5 tests OK (the existing test plus new old-format, multi-currency, sorting and malformed-code exit-2 cases). README updated. Not checked: the cross-repo ledger contract, since ledger is a sibling item. Open: the output header change breaks callers that parse account,total_cents, so risk is high. No assert statements were added: the existing file has none and the change adds none beyond the validation.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit fceefe0d66f2df1aeffec425548ea7ce0123f590 on the run branch
+Branch `archon/tdtc5fxp-reports-per-account-per-currency-totals` in /home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/83a824534de2639313d1feb2/reports holds it (3 files changed, 98 insertions(+), 10 deletions(-)). Review: `archon diff qi_01M7W4FQ7JVRK9N7FWTDTC5FXP`; land it in `main`: `archon merge qi_01M7W4FQ7JVRK9N7FWTDTC5FXP`.
+
+Done: ledger: add currency column. ledger: optional fourth TSV currency column implemented and committed on archon/2ep4np5h-ledger-add-currency-column as 09311d7 (not pushed). Missing column defaults to USD; a currency must be exactly three uppercase ASCII letters. The CSV header is date,account,amount_cents,currency and every row carries its currency. A malformed currency exits 2 with 'line N:' on stderr; other input errors still exit 1. Checks on the final tree 7eaecc065975a6e1dc928245a9ed122845e08d3e: cargo fmt --check clean, cargo clippy --all-targets -D warnings clean, cargo build ok, cargo test 9/9 pass (2 pre-existing, 4 library cases, 3 binary end-to-end cases for default USD, exit 2 with line number, and exit 1). README updated. Nothing left running. Open: no review was delegated (no reviewer tool in this stage), and reports must be updated separately to consume the new column. Note: rustfmt also reflowed two pre-existing lines in lib.rs. Rust was installed user-locally into the item cache (rustup minimal + rustfmt/clippy).
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 09311d7cf65cd8dd2d8edaa8278f6d8b5a12cdad on the run branch
+Branch `archon/2ep4np5h-ledger-add-currency-column` in /home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/83a824534de2639313d1feb2/ledger holds it (4 files changed, 170 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M7W4FQ6E0C9FAXRG2EP4NP5H`; land it in `main`: `archon merge qi_01M7W4FQ6E0C9FAXRG2EP4NP5H`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.7 GiB of build output: item qi_01M7W4FQ6E0C9FAXRG2EP4NP5H ended and its cargo target directory went.
+
+Multi-currency initiative ini_01M7W4FQ6ARM91DRBKRG173RT1 is done. Both items succeeded, each committed locally on its run branch and not pushed. Neither item got a review run.
+
+- ledger (qi_01M7W4FQ6E0C9FAXRG2EP4NP5H): commit 09311d7 on archon/2ep4np5h-ledger-add-currency-column. Optional fourth currency column, default USD. Header date,account,amount_cents,currency. A malformed code exits 2 with "line N:" on stderr; other input errors still exit 1. Reported cargo fmt, clippy -D warnings and cargo test (9/9) clean. rustfmt also reflowed two pre-existing lines in lib.rs.
+- reports (qi_01M7W4FQ7JVRK9N7FWTDTC5FXP): commit fceefe0 on archon/tdtc5fxp-reports-per-account-per-currency-totals. Totals per account and currency, header account,currency,total_cents, sorted by account then currency. Old CSV without a currency column counts as USD. A malformed code exits 2. python3 -m unittest: 5 tests pass.
+
+Risk: the reports header change breaks any caller that parses account,total_cents. Check downstream consumers before merging. The two items' results are self-reported; I have not re-run the tests. Say the word and I'll queue a review item on each branch before you merge.
+
+Changed reports to total per account and currency. Committed fceefe0 on archon/tdtc5fxp-reports-per-account-per-currency-totals (not pushed). Before, the currency column was ignored, so EUR and USD rows merged into one total. Now output is account,currency,total_cents sorted by account then currency; input without a currency column counts as USD; a malformed code (not exactly three uppercase ASCII letters) prints to stderr and exits 2. Tests: python3 -I -m unittest on the final head: 5 tests OK (the existing test plus new old-format, multi-currency, sorting and malformed-code exit-2 cases). README updated. Not checked: the cross-repo ledger contract, since ledger is a sibling item. Open: the output header change breaks callers that parse account,total_cents, so risk is high. No assert statements were added: the existing file has none and the change adds none beyond the validation.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit fceefe0d66f2df1aeffec425548ea7ce0123f590 on the run branch
+
+ledger: optional fourth TSV currency column implemented and committed on archon/2ep4np5h-ledger-add-currency-column as 09311d7 (not pushed). Missing column defaults to USD; a currency must be exactly three uppercase ASCII letters. The CSV header is date,account,amount_cents,currency and every row carries its currency. A malformed currency exits 2 with 'line N:' on stderr; other input errors still exit 1. Checks on the final tree 7eaecc065975a6e1dc928245a9ed122845e08d3e: cargo fmt --check clean, cargo clippy --all-targets -D warnings clean, cargo build ok, cargo test 9/9 pass (2 pre-existing, 4 library cases, 3 binary end-to-end cases for default USD, exit 2 with line number, and exit 1). README updated. Nothing left running. Open: no review was delegated (no reviewer tool in this stage), and reports must be updated separately to consume the new column. Note: rustfmt also reflowed two pre-existing lines in lib.rs. Rust was installed user-locally into the item cache (rustup minimal + rustfmt/clippy).
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 09311d7cf65cd8dd2d8edaa8278f6d8b5a12cdad on the run branch

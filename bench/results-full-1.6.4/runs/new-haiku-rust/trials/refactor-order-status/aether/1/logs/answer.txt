@@ -1,0 +1,17 @@
+The status refactor is committed on `main` as `79edffd`, and `cargo test` passes (3 integration tests and 3 new unit tests in `status.rs`).
+
+**What changed**
+- **`src/status.rs` (new):** `OrderStatus` with `as_str`, `Display`, `FromStr`, and `can_transition_to`. `ParseStatusError` implements `std::error::Error`, and its message is `unknown order status "<input>"`. All status string literals now live only in this file.
+- **`Order`:** `status` is an `OrderStatus`. `is_open` and `cancel` use the enum.
+- **`billing` and `shipping`:** `pay` and `ship` go through `can_transition_to`, so the lifecycle rules are in one place.
+- **`report`:** `from_line` parses through `FromStr`. The error text stays `unknown status "<field>"`, as before.
+- **`lib.rs`:** `pub mod status;` and re-exports of `OrderStatus` and `ParseStatusError`.
+- **`tests/orders.rs`:** Compares against enum values. The expected error and CSV strings are built with `format!` from the enum.
+
+**Choices you may want to check**
+- **`report::status_counts` return type changed** from `Vec<(String, usize)>` to `Vec<(OrderStatus, usize)>`. This follows "use the enum everywhere". The existing test still compiles, but external callers of this function will need updating.
+- **Ordering is kept alphabetical by name.** Sorting by the derived enum order would have put `Pending` first, which would change the report output. The sort key is `as_str()`.
+- **`Display` uses `f.pad`,** so width and alignment specifiers behave as they did with `String`.
+- **Commit author and message:** I committed as the configured git user (`mengsig`). I left out the Co-Authored-By trailer because your CLAUDE.md says not to add Claude attribution.
+
+`cargo fmt --check` and `cargo clippy --all-targets` are clean.

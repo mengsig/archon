@@ -828,7 +828,7 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         "no `Co-Authored-By` or \"Generated with\" line",
         "Delegate the reviewers your contract asks for on the committed change with `wait: false`",
         "never see each other's findings",
-        "full test suite once, and follow your contract's `wait_for` rule",
+        "full test suite once (the fast checks where your Checks section says so), and follow your contract's `wait_for` rule",
         "With no reviewer asked for, that run is the whole of this step",
         "never end your turn while a check runs",
         "the exact base and head commits (`{{base_commit}}` and `git rev-parse HEAD`",
@@ -839,7 +839,7 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         "(`base` the head the earlier reviews read), given the open findings",
         "Pass on your contract's bounds for reviewers and its blocking class",
         "Use leaf workers unless a bounded subproblem benefits from another level allowed by the contract",
-        "settle a disputed finding with evidence rather than another round",
+        "Settle disputed findings with evidence",
         "An unresolved blocking finding, a failed check",
         "Advice left open fails nothing",
         "Archon delivers your commits as they are. Do not push.",
@@ -994,7 +994,7 @@ fn direct_escalates_on_risk_not_size() {
     for said in [
         "each re-review is ONE new agent that reads only the fix",
         "No new whole-change read is owed",
-        "After three failed rounds Archon stops this stage",
+        "After three failed rounds, follow the contract's cap rule",
         "only blocking findings fail; the rest are follow-ups",
     ] {
         assert!(build.contains(said), "missing {said:?} in {build}");

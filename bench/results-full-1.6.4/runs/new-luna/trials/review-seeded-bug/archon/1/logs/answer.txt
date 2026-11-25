@@ -1,0 +1,5 @@
+Found one high severity security issue in `src/tokens.js`, in `verify`:
+
+- **HMAC signature prefix accepted, including an empty signature.** `expected.startsWith(signature)` accepts any prefix of the real MAC. For example, a token like `<base64url({"user":"root","exp":9999999999999})>.` has an empty signature; `verify` accepts it and returns the forged claims. Even a nonempty, short MAC prefix can be guessed. This allows token forgery and can enable account impersonation. Verification should require an exact, fixed-length signature match using a timing-safe comparison.
+
+I reviewed the current `review-seeded-bug` mirror; its `package.json` identifies the project as `session-lib`. No files were changed.

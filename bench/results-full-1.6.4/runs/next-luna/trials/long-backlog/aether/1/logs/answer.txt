@@ -1,0 +1,8 @@
+Implemented TT-101 through TT-104, added tests, and committed each ticket separately. The requested unittest suite passes: **9 tests, OK**. The working tree is clean.
+
+Commits:
+
+- `384678e` TT-101 reject impossible due dates
+- `23810da` TT-102 write RFC 4180 CSV
+- `5b90562` TT-103 add search query syntax
+- `fab6c33` TT-104 add task operation undo

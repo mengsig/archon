@@ -1,0 +1,23 @@
+I've queued the fix as item `qi_01M7W2FMC70H9KCRMT4BXFAJB6` (repo `fix-off-by-one`, `direct` pipeline, standard review). I have not run the tests or edited the code myself; I'm leaving that to the item's agent, which will commit on the local branch and not push.
+
+The brief asks for three things:
+- `python3 -m unittest` exits 0 with no test file changed.
+- The fix is in `window.py` only.
+- The function is correct for all inputs, including edge and invalid cases, not only the tested ones.
+
+I chose standard review because the bug sits in shared logic and a fix that only passes the tests could slip through. I'll report back when the item finishes.
+
+Done: Fix window.py bug so python3 -m unittest passes. Fixed the off-by-one in window.py. sliding_windows iterated range(len(items) - size), dropping the last window; it now iterates range(len(items) - size + 1). Changed one line, no other files. Before: `python3 -m unittest` ran 3 tests, FAILED (failures=2) (test_includes_the_last_window, test_whole_list_is_one_window). After: 3 tests run, OK, exit 0. Extra edge checks pass: [] size 1 -> []; size > len -> []; size == len -> one window; size 1 -> singletons; strings work; size 0 and -1 still raise ValueError. Committed as dd172947a5b496ad3113f1f35fbbf1836a44d694 (tree 86fa2570260a2e082a57848f99c47518a99b485c) on archon/4bxfajb6-fix-window-py-bug-so-python3-m-unittest, under the repo's configured identity; not pushed. Review: reviewer agt_01M7W2GKYDX5BKSX6FPPRVK35K (claude-haiku-5-5, medium) read the whole change and returned pass with no findings; it confirmed risk medium. Open follow-up (non-blocking): callers that relied on the old output will now receive one extra trailing window. Nothing left running from me; the reviewer's process ends with its agent.
+REVIEW: pass by agt_01M7W2GKYDX5BKSX6FPPRVK35K
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W2GKYDX5BKSX6FPPRVK35K)
+
+SHIPPED: commit dd172947a5b496ad3113f1f35fbbf1836a44d694 on the run branch
+Branch `archon/4bxfajb6-fix-window-py-bug-so-python3-m-unittest` in /home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/daf2a4bdbd0695d61e69e190/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7W2FMC70H9KCRMT4BXFAJB6`; land it in `main`: `archon merge qi_01M7W2FMC70H9KCRMT4BXFAJB6`.
+
+Fixed the off-by-one in window.py. sliding_windows iterated range(len(items) - size), dropping the last window; it now iterates range(len(items) - size + 1). Changed one line, no other files. Before: `python3 -m unittest` ran 3 tests, FAILED (failures=2) (test_includes_the_last_window, test_whole_list_is_one_window). After: 3 tests run, OK, exit 0. Extra edge checks pass: [] size 1 -> []; size > len -> []; size == len -> one window; size 1 -> singletons; strings work; size 0 and -1 still raise ValueError. Committed as dd172947a5b496ad3113f1f35fbbf1836a44d694 (tree 86fa2570260a2e082a57848f99c47518a99b485c) on archon/4bxfajb6-fix-window-py-bug-so-python3-m-unittest, under the repo's configured identity; not pushed. Review: reviewer agt_01M7W2GKYDX5BKSX6FPPRVK35K (claude-haiku-5-5, medium) read the whole change and returned pass with no findings; it confirmed risk medium. Open follow-up (non-blocking): callers that relied on the old output will now receive one extra trailing window. Nothing left running from me; the reviewer's process ends with its agent.
+REVIEW: pass by agt_01M7W2GKYDX5BKSX6FPPRVK35K
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W2GKYDX5BKSX6FPPRVK35K)
+
+SHIPPED: commit dd172947a5b496ad3113f1f35fbbf1836a44d694 on the run branch

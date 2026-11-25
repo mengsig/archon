@@ -1,0 +1,24 @@
+Enqueued as `qi_01M7WHCCY3Y7WY0W16VY17FA6M` in the `direct` pipeline. It includes the enum API, behavior preservation, `cargo test`, and local commit requirements.
+
+Failed: Refactor order status strings to OrderStatus enum — implement: ESCALATE: The requested Order.status: String → OrderStatus change is a breaking public API change. Full detail: archon queue show qi_01M7WHCCY3Y7WY0W16VY17FA6M --full
+
+Freed 0.0 GiB of build output: item qi_01M7WHCCY3Y7WY0W16VY17FA6M ended and its cargo target directory went.
+
+From build (agt_01M7WHE39HFTWDKGAG4EYPZ73V; question): Clarification [clarification:ntf_01M7WHEPXF4ZKNYNQPSG45RE9S] for qi_01M7WHCCY3Y7WY0W16VY17FA6M (agt_01M7WHE39HFTWDKGAG4EYPZ73V): The assignment explicitly requires Order.status: String -> OrderStatus, but Amendment records escalation under a breaking-public-API rule. Please confirm the required exception/authorization to proceed with this explicitly requested API break. Fallback: proceed under the assignment's explicit acceptance criteria; no external consumers are present in the local crate.. Fallback: Preserve existing behavior and make the smallest change consistent with the brief.. Deadline: 2026-11-20 13:43:40.015922369 UTC. Resolution: open
+
+Deviations to review: /home/mengsig/.local/share/archon-bench/f164-0shouhbb/archon-bench/work/20261120T123131Z/652fd48daaf76b53be0189b2/.archon/data/reports/rpt_01M7WHJXX0CRBVBNMJHZ8WW60B/index.html
+
+Done: Refactor order status strings to OrderStatus enum. Refactored order lifecycle state from String to public OrderStatus, with parsing, display, transition rules, and preserved report/error behavior. Added enum contract regression coverage. Verified cargo fmt --check, cargo test (4 integration tests), cargo clippy --all-targets -- -D warnings, source literal scan, and clean worktree. Commits: 5edfd2e and ce2d5c4. No reviewers required by contract.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit ce2d5c4a97e02f8623ef93c43424b71c0bc3b14c on the run branch
+Branch `archon/vy17fa6m-refactor-order-status-strings-to-orderst` in /home/mengsig/.local/share/archon-bench/f164-0shouhbb/archon-bench/work/20261120T123131Z/652fd48daaf76b53be0189b2/refactor-order-status holds it (7 files changed, 161 insertions(+), 26 deletions(-)). Review: `archon diff qi_01M7WHCCY3Y7WY0W16VY17FA6M`; land it in `main`: `archon merge qi_01M7WHCCY3Y7WY0W16VY17FA6M`.
+
+Freed 0.0 GiB of build output: item qi_01M7WHCCY3Y7WY0W16VY17FA6M ended and its cargo target directory went.
+
+Refactored order lifecycle state from String to public OrderStatus, with parsing, display, transition rules, and preserved report/error behavior. Added enum contract regression coverage. Verified cargo fmt --check, cargo test (4 integration tests), cargo clippy --all-targets -- -D warnings, source literal scan, and clean worktree. Commits: 5edfd2e and ce2d5c4. No reviewers required by contract.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit ce2d5c4a97e02f8623ef93c43424b71c0bc3b14c on the run branch

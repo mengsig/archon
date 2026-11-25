@@ -11,6 +11,23 @@ use std::collections::BTreeSet;
 const MIN_WORD_SIMILARITY: f64 = 0.6;
 const MIN_TRIGRAM_SIMILARITY: f64 = 0.5;
 
+pub(super) fn near_duplicate<'a>(lesson: &Lesson, others: &'a [Lesson]) -> Option<&'a Lesson> {
+    let features = Features::of(&lesson.text);
+    let found = others
+        .iter()
+        .filter(|other| {
+            other.scope == lesson.scope
+                && other.kind == lesson.kind
+                && features.near_duplicate(&Features::of(&other.text))
+        })
+        .min_by_key(|other| (other.state == LessonState::Retracted, &other.id));
+    if let Some(other) = found {
+        assert_eq!(other.scope, lesson.scope);
+        assert_eq!(other.kind, lesson.kind);
+    }
+    found
+}
+
 /// Recomputes the clusters of `scope`'s lessons and writes those whose cluster changed.
 pub(super) fn consolidate(conn: &Connection, scope: &LessonScope) -> Result<(), ArchonError> {
     let lessons: Vec<Lesson> = super::scoped(conn, scope.repo.as_ref())?

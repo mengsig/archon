@@ -1003,6 +1003,20 @@ async fn an_infra_failure_from_a_rate_limit_waits_before_its_retry() {
         serde_json::from_str(&store.kv_get(&key).unwrap().unwrap()).unwrap()
     };
     let until: Timestamp = serde_json::from_value(spawn["not_before"].clone()).unwrap();
+    let timing_key = format!(
+        "{}{id}",
+        archon_queue::store::keys::STAGE_DEFERRED_UNTIL_PREFIX,
+        id = held.id
+    );
+    let recorded = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .kv_get(&timing_key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(recorded.parse::<Timestamp>().unwrap(), until);
     let deadline: Timestamp = serde_json::from_value(spawn["request"]["deadline"].clone()).unwrap();
     let left = deadline - until;
     assert!(
@@ -3185,8 +3199,9 @@ async fn a_left_out_fail_of_an_earlier_head_is_answered_by_a_pass_of_the_fix() {
     let rereview = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
     let named = pass_by(std::slice::from_ref(&rereview));
     let fixed = shipped_by(&h, &lead, "Built, then fixed", named).await;
-    h.backend
-        .complete_delegated(&rereview, verdict_on(&fixed, "pass"));
+    let mut passed = verdict_on(&fixed, "pass");
+    passed["resolved_findings"] = serde_json::json!([format!("{failing}:1")]);
+    h.backend.complete_delegated(&rereview, passed);
     h.settle_running(|_| fixed.clone()).await;
     h.dispatch().await;
     assert!(delivered(&h, &item).await, "{:?}", h.state(&item.id).await);
@@ -4632,8 +4647,17 @@ async fn a_restart_in_the_middle_of_a_round_counts_it_once() {
     pump::handle_fleet_event(&h.ctx, &event).await.unwrap();
     let error = escalated(&h, &lead).await.expect("the third round caps it");
     assert!(error.contains("failed 3 rounds"), "{error}");
+    let (findings, reviewers) = error
+        .split_once("The reviewers' results (")
+        .expect("the escalation names the reviewers");
+    let finding = format!("finding 3 [{third}:1]");
     assert_eq!(
-        error.matches(third.as_str()).count(),
+        findings.matches(&finding).count(),
+        1,
+        "the finding is recorded once: {error}"
+    );
+    assert_eq!(
+        reviewers.matches(third.as_str()).count(),
         1,
         "counted once: {error}"
     );

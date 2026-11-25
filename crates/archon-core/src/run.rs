@@ -1345,6 +1345,25 @@ struct StoredTally {
     every_fail_kept: bool,
     #[serde(default)]
     reread: Vec<TalliedAgent>,
+    // The daemon validates review history when it reads or continues a round.
+    #[serde(default)]
+    reports: Vec<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
+    prior_findings: Vec<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
+    fix_wait: Option<StoredFixWait>,
+    #[serde(default)]
+    confirm: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
+    stopped: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[expect(dead_code, reason = "decoding each field is the check")]
+struct StoredFixWait {
+    reviewers: Vec<TalliedAgent>,
+    delivered: Option<String>,
 }
 
 /// One failing verdict as archond keeps it, in either shape it has written:
@@ -2745,6 +2764,36 @@ mod tests {
     }
 
     #[test]
+    fn convergence_metadata_preserves_the_tallys_fail_count() {
+        let tally = serde_json::json!({
+            "fails": [{
+                "agent": "agt_01JB000000000000000000000R",
+                "head": "abc1234",
+                "findings": ["a bug"]
+            }],
+            "reports": [{"pass": false}],
+            "prior_findings": [{"blocking": true}],
+            "confirm": {"base": "abc1234", "head": "def1234"},
+            "stopped": "ESCALATE: failed confirmation"
+        });
+        let decoded = TalliedFails::try_from(tally.clone()).unwrap();
+        assert_eq!(decoded.reviewers(), 1);
+        for (key, invalid) in [
+            ("reports", serde_json::json!(true)),
+            ("prior_findings", serde_json::json!([0])),
+            ("confirm", serde_json::json!([])),
+            ("stopped", serde_json::json!(9)),
+        ] {
+            let mut bad = tally.clone();
+            bad[key] = invalid;
+            assert!(
+                TalliedFails::try_from(bad).is_err(),
+                "{key} has the wrong shape"
+            );
+        }
+    }
+
+    #[test]
     fn a_review_tally_decodes_only_in_the_shape_archond_stores() {
         let read = |tally: &str| serde_json::from_str::<TalliedFails>(tally);
         let fail =
@@ -2765,6 +2814,7 @@ mod tests {
                 ),
                 2,
             ),
+
         ];
         for (tally, reviewers) in stored {
             let read = read(&tally).unwrap_or_else(|e| panic!("{tally}: {e}"));

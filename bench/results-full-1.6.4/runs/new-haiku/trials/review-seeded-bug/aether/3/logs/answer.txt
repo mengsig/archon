@@ -1,0 +1,43 @@
+The review is complete and I changed no code. The main finding is a signature-verification bypass in `verify()`: it accepts forged tokens, so it should not ship as written. I reproduced it by running `src/index.js` from a throwaway script in `/tmp`, which I removed afterward.
+
+## Findings
+
+**1. Critical: `src/tokens.js`, `verify()`: an empty signature forges any token.**
+- Cause: the check is `expected.startsWith(signature)`. An empty string is a prefix of every string, and the `signature === undefined` guard does not catch `""`.
+- Input: `base64url('{"user":"root","exp":9000000000000000}') + "."`, which is `body + "."` with nothing after the dot.
+- Observed: `verify(input, secret)` returns `{"user":"root","exp":9000000000000000}`. Any identity can be forged without knowing the secret.
+
+**2. Critical: `src/tokens.js`, `verify()`: the signature is compared as a prefix, so a 1-character guess is enough.**
+- Cause: `startsWith` accepts any leading slice of the real MAC, not the full MAC.
+- Observed: a real token's signature truncated to its first character verifies (`{"user":"ada",...}`). A wrong first character returns `null`.
+- Impact: an attacker needs at most 64 attempts to forge a token for any payload, because the MAC is effectively reduced to 6 bits. Even after the empty-signature fix, this remains exploitable.
+- Also: the comparison is not constant-time, so it leaks timing. The fix is to compare the full string with `crypto.timingSafeEqual` on equal-length buffers, and to reject a signature whose length differs from the expected one.
+
+**3. High: `src/tokens.js`, `verify()`: the payload is parsed and used after the signature check.**
+- Cause: `JSON.parse` is not guarded, and `payload.exp` is read without checking that `payload` is an object.
+- Input: a body that decodes to `null` (`"bnVsbA."` in base64url), or to non-JSON (`"{not json"`). Once finding 1 is exploited, these inputs are reachable and throw `TypeError` or `SyntaxError` out of `verify()`.
+- Impact: the caller gets an uncaught exception instead of `null`. The function's documented contract is `null` for invalid tokens. Malformed input from an attacker can also crash request handling.
+
+**4. High: `src/tokens.js`, `verify()`: an empty or missing secret is accepted.**
+- Cause: `sign()` enforces `secret.length >= 32`, but `verify()` does no such check.
+- Input: `verify(token, "")`. With the HMAC key `""`, an attacker can compute a valid MAC for any payload, and it is accepted.
+- Observed: a forgery signed with HMAC key `""` verifies with an empty secret. `verify(token, undefined)` throws `TypeError` instead of returning `null`.
+- Fix: apply the same secret validation in `verify()`, ideally in one shared helper.
+
+**5. Medium: `src/tokens.js`, `verify()`: trailing segments are ignored.**
+- Cause: `token.split('.')` destructures two parts and drops the rest.
+- Input: `validToken + ".junk"` verifies. Tokens are malleable, and a strict format check (exactly two segments, both non-empty) is missing.
+
+**6. Low: `src/tokens.js`, `sign()`: the secret check is length-only.**
+- `'k'.repeat(40)` is accepted. The check does not test entropy, so a weak secret of sufficient length passes. This is a documentation and operations point more than a code bug.
+
+**7. Low (design notes, not bugs):**
+- No audience, key ID, or token-purpose claim. If the same secret signs other token types, a token could be replayed across contexts.
+- `verify()` takes `now` from the caller. Callers must not pass a client-supplied value.
+- There is no revocation path, so a token stays valid until its expiry (default 1 hour).
+
+## Test gap
+`test/tokens.test.js` has no case for an empty signature, a truncated signature, a `null` or non-JSON body, or an empty secret in `verify()`. The "tampered payloads" test passes only because it keeps the real signature, so it does not exercise the vulnerable branch. Adding those cases would have caught findings 1–4.
+
+## Recommendation
+Do not ship this version. Replace the `startsWith` check with a full-length constant-time comparison (`crypto.timingSafeEqual`), reject malformed token shapes and secrets in `verify()`, and wrap parsing so that invalid tokens return `null`. Then add tests for each case above.

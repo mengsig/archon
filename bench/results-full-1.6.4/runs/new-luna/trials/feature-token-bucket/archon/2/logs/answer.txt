@@ -1,0 +1,14 @@
+Queued as **qi_01M7W5ESMBF4RTPEQWC93GFGGJ** in the `direct` pipeline. It will implement the `SPEC.md` behavior, cover error and edge cases, use only the standard library, run relevant checks, and commit the work.
+
+Done: Implement specified rate limiter in ratelimit.py. Implemented the specified token bucket and LRU keyed limiter in ratelimit.py, including continuous refill, backward-clock handling, request validation, per-key isolation, and eviction on every use. The first review found NaN validation gaps; added finite-value checks and committed the fix. Final unit tests, compile check, diff check, and focused edge probes pass. No work remains.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W5HQJSJZYRY278MTTEF65W), codex/gpt-6-luna (agent agt_01M7W5P0KJTHYQVDW7MPWPJ0ZP)
+
+SHIPPED: commit 6fde9b909c82f1eed9365f352bb3d9f02430a989 on the run branch
+Branch `archon/c93gfggj-implement-specified-rate-limiter-in-rate` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/3d7679eecfeb50e7476bbfb0/feature-token-bucket holds it (1 file changed, 73 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W5ESMBF4RTPEQWC93GFGGJ`; land it in `main`: `archon merge qi_01M7W5ESMBF4RTPEQWC93GFGGJ`.
+
+Implemented the specified token bucket and LRU keyed limiter in ratelimit.py, including continuous refill, backward-clock handling, request validation, per-key isolation, and eviction on every use. The first review found NaN validation gaps; added finite-value checks and committed the fix. Final unit tests, compile check, diff check, and focused edge probes pass. No work remains.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W5HQJSJZYRY278MTTEF65W), codex/gpt-6-luna (agent agt_01M7W5P0KJTHYQVDW7MPWPJ0ZP)
+
+SHIPPED: commit 6fde9b909c82f1eed9365f352bb3d9f02430a989 on the run branch

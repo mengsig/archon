@@ -1,0 +1,21 @@
+I queued the change as item `qi_01M7W754A99NR91T65PHA707H4`. It is still queued, so nothing is implemented or committed yet.
+
+- **Repository:** `quality-retry-budget`, which ships locally (commits stay on a local branch, not pushed).
+- **Pipeline:** `direct`, one agent that implements, tests and commits. Model is balanced tier at medium effort.
+- **Review:** `standard`, one reviewer. I chose this because the boundary rules and validation are easy to get subtly wrong.
+- **Brief:** the full operator request plus a summary of every rule in `SPEC.md`, so the agent has the spec even if the file is unavailable.
+
+The quota note still applies: claude-code is at 77% of its weekly window. This is a single item at medium effort, so it adds little pressure. I'll report the outcome when the item finishes.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and added focused tests in test_retry_budget.py. Committed fb1db7b on archon/pha707h4-implement-retry-budget-py-per-spec-md-wi (not pushed). Before: retry_budget.py was a stub raising NotImplementedError, so the three existing tests could not pass (from reading the stub; I did not run the stub). After: `python3 -B -m unittest -v test_retry_budget` runs 23 tests, all OK. The tests cover every validation error (bool, float, below minimum, validation ordered before the early returns), attempt == and > max_attempts, zero base and zero cap, huge attempt, base above cap, retry_after above cap, and budget exactly reached. Assumption: the spec's "invalid values raise ValueError" applies to wrong types too, so bool and float raise ValueError. Non-blocking follow-up: no test pins the exact shift-threshold boundary in _backoff (e.g. cap=400, attempt 9 vs 10); the logic is correct per review. Nothing left running; no servers started. Review: one reviewer (agt_01M7W767Y8VXEPZ0EAV43MR0FD) passed the head fb1db7b with no blocking findings; risk low.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W767Y8VXEPZ0EAV43MR0FD)
+
+SHIPPED: commit fb1db7b2553066a5c34f08755b2a1b458f642bf5 on the run branch
+Branch `archon/pha707h4-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/ef15769cbc26f5ee9b8ab260/quality-retry-budget holds it (2 files changed, 146 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7W754A99NR91T65PHA707H4`; land it in `main`: `archon merge qi_01M7W754A99NR91T65PHA707H4`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and added focused tests in test_retry_budget.py. Committed fb1db7b on archon/pha707h4-implement-retry-budget-py-per-spec-md-wi (not pushed). Before: retry_budget.py was a stub raising NotImplementedError, so the three existing tests could not pass (from reading the stub; I did not run the stub). After: `python3 -B -m unittest -v test_retry_budget` runs 23 tests, all OK. The tests cover every validation error (bool, float, below minimum, validation ordered before the early returns), attempt == and > max_attempts, zero base and zero cap, huge attempt, base above cap, retry_after above cap, and budget exactly reached. Assumption: the spec's "invalid values raise ValueError" applies to wrong types too, so bool and float raise ValueError. Non-blocking follow-up: no test pins the exact shift-threshold boundary in _backoff (e.g. cap=400, attempt 9 vs 10); the logic is correct per review. Nothing left running; no servers started. Review: one reviewer (agt_01M7W767Y8VXEPZ0EAV43MR0FD) passed the head fb1db7b with no blocking findings; risk low.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W767Y8VXEPZ0EAV43MR0FD)
+
+SHIPPED: commit fb1db7b2553066a5c34f08755b2a1b458f642bf5 on the run branch

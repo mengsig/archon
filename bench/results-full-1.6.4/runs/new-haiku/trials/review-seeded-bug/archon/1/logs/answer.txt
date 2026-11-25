@@ -1,0 +1,39 @@
+**Do not ship `src/tokens.js` as written.** The first finding is a full authentication bypass. I did not change any code.
+
+I read the file in the registered repo's mirror (`repos/review-seeded-bug/src/tokens.js`, the local base commit). The repo is registered as `review-seeded-bug`, not `session-lib`, so I assumed that is the repo you meant because the file matches your description. If the rewrite is uncommitted or on another branch, the mirror may not have it, and these line numbers need re-checking against your copy.
+
+**1. Critical: `verify` accepts any token with an empty signature**
+- **File/function:** `src/tokens.js:24-27`, `verify`
+- **What goes wrong:** `token.split('.')` gives `signature === ''` for `"<body>."`. The check `signature === undefined` does not catch that, and `expected.startsWith('')` is always true. Anyone can mint a token with any claims and no secret.
+- **Concrete input:** `base64url(JSON.stringify({sub:"admin", exp: 9999999999999}))` + `"."`. `verify(token, secret)` returns the payload.
+- **Severity:** critical. This is a complete forgery path that needs no secret and no guessing.
+
+**2. Critical: signature check is a prefix match, so the HMAC can be guessed one character at a time**
+- **File/function:** `src/tokens.js:27`, `verify`
+- **What goes wrong:** `expected.startsWith(signature)` accepts any prefix of the correct MAC. An attacker who gets a valid-looking response can brute-force the MAC one base64url character at a time, about 43 × 64 ≈ 2,750 requests in the worst case. The string comparison is also not constant-time, so response timing leaks how many leading characters matched.
+- **Concrete input:** a signature of `"A"` is accepted whenever the real MAC starts with `A`.
+- **Severity:** critical. Even with finding 1 fixed, this breaks the MAC over the network. The fix is a full-length comparison with `crypto.timingSafeEqual` on equal-length buffers.
+
+**3. High: malformed or non-object payloads throw instead of returning `null`**
+- **File/function:** `src/tokens.js:28-29`, `verify`
+- **What goes wrong:** `JSON.parse` is not guarded. Bad base64 or invalid JSON throws, and a body that decodes to `null` makes `payload.exp` throw a `TypeError`. The function's contract is "payload or null", so a caller that does not wrap `verify` in try/catch gets a 500 or a crash. With finding 1, an attacker controls the body, so this is reachable without a valid signature.
+- **Concrete input:** token `"bnVsbA."` (base64url of `null`, empty signature). This throws instead of returning `null`.
+- **Severity:** high (availability, and it relies on finding 1 for an unauthenticated trigger).
+
+**4. Medium: extra dot-separated segments are silently accepted**
+- **File/function:** `src/tokens.js:24`, `verify`
+- **What goes wrong:** `const [body, signature] = token.split('.')` discards any segments after the second. `body.sig.garbage` verifies. Tokens are not strictly parsed, so a token with trailing data is treated as valid, which can confuse any later component that parses the same string differently.
+- **Concrete input:** a validly signed token with `".x"` appended.
+- **Severity:** medium. Fix by requiring exactly two segments.
+
+**5. Low: `verify` does not validate its secret**
+- **File/function:** `src/tokens.js:9-10, 22`, `mac` / `verify`
+- **What goes wrong:** `sign` enforces a 32-character minimum, but `verify` does not. An empty or undefined secret throws from `createHmac` rather than returning `null`. A short secret would verify tokens that `sign` could never have produced.
+- **Severity:** low. Validate the secret in one place shared by `sign` and `verify`.
+
+**6. Low: `exp` is in milliseconds, unlike the JWT convention**
+- **File/function:** `src/tokens.js:16`, `sign`
+- **What goes wrong:** `exp` is `now + ttlSeconds * 1000`, so it is in milliseconds. This is internally consistent. But any component that expects standard JWT seconds will treat these tokens as either never-expiring or already expired.
+- **Severity:** low, but an interoperability hazard. Document the unit or switch to seconds.
+
+**Assessment:** findings 1 and 2 are each enough to block the release. Finding 1 is a one-line fix: reject an empty signature, use `crypto.timingSafeEqual` on the full MAC, and wrap parsing so that malformed input returns `null`. Findings 3-6 should be fixed in the same change. No test in this repo covers forgery, so add a regression test for the empty-signature token before shipping.

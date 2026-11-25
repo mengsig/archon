@@ -17,7 +17,7 @@ use crate::template;
 /// What stands in for the summary of a stage a steer passed over.
 pub(crate) const SKIPPED_SUMMARY: &str = "(This stage was skipped by a steer and left no result.)";
 
-/// The line a swarm integrator's error sends tasks back with.
+/// A header for displaying worker feedback. Scheduling uses structured slots.
 pub(crate) const REDISPATCH_PREFIX: &str = "REDISPATCH:";
 
 /// What a planned team's worker is told when the integrator failed without it.
@@ -41,6 +41,9 @@ pub(crate) fn resume_message(
     assert!(!feedback.is_empty(), "an agent is resumed with findings");
     assert!(attempt > 1, "the first attempt has nothing to resume");
     assert!(owed.review.is_none(), "the review's holder is never kept");
+    if stage.kind == StageKind::Design {
+        return design_resume_message(stage, attempt, feedback);
+    }
     let record = match owed.ship_record {
         true => format!(
             " End that message with the ship record of the commit you leave, read after \
@@ -64,6 +67,32 @@ pub(crate) fn resume_message(
         id = stage.id,
         blocked = StageOutcome::BLOCKED_PREFIX,
         escalate = StageOutcome::ESCALATE_PREFIX,
+    )
+}
+
+/// A kept design agent resumed after the operator asked for changes. The
+/// fix-and-end-your-turn message of other stages would have it commit the
+/// feedback outside any note and end its turn without a Finish, which Archon
+/// refuses: the request comes to it as the new session's first note instead.
+fn design_resume_message(stage: &StageSpec, attempt: u32, feedback: &str) -> String {
+    format!(
+        "Archon stage `{id}`, attempt {attempt}: a new live design session; what you already \
+         learned still holds.\n\n\
+         ## Feedback on the previous session (for context)\n\n{feedback}\n\n\
+         ## What to do\n\n\
+         1. From the run worktree, start the dev server in its own process group with `setsid` \
+         if needed. Record the actual server PID in `.archon/services/<name>.pid` before calling \
+         `design_preview` with its URL.\n\
+         2. Change the code only for a note. When the operator asked for changes on the design, \
+         Archon sends that request as this session's first note; make it like any note: exactly \
+         one commit with its `Archon-Note: D<n>` trailer, then `design_note` with \
+         `status: \"done\"`. Otherwise wait for the operator's notes.\n\
+         3. Keep calling `wait_for` and work through the notes one at a time, as before.\n\
+         4. On `finish`, stop the dev server by the PID you recorded and end your turn with a \
+         one-line summary. Your task is already recorded, so do not call `complete_task` or \
+         `fail_task` again.\n\n\
+         Archon refuses a commit outside a note and an end before `finish`.\n",
+        id = stage.id,
     )
 }
 
@@ -115,8 +144,7 @@ pub(crate) fn operator_feedback(subject: GateSubject, feedback: &str) -> String 
     )
 }
 
-/// The `feedback` a stage sees. A planned team's workers see the integrator's
-/// error from its `REDISPATCH:` line on, never its report of other tasks.
+/// A planned team's workers see only the feedback from its `REDISPATCH:` header.
 pub(crate) fn stage_feedback(stage: &StageSpec, feedback: &str) -> String {
     if stage.roles_from.is_none() || feedback.trim().is_empty() {
         return feedback.to_owned();
@@ -181,7 +209,7 @@ fn handed_off<'a>(spec: &'a PipelineSpec, stage: &StageSpec) -> Vec<&'a StageSpe
     let reported = autonomy::change_report_stage(spec).filter(|_| stage.kind == StageKind::Ship);
     spec.file.stages[..=index]
         .iter()
-        .filter(|s| s.kind != StageKind::Propose && !lists_all)
+        .filter(|s| !matches!(s.kind, StageKind::Propose | StageKind::Design) && !lists_all)
         .filter(|s| reported.is_none_or(|report| report.id != s.id))
         .filter(|s| !shown.contains(&template::previous_variable(&s.id)))
         .collect()
@@ -271,7 +299,7 @@ fn earlier_summaries(
     let index = spec.stage_index(&stage.id).expect("stage of this pipeline");
     let mut out = String::from("\n\n## Earlier stages\n");
     for earlier in &spec.file.stages[..index] {
-        if earlier.kind == StageKind::Propose {
+        if matches!(earlier.kind, StageKind::Propose | StageKind::Design) {
             continue;
         }
         if let Some(summary) = previous.get(&template::previous_variable(&earlier.id)) {
@@ -294,6 +322,31 @@ fn change_report(summary: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_design_agent_is_resumed_into_a_new_session_not_told_to_fix_and_stop() {
+        let spec = crate::autonomy::augment(
+            &crate::catalog::Catalog::builtin()
+                .get("direct")
+                .expect("built-in")
+                .clone(),
+            &archon_core::autonomy::Autonomy {
+                proposal: archon_core::autonomy::ProposalMode::Live,
+                ..Default::default()
+            },
+        )
+        .expect("live");
+        let stage = &spec.file.stages[0];
+        assert_eq!(stage.kind, StageKind::Design);
+        let feedback = operator_feedback(GateSubject::Proposal, "a darker green");
+        let text = resume_message(stage, 2, &feedback, spec.owed(stage));
+        assert!(text.contains("a darker green"));
+        assert!(text.contains("first note"));
+        assert!(text.contains("design_preview"));
+        assert!(text.contains("wait_for"));
+        assert!(!text.contains("Fix it in the same workspace"));
+        assert!(!text.contains("Do not wait for a reply"));
+    }
 
     #[test]
     fn operator_feedback_names_what_was_reviewed() {

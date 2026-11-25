@@ -1,0 +1,17 @@
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and extended test_ratelimit.py with edge-case tests. All 16 tests pass (python3 -m unittest test_ratelimit). Committed as dd92a85 on main, with no working-tree changes left.
+
+Choices beyond the spec's literal text:
+- capacity and refill_per_sec must be finite as well as > 0, so NaN and inf raise ValueError. Without this, refill_per_sec=inf with zero elapsed time yields NaN tokens.
+- Invalid n is validated before a KeyedLimiter touches its key map, so a bad call never creates a key or evicts another one.
+- The commit has no Co-Authored-By trailer. The CLAUDE.md in the repo says not to add anything attributing the work to Claude, which conflicts with the attribution reminder; I followed CLAUDE.md.
+
+Known limitation: wait_time returns a float deficit / rate. Advancing the clock by exactly that amount can, in rare cases, fall a few ULPs short and make try_acquire fail again. The spec does not ask for an epsilon, so none was added.
+
+The rate limiter is implemented in `ratelimit.py` per `SPEC.md`, using only the standard library. The work is committed as `dd92a85` on `main`, and the working tree is clean. All 16 tests pass (`python3 -m unittest test_ratelimit`), including the 3 original tests and 13 new edge-case tests I added to `test_ratelimit.py`.
+
+Choices beyond the spec's literal text:
+- **Finite-number check:** `capacity` and `refill_per_sec` must be finite as well as `> 0`, so NaN and infinity raise `ValueError`. Infinity rate with zero elapsed time would otherwise produce NaN tokens.
+- **Validate before touching state:** an invalid `n` is rejected before a `KeyedLimiter` creates a key or evicts another, so a bad call has no side effects.
+- **No `Co-Authored-By` trailer:** the commit message has none. The repo's `CLAUDE.md` says not to attribute the work to Claude, which conflicts with the attribution reminder, and I followed `CLAUDE.md`.
+
+Known limitation: `wait_time` returns `deficit / rate`. If the caller advances the clock by exactly that amount, floating-point rounding can occasionally leave `try_acquire` a few ULPs short, so it fails again. The spec doesn't ask for an epsilon, so I didn't add one.

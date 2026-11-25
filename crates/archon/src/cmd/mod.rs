@@ -27,7 +27,7 @@ mod settings;
 mod talk;
 mod update;
 
-const REQUIRED_AETHER_VERSION: &str = "1.4.2";
+const REQUIRED_AETHER_VERSION: &str = "1.4.3";
 
 use std::process::ExitCode;
 
@@ -77,6 +77,9 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         } => control::status(check_updates, verbose, json).await,
         Command::Cost { since, until, by } => {
             cost::run(since.as_deref(), until.as_deref(), by, json).await
+        }
+        Command::TimingReport { since, until } => {
+            cost::timing(since.as_deref(), until.as_deref(), json).await
         }
         Command::ModelEvidence {
             repo,
@@ -162,6 +165,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Promote { .. }
         | Command::Status { .. }
         | Command::Cost { .. }
+        | Command::TimingReport { .. }
         | Command::ModelEvidence { .. }
         | Command::Log { .. }
         | Command::Repo(_)

@@ -1,0 +1,16 @@
+Queued as **qi_01M7WE3BJ0H0B1GF2G15HDRT1B** on `direct`, with standard review and manual merge. The brief includes the enum API, behavior preservation, `cargo test`, and commit requirements.
+
+Done: Refactor order status to OrderStatus enum. Refactored order status from strings to the public OrderStatus enum, centralized parsing/display and allowed transitions in src/status.rs, and updated lifecycle operations and reports while preserving error text, CSV output, and status sorting. Added coverage for parsing, display, and the exact transition set. `cargo fmt -- --check`, `cargo test` (4 integration tests and doc tests), and `git diff --check` passed. Independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WE79GJ8PDYQT3W7BFKXRQR)
+
+SHIPPED: commit 00a81ed78b273e89a7f4defb6cb0eff4e0109f32 on the run branch
+Branch `archon/15hdrt1b-refactor-order-status-to-orderstatus-enu` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/dce25cc9ac7ce22c28a1a302/refactor-order-status holds it (7 files changed, 152 insertions(+), 31 deletions(-)). Review: `archon diff qi_01M7WE3BJ0H0B1GF2G15HDRT1B`; land it in `main`: `archon merge qi_01M7WE3BJ0H0B1GF2G15HDRT1B`.
+
+Freed 0.0 GiB of build output: item qi_01M7WE3BJ0H0B1GF2G15HDRT1B ended and its cargo target directory went.
+
+Refactored order status from strings to the public OrderStatus enum, centralized parsing/display and allowed transitions in src/status.rs, and updated lifecycle operations and reports while preserving error text, CSV output, and status sorting. Added coverage for parsing, display, and the exact transition set. `cargo fmt -- --check`, `cargo test` (4 integration tests and doc tests), and `git diff --check` passed. Independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WE79GJ8PDYQT3W7BFKXRQR)
+
+SHIPPED: commit 00a81ed78b273e89a7f4defb6cb0eff4e0109f32 on the run branch

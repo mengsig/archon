@@ -958,9 +958,9 @@ attempt reported. It is a digest of at most 1,200 characters per stage and
 already shows through `{{previous.<id>.summary}}` is not repeated there.
 A team stage with `roles_from` gets none: its workers see their own task
 only, so the plan's and their peers' reports stay out, and so does a
-proposal's direction, which the planner carries into the tasks. Of the
-feedback that sends them back, they see the integrator's error from its
-`REDISPATCH:` line on; without one, they are told to change nothing.
+proposal's direction, which the planner carries into the tasks. Workers
+that are sent back see the integrator's retry feedback. A failure without
+structured slots supplies feedback through the legacy `REDISPATCH:` header.
 So a prompt needs `{{previous.*}}` only where the full summary matters;
 the next stage is not left to rediscover what changed, where, how it was
 verified and what is still open. That is what a stage summary should say.
@@ -1031,9 +1031,9 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
 - **Restating a verdict.** A finished agent cannot be asked again, so every
   contract with a Verdict section tells its agent to call `submit_verdict`
   with the `summary` and `structured` (an object) it is about to finish
-  with. Archon reads them as the gate will. A pass or a fail is accepted and
-  the agent finishes. A verdict that reads as neither (a pass beside a
-  blocking finding, no verdict, a hedged one) is answered with what to
+  with. Archon reads them as the gate will. It accepts a fail or a pass
+  whose required records hold. A verdict that reads as neither (a pass
+  beside a blocking finding, no verdict, a hedged one) is answered with what to
   change, and the agent submits the corrected result with `"restating":
   true`: that submission is final, whatever it reads as. An unreadable
   submission repeated without the mark restates nothing and is given the
@@ -1069,6 +1069,9 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
 - **The stage `[pipeline.ship]` names.** `## Ship record`: commit with the
   repository's git identity, leave a clean tree, do not push, and return
   `commit`, `tree`, `checks` and `pr` in `structured` (see "Shipping").
+- **Stages that owe a review or ship record** submit their proposed result
+  through `submit_verdict`. Correct any refusal and submit again before
+  finishing. Settlement rechecks the records against the branch and Aether.
 - **Ship stages**, in a pipeline of your own that has one. `structured`
   includes `{"pr_url": …}` or `{"commit": …}`. The commits a ship stage is
   given are delivered as they are: it does not amend, rebase, squash or
@@ -1146,11 +1149,13 @@ pipeline:
 | Knob | Inserted stage | Where |
 | --- | --- | --- |
 | `proposal = lavish` | `propose`, kind `propose`, prompt `pipelines/_shared/propose.md` | First. The run then waits for the operator to approve the direction. |
+| `proposal = live` | `design`, kind `design`, prompt `pipelines/_shared/design-live.md` | First, instead of `propose`. A long-lived agent (`keep`) with a 240-minute timeout runs the app while the operator comments on it; the run then waits for the operator to approve the ledger. See [design-sessions.md](design-sessions.md). |
 | `report = with-pr` or `before-pr` | `report`, kind `report`, prompt `pipelines/_shared/report.md` | Last, right before the change ships (before the `ship` stage of a pipeline that has one). With `before-pr` the run waits for the operator before shipping. |
 
-Both knobs apply only to pipelines that ship, through `[pipeline.ship]` or
+All three values apply only to pipelines that ship, through `[pipeline.ship]` or
 a `ship` stage. An inserted stage has
-`fan_out = 1`, no gate, a 45-minute timeout and `allow_delegation = false`. If the item's
+`fan_out = 1`, no gate, `allow_delegation = false` and a 45-minute timeout for proposal or report.
+Live design has a 240-minute timeout. If the item's
 `model_plan` does not name it, it gets the first choice of the pipeline's
 first stage.
 
@@ -1164,6 +1169,22 @@ for the operator. The stage ids `propose` and `report`, and the prompt file
 names `archon-propose.md` and `archon-report.md`, are reserved for the
 inserted stages. A pipeline that uses them for something else is refused
 when a knob needs the stage.
+
+**The live design stage.** `proposal = live` inserts `design` (kind `design`)
+instead of `propose`. It has no fan-out and no gate of its own; the proposal
+gate applies to it exactly as to `propose`, with the same Approve, Revise and
+Reject. The agent is kept so it waits for notes between requests, and the stage
+needs `workspace = "worktree"` because it edits and commits code. Its contract
+tells it to run the dev server from the worktree under `setsid`, record its
+actual PID under `.archon/services/`, call `design_preview`, make one
+commit per note with an `Archon-Note: D<n>` trailer, and on `finish` stop the
+server and complete. Archon builds the approved intent from its own records
+rather than the stage's `structured` output. The stage id `design` and the
+prompt file `archon-design.md` are reserved; a pipeline that declares its
+own first `design` stage gets no duplicate. At most one `propose` or `design`
+stage is allowed, and it must be first. Choosing live design for a pipeline
+with a custom written `propose` stage requires changing that stage to
+`design` or removing it.
 
 Later stages get extra context in their prompts:
 - Every stage after `propose` gets the proposal's summary, whether the
@@ -1386,11 +1407,12 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   invariant, or adds scope: one new child reads only the fix, given the
   open findings, whatever the level; only the first whole-change read takes
   three where the level asks for three. Follow-ups (non-blocking findings)
-  are listed in the `pr.body` and left. A delta reviewer fails only on a
-  defect in the commits it was given or an open finding left unfixed; a new
-  finding in code a pass already read is a follow-up. Archon stops the stage
-  after three failed rounds and escalates; only an unresolved blocking
-  finding, a failed check or a review that did not run fails the stage. A
+  are listed in the `pr.body` and left. A re-review confirms the previous
+  round's open findings by ID and reviews the new delta. A real blocker
+  anywhere fails. At three failed rounds, finish committing fixes for every
+  open blocker with `Review-Fix: <id>` trailers and wait for Archon to request
+  one final confirmation. Large finding lists are linked from the handoff.
+  Missing fixes, a failed confirmation, or early completion escalates. A
   retry on the same branch keeps the earlier runs' reviews while the branch
   holds their heads, so its new lead owes only the whole reads they lack and
   a delta review of its own commits; a
@@ -1443,9 +1465,14 @@ are coupled, `direct` or `adaptive` costs less.
 3. `integrate` (work, tier `strong`) runs every task's acceptance
    commands, the plan's checks and the repository's fast checks on the
    merged change. A task whose own part is wrong goes back to its worker:
-   the integrator fails with `REDISPATCH: <task ids>` and what to fix,
-   `on_fail` returns to `build`, and the workers not named finish at
-   once. That happens at most twice; on the third attempt the integrator
+   the integrator calls `complete_task` with a fail verdict and
+   `redo_slots` in its structured result. The list contains distinct
+   zero-based indexes in the plan's `tasks` array. The summary says what
+   to fix. `on_fail` returns to `build`, which runs and merges only those
+   slots and carries forward the other workers' results. Stage output
+   for the new attempt includes carried results with their original
+   attempt numbers. Omitting the list runs the whole team again.
+   This happens at most twice. On the third attempt the integrator
    fixes what remains itself or fails. It never commits the plan file, delegates the reviewers the item's review level asks for
    (`[pipeline.review] level = "standard"` on `integrate`), and returns
    the ship record; archond ships it.

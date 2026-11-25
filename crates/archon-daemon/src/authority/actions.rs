@@ -97,7 +97,7 @@ pub(super) async fn needs_confirmation(
 ) -> Result<bool, ArchonError> {
     match action {
         Request::Pause(_) | Request::SetDirective { .. } => Ok(false),
-        Request::SetSettings { repo, settings } => {
+        Request::SetSettings { repo, settings, .. } => {
             super::settings::loosens(ctx, repo, settings, before).await
         }
         Request::ResetSettings { repo } => {

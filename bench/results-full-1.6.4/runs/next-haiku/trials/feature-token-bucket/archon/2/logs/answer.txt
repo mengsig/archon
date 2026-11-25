@@ -1,0 +1,21 @@
+I queued the rate limiter as item `qi_01M7W6H1TTD4C4NQZGBNX8F8B2` on the `feature-token-bucket` repository. It is queued, not yet started.
+
+- **Pipeline:** `direct`, one agent that implements, tests and commits. The repository ships locally, so nothing is pushed.
+- **Review:** `standard`. The change is a single module with a written spec and no concurrency terms in `SPEC.md`, so I didn't use the stricter review.
+- **Model:** balanced tier at medium effort. This is one item at a time, which also keeps load down given the claude-code quota pace (77% used, 31% elapsed).
+- **Scope:** implement `ratelimit.py` to the spec, including its error and edge cases, add tests for those cases in `test_ratelimit.py`, and use the standard library only.
+
+I'll act on the item's outcome when it finishes.
+
+Done: Implement token-bucket rate limiter per SPEC.md in ratelimit.py. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 22 tests to test_ratelimit.py covering the spec's error and edge cases. Committed as 8802b7a on archon/bnx8f8b2-implement-token-bucket-rate-limiter-per (tree 6f7ac306b4e76d6e66a50e7fd4c3a7da4a665588), not pushed. Before: the 3 original tests errored on the stubs. After: `python3 -W error -m unittest -v test_ratelimit` runs 25 tests, all OK. No linter is configured and pyflakes is not installed, so imports were checked by hand. Review: one reviewer (agt_01M7W6KGDS06CPRGHVCZ9SM8MT, claude-haiku-5-5, medium) passed the head with no blocking findings and confirmed risk medium. Non-blocking follow-ups: a misleading test name (test_request_size_must_be_within_one_and_capacity); non-numeric rates raise TypeError rather than ValueError; bool passes the max_keys int check; no test for the default max_keys=1024; clock-backwards behaviour is tested only on TokenBucket. Assumptions: non-finite capacity or refill is rejected as an extension of the spec's <= 0 rule; max_keys must be an int. Nothing left running; no processes were started. REVIEW: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W6KGDS06CPRGHVCZ9SM8MT)
+
+SHIPPED: commit 8802b7a9b6032fe59dadeb960cb86244aae170a4 on the run branch
+Branch `archon/bnx8f8b2-implement-token-bucket-rate-limiter-per` in /home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/fdf136732fd429c49b3aa07e/feature-token-bucket holds it (2 files changed, 260 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7W6H1TTD4C4NQZGBNX8F8B2`; land it in `main`: `archon merge qi_01M7W6H1TTD4C4NQZGBNX8F8B2`.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 22 tests to test_ratelimit.py covering the spec's error and edge cases. Committed as 8802b7a on archon/bnx8f8b2-implement-token-bucket-rate-limiter-per (tree 6f7ac306b4e76d6e66a50e7fd4c3a7da4a665588), not pushed. Before: the 3 original tests errored on the stubs. After: `python3 -W error -m unittest -v test_ratelimit` runs 25 tests, all OK. No linter is configured and pyflakes is not installed, so imports were checked by hand. Review: one reviewer (agt_01M7W6KGDS06CPRGHVCZ9SM8MT, claude-haiku-5-5, medium) passed the head with no blocking findings and confirmed risk medium. Non-blocking follow-ups: a misleading test name (test_request_size_must_be_within_one_and_capacity); non-numeric rates raise TypeError rather than ValueError; bool passes the max_keys int check; no test for the default max_keys=1024; clock-backwards behaviour is tested only on TokenBucket. Assumptions: non-finite capacity or refill is rejected as an extension of the spec's <= 0 rule; max_keys must be an int. Nothing left running; no processes were started. REVIEW: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W6KGDS06CPRGHVCZ9SM8MT)
+
+SHIPPED: commit 8802b7a9b6032fe59dadeb960cb86244aae170a4 on the run branch

@@ -39,6 +39,54 @@ fn plan(env: &Env, value: Value) {
 }
 
 #[test]
+fn enqueue_advice_uses_stderr_and_stdout_keeps_the_item_json() {
+    let env = Env::with_config(
+        "[aether]\nmode = 'shared'\n[orchestrator]\nmodel = 'codex/test'\n[models]\nallow = ['codex/test']\n",
+    );
+    let daemon = start_daemon(&env);
+    env.run(&["pause"]);
+    let brief = "- Fix the broken link.\n- Repair the empty state.";
+    std::fs::write(env.path("brief.md"), brief).unwrap();
+    plan(&env, json!({}));
+
+    let out = output(&env, &[]);
+    assert!(out.status.success(), "{out:?}");
+    let item = parsed(&out);
+    assert_eq!(item["brief"], brief);
+    assert!(item["id"].is_string(), "{item}");
+    assert!(item.get("notices").is_none(), "{item}");
+    let notes = String::from_utf8(out.stderr).unwrap();
+    assert!(notes.contains("Consider one item per fix."), "{notes}");
+
+    let repo = env.path("demo");
+    git_repo(&repo);
+    env.run(&["repo", "add", repo.to_str().unwrap(), "--ship", "local"]);
+    std::fs::write(env.path("brief.md"), "Fix a concurrency bug.").unwrap();
+    let brief_path = env.path("brief.md");
+    let out = env
+        .command(&[
+            "--json",
+            "queue",
+            "add",
+            "--title",
+            "risky",
+            "--pipeline",
+            "direct",
+            "--repo",
+            "demo",
+            "--brief-file",
+            brief_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(parsed(&out)["pipeline"], "direct");
+    let notes = String::from_utf8(out.stderr).unwrap();
+    assert!(notes.contains("adaptive"), "{notes}");
+    stop_daemon(&env, daemon);
+}
+
+#[test]
 fn enqueue_files_policy_idempotency_and_dependencies() {
     let env = Env::with_config(
         "[aether]\nmode = 'shared'\n[orchestrator]\nmodel = 'codex/test'\n[models]\nallow = ['codex/test']\ndeny = ['codex/denied']\n",

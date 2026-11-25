@@ -93,7 +93,7 @@ When it needs your yes, archond asks a numbered question and you reply
 ```text
 you:     Register ~/code/foo as foo, ship pull requests, base branch main.
 you:     For foo, use the adaptive pipeline by default.
-archon:  Q3: Approve operator authority change? … Reply yes or no, or /answer N yes.
+archon:  Q3: Change repository "foo"? … Reply yes or no (or /answer N yes).
 you:     /answer 3 yes
 you:     In foo, fix issue #12.
 you:     From now on, review anything that touches foo's auth/ strictly.
@@ -234,5 +234,5 @@ Contributors are listed by GitHub handle, and the list is maintained by hand.
 [Upgrading](docs/upgrading.md) · [Troubleshooting](docs/troubleshooting.md) ·
 [Every page](docs/README.md)
 
-Project version: **1.6.4**. Licensed under [MIT](LICENSE). For development,
+Project version: **1.6.5**. Licensed under [MIT](LICENSE). For development,
 see [CONTRIBUTING.md](CONTRIBUTING.md).

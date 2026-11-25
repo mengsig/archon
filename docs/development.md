@@ -90,7 +90,9 @@ make ci      # fmt check, clippy -D warnings, rustdoc -D warnings, tests
 
 `make ci` holds one of `CI_HOST_SLOTS` (default 1) host-wide CI slots while
 it runs, so at most that many full runs, Aether's included, load the host at
-once; see [CONTRIBUTING.md](../CONTRIBUTING.md).
+once. In the slot it waits for free memory and runs at low priority; see
+[CONTRIBUTING.md](../CONTRIBUTING.md) for the knobs and for which checks a
+pull request into `next` needs.
 
 The ship gate's fast check (see the repository's `checks.fast`) runs once
 per git tree and expanded command: archond reuses a pass it proved for the

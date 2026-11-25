@@ -994,6 +994,7 @@ pub(crate) mod tests {
 
     pub(crate) fn status_with(aether: AetherLinkStatus) -> DaemonStatus {
         DaemonStatus {
+            work_units: None,
             waiting_items: vec![],
             daemon_version: "0.1.0".into(),
             pid: 42,
@@ -1804,7 +1805,7 @@ pub(crate) mod tests {
         let text = autonomy(&view);
         assert!(text.starts_with("autonomy (repo api)\ndefault: review=standard"));
         assert!(
-            text.contains("\nceiling (values each knob allows): review=strict|standard|none, proposal=lavish|off,"),
+            text.contains("\nceiling (values each knob allows): review=strict|standard|none, proposal=lavish|live|off,"),
             "the ceiling lists what it allows: {text}"
         );
         assert!(

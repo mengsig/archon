@@ -269,6 +269,7 @@ fn item(state: QueueState, repo: Option<RepoId>, minute: i64) -> QueueItem {
         state,
         autonomy: Default::default(),
         origin: None,
+        supersedes: None,
         fresh_retries: 0,
         routed_provider: None,
         provider_switch: None,
@@ -460,6 +461,7 @@ fn operator_line(text: &str) -> FeedEntry {
         text: text.into(),
         images: Vec::new(),
         local: false,
+        command_id: None,
     }
 }
 
@@ -659,6 +661,42 @@ fn a_transcript_applies_only_its_orchestrators_new_events() {
     theirs.agent = Some(agent("agt_other"));
     assert!(log.apply(&[theirs]).is_err());
     assert!(ReplyLog::feed(agent(ORCHESTRATOR)).apply(&[]).is_err());
+}
+
+#[test]
+fn a_helper_the_orchestrator_creates_is_skipped_and_another_agents_refused() {
+    let created = EventKind::AgentCreated {
+        model: "claude-code/claude-haiku-5-5".parse().unwrap(),
+        name: "reviewer".to_owned(),
+    };
+    let helper = |kind| {
+        let mut e = event(0, 1, kind);
+        e.agent = Some(agent("agt_helper"));
+        e.parent = Some(agent(ORCHESTRATOR));
+        e
+    };
+    let mut events = transcript_shape();
+    events.insert(2, helper(created.clone()));
+    // The helper's own words and turn are not the orchestrator's answer.
+    events.insert(3, helper(wrote("Not the orchestrator.")));
+    events.insert(4, helper(turn_ended("ready")));
+    for (i, e) in events.iter_mut().enumerate() {
+        e.seq = 101 + i as u64;
+    }
+    let mut log = ReplyLog::transcript(agent(ORCHESTRATOR), 100);
+    log.apply(&events).unwrap();
+    let mut plain = ReplyLog::transcript(agent(ORCHESTRATOR), 100);
+    plain.apply(&transcript_shape()).unwrap();
+    assert!(log.replies().replied(&[]));
+    assert_eq!(log.replies(), plain.replies(), "the helper adds no answer");
+
+    let mut stranger = event(500, 1, created);
+    stranger.agent = Some(agent("agt_helper"));
+    stranger.parent = Some(agent("agt_other"));
+    assert!(log.apply(&[stranger]).is_err(), "another agent's helper");
+    let mut orphan = event(501, 1, wrote("No parent."));
+    orphan.agent = Some(agent("agt_helper"));
+    assert!(log.apply(&[orphan]).is_err(), "an event with no parent");
 }
 
 /// The wire form of `transcript_shape`, as aetherd serves `get_events`.

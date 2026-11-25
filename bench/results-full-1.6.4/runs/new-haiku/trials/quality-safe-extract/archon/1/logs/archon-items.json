@@ -1,0 +1,616 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W4DKXSAWH9JADBY2KVZ9GV",
+      "repo": "repo_01M7W44VKVWC50FX1E56DCKA0M",
+      "pipeline": "direct",
+      "title": "Make safe_extract validation surface unexpected OSError (spec: I/O errors stay visible)",
+      "brief": "Follow-up to qi_01M7W45D2PHXW91F35TWMSC1V0 (commit c67ed97). Read SPEC.md; it says unexpected filesystem I/O errors must remain visible, and validation failure must leave root and outside unchanged.\n\nGap found in review: validation uses os.path.lexists, which swallows OSError such as EACCES. An unreadable ancestor or target during validation can therefore let a batch be partly written before PermissionError surfaces, which breaks the 'validate the entire batch before any write' rule.\n\nFix: in safe_extract.py, check existence with os.lstat, treating only FileNotFoundError as 'absent' and letting every other OSError propagate before any write. Keep the code flat and under 60 lines per function. Add focused tests in test_safe_extract.py that make an ancestor unreadable or non-searchable (skip with unittest.skipIf when running as root or on platforms without POSIX permissions) and assert PermissionError propagates and nothing is created. Also add tests for whitespace-only names and names that differ only in Unicode normalisation, which the previous change left untested; they should be treated as distinct, literal names.\n\nRun `python3 -m unittest -v test_safe_extract` and `ruff check` until clean. Commit on the current branch with a clear message as the repository's configured git user. Add no Co-Authored-By, 'Generated with' or other AI attribution lines. Do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "safe-extract",
+        "operator-request"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "strong",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W4DKXSAWH9JADBY2KVZ9GV",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T09:25:52.700248419Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-20T09:25:52.700248419Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-20T09:25:52.700248419Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:security",
+          "review:strict"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Permission-error propagation before any write is a safety invariant; strong tier, medium effort (policy cap)."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W4DKY6JW3JBJTWV9WGPMGF",
+        "summary": "Fixed safe_extract validation so unexpected OSError is no longer hidden. Two commits on archon/twmsc1v0-implement-safe-extract-extract-per-spec: 3a52012 (existence checks use os.lstat via _lstat_or_none, and only FileNotFoundError counts as absent, so EACCES propagates before any write) and 1d8484a (root validation also uses lstat, so an unsearchable root raises PermissionError; names that are not encodable UTF-8, such as lone surrogates, are rejected during validation, before any ancestor is created). Tests added: unsearchable ancestor and root (skipped as root or without POSIX permissions), whitespace-only names kept literal, and Unicode-normalisation variants kept distinct (skipped on darwin, where APFS collides them), plus surrogate names in the invalid-names list. Checks: `python3 -m unittest -v test_safe_extract` 40/40 OK, run as uid 1000 so the permission tests ran; `ruff check .` clean. The new permission and surrogate tests fail on the previous head, confirming they catch the defects. Not pushed. Review: whole-change pass on 1d8484a (whole-review-replacement), delta pass 3a52012..1d8484a (delta-review-fix), and an earlier whole-change pass on 3a52012 (review-2) all report no blocking findings. review-1 failed on root EACCES and review-3 failed on surrogate names (its verdict was unreadable, so it was replaced); both blocking findings are fixed and verified. Open non-blocking follow-ups: no root-independent test of non-FileNotFoundError errors from the lstat path; ExtractBasics writes temp dirs into cwd; no assert statements (CLAUDE.md density); Path(\"\") is accepted as root while \"\" is rejected; duplicate detection is exact-string, so case-insensitive filesystems can fail mid-batch (spec puts this outside rollback scope); ENAMETOOLONG from lstat surfaces as OSError rather than ValueError. Nothing is left running from me; the reviewer processes shown in inbox notices stop when this task ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W4MKWCCFBAGY0BT23DPG37), claude-code/claude-haiku-5-5 (agent agt_01M7W4MCX4WA3F4HB9002SN8EQ), claude-code/claude-haiku-5-5 (agent agt_01M7W4FXZWK449HAWDKJKHGWT6), claude-code/claude-haiku-5-5 (agent agt_01M7W4FR64K90WY1SMC31P89ZR)\n\nSHIPPED: commit 1d8484a230c6bbc75871bfddf499e2e63fdd92e8 on the run branch"
+      },
+      "created_at": "2026-11-20T09:25:52.697642577Z",
+      "updated_at": "2026-11-20T09:31:36.907706228Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W4DKY6JW3JBJTWV9WGPMGF",
+        "item": "qi_01M7W4DKXSAWH9JADBY2KVZ9GV",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W4DM1HYXH2QX2R7HJ5GSMT",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/81afeced0ec991c2a1c86ae2/.archon/data/worktrees/quality-safe-extract/qi_01M7W45D2PHXW91F35TWMSC1V0",
+        "branch": "archon/twmsc1v0-implement-safe-extract-extract-per-spec",
+        "state": {
+          "state": "succeeded",
+          "summary": "Fixed safe_extract validation so unexpected OSError is no longer hidden. Two commits on archon/twmsc1v0-implement-safe-extract-extract-per-spec: 3a52012 (existence checks use os.lstat via _lstat_or_none, and only FileNotFoundError counts as absent, so EACCES propagates before any write) and 1d8484a (root validation also uses lstat, so an unsearchable root raises PermissionError; names that are not encodable UTF-8, such as lone surrogates, are rejected during validation, before any ancestor is created). Tests added: unsearchable ancestor and root (skipped as root or without POSIX permissions), whitespace-only names kept literal, and Unicode-normalisation variants kept distinct (skipped on darwin, where APFS collides them), plus surrogate names in the invalid-names list. Checks: `python3 -m unittest -v test_safe_extract` 40/40 OK, run as uid 1000 so the permission tests ran; `ruff check .` clean. The new permission and surrogate tests fail on the previous head, confirming they catch the defects. Not pushed. Review: whole-change pass on 1d8484a (whole-review-replacement), delta pass 3a52012..1d8484a (delta-review-fix), and an earlier whole-change pass on 3a52012 (review-2) all report no blocking findings. review-1 failed on root EACCES and review-3 failed on surrogate names (its verdict was unreadable, so it was replaced); both blocking findings are fixed and verified. Open non-blocking follow-ups: no root-independent test of non-FileNotFoundError errors from the lstat path; ExtractBasics writes temp dirs into cwd; no assert statements (CLAUDE.md density); Path(\"\") is accepted as root while \"\" is rejected; duplicate detection is exact-string, so case-insensitive filesystems can fail mid-batch (spec puts this outside rollback scope); ENAMETOOLONG from lstat surfaces as OSError rather than ValueError. Nothing is left running from me; the reviewer processes shown in inbox notices stop when this task ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W4MKWCCFBAGY0BT23DPG37), claude-code/claude-haiku-5-5 (agent agt_01M7W4MCX4WA3F4HB9002SN8EQ), claude-code/claude-haiku-5-5 (agent agt_01M7W4FXZWK449HAWDKJKHGWT6), claude-code/claude-haiku-5-5 (agent agt_01M7W4FR64K90WY1SMC31P89ZR)\n\nSHIPPED: commit 1d8484a230c6bbc75871bfddf499e2e63fdd92e8 on the run branch"
+        },
+        "cost_usd": 0.13974088,
+        "started_at": "2026-11-20T09:25:52.769758561Z",
+        "finished_at": "2026-11-20T09:31:36.907706228Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W4DM0PCQNZC220PFNP89BP",
+        "run": "prun_01M7W4DKY6JW3JBJTWV9WGPMGF",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "strong",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W4DM26DNJSSKNXE4XGVQZW",
+        "aether_task": "tsk_01M7W4DM26W19FRF9D8QPT9JJ8",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "critical",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; the plan pins medium",
+        "summary": "Fixed safe_extract validation so unexpected OSError is no longer hidden. Two commits on archon/twmsc1v0-implement-safe-extract-extract-per-spec: 3a52012 (existence checks use os.lstat via _lstat_or_none, and only FileNotFoundError counts as absent, so EACCES propagates before any write) and 1d8484a (root validation also uses lstat, so an unsearchable root raises PermissionError; names that are not encodable UTF-8, such as lone surrogates, are rejected during validation, before any ancestor is created). Tests added: unsearchable ancestor and root (skipped as root or without POSIX permissions), whitespace-only names kept literal, and Unicode-normalisation variants kept distinct (skipped on darwin, where APFS collides them), plus surrogate names in the invalid-names list. Checks: `python3 -m unittest -v test_safe_extract` 40/40 OK, run as uid 1000 so the permission tests ran; `ruff check .` clean. The new permission and surrogate tests fail on the previous head, confirming they catch the defects. Not pushed. Review: whole-change pass on 1d8484a (whole-review-replacement), delta pass 3a52012..1d8484a (delta-review-fix), and an earlier whole-change pass on 3a52012 (review-2) all report no blocking findings. review-1 failed on root EACCES and review-3 failed on surrogate names (its verdict was unreadable, so it was replaced); both blocking findings are fixed and verified. Open non-blocking follow-ups: no root-independent test of non-FileNotFoundError errors from the lstat path; ExtractBasics writes temp dirs into cwd; no assert statements (CLAUDE.md density); Path(\"\") is accepted as root while \"\" is rejected; duplicate detection is exact-string, so case-insensitive filesystems can fail mid-batch (spec puts this outside rollback scope); ENAMETOOLONG from lstat surfaces as OSError rather than ValueError. Nothing is left running from me; the reviewer processes shown in inbox notices stop when this task ends.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v test_safe_extract (40 tests, OK, run as uid 1000)",
+            "ruff check . (clean)"
+          ],
+          "commit": "1d8484a230c6bbc75871bfddf499e2e63fdd92e8",
+          "evidence": [
+            {
+              "after": "Ran 40 tests in 0.012s\n\nOK",
+              "before": "FAIL: test_invalid_names_rejected (name='new/\\ud800')\nERROR: test_unsearchable_root_raises_permission_error\nFAILED (failures=1, errors=1)",
+              "caption": "Permission-error and surrogate-name tests: head 3a52012 (before) fails both new tests; head 1d8484a (after) passes all 40",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "1d8484a230c6bbc75871bfddf499e2e63fdd92e8",
+          "pr": {
+            "body": "Approach: _check_target and _validate_root use os.lstat through _lstat_or_none, which treats only FileNotFoundError as absent. A NotADirectoryError on root maps to ValueError. Names must be UTF-8 encodable, so lone surrogates are rejected during validation. Key files: safe_extract.py, test_safe_extract.py. Checks: 40/40 unittest OK as uid 1000; ruff check clean. New tests fail on the previous head and pass now. Assumptions: permission tests skip as root or without POSIX permissions; Unicode-normalisation test skips on darwin. Limits: no assert statements in the module; case-insensitive duplicate names remain a write-time error, which the spec places outside rollback scope.",
+            "reviewed_on": "1d8484a",
+            "summary": "Made validation fail closed on I/O errors. Now: only a missing path counts as absent, and EACCES on root or ancestors raises PermissionError before any write. Before: lexists swallowed OSError, so a batch could be partly written before the error surfaced.",
+            "title": "Surface unexpected OSError during safe_extract validation"
+          },
+          "review": {
+            "reviewed_head": "1d8484a230c6bbc75871bfddf499e2e63fdd92e8",
+            "reviewer_agents": [
+              "agt_01M7W4MKWCCFBAGY0BT23DPG37",
+              "agt_01M7W4MCX4WA3F4HB9002SN8EQ",
+              "agt_01M7W4FXZWK449HAWDKJKHGWT6",
+              "agt_01M7W4FR64K90WY1SMC31P89ZR"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W4MKWCCFBAGY0BT23DPG37",
+                "base": "adbe749df186e3fc0d07a3ffef71a0289544159c",
+                "findings": 4,
+                "head": "1d8484a230c6bbc75871bfddf499e2e63fdd92e8",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W4MCX4WA3F4HB9002SN8EQ",
+                "base": "3a520128a06469f7df0dea7a821facc8a953e1b5",
+                "findings": 0,
+                "head": "1d8484a230c6bbc75871bfddf499e2e63fdd92e8",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W4FXZWK449HAWDKJKHGWT6",
+                "base": "adbe749df186e3fc0d07a3ffef71a0289544159c",
+                "findings": 5,
+                "head": "3a520128a06469f7df0dea7a821facc8a953e1b5",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W4FR64K90WY1SMC31P89ZR",
+                "base": "adbe749df186e3fc0d07a3ffef71a0289544159c",
+                "findings": 4,
+                "head": "3a520128a06469f7df0dea7a821facc8a953e1b5",
+                "verdict": "fail"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W4MKWCCFBAGY0BT23DPG37",
+              "agt_01M7W4MCX4WA3F4HB9002SN8EQ",
+              "agt_01M7W4FXZWK449HAWDKJKHGWT6",
+              "agt_01M7W4FR64K90WY1SMC31P89ZR"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "Safety boundary for a filesystem write API: symlink refusal, no overwrite, validate-before-create, and error propagation. Changes are behavioural: errors now propagate instead of being treated as absent, and surrogate names are rejected. Tests were added for each, and reviewers verified them."
+          },
+          "risk_reviewer": "agt_01M7W4MKWCCFBAGY0BT23DPG37",
+          "tree": "f18f0a439c043663a08162cb07c03529c7384a0e"
+        },
+        "cost_usd": 0.13974088,
+        "started_at": "2026-11-20T09:25:52.790690935Z",
+        "finished_at": "2026-11-20T09:31:33.772765589Z"
+      }
+    ],
+    "spent_usd": 0.13974088,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W4DM0PCQNZC220PFNP89BP": {
+        "direct_usd": 0.04812499,
+        "delegated_usd": 0.09161589,
+        "agents": [
+          {
+            "agent": "agt_01M7W4FR64K90WY1SMC31P89ZR",
+            "parent": "agt_01M7W4DM26DNJSSKNXE4XGVQZW",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.018103669999999995
+          },
+          {
+            "agent": "agt_01M7W4FXZWK449HAWDKJKHGWT6",
+            "parent": "agt_01M7W4DM26DNJSSKNXE4XGVQZW",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.02485467
+          },
+          {
+            "agent": "agt_01M7W4G2XB5F4XPRAF941WF1XW",
+            "parent": "agt_01M7W4DM26DNJSSKNXE4XGVQZW",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.019001670000000005
+          },
+          {
+            "agent": "agt_01M7W4MCX4WA3F4HB9002SN8EQ",
+            "parent": "agt_01M7W4DM26DNJSSKNXE4XGVQZW",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.008124319999999999
+          },
+          {
+            "agent": "agt_01M7W4MKWCCFBAGY0BT23DPG37",
+            "parent": "agt_01M7W4DM26DNJSSKNXE4XGVQZW",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.02153156
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T09:25:52.700248419Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-20T09:25:52.700248419Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-20T09:25:52.700248419Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W45D2PHXW91F35TWMSC1V0",
+      "repo": "repo_01M7W44VKVWC50FX1E56DCKA0M",
+      "pipeline": "direct",
+      "title": "Implement safe_extract.extract per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated inbox): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nRead SPEC.md in full first; it is the contract. Implement `extract(entries, root) -> list[str]` in safe_extract.py, replacing the NotImplementedError stub and keeping the module docstring and signature. Key rules from the spec: a non-list batch (including tuples, iterators, generators, even empty) raises ValueError without consuming it or touching the filesystem; validate the ENTIRE batch before creating any file or directory (malformed entries, non-string names, non-bytes data, names that are not nonempty relative POSIX paths with no leading '/', backslash, colon, NUL, or empty/'.'/'..' component, no sanitizing or decoding, literal '%' is legal; duplicate names and file/directory collisions in either order such as 'a' and 'a/b'); root must be an existing real directory (a str or pathlib.Path), not a symlink, no existing component below root may be a symlink including dangling ones, every existing ancestor must be a directory, each target must be absent; never overwrite or follow links. Validation failure leaves root and outside unchanged. Empty batches return [] after root validation. Valid batches create missing parent directories and write exact bytes including empty files; return names in input order. Use only the standard library. Unexpected I/O errors must propagate visibly (no try/except pass, no swallowing). Keep functions under 60 lines, flat control flow, at least two meaningful assertions or explicit checks per non-trivial function at boundaries, no unnecessary comments, no speculative abstractions.\n\nTests: extend test_safe_extract.py (existing basics) with focused tests for each error and boundary case in the spec, using tempfile directories. Run them with `python3 -m unittest` or pytest if present, and make them pass before committing.\n\nCommit on the current branch with a clear message, as the repository's configured git user only. Do not add any Co-Authored-By, 'Generated with' or other AI attribution lines to the commit message. Do not push. Leave the repository clean otherwise.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "safe-extract",
+        "operator-request"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "strong",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W45D2PHXW91F35TWMSC1V0",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T09:21:23.549346273Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-20T09:21:23.549346273Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-20T09:21:23.549346273Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:security",
+          "review:strict"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Filesystem-safety validation with symlink and collision rules needs a stronger tier; effort capped at medium by policy, and the strong tier compensates for the edge-case reasoning."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W45D3RFTP01AQKQF72H1DW",
+        "summary": "Implemented safe_extract.extract per SPEC.md (commit c67ed97 on archon/twmsc1v0-implement-safe-extract-extract-per-spec, tree 15b97b5244e690fa7d7cd3b884c2181d9b18c0c1, base adbe749). The whole batch is validated before any write: list type (no consumption), entry shape, names, duplicates, file/directory collisions, root and symlink rules, and target absence. Files are written with exclusive-create mode and parents are created as needed. Tests: 2 existing tests plus 33 new focused tests in test_safe_extract.py. `python3 -m unittest -v test_safe_extract` gives 35 OK (before: the 2 existing tests errored on the NotImplementedError stub). `ruff check` on both files is clean. Three whole-change reviewers (haiku, medium) all passed head c67ed97 with no blocking findings. Open follow-ups, non-blocking: (1) os.path.lexists swallows OSError such as EACCES, so an unreadable ancestor or target during validation can let a batch be partly written before PermissionError surfaces; a fix would use os.lstat with only FileNotFoundError treated as absent, and this is not done. (2) The CLAUDE.md assertion-density rule is met with explicit ValueError checks rather than assert statements. (3) Whitespace and Unicode-normalisation names are untested. Nothing is pushed and no processes were started. Review: pass (3 reviewers).\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W48PY2GP36QFD00KB8YW6Y), claude-code/claude-haiku-5-5 (agent agt_01M7W48WJYXK9K5VYGG49QG204), claude-code/claude-haiku-5-5 (agent agt_01M7W4924FEFS1KRV6Q7A5VV0A)\n\nSHIPPED: commit c67ed971db6357eb24a70551bb56c7d335b2bfd7 on the run branch"
+      },
+      "created_at": "2026-11-20T09:21:23.542874897Z",
+      "updated_at": "2026-11-20T09:25:43.686982069Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W45D3RFTP01AQKQF72H1DW",
+        "item": "qi_01M7W45D2PHXW91F35TWMSC1V0",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W45DDDB4D0BS1QVT0BJKE9",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/81afeced0ec991c2a1c86ae2/.archon/data/worktrees/quality-safe-extract/qi_01M7W45D2PHXW91F35TWMSC1V0",
+        "branch": "archon/twmsc1v0-implement-safe-extract-extract-per-spec",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract per SPEC.md (commit c67ed97 on archon/twmsc1v0-implement-safe-extract-extract-per-spec, tree 15b97b5244e690fa7d7cd3b884c2181d9b18c0c1, base adbe749). The whole batch is validated before any write: list type (no consumption), entry shape, names, duplicates, file/directory collisions, root and symlink rules, and target absence. Files are written with exclusive-create mode and parents are created as needed. Tests: 2 existing tests plus 33 new focused tests in test_safe_extract.py. `python3 -m unittest -v test_safe_extract` gives 35 OK (before: the 2 existing tests errored on the NotImplementedError stub). `ruff check` on both files is clean. Three whole-change reviewers (haiku, medium) all passed head c67ed97 with no blocking findings. Open follow-ups, non-blocking: (1) os.path.lexists swallows OSError such as EACCES, so an unreadable ancestor or target during validation can let a batch be partly written before PermissionError surfaces; a fix would use os.lstat with only FileNotFoundError treated as absent, and this is not done. (2) The CLAUDE.md assertion-density rule is met with explicit ValueError checks rather than assert statements. (3) Whitespace and Unicode-normalisation names are untested. Nothing is pushed and no processes were started. Review: pass (3 reviewers).\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W48PY2GP36QFD00KB8YW6Y), claude-code/claude-haiku-5-5 (agent agt_01M7W48WJYXK9K5VYGG49QG204), claude-code/claude-haiku-5-5 (agent agt_01M7W4924FEFS1KRV6Q7A5VV0A)\n\nSHIPPED: commit c67ed971db6357eb24a70551bb56c7d335b2bfd7 on the run branch"
+        },
+        "cost_usd": 0.07736341,
+        "started_at": "2026-11-20T09:21:23.839542475Z",
+        "finished_at": "2026-11-20T09:25:43.686982069Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W45DCEM1EZBJQ9QBMZ5YCE",
+        "run": "prun_01M7W45D3RFTP01AQKQF72H1DW",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "strong",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W45DDVTPZF1HZJSP8FYBQZ",
+        "aether_task": "tsk_01M7W45DDVTPZF1HZJSP8FYBR0",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "critical",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; the plan pins medium",
+        "summary": "Implemented safe_extract.extract per SPEC.md (commit c67ed97 on archon/twmsc1v0-implement-safe-extract-extract-per-spec, tree 15b97b5244e690fa7d7cd3b884c2181d9b18c0c1, base adbe749). The whole batch is validated before any write: list type (no consumption), entry shape, names, duplicates, file/directory collisions, root and symlink rules, and target absence. Files are written with exclusive-create mode and parents are created as needed. Tests: 2 existing tests plus 33 new focused tests in test_safe_extract.py. `python3 -m unittest -v test_safe_extract` gives 35 OK (before: the 2 existing tests errored on the NotImplementedError stub). `ruff check` on both files is clean. Three whole-change reviewers (haiku, medium) all passed head c67ed97 with no blocking findings. Open follow-ups, non-blocking: (1) os.path.lexists swallows OSError such as EACCES, so an unreadable ancestor or target during validation can let a batch be partly written before PermissionError surfaces; a fix would use os.lstat with only FileNotFoundError treated as absent, and this is not done. (2) The CLAUDE.md assertion-density rule is met with explicit ValueError checks rather than assert statements. (3) Whitespace and Unicode-normalisation names are untested. Nothing is pushed and no processes were started. Review: pass (3 reviewers).",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v test_safe_extract (35 tests, OK)",
+            "ruff check safe_extract.py test_safe_extract.py (All checks passed)"
+          ],
+          "commit": "c67ed971db6357eb24a70551bb56c7d335b2bfd7",
+          "evidence": [
+            {
+              "caption": "Unit tests on the committed head c67ed97: 35 tests, OK",
+              "kind": "output",
+              "text": "Ran 35 tests in 0.011s\n\nOK"
+            },
+            {
+              "caption": "Before the change, the two existing tests errored on the stub",
+              "kind": "output",
+              "text": "Ran 2 tests in 0.001s\n\nFAILED (errors=2)"
+            }
+          ],
+          "local_commit": "c67ed971db6357eb24a70551bb56c7d335b2bfd7",
+          "pr": {
+            "body": "Approach: validate everything first (list type, entry shape, names, duplicates, file/dir collisions, root is a real directory, no symlink or non-directory ancestor, target absent), then write with exclusive-create ('xb') after creating parent directories. Key files: safe_extract.py, test_safe_extract.py. Checks: unittest 35 OK; ruff clean. Reviews: 3 whole-change haiku reviewers, all pass, no blocking findings. Mutation check by a reviewer: 18 of 19 mutations caught; the one missed is the 'xb' to 'wb' change, which validation still covers. Assumptions and limits: os.path.lexists swallows OSError (e.g. EACCES) during validation, so an unreadable target may let a batch be partly written before the error surfaces; left as a follow-up. Ruff run with default rules; TRY004 suppressed on the three ValueError type checks because the SPEC requires ValueError.",
+            "summary": "made safe extraction work per SPEC.md. now validates whole batch before any write and never overwrites or follows links. before: extract raised NotImplementedError, now: 35 tests pass.",
+            "title": "Implement safe_extract.extract per SPEC with focused tests"
+          },
+          "review": {
+            "reviewed_head": "c67ed971db6357eb24a70551bb56c7d335b2bfd7",
+            "reviewer_agents": [
+              "agt_01M7W48PY2GP36QFD00KB8YW6Y",
+              "agt_01M7W48WJYXK9K5VYGG49QG204",
+              "agt_01M7W4924FEFS1KRV6Q7A5VV0A"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W48PY2GP36QFD00KB8YW6Y",
+                "base": "adbe749df186e3fc0d07a3ffef71a0289544159c",
+                "findings": 1,
+                "head": "c67ed971db6357eb24a70551bb56c7d335b2bfd7",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W48WJYXK9K5VYGG49QG204",
+                "base": "adbe749df186e3fc0d07a3ffef71a0289544159c",
+                "findings": 3,
+                "head": "c67ed971db6357eb24a70551bb56c7d335b2bfd7",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M7W4924FEFS1KRV6Q7A5VV0A",
+                "base": "adbe749df186e3fc0d07a3ffef71a0289544159c",
+                "findings": 4,
+                "head": "c67ed971db6357eb24a70551bb56c7d335b2bfd7",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W48PY2GP36QFD00KB8YW6Y",
+              "agt_01M7W48WJYXK9K5VYGG49QG204",
+              "agt_01M7W4924FEFS1KRV6Q7A5VV0A"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "Security-sensitive filesystem-writing code: it creates files and directories under a caller-supplied root and must reject symlinks, collisions and overwrites. Reviewers confirmed all symlink, dangling-link and collision cases are rejected before any write. Remaining risk is the spec-scoped TOCTOU window and partial writes on mid-batch I/O errors. Only safe_extract.py and test_safe_extract.py changed."
+          },
+          "tree": "15b97b5244e690fa7d7cd3b884c2181d9b18c0c1"
+        },
+        "cost_usd": 0.07736341,
+        "started_at": "2026-11-20T09:21:23.854516764Z",
+        "finished_at": "2026-11-20T09:25:40.449658758Z"
+      }
+    ],
+    "spent_usd": 0.07736341,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W45DCEM1EZBJQ9QBMZ5YCE": {
+        "direct_usd": 0.03895459,
+        "delegated_usd": 0.03840882,
+        "agents": [
+          {
+            "agent": "agt_01M7W48PY2GP36QFD00KB8YW6Y",
+            "parent": "agt_01M7W45DDVTPZF1HZJSP8FYBQZ",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00740642
+          },
+          {
+            "agent": "agt_01M7W48WJYXK9K5VYGG49QG204",
+            "parent": "agt_01M7W45DDVTPZF1HZJSP8FYBQZ",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00966571
+          },
+          {
+            "agent": "agt_01M7W4924FEFS1KRV6Q7A5VV0A",
+            "parent": "agt_01M7W45DDVTPZF1HZJSP8FYBQZ",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.02133669
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T09:21:23.549346273Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-20T09:21:23.549346273Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-20T09:21:23.549346273Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

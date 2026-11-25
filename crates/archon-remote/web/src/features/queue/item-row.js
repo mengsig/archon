@@ -10,7 +10,7 @@ export function repoNames(repos) {
 
 export function rowSignature(summary, names, now) {
   return JSON.stringify([summary.updated_at, summary.title, summary.state, summary.stage, summary.spent_usd,
-    summary.waiting_on?.prompt, summary.waiting_reason?.message, names.get(summary.repo), age(summary.updated_at, now)]);
+    summary.waiting_on?.prompt, summary.waiting_reason?.message, summary.autonomy?.proposal, names.get(summary.repo), age(summary.updated_at, now)]);
 }
 
 export function itemRow(summary, names, now) {
@@ -25,6 +25,7 @@ export function itemRow(summary, names, now) {
         detailLine(summary)),
       h('div', { class: 'item-row-side' },
         chip(look),
+        summary.autonomy?.proposal === 'live' ? chip({ label: 'Design', tone: 'accent' }) : null,
         summary.priority === 'high' || summary.priority === 'critical'
           ? h('span', { class: ['priority', `priority-${summary.priority}`], text: priorityLabel(summary.priority) }) : null)));
 }

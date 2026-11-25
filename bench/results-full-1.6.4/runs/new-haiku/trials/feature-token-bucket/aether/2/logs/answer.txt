@@ -1,0 +1,9 @@
+The rate limiter is implemented in `ratelimit.py` per `SPEC.md`, using only the standard library, and committed as `3be5d27` under `mengsig`. All 12 tests pass (the 3 original plus 9 I added for the spec's edge cases).
+
+Choices I made:
+- **Commit trailer:** I left out the Co-Authored-By line the system reminder asked for, because the project's CLAUDE.md says not to add Claude attribution to commits. The CLAUDE.md rule is the one that applies here.
+- **Validation order:** `KeyedLimiter` checks `n` before touching its LRU state, so an invalid call can't evict another key.
+- **Backwards clock:** the bucket keeps the latest time it has seen, so a clock that goes back adds no tokens until it passes that point again.
+- **Assertions:** I added two invariant asserts (token count never negative, key count never over `max_keys`) on top of the spec's `ValueError` checks.
+
+I also tested a few edge cases by hand that the spec describes but the tests don't cover, such as eviction order and the backwards clock. The working tree is clean.

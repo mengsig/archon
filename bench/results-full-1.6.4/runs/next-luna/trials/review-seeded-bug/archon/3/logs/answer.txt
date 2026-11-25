@@ -1,0 +1,5 @@
+`src/tokens.js` has a **critical signature-validation flaw** in `verify`: it accepts any signature that is a prefix of the expected HMAC, including an empty signature. An attacker can create a token with a future expiry and no signature, such as `<base64url({"user":"root","exp":9999999999999})>.`; verification accepts the forged claims. Require an exact signature match, compared with a constant-time comparison.
+
+It also has a **moderate malformed-input failure** in `verify`: `JSON.parse` and `crypto.createHmac` can throw instead of returning `null`. For example, a correctly signed body containing invalid JSON makes `JSON.parse` throw; a missing or invalid secret can make HMAC creation throw. If callers don’t catch these exceptions, malformed tokens can cause failed requests or an application error. Validate inputs and handle parsing or HMAC errors as verification failures.
+
+Reviewed the registered mirror at commit `233cc4b`, including the token code, encoding helper, exports, and tests. I made no code changes and did not run tests.

@@ -1,0 +1,8 @@
+Implemented cursor pagination for `GET /items` with a default limit of 20, a maximum of 100, ordered pages, and 400 responses for invalid limits or cursors. The client now follows cursors until `next_cursor` is null or absent. Both READMEs and tests are updated.
+
+Checks passed: `python3 -m unittest` and `npm test`.
+
+Commits:
+
+- `inventory-api`: `f7f1b21` — Add cursor pagination to items endpoint
+- `inventory-client`: `9998b62` — Follow item pagination cursors in client

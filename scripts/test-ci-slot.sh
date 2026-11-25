@@ -41,6 +41,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 export XDG_RUNTIME_DIR="$testdir"
 CARGO_BUILD_JOBS=2; export CARGO_BUILD_JOBS
+CI_LOW_PRIORITY=0 CI_MIN_FREE_GIB=0; export CI_LOW_PRIORITY CI_MIN_FREE_GIB
 
 fail() {
     echo "test-ci-slot.sh: $*" >&2
@@ -216,5 +217,163 @@ touch "$testdir/release-again"
 wait "$holder"; holder=
 await_file "$testdir/after-head"
 wait "$waiter2"; waiter2=
+run_slot() { CI_HOST_SLOTS=1 "$shell" "$slot" "$@"; }
+
+# Low priority: mock wrappers log their argv and exec the rest.
+lpbin="$testdir/lp-bin"
+mkdir "$lpbin"
+for tool in nice ionice; do
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\necho "%s $*" >> "$LP_LOG"\nwhile [ "$#" -gt 0 ]; do case "$1" in -n|-c) shift 2 ;; *) break ;; esac; done\nexec "$@"\n' "$tool" > "$lpbin/$tool"
+done
+cat > "$lpbin/systemd-run" <<'MOCK_SD'
+#!/bin/sh
+[ "${MOCK_SD_FAIL:-0}" = 1 ] && exit 1
+[ "${MOCK_SD_HANG:-0}" = 1 ] && exec sleep 60
+echo "systemd-run $*" >> "$LP_LOG"
+while [ "$#" -gt 0 ]; do case "$1" in --) shift; break ;; *) shift ;; esac; done
+[ "$#" -gt 0 ] || exit 0
+exec "$@"
+MOCK_SD
+chmod +x "$lpbin"/*
+LP_LOG="$testdir/lp.log"; export LP_LOG
+lp() { PATH="$lpbin:$PATH" CI_LOW_PRIORITY=1 run_slot "$@"; }
+
+: > "$LP_LOG"
+lp true 2>"$testdir/lp.err"
+grep -q 'systemd-run --user --scope --quiet -p CPUWeight=20 -p IOWeight=20 -p MemoryHigh=6G -- nice -n 19 ionice -c 3 true' "$LP_LOG" || fail "default wrapping wrong: $(cat "$LP_LOG")"
+: > "$LP_LOG"
+CI_MEMORY_HIGH=2G lp true 2>/dev/null
+grep -q 'MemoryHigh=2G' "$LP_LOG" || fail "CI_MEMORY_HIGH override ignored"
+if grep -q MemoryMax "$LP_LOG"; then fail "MemoryMax must never be used"; fi
+status=0
+lp sh -c 'exit 5' 2>/dev/null || status=$?
+[ "$status" -eq 5 ] || fail "exit status lost through wrappers: $status"
+if lp sh -c 'echo >&9' 2>/dev/null; then fail "wrappers leaked the lock descriptor"; fi
+: > "$LP_LOG"
+MOCK_SD_FAIL=1 lp true 2>"$testdir/lp.err"
+grep -q 'systemd-run --user unavailable or probe timed out' "$testdir/lp.err" || fail "no fallback message"
+grep -q '^nice -n 19 ionice' "$LP_LOG" || grep -q '^nice -n 19' "$LP_LOG" || fail "fallback skipped nice"
+grep -q '^ionice -c 3' "$LP_LOG" || fail "fallback skipped ionice"
+if grep -q '^systemd-run' "$LP_LOG"; then fail "systemd-run ran after a failed probe"; fi
+: > "$LP_LOG"
+MOCK_SD_HANG=1 PATH="$lpbin:$PATH" CI_LOW_PRIORITY=1 timeout 8 "$shell" "$slot" true 2>"$testdir/hang.err" || fail "hanging probe blocked the slot"
+grep -q 'probe timed out' "$testdir/hang.err" || fail "hanging probe was not reported"
+CI_LOW_PRIORITY=0 timeout 5 "$shell" "$slot" true || fail "slot remained locked after hanging probe"
+: > "$LP_LOG"
+CI_LOW_PRIORITY=0 PATH="$lpbin:$PATH" run_slot true 2>"$testdir/lp.err"
+[ ! -s "$LP_LOG" ] || fail "CI_LOW_PRIORITY=0 still wrapped"
+[ ! -s "$testdir/lp.err" ] || fail "CI_LOW_PRIORITY=0 printed: $(cat "$testdir/lp.err")"
+
+# Test threads.
+# shellcheck disable=SC2016
+show_threads='echo $NEXTEST_TEST_THREADS $RUST_TEST_THREADS'
+threads=$(env -u NEXTEST_TEST_THREADS -u RUST_TEST_THREADS "$shell" "$slot" sh -c "$show_threads" 2>/dev/null)
+[ "$threads" = "4 4" ] || fail "default test threads '$threads'"
+threads=$(env -u NEXTEST_TEST_THREADS -u RUST_TEST_THREADS CI_TEST_THREADS=2 "$shell" "$slot" sh -c "$show_threads" 2>/dev/null)
+[ "$threads" = "2 2" ] || fail "CI_TEST_THREADS override gave '$threads'"
+threads=$(env -u RUST_TEST_THREADS NEXTEST_TEST_THREADS=9 "$shell" "$slot" sh -c "$show_threads" 2>/dev/null)
+[ "$threads" = "9 4" ] || fail "caller NEXTEST_TEST_THREADS not kept: '$threads'"
+threads=$(env -u NEXTEST_TEST_THREADS RUST_TEST_THREADS=7 "$shell" "$slot" sh -c "$show_threads" 2>/dev/null)
+[ "$threads" = "4 7" ] || fail "caller RUST_TEST_THREADS not kept: '$threads'"
+
+# Without a slot (none asked for, or no flock) the command keeps the priority and thread policy.
+wrapped='systemd-run --user --scope --quiet -p CPUWeight=20 -p IOWeight=20 -p MemoryHigh=6G -- nice -n 19 ionice -c 3 true'
+: > "$LP_LOG"
+CI_HOST_SLOTS=0 PATH="$lpbin:$PATH" CI_LOW_PRIORITY=1 "$shell" "$slot" true 2>/dev/null
+grep -q -- "$wrapped" "$LP_LOG" || fail "zero slots skipped low priority: $(cat "$LP_LOG")"
+threads=$(env -u NEXTEST_TEST_THREADS -u RUST_TEST_THREADS CI_HOST_SLOTS=0 "$shell" "$slot" sh -c "$show_threads" 2>/dev/null)
+[ "$threads" = "4 4" ] || fail "zero slots left test threads '$threads'"
+status=0
+CI_HOST_SLOTS=0 "$shell" "$slot" sh -c 'exit 6' 2>/dev/null || status=$?
+[ "$status" -eq 6 ] || fail "zero slots lost the exit status: $status"
+noflock="$testdir/noflock-bin"
+mkdir "$noflock"
+cp "$lpbin"/* "$noflock"/
+ln -s "$(command -v sh)" "$noflock/sh"
+ln -s "$(command -v timeout)" "$noflock/timeout"
+printf '#!/bin/sh\nexit 0\n' > "$noflock/true"
+chmod +x "$noflock/true"
+shell_path=$(command -v "$shell")
+: > "$LP_LOG"
+PATH="$noflock" CI_LOW_PRIORITY=1 "$shell_path" "$slot" true 2>"$testdir/noflock.err" || fail "no-flock run failed: $(cat "$testdir/noflock.err")"
+grep -q 'no flock on PATH' "$testdir/noflock.err" || fail "no-flock run was not announced"
+grep -q -- "$wrapped" "$LP_LOG" || fail "no-flock run skipped low priority: $(cat "$LP_LOG")"
+no_timeout="$testdir/no-timeout-bin"
+mkdir "$no_timeout"
+cp "$lpbin"/* "$no_timeout"/
+ln -s "$(command -v sh)" "$no_timeout/sh"
+ln -s "$(command -v touch)" "$no_timeout/touch"
+: > "$LP_LOG"
+PATH="$no_timeout" CI_HOST_SLOTS=0 CI_LOW_PRIORITY=1 "$shell_path" "$slot" touch "$testdir/no-timeout-ran" 2>"$testdir/no-timeout.err" || fail "missing timeout blocked command"
+[ -e "$testdir/no-timeout-ran" ] || fail "command did not run without timeout"
+grep -q 'timeout missing' "$testdir/no-timeout.err" || fail "missing timeout was not reported"
+if grep -q '^systemd-run' "$LP_LOG"; then fail "systemd-run ran without timeout"; fi
+threads=$(env -u NEXTEST_TEST_THREADS -u RUST_TEST_THREADS PATH="$noflock" "$shell_path" "$slot" sh -c "$show_threads" 2>/dev/null)
+[ "$threads" = "4 4" ] || fail "no-flock run left test threads '$threads'"
+
+# Job sizing against a fake meminfo, with a fixed CPU count.
+jobsbin="$testdir/jobs-bin"
+mkdir "$jobsbin"
+printf '#!/bin/sh\necho 8\n' > "$jobsbin/getconf"
+chmod +x "$jobsbin/getconf"
+# shellcheck disable=SC2016
+show_jobs='echo "$CARGO_BUILD_JOBS"'
+for sizing in '0 2' '3774873 3' '25165820 8'; do
+    available=${sizing% *}
+    expected=${sizing#* }
+    printf 'MemAvailable: %s kB\n' "$available" > "$testdir/jobs-meminfo"
+    jobs=$(env -u CARGO_BUILD_JOBS PATH="$jobsbin:$PATH" CI_SLOT_MEMINFO="$testdir/jobs-meminfo" CI_HOST_SLOTS=1 "$shell" "$slot" sh -c "$show_jobs" 2>"$testdir/jobs.err")
+    [ "$jobs" = "$expected" ] || fail "memory $available sized jobs as '$jobs', expected $expected"
+done
+printf 'MemTotal: 8388608 kB\n' > "$testdir/jobs-meminfo"
+if env -u CARGO_BUILD_JOBS CI_SLOT_MEMINFO="$testdir/jobs-meminfo" CI_HOST_SLOTS=1 "$shell" "$slot" touch "$testdir/missing-memory-ran" 2>"$testdir/jobs.err"; then
+    fail "missing MemAvailable silently sized jobs"
+fi
+grep -q 'no MemAvailable' "$testdir/jobs.err" || fail "missing memory error not reported"
+[ ! -e "$testdir/missing-memory-ran" ] || fail "command ran without memory sizing data"
+jobs=$(CI_SLOT_MEMINFO="$testdir/jobs-meminfo" CARGO_BUILD_JOBS=5 run_slot sh -c "$show_jobs")
+[ "$jobs" = 5 ] || fail "caller CARGO_BUILD_JOBS not kept: '$jobs'"
+
+# Memory wait against a fake meminfo.
+printf 'MemAvailable: %s kB\n' 8388608 > "$testdir/meminfo"
+export CI_SLOT_MEMINFO="$testdir/meminfo" CI_SLOT_MEM_POLL_SECS=1
+CI_MIN_FREE_GIB=6 run_slot true 2>"$testdir/mem.err"
+[ ! -s "$testdir/mem.err" ] || fail "enough memory still waited: $(cat "$testdir/mem.err")"
+printf 'MemAvailable: %s kB\n' 3250586 > "$testdir/meminfo"
+CI_MIN_FREE_GIB=0 run_slot true 2>"$testdir/mem.err"
+[ ! -s "$testdir/mem.err" ] || fail "CI_MIN_FREE_GIB=0 waited"
+(sleep 2; printf 'MemAvailable: 8388608 kB\n' > "$testdir/meminfo") &
+bgmem=$!
+CI_MIN_FREE_GIB=6 CI_SLOT_MEM_PROGRESS_SECS=1 run_slot true 2>"$testdir/mem.err"
+wait "$bgmem"
+grep -q 'ci-slot: waiting for 6 GiB of free memory (MemAvailable 3.1 GiB)' "$testdir/mem.err" || fail "no wait line: $(cat "$testdir/mem.err")"
+[ "$(grep -c '^ci-slot: waiting for' "$testdir/mem.err")" -eq 1 ] || fail "wait line repeated"
+grep -q 'still waiting' "$testdir/mem.err" || fail "no progress line"
+if grep -q WARNING "$testdir/mem.err"; then fail "warned although memory recovered"; fi
+printf 'MemAvailable: %s kB\n' 3250586 > "$testdir/meminfo"
+CI_MIN_FREE_GIB=6 CI_MEM_WAIT_MAX_MIN=0 run_slot touch "$testdir/ran-anyway" 2>"$testdir/mem.err"
+grep -q 'WARNING.*running anyway' "$testdir/mem.err" || fail "no cap warning"
+[ -e "$testdir/ran-anyway" ] || fail "command did not run after the cap"
+CI_MIN_FREE_GIB=6 CI_SLOT_MEM_WAIT_MAX_SECS=2 run_slot true 2>"$testdir/mem.err"
+grep -q WARNING "$testdir/mem.err" || fail "no warning after timed cap"
+printf 'MemAvailable: 8388608 kB\n' > "$testdir/meminfo"
+CI_MIN_FREE_GIB=00008 CI_MEM_WAIT_MAX_MIN=00008 run_slot true 2>"$testdir/mem.err" || fail "leading zeros rejected"
+CI_MIN_FREE_GIB=010 CI_MEM_WAIT_MAX_MIN=0 run_slot true 2>"$testdir/mem.err"
+grep -q 'waiting for 10 GiB' "$testdir/mem.err" || fail "010 was not interpreted as decimal 10"
+for bad in CI_MIN_FREE_GIB CI_MEM_WAIT_MAX_MIN; do
+    status=0
+    env "$bad=999999999999999999999999999999" "$shell" "$slot" true 2>"$testdir/bad.err" || status=$?
+    [ "$status" -eq 2 ] || fail "overflowing $bad exit status $status"
+    grep -q "$bad must be at most" "$testdir/bad.err" || fail "no clear bound for $bad"
+done
+unset CI_SLOT_MEMINFO CI_SLOT_MEM_POLL_SECS
+for bad in CI_MIN_FREE_GIB CI_MEM_WAIT_MAX_MIN CI_TEST_THREADS; do
+    if env "$bad=x1" "$shell" "$slot" true 2>/dev/null; then fail "malformed $bad accepted"; fi
+done
+status=0
+CI_MIN_FREE_GIB=-1 "$shell" "$slot" true 2>/dev/null || status=$?
+[ "$status" -eq 2 ] || fail "malformed CI_MIN_FREE_GIB exit status $status, not 2"
+
 CI_HOST_SLOTS=1 timeout 5 "$shell" "$slot" --status >"$testdir/empty-status" || fail "--status failed with no holders"
 echo "test-ci-slot.sh: ok"

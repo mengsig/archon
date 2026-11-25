@@ -1,0 +1,14 @@
+Queued as **qi_01M7WCGNQ4NV8XSWXZFDXGCZ9Z** in the `direct` pipeline. It will implement the spec, add focused boundary tests, run checks, and commit the work.
+
+Done: Implement retry_budget.py per SPEC.md with focused boundary tests. Implemented retry_delay with full built-in-int validation, efficient capped exponential backoff, uncapped Retry-After floors, and strict budget checks. Added focused boundary and exhaustive small-range regression tests. `python -m unittest -v` passes all 10 tests and `git diff --check` is clean. Initial review found and helped fix an early-saturation bug; the corrective delta review passed. Commits: 834f9b4 and a779cb8.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCJS20MKAHDFVWBCHRFXS9), codex/gpt-6-luna (agent agt_01M7WCNQFT5HS2393XH66Y4KE1)
+
+SHIPPED: commit a779cb8b85b8bce54f0355a9ddd1e4978700cb53 on the run branch
+Branch `archon/fdxgcz9z-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/0d28a17d6745316319bfec20/quality-retry-budget holds it (2 files changed, 91 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7WCGNQ4NV8XSWXZFDXGCZ9Z`; land it in `main`: `archon merge qi_01M7WCGNQ4NV8XSWXZFDXGCZ9Z`.
+
+Implemented retry_delay with full built-in-int validation, efficient capped exponential backoff, uncapped Retry-After floors, and strict budget checks. Added focused boundary and exhaustive small-range regression tests. `python -m unittest -v` passes all 10 tests and `git diff --check` is clean. Initial review found and helped fix an early-saturation bug; the corrective delta review passed. Commits: 834f9b4 and a779cb8.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCJS20MKAHDFVWBCHRFXS9), codex/gpt-6-luna (agent agt_01M7WCNQFT5HS2393XH66Y4KE1)
+
+SHIPPED: commit a779cb8b85b8bce54f0355a9ddd1e4978700cb53 on the run branch

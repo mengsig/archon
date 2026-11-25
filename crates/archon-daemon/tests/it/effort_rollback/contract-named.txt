@@ -24,10 +24,14 @@ You are stage `build` (kind `work`) of an Archon pipeline, running unattended. A
 - Report the `git rev-parse HEAD^{tree}` of your last full check. A passing check of a tree holds for any later head with that tree. After a passing full check, a later diff of only prose or raster images that no build or test reads needs only the repository's link and notice checks.
 - Check your change against each user-outcome criterion in the brief and say how. Say plainly which this environment cannot check, and why: never claim one you did not check.
 
+## Record precheck
+
+- Before you finish, call `mcp__archon__submit_verdict` with the `summary` and `structured` you will finish with (skip it if you have no such tool). Fix and resubmit any refused record. Archon checks the final result again at settlement.
+
 ## Review on record
 
-- Your stage holds this run's review: the change as it finally stands is reviewed by 3 agents you delegate to, each working alone and none of which wrote any of it. Delegate all 3 yourself; naming fewer fails the run. Where earlier runs of this item reviewed this branch, each whole-change read they made still counts toward the 3: delegate only the whole-change reviewers they lack, and one delta reviewer of the commits after their last reviewed head.
-- Paste this JSON into each reviewer's instructions as its `complete_task` `structured`, never prose alone; a result without `verdict` and `head` counts for nothing. `base` starts the diff read:
+- Your stage holds this run's review: the change as it finally stands is reviewed by 3 agents you delegate to, each working alone and none of which wrote any of it. Delegate all 3 yourself; naming fewer fails the run. Where earlier runs of this item reviewed this branch, each whole-change read they made still counts toward the 3: delegate only the whole-change reviewers they lack, and one delta reviewer of the commits after their last reviewed head. No more, not even to confirm a pass: another only for a read the rules below require.
+- Paste this JSON verbatim into each reviewer's instructions as its `complete_task` `structured`, never prose alone; a result without `verdict` and `head` counts for nothing. `base` starts the diff read:
 
 ```json
 {"verdict": "pass", "head": "<commit>", "base": "<commit>", "findings": []}
@@ -42,8 +46,8 @@ Use `"fail"` with findings for failures. The `verdict` is exactly `"pass"` or `"
 {"review": {"verdict": "pass", "reviewers": ["<agent id>", … 3 or more]}}
 ```
 
-- Delegate with `wait: false`, then use `wait_for`. On a blocking fail, edit nothing until the reviewers still reading finish (they share your workspace); one you cancel counts for nothing and needs a whole-change replacement. Fix every blocking finding and commit, then re-review only the fix with one reviewer: a finished one cannot be asked again, so delegate a new one with `base` at the head the failed review read, given the fix commits and the open findings, to verify each is fixed and the fix regresses nothing. No new whole-change read is needed. A commit after passes needs only a delta read from the head they passed; an amend or rebase needs whole-change reads. Tell every delta reviewer to fail only on a defect in its commits or an open finding unfixed: a new finding in code a pass already read is `"blocking": false`. After 3 failed rounds Archon stops the stage and escalates.
-- Archon checks a pass against Aether and the branch. Each agent named must be a different one you delegated to yourself that completed with that verdict. As many as the review asks must have read the whole change, passing or with findings fixed, and one must have passed the branch head itself: whole, or as a delta whose `base` a reviewer read the change up to. A pass of an earlier head only anchors such a delta. A fail stands until a pass read past it, or after an amend or rebase until a pass of the whole change. Name every reviewer of yours that coverage rests on, earlier whole-change reads included, passed or failed. Anything else fails the run, and nothing ships. Never report `pass` for a review that did not run or did not pass: with a blocking finding open, call `fail_task` and say which.
+- Delegate with `wait: false`, then use `wait_for`. Wait for all readers before editing. Replace any cancelled reader with a whole-change read. Commit fixes with a `Review-Fix: <id>` trailer per blocker. Have one new reviewer verify each open finding's fix and read only the delta from the last reviewed head, including after a pass. Amend or rebase needs whole-change reads. List all open findings and their IDs (`reviewer-agent:1-based position in findings`) in the prompt. Ask for `resolved_findings` and `findings[].id` for open issues. Carry omissions forward. Any real blocker anywhere fails. At 3 failed rounds, commit all fixes, then wait for Archon to request one final confirmation. If you cannot commit every fix, fail.
+- Archon checks a pass against Aether and the branch. Each agent named must be a different one you delegated to yourself that completed with that verdict. As many as the review asks must have read the whole change, passing or with findings fixed, and one must have passed the branch head itself: whole, or as a delta whose `base` a reviewer read the change up to. A pass of an earlier head only anchors such a delta. A fail stands until a pass read past it, or after an amend or rebase until a pass of the whole change. Name every reviewer of yours that coverage rests on, earlier whole-change reads included, passed or failed. Anything else fails the run. Never report `pass` for a review that did not run or did not pass: with a blocking finding open, call `fail_task` and say which.
 - Archon adds the review as the last line of your summary: write no `REVIEW:` line yourself.
 
 ## Ship record
@@ -73,7 +77,7 @@ Use `"fail"` with findings for failures. The `verdict` is exactly `"pass"` or `"
   - `high`: security, auth, permissions, or anything touching secrets; persistence formats and migrations, data deletion, concurrency or locking; protocol, API or CLI changes that break callers; merge, push, ship, release or deploy machinery; and large cross-cutting refactors.
   - When in doubt, pick the higher level.
 - `why`: areas and files touched, whether behaviour changes or only tests, docs or comments, tests run with results, review findings, what pushes the level up.
-- Give each reviewer the rubric and your level; it returns `"risk": {"level": …, "why": …}` in `structured`, confirming it or changing it with a reason. Relay the call your pass rests on as `risk.reviewer`; it stands.
+- Give each reviewer the rubric and your level; it adds `"risk": {"level": …, "why": …}` to its verdict JSON, confirming it or changing it with a reason. Relay the call your pass rests on as `risk.reviewer`; it stands.
 - Without a valid `risk` key Archon labels it `high`.
 
 ## Summary and evidence

@@ -1,0 +1,3 @@
+Implemented `extract` with full batch prevalidation, path and collision checks, root and symlink checks, and exclusive file creation. Added focused tests for malformed entries, invalid paths, collisions, existing targets, symlinks, and invalid roots.
+
+All 7 tests pass, and the working tree is clean. Commit: `352979d` (`Implement safe batch extraction`).

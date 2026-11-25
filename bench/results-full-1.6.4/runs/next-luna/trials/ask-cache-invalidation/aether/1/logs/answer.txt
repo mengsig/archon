@@ -1,0 +1,7 @@
+The stale prices come from the category listing cache:
+
+- `Catalog.listing()` caches each category and page under `listing:<category>:<page>`. Its cached rows include `priceCents`.
+- `updatePrice()` updates the store and deletes only `product:<sku>`. That invalidates the product detail cache, so product pages show the new price immediately, but it leaves every cached listing containing that SKU untouched.
+- Listings expire after `LISTING_TTL_SECONDS: 600`, so a cached price can remain stale for up to ten minutes. The one-hour product TTL is not responsible because the product entry is explicitly deleted on update.
+
+The fix is to invalidate the affected category’s listing cache entries when a price changes. That requires knowing the product’s category—available from the updated product—and deleting all cached pages for that category, or using a category-level version/key scheme so old listing entries stop being read. A shorter listing TTL would only reduce the stale window, not fix the invalidation gap.

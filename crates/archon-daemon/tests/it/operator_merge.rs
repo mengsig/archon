@@ -927,7 +927,7 @@ async fn changing_grant_merge_posts_the_feed_note() {
     set_grant(&h, false).await;
     let feed = h.ctx.store.lock().await.feed_after(0, 10_000).unwrap();
     for expected in ["grant_merge is on", "grant_merge is off"] {
-        assert!(feed.iter().any(|entry| matches!(&entry.entry, FeedEntry::System { text } if text.contains(expected))), "{expected}: {feed:?}");
+        assert!(feed.iter().any(|entry| matches!(&entry.entry, FeedEntry::System { text, .. } if text.contains(expected))), "{expected}: {feed:?}");
     }
 }
 
@@ -938,7 +938,9 @@ async fn a_grant_waits_for_pending_checks_then_merges() {
     let (h, gh) = delivering(Config::default()).await;
     grant_merge(&h).await;
     let (item, head) = reviewed(&h).await;
-    gh.show(&head, "MERGEABLE", pending());
+    let mut checking = pending();
+    checking[0]["startedAt"] = json!("2026-10-15T09:10:00Z");
+    gh.show(&head, "MERGEABLE", checking);
     let waiting = merge_of(h.orchestrator(request_merge(&item)).await);
     assert_eq!(waiting.state, MergeState::AwaitingChecks);
     assert_eq!(waiting.authority, MergeAuthority::Grant);
@@ -949,16 +951,35 @@ async fn a_grant_waits_for_pending_checks_then_merges() {
     assert_eq!(still.state, MergeState::AwaitingChecks, "still pending");
     assert!(merge_calls(&gh).is_empty() && !gh.merged());
 
-    gh.show(&head, "MERGEABLE", green());
+    let mut passed = green();
+    passed[0]["startedAt"] = json!("2026-10-15T09:10:00Z");
+    passed[0]["completedAt"] = json!("2026-10-15T09:25:00Z");
+    gh.show(&head, "MERGEABLE", passed);
     coordination::reconcile(&h.ctx).await.unwrap();
     let [done] = merges(&h, &item).await.try_into().expect("one request");
     assert_eq!(done.state.kind(), "merged", "{done:?}");
     assert!(gh.merged());
+    assert_merge_timestamps(&h);
     let news = merge_news(&h).await;
     assert!(
         matches!(news.as_slice(), [(true, text)] if text.contains("waited")),
         "{news:?}"
     );
+}
+
+fn assert_merge_timestamps(h: &Harness) {
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let times: (String, String, String) = conn
+        .query_row(
+            "SELECT checks_started_at, checks_finished_at, merged_at FROM run_pull_requests
+         WHERE host = 'github.com' AND repository = 'o/r' AND number = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(times.0, "2026-10-15T09:10:00.000000000Z");
+    assert_eq!(times.1, "2026-10-15T09:25:00.000000000Z");
+    assert_eq!(times.2, "2026-10-15T09:30:00.000000000Z");
 }
 
 /// A check that fails while waiting asks the operator instead of merging.

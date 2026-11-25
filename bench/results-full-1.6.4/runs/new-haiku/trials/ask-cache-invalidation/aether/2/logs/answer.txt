@@ -1,0 +1,24 @@
+Root cause: updatePrice (src/pricing.js:10-11) updates the store and deletes only the product cache key `product:<sku>`. Category listings are cached under `listing:<category>:<page>` (src/catalog.js:23-30, keys in src/keys.js:4) with LISTING_TTL_SECONDS = 600 (src/config.js:7). Each listing row is a copy of {sku, name, priceCents}, so a cached listing keeps the old price until its entry expires. Nothing invalidates listing keys, so the delay is the remaining listing TTL, up to 600 s (10 min). Product pages read `product:<sku>` (src/catalog.js:12-20), which the update deletes, so they refresh at once. The existing test (test/catalog.test.js:13-18) only checks the product page, so it does not catch this. Fix options: (1) in updatePrice, also drop every `listing:<category>:*` entry for the product's category. Add a prefix/predicate delete to TtlCache, since page count is unknown, and use updated.category from store.update. Keep the per-category scope so the expensive listing rebuilds are not all lost. (2) Stop denormalizing price into listing rows: cache only SKU order per category and hydrate prices from the product cache on read. (3) Use a per-category version in the listing key and bump it on price update. Option 1 is the smallest change. Also add a regression test that warms a listing, calls updatePrice, and expects the listing to show the new price. No code was changed. Assumption: the cache is in-process (createCatalog creates a new TtlCache), so this fixes a single process; a multi-instance deployment would need shared invalidation.
+
+**Root cause:** `updatePrice` invalidates only the product cache entry. Category listings are cached separately for 10 minutes and still hold the old price.
+
+**Code path**
+- `src/pricing.js:10-11`: `updatePrice` writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. It never touches listing entries.
+- `src/catalog.js:12-20`: product pages read `product:<sku>`. That key was just deleted, so the next read goes to the store and the product page is correct immediately.
+- `src/catalog.js:22-33`: category pages read `listing:<category>:<page>` (keys from `src/keys.js:4`). Each cached row is a copy of `{ sku, name, priceCents }`, so the price is denormalized into the listing.
+- `src/config.js:7`: `LISTING_TTL_SECONDS = 600`.
+
+**Why the delay is what it is:** a listing entry is served until it expires, and nothing invalidates it on a price change. The delay is the time left on the listing's TTL, so it can be up to 600 s (10 minutes), depending on when the page was last built. The product TTL is 3600 s, but that doesn't matter here because the product key is deleted on update.
+
+**Why tests didn't catch it:** `test/catalog.test.js:13-18` only checks the product page after an update. There is no test that warms a listing, updates the price, and re-reads the listing.
+
+**Fix options**
+1. **Smallest change:** in `updatePrice`, also drop the `listing:<category>:*` entries for the product's category. Use `updated.category` from `store.update`. Because the page count is unknown, add a prefix or predicate delete to `TtlCache`. Scoping to the category keeps the expensive listing rebuilds for other categories.
+2. **Structural:** stop storing prices in listing rows. Cache only the SKU order per category and fill prices from the product cache at read time. This removes the duplication that causes the bug.
+3. **Versioned keys:** store a version per category in the listing key and bump it on each price update. This is simple, but old entries stay in memory until they expire.
+
+I'd go with option 1, plus a regression test that warms a listing, updates the price, and expects the new price on the next read.
+
+**Assumption:** the cache is in-process (`createCatalog` creates a new `TtlCache`). This fix covers one process. If the service runs as multiple instances, each one keeps its own stale listings, and you would need shared invalidation.
+
+No code was changed.

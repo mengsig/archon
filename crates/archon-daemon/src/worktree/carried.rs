@@ -2,9 +2,9 @@
 //! (ARCHITECTURE §18.6): every commit since is a merge, on the branch's first
 //! parents, of a commit its base holds, whose content is either git's own
 //! clean merge of it or, for a stacked parent's squash landing (§8.8), the
-//! branch's own tree over a commit of exactly the parent head's content the
-//! review read on top of. A resolved conflict, an added change, a tree that
-//! merely matches or any other commit is not covered.
+//! branch's own tree over a landing of recorded stack ancestry or a commit
+//! merged earlier in the checked chain. A resolved conflict, an added change,
+//! a tree that merely matches or any other commit is not covered.
 
 use std::path::Path;
 
@@ -117,7 +117,7 @@ fn explain(
         )));
     }
     // Landing it adds what the review read on top of that parent head, alone.
-    if tree == tree_of(shadow, ours)? && lands_parent(shadow, repo, theirs, review)? {
+    if tree == tree_of(shadow, ours)? && lands_parent(shadow, repo, theirs, ours, review)? {
         return Ok(Ok(format!(
             "{} merges {}, the landing of a stack parent the review read on top of, \
              and changes no file",
@@ -150,26 +150,73 @@ fn parents(shadow: &Shadow, commit: &str) -> Result<Option<(String, String)>, Ar
     })
 }
 
-/// Whether `theirs` has the exact content of a stack parent head the
-/// reviewed commit holds: a squash or rebase landing of that parent.
+/// Whether `theirs` has the content of stack commits outside the base, or of
+/// an ancestor merged earlier in the chain, which the caller also checks.
 fn lands_parent(
     shadow: &Shadow,
     repo: &Path,
     theirs: &str,
+    ours: &str,
     review: &Review,
 ) -> Result<bool, ArchonError> {
     let wanted = tree_of(shadow, theirs)?;
+    if earlier_landing_has_tree(shadow, repo, theirs, &wanted, ours, review.reviewed)? {
+        return Ok(true);
+    }
     for parent in review.stacked_on {
         assert!(is_commit_id(parent), "a stack parent head");
         // The reviewed commit holds only commits that are here.
         if parent == review.reviewed || !has_commit(repo, parent)? {
             continue;
         }
-        if tree_of(shadow, parent)? == wanted && contains(repo, parent, review.reviewed)? {
+        let exclude = format!("^{}", review.base);
+        if contains(repo, parent, review.reviewed)?
+            && has_tree_in_history(shadow, &wanted, &[parent, &exclude])?
+        {
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+fn earlier_landing_has_tree(
+    shadow: &Shadow,
+    repo: &Path,
+    theirs: &str,
+    tree: &str,
+    ours: &str,
+    reviewed: &str,
+) -> Result<bool, ArchonError> {
+    assert!(is_commit_id(tree), "a tree id");
+    assert!(is_commit_id(ours) && is_commit_id(reviewed), "commit ids");
+    let mut at = ours.to_owned();
+    for _ in 0..MAX_MERGES {
+        if at == reviewed {
+            break;
+        }
+        let Some((first, second)) = parents(shadow, &at)? else {
+            break;
+        };
+        if tree_of(shadow, &second)? == tree && contains(repo, &second, theirs)? {
+            return Ok(true);
+        }
+        at = first;
+    }
+    Ok(false)
+}
+
+fn has_tree_in_history(
+    shadow: &Shadow,
+    tree: &str,
+    revisions: &[&str],
+) -> Result<bool, ArchonError> {
+    assert!(is_commit_id(tree), "a tree id");
+    assert!(!revisions.is_empty(), "a revision range");
+    let listed = git(shadow)?
+        .args(["rev-list", "--no-commit-header", "--format=%T"])
+        .args(revisions.iter().copied())
+        .text()?;
+    Ok(listed.lines().any(|line| line == tree))
 }
 
 fn has_commit(repo: &Path, commit: &str) -> Result<bool, ArchonError> {

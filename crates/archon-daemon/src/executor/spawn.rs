@@ -2,6 +2,7 @@
 //! Unsupported lean context may fall back to full before an agent is recorded.
 
 use std::collections::BTreeMap;
+use std::fmt::Write;
 use std::path::Path;
 use std::time::Instant;
 
@@ -16,10 +17,11 @@ use archon_core::delegation::Narrowed;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::lesson::CONTRACT_LESSONS;
-use archon_core::model::{EffortContract, ModelChoice, ModelPlan};
+use archon_core::model::{EffortContract, ModelChoice, ModelPlan, ModelRef};
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{CheckedOn, SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
+use archon_core::reference::ReferenceKind;
 use archon_core::repo::affected::{Affected, selects};
 use archon_core::repo::{Repo, RepoTiers};
 use archon_core::run::{PipelineRun, StageOutcome, StageRun, StageState};
@@ -27,9 +29,11 @@ use archon_pipeline::contract;
 use archon_pipeline::spec::MAX_TIMEOUT_MINUTES;
 use archon_pipeline::{PipelineSpec, SpawnPlan};
 use archon_queue::Store;
+use archon_queue::store::keys::{STAGE_DEFERRED_UNTIL_PREFIX, STAGE_SPAWN_PREFIX};
 use serde::{Deserialize, Serialize};
 
 use super::resume::Takeover;
+use super::stage_timing::{self, StageTiming};
 use super::{
     FollowUp, RunTable, archive, dependencies, descendants, fast_check, finish, naming, resume,
     run_node, settle, team,
@@ -40,7 +44,6 @@ use crate::experiments;
 use crate::learned;
 use crate::resolve::{self, RepoEnv};
 
-const REQUEST_KEY_PREFIX: &str = "spawn_request:";
 /// `Protocol`, `Io` or Aether `internal` failures of one `create_agent`
 /// before the stage fails.
 const MAX_TRANSPORT_ERRORS: u32 = 5;
@@ -57,6 +60,8 @@ pub(super) const WORKSPACE_MISSING: &str = StageOutcome::WORKSPACE_MISSING;
 pub(crate) struct StoredSpawn {
     pub request: SpawnRequest,
     pub timeout_minutes: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) timing: Option<StageTiming>,
     #[serde(default)]
     pub parent: ParentBinding,
     /// A team slot's worker; its worktree is `request.workspace`.
@@ -107,6 +112,8 @@ pub(crate) struct StoredSpawn {
     /// ran. `None` when it runs on as it is, or 1.6.3 stored the spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wake_retune: Option<ModelChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    review_findings: Option<super::review::FindingsFile>,
 }
 
 impl StoredSpawn {
@@ -205,8 +212,8 @@ pub(crate) enum ParentBinding {
     Pending,
 }
 
-fn request_key(id: &StageRunId) -> String {
-    format!("{REQUEST_KEY_PREFIX}{id}")
+pub(super) fn request_key(id: &StageRunId) -> String {
+    format!("{STAGE_SPAWN_PREFIX}{id}")
 }
 
 pub(crate) fn load_spawn(store: &Store, id: &StageRunId) -> Result<StoredSpawn, ArchonError> {
@@ -300,9 +307,9 @@ fn record_host_context(
 /// (a kept agent's once its run's node retired) and of ones never recorded.
 pub(crate) fn prune_settled_requests(store: &mut Store) -> Result<usize, ArchonError> {
     let mut pruned = 0;
-    for (key, _) in store.kv_prefix(REQUEST_KEY_PREFIX)? {
+    for (key, _) in store.kv_prefix(STAGE_SPAWN_PREFIX)? {
         let raw = key
-            .strip_prefix(REQUEST_KEY_PREFIX)
+            .strip_prefix(STAGE_SPAWN_PREFIX)
             .expect("ranged by prefix");
         let id = StageRunId::parse(raw)
             .map_err(|e| ArchonError::Corrupt(format!("spawn request key {key}: {e}")))?;
@@ -580,7 +587,17 @@ fn reserve_checked(
     mut plans: Vec<SpawnPlan>,
     (env, catalog): (&RepoEnv, &archon_core::model_tier::ModelCatalog),
 ) -> Result<Reserved, ArchonError> {
-    if let Err(error) = super::acceptance::select_model(ctx, store, &item, run, &mut plans, None) {
+    if plans[0].kind == StageKind::Design
+        && let Err(error) = crate::knobs::require_design_enabled(ctx)
+    {
+        return Ok(Reserved::Blocked(Exhausted {
+            stage: plans[0].stage_id.clone(),
+            error: error.to_string(),
+        }));
+    }
+    if let Err(error) =
+        super::acceptance::select_model(ctx, store, &item, run, &mut plans, (None, None))
+    {
         if error.is_store() {
             return Err(error);
         }
@@ -687,6 +704,7 @@ fn reserve_each(
             governed: budget.is_some(),
             sections: &sections,
             experiments: &experiments,
+            replacing: None,
         };
         let share = slot_budget(budget, &plan);
         let now = archon_core::now();
@@ -732,9 +750,11 @@ fn run_sections(
     let env = RepoEnv::new(repo.cloned())?;
     let tiers = env.tiers()?;
     let (affected, gated) = fast_check_now(store, run, &env, &tiers, mode)?;
+    let integration = integration_now(store, run, &env, &tiers, mode)?;
     let fast = contract::FastCheck {
         affected: affected.as_ref(),
         gated,
+        integration: integration.as_deref(),
     };
     let checks = contract::check_rules(&tiers.checks, fast);
     let cache = build_cache_section(ctx, &env, &item.id);
@@ -784,6 +804,32 @@ fn fast_check_now(
     }
 }
 
+/// The integration branch the run's pull request is for, when it is one
+/// (see [`fast_check::integration_target`]). Unknown reads as none, so the
+/// contract keeps its default checks.
+fn integration_now(
+    store: &Store,
+    run: &PipelineRun,
+    env: &RepoEnv,
+    tiers: &RepoTiers,
+    mode: WorkspaceMode,
+) -> Result<Option<String>, ArchonError> {
+    if mode != WorkspaceMode::Worktree || env.repo.is_none() {
+        return Ok(None);
+    }
+    assert!(run.workspace.is_absolute(), "run workspaces are absolute");
+    let vars = super::recover::load_run_vars(store, &run.id)?;
+    let target = super::ship::base_of(store, run, &vars)?;
+    let fork_base = env.fork_base(tiers);
+    match fast_check::integration_target(&run.workspace, &target, tiers, fork_base.as_deref()) {
+        Ok(found) => Ok(found),
+        Err(error) => {
+            tracing::warn!(run = %run.id, %error, "the release branch is unread; the contract keeps its default checks");
+            Ok(None)
+        }
+    }
+}
+
 /// The Build cache section, unless the repository (or none) builds into
 /// its worktrees.
 fn build_cache_section(ctx: &DaemonContext, env: &RepoEnv, item: &QueueItemId) -> String {
@@ -823,6 +869,7 @@ struct Target<'a> {
     sections: &'a str,
     /// The item's directory for reviewers' experiment copies.
     experiments: &'a Path,
+    replacing: Option<&'a StageRun>,
 }
 
 impl Target<'_> {
@@ -830,12 +877,6 @@ impl Target<'_> {
     /// allows it, or the item's `tools = yolo` withholds nothing.
     fn delegates(&self, plan: &SpawnPlan) -> bool {
         super::model_catalog::delegates(plan, self.item)
-    }
-
-    /// Minutes the stage of `plan` may run: the item's override, else the pipeline's.
-    fn timeout_minutes(&self, plan: &SpawnPlan) -> u32 {
-        let own = self.item.stage_timeouts.get(&plan.stage_id);
-        own.copied().unwrap_or(plan.timeout_minutes)
     }
 
     /// The stage contract, with its reviewers' models, its deadline `until`, the run's
@@ -851,7 +892,7 @@ impl Target<'_> {
         let policy = RepoEnv::new(self.repo.cloned())
             .map(|env| env.policy_in(self.config, &self.catalog.aliases()));
         let reviewers = reviewer_rules(plan, &policy, self, effort);
-        let minutes = self.timeout_minutes(plan);
+        let minutes = plan.timeout_minutes;
         let deadline = contract::deadline_rule(plan.kind, plan.workspace, minutes, until);
         let contract = format!(
             "{}{reviewers}{deadline}{}",
@@ -951,6 +992,76 @@ fn hold_woken(
     Ok(taken.then(|| ran.clone()))
 }
 
+fn omit_oversized_references(request: &mut SpawnRequest) -> Result<(), ArchonError> {
+    const MIB: u64 = 1024 * 1024;
+    let references = std::mem::take(&mut request.references);
+    for reference in references {
+        // Aether's file and image reference caps differ.
+        let limit = match reference.kind {
+            ReferenceKind::File => 16 * MIB,
+            ReferenceKind::Image => 6 * MIB,
+        };
+        let path = &reference.path;
+        let metadata = path.metadata().map_err(|e| {
+            ArchonError::io(format!("inspect stage reference {}", path.display()), e)
+        })?;
+        assert!(path.is_absolute(), "stage references name workspace files");
+        assert!(metadata.is_file(), "stage references are files");
+        let bytes = metadata.len();
+        if bytes <= limit {
+            request.references.push(reference);
+            continue;
+        }
+        tracing::warn!(stage = %request.idempotency_key, path = %path.display(), bytes, limit,
+            "oversized stage reference delivered by path");
+        writeln!(
+            &mut request.instructions,
+            "\nOpen oversized reference from disk: {} ({bytes} bytes, attachment limit {limit} bytes). Pass its path to delegates.",
+            path.display(),
+        ).expect("writing to a String is infallible");
+    }
+    Ok(())
+}
+
+fn resolve_stage_timing(
+    store: &Store,
+    target: &Target<'_>,
+    plan: &mut SpawnPlan,
+    retry: Option<&Retry>,
+) -> Option<StageTiming> {
+    assert!(plan.timeout_minutes > 0, "validated pipeline stage");
+    let configured = target
+        .item
+        .stage_timeouts
+        .get(&plan.stage_id)
+        .copied()
+        .unwrap_or(plan.timeout_minutes);
+    plan.timeout_minutes = configured;
+    let p90 = match store.stage_p90_seconds(
+        &target.run.pipeline,
+        &plan.stage_id,
+        plan.choice.effort,
+    ) {
+        Ok(p90) => p90,
+        Err(error) => {
+            tracing::warn!(%error, run = %target.run.id, stage = %plan.stage_id, "stage timing unavailable; using configured timeout");
+            return None;
+        }
+    };
+    let deadline_wake = retry.is_some_and(|retry| retry.extension.is_some());
+    if target.config.limits.learned_stage_timeouts()
+        && !deadline_wake
+        && let Some(minutes) = p90.and_then(|p90| stage_timing::learned_minutes(configured, p90))
+    {
+        plan.timeout_minutes = minutes;
+    }
+    assert!(
+        plan.timeout_minutes <= configured,
+        "history only caps a timeout"
+    );
+    Some(StageTiming::new(p90))
+}
+
 /// Persist the exact request, then the `spawning` stage run that owns it,
 /// with the slot's `budget`. `retry` numbers an infrastructure replacement
 /// of the slot.
@@ -969,6 +1080,7 @@ fn reserve_one(
     };
     // Woken or fresh, the agent runs what a new one of its slot would.
     hold_new_agent(target, &mut held);
+    let timing = resolve_stage_timing(store, target, &mut held, retry.as_ref());
     let wake_retune = ran
         .filter(|ran| *ran != held.choice)
         .map(|_| held.choice.clone());
@@ -983,16 +1095,59 @@ fn reserve_one(
     let observes = super::acceptance::observes_requirements(store, target.run, &plan.stage_id)?;
     let intent = (target.references, plan.reports_requirements || observes);
     super::acceptance::attach(store, target.item, &mut request, intent)?;
+    omit_oversized_references(&mut request)?;
+    let mut spawn = StoredSpawn {
+        request,
+        timeout_minutes: plan.timeout_minutes,
+        timing,
+        parent: ParentBinding::Pending,
+        team: plan.team.as_ref().map(|slot| StoredWorker {
+            role: slot.role.clone(),
+            branch: slot.branch.clone(),
+        }),
+        resume: None,
+        replaces: None,
+        woken: false,
+        wake_asked: false,
+        login_wake: false,
+        not_before: None,
+        deadline_wake: false,
+        deadline_warned: false,
+        effort_contract: Some(effort),
+        issued_reviewers: plan.reviewers.clone(),
+        wake_retune,
+        review_findings: None,
+    };
+    bind_takeover(store, &target.run.id, plan, &mut spawn, now, retry)?;
+    let note = workers.and_then(|narrowed| narrowed.note);
+    record_reserved_stage(store, target, plan, &id, now, note.as_deref(), &mut spawn)?;
+    Ok(id)
+}
+
+fn bind_takeover(
+    store: &Store,
+    run: &PipelineRunId,
+    plan: &SpawnPlan,
+    spawn: &mut StoredSpawn,
+    now: Timestamp,
+    retry: Option<Retry>,
+) -> Result<(), ArchonError> {
     let not_before = retry.as_ref().and_then(|r| r.not_before);
     if let Some(until) = not_before {
         // Held as it is reserved, so no sweep issues it early; it loses no working time.
         assert!(until > now, "a retry waits until later");
-        request.deadline = request.deadline.map(|deadline| deadline + (until - now));
+        spawn.request.deadline = spawn
+            .request
+            .deadline
+            .map(|deadline| deadline + (until - now));
     }
     // An infrastructure replacement is a fresh agent: the kept one was lost.
-    let (resume, replaces) = match resume::takeover(store, &target.run.id, plan, nth.is_some())? {
+    let (resume, replaces) = match resume::takeover(store, run, plan, retry.is_some())? {
         Takeover::Fresh => (None, None),
-        Takeover::Resume(kept) => (Some(resume::with_deadline(kept, request.deadline)), None),
+        Takeover::Resume(kept) => (
+            Some(resume::with_deadline(kept, spawn.request.deadline)),
+            None,
+        ),
         Takeover::Replace(agent) => (None, Some(agent)),
     };
     let extension = retry.as_ref().and_then(|r| r.extension);
@@ -1007,7 +1162,7 @@ fn reserve_one(
             extension > chrono::Duration::zero(),
             "an extension lies ahead"
         );
-        request.deadline = Some(now + extension);
+        spawn.request.deadline = Some(now + extension);
     }
     let wake = retry.and_then(|r| r.wake);
     let woken = wake.is_some();
@@ -1015,31 +1170,38 @@ fn reserve_one(
     let (resume, replaces) = match wake {
         Some(kept) => {
             let woken = resume::wake_in(resume, replaces, kept);
-            (Some(resume::with_deadline(woken, request.deadline)), None)
+            (
+                Some(resume::with_deadline(woken, spawn.request.deadline)),
+                None,
+            )
         }
         None => (resume, replaces),
     };
-    let spawn = StoredSpawn {
-        request,
-        timeout_minutes: target.timeout_minutes(plan),
-        parent: ParentBinding::Pending,
-        team: plan.team.as_ref().map(|slot| StoredWorker {
-            role: slot.role.clone(),
-            branch: slot.branch.clone(),
-        }),
-        resume,
-        replaces,
-        woken,
-        wake_asked: false,
-        login_wake: retry_login,
-        not_before,
-        deadline_wake: extension.is_some(),
-        deadline_warned: false,
-        effort_contract: Some(effort),
-        issued_reviewers: plan.reviewers.clone(),
-        wake_retune,
-    };
-    save_spawn(store, &id, &spawn)?;
+    spawn.resume = resume;
+    spawn.replaces = replaces;
+    spawn.woken = woken;
+    spawn.login_wake = retry_login;
+    spawn.not_before = not_before;
+    spawn.deadline_wake = extension.is_some();
+    Ok(())
+}
+
+fn record_reserved_stage(
+    store: &mut Store,
+    target: &Target<'_>,
+    plan: &SpawnPlan,
+    id: &StageRunId,
+    now: Timestamp,
+    note: Option<&str>,
+    spawn: &mut StoredSpawn,
+) -> Result<(), ArchonError> {
+    let not_before = spawn.not_before;
+    assert!(plan.fan_index < plan.fan_count);
+    assert!(plan.attempt > 0, "attempts are counted from one");
+    assert!(
+        not_before.is_none_or(|until| until > now),
+        "a deferred stage starts later"
+    );
     let sizing = crate::sizing::attempt(target.item, plan);
     let stage = StageRun {
         id: id.clone(),
@@ -1067,19 +1229,52 @@ fn reserve_one(
         started_at: now,
         finished_at: None,
     };
-    let note = workers.and_then(|narrowed| narrowed.note);
-    match &note {
-        Some(note) => {
-            let key = super::stage_note::key(&id);
-            store.upsert_stage_run_with_kv(&stage, &[(key.as_str(), note.as_str())])?;
+    save_review_spawn(
+        store,
+        &stage,
+        spawn,
+        plan.reviewers.is_some(),
+        target.replacing,
+    )?;
+    let note_key = note.map(|_| super::stage_note::key(id));
+    let deferred = not_before.map(|until| {
+        (
+            format!("{STAGE_DEFERRED_UNTIL_PREFIX}{id}"),
+            until.to_rfc3339(),
+        )
+    });
+    let updates: Vec<_> = [
+        note_key.as_deref().zip(note),
+        deferred
+            .as_ref()
+            .map(|(key, value)| (key.as_str(), value.as_str())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    store.upsert_stage_run_with_kv(&stage, &updates)
+}
+
+fn save_review_spawn(
+    store: &mut Store,
+    stage: &StageRun,
+    spawn: &mut StoredSpawn,
+    reviews: bool,
+    replacing: Option<&StageRun>,
+) -> Result<(), ArchonError> {
+    if let Some(handoff) = super::review::prior_handoff(store, stage, reviews, replacing)? {
+        assert!(!spawn.request.objective.is_empty());
+        spawn.request.objective.push_str(&handoff.text);
+        if let Some(resume) = &mut spawn.resume {
+            resume.message.push_str(&handoff.text);
         }
-        None => store.upsert_stage_run(&stage)?,
+        spawn.review_findings = handoff.file;
     }
-    Ok(id)
+    save_spawn(store, &stage.id, spawn)
 }
 
 /// A team slot's share of what is left: the remainder split evenly across
-/// the stage's slots, so the roles together cannot overspend it.
+/// the slots this attempt runs, so the roles together cannot overspend it.
 fn slot_budget(budget: Option<f64>, plan: &SpawnPlan) -> Option<f64> {
     assert!(plan.fan_count >= 1, "a stage has at least one slot");
     assert!(
@@ -1087,7 +1282,14 @@ fn slot_budget(budget: Option<f64>, plan: &SpawnPlan) -> Option<f64> {
         "budgets are finite amounts"
     );
     match plan.team {
-        Some(_) => budget.map(|left| left / f64::from(plan.fan_count)),
+        Some(_) => {
+            let carried = u32::try_from(plan.carried_slots.len()).expect("few slots per team");
+            assert!(
+                carried < plan.fan_count,
+                "the team attempts at least one slot"
+            );
+            budget.map(|left| left / f64::from(plan.fan_count - carried))
+        }
         None => budget,
     }
 }
@@ -1114,7 +1316,7 @@ fn build_request(
             .is_none_or(|root| workspace.starts_with(root)),
         "a team run's agents work under its team directory"
     );
-    let until = deadline(now, target.timeout_minutes(plan));
+    let until = deadline(now, plan.timeout_minutes);
     SpawnRequest {
         references: Vec::new(),
         host_context: Default::default(),
@@ -1129,7 +1331,7 @@ fn build_request(
         repository: target.repo.map(|repo| repo.name.clone()),
         repository_root: None,
         labels: labels(target, plan, id),
-        hidden_tools: hidden_tools(item.autonomy.tools, plan.workspace),
+        hidden_tools: hidden_tools(item.autonomy.tools, plan.workspace, plan.kind),
         leaf: !target.delegates(plan),
         cost_budget_usd: budget,
         aether_cost_budget: None,
@@ -1224,8 +1426,14 @@ const HIDDEN_NATIVE_TOOLS: [&str; 5] = [
 const INTEGRATE_TOOL: &str = "integrate_workspace";
 
 /// What a stage agent does not see: Archon's tools that act for the
-/// orchestrator (but for [`STAGE_TOOLS`](archon_core::mcp_tools::STAGE_TOOLS)), and the Aether tools above. A child inherits the list.
-fn hidden_tools(tools: ToolsMode, workspace: WorkspaceMode) -> Vec<String> {
+/// orchestrator (but for [`STAGE_TOOLS`](archon_core::mcp_tools::STAGE_TOOLS),
+/// and on a design stage [`DESIGN_STAGE_TOOLS`](archon_core::mcp_tools::DESIGN_STAGE_TOOLS)),
+/// and the Aether tools above. A child inherits the list.
+fn hidden_tools(
+    tools: ToolsMode,
+    workspace: WorkspaceMode,
+    kind: archon_core::catalog::StageKind,
+) -> Vec<String> {
     let hidden = match tools {
         ToolsMode::Guarded => archon_core::mcp_tools::qualified_names(),
         ToolsMode::Yolo => archon_core::mcp_tools::mutating_names(),
@@ -1238,11 +1446,18 @@ fn hidden_tools(tools: ToolsMode, workspace: WorkspaceMode) -> Vec<String> {
     let native = HIDDEN_NATIVE_TOOLS
         .into_iter()
         .chain(read_only.then_some(INTEGRATE_TOOL));
+    let design = match kind {
+        archon_core::catalog::StageKind::Design => {
+            archon_core::mcp_tools::DESIGN_STAGE_TOOLS.as_slice()
+        }
+        _ => &[],
+    };
     hidden
         .into_iter()
         .filter(|name| {
             !archon_core::mcp_tools::STAGE_TOOLS
                 .iter()
+                .chain(design)
                 .any(|tool| name == &archon_core::mcp_tools::qualified(tool))
         })
         .chain(native.map(str::to_owned))
@@ -1293,6 +1508,7 @@ pub(super) fn reserve_replacement(
         governed: false,
         sections: &sections,
         experiments: &experiments,
+        replacing: Some(failed),
     };
     // An earlier grant is not enforced once budgets are off.
     let budget = match resolve::item_caps(ctx, item.repo.as_ref()).budgets_enabled {
@@ -1429,7 +1645,14 @@ async fn issue_claimed(ctx: &DaemonContext, id: &StageRunId) -> Result<FollowUp,
     let reviews = allowed.is_ok() && !unsent && can_review(&stage, &spawn);
     let workspace = prepare.then_some(spawn.request.workspace.as_path());
     let worker = worker.filter(|_| prepare);
-    let ready = ready_to_spawn(ctx, id, (worker, workspace), reviews, &item).await;
+    let ready = ready_to_spawn(ctx, id, (worker, workspace), reviews, &item)
+        .await
+        .and_then(|()| {
+            if let (Some(file), Some(workspace)) = (&spawn.review_findings, workspace) {
+                file.install(workspace).map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        });
     if let Err(error) = ready {
         let mut table = ctx.runs.lock().await;
         let was_claimed = table.in_flight.remove(id);
@@ -1495,7 +1718,7 @@ pub(super) enum Issued {
     Resumed(AetherAgentId),
     /// The agent stopped at its stage deadline could not be woken.
     NotWoken,
-    CatalogRefused(String),
+    CatalogRefused(settle::ModelRefusal),
     /// The kept agent cannot go on, and a fresh one runs another model: a
     /// replacement attempt is reserved for it instead.
     Rerouted,
@@ -1575,9 +1798,7 @@ async fn resume_or_spawn(
             return Ok(Issued::Rerouted);
         }
     }
-    spawn_bound(ctx, stage, spawn, &checked)
-        .await
-        .map(Issued::Spawned)
+    spawn_bound(ctx, stage, spawn, &checked).await
 }
 
 /// What becomes of a frozen create the catalog refuses for `reason`: the agent
@@ -1594,7 +1815,7 @@ async fn landed_or_refused(
     {
         return Ok(Issued::Spawned(agent));
     }
-    Ok(Issued::CatalogRefused(reason))
+    Ok(Issued::CatalogRefused(settle::ModelRefusal::Frozen(reason)))
 }
 
 /// Count a deadline wake's minutes from now when it waited to be asked, as for
@@ -1733,7 +1954,7 @@ async fn spawn_bound(
     stage: &StageRun,
     mut spawn: StoredSpawn,
     checked: &archon_core::model_tier::ModelCatalog,
-) -> Result<SpawnedAgent, ArchonError> {
+) -> Result<Issued, ArchonError> {
     if spawn.request.cost_budget_usd.is_some() {
         let unresolved = spawn.request.aether_cost_budget.is_none();
         ctx.backend
@@ -1743,8 +1964,10 @@ async fn spawn_bound(
             save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
         }
     }
-    if spawn.parent == ParentBinding::Pending {
-        bind_pending(ctx, stage, &mut spawn, checked).await?;
+    if spawn.parent == ParentBinding::Pending
+        && let Some(refused) = bind_pending(ctx, stage, &mut spawn, checked).await?
+    {
+        return Ok(refused);
     }
     let (network_default, default_on) = legacy_network_default(ctx, &spawn.request).await?;
     let connection = settle_host_context(ctx, stage, &mut spawn, checked).await?;
@@ -1759,7 +1982,45 @@ async fn spawn_bound(
         network_default,
         aliases: checked.aliases(),
     };
-    ctx.backend.spawn_on(spawn.request, checked).await
+    match ctx.backend.spawn_on(spawn.request, checked).await {
+        Ok(agent) => Ok(Issued::Spawned(agent)),
+        Err(error) if create_refused_model(&error, &stage.choice.model) => {
+            refresh_create_refusal(ctx, error).await
+        }
+        Err(error) => Err(error),
+    }
+}
+
+async fn refresh_create_refusal(
+    ctx: &DaemonContext,
+    error: ArchonError,
+) -> Result<Issued, ArchonError> {
+    let reason = error.to_string();
+    ctx.store
+        .lock()
+        .await
+        .invalidate_model_catalog(reason.clone());
+    let catalog = learned::catalog(ctx).await?;
+    let refresh_error = catalog.not_ready_reason().map(str::to_owned);
+    Ok(Issued::CatalogRefused(settle::ModelRefusal::Create {
+        reason,
+        refresh_error,
+    }))
+}
+
+pub(super) fn create_refused_model(error: &ArchonError, model: &ModelRef) -> bool {
+    let message = match error {
+        ArchonError::Aether(message) => message.strip_prefix("unavailable: "),
+        ArchonError::Invalid(message) => message.strip_prefix("aether: "),
+        _ => None,
+    };
+    message.is_some_and(|message| {
+        message == "unknown model"
+            || message.starts_with("unknown model ")
+            || message
+                .strip_prefix(&model.to_string())
+                .is_some_and(|tail| tail.starts_with(" was retired; use "))
+    })
 }
 
 /// Bind a new stage to its run node and freeze its parent, network and
@@ -1770,7 +2031,7 @@ async fn bind_pending(
     stage: &StageRun,
     spawn: &mut StoredSpawn,
     checked: &archon_core::model_tier::ModelCatalog,
-) -> Result<(), ArchonError> {
+) -> Result<Option<Issued>, ArchonError> {
     assert_eq!(spawn.parent, ParentBinding::Pending, "bound only once");
     assert!(
         spawn.request.parent.is_none() && spawn.request.network.is_none(),
@@ -1778,7 +2039,22 @@ async fn bind_pending(
     );
     let (default, read_on) = network_default_on(ctx).await?;
     let model = &spawn.request.choice.model;
-    let node = run_node::ensure(ctx, &stage.run, model, default).await?;
+    let node = match run_node::ensure(ctx, &stage.run, model, default).await {
+        Ok(node) => node,
+        Err(error) if create_refused_model(&error, model) => {
+            let stored = run_node::load_node(&*ctx.store.lock().await, &stage.run)?;
+            // The node may be retrying a frozen create on an earlier slot's model.
+            if stored.agent.is_none()
+                && stored
+                    .request
+                    .is_some_and(|request| request.model == *model)
+            {
+                return refresh_create_refusal(ctx, error).await.map(Some);
+            }
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
     let host_context = ctx
         .backend
         .host_context(ctx.config.aether.host_context.for_model(model))
@@ -1794,7 +2070,8 @@ async fn bind_pending(
     spawn.request.parent = Some(node.agent);
     spawn.request.network = Some(node.network.narrower(default));
     spawn.parent = ParentBinding::Bound;
-    save_spawn(&mut store, &stage.id, spawn)
+    save_spawn(&mut store, &stage.id, spawn)?;
+    Ok(None)
 }
 
 /// Freeze the host context the create sends, then return the connection it
@@ -1955,19 +2232,30 @@ async fn record(
         Ok(Issued::Spawned(spawned)) => {
             table.spawn_errors.remove(&stage.id);
             ctx.disk.agent_created();
-            return spawned_ok(ctx, stage, spawned).await;
+            let agent = spawned.agent.clone();
+            let follow = spawned_ok(ctx, stage, spawned).await?;
+            design_started(ctx, stage, &agent).await;
+            return Ok(follow);
         }
         Ok(Issued::Resumed(agent)) => {
             table.spawn_errors.remove(&stage.id);
-            return resume::resumed_ok(ctx, stage, agent).await;
+            let follow = resume::resumed_ok(ctx, stage, agent.clone()).await?;
+            design_started(ctx, stage, &agent).await;
+            return Ok(follow);
         }
-        Ok(Issued::CatalogRefused(reason)) => {
-            return settle::replace_refused_model(ctx, table, stage, reason).await;
+        Ok(Issued::CatalogRefused(refusal)) => {
+            return settle::replace_refused_model(ctx, table, stage, refusal).await;
         }
         Ok(Issued::Rerouted) => {
             table.spawn_errors.remove(&stage.id);
             let reason = "its kept agent cannot go on, and quota routes a fresh one elsewhere";
-            return settle::replace_refused_model(ctx, table, stage, reason.to_owned()).await;
+            return settle::replace_refused_model(
+                ctx,
+                table,
+                stage,
+                settle::ModelRefusal::Frozen(reason.to_owned()),
+            )
+            .await;
         }
         Ok(Issued::NotWoken) => {
             table.spawn_errors.remove(&stage.id);
@@ -1991,6 +2279,68 @@ async fn record(
         error if wire::is_internal(&error) => retry_or_fail(ctx, table, stage, error).await,
         ArchonError::Policy(_) => policy_refusal(ctx, table, stage, error).await,
         other => refuse(ctx, table, stage, format!("cannot create agent: {other}")).await,
+    }
+}
+
+/// A Design stage attempt's agent is running: open its live design session
+/// over the run's worktree. A session that cannot start is logged; the stage
+/// then ends at its own deadline or the operator's cancel.
+pub(crate) async fn design_started(ctx: &DaemonContext, stage: &StageRun, agent: &AetherAgentId) {
+    if stage.kind != Some(StageKind::Design) {
+        return;
+    }
+    let found = {
+        let store = ctx.store.lock().await;
+        let current = store.stage_run(&stage.id);
+        let run = store.run(&stage.run);
+        let repo = run.as_ref().ok().and_then(|run| {
+            let item = store.item(&run.item).ok()?;
+            let id = item.repo?;
+            store.repo(&resolve::repo_ref(&id)).ok().map(|r| r.path)
+        });
+        (current, run, repo)
+    };
+    let (Ok(current), Ok(run), Some(repo)) = found else {
+        tracing::warn!(stage = %stage.id, "design stage without a run or repository; no session");
+        return;
+    };
+    if current.state != StageState::Running {
+        return;
+    }
+    let worktree = crate::design::WorktreeRef {
+        repo,
+        worktree: run.workspace.clone(),
+        branch: run.branch.clone(),
+    };
+    let lock = ctx.design.item_lock(&run.item);
+    let ctx = ctx.arc();
+    let agent = agent.clone();
+    let bind = async move |held| {
+        if let Err(error) = ctx
+            .design
+            .stage_started_locked(
+                &ctx,
+                &run.item,
+                &run.id,
+                &current.stage_id,
+                current.attempt,
+                &agent,
+                worktree,
+                held,
+            )
+            .await
+        {
+            tracing::warn!(%error, stage = %current.id, "design session did not start");
+        }
+    };
+    // Record holds the run table. A busy item must release its lock off that path.
+    match lock.clone().try_lock_owned() {
+        Ok(held) => bind(held).await,
+        Err(_) => {
+            tokio::spawn(async move {
+                bind(lock.lock_owned().await).await;
+            });
+        }
     }
 }
 
@@ -2146,6 +2496,7 @@ async fn spawned_ok(
     let mut current = store.stage_run(&stage.id)?;
     if current.state != StageState::Spawning {
         tracing::error!(stage = %stage.id, agent = %spawned.agent, "spawned agent for a settled stage run; cancelling it");
+        store.bind_spawned_spend(&stage.id, &spawned.agent)?;
         let reason = "stage run already settled".to_owned();
         return Ok(FollowUp {
             cancel_agents: vec![(spawned.agent, reason)],
@@ -2186,6 +2537,25 @@ mod tests {
 
     const HAIKU: &str = "claude-code/claude-haiku-5-5";
     const OTHER: &str = "claude-code/claude-sonnet-5-5";
+
+    /// Only a design stage's agent sees the design tools; the stage tools stay
+    /// visible to every agent, whatever its tools mode.
+    #[test]
+    fn design_tools_are_visible_only_to_a_design_stage() {
+        use archon_core::catalog::StageKind;
+        use archon_core::mcp_tools::{DESIGN_STAGE_TOOLS, STAGE_TOOLS, qualified};
+        for tools in [ToolsMode::Guarded, ToolsMode::Yolo] {
+            let design = hidden_tools(tools, WorkspaceMode::Worktree, StageKind::Design);
+            let work = hidden_tools(tools, WorkspaceMode::Worktree, StageKind::Work);
+            for tool in DESIGN_STAGE_TOOLS {
+                assert!(!design.contains(&qualified(tool)), "{tool} on design");
+                assert!(work.contains(&qualified(tool)), "{tool} hidden from work");
+            }
+            for tool in STAGE_TOOLS {
+                assert!(!design.contains(&qualified(tool)) && !work.contains(&qualified(tool)));
+            }
+        }
+    }
 
     fn model(id: &str) -> ModelRef {
         id.parse().expect("a model id")

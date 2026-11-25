@@ -14,7 +14,9 @@ pub use changes::{KEEP_DAYS as CHANGES_KEEP_DAYS, KEEP_ROWS as CHANGES_KEEP_ROWS
 mod codec;
 mod cost;
 mod delegated;
+mod design;
 mod directives;
+mod evidence_links;
 mod feed;
 mod gates;
 mod github_links;
@@ -36,13 +38,17 @@ mod modes;
 mod operator_feedback;
 mod outcomes;
 mod pull_requests;
+mod queue_timing;
 mod repos;
 mod retention;
+mod routing;
+mod work_units;
 pub use retention::HistoryPruned;
 pub use schema::WAL_SIZE_LIMIT;
 mod run_edits;
 mod run_plans;
 mod run_reviews;
+mod stage_timing;
 pub use run_reviews::RunReview;
 mod runs;
 pub use runs::UnreadableRun;
@@ -52,9 +58,12 @@ mod settings;
 mod snapshot;
 mod spend;
 pub mod stacks;
+mod stage_spend;
+mod timing_report;
 mod tracked;
 pub use tracked::{Claim, TrackedRequest};
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use archon_core::Timestamp;
@@ -77,19 +86,27 @@ use archon_core::steer::RunEdit;
 use crate::data_lock::DataLock;
 use crate::dispatch::DispatchSnapshot;
 
+pub use design::{FinishRecord, NewDesignNote, NewDesignSession, NoteChange, SessionPatch};
 pub use model_evidence::ModelEvidenceSnapshot;
 pub use model_evidence::{CohortEvidence, RouteEvidence, RouteQuery, preferred_route};
 pub use operator_feedback::CorrectionFacts;
-pub use pull_requests::RunPullRequest;
+pub use pull_requests::{PullRequestTimes, RunPullRequest};
 pub use run_edits::RecordedEdit;
 
 /// Well-known `kv` keys.
 pub mod keys {
+    pub use super::design::keys::{design_owed, design_seq};
+    use archon_core::id::QueueItemId;
+
     pub const ORCHESTRATOR_AGENT: &str = "orchestrator_agent";
     pub const ORCHESTRATOR_GENERATION: &str = "orchestrator_generation";
     pub const CURSOR_ORCHESTRATOR: &str = "aether_cursor_orchestrator";
     pub const CURSOR_FLEET: &str = "aether_cursor_fleet";
     pub const AETHER_INSTANCE: &str = "aether_instance_id";
+    /// A stage run's reserved spawn request.
+    pub const STAGE_SPAWN_PREFIX: &str = "spawn_request:";
+    /// A delayed stage run's earliest working time, kept with its history.
+    pub const STAGE_DEFERRED_UNTIL_PREFIX: &str = "stage_deferred_until:";
     /// The last feed seq mirrored to Aether's notification center.
     pub const CURSOR_NOTIFICATION_CENTER: &str = "notification_center_feed_cursor";
     /// Prefix: + question id → the notification whose answer was refused.
@@ -99,6 +116,11 @@ pub mod keys {
     /// `<item>`: the feed head when a view of the settled item last asked the
     /// notification center to resolve what it holds for it.
     pub const NOTIFICATION_CENTER_VIEWED: &str = "notification_center_viewed:";
+
+    /// The stage list an item keeps from a shape steer.
+    pub fn item_shape(item: &QueueItemId) -> String {
+        format!("shape:{item}")
+    }
 }
 
 /// Latest absolute usage for one Aether agent (`agent.usage_updated`).
@@ -243,6 +265,13 @@ impl Store {
     /// writer. Unlike [`Self::open_read_only`] it is never immutable. It
     /// shares this store's learning config and model catalog.
     pub fn open_reader(&self, path: &Path) -> Result<Self, ArchonError> {
+        let mut reader = Self::open_live_reader(path)?;
+        reader.learned = std::sync::Arc::clone(&self.learned);
+        Ok(reader)
+    }
+
+    /// Open a read-only connection that can share a WAL with a live writer.
+    pub fn open_live_reader(path: &Path) -> Result<Self, ArchonError> {
         use rusqlite::OpenFlags;
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = rusqlite::Connection::open_with_flags(path, flags)
@@ -251,7 +280,7 @@ impl Store {
         schema::check_wal(&conn)?;
         Ok(Self {
             conn,
-            learned: std::sync::Arc::clone(&self.learned),
+            learned: Default::default(),
             lock: None,
         })
     }
@@ -436,7 +465,8 @@ impl Store {
         next: QueueState,
         at: Timestamp,
     ) -> Result<QueueItem, ArchonError> {
-        items::transition(&mut self.conn, id, next, at)
+        let min_uses = self.learning_config()?.retire_min_uses;
+        items::transition(&mut self.conn, id, next, at, min_uses)
     }
     /// Non-state fields only; repository, pipeline and `created_at` are
     /// fixed. Changed dependencies are checked like on insert.
@@ -500,7 +530,7 @@ impl Store {
         next: QueueState,
         at: Timestamp,
     ) -> Result<FinishedRun, ArchonError> {
-        runs::finish(&mut self.conn, run, None, next, at)
+        self.finish_run_with_plan(run, None, next, at)
     }
     /// [`Store::finish_run`], keeping `plan` as the plan the run finished
     /// with in the same transaction; with none, any earlier one is dropped.
@@ -511,7 +541,8 @@ impl Store {
         next: QueueState,
         at: Timestamp,
     ) -> Result<FinishedRun, ArchonError> {
-        runs::finish(&mut self.conn, run, plan, next, at)
+        let min_uses = self.learning_config()?.retire_min_uses;
+        runs::finish(&mut self.conn, run, plan, next, at, min_uses)
     }
     pub fn run(&self, id: &PipelineRunId) -> Result<PipelineRun, ArchonError> {
         runs::load(&self.conn, id)
@@ -528,7 +559,7 @@ impl Store {
     /// (`spawning` → `running` → terminal) and keep their identity and
     /// Aether ids once set.
     pub fn upsert_stage_run(&mut self, stage: &StageRun) -> Result<(), ArchonError> {
-        runs::upsert_stage(&mut self.conn, stage, &[])
+        runs::upsert_stage(&mut self.conn, stage, &[], None)
     }
     /// `upsert_stage_run` and the `kv` `updates` in one transaction: both or neither.
     pub fn upsert_stage_run_with_kv(
@@ -536,7 +567,18 @@ impl Store {
         stage: &StageRun,
         updates: &[(&str, &str)],
     ) -> Result<(), ArchonError> {
-        runs::upsert_stage(&mut self.conn, stage, updates)
+        runs::upsert_stage(&mut self.conn, stage, updates, None)
+    }
+    /// Settle a review and record what its first round resolved on the preceding stage.
+    pub fn upsert_stage_with_previous_review(
+        &mut self,
+        stage: &StageRun,
+        previous: &StageRunId,
+        rounds: &serde_json::Value,
+    ) -> Result<(), ArchonError> {
+        assert!(stage.state.is_terminal());
+        assert_ne!(stage.id, *previous);
+        runs::upsert_stage(&mut self.conn, stage, &[], Some((previous, rounds)))
     }
     /// Delete `run`'s stage rows that do not decode; the `(id, raw data)` of
     /// each is returned and saved under `archive` for the operator.
@@ -703,7 +745,8 @@ impl Store {
     }
     /// Identity and subject are fixed; a decision or withdrawal is final.
     pub fn update_gate(&mut self, gate: &OperatorGate) -> Result<(), ArchonError> {
-        gates::update(&mut self.conn, gate)
+        let min_uses = self.learning_config()?.retire_min_uses;
+        gates::update(&mut self.conn, gate, min_uses)
     }
     pub fn gate(
         &self,
@@ -736,6 +779,48 @@ impl Store {
         at: Timestamp,
     ) -> Result<Vec<FeedItem>, ArchonError> {
         gates::close_withdrawn_questions(&mut self.conn, at)
+    }
+    /// Close the questions still open about a cancelled live design item, each with a
+    /// feed answer, which is returned for broadcasting: nobody acts on
+    /// their answers any more. Gate questions close with their gates.
+    pub fn close_cancelled_design_questions(
+        &mut self,
+        at: Timestamp,
+    ) -> Result<Vec<FeedItem>, ArchonError> {
+        let mut stale = Vec::new();
+        for question in feed::list(&self.conn, true)? {
+            let Some(item) = &question.item else { continue };
+            let cancelled = match self.item(item) {
+                Ok(found) => {
+                    found.autonomy.proposal == archon_core::autonomy::ProposalMode::Live
+                        && matches!(
+                            found.state,
+                            archon_core::queue::QueueState::Cancelled { .. }
+                        )
+                }
+                Err(ArchonError::NotFound(_)) => false,
+                Err(error) => return Err(error),
+            };
+            if cancelled && gates::by_question(&self.conn, &question.id)?.is_none() {
+                stale.push(question.id);
+            }
+        }
+        if stale.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tx = codec::write_tx(&mut self.conn)?;
+        let mut answers = Vec::new();
+        for id in &stale {
+            answers.extend(feed::close_withdrawn(
+                &tx,
+                id,
+                "the item was cancelled",
+                at,
+            )?);
+        }
+        use codec::SqlContext;
+        tx.commit().ctx("commit cancelled items' questions")?;
+        Ok(answers)
     }
     /// Close the questions still open on decided gates, each with a feed
     /// answer, which is returned for broadcasting.
@@ -814,7 +899,51 @@ impl Store {
     /// Charge the agent's growth: usage events carry absolute totals. A replayed
     /// (older) row is ignored, and only a provider-settled total lowers a charge.
     pub fn record_spend(&mut self, row: &SpendRow) -> Result<(), ArchonError> {
-        spend::record(&mut self.conn, row)
+        spend::record(&mut self.conn, row, false, None)
+    }
+    /// Charge an event of the fleet or orchestrator stream in Aether's order.
+    pub fn record_spend_event(&mut self, row: &SpendRow, seq: u64) -> Result<(), ArchonError> {
+        assert!(seq > 0, "Aether event sequences are one-based");
+        spend::record(&mut self.conn, row, row.item.is_none(), Some(seq))
+    }
+    /// Spend rows without a stage or with an unassigned historical balance.
+    pub fn unlinked_spend(&self) -> Result<Vec<AetherAgentId>, ArchonError> {
+        stage_spend::unlinked(&self.conn)
+    }
+    /// Check whether a retry already has a spend boundary.
+    pub fn has_stage_spend_window(
+        &self,
+        stage: &StageRunId,
+        agent: &AetherAgentId,
+    ) -> Result<bool, ArchonError> {
+        stage_spend::has_window(&self.conn, stage, agent)
+    }
+    /// Each fully attributed agent beneath `root`, with its charge on `stage`, if any.
+    pub fn delegated_stage_spend(
+        &self,
+        root: &AetherAgentId,
+        stage: &StageRunId,
+        estimates: bool,
+    ) -> Result<BTreeMap<AetherAgentId, Option<f64>>, ArchonError> {
+        stage_spend::delegated_on_stage(&self.conn, root, stage, estimates)
+    }
+    /// Set the spend boundary before a kept agent is told to resume or wake.
+    pub fn bind_kept_spend(
+        &mut self,
+        stage: &StageRunId,
+        agent: &AetherAgentId,
+        at: &Timestamp,
+        after_seq: Option<u64>,
+    ) -> Result<(), ArchonError> {
+        stage_spend::bind_kept(&mut self.conn, stage, agent, at, after_seq)
+    }
+    /// Bind a late create reply even if its attempt was already settled.
+    pub fn bind_spawned_spend(
+        &mut self,
+        stage: &StageRunId,
+        agent: &AetherAgentId,
+    ) -> Result<(), ArchonError> {
+        stage_spend::bind_spawned(&mut self.conn, stage, agent)
     }
     pub fn spend_for_item(&self, item: &QueueItemId, estimates: bool) -> Result<f64, ArchonError> {
         spend::for_item(&self.conn, item, estimates)
@@ -857,7 +986,18 @@ impl Store {
         model: &archon_core::model::ModelRef,
         effort: Option<archon_core::model::Effort>,
     ) -> Result<(), ArchonError> {
-        delegated::record(&self.conn, agent, parent, model, effort)
+        delegated::record(&mut self.conn, agent, parent, model, effort, None)
+    }
+    /// The delegation's creation event, which fixes its stage across lead handoffs.
+    pub fn record_delegation_event(
+        &mut self,
+        agent: &AetherAgentId,
+        parent: &AetherAgentId,
+        model: &archon_core::model::ModelRef,
+        seq: u64,
+    ) -> Result<(), ArchonError> {
+        assert!(seq > 0, "Aether event sequences are one-based");
+        delegated::record(&mut self.conn, agent, parent, model, None, Some(seq))
     }
     /// The agent that delegated to `agent`, as [`Self::record_delegated`] stored it.
     pub fn delegated_parent(
@@ -899,7 +1039,20 @@ impl Store {
         range: &DayRange,
         estimates: bool,
     ) -> Result<ModelEvidenceSnapshot, ArchonError> {
-        model_evidence::read(&self.conn, query, range, estimates)
+        let tx = codec::read_tx(&self.conn)?;
+        let snapshot = model_evidence::read(&self.conn, query, range, estimates)?;
+        codec::end_read_tx(tx, "close model evidence snapshot")?;
+        Ok(snapshot)
+    }
+
+    /// Nearest-rank p90 of recent completed stage runs in the same cohort.
+    pub fn stage_p90_seconds(
+        &self,
+        pipeline: &str,
+        stage: &str,
+        effort: archon_core::model::Effort,
+    ) -> Result<Option<u64>, ArchonError> {
+        stage_timing::p90(&self.conn, pipeline, stage, effort)
     }
 
     /// Spend over the local days of `range` grouped `by`, counted as the

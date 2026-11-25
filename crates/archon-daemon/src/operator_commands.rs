@@ -75,6 +75,7 @@ pub(crate) async fn from_socket(
             text: text.into(),
             images: Vec::new(),
             local: true,
+            command_id: feed::COMMAND_ID.try_with(Clone::clone).ok(),
         },
     )
     .await?;
@@ -123,7 +124,7 @@ async fn execute(
         };
         let shown = crate::command_notice::show(ctx, &label, applied, &text).await?;
         if shown != Shown::InFeed {
-            feed::system(ctx, format!("Operator command: {text}")).await?;
+            feed::command_result(ctx, format!("Operator command: {text}"), &text).await?;
         }
         return crate::triggers::push(
             ctx,
@@ -151,7 +152,8 @@ async fn execute(
         Ok(None) => text.to_owned(),
         Err(error) if error.is_store() => return Err(error),
         Err(error) => {
-            return feed::system(ctx, format!("Operator command refused: {error}"))
+            let message = format!("Operator command refused: {error}");
+            return feed::command_result(ctx, &message, &message)
                 .await
                 .map(drop);
         }
@@ -296,7 +298,7 @@ fn retired_alias(text: &str) -> bool {
 /// Note the hint in Archon's feed and tell the orchestrator, which restates
 /// it in the chat the alias was typed in.
 async fn retired_alias_hint(ctx: &DaemonContext) -> Result<(), ArchonError> {
-    feed::system(ctx, RETIRED_ALIAS_HINT).await?;
+    feed::command_result(ctx, RETIRED_ALIAS_HINT, RETIRED_ALIAS_HINT).await?;
     let news = crate::triggers::TriggerEvent::ChatAnswer {
         number: None,
         applied: false,

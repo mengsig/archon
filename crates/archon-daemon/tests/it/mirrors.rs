@@ -83,7 +83,7 @@ async fn system_notes(h: &Harness) -> Vec<String> {
         .expect("feed");
     feed.into_iter()
         .filter_map(|item| match item.entry {
-            archon_core::notify::FeedEntry::System { text } => Some(text),
+            archon_core::notify::FeedEntry::System { text, .. } => Some(text),
             _ => None,
         })
         .collect()

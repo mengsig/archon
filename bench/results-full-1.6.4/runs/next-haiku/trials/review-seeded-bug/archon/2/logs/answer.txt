@@ -1,0 +1,38 @@
+I found no problems in the code that I'd call safe to ship. The most serious one is a complete authentication bypass in `verify`.
+
+**Repository note:** `session-lib` is the `name` in `package.json`. It's registered in Archon as `review-seeded-bug`, mirror at base commit `d4b8fcc`. The mirror already contains the HMAC version of `src/tokens.js`, so I reviewed that. If the rewrite has uncommitted changes beyond what's in that commit, I haven't seen them.
+
+**1. Critical: `verify` accepts unsigned tokens (`src/tokens.js:verify`, line 24–27).**
+`token.split('.')` gives `signature === ''` for a token ending in `.`. The guard `signature === undefined` doesn't catch that. Then `expected.startsWith('')` is always true, so any body passes.
+- Input: `base64url('{"sub":"admin","exp":9999999999999}') + "."`. `verify` returns the payload with no key material.
+- Anyone can mint arbitrary claims with no secret at all.
+- Fix: require a non-empty signature and compare the full MAC with `crypto.timingSafeEqual` on equal-length buffers.
+
+**2. High: signature is accepted as a prefix (`src/tokens.js:verify`, line 27).**
+Even with a non-empty signature, `startsWith` accepts any prefix of the real MAC. Guessing one base64url character gives a 1-in-64 chance per attempt, so a forgery takes about 64 tries. The bug is separate from item 1 and remains after fixing it unless the comparison is fixed too.
+
+**3. Medium: unhandled exceptions on attacker-controlled input (`src/tokens.js:verify`, lines 28–29).**
+`JSON.parse` on a malformed body throws instead of returning `null`. A body that decodes to JSON `null` makes `payload.exp` throw a `TypeError`. Once item 1 is fixed, these are reachable only with a valid signature, but `verify` still throws where its contract says it returns `null`. Callers that don't wrap it will crash.
+- Input: `base64url('null') + "."` throws `TypeError` today.
+
+**4. Medium: `verify` doesn't enforce the secret rules `sign` does (`src/tokens.js:verify`, line 22).**
+`sign` rejects secrets shorter than 32 characters, but `verify` accepts any value, including `''`. A verifier with an empty or short secret will accept tokens signed with the same weak key.
+- Fix: apply the same length check in `verify`, or share one `assertSecret` helper.
+
+**5. Low: trailing garbage is ignored (`src/tokens.js:verify`, line 24).**
+`'<body>.<sig>.extra'` verifies because the extra segments are dropped. This makes tokens malleable and hard to reason about. Use `split` with a length check of exactly 2, or reject when there are more than two parts.
+
+**6. Low: no check that the payload is an object.**
+`verify` returns whatever `JSON.parse` produced, which can be an array or a number once the signature check is correct. Callers may then read claims from the wrong shape.
+
+**7. Low: no key ID or rotation support.**
+Tokens carry no version or key identifier, so rotating the secret invalidates all outstanding tokens at once, and there's no way to accept an old key during rollover. This is a design gap, not a bug today.
+
+**8. Low: timestamps are milliseconds, not seconds.**
+`iat` and `exp` are in ms, which doesn't match the JWT convention. Any other system that reads these tokens will misread the expiry by a factor of 1000.
+
+**What looks correct:** `sign` puts `iat` and `exp` after the spread, so caller claims can't override them. The algorithm is fixed to HMAC-SHA256 with no `alg` header, so algorithm confusion isn't possible. The secret is at least 32 characters when signing.
+
+**Recommendation:** Do not ship tomorrow. Item 1 alone is a full forgery. Fix items 1 and 2 together, add tests that reject an empty signature, a truncated signature, and an unsigned token with `exp` in the future, then fix item 3 and item 4. I haven't checked for existing tests in the repo.
+
+**Queue note:** the quota-pace warning (claude-code 77% used at 31% elapsed) is noted. Nothing is queued there, so no change is needed yet.

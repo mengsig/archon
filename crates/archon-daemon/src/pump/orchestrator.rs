@@ -2,6 +2,8 @@
 //! commands, its `ask_user` questions, its spend, reviving it when it stops, and adopting
 //! the agent Aether restarted it into.
 
+mod tool_error;
+
 use archon_aether::AetherEvent;
 use archon_aether::events::{EventKind, InboxMessage};
 use archon_core::aether_ids::{AetherAgentId, AetherQuestionRef};
@@ -54,6 +56,9 @@ async fn apply(
             // Undoes, and reports, a write into a mirror made in that turn.
             ctx.mirrors.request();
             supervisor::turn_ended(ctx, next.as_deref()).await
+        }
+        EventKind::Custom { name, payload } if name == tool_error::EVENT_NAME => {
+            tool_error::handle(ctx, agent, payload).await
         }
         EventKind::QuestionAsked { question } => {
             let aether = AetherQuestionRef {

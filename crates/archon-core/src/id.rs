@@ -102,6 +102,8 @@ macro_rules! prefixed_id {
     };
 }
 
+prefixed_id!(DesignSessionId, "ds");
+prefixed_id!(DesignAssetId, "da");
 prefixed_id!(RepoId, "repo");
 prefixed_id!(QueueItemId, "qi");
 prefixed_id!(PipelineRunId, "prun");

@@ -20,8 +20,9 @@ use archon_core::error::ArchonError;
 use archon_core::github::GithubRepo;
 use archon_core::id::RepoId;
 use archon_core::protocol::{GithubKind, GithubObjectState, GithubRef};
+use archon_core::pull_request::PullRequestRef;
 use archon_core::repo::{GH_HOST, Repo};
-use archon_queue::store::{CachedObject, SyncTarget};
+use archon_queue::store::{CachedObject, PullRequestTimes, SyncTarget};
 use tokio::time::Instant;
 
 pub use self::watch_pass::WatchPass;
@@ -213,7 +214,7 @@ async fn watched_targets(ctx: &DaemonContext) -> Result<Vec<SyncTarget>, ArchonE
     Ok(targets)
 }
 
-/// One `GET` of `target`, its outcome counted in `pass`: only a 200 writes.
+/// One `GET` of `target`, its outcome counted in `pass`.
 /// Returns the backoff GitHub's headers asked for.
 async fn refresh(
     ctx: &DaemonContext,
@@ -237,9 +238,10 @@ async fn refresh(
         }
     };
     match read.fetched {
-        Ok(fetch::Fetched::Changed { cached, .. }) => {
-            let cached = with_pr_state(ctx, repo, *cached, pass).await?;
-            ctx.store.lock().await.cache_github_object(&cached)?;
+        Ok(fetch::Fetched::Changed {
+            cached, created_at, ..
+        }) => {
+            cache_changed(ctx, repo, *cached, created_at, pass).await?;
             pass.changed += 1;
         }
         Ok(fetch::Fetched::NotModified) => {
@@ -251,7 +253,7 @@ async fn refresh(
                 ..reference
             };
             // Checks change without the issue's ETag: they are read anyway.
-            if open_pr && let Some(state) = read_pr_state(ctx, repo, &reference, pass).await {
+            if open_pr && let Some(state) = read_pr_state(ctx, repo, &reference, pass).await? {
                 let checks = Some(&state.checks);
                 let mut store = ctx.store.lock().await;
                 store.set_pull_request_state(&reference, state.review_decision, checks)?;
@@ -264,6 +266,28 @@ async fn refresh(
         }
     }
     Ok(read.backoff)
+}
+
+async fn cache_changed(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    cached: CachedObject,
+    created_at: Option<archon_core::Timestamp>,
+    pass: &mut Pass,
+) -> Result<(), ArchonError> {
+    let cached = with_pr_state(ctx, repo, cached, pass).await?;
+    let mut store = ctx.store.lock().await;
+    if cached.object.reference.kind == GithubKind::PullRequest {
+        store.observe_pull_request_times(
+            &pr_ref(&cached.object.reference),
+            PullRequestTimes {
+                created_at,
+                merged_at: cached.merged_at,
+                ..PullRequestTimes::default()
+            },
+        )?;
+    }
+    store.cache_github_object(&cached)
 }
 
 /// `cached` with a pull request's review decision and checks: read afresh
@@ -279,7 +303,7 @@ async fn with_pr_state(
         return Ok(cached);
     }
     let fresh = match cached.object.state {
-        GithubObjectState::Open => read_pr_state(ctx, repo, &reference, pass).await,
+        GithubObjectState::Open => read_pr_state(ctx, repo, &reference, pass).await?,
         GithubObjectState::Merged | GithubObjectState::Closed => None,
     };
     let (review_decision, checks) = match fresh {
@@ -301,7 +325,7 @@ async fn read_pr_state(
     repo: &Repo,
     reference: &GithubRef,
     pass: &mut Pass,
-) -> Option<pr_state::PrState> {
+) -> Result<Option<pr_state::PrState>, ArchonError> {
     assert_eq!(
         reference.kind,
         GithubKind::PullRequest,
@@ -310,13 +334,30 @@ async fn read_pr_state(
     match pr_state::read(&ctx.config.github.binary, repo, reference).await {
         Ok(state) => {
             pass.pr_states += 1;
-            Some(state)
+            ctx.store.lock().await.observe_pull_request_times(
+                &pr_ref(reference),
+                PullRequestTimes {
+                    checks_started_at: state.checks_started_at,
+                    checks_finished_at: state.checks_finished_at,
+                    ..PullRequestTimes::default()
+                },
+            )?;
+            Ok(Some(state))
         }
         Err(error) => {
             tracing::debug!(%error, repo = %reference.repo, number = reference.number, "pull request state read failed");
             pass.pr_states_failed += 1;
-            None
+            Ok(None)
         }
+    }
+}
+
+fn pr_ref(reference: &GithubRef) -> PullRequestRef {
+    assert_eq!(reference.kind, GithubKind::PullRequest);
+    PullRequestRef {
+        host: reference.host.clone(),
+        repository: reference.repo.clone(),
+        number: reference.number,
     }
 }
 

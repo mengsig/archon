@@ -1,0 +1,3 @@
+Implemented `extract()` with full-batch validation before filesystem changes, including path, collision, root, symlink, and existing-target checks. Added focused tests for invalid inputs, atomic rejection, symlinks, and exact byte writes.
+
+All 8 tests pass. Committed as `86632ae` (`Implement validated safe extraction`).

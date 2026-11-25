@@ -1,0 +1,10 @@
+Implemented cursor pagination in both repositories. `GET /items` defaults to 20 items per page, accepts limits from 1 to 100, and returns `next_cursor` as a string or `null`. The client follows cursors and returns all items in order. Both READMEs are updated.
+
+Tests passed: `python3 -m unittest` and `npm test`.
+
+Commits:
+
+- `inventory-api`: `50ecdd7` — Add cursor pagination to item listing
+- `inventory-client`: `0f9e15e` — Follow item pagination cursors
+
+The API test run left an untracked `__pycache__/` directory in `inventory-api`; it was not committed.

@@ -317,6 +317,50 @@ async fn a_refresh_merges_the_new_base_into_the_same_branch_and_pull_request() {
     assert!(again.contains("nothing to refresh"), "{again}");
 }
 
+#[tokio::test]
+async fn evidence_attributes_refresh_usage_to_the_refresh_stage() {
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "the change").await;
+    let upstream = advance_origin(&h, "change.txt", "upstream wording\n");
+    let fix = refresh(&h, &owner).await.unwrap();
+    h.dispatch().await;
+    let stage = h.running().await.remove(0);
+    let run = h.run(&fix.id).await;
+    assert_eq!(stage.run, run.id);
+    let charge = archon_queue::store::SpendRow {
+        agent: stage.aether_agent.clone().unwrap(),
+        item: Some(fix.id.clone()),
+        cost_usd: 1.5,
+        cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: Some(true),
+        estimated_cost_usd: 0.0,
+        input_tokens: 1,
+        output_tokens: 1,
+        at: archon_core::now(),
+    };
+    h.ctx.store.lock().await.record_spend(&charge).unwrap();
+
+    let first_parent = git(&run.workspace, &["rev-parse", "HEAD"]);
+    merge_by_hand(&run.workspace, &upstream, "change.txt", "both wordings\n");
+    settle_reviewed(&h, Some(&first_parent)).await;
+    let day = stage.started_at.with_timezone(&chrono::Local).date_naive();
+    let range = archon_core::cost::DayRange {
+        since: day,
+        until: day,
+    };
+    let query = archon_core::model_evidence::ModelEvidenceQuery {
+        stage: Some(stage.stage_id.clone()),
+        ..Default::default()
+    };
+    let store = h.ctx.store.lock().await;
+    let report = store
+        .model_evidence(&query, &range, false, |_, _| Ok(false))
+        .unwrap();
+    assert!(report.rows.iter().any(|row| row.p90_cost_usd == Some(1.5)));
+    assert_eq!(store.spend_for_item(&owner.id, false).unwrap(), 0.0);
+    assert!(store.unlinked_spend().unwrap().is_empty());
+}
+
 /// A refresh's prompts hand reviewers the base commit it merges, never the
 /// old fork, whose diff would hold every upstream commit the merge brings in.
 #[tokio::test]
@@ -694,6 +738,7 @@ async fn waived_checks_that_never_started_are_a_quiet_line_only() {
     use archon_core::settings::{ChecksMode, OperatorSettings};
     let (h, gh) = delivering().await;
     let waive = Request::SetSettings {
+        legacy_proposals: false,
         repo: Some(RepoRef(REPO_NAME.into())),
         settings: OperatorSettings {
             checks: Some(ChecksMode::Waived),
@@ -729,9 +774,13 @@ async fn absent_checks_are_a_quiet_line_watched_or_waived() {
             ..OperatorSettings::default()
         };
         let repo = Some(RepoRef(REPO_NAME.into()));
-        h.cli(Request::SetSettings { repo, settings })
-            .await
-            .unwrap();
+        h.cli(Request::SetSettings {
+            repo,
+            settings,
+            legacy_proposals: false,
+        })
+        .await
+        .unwrap();
         let (_, run) = shipped(&h, "the change").await;
         gh.set_checks(&json!([]));
         age_watch(&h, &run, 3).await;
@@ -797,11 +846,25 @@ async fn failing_pending_and_queued_checks_are_told_apart() {
 async fn passing_checks_end_the_watch_quietly() {
     let (h, gh) = delivering().await;
     let (_, run) = shipped(&h, "the change").await;
-    gh.set_checks(&json!([job("test", "pass", "2026-10-15T09:20:44Z", 11)]));
+    let mut check = job("test", "pass", "2026-10-15T09:20:44Z", 11);
+    check["completedAt"] = json!("2026-10-15T09:23:18Z");
+    gh.set_checks(&json!([check]));
     age_watch(&h, &run, 3).await;
+    let before = gh.count("pr checks");
     executor::coordination::reconcile(&h.ctx).await.unwrap();
+    assert_eq!(gh.count("pr checks"), before + 1);
     assert_eq!(h.kv(&format!("ship_checks:{}", run.id)).await, None);
     assert!(pr_checks_news(&h).await.is_empty());
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let (started, finished): (String, String) = conn
+        .query_row(
+            "SELECT checks_started_at, checks_finished_at FROM run_pull_requests WHERE run = ?1",
+            [run.id.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(started, "2026-10-15T09:20:44.000000000Z");
+    assert_eq!(finished, "2026-10-15T09:23:18.000000000Z");
 }
 
 /// A watch whose repository was removed ends quietly, and the pass returns:

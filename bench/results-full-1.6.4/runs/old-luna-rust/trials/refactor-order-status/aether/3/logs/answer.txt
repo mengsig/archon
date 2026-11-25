@@ -1,0 +1,3 @@
+Implemented and committed as `bf5819d` (`Refactor order status to enum`).
+
+`OrderStatus` now handles status parsing, display, and valid transitions; the crate re-exports it and `ParseStatusError`. Existing error messages and report ordering are preserved. `cargo test` passes, and status-name literals appear only in `src/status.rs`.

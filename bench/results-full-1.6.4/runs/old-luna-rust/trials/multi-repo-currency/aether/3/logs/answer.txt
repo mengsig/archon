@@ -1,0 +1,6 @@
+Implemented and committed both repositories.
+
+- `ledger` now accepts an optional currency column, defaults it to `USD`, emits the currency in CSV, and exits with status 2 for invalid currency codes. Commit: `3adcaaa`.
+- `reports` now totals and sorts by account and currency, accepts legacy CSV as USD, and exits with status 2 for invalid codes. Commit: `4f6150c`.
+
+`cargo test` and `python3 -m unittest` both pass. Manual checks confirmed the new output, legacy fallback, and invalid currency exit codes. The Python test run left an untracked `reports/__pycache__/` directory.

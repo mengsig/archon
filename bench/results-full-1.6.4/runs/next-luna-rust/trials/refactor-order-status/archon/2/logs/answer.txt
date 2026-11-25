@@ -1,0 +1,12 @@
+Queued as **qi_01M7WG6NYTNFN6PMWGRHN8YXRK** in the `refactor` pipeline. Its acceptance criteria include preserving observable behavior, running `cargo test`, and committing the change. Merge remains manual.
+
+Done: Refactor order status into a typed enum. Reviewed the typed OrderStatus refactor and compared it with the baseline and characterization tests. The enum and ParseStatusError are public and re-exported; display, parsing, transition rules, lifecycle behavior, report formatting/order, and parser errors are preserved. Status value literals occur only in src/status.rs. The design centralizes status names and removes string-based status handling from callers. No findings. Independently ran cargo test (7 integration tests passed), cargo build, cargo clippy --all-targets -- -D warnings, cargo fmt -- --check, git diff --check, and confirmed the worktree is clean. Risk is medium because Order.status changes its public type as required by the brief. VERDICT: PASS
+
+SHIPPED: commit 8ab7ecca2cbf7e0725355da60a3fcf0635f20d4a on the run branch
+Branch `archon/rhn8yxrk-refactor-order-status-into-a-typed-enum` in /home/mengsig/.local/share/archon-bench/f164-ngf165q5/archon-bench/work/20261120T123310Z/c317a18ceed168fabe3b9c21/refactor-order-status holds it (7 files changed, 226 insertions(+), 26 deletions(-)). Review: `archon diff qi_01M7WG6NYTNFN6PMWGRHN8YXRK`; land it in `main`: `archon merge qi_01M7WG6NYTNFN6PMWGRHN8YXRK`.
+
+Freed 0.0 GiB of build output: item qi_01M7WG6NYTNFN6PMWGRHN8YXRK ended and its cargo target directory went.
+
+Reviewed the typed OrderStatus refactor and compared it with the baseline and characterization tests. The enum and ParseStatusError are public and re-exported; display, parsing, transition rules, lifecycle behavior, report formatting/order, and parser errors are preserved. Status value literals occur only in src/status.rs. The design centralizes status names and removes string-based status handling from callers. No findings. Independently ran cargo test (7 integration tests passed), cargo build, cargo clippy --all-targets -- -D warnings, cargo fmt -- --check, git diff --check, and confirmed the worktree is clean. Risk is medium because Order.status changes its public type as required by the brief. VERDICT: PASS
+
+SHIPPED: commit 8ab7ecca2cbf7e0725355da60a3fcf0635f20d4a on the run branch

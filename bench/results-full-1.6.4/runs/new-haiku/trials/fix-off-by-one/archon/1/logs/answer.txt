@@ -1,0 +1,24 @@
+Queued qi_01M7W2BE1AZKYYCX0RNWZY1F4A to fix window.py in fix-off-by-one so `python3 -m unittest` passes, with tests unchanged and the function correct for all inputs. It runs the `direct` pipeline with standard review, and ships as a local commit (the repo is ship=local, so nothing is pushed). Quota note: claude-code's seven-day window is at 76% with 30% elapsed and runs out before reset, so I'm running this as a single item at default effort rather than starting more work in parallel.
+
+I've queued the fix as item `qi_01M7W2BE1AZKYYCX0RNWZY1F4A`. I haven't changed the repository myself; the orchestrator rules say changes go through the queue.
+
+- **Repo:** `fix-off-by-one`, which is registered with `ship: local`, so the commit stays on a local branch and nothing is pushed.
+- **Pipeline:** `direct`, one agent that makes and commits the change, with `standard` review and high priority.
+- **Brief:** your instruction verbatim, plus the requirements: make `python3 -m unittest` pass, leave the tests alone, keep the function correct for all valid inputs (empty input, window size at or above the input length, boundary indices), keep the change minimal, and commit with the configured identity and no attribution lines.
+
+On the quota note: claude-code's seven-day window is at 76% with 30% of it elapsed, and it runs out before it resets. I've kept this as a single item at default effort rather than running more in parallel, and I've told the operator in chat.
+
+I'll act on the result when the item finishes.
+
+Done: Fix bug in window.py so python3 -m unittest passes. Fixed the off-by-one in window.py: sliding_windows used range(len(items) - size), which dropped the final window. It now uses range(len(items) - size + 1). Committed as 7cfd8aa873e0b656067e7f29ad7059f7a1c863d5 (tree 86fa2570260a2e082a57848f99c47518a99b485c) on archon/nwzy1f4a-fix-bug-in-window-py-so-python3-m-unitte, under the configured git identity (mengsig), with no attribution lines. No test files changed; nothing pushed. Checks: python3 -m unittest on the final head: 3 tests, OK (before: 2 failures). Edge cases checked by hand: [] with size 1 gives []; size equal to len gives one window; size greater than len gives []; size 1 gives singletons; size 0 still raises ValueError. Review: reviewer agt_01M7W2C3B9QMQ1718YD4C923DJ passed the head (base 95d0559), no findings, risk low. Nothing left open and no processes were started. Review: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W2C3B9QMQ1718YD4C923DJ)
+
+SHIPPED: commit 7cfd8aa873e0b656067e7f29ad7059f7a1c863d5 on the run branch
+Branch `archon/nwzy1f4a-fix-bug-in-window-py-so-python3-m-unitte` in /home/mengsig/.local/share/archon-bench/f164-paj10sjc/archon-bench/work/20261120T084354Z/c937a03985076cb564cbae67/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M7W2BE1AZKYYCX0RNWZY1F4A`; land it in `main`: `archon merge qi_01M7W2BE1AZKYYCX0RNWZY1F4A`.
+
+Fixed the off-by-one in window.py: sliding_windows used range(len(items) - size), which dropped the final window. It now uses range(len(items) - size + 1). Committed as 7cfd8aa873e0b656067e7f29ad7059f7a1c863d5 (tree 86fa2570260a2e082a57848f99c47518a99b485c) on archon/nwzy1f4a-fix-bug-in-window-py-so-python3-m-unitte, under the configured git identity (mengsig), with no attribution lines. No test files changed; nothing pushed. Checks: python3 -m unittest on the final head: 3 tests, OK (before: 2 failures). Edge cases checked by hand: [] with size 1 gives []; size equal to len gives one window; size greater than len gives []; size 1 gives singletons; size 0 still raises ValueError. Review: reviewer agt_01M7W2C3B9QMQ1718YD4C923DJ passed the head (base 95d0559), no findings, risk low. Nothing left open and no processes were started. Review: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W2C3B9QMQ1718YD4C923DJ)
+
+SHIPPED: commit 7cfd8aa873e0b656067e7f29ad7059f7a1c863d5 on the run branch

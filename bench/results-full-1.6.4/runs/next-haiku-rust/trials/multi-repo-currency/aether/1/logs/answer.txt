@@ -1,0 +1,40 @@
+Implemented the currency column across both repos and committed each. Both test suites pass: ledger `cargo test` 7/7 integration tests plus clippy clean, and reports `python3 -m unittest` 4/4. An end-to-end pipe (ledger | reports) works.
+
+ledger (commit 1bde21a):
+- Input accepts 3 or 4 tab-separated columns. A missing fourth column defaults to USD.
+- The currency must be exactly three uppercase ASCII letters. Otherwise ledger prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- parse_line now returns a typed ParseError (Malformed / BadCurrency) so the CLI can pick the exit status.
+- README updated.
+
+reports (commit 70b365b):
+- Totals are keyed by (account, currency). Output is `account,currency,total_cents`, sorted by account then currency.
+- A CSV with no currency column counts as USD. A malformed code prints `error: ...` to stderr and exits 2.
+- README updated.
+
+Choices I made:
+- The currency field is trimmed like the other fields, so `\tEUR ` is accepted as EUR.
+- An empty fourth column (trailing tab) is treated as a bad currency, exit 2.
+- Commits use the repo's configured identity (mengsig). I left out a Co-Authored-By line because CLAUDE.md forbids Claude attribution, and that instruction takes precedence over the attribution reminder.
+
+The currency column now runs through both repositories. Each change is committed, and both test suites pass.
+
+**ledger** (commit `1bde21a`)
+- Lines take an optional fourth column. When it is missing, the currency is `USD`.
+- A currency must be exactly three uppercase ASCII letters. A malformed one prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- `cargo test` passes all 7 integration tests, and clippy is clean.
+
+**reports** (commit `70b365b`)
+- Totals are per account and currency, printed as `account,currency,total_cents`, sorted by account and then currency.
+- A CSV without a `currency` column counts as `USD`. A malformed code prints `error: ...` to stderr and exits 2.
+- `python3 -m unittest` passes all 4 tests.
+
+I ran `ledger | reports` end to end and it produced the expected totals. A bad code exits 2 at the ledger stage.
+
+Choices I made:
+- The currency field is trimmed like the other fields, so `EUR ` with a trailing space is accepted.
+- An empty fourth column, such as a trailing tab, counts as a bad currency and exits 2.
+- The commits carry no Co-Authored-By line. CLAUDE.md forbids Claude attribution, and that rule takes precedence over the attribution reminder.
+
+Both READMEs describe the new format and the exit codes.

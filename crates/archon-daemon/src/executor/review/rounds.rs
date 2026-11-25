@@ -1,22 +1,21 @@
-//! A lead that fixes and re-reviews round after round is stopped. A round is
-//! a commit some reviewer of the lead failed with a blocking finding;
-//! [`REVIEW_ROUND_CAP`] of them end the stage attempt with an escalation to the
-//! orchestrator that lists the open blocking findings, instead of another round.
-//! Each re-review is given the open findings to verify, so the last round's
-//! blocking findings are the open ones; earlier rounds' are listed apart.
-//! Every count rereads the attempt's settled children it has not read, so a
-//! reviewer whose event was missed still counts, at the next event or the
-//! lead's completion; a resumed lead's attempt holds the children it gained since.
+//! The cap counts distinct heads with a blocking fail. Committed fixes for
+//! all capped blockers admit one confirmation in the same attempt.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::delegation::REVIEWER_ROLE;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::ports::{Descendant, DescendantState};
 use archon_core::run::{StageOutcome, StageRun, review_tally_key};
 use archon_pipeline::contract::REVIEW_ROUND_CAP;
-use archon_pipeline::review::Verdict;
+use archon_pipeline::review::{ReviewFinding, Verdict};
 use serde::{Deserialize, Serialize};
 
+use super::confirm::{self, Confirmation, Eligibility, Status};
+use super::handoff;
+use super::record::{self, Finding, Report, Rounds};
 use super::{result_of, verdict_in};
 use crate::context::DaemonContext;
 
@@ -48,7 +47,7 @@ pub(in crate::executor) async fn reviewer_settled(
         Some(lead),
         "the stage of the lead"
     );
-    count(ctx, &stage, lead, Some(reviewer)).await
+    count(ctx, &stage, lead, Trigger::Child(reviewer)).await
 }
 
 /// The cap a stage completing now reached, counting every child of its
@@ -62,7 +61,86 @@ pub(in crate::executor) async fn capped_at_completion(
         return Ok(None);
     };
     assert!(!stage.state.is_terminal(), "only a live stage completes");
-    count(ctx, stage, lead, None).await
+    count(ctx, stage, lead, Trigger::Finished).await
+}
+
+pub(in crate::executor) async fn capped_on_failure(
+    ctx: &DaemonContext,
+    stage: &StageRunId,
+) -> Result<Option<Capped>, ArchonError> {
+    let store = ctx.store.lock().await;
+    let tally = load_from(&store, stage)?;
+    if rounds_of(&tally.fails) < REVIEW_ROUND_CAP && tally.stopped.is_none() {
+        return Ok(None);
+    }
+    let stage = store.stage_run(stage)?;
+    drop(store);
+    if stage.state.is_terminal() {
+        return Ok(None);
+    }
+    if let Some(reason) = tally.stopped {
+        return Ok(Some(Capped {
+            stage: stage.id,
+            reason,
+        }));
+    }
+    capped_at_completion(ctx, &stage).await
+}
+
+pub(in crate::executor) async fn confirmation_reviewer_stopped(
+    ctx: &DaemonContext,
+    lead: &AetherAgentId,
+    reviewer: &AetherAgentId,
+) -> Result<Option<Capped>, ArchonError> {
+    let store = ctx.store.lock().await;
+    let Some(stage) = store
+        .stage_run_by_agent(lead)?
+        .filter(|s| !s.state.is_terminal())
+    else {
+        return Ok(None);
+    };
+    if rounds_of(&load_from(&store, &stage.id)?.fails) < REVIEW_ROUND_CAP {
+        return Ok(None);
+    }
+    drop(store);
+    count(ctx, &stage, lead, Trigger::Child(reviewer)).await
+}
+
+pub(in crate::executor) fn review_fix_waiting(
+    store: &archon_queue::Store,
+    stage: &StageRunId,
+) -> Result<bool, ArchonError> {
+    Ok(load_from(store, stage)?.fix_wait.is_some())
+}
+
+pub(in crate::executor) async fn revisit_fix_wait(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+) -> Result<Option<Capped>, ArchonError> {
+    let Some(lead) = &stage.aether_agent else {
+        return Ok(None);
+    };
+    count(ctx, stage, lead, Trigger::Sweep).await
+}
+
+#[derive(Clone, Copy)]
+enum Trigger<'a> {
+    Child(&'a AetherAgentId),
+    Sweep,
+    Finished,
+}
+
+impl<'a> Trigger<'a> {
+    fn reviewer(self) -> Option<&'a AetherAgentId> {
+        match self {
+            Self::Child(reviewer) => Some(reviewer),
+            Self::Sweep | Self::Finished => None,
+        }
+    }
+
+    fn live(self) -> bool {
+        !matches!(self, Self::Finished)
+    }
 }
 
 /// Record the children `lead` holds as `stage` resumes it: they are earlier
@@ -73,6 +151,7 @@ pub(in crate::executor) async fn attempt_resumed(
     stage: &StageRun,
     lead: &AetherAgentId,
 ) -> Result<(), ArchonError> {
+    let _hold = ctx.coordination.review_rounds.hold(&stage.id).await;
     let mut tally = load(ctx, &stage.id).await?;
     if tally.earlier.is_some() {
         return Ok(());
@@ -95,6 +174,7 @@ pub(super) struct Tallied {
     /// `false` for a tally an earlier archond began: it kept only blocking
     /// fails' heads, so a child without one may still have failed.
     pub every_fail_kept: bool,
+    pub reports: BTreeMap<String, Report>,
 }
 
 /// The settled children `stage`'s attempt read, each with the head of the fail it
@@ -131,46 +211,419 @@ pub(super) async fn attempt_children(
     Ok(Tallied {
         children,
         every_fail_kept,
+        reports: tally
+            .reports
+            .into_iter()
+            .map(|r| (r.agent.clone(), r))
+            .collect(),
     })
 }
 
 /// Add the blocking fails of the attempt's settled children not read before
 /// to its tally, in the order Aether created them; the cap, once reached.
-/// `reviewer` is the child an event names, `None` at the lead's completion.
+/// A sweep rechecks a pending fix without waiting for another reviewer event.
 async fn count(
     ctx: &DaemonContext,
     stage: &StageRun,
     lead: &AetherAgentId,
-    reviewer: Option<&AetherAgentId>,
+    trigger: Trigger<'_>,
 ) -> Result<Option<Capped>, ArchonError> {
+    let _hold = ctx.coordination.review_rounds.hold(&stage.id).await;
+    if matches!(trigger, Trigger::Sweep)
+        && ctx
+            .store
+            .lock()
+            .await
+            .stage_run(&stage.id)?
+            .state
+            .is_terminal()
+    {
+        return Ok(None);
+    }
     let fresh = lead_is_fresh(ctx, stage, lead).await?;
     let beneath = ctx.backend.descendants(lead).await?;
     let mut tally = load(ctx, &stage.id).await?;
-    let unread: Vec<&Descendant> = settled_children(&beneath, lead)
+    update_reports(ctx, stage, (lead, &beneath), (fresh, trigger), &mut tally).await?;
+    if let Some(reason) = tally.stopped {
+        return Ok(Some(Capped {
+            stage: stage.id.clone(),
+            reason,
+        }));
+    }
+    if rounds_of(&tally.fails) >= REVIEW_ROUND_CAP {
+        return capped(ctx, stage, lead, (trigger, &beneath), &mut tally).await;
+    }
+    if trigger.reviewer().is_some() && !tally.reports.is_empty() {
+        let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
+        if let Some(refusal) = tell_findings(ctx, stage, lead, &records).await?
+            && !lead_finished(ctx, stage, lead).await?
+        {
+            let reason = format!(
+                "{} review finding IDs could not be delivered to {lead}: {refusal}",
+                StageOutcome::ESCALATE_PREFIX
+            );
+            return stop(ctx, stage, &mut tally, reason).await.map(Some);
+        }
+    }
+    Ok(None)
+}
+
+async fn update_reports(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    (lead, beneath): (&AetherAgentId, &[Descendant]),
+    (fresh, trigger): (bool, Trigger<'_>),
+    tally: &mut Tally,
+) -> Result<(), ArchonError> {
+    assert_eq!(stage.aether_agent.as_ref(), Some(lead));
+    assert!(!stage.state.is_terminal());
+    let recovered = backfill_reports(ctx, stage, beneath, tally).await?;
+    let unread: Vec<&Descendant> = settled_children(beneath, lead)
         .into_iter()
-        .filter(|c| tally.attempt_holds(&c.agent, fresh, reviewer))
+        .filter(|c| tally.attempt_holds(&c.agent, fresh, trigger.reviewer()))
         .filter(|c| !tally.has_read(&c.agent) || tally.owes_reread(&c.agent))
         .collect();
-    if !unread.is_empty() {
-        for child in unread {
-            // Unreadable yet: no child is skipped, so the event or settle is retried.
-            let verdict = verdict_of(ctx, child).await?;
-            tally.record(&child.agent, verdict);
+    let changed = recovered || !unread.is_empty();
+    for child in unread {
+        // Unreadable yet: no child is skipped, so the event or settle is retried.
+        let verdict = verdict_of(ctx, child).await?;
+        if let Some(verdict) = &verdict
+            && child.role.eq_ignore_ascii_case(REVIEWER_ROLE)
+        {
+            if tally.reports.is_empty() {
+                tally.prior_findings = record::prior_findings(&*ctx.store.lock().await, stage)?;
+            }
+            tally.reports.push(Report::new(child, verdict));
         }
-        in_creation_order(&mut tally.fails, &beneath, lead);
-        save(ctx, &stage.id, &tally).await?;
+        tally.record(&child.agent, verdict);
     }
-    // A replayed reviewer adds no round, but may still owe the stop.
+    if changed {
+        in_creation_order(&mut tally.fails, beneath, lead);
+        reports_in_creation_order(&mut tally.reports, beneath);
+        save(ctx, &stage.id, tally).await?;
+    }
+    Ok(())
+}
+
+async fn lead_finished(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+) -> Result<bool, ArchonError> {
+    assert_eq!(stage.aether_agent.as_ref(), Some(lead));
+    assert!(!stage.state.is_terminal());
+    let outcome = match &stage.aether_task {
+        Some(task) => ctx.backend.task_outcome(task).await?,
+        None => {
+            let resumed = crate::executor::resume::resumed_on(&*ctx.store.lock().await, &stage.id)?;
+            let Some((_, kept)) = resumed else {
+                return Ok(false);
+            };
+            assert_eq!(&kept.agent, lead, "the resumed lead owns the message");
+            ctx.backend.resumed_outcome(lead, &kept.message).await?
+        }
+    };
+    Ok(outcome.is_some())
+}
+
+async fn capped(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+    (trigger, beneath): (Trigger<'_>, &[Descendant]),
+    tally: &mut Tally,
+) -> Result<Option<Capped>, ArchonError> {
+    assert!(tally.stopped.is_none());
     let rounds = rounds_of(&tally.fails);
-    if rounds < REVIEW_ROUND_CAP {
-        return Ok(None);
+    if tally.confirm.is_none() && rounds == REVIEW_ROUND_CAP && trigger.live() {
+        match prepare_confirmation(ctx, stage, (lead, beneath), tally).await? {
+            Prepare::Waiting => return Ok(None),
+            Prepare::Ready => {}
+            Prepare::Refused(why) => {
+                let last = tally
+                    .fails
+                    .last()
+                    .expect("a capped review has a failed head");
+                let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
+                let latest = records.reported_blockers(&last.head);
+                let reason = capped_reason(stage, &tally.fails, &latest, why.as_deref());
+                return stop(ctx, stage, tally, reason).await.map(Some);
+            }
+        }
     }
-    let reason = escalation(stage, rounds, &Open::of(&tally.fails));
-    assert!(StageOutcome::ends_run(&reason), "a capped review escalates");
-    Ok(Some(Capped {
+    let refusal = if tally.confirm.is_some() {
+        let progress = confirmation_refusal(ctx, stage, (lead, beneath), trigger.live(), tally);
+        let Some(why) = progress.await? else {
+            return Ok(None);
+        };
+        Some(why)
+    } else {
+        None
+    };
+    let last = tally
+        .fails
+        .last()
+        .expect("the stage still has capped findings");
+    let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
+    let reported = records.reported_blockers(&last.head);
+    let reason = capped_reason(stage, &tally.fails, &reported, refusal.as_deref());
+    stop(ctx, stage, tally, reason).await.map(Some)
+}
+
+enum Prepare {
+    Waiting,
+    Ready,
+    Refused(Option<String>),
+}
+
+async fn prepare_confirmation(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    (lead, beneath): (&AetherAgentId, &[Descendant]),
+    tally: &mut Tally,
+) -> Result<Prepare, ArchonError> {
+    assert!(
+        tally.confirm.is_none(),
+        "an authorization is frozen once made"
+    );
+    assert_eq!(rounds_of(&tally.fails), REVIEW_ROUND_CAP);
+    let last = tally.fails.last().expect("the capped failure");
+    let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
+    let latest = records.blocking_at(&last.head);
+    if latest.is_empty() || stage.only_reviews == Some(true) || !all_blockers_recorded(tally) {
+        return Ok(Prepare::Refused(None));
+    }
+    let run = ctx.store.lock().await.run(&stage.run)?;
+    let reviewers: BTreeSet<_> = confirm::reviewers(lead, beneath)
+        .map(|r| r.agent.to_string())
+        .collect();
+    if tally
+        .fix_wait
+        .as_ref()
+        .is_some_and(|wait| !reviewers.is_subset(&wait.reviewers))
+    {
+        return Ok(Prepare::Refused(Some(
+            "another review started before confirmation was authorized".into(),
+        )));
+    }
+    if tally.fix_wait.is_none() {
+        tally.fix_wait = Some(FixWait {
+            reviewers,
+            delivered: None,
+        });
+        save(ctx, &stage.id, tally).await?;
+    }
+    let workspace = run.workspace.clone();
+    match Confirmation::eligible(run, &last.head, &latest).await? {
+        Eligibility::NoBranch => return Ok(Prepare::Refused(None)),
+        Eligibility::Ready(confirmation) => {
+            tally.confirm = Some(confirmation);
+            save(ctx, &stage.id, tally).await?;
+            return Ok(Prepare::Ready);
+        }
+        Eligibility::AwaitingFixes => {}
+    }
+    let wait = tally.fix_wait.as_mut().expect("joined the cap fix wait");
+    let outcome = ask_for_fixes(
+        ctx,
+        stage,
+        lead,
+        (&workspace, &latest),
+        wait.delivered.as_deref(),
+    )
+    .await?;
+    let tag = match outcome {
+        FixOffer::Sent(tag) => tag,
+        FixOffer::Unchanged => return Ok(Prepare::Waiting),
+        FixOffer::Refused(why) => return Ok(Prepare::Refused(Some(why))),
+    };
+    wait.delivered = Some(tag);
+    save(ctx, &stage.id, tally).await?;
+    Ok(Prepare::Waiting)
+}
+
+enum FixOffer {
+    Unchanged,
+    Sent(String),
+    Refused(String),
+}
+
+async fn ask_for_fixes(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+    (workspace, findings): (&std::path::Path, &[(&str, &str)]),
+    delivered: Option<&str>,
+) -> Result<FixOffer, ArchonError> {
+    assert!(!findings.is_empty());
+    assert!(workspace.is_absolute());
+    let (list, file) = handoff::prepare(findings);
+    let note = format!(
+        "The review reached the cap. Wait for existing reviewers and commit fixes for every open blocker below with `Review-Fix: <id>` trailers. Then wait for Archon's confirmation instructions. If a fix cannot be committed, fail the stage.\n\n{list}"
+    );
+    let tag = handoff::digest(&note);
+    if delivered == Some(tag.as_str()) {
+        return Ok(FixOffer::Unchanged);
+    }
+    if let Some(file) = file
+        && let Err(error) = file.install(workspace)
+    {
+        return Ok(FixOffer::Refused(error.to_string()));
+    }
+    let key = format!("archon:review-fix:{}:{tag}", stage.id);
+    if let Some(refusal) = tell(ctx, lead, &note, &key).await? {
+        return Ok(FixOffer::Refused(format!(
+            "the lead could not receive the capped finding list: {refusal}"
+        )));
+    }
+    Ok(FixOffer::Sent(tag))
+}
+
+fn all_blockers_recorded(tally: &Tally) -> bool {
+    tally
+        .fails
+        .iter()
+        .all(|f| tally.reports.iter().any(|r| r.agent == f.agent))
+}
+
+async fn confirmation_refusal(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    (lead, beneath): (&AetherAgentId, &[Descendant]),
+    live: bool,
+    tally: &mut Tally,
+) -> Result<Option<String>, ArchonError> {
+    if rounds_of(&tally.fails) > REVIEW_ROUND_CAP {
+        return Ok(Some("a further review reported a blocker".into()));
+    }
+    let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
+    let confirm = tally
+        .confirm
+        .as_mut()
+        .expect("the capped review is authorized");
+    let findings = records.blocking_at(&confirm.base);
+    match confirm.status(lead, beneath, &tally.reports, &findings) {
+        Status::Passed => {
+            if tally.fix_wait.take().is_some() {
+                save(ctx, &stage.id, tally).await?;
+            }
+            return Ok(None);
+        }
+        Status::Refused(why) => return Ok(Some(why.into())),
+        _ if !live => {
+            return Ok(Some(
+                "the lead finished before the confirmation passed".into(),
+            ));
+        }
+        Status::WaitingForPeers => return Ok(None),
+        Status::Ready => {
+            confirm.prepare_delivery(lead, beneath, &findings);
+            save(ctx, &stage.id, tally).await?;
+        }
+        Status::Waiting => {}
+    }
+    let confirm = tally
+        .confirm
+        .as_ref()
+        .expect("a confirmation owes its note");
+    let refusal = confirm.tell(ctx, stage, lead).await?;
+    if refusal.is_none() && tally.fix_wait.take().is_some() {
+        save(ctx, &stage.id, tally).await?;
+    }
+    Ok(refusal
+        .map(|why| format!("the lead could not receive the confirmation instructions: {why}")))
+}
+
+async fn stop(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    tally: &mut Tally,
+    reason: String,
+) -> Result<Capped, ArchonError> {
+    assert!(StageOutcome::ends_run(&reason));
+    assert!(tally.stopped.is_none());
+    tally.fix_wait = None;
+    tally.stopped = Some(reason.clone());
+    save(ctx, &stage.id, tally).await?;
+    Ok(Capped {
         stage: stage.id.clone(),
         reason,
-    }))
+    })
+}
+
+fn capped_reason(
+    stage: &StageRun,
+    fails: &[Fail],
+    findings: &[(&str, &str)],
+    refusal: Option<&str>,
+) -> String {
+    let identified: Vec<String> = findings
+        .iter()
+        .map(|(id, text)| format!("{text} [{id}]"))
+        .collect();
+    let latest: Vec<&str> = identified.iter().map(String::as_str).collect();
+    let mut open = Open::of(fails);
+    if !latest.is_empty()
+        && open
+            .latest
+            .iter()
+            .all(|line| identified.iter().any(|id| id.starts_with(line)))
+    {
+        open.latest = latest;
+    }
+    let mut reason = escalation(stage, rounds_of(fails), &open);
+    if let Some(why) = refusal {
+        reason.push_str(&format!(" The final confirmation did not pass: {why}."));
+    }
+    assert!(StageOutcome::ends_run(&reason), "a capped review escalates");
+    reason
+}
+
+async fn tell_findings(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+    records: &Rounds<'_>,
+) -> Result<Option<String>, ArchonError> {
+    let findings = records.last_open();
+    if findings.is_empty() || stage.only_reviews == Some(true) {
+        return Ok(None);
+    }
+    let workspace = ctx.store.lock().await.run(&stage.run)?.workspace;
+    let list = match handoff::findings(&workspace, &findings) {
+        Ok(list) => list,
+        Err(error) => return Ok(Some(error.to_string())),
+    };
+    let note = format!(
+        "For the next review, give the reviewer this list or its file path. Ask for each ID's disposition and a review of the new delta.\n\n{list}"
+    );
+    tell_note(ctx, stage, lead, "review-findings", &note).await
+}
+
+async fn tell_note(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+    purpose: &str,
+    note: &str,
+) -> Result<Option<String>, ArchonError> {
+    let key = format!("archon:{purpose}:{}:{}", stage.id, handoff::digest(note));
+    tell(ctx, lead, note, &key).await
+}
+
+pub(super) async fn tell(
+    ctx: &DaemonContext,
+    lead: &AetherAgentId,
+    note: &str,
+    key: &str,
+) -> Result<Option<String>, ArchonError> {
+    assert!(!note.is_empty());
+    assert!(!key.is_empty());
+    match ctx.backend.send_message(lead, note, key).await {
+        Ok(()) => Ok(None),
+        Err(error) if crate::executor::resume::unanswered(&error) || error.is_store() => Err(error),
+        Err(refusal) => Ok(Some(refusal.to_string())),
+    }
 }
 
 /// Only a fail that lists a blocking finding is a round; the gate still
@@ -226,6 +679,17 @@ fn in_creation_order(fails: &mut [Fail], beneath: &[Descendant], lead: &AetherAg
     );
 }
 
+fn reports_in_creation_order(reports: &mut [Report], beneath: &[Descendant]) {
+    let index: std::collections::BTreeMap<&str, usize> = beneath
+        .iter()
+        .enumerate()
+        .map(|(i, child)| (child.agent.as_str(), i))
+        .collect();
+    if reports.iter().all(|r| index.contains_key(r.agent.as_str())) {
+        reports.sort_by_key(|r| index[r.agent.as_str()]);
+    }
+}
+
 /// `child`'s verdict; `None` for a result that is no verdict, which counts for nothing.
 async fn verdict_of(
     ctx: &DaemonContext,
@@ -241,6 +705,44 @@ async fn verdict_of(
     Ok(verdict_in(outcome).ok())
 }
 
+async fn backfill_reports(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    beneath: &[Descendant],
+    tally: &mut Tally,
+) -> Result<bool, ArchonError> {
+    let original = tally.reports.len();
+    for fail in &tally.fails {
+        if tally.reports.iter().any(|r| r.agent == fail.agent) {
+            continue;
+        }
+        let child = beneath.iter().find(|d| d.agent.as_str() == fail.agent);
+        if child.is_some_and(|d| !d.role.eq_ignore_ascii_case(REVIEWER_ROLE)) {
+            continue;
+        }
+        let report = match child {
+            Some(child) if child.state == DescendantState::Completed && child.task.is_some() => {
+                match verdict_of(ctx, child)
+                    .await?
+                    .filter(|v| blocks(v) && same_commit(&v.head, &fail.head))
+                {
+                    Some(verdict) => Report::new(child, &verdict),
+                    None => fail.report(Some(child)),
+                }
+            }
+            _ => fail.report(child),
+        };
+        assert_eq!(report.agent, fail.agent);
+        assert_eq!(report.pass, Some(false));
+        tally.reports.push(report);
+    }
+    let recovered = tally.reports.len() != original;
+    if recovered && original == 0 {
+        tally.prior_findings = record::prior_findings(&*ctx.store.lock().await, stage)?;
+    }
+    Ok(recovered)
+}
+
 /// A failing verdict one reviewer returned in a stage attempt.
 #[derive(Debug, Serialize, Deserialize)]
 struct Fail {
@@ -252,9 +754,34 @@ struct Fail {
     findings: Vec<String>,
 }
 
+impl Fail {
+    fn report(&self, child: Option<&Descendant>) -> Report {
+        assert!(!self.agent.is_empty() && !self.head.is_empty());
+        assert!(!self.findings.is_empty());
+        Report {
+            agent: self.agent.clone(),
+            model: child.map_or_else(|| "unknown".into(), |d| d.model.to_string()),
+            pass: Some(false),
+            head: Some(self.head.clone()),
+            base: None,
+            finding_count: Some(self.findings.len()),
+            findings: self
+                .findings
+                .iter()
+                .map(|text| ReviewFinding {
+                    description: text.clone(),
+                    blocking: true,
+                    id: None,
+                })
+                .collect(),
+            resolved_findings: Vec::new(),
+        }
+    }
+}
+
 /// The failing verdicts of one stage attempt, and every child read for one.
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct Tally {
+pub(super) struct Tally {
     fails: Vec<Fail>,
     /// Tallies written before children were rescanned kept fails alone.
     #[serde(default)]
@@ -274,6 +801,22 @@ struct Tally {
     /// verdict words; any other child it read is read again once its attempt admits it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     reread: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reports: Vec<Report>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prior_findings: Vec<Finding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fix_wait: Option<FixWait>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    confirm: Option<Confirmation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stopped: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FixWait {
+    reviewers: BTreeSet<String>,
+    delivered: Option<String>,
 }
 
 impl Tally {
@@ -351,8 +894,15 @@ impl Tally {
 }
 
 async fn load(ctx: &DaemonContext, stage: &StageRunId) -> Result<Tally, ArchonError> {
+    load_from(&*ctx.store.lock().await, stage)
+}
+
+pub(super) fn load_from(
+    store: &archon_queue::Store,
+    stage: &StageRunId,
+) -> Result<Tally, ArchonError> {
     let key = review_tally_key(stage);
-    let Some(raw) = ctx.store.lock().await.kv_get(&key)? else {
+    let Some(raw) = store.kv_get(&key)? else {
         return Ok(Tally {
             every_fail_kept: true,
             ..Tally::default()
@@ -370,7 +920,7 @@ async fn save(ctx: &DaemonContext, stage: &StageRunId, tally: &Tally) -> Result<
 }
 
 /// Whether two commit ids, each possibly abbreviated, can name one commit.
-fn same_commit(a: &str, b: &str) -> bool {
+pub(super) fn same_commit(a: &str, b: &str) -> bool {
     a.starts_with(b) || b.starts_with(a)
 }
 
@@ -573,6 +1123,8 @@ mod tests {
             findings: Some(1),
             blocking: Some(1),
             blocking_findings: vec!["drops the tail".into()],
+            listed_findings: Vec::new(),
+            resolved_findings: Vec::new(),
         };
         tally.record(&old, Some(blocking));
         assert_eq!(rounds_of(&tally.fails), 1, "the reread fail is a round");
@@ -609,6 +1161,7 @@ mod tests {
             other_fails: vec![(agent(2), "bbbbbbb1".into())],
             every_fail_kept: true,
             reread: vec![agent(2)],
+            ..Tally::default()
         };
         let stored = serde_json::to_string(&tally).unwrap();
         let read: archon_core::run::TalliedFails = serde_json::from_str(&stored).unwrap();

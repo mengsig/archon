@@ -1,0 +1,16 @@
+The `orders` crate now uses an `OrderStatus` enum instead of `String`, and the work is committed as `16241fd` on `main`. `cargo test` passes: the 3 existing integration tests and 3 new unit tests in `src/status.rs`.
+
+What changed:
+- **`src/status.rs`** (new): `OrderStatus` with `as_str`, `Display`, `FromStr`, and `can_transition_to`. `ParseStatusError` implements `std::error::Error` and its message names the rejected input. The status literals live only in this file.
+- **`src/lib.rs`**: re-exports `OrderStatus` and `ParseStatusError` from the crate root.
+- **`Order::status`** is now `OrderStatus`. `is_open` and `cancel` use the enum.
+- **`billing::pay`, `shipping::ship`, `Order::cancel`** check the lifecycle through `can_transition_to`. Each refuses exactly what it refused before, with the same error text.
+- **`report`**: `from_line` parses through `FromStr` and keeps the original `unknown status` error. `status_counts` now returns `Vec<(OrderStatus, usize)>`.
+- **`tests/orders.rs`**: compares enum values directly. Error-message and CSV assertions are unchanged.
+
+Decisions to review:
+- **Sort order in `status_counts`**: the enum's declaration order (pending, paid, …) differs from the old alphabetical order. I kept the alphabetical order by keying on `as_str()`, so report output is unchanged.
+- **`status_counts` return type**: it changed from `(String, usize)` to `(OrderStatus, usize)`. That is a public API change. Callers that use `.to_string()` still work through `Display`.
+- **Commit message**: I left out the `Co-Authored-By` trailer the system reminder asked for, because the project's CLAUDE.md says not to put Claude attribution in commits.
+
+Not verified: `rustfmt` and `clippy` aren't installed on this toolchain, so I couldn't run them. I found cargo under `~/.cargo/bin`, which isn't on the default PATH.

@@ -1,0 +1,3 @@
+Fixed the sliding window stop bound in [window.py](/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/e259d02c568b171cfd31951c/fix-off-by-one/window.py). It now includes every valid start, including the final window; inputs shorter than the requested size produce no windows.
+
+`python3 -m unittest` passes. Committed as `a58520e` (`Fix sliding window final boundary`).

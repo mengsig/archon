@@ -29,7 +29,7 @@ def opened(branch, base='main', draft=True, body='Change details.', title=''):
     number = len(state) + 1
     state[branch] = dict(url=f'https://github.com/o/r/pull/{number}', number=number,
         headRefName=branch, baseRefName=base, state='OPEN', body=body, title=title,
-        isDraft=draft, autoMerge=False)
+        isDraft=draft, autoMerge=False, createdAt='2026-10-15T09:01:00Z')
     return state[branch]
 
 

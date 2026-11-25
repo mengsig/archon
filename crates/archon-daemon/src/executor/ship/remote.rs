@@ -209,6 +209,16 @@ pub(crate) async fn pull_request(
     repo: &Repo,
     request: Request<'_>,
 ) -> Result<Result<String, String>, ArchonError> {
+    Ok(pull_request_with_times(binary, repo, request)
+        .await?
+        .map(|pr| pr.url))
+}
+
+pub(super) async fn pull_request_with_times(
+    binary: &Path,
+    repo: &Repo,
+    request: Request<'_>,
+) -> Result<Result<gh::PullRequest, String>, ArchonError> {
     assert!(!request.title.is_empty() && !request.body.is_empty());
     assert_ne!(
         request.branch, request.base,
@@ -224,7 +234,7 @@ pub(crate) async fn pull_request(
             if pr.base_ref_name != request.base {
                 retarget(binary, repo, &pr.url, request.base).await?;
             }
-            Ok(Ok(pr.url.clone()))
+            Ok(Ok(pr.clone()))
         }
         several => Ok(Err(format!(
             "GitHub lists {} open pull requests for `{}`; close all but one, then retry the item",
@@ -240,7 +250,7 @@ async fn create(
     binary: &Path,
     repo: &Repo,
     request: Request<'_>,
-) -> Result<Result<String, String>, ArchonError> {
+) -> Result<Result<gh::PullRequest, String>, ArchonError> {
     assert!(!request.branch.is_empty() && !request.base.is_empty());
     assert_ne!(
         request.branch, request.base,
@@ -267,11 +277,17 @@ async fn create(
         Err(refusal) => return Ok(Err(refusal)),
     };
     if let [pr] = listed.as_slice() {
-        return Ok(Ok(pr.url.clone()));
+        return Ok(Ok(pr.clone()));
     }
     let said = created.detail();
     if let Some(blocked) = needs_operator("opening the pull request", &said) {
         return Ok(Err(blocked));
+    }
+    if !created.ok
+        && listed.is_empty()
+        && let Some(refusal) = create_refusal(request, &said)
+    {
+        return Ok(Err(refusal));
     }
     let outcome = match created.ok {
         true => "succeeded",
@@ -282,6 +298,44 @@ async fn create(
         listed.len(),
         request.branch
     )))
+}
+
+fn create_refusal(request: Request<'_>, said: &str) -> Option<String> {
+    assert!(!request.branch.is_empty() && !request.base.is_empty());
+    assert_ne!(request.branch, request.base);
+    let lower = said.to_lowercase();
+    let base = lower.contains("base ref must be a branch");
+    let head = lower.contains("head ref must be a branch");
+    let action = if base && head {
+        format!(
+            "check that base branch `{}` exists and head branch `{}` was pushed to GitHub",
+            request.base, request.branch
+        )
+    } else if base {
+        format!("check that base branch `{}` exists on GitHub", request.base)
+    } else if head {
+        format!(
+            "check that head branch `{}` was pushed to GitHub",
+            request.branch
+        )
+    } else if lower.contains("no commits between") {
+        format!(
+            "add commits to `{}` that are not in `{}`",
+            request.branch, request.base
+        )
+    } else if lower.contains("base sha can't be blank") {
+        format!("check that base branch `{}` exists on GitHub", request.base)
+    } else if lower.contains("head sha can't be blank") {
+        format!(
+            "check that head branch `{}` was pushed to GitHub",
+            request.branch
+        )
+    } else {
+        return None;
+    };
+    Some(format!(
+        "GitHub refused to open the pull request: {said}. {action}, then retry the item"
+    ))
 }
 
 /// Point the pull request at `url` to `base`, the branch its change is for.

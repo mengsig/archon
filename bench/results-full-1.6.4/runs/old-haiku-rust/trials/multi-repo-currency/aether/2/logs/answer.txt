@@ -1,0 +1,21 @@
+Both repositories are updated and committed: `ledger` at `3002c80` and `reports` at `bd321e8`. `cargo test` passes 8 of 8 and `python3 -m unittest` passes 6 of 6. I also ran the pipeline end to end, and it produces the expected per-account, per-currency totals.
+
+**ledger**
+- A TSV line may now carry a fourth column for the currency. A missing column means `USD`.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed currency code (anything other than three uppercase ASCII letters, including an empty fourth column) prints `line N: ...` to stderr and exits with status 2.
+- Other malformed input still exits 1. This is the new `ParseError` split in `src/lib.rs`.
+- New tests cover currency defaulting and validation, plus a binary-level check of the exit codes and the line number on stderr.
+
+**reports**
+- Totals are keyed by `(account, currency)` and sorted by account, then currency. The header is `account,currency,total_cents`.
+- CSV without a `currency` column counts as `USD`.
+- A malformed currency code prints `reports: line N: ...` to stderr and exits 2.
+- New tests cover the per-currency totals, the legacy format, bad and empty currency codes, and the line number in the error.
+
+Both READMEs describe the new input, output, and exit codes.
+
+Choices I made that you may want to change:
+- **No commit trailer.** The system reminder asked for a `Co-Authored-By: Claude Haiku 5.5` line. Your CLAUDE.md says not to put anything Claude-related in commits, and I followed CLAUDE.md. Commits use the repos' configured identity.
+- **No version bump.** `ledger` is still `0.3.0` even though the output format changed. Bumping to `0.4.0` would also touch `Cargo.lock`; I left that for you to decide.
+- **Assertions.** The Python code has none, matching its existing style. The Rust side has one `assert!` in `to_csv_row`, since `Entry` has public fields.

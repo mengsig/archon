@@ -1,0 +1,7 @@
+I found two security issues in [src/tokens.js](/home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/d9ff4c465e7f9a9b85364799/.archon/data/orchestrator/repos/review-seeded-bug/src/tokens.js:22). No code was changed.
+
+- **High — `verify`: accepts an empty or truncated signature.** `expected.startsWith(signature)` accepts any prefix of the valid HMAC, including an empty string. For example, `verify("eyJ1c2VyIjoicm9vdCIsImV4cCI6OTk5OTk5OTk5OTk5OX0.", secret)` can accept a forged payload with a future expiration because the signature is empty. Require a full-length signature and compare it to the expected HMAC using a constant-time comparison.
+
+- **Medium — `verify`: malformed tokens can throw instead of returning `null`.** The function’s comment promises `null` for an invalid token, but parsing errors escape. For example, `"!. "` with the space removed (`"!."`) passes the empty-signature check, then `JSON.parse` throws. A caller that doesn’t catch this can turn an invalid token into a request failure. Reject malformed encodings and catch parse errors so invalid input returns `null`.
+
+The signature-prefix flaw also makes the malformed-input exception reachable without knowing the secret.

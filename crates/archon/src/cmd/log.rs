@@ -354,6 +354,7 @@ mod tests {
                     text: "hi".into(),
                     images: Vec::new(),
                     local: false,
+                    command_id: None,
                 },
             ),
             feed(4, answer(&asked_before)),
@@ -362,7 +363,14 @@ mod tests {
             feed(7, FeedEntry::Question(theirs.clone())),
             feed(8, answer(&theirs)),
             feed(9, report),
-            feed(10, FeedEntry::System { text: "up".into() }),
+            feed(
+                10,
+                FeedEntry::System {
+                    text: "up".into(),
+                    command_id: None,
+                    command_result: None,
+                },
+            ),
         ];
         let known = HashSet::from([asked_before.id.clone()]);
         let mut filter = LogFilter::new(Some(mine), known, vec![]);

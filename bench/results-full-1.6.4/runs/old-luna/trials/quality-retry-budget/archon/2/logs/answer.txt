@@ -1,0 +1,14 @@
+Queued as **qi_01M7W8Z685ERATTN8EW63JHC6A**. It covers the implementation, focused boundary and error tests, and verification. The requested commit will be made locally through the repository’s `direct` pipeline.
+
+Done: Implement retry delay spec and boundary tests. Implemented the retry delay specification and committed it locally as 9a7dbfc0518d0bb5adcf6f1f76bdfd2d2216cc89. Added full argument validation, saturated exponential backoff, uncapped Retry-After minimum handling, strict budget boundaries, and focused boundary tests. `python -m unittest -v test_retry_budget`, `python -m unittest discover -v`, and `git diff --check` passed (8 tests). The worktree is clean; no build or linter configuration exists.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 9a7dbfc0518d0bb5adcf6f1f76bdfd2d2216cc89 on the run branch
+Branch `archon/w63jhc6a-implement-retry-delay-spec-and-boundary` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/40ce2e0df918764995208c37/quality-retry-budget holds it (2 files changed, 66 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7W8Z685ERATTN8EW63JHC6A`; land it in `main`: `archon merge qi_01M7W8Z685ERATTN8EW63JHC6A`.
+
+Implemented the retry delay specification and committed it locally as 9a7dbfc0518d0bb5adcf6f1f76bdfd2d2216cc89. Added full argument validation, saturated exponential backoff, uncapped Retry-After minimum handling, strict budget boundaries, and focused boundary tests. `python -m unittest -v test_retry_budget`, `python -m unittest discover -v`, and `git diff --check` passed (8 tests). The worktree is clean; no build or linter configuration exists.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 9a7dbfc0518d0bb5adcf6f1f76bdfd2d2216cc89 on the run branch

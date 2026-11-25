@@ -1,5 +1,5 @@
-//! Team rosters (ARCHITECTURE §13.1): once every role of a team attempt has
-//! an agent, each live role gets one message naming every role's agent,
+//! Team rosters (ARCHITECTURE §13.1): once every dispatched role has
+//! an agent, each live role gets one message naming those agents,
 //! worktree and branch. A role's replacement makes a new roster version,
 //! sent again to the live roles.
 //!
@@ -7,6 +7,7 @@
 //! by recipient and version, so a retry after a crash or a lost reply is
 //! delivered once. `kv` records the version each stage run last received.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use archon_core::aether_ids::AetherAgentId;
@@ -16,7 +17,7 @@ use archon_core::run::{PipelineRun, RunState, StageRun, StageState};
 use archon_pipeline::team;
 use archon_queue::Store;
 
-use super::{FollowUp, settle};
+use super::{FollowUp, settle, swarm};
 use crate::context::DaemonContext;
 
 /// `kv`: `team_roster:<stage run>` → the last roster version it received.
@@ -57,6 +58,7 @@ impl Roster {
         attempt: u32,
         roles: &[String],
         group: &[StageRun],
+        carried: &BTreeMap<u32, u32>,
     ) -> Option<Self> {
         assert!(!roles.is_empty(), "a team stage has roles");
         assert!(
@@ -66,8 +68,14 @@ impl Roster {
             "the group is one team attempt of this run"
         );
         let root = run.team_root.as_ref().expect("a team run has a team root");
-        let mut members = Vec::with_capacity(roles.len());
+        assert!(carried.len() < roles.len(), "a team attempt runs a role");
+        assert!(carried.keys().all(|&slot| (slot as usize) < roles.len()));
+        let active = roles.len() - carried.len();
+        let mut members = Vec::with_capacity(active);
         for (fan, role) in roles.iter().enumerate() {
+            if carried.contains_key(&(fan as u32)) {
+                continue;
+            }
             let latest = group
                 .iter()
                 .filter(|s| s.fan_index as usize == fan)
@@ -82,8 +90,9 @@ impl Roster {
             });
         }
         let agents = group.iter().filter(|s| s.aether_agent.is_some()).count();
-        assert!(agents >= roles.len(), "every role has an agent");
-        let version = u32::try_from(agents - roles.len() + 1).expect("few agents per attempt");
+        assert_eq!(members.len(), active, "every dispatched role is listed");
+        assert!(agents >= active, "every dispatched role has an agent");
+        let version = u32::try_from(agents - active + 1).expect("few agents per attempt");
         Some(Self {
             stage_id: stage_id.to_owned(),
             attempt,
@@ -157,7 +166,8 @@ async fn owed(ctx: &DaemonContext, run_id: &PipelineRunId) -> Result<Vec<Deliver
         .into_iter()
         .filter(|s| s.stage_id == *stage_id && s.attempt == *attempt)
         .collect();
-    let Some(roster) = Roster::of(&run, stage_id, *attempt, roles, &group) else {
+    let carried = swarm::carried_slots(&store, run_id, stage_id, *attempt)?;
+    let Some(roster) = Roster::of(&run, stage_id, *attempt, roles, &group, &carried) else {
         return Ok(Vec::new());
     };
     let mut owed = Vec::new();

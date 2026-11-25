@@ -20,7 +20,7 @@ use crate::client::AetherClient;
 use crate::link::AetherLink;
 use crate::resumed;
 use crate::wire::{
-    Agent, AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, CreateAgent, ModelInfo,
+    Agent, AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, CreateAgent, EventQuery, ModelInfo,
     NetworkPolicy, ProviderInfo, Scope, Task, TaskStatus, ToolExposure,
 };
 
@@ -31,6 +31,27 @@ pub const LIVE_STATES: &[&str] = &["created", "ready", "running", "waiting", "bl
 /// Aether agent states it names final: the agent can no longer act or take
 /// children. A state in neither list may still act.
 pub const STOPPED_STATES: &[&str] = &["completed", "failed", "cancelled", "imported"];
+
+fn review_event_seq(
+    event: &serde_json::Value,
+    agent: &AetherAgentId,
+    task: &AetherTaskId,
+    kind: &str,
+) -> Result<u64, ArchonError> {
+    let seq = event["seq"].as_u64().filter(|seq| *seq > 0);
+    match seq {
+        Some(seq)
+            if event["agent_id"] == agent.as_str()
+                && event["task_id"] == task.as_str()
+                && event["kind"]["type"] == kind =>
+        {
+            Ok(seq)
+        }
+        _ => Err(ArchonError::Protocol(format!(
+            "unexpected {kind} event when reading reviewer {agent} task {task}"
+        ))),
+    }
+}
 
 #[derive(Debug)]
 pub struct AetherBackend {
@@ -742,6 +763,13 @@ impl AgentBackend for AetherBackend {
         Ok(defaults.network_default)
     }
 
+    async fn event_watermark(&self) -> Result<Option<u64>, ArchonError> {
+        let client = self.link.client()?;
+        // A live-only subscription reports the global head even after history is pruned.
+        let checkpoint = client.subscribe(None, EventQuery::default()).await?;
+        Ok(Some(checkpoint.last_seq))
+    }
+
     async fn is_live(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
         match self.link.client()?.get_agent(agent).await {
             Ok(found) => Ok(agent_is_live(&found)),
@@ -929,6 +957,43 @@ impl AgentBackend for AetherBackend {
         Ok(task_outcome(&task))
     }
 
+    async fn review_model(
+        &self,
+        agent: &AetherAgentId,
+        task: &AetherTaskId,
+    ) -> Result<Option<ModelRef>, ArchonError> {
+        let query = |kind: &str| EventQuery {
+            agent: Some(agent.clone()),
+            task: Some(task.clone()),
+            types: vec![kind.into()],
+            ..EventQuery::default()
+        };
+        let client = self.link.client()?;
+        let completed = client.latest_events_raw(query("task.completed"), 1).await?;
+        let Some(completed) = completed.first() else {
+            return Ok(None);
+        };
+        let completed_at = review_event_seq(completed, agent, task, "task.completed")?;
+        // Native tools can finish the task before their invocation is written.
+        let snapshots = client
+            .events_before_raw(completed_at, query("snapshot.created"), 1)
+            .await?;
+        let Some(snapshot) = snapshots.first() else {
+            return Ok(None);
+        };
+        let snapshot_at = review_event_seq(snapshot, agent, task, "snapshot.created")?;
+        if snapshot_at >= completed_at {
+            return Err(ArchonError::Protocol(format!(
+                "execution snapshot of reviewer {agent} task {task} follows its completion"
+            )));
+        }
+        serde_json::from_value(snapshot["kind"]["model"].clone())
+            .map(Some)
+            .map_err(|error| {
+                ArchonError::Protocol(format!("reviewer {agent} execution model: {error}"))
+            })
+    }
+
     async fn send_message(
         &self,
         to: &AetherAgentId,
@@ -938,6 +1003,24 @@ impl AgentBackend for AetherBackend {
         self.link
             .client()?
             .send_message(to, content, &[], idempotency_key)
+            .await
+    }
+
+    async fn send_message_with_attachments(
+        &self,
+        to: &AetherAgentId,
+        content: &str,
+        idempotency_key: &str,
+        attachments: &[archon_core::attachment::ImageAttachment],
+    ) -> Result<(), ArchonError> {
+        let client = self.link.client()?;
+        let version = client.welcome().protocol_version;
+        if !attachments.is_empty() && version < crate::wire::IMAGES_PROTOCOL_VERSION {
+            let text = format!("{content}\n\n(picture available to the operator only)");
+            return client.send_message(to, &text, &[], idempotency_key).await;
+        }
+        client
+            .send_message(to, content, attachments, idempotency_key)
             .await
     }
 

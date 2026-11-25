@@ -49,8 +49,8 @@ read again.
    for on the committed change with `wait: false`: each a fresh leaf that
    shares your workspace and only reads. Several work alone, on different
    models where the policy allows, and never see each other's findings. While
-   they read, run the project's build, lint/format and full test suite once,
-   and follow your contract's `wait_for` rule. Run it in the foreground or
+   they read, run the project's build, lint/format and full test suite once
+   (the fast checks where your Checks section says so), and follow your contract's `wait_for` rule. Run it in the foreground or
    wait on it: never end your turn while a check runs. With no reviewer
    asked for, that run is the whole of this step. Hand a reviewer this and
    nothing more:
@@ -87,9 +87,8 @@ read again.
    fixed with no regression. No new whole-change read is owed. If the
    operator adds scope while a review runs, let it finish, keep its verdict
    for the commit it read, and have the whole change read again with the
-   addition. After three failed rounds Archon stops this stage and escalates
-   the open blocking findings, so settle a disputed finding with evidence
-   rather than another round.
+   addition. After three failed rounds, follow the contract's cap rule.
+   Settle disputed findings with evidence.
 7. **Finish or fail.** An unresolved blocking finding, a failed check, a
    review your contract asks for that did not run, or delegation you needed
    and could not get fail this stage via `fail_task`; use `BLOCKED:` for

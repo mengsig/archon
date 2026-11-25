@@ -1,0 +1,25 @@
+Cursor pagination is in `inventory-api` and `inventory-client` is updated to follow it. Both repos are committed and their tests pass: `python3 -m unittest` (8 tests) and `npm test` (6 tests).
+
+**Commits** (author `mengsig`, the repo's configured identity):
+- `inventory-api` `10b05f4`: "Paginate GET /items with limit and opaque cursor"
+- `inventory-client` `929fb95`: "Follow next_cursor in listItems"
+
+**API (`api.py`)**
+- `limit` is an integer from 1 to 100, defaulting to 20. Anything else returns 400 with `{"error": ...}`.
+- `cursor` is a base64url encoding of the last item id on the previous page. The next page is the items with a larger id. Anything that doesn't round-trip to a cursor this service issued returns 400.
+- The body is `{"items": [...], "next_cursor": ...}`. `next_cursor` is null when nothing follows the page.
+
+**Client (`client.js`)**
+- `listItems` sends no cursor on the first request and passes each `next_cursor` back unchanged until it is null or absent.
+- I added one guard the spec did not ask for: it throws if the server repeats a cursor, so a misbehaving server cannot cause an infinite loop.
+
+**Tests and docs**
+- API tests cover the default page size, a full walk of all 57 items, the last page, limit bounds, and rejected cursors.
+- Client tests cover multi-page traversal with the cursor passed back, an absent `next_cursor`, and the repeated-cursor error.
+- Both READMEs document the new parameters and response shape.
+- I also ran the client against the real API through `api_cli.py` in a scratch script (since deleted), and it returned all 57 items in order.
+
+**Choices to review**
+- I did not add a `Co-Authored-By` trailer to the commits. The repo's CLAUDE.md says not to mention Claude Code in commits, and it takes precedence over the attribution reminder.
+- The untracked `inventory-api/__pycache__/` directory is left out of the commit. The repo has no `.gitignore`.
+- I did not bump `inventory-client`'s version (1.4.0) for this behaviour change, since the spec didn't ask for it.

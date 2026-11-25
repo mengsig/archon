@@ -1,0 +1,131 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W8Z685ERATTN8EW63JHC6A",
+      "repo": "repo_01M7W8YHVS82DV3VXKJVSKZ7S8",
+      "pipeline": "direct",
+      "title": "Implement retry delay spec and boundary tests",
+      "brief": "Implement retry_budget.py according to SPEC.md. Preserve the documented API, handle every specified error and boundary case, add focused tests beyond existing basics, use only the Python standard library. Validate all arguments (built-in int excluding bool; nonnegative constraints and positive attempt/max_attempts) before any exhaustion checks. Implement efficient saturated exponential backoff, uncapped Retry-After minimum, strict budget boundary. Run focused tests and commit the work as requested; repository is local ship mode, so commit locally. Acceptance: all spec clauses covered by implementation and focused tests, existing tests pass.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W8Z6G29HY7VQQW01YH4WBE",
+        "summary": "Implemented the retry delay specification and committed it locally as 9a7dbfc0518d0bb5adcf6f1f76bdfd2d2216cc89. Added full argument validation, saturated exponential backoff, uncapped Retry-After minimum handling, strict budget boundaries, and focused boundary tests. `python -m unittest -v test_retry_budget`, `python -m unittest discover -v`, and `git diff --check` passed (8 tests). The worktree is clean; no build or linter configuration exists.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 9a7dbfc0518d0bb5adcf6f1f76bdfd2d2216cc89 on the run branch"
+      },
+      "created_at": "2026-11-20T10:45:23.008409804Z",
+      "updated_at": "2026-11-20T10:46:54.237465366Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W8Z6G29HY7VQQW01YH4WBE",
+        "item": "qi_01M7W8Z685ERATTN8EW63JHC6A",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W8Z6SB2DYJ78YPCKM7T828",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/40ce2e0df918764995208c37/.archon/data/worktrees/quality-retry-budget/qi_01M7W8Z685ERATTN8EW63JHC6A",
+        "branch": "archon/w63jhc6a-implement-retry-delay-spec-and-boundary",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the retry delay specification and committed it locally as 9a7dbfc0518d0bb5adcf6f1f76bdfd2d2216cc89. Added full argument validation, saturated exponential backoff, uncapped Retry-After minimum handling, strict budget boundaries, and focused boundary tests. `python -m unittest -v test_retry_budget`, `python -m unittest discover -v`, and `git diff --check` passed (8 tests). The worktree is clean; no build or linter configuration exists.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 9a7dbfc0518d0bb5adcf6f1f76bdfd2d2216cc89 on the run branch"
+        },
+        "cost_usd": 0.00791722,
+        "started_at": "2026-11-20T10:45:23.276838567Z",
+        "finished_at": "2026-11-20T10:46:54.237465366Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W8Z6RDKW5BX64QGMZGKS42",
+        "run": "prun_01M7W8Z6G29HY7VQQW01YH4WBE",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W8Z6TV11CPGHMMN32T8MM5",
+        "aether_task": "tsk_01M7W8Z6TVJBN6QNFCN70D50ND",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented the retry delay specification and committed it locally as 9a7dbfc0518d0bb5adcf6f1f76bdfd2d2216cc89. Added full argument validation, saturated exponential backoff, uncapped Retry-After minimum handling, strict budget boundaries, and focused boundary tests. `python -m unittest -v test_retry_budget`, `python -m unittest discover -v`, and `git diff --check` passed (8 tests). The worktree is clean; no build or linter configuration exists.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v test_retry_budget (8 tests passed)",
+            "python -m unittest discover -v (8 tests passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "9a7dbfc0518d0bb5adcf6f1f76bdfd2d2216cc89",
+          "evidence": [
+            {
+              "after": "Ran 8 tests; OK. `python -m unittest discover -v` passed all existing and new boundary tests.",
+              "before": "Ran 3 tests; FAILED (errors=3). Each test failed at retry_budget.py:6 with NotImplementedError.",
+              "caption": "Baseline on the branch before implementation: all three existing tests failed because retry_delay raised NotImplementedError.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "9a7dbfc0518d0bb5adcf6f1f76bdfd2d2216cc89",
+          "pr": {
+            "body": "Implemented the pure retry_delay API in retry_budget.py and added focused validation and boundary coverage in test_retry_budget.py. Validation rejects bool, float and negative values before exhaustion checks. Backoff handles zero base/cap and huge attempts without constructing enormous powers; Retry-After is an uncapped minimum. Full unittest discovery and diff whitespace checks passed. Assumption: the repository's unittest discovery is its full test suite; no build or linter configuration is present.",
+            "summary": "Implemented the documented retry scheduling rules. Before: the function was unimplemented and all baseline tests errored. Now: it validates inputs, computes bounded backoff efficiently, honors Retry-After and enforces the strict budget boundary.",
+            "title": "Implement retry delay budget rules"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained behavior change in the existing retry_delay API, with focused coverage of specified error and boundary cases. No persistence, concurrency, security, or dependency changes. All 8 tests pass and diff checks are clean."
+          },
+          "tree": "01d8a277d2f792789e65fe157260a6b18fcd0df7"
+        },
+        "cost_usd": 0.00791722,
+        "started_at": "2026-11-20T10:45:23.341027560Z",
+        "finished_at": "2026-11-20T10:46:53.953700456Z"
+      }
+    ],
+    "spent_usd": 0.00791722,
+    "gates": [],
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

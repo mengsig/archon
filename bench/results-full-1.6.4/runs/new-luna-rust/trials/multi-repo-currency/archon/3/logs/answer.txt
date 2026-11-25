@@ -1,0 +1,31 @@
+Enqueued initiative **ini_01M7WGY89H7M99KG7H9PACQY1R** with parallel changes for `ledger` and `reports`. The shared contract covers the CSV formats, USD defaults and legacy compatibility, currency validation and exit codes, README updates, requested test commands, and a commit in each repository.
+
+Done: Report account totals by currency. Updated reports to aggregate account totals by currency, default legacy CSV to USD, validate currency codes with status 2 errors, and document the output. Added coverage for legacy input, grouping/sorting, and invalid codes. `python3 -m unittest` passed (3 tests), CLI checks confirmed sorted currency totals and invalid input status 2, and the independent review passed with no findings. Commit: 65cbdea7fbae3a11d36287bac47baa68feaedea6; tree: 4b3dac48066754a0f35dda129fd986651525dc0d. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WH0PE2VDBFA377Z4F2AR7M)
+
+SHIPPED: commit 65cbdea7fbae3a11d36287bac47baa68feaedea6 on the run branch
+Branch `archon/wda5g5ak-report-account-totals-by-currency` in /home/mengsig/.local/share/archon-bench/f164-0shouhbb/archon-bench/work/20261120T123131Z/e2b6f951ff8744db91379698/reports holds it (3 files changed, 55 insertions(+), 14 deletions(-)). Review: `archon diff qi_01M7WGY89SD7HSQ72KWDA5G5AK`; land it in `main`: `archon merge qi_01M7WGY89SD7HSQ72KWDA5G5AK`.
+
+Done: Add currency support to ledger TSV to CSV conversion. Repair record complete: delegated a fresh whole-change review from base 126c91a691a748023567373f6826982a40ef9375 to head 694211428655f8848efc40f40f1a76975866cdd6. Reviewer agt_01M7WH4KXSSTEMHZPW248WSHV4 passed with no findings and confirmed cargo test passed. No code changes; branch remains clean.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WH4KXSSTEMHZPW248WSHV4)
+
+SHIPPED: commit 694211428655f8848efc40f40f1a76975866cdd6 on the run branch
+Branch `archon/8df43fdq-add-currency-support-to-ledger-tsv-to-cs` in /home/mengsig/.local/share/archon-bench/f164-0shouhbb/archon-bench/work/20261120T123131Z/e2b6f951ff8744db91379698/ledger holds it (4 files changed, 103 insertions(+), 19 deletions(-)). Review: `archon diff qi_01M7WGY89KVQDBEE958DF43FDQ`; land it in `main`: `archon merge qi_01M7WGY89KVQDBEE958DF43FDQ`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M7WGY89KVQDBEE958DF43FDQ ended and its cargo target directory went.
+
+Updated reports to aggregate account totals by currency, default legacy CSV to USD, validate currency codes with status 2 errors, and document the output. Added coverage for legacy input, grouping/sorting, and invalid codes. `python3 -m unittest` passed (3 tests), CLI checks confirmed sorted currency totals and invalid input status 2, and the independent review passed with no findings. Commit: 65cbdea7fbae3a11d36287bac47baa68feaedea6; tree: 4b3dac48066754a0f35dda129fd986651525dc0d. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WH0PE2VDBFA377Z4F2AR7M)
+
+SHIPPED: commit 65cbdea7fbae3a11d36287bac47baa68feaedea6 on the run branch
+
+Repair record complete: delegated a fresh whole-change review from base 126c91a691a748023567373f6826982a40ef9375 to head 694211428655f8848efc40f40f1a76975866cdd6. Reviewer agt_01M7WH4KXSSTEMHZPW248WSHV4 passed with no findings and confirmed cargo test passed. No code changes; branch remains clean.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WH4KXSSTEMHZPW248WSHV4)
+
+SHIPPED: commit 694211428655f8848efc40f40f1a76975866cdd6 on the run branch

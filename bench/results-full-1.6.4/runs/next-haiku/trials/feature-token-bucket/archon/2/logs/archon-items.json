@@ -1,0 +1,241 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W6H1TTD4C4NQZGBNX8F8B2",
+      "repo": "repo_01M7W6GNJE5NBF62NE6XF8Y3BX",
+      "pipeline": "direct",
+      "title": "Implement token-bucket rate limiter per SPEC.md in ratelimit.py",
+      "brief": "Implement the rate limiter described in SPEC.md in ratelimit.py, which currently only has stubs. Follow the spec exactly, including its error cases and edge cases; test_ratelimit.py only covers the basics, so add tests for the spec's error and edge cases. Use the standard library only, no dependencies. Commit the work. Operator words: \"Implement the rate limiter described in SPEC.md in ratelimit.py (the module currently only has stubs). Follow the spec exactly, including its error cases and edge cases; the tests in test_ratelimit.py only cover the basics. Keep it dependency-free (standard library only) and commit your work.\"",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "operator-request"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7W6H1TTD4C4NQZGBNX8F8B2",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T10:02:42.413811508Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-20T10:02:42.413811508Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-20T10:02:42.413811508Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Single-module change with a written spec; medium effort covers the edge cases without a costly model."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W6H1WMTTN5SGBWBAD612K9",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 22 tests to test_ratelimit.py covering the spec's error and edge cases. Committed as 8802b7a on archon/bnx8f8b2-implement-token-bucket-rate-limiter-per (tree 6f7ac306b4e76d6e66a50e7fd4c3a7da4a665588), not pushed. Before: the 3 original tests errored on the stubs. After: `python3 -W error -m unittest -v test_ratelimit` runs 25 tests, all OK. No linter is configured and pyflakes is not installed, so imports were checked by hand. Review: one reviewer (agt_01M7W6KGDS06CPRGHVCZ9SM8MT, claude-haiku-5-5, medium) passed the head with no blocking findings and confirmed risk medium. Non-blocking follow-ups: a misleading test name (test_request_size_must_be_within_one_and_capacity); non-numeric rates raise TypeError rather than ValueError; bool passes the max_keys int check; no test for the default max_keys=1024; clock-backwards behaviour is tested only on TokenBucket. Assumptions: non-finite capacity or refill is rejected as an extension of the spec's <= 0 rule; max_keys must be an int. Nothing left running; no processes were started. REVIEW: pass.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W6KGDS06CPRGHVCZ9SM8MT)\n\nSHIPPED: commit 8802b7a9b6032fe59dadeb960cb86244aae170a4 on the run branch"
+      },
+      "created_at": "2026-11-20T10:02:42.394781348Z",
+      "updated_at": "2026-11-20T10:04:41.578488487Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W6H1WMTTN5SGBWBAD612K9",
+        "item": "qi_01M7W6H1TTD4C4NQZGBNX8F8B2",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W6H26XXQQKEYKJSQSNR5NS",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-fsnvj584/archon-bench/work/20261120T085810Z/fdf136732fd429c49b3aa07e/.archon/data/worktrees/feature-token-bucket/qi_01M7W6H1TTD4C4NQZGBNX8F8B2",
+        "branch": "archon/bnx8f8b2-implement-token-bucket-rate-limiter-per",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 22 tests to test_ratelimit.py covering the spec's error and edge cases. Committed as 8802b7a on archon/bnx8f8b2-implement-token-bucket-rate-limiter-per (tree 6f7ac306b4e76d6e66a50e7fd4c3a7da4a665588), not pushed. Before: the 3 original tests errored on the stubs. After: `python3 -W error -m unittest -v test_ratelimit` runs 25 tests, all OK. No linter is configured and pyflakes is not installed, so imports were checked by hand. Review: one reviewer (agt_01M7W6KGDS06CPRGHVCZ9SM8MT, claude-haiku-5-5, medium) passed the head with no blocking findings and confirmed risk medium. Non-blocking follow-ups: a misleading test name (test_request_size_must_be_within_one_and_capacity); non-numeric rates raise TypeError rather than ValueError; bool passes the max_keys int check; no test for the default max_keys=1024; clock-backwards behaviour is tested only on TokenBucket. Assumptions: non-finite capacity or refill is rejected as an extension of the spec's <= 0 rule; max_keys must be an int. Nothing left running; no processes were started. REVIEW: pass.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W6KGDS06CPRGHVCZ9SM8MT)\n\nSHIPPED: commit 8802b7a9b6032fe59dadeb960cb86244aae170a4 on the run branch"
+        },
+        "cost_usd": 0.03448855,
+        "started_at": "2026-11-20T10:02:42.671078535Z",
+        "finished_at": "2026-11-20T10:04:41.578488487Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W6H262Z913QSD6F00XKEWW",
+        "run": "prun_01M7W6H1WMTTN5SGBWBAD612K9",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7W6H28DMSMY3MPM29CYBWRZ",
+        "aether_task": "tsk_01M7W6H28DTCZ0AKY1AXDPT5A5",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 22 tests to test_ratelimit.py covering the spec's error and edge cases. Committed as 8802b7a on archon/bnx8f8b2-implement-token-bucket-rate-limiter-per (tree 6f7ac306b4e76d6e66a50e7fd4c3a7da4a665588), not pushed. Before: the 3 original tests errored on the stubs. After: `python3 -W error -m unittest -v test_ratelimit` runs 25 tests, all OK. No linter is configured and pyflakes is not installed, so imports were checked by hand. Review: one reviewer (agt_01M7W6KGDS06CPRGHVCZ9SM8MT, claude-haiku-5-5, medium) passed the head with no blocking findings and confirmed risk medium. Non-blocking follow-ups: a misleading test name (test_request_size_must_be_within_one_and_capacity); non-numeric rates raise TypeError rather than ValueError; bool passes the max_keys int check; no test for the default max_keys=1024; clock-backwards behaviour is tested only on TokenBucket. Assumptions: non-finite capacity or refill is rejected as an extension of the spec's <= 0 rule; max_keys must be an int. Nothing left running; no processes were started. REVIEW: pass.",
+        "structured": {
+          "checks": [
+            "python3 -W error -m unittest -v test_ratelimit (25 tests, OK)",
+            "python3 -m py_compile ratelimit.py test_ratelimit.py"
+          ],
+          "commit": "8802b7a9b6032fe59dadeb960cb86244aae170a4",
+          "evidence": [
+            {
+              "after": "Ran 25 tests\n\nOK",
+              "before": "Ran 3 tests\n\nFAILED (errors=3)",
+              "caption": "Before: the original test file run against the stubs",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "8802b7a9b6032fe59dadeb960cb86244aae170a4",
+          "pr": {
+            "body": "Approach: ratelimit.py implements TokenBucket (refill on each call from an injected monotonic clock; a backwards clock adds nothing until it passes the latest time seen) and KeyedLimiter (OrderedDict of buckets, LRU via move_to_end, eviction before insert, request validation before any key is created or evicted). Key files: ratelimit.py, test_ratelimit.py. Checks: python3 -W error -m unittest -v test_ratelimit, 25 tests OK. Assumptions and extensions: capacity and refill_per_sec must be finite and > 0; max_keys must be an int >= 1. Known limits: floating-point token arithmetic; not thread-safe. Review follow-ups (non-blocking): misleading test name at test_request_size_must_be_within_one_and_capacity; TypeError for non-numeric rates; bool accepted as max_keys; no default max_keys test; clock-backwards not tested through KeyedLimiter.",
+            "summary": "Made rate limiting possible: TokenBucket and KeyedLimiter, stdlib only. Before: stubs raising NotImplementedError. Now: buckets start full, refill continuously, reject invalid params, and KeyedLimiter evicts LRU keys at max_keys.",
+            "title": "Implement token-bucket rate limiter per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "8802b7a9b6032fe59dadeb960cb86244aae170a4",
+            "reviewer_agents": [
+              "agt_01M7W6KGDS06CPRGHVCZ9SM8MT"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W6KGDS06CPRGHVCZ9SM8MT",
+                "base": "063f3fcff34701e3625e2055fe440a4e3384fa9f",
+                "findings": 5,
+                "head": "8802b7a9b6032fe59dadeb960cb86244aae170a4",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W6KGDS06CPRGHVCZ9SM8MT"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "New public module with no callers, no concurrency or security surface. Defines API with subtle refill and LRU semantics, so medium. Only ratelimit.py and test_ratelimit.py change. Reviewer confirmed medium with no blocking findings."
+          },
+          "tree": "6f7ac306b4e76d6e66a50e7fd4c3a7da4a665588"
+        },
+        "cost_usd": 0.03448855,
+        "started_at": "2026-11-20T10:02:42.754170562Z",
+        "finished_at": "2026-11-20T10:04:39.028604989Z"
+      }
+    ],
+    "spent_usd": 0.03448855,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W6H262Z913QSD6F00XKEWW": {
+        "direct_usd": 0.02492356,
+        "delegated_usd": 0.00956499,
+        "agents": [
+          {
+            "agent": "agt_01M7W6KGDS06CPRGHVCZ9SM8MT",
+            "parent": "agt_01M7W6H28DMSMY3MPM29CYBWRZ",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00956499
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T10:02:42.413811508Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-20T10:02:42.413811508Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-20T10:02:42.413811508Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

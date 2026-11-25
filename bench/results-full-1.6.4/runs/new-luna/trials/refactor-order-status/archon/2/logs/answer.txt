@@ -1,0 +1,16 @@
+Queued **Replace string order statuses with OrderStatus** as `qi_01M7W85DPATNTF4ZA83VAX99EH` in the `direct` pipeline with standard review. The brief includes the API, behavior preservation, `cargo test`, and commit requirements.
+
+Done: Replace string order statuses with OrderStatus. Replaced string order statuses with public OrderStatus and ParseStatusError, preserving transition errors, CSV parsing, report ordering, and output. Added status API/transition coverage and updated integration expectations. `cargo fmt --check`, `cargo test` (5 tests), `git diff --check`, and status-literal scan passed. Committed as 8af87bb; nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8A3N3V6DRK6XVVDJ9NFFB)
+
+SHIPPED: commit 8af87bb170eff9bff1629aa748bcf96803ce93b2 on the run branch
+Branch `archon/3vax99eh-replace-string-order-statuses-with-order` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/c386e89f87cf55f167a106ec/refactor-order-status holds it (7 files changed, 170 insertions(+), 34 deletions(-)). Review: `archon diff qi_01M7W85DPATNTF4ZA83VAX99EH`; land it in `main`: `archon merge qi_01M7W85DPATNTF4ZA83VAX99EH`.
+
+Freed 0.0 GiB of build output: item qi_01M7W85DPATNTF4ZA83VAX99EH ended and its cargo target directory went.
+
+Replaced string order statuses with public OrderStatus and ParseStatusError, preserving transition errors, CSV parsing, report ordering, and output. Added status API/transition coverage and updated integration expectations. `cargo fmt --check`, `cargo test` (5 tests), `git diff --check`, and status-literal scan passed. Committed as 8af87bb; nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8A3N3V6DRK6XVVDJ9NFFB)
+
+SHIPPED: commit 8af87bb170eff9bff1629aa748bcf96803ce93b2 on the run branch

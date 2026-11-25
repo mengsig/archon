@@ -1,0 +1,14 @@
+Queued as `qi_01M7WCVH2JNJBX8KDHDPVJQ6M2` in the `direct` pipeline. The item covers implementing the spec, adding focused tests, running them, and committing the work locally.
+
+Done: Implement safe_extract.py and focused tests. Implemented safe_extract.extract with whole-batch validation, POSIX name and collision checks, root and symlink-aware filesystem preflight, exclusive target creation, and exact byte writes. Added focused coverage for invalid batches, path boundaries, collisions, symlinks, existing targets, byte preservation, and visible I/O errors. Final `python -m unittest -v` passed all 10 tests; `git diff --check` passed. Baseline had both original tests failing with NotImplementedError. Committed as c1ca27ac56a5a42dde2381b3d2fb6cb4a6987de1; worktree clean. No known gaps.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCZ581NV6ZHP6F83Z552QB)
+
+SHIPPED: commit c1ca27ac56a5a42dde2381b3d2fb6cb4a6987de1 on the run branch
+Branch `archon/dpvjq6m2-implement-safe-extract-py-and-focused-te` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/9bbf18aa2585aedae16b3852/quality-safe-extract holds it (2 files changed, 161 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M7WCVH2JNJBX8KDHDPVJQ6M2`; land it in `main`: `archon merge qi_01M7WCVH2JNJBX8KDHDPVJQ6M2`.
+
+Implemented safe_extract.extract with whole-batch validation, POSIX name and collision checks, root and symlink-aware filesystem preflight, exclusive target creation, and exact byte writes. Added focused coverage for invalid batches, path boundaries, collisions, symlinks, existing targets, byte preservation, and visible I/O errors. Final `python -m unittest -v` passed all 10 tests; `git diff --check` passed. Baseline had both original tests failing with NotImplementedError. Committed as c1ca27ac56a5a42dde2381b3d2fb6cb4a6987de1; worktree clean. No known gaps.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WCZ581NV6ZHP6F83Z552QB)
+
+SHIPPED: commit c1ca27ac56a5a42dde2381b3d2fb6cb4a6987de1 on the run branch

@@ -1,0 +1,29 @@
+The root cause is that `updatePrice` invalidates only the product cache entry, while category listings cache copies of the price under a separate key with a 10-minute TTL. Nothing clears those listing entries, so they serve the old price until they expire. I didn't change any code.
+
+**Responsible code path**
+
+- `src/pricing.js:6-13`, `updatePrice`: writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That is the only invalidation. It deletes `product:<sku>` and nothing else.
+- `src/catalog.js:22-33`, `Catalog.listing`: caches the listing rows under `listing:<category>:<page>` with `LISTING_TTL_SECONDS`. Each row is a copy of `{ sku, name, priceCents }`, so the price is baked into the cached listing.
+- `src/config.js:7`: `LISTING_TTL_SECONDS: 600`. The comment says listings are cached separately because they are expensive to build. That is the source of the roughly ten-minute window.
+- `src/catalog.js:12-20`, `Catalog.product`: reads through `product:<sku>`, which `updatePrice` does clear. That is why product pages update immediately.
+
+**Why it is exactly ~10 minutes**
+
+The listing entry is written once and only leaves the cache when `expiresAt <= now()` (`src/cache.js:13`). Nothing writes to it on a price change, so a merchant's change appears on category pages only when the 600 s TTL runs out.
+
+**Reproduction**
+
+I ran this against the repo with an injected clock:
+- Listing and product both show 5000.
+- After `updatePrice(c, 'A1', 4500)`, the product shows 4500 and the listing still shows 5000.
+- At t=599 s the listing still shows 5000. At t=600 s it shows 4500.
+
+The existing suite passes (3/3), but the only price-update test checks `catalog.product`, so the listing gap isn't covered.
+
+**Fix options**
+
+1. **Invalidate the affected listings on write (smallest change).** `updatePrice` already gets `updated`, which includes `category`. It could clear every `listing:<category>:*` entry. This needs a prefix delete on `TtlCache`, or a per-category index of listing keys. It is a linear scan of the cache, which is fine for a merchant-facing write. Recommended.
+2. **Stop caching prices inside listings.** Cache only the SKU ordering per page and look up each price from the product cache or store when the page is built. Prices then can't go stale in listings, at the cost of one lookup per row. This is the most robust option if names or other fields will also change.
+3. **Lower `LISTING_TTL_SECONDS`.** This only shrinks the window and adds rebuild cost. It is not a fix.
+
+Whichever option is chosen, add a test that calls `updatePrice` and then reads `catalog.listing(...)`. I'd also update the `config.js` comment so the next reader knows listings hold copies of product data.

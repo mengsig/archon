@@ -143,14 +143,18 @@ pub(crate) fn preserve(
     }
     std::fs::create_dir_all(directory)
         .map_err(|e| ArchonError::io("create intent artifact directory", e))?;
+    let target = directory.join(preserved_filename(source, &hash));
+    save_bytes(&target, &bytes)?;
+    Ok(target)
+}
+
+pub(crate) fn preserved_filename(source: &Path, sha256: &str) -> String {
     let extension = source
         .extension()
         .and_then(|s| s.to_str())
         .filter(|s| s.len() <= 8 && s.bytes().all(|b| b.is_ascii_alphanumeric()))
         .unwrap_or("bin");
-    let target = directory.join(format!("{hash}.{extension}"));
-    save_bytes(&target, &bytes)?;
-    Ok(target)
+    format!("{sha256}.{extension}")
 }
 
 pub(crate) fn save_bytes(target: &Path, bytes: &[u8]) -> Result<(), ArchonError> {

@@ -1,0 +1,12 @@
+Implemented ledger.py per SPEC.md and committed as 4f360f9 on main (only ledger.py and test_ledger.py in the commit). Ledger uses a per-instance threading.Lock around every transfer and snapshot, so transfers are atomic and linearizable and opposite transfers cannot deadlock. Validation: balances and amounts must be built-in ints (bools rejected) in range; names must be nonempty strings; non-dict input raises ValueError. Amounts are validated before accounts; unknown or non-string account names raise KeyError. Insufficient funds and destination overflow return False with no change. Same-account transfers return whether the balance covers the amount and never change it. The constructor and snapshot copy state. Tests: 22 unittest cases, all passing (python3 -m unittest test_ledger), covering validation, boundaries, copy isolation, same-account cases, and two deterministic thread tests (no deadlock with opposite transfers, snapshot totals never torn). Left an untracked __pycache__/ directory uncommitted. Commit has no Claude attribution line, per the project CLAUDE.md, which overrides the system reminder.
+
+I implemented `ledger.py` to the spec and committed it as `4f360f9` on `main`. The 22 unit tests pass with `python3 -m unittest test_ledger`.
+
+- **Concurrency:** each ledger has one `threading.Lock` that every transfer and snapshot takes. That makes operations linearizable, and since there is only one lock, opposite transfers cannot deadlock.
+- **Construction:** balances and amounts must be built-in ints (booleans rejected) in `[0, MAX_BALANCE]` and `[1, MAX_BALANCE]` respectively. Account names must be nonempty strings. The input dict is copied, and snapshots return copies.
+- **Transfers:** the amount is validated before any account lookup. Unknown or non-string account names raise `KeyError`. Insufficient funds and destination overflow return `False` with no change. Same-account transfers return whether the balance covers the amount and never modify it.
+- **Tests:** cover validation, boundary values, copy isolation, same-account cases, and two thread tests (opposite transfers, and snapshots never seeing a half-finished transfer). The thread tests use fixed round counts, with no randomness or timing.
+
+Two choices to confirm:
+- I left out the Claude co-author line in the commit message, because the project CLAUDE.md says not to add attribution and I treated that as overriding the system reminder.
+- An untracked `__pycache__/` directory is left in the working tree and not committed.

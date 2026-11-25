@@ -1,4 +1,4 @@
-import { entryKey, echoedLine } from '../../core/conversation.js';
+import { entryKey, echoedLine, commandEchoId } from '../../core/conversation.js';
 
 // Chat lines sent from here, until the orchestrator reads them and the
 // conversation shows them. The outcome of each send (offline, refused) stays
@@ -8,7 +8,12 @@ export function addPending(store, text) {
   const { conversation } = store.get();
   if (!Array.isArray(conversation)) throw new TypeError('addPending needs the conversation in the store');
   const after = conversation.at(-1)?.seq ?? 0;
-  const entry = { localId: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text, after, status: 'sending', error: null };
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  const localId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  const entry = { localId, text, after, status: 'sending', error: null };
   store.set({ outbox: [...store.get().outbox, entry] });
   return entry.localId;
 }
@@ -30,8 +35,9 @@ export function removePending(store, localId) {
   store.set({ outbox: store.get().outbox.filter((e) => e.localId !== localId) });
 }
 
-// Fresh operator entries, and archond's posts of commands it ran, replace the
-// oldest pending send with the same text that began before them.
+// Host commands are consumed by archond and echoed as posts. Only ordinary chat
+// is relayed to the orchestrator and matched by transcript sequence and text.
+const hostCommand = /^\/(answer|approve|reject|merge|archon|upgrade|update|watch|a)(?:\s|$)/i;
 export function matchEchoes(store, fresh) {
   if (!Array.isArray(fresh)) throw new TypeError('matchEchoes needs the fresh conversation entries');
   let { outbox, chatNotes } = store.get();
@@ -40,7 +46,9 @@ export function matchEchoes(store, fresh) {
     const line = echoedLine(item);
     if (line === null) continue;
     const text = line.trim();
-    const at = outbox.findIndex((e) => item.seq > e.after && e.text.trim() === text);
+    const id = commandEchoId(item);
+    const at = id ? outbox.findIndex((e) => e.localId === id)
+      : outbox.findIndex((e) => item.kind === 'operator' && !hostCommand.test(text) && item.seq > e.after && e.text.trim() === text);
     if (at < 0) continue;
     const entry = outbox[at];
     outbox = outbox.filter((_, i) => i !== at);
@@ -50,4 +58,26 @@ export function matchEchoes(store, fresh) {
     changed = true;
   }
   if (changed) store.set({ outbox, chatNotes });
+}
+
+export function commandOutcome(feed, pending) {
+  if (!Array.isArray(feed) || typeof pending?.localId !== 'string' || !pending.localId) return null;
+  const lines = [];
+  for (const item of feed) {
+    const entry = item.entry;
+    if (entry?.entry !== 'system' || entry.command_id !== pending.localId || typeof entry.text !== 'string') continue;
+    const line = entry.text.trim();
+    let result = entry.command_result;
+    if (result === undefined) {
+      if (line.startsWith('Operator command: ')) result = line.slice('Operator command: '.length).trim();
+      else if (line.startsWith('Operator command refused: ')) result = line;
+    }
+    if (typeof result !== 'string' || !result.trim()) {
+      if (line) lines.push(line);
+      continue;
+    }
+    const question = /\bQ(\d+)\b/.exec(/^Awaiting your confirmation/.test(result) ? result : '')?.[0] ?? null;
+    return { lines: [...lines, result].filter(Boolean), question };
+  }
+  return null;
 }

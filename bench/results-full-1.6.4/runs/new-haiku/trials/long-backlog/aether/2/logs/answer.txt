@@ -1,0 +1,17 @@
+All four tickets (TT-101 to TT-104) are implemented, each in its own commit on `main`. The suite passes with `python3 -m unittest discover -s tests -t .`: 41 tests, up from 4.
+
+Commits:
+- `b2a8fda` TT-101: `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible dates and unsupported forms, instead of clamping. Tests in `tests/test_dates.py`.
+- `ebb603c` TT-102: `to_csv` produces RFC 4180 output with CRLF line endings and quoting for `,` `"` CR LF. Tests in `tests/test_export.py`, including a round trip through the stdlib `csv` reader.
+- `3611897` TT-103: `search` supports quoted phrases, `tag:NAME`, `status:open|done`, and ANDed terms. Errors raise `QueryError`. Tests in `tests/test_search.py`.
+- `6f49bee` TT-104: `TaskStore.undo()` walks back LIFO over add, complete and delete. It raises `NothingToUndo` when empty. Tests in `tests/test_undo.py`.
+
+Choices I made where the backlog was silent:
+- **Commit trailer:** I left out the `Co-Authored-By: Claude` trailer the system reminder asked for. Your CLAUDE.md says not to put Claude attribution in commits, and it takes precedence.
+- **Untracked files:** `__pycache__/` directories are untracked and not committed. There is no `.gitignore` in the repo; I didn't add one.
+- **Search case rules:** field names and `status:` values are case-insensitive, so `TAG:x` and `status:DONE` both work. `tag:` with an empty value raises `QueryError`. `""` matches every task.
+- **Quotes inside a term:** a quoted section can sit inside a term, as in `tag:"my tag"`. A colon inside quotes is plain text, so `"note: call"` is a phrase.
+- **Dates:** year `0000` is rejected as an impossible date. `InvalidDate` messages include the original input text.
+- **Undo:** `undo()` returns `None`. Completing an already-done task is recorded, so undoing it restores the previous status.
+
+I also added a few assertions for invariants (the `today` type, the CSV field count, and the store's undo state), in line with the codebase's CLAUDE.md.

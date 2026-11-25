@@ -213,7 +213,8 @@ fn distillation_input(
             Err(error) => return Err(error),
         };
         compact.push(serde_json::json!({"item":outcome.item,"brief":brief,
-            "pipeline":outcome.pipeline,"result":outcome.result,"corrections":outcome.corrections,
+            "pipeline":outcome.pipeline,"result":outcome.result,"failure":outcome.failure,
+            "corrections":outcome.corrections,
             "cost":outcome.cost_usd,"wall":outcome.wall_secs}));
     }
     let lessons = store.lessons(&archon_core::lesson::LessonQuery {
@@ -267,7 +268,8 @@ fn cheap_choice<'a>(
 /// rules of any user pipeline, archond's own delivery included (§8.7).
 const DISTILL_ASK: &str = "Return structured JSON with `lessons`: [{kind: routing|practice|\
     pitfall|pipeline, text: one plain sentence of at most 300 characters using only letters, digits, spaces and , . \' - ( ) _ with no backticks, URLs or paths, replaces: an existing lesson id, \
-    optional}]. Merge or rewrite repeated advice; operator and pinned lessons are immutable. Only \
+    optional, source_item: the item id of a failed outcome this lesson addresses, optional}]. \
+    Merge or rewrite repeated advice; operator and pinned lessons are immutable. Only \
     when a kind of brief recurs at least three times, add `pipeline_proposal`: {name, files: \
     {\"pipeline.toml\": ..., \"<prompt>.md\": ...}} in Archon's pipeline format. One that changes \
     the repository has workspace = \"worktree\" and no ship stage: archond ships, after \
@@ -309,6 +311,7 @@ fn errand(
         autonomy: Default::default(),
         origin: None,
         stage_timeouts: Default::default(),
+        supersedes: None,
         fresh_retries: 0,
         routed_provider: None,
         provider_switch: None,
@@ -424,6 +427,8 @@ async fn diff_stat(
 struct Advice {
     #[serde(default)]
     replaces: Option<archon_core::id::LessonId>,
+    #[serde(default)]
+    source_item: Option<archon_core::id::QueueItemId>,
     kind: LessonKind,
     text: String,
 }
@@ -494,7 +499,7 @@ fn proposed_lessons(
     let mut lessons = Vec::new();
     for advice in advice {
         let text = archon_core::lesson::sanitized_text(&advice.text)?;
-        let lesson = Lesson::new(
+        let mut lesson = Lesson::new(
             LessonScope {
                 repo: item.repo.clone(),
                 pipeline: None,
@@ -505,6 +510,7 @@ fn proposed_lessons(
             LessonState::Proposed,
             archon_core::now(),
         )?;
+        lesson.item = advice.source_item;
         lessons.push((lesson, advice.replaces));
     }
     assert!(lessons.len() <= 10);

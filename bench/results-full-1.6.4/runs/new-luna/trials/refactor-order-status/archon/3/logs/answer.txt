@@ -1,0 +1,28 @@
+Queued as **qi_01M7WBK8820PJHNJDT2626BSK0** in the `direct` pipeline. Its acceptance criteria include the enum refactor, preserved behavior, passing `cargo test`, and a local commit without pushing.
+
+Done: Refactor order status strings to OrderStatus enum. Refactored order status to the public OrderStatus enum, added parsing/display/error and transition support, and updated lifecycle and report code while preserving status text, parsing errors, and lexical report order. Commit aafe5b029e182d6460e4e538bd990d4d13511252. `git diff --check` passed; `cargo fmt -- --check`, formatting, and `cargo test` could not run because cargo is not installed or available on PATH. Independent review passed with no findings. No runtime evidence applies to this pure refactor; the Rust test suite remains unverified in this environment.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBQ0BH3X9VYS7C5B0W66HJ)
+
+SHIPPED: commit aafe5b029e182d6460e4e538bd990d4d13511252 on the run branch
+Branch `archon/2626bsk0-refactor-order-status-strings-to-orderst` in /home/mengsig/.local/share/archon-bench/f164-kct3x9mo/archon-bench/work/20261120T084524Z/e5580d592ca2398f815c549d/refactor-order-status holds it (6 files changed, 139 insertions(+), 22 deletions(-)). Review: `archon diff qi_01M7WBK8820PJHNJDT2626BSK0`; land it in `main`: `archon merge qi_01M7WBK8820PJHNJDT2626BSK0`.
+
+Done: Verify order status refactor with cargo test. Record repair only; no code changed. Whole-change review by agt_01M7WBXPD0V5C3G3P78MVJZYEZ passed with no findings. `git diff --check 13224dc 7a5377363269572569953ee37184cae488bca3c0` passed. `cargo fmt -- --check` and `cargo test` remain unverified because cargo is unavailable in the environment; no claim of test success. The branch is clean at 7a5377363269572569953ee37184cae488bca3c0.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBXPD0V5C3G3P78MVJZYEZ)
+
+SHIPPED: commit 7a5377363269572569953ee37184cae488bca3c0 on the run branch
+
+Freed 0.0 GiB of build output: item qi_01M7WBS677JRZT6G0B651A7BA6 ended and its cargo target directory went.
+
+Record repair only; no code changed. Whole-change review by agt_01M7WBXPD0V5C3G3P78MVJZYEZ passed with no findings. `git diff --check 13224dc 7a5377363269572569953ee37184cae488bca3c0` passed. `cargo fmt -- --check` and `cargo test` remain unverified because cargo is unavailable in the environment; no claim of test success. The branch is clean at 7a5377363269572569953ee37184cae488bca3c0.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBXPD0V5C3G3P78MVJZYEZ)
+
+SHIPPED: commit 7a5377363269572569953ee37184cae488bca3c0 on the run branch
+
+Refactored order status to the public OrderStatus enum, added parsing/display/error and transition support, and updated lifecycle and report code while preserving status text, parsing errors, and lexical report order. Commit aafe5b029e182d6460e4e538bd990d4d13511252. `git diff --check` passed; `cargo fmt -- --check`, formatting, and `cargo test` could not run because cargo is not installed or available on PATH. Independent review passed with no findings. No runtime evidence applies to this pure refactor; the Rust test suite remains unverified in this environment.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WBQ0BH3X9VYS7C5B0W66HJ)
+
+SHIPPED: commit aafe5b029e182d6460e4e538bd990d4d13511252 on the run branch

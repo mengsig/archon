@@ -233,8 +233,9 @@ Set it to `false` to retry such items by hand with `retry_item`.
 `independent_acceptance` (default `false`) controls approved-intent
 acceptance when no permitted, connected model apart from every builder can
 judge it. Approved reference images need a vision model. Off, the strongest
-permitted model judges it, and readiness says `acceptance: not independent`.
-On, the run is refused instead.
+permitted model judges it, and readiness says `acceptance: not independent`,
+including a live design item's pinned judge when it shares a builder's model
+or vendor. Turning this setting on refuses these runs.
 
 ```toml
 [review]                       # reviewers with no explicit <stage>.review plan
@@ -347,9 +348,23 @@ branch_prefix = "archon/"      # run branches are named <prefix><id>-<slug>
 [lavish]
 binary = "lavish-axi"          # the Lavish command
 
+[design]                       # live design sessions (design-sessions.md)
+enabled = false                # true allows `proposal = live`; false refuses it
+browser = ""                   # path to Chrome or Chromium; empty finds one
+browser_sandbox = "required"   # "required", or "off" (adds --no-sandbox; the UI shows a badge)
+max_sessions = 2               # live headless browsers on this host
+
 [github]
 binary = "gh"                  # the command `github_reply` posts with
 ```
+
+`[design]` turns on [live design
+sessions](design-sessions.md). `enabled` is `false` until you set it. With it
+off, `proposal = live` is refused with a clear message and a running live
+stage fails with "design sessions turned off". Serve all preview assets through the item's registered
+dev-server origin. Verifying socket ownership requires a Linux daemon host
+with access to the dev server’s `/proc` records. Remove nonempty `[design] allow_hosts` lists from
+`.archon/repo.toml`.
 
 In `<repo>/.archon/config.toml`, `[repo]` takes `ship = "pr"`, `base_branch = "main"` and
 `default_pipeline = "direct"`, and `[pipelines]` takes `disabled = ["adaptive"]`,
@@ -559,6 +574,7 @@ go past:
 [limits]
 max_delegation_depth = 2         # 1..=4
 max_stage_timeout_minutes = 1440 # 1..=43200
+learned_stage_timeouts = false
 refresh_stage_timeout_minutes = 30 # 1..=43200
 max_agent_messages = 20          # 1..=200; questions are exempt
 clarification_timeout_minutes = 30 # 1..=43200
@@ -574,6 +590,12 @@ initiative_contract_bytes = 2048 # 1..=16384
 - `max_stage_timeout_minutes`: the longest per-stage timeout an item may
   ask for with `stage_timeouts` at `enqueue`, `update_item`, `steer_item` or `retry_item` (`--stage-timeout` on `archon queue add|steer|retry`). A pipeline's
   own `timeout_minutes` is not capped by it.
+- `learned_stage_timeouts` caps a new attempt's configured timeout at three
+  times its learned p90 when enabled. The cap is rounded up to
+  minutes with a 30-minute floor. `archon settings` shows whether it is enabled
+  and where that value comes from. `run_plan` reports reductions as
+  `settings[].learned_timeouts`, by fan-out slot, with the p90 used. The configured
+  value still sets the timeout when fewer than ten samples exist.
 - `refresh_stage_timeout_minutes`: each stage's timeout in a refresh
   (`refresh_item`, `archon queue refresh`) whose request names none, instead
   of the owner's or the pipeline's: a refresh only merges a fresh base, so it
@@ -589,6 +611,12 @@ initiative_contract_bytes = 2048 # 1..=16384
 - `initiative_members` and `initiative_contract_bytes`: an initiative's
   size. The contract is in every member's stage contract, and is sent
   whole to running members whenever it changes.
+
+The daemon learns p90 from the most recent completed attempts still in the
+store, up to 100 per pipeline, stage and effort. It snapshots p90 at reservation
+and sends one `stage_overrun` news event if the running attempt exceeds twice
+that duration. This news is available with either timeout setting.
+Hold time before a delayed retry is excluded when its start time is recorded.
 
 Others stay fixed. `MAX_DIRECTIVES` caps the operator directives in force
 at once at 20, each at most 500 characters (`MAX_DIRECTIVE_CHARS`); expired
@@ -616,6 +644,7 @@ distill_every = 20
 distill_daily_budget_usd = 3.0
 explore_rate = 0.1
 holdout_rate = 0.0
+retire_min_uses = 20
 ```
 
 Learning keeps an outcome for every finished run: its result, its stage
@@ -648,10 +677,17 @@ Proposed lessons and pipelines wait for operator acceptance; inspect pipelines w
 contract would carry, chosen by a stable hash of the lesson and item IDs, so every run
 of an item gets the same answer. Each run records which lessons it was given and which
 it was denied; `archon lessons stats` reports the win rates of both once each has 20
-scored runs. Holding a lesson out never counts against it, the Wilson bound alone
-still activates and retracts lessons, and pinned lessons are never held out. Lessons
-whose text nearly repeats another in the same scope form a cluster: a contract carries
-at most one lesson of each, and clustering never accepts or promotes a lesson.
+scored runs. Held-out runs contribute to the baseline and pinned lessons are never
+held out. After `retire_min_uses` scored uses (a positive integer, default 20), learned
+advice at or below its baseline retires. The baseline is the same lesson's held-out
+win rate once that arm also has `retire_min_uses` scored runs, and 50% until then.
+Pinned and operator-accepted lessons are exempt. `archon lessons stats` shows the
+running daemon's sample floor.
+
+Recording near-identical advice of the same kind and scope reuses the existing
+lesson for learned advice. For an operator add, Archon names the existing lesson
+and lets the operator decide whether to edit it. Existing clusters still contribute
+at most one lesson per contract.
 
 `enabled = false` stops new learning and cancels queued distillation errands on the
 next maintenance pass. Recorded evidence stays readable, including offline lessons

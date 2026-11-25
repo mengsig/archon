@@ -1,0 +1,51 @@
+Multi-currency change queued as one initiative (ini_01M7WFSBQ9FR2RMZZAJW8BH0BD) with two members: ledger (qi_01M7WFSBQE0DSJ8ST2KJMT17PQ) and reports (qi_01M7WFSBQZTAX852N6F4EWS6QD). Both use the direct pipeline, standard review, balanced tier at medium effort, to limit claude-code quota use (seven_day at 77% with 33% elapsed, empty around 2026-11-21 05:05 UTC). Shared contract covers the CSV header, currency validation, exit codes and the USD default. Both repos are ship: local, so nothing is pushed.
+
+The multi-currency change is queued as one initiative with two members, one per repository. Nothing has run yet, and the operator will get the outcome when each member finishes.
+
+- **Initiative:** `ini_01M7WFSBQ9FR2RMZZAJW8BH0BD`. Its shared contract fixes the CSV headers, the USD default, the currency format (three uppercase ASCII letters), the exit codes (2 for a bad currency, 1 for other ledger errors), and the rule that old CSV without a currency column counts as USD.
+- **ledger** (`qi_01M7WFSBQE0DSJ8ST2KJMT17PQ`): accepts an optional fourth currency column, emits `date,account,amount_cents,currency`, and reports malformed currencies with the line number.
+- **reports** (`qi_01M7WFSBQZTAX852N6F4EWS6QD`): totals by `account,currency,total_cents`, sorted by account then currency, and accepts old CSV as USD.
+- **Quota:** both members use the `direct` pipeline with standard review, balanced tier and medium effort, to limit claude-code use while its seven-day window is at 77% and running short before reset.
+- **Repos:** both are `ship: local`, so commits stay local and nothing is pushed.
+
+The brief asks each member to keep its existing tests passing (`cargo test` for ledger, `python3 -m unittest` for reports), update its README, and commit.
+
+Done: reports: per-account-and-currency totals. reports now totals per (account, currency) and prints account,currency,total_cents, sorted by account then currency. Input without a currency column counts as USD. A malformed currency (not exactly three uppercase ASCII letters) prints an error naming the line to stderr and exits 2 with no stdout. Committed as 3355e50 on archon/f4ews6qd-reports-per-account-and-currency-totals (base 45dc29c), tree 8b96bd18b593725a45ad2d9d255947c4d62d06d8, under the configured mengsig identity, no attribution lines. Check: `python3 -m unittest -v` on the final head: 5 tests, OK (the 4 new ones cover old format as USD, multi-currency totals, sorting, and malformed currency exit 2; the original test still passes). Sample runs confirmed the header, the USD default and exit 2 with "line 2". Review: agt_01M7WFV2FBVEQT2908M5C1WRMB (Haiku, medium) passed head 3355e50 with no blocking findings; it confirmed risk high because the CLI header and row shape change for callers that parse them. Open follow-up (non-blocking, not changed to avoid a new review round): README says "ISO 4217 code" but the code checks only the three-uppercase-letter shape, so codes like XXX are accepted. Nothing was pushed and no services were started. Not done: the ledger sibling item (qi_01M7WFSBQE0DSJ8ST2KJMT17PQ) is separate and was not touched.
+REVIEW: pass (agt_01M7WFV2FBVEQT2908M5C1WRMB)
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFV2FBVEQT2908M5C1WRMB)
+
+SHIPPED: commit 3355e50891ec8ce2ed86298a84defdfc84a056bd on the run branch
+Branch `archon/f4ews6qd-reports-per-account-and-currency-totals` in /home/mengsig/.local/share/archon-bench/f164-y8j04sff/archon-bench/work/20261120T123220Z/9f79c9216e00f12b5b94acc1/reports holds it (3 files changed, 109 insertions(+), 13 deletions(-)). Review: `archon diff qi_01M7WFSBQZTAX852N6F4EWS6QD`; land it in `main`: `archon merge qi_01M7WFSBQZTAX852N6F4EWS6QD`.
+
+Done: ledger: multi-currency TSV to CSV. Added an optional fourth currency column to the ledger TSV-to-CSV export. Committed as ddca6f2 (tree f84ef60) on archon/kjmt17pq-ledger-multi-currency-tsv-to-csv; not pushed. Missing currency defaults to USD. The header is now date,account,amount_cents,currency and every row carries its currency. A malformed currency (lowercase, wrong length, digits, empty) prints "line N: bad currency ..." to stderr and exits 2. Other input errors still exit 1. Checks at the final tree: cargo fmt --check passes, cargo clippy --all-targets -D warnings is clean, cargo test passes (9 tests: 6 in tests/ledger.rs, 3 in the new tests/cli.rs). The before output was the old 3-column header; the after output is the new 4-column header with USD and EUR rows. README updated. One reviewer (agt_01M7WFV82C2Z6DXNW2CY9APAQF) passed the head with no blocking findings and confirmed risk high. Open follow-ups, all non-blocking: the currency is trimmed before validation, so padded codes are accepted (matches the other fields, but is not documented); a trailing tab on a 3-column line gives an empty currency and exit 2; the library API changed (parse_line returns LineError, Entry has a currency field), so the crate version is not bumped; cargo fmt also reflowed two pre-existing lines in lib.rs. Nothing is left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFV82C2Z6DXNW2CY9APAQF)
+
+SHIPPED: commit ddca6f2fd9f1a77e2a7cbd7250117d0483c89f0b on the run branch
+Branch `archon/kjmt17pq-ledger-multi-currency-tsv-to-csv` in /home/mengsig/.local/share/archon-bench/f164-y8j04sff/archon-bench/work/20261120T123220Z/9f79c9216e00f12b5b94acc1/ledger holds it (5 files changed, 167 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M7WFSBQE0DSJ8ST2KJMT17PQ`; land it in `main`: `archon merge qi_01M7WFSBQE0DSJ8ST2KJMT17PQ`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M7WFSBQE0DSJ8ST2KJMT17PQ ended and its cargo target directory went.
+
+Multi-currency initiative (ini_01M7WFSBQ9FR2RMZZAJW8BH0BD) finished, both members succeeded and passed review. Nothing is pushed and nothing is merged; merge is manual.
+- ledger: commit ddca6f2 on archon/kjmt17pq-ledger-multi-currency-tsv-to-csv. cargo fmt, clippy -D warnings and cargo test (9 tests) pass. Bad currency exits 2 with "line N" on stderr. Other input errors still exit 1.
+- reports: commit 3355e50 on archon/f4ews6qd-reports-per-account-and-currency-totals. python3 -m unittest passes (5 tests). Old CSV counts as USD. Bad currency exits 2.
+Open non-blocking follow-ups:
+1. ledger: a trailing tab on a 3-column line gives an empty currency and exit 2. Padded currency codes are trimmed and accepted.
+2. reports: the README says "ISO 4217 code", but only the three-uppercase-letter shape is checked, so XXX is accepted.
+Say the word if you want either fixed, or the branches merged.
+
+reports now totals per (account, currency) and prints account,currency,total_cents, sorted by account then currency. Input without a currency column counts as USD. A malformed currency (not exactly three uppercase ASCII letters) prints an error naming the line to stderr and exits 2 with no stdout. Committed as 3355e50 on archon/f4ews6qd-reports-per-account-and-currency-totals (base 45dc29c), tree 8b96bd18b593725a45ad2d9d255947c4d62d06d8, under the configured mengsig identity, no attribution lines. Check: `python3 -m unittest -v` on the final head: 5 tests, OK (the 4 new ones cover old format as USD, multi-currency totals, sorting, and malformed currency exit 2; the original test still passes). Sample runs confirmed the header, the USD default and exit 2 with "line 2". Review: agt_01M7WFV2FBVEQT2908M5C1WRMB (Haiku, medium) passed head 3355e50 with no blocking findings; it confirmed risk high because the CLI header and row shape change for callers that parse them. Open follow-up (non-blocking, not changed to avoid a new review round): README says "ISO 4217 code" but the code checks only the three-uppercase-letter shape, so codes like XXX are accepted. Nothing was pushed and no services were started. Not done: the ledger sibling item (qi_01M7WFSBQE0DSJ8ST2KJMT17PQ) is separate and was not touched.
+REVIEW: pass (agt_01M7WFV2FBVEQT2908M5C1WRMB)
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFV2FBVEQT2908M5C1WRMB)
+
+SHIPPED: commit 3355e50891ec8ce2ed86298a84defdfc84a056bd on the run branch
+
+Added an optional fourth currency column to the ledger TSV-to-CSV export. Committed as ddca6f2 (tree f84ef60) on archon/kjmt17pq-ledger-multi-currency-tsv-to-csv; not pushed. Missing currency defaults to USD. The header is now date,account,amount_cents,currency and every row carries its currency. A malformed currency (lowercase, wrong length, digits, empty) prints "line N: bad currency ..." to stderr and exits 2. Other input errors still exit 1. Checks at the final tree: cargo fmt --check passes, cargo clippy --all-targets -D warnings is clean, cargo test passes (9 tests: 6 in tests/ledger.rs, 3 in the new tests/cli.rs). The before output was the old 3-column header; the after output is the new 4-column header with USD and EUR rows. README updated. One reviewer (agt_01M7WFV82C2Z6DXNW2CY9APAQF) passed the head with no blocking findings and confirmed risk high. Open follow-ups, all non-blocking: the currency is trimmed before validation, so padded codes are accepted (matches the other fields, but is not documented); a trailing tab on a 3-column line gives an empty currency and exit 2; the library API changed (parse_line returns LineError, Entry has a currency field), so the crate version is not bumped; cargo fmt also reflowed two pre-existing lines in lib.rs. Nothing is left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WFV82C2Z6DXNW2CY9APAQF)
+
+SHIPPED: commit ddca6f2fd9f1a77e2a7cbd7250117d0483c89f0b on the run branch

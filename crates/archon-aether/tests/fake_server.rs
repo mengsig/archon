@@ -1028,6 +1028,74 @@ async fn images_reach_a_protocol_19_aetherd_and_are_refused_below_it() {
 }
 
 #[tokio::test]
+async fn the_backend_sends_attachments_and_leaves_the_frame_alone_without_them() {
+    use archon_core::attachment::ImageAttachment;
+    use archon_core::ports::AgentBackend as _;
+    let image = ImageAttachment::encode(b"\x89PNG\r\n\x1a\npixels", Some("crop.png")).unwrap();
+    let (_dir, fake) = fake_aether().await;
+    fake.set_default("send_message", Scripted::reply("message_sent", json!({})));
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    backend
+        .send_message_with_attachments(
+            &agent,
+            "D1: make it blue",
+            "k1",
+            std::slice::from_ref(&image),
+        )
+        .await
+        .unwrap();
+    backend
+        .send_message_with_attachments(&agent, "D2: nothing to see", "k2", &[])
+        .await
+        .unwrap();
+    backend.send_message(&agent, "plain", "k3").await.unwrap();
+    let sent = fake.received_named("send_message");
+    assert_eq!(sent.len(), 3);
+    assert_eq!(sent[0]["attachments"], json!([image]));
+    assert_eq!(sent[0]["content"], "D1: make it blue");
+    assert_eq!(sent[0]["idempotency_key"], "k1");
+    assert!(sent[1].get("attachments").is_none(), "{}", sent[1]);
+    assert_eq!(sent[1]["content"], "D2: nothing to see");
+    assert_eq!(sent[1]["idempotency_key"], "k2");
+    assert!(sent[2].get("attachments").is_none(), "{}", sent[2]);
+    assert_eq!(sent[2]["content"], "plain");
+}
+
+#[tokio::test]
+async fn legacy_aether_receives_design_note_text_without_attachments() {
+    let image = archon_core::attachment::ImageAttachment::encode(
+        b"\x89PNG\r\n\x1a\npixels",
+        Some("crop.png"),
+    )
+    .unwrap();
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    for version in [17, 18] {
+        let (_dir, fake) = fake_aether().await;
+        fake.set_protocol_window(17, version);
+        fake.set_default("send_message", Scripted::reply("message_sent", json!({})));
+        let backend = backend(&fake, any_model()).await;
+        backend
+            .send_message_with_attachments(
+                &agent,
+                "D1: make it blue",
+                "k1",
+                std::slice::from_ref(&image),
+            )
+            .await
+            .unwrap();
+        let sent = fake.received_named("send_message");
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            sent[0]["content"],
+            "D1: make it blue\n\n(picture available to the operator only)"
+        );
+        assert_eq!(sent[0]["idempotency_key"], "k1");
+        assert!(sent[0].get("attachments").is_none(), "{}", sent[0]);
+    }
+}
+
+#[tokio::test]
 async fn typed_commands_send_what_architecture_4_3_says() {
     let (_dir, fake) = fake_aether().await;
     let sent = json!({"message": "msg_1"});
@@ -1620,8 +1688,7 @@ async fn reference_wire_shape_is_frozen_across_retries_and_refused_after_capabil
     assert_eq!(fake.received_named("create_agent").len(), 2);
 }
 
-/// The read right before a quota-waiting reviewer is cancelled is a single
-/// `get_agent`: no second call widens the window a resume can land in.
+/// The quota sweep can recheck a live reviewer's own block with a single read.
 #[tokio::test]
 async fn a_quota_block_is_read_with_one_get_agent() {
     const REVIEWER: &str = "agt_01BX5ZZKBKACTAV9WEVGEMMVS4";
@@ -1646,4 +1713,54 @@ async fn a_quota_block_is_read_with_one_get_agent() {
     reviewer["status"] = json!({"state": "running"});
     fake.set_default("get_agent", Scripted::reply("agent", reviewer));
     assert_eq!(backend.quota_blocked(&id).await.unwrap(), Some(false));
+}
+
+#[tokio::test]
+async fn a_review_is_attributed_to_the_model_running_when_the_task_completed() {
+    let (_dir, fake) = fake_aether().await;
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let task = AetherTaskId::parse(TASK).unwrap();
+    let mut history = [
+        agent_event(
+            54,
+            json!({"type": "snapshot.created", "model": "claude-code/claude-opus-5-5"}),
+        ),
+        agent_event(53, json!({"type": "task.completed"})),
+        agent_event(
+            52,
+            json!({"type": "snapshot.created", "model": "codex/gpt-5"}),
+        ),
+    ];
+    for event in &mut history {
+        event["task_id"] = json!(TASK);
+    }
+    fake.set_responder(
+        "get_events",
+        Arc::new(move |frame| {
+            let before = frame["query"]["before"].as_u64().unwrap();
+            let event = history
+                .iter()
+                .find(|event| {
+                    event["seq"].as_u64().unwrap() < before
+                        && event["kind"]["type"] == frame["query"]["types"][0]
+                })
+                .unwrap();
+            Scripted::reply("events", json!([event]))
+        }),
+    );
+
+    let model = backend.review_model(&agent, &task).await.unwrap().unwrap();
+    assert_eq!(model.to_string(), "codex/gpt-5");
+    let reads = fake.received_named("get_events");
+    assert_eq!(reads.len(), 2);
+    for read in &reads {
+        assert_eq!(read["limit"], 1);
+        assert_eq!(read["query"]["agent"], AGENT);
+        assert_eq!(read["query"]["task"], TASK);
+    }
+    assert_eq!(reads[0]["query"]["before"], u64::MAX);
+    assert_eq!(reads[0]["query"]["types"], json!(["task.completed"]));
+    assert_eq!(reads[1]["query"]["before"], 53);
+    assert_eq!(reads[1]["query"]["types"], json!(["snapshot.created"]));
 }

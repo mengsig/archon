@@ -107,6 +107,7 @@ fn allows(request: &Request) -> bool {
             | Request::Gc { .. }
             | Request::CostReport(_)
             | Request::ModelEvidence(_)
+            | Request::TimingReport(_)
             | Request::RequestStatus { .. }
     )
 }

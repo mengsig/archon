@@ -1,0 +1,21 @@
+Added cursor pagination to GET /items in inventory-api and updated inventory-client's listItems to follow next_cursor. Both changes are committed: inventory-api f0ca553 and inventory-client 7f9944a, each authored as the repo's configured git user.
+
+API: limit (1..100, default 20) and cursor (opaque base64 of the last id returned, strictly validated). The body is {"items", "next_cursor"}, with null on the last page. Invalid limit or cursor returns 400 with {"error"}. Tests cover default limit, full cursor walk, last page, exact multiple, cursor past end, and the invalid cases. `python3 -m unittest` passes (10 tests).
+
+Client: listItems sends no cursor first, passes next_cursor back unchanged, stops on null or absent cursor, and throws if the server repeats a cursor or returns no items array. New tests cover multi-page, absent cursor, and repeated cursor. `npm test` passes (6 tests). An end-to-end run through the real API returned all 57 items in ascending order.
+
+READMEs in both repos document the new contract, including the breaking change that GET /items now returns one page by default.
+
+Choices made: the cursor encodes the last id returned, not an offset, so it stays correct if items are inserted or deleted between requests. The client's repeated-cursor check is an addition beyond the spec, to avoid an infinite loop against a buggy server. Untracked __pycache__ from the test run was removed and not committed.
+
+Cursor pagination is in place on `GET /items` in `inventory-api`, and `inventory-client`'s `listItems` now follows `next_cursor` to return every item. Both changes are committed, and both test suites pass.
+
+- **inventory-api** (`f0ca553`): `limit` is 1..100 with default 20, and `cursor` is an opaque base64 string encoding the last id returned. Invalid values return 400 with `{"error": "..."}`. The body is `{"items", "next_cursor"}`, with `next_cursor` null on the last page. `python3 -unittest` runs 10 tests, all passing.
+- **inventory-client** (`7f9944a`): `listItems` sends no cursor on the first request, passes `next_cursor` back unchanged, and stops when it is null or absent. `npm test` runs 6 tests, all passing.
+- **Check against the real API:** running the client against the actual handler returned all 57 items in ascending order.
+- **READMEs:** both document the new contract, including that `GET /items` now returns one page by default, which is a breaking change for callers.
+
+Choices I made that you may want to change:
+- The cursor encodes the last id returned rather than an offset, so paging stays correct if items are added or removed between requests.
+- I added a guard in the client that throws if the server repeats a cursor, to avoid an infinite loop. The spec didn't ask for it.
+- Both commits carry the `Co-Authored-By: Claude Haiku 5.5` line from the attribution instructions.

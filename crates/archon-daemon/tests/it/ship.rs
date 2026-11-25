@@ -29,6 +29,76 @@ use serde_json::{Value, json};
 
 const PR_ONE: &str = "https://github.com/o/r/pull/1";
 
+#[tokio::test]
+async fn validation_failures_refuse_delivery_without_retry() {
+    for (message, action, wrong_action) in [
+        (
+            "GraphQL: No commits between main and feature (createPullRequest)",
+            "add commits to",
+            "check that head branch",
+        ),
+        (
+            "GraphQL: Base sha can't be blank, No commits between main and feature, Base ref must be a branch (createPullRequest)",
+            "check that base branch",
+            "add commits to",
+        ),
+        (
+            "GraphQL: Head sha can't be blank, Base sha can't be blank, No commits between main and feature, Head ref must be a branch (createPullRequest)",
+            "check that head branch",
+            "add commits to",
+        ),
+        (
+            "GraphQL: No commits between main and feature, Base ref must be a branch, Head ref must be a branch (createPullRequest)",
+            "exists and head branch",
+            "add commits to",
+        ),
+    ] {
+        let (h, gh) = delivering().await;
+        let (item, run) = started(&h, "direct").await;
+        gh.fail_next("pr create", message);
+        settle_changed(&h, json!({})).await;
+        let error = failed(&h, &item).await;
+        assert!(error.contains(action), "{error}");
+        assert!(!error.contains(wrong_action), "{error}");
+        assert!(error.contains(message), "{error}");
+        assert_eq!(gh.count("pr create"), 1);
+        assert!(h.kv(&format!("ship_retry:{}", run.id)).await.is_none());
+    }
+}
+
+#[tokio::test]
+async fn create_transport_failure_is_retried() {
+    let (mut h, gh) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    gh.fail_next("pr create", "HTTP 502: Bad Gateway");
+    settle_changed(&h, json!({})).await;
+    let key = format!("ship_retry:{}", run.id);
+    assert!(h.kv(&key).await.is_some());
+    assert_eq!(gh.count("pr create"), 1);
+    let due = json!({"failures": 1, "next_at": "2000-01-01T00:00:00Z"});
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &due.to_string())
+        .unwrap();
+    h.restart();
+    executor::recover(&h.ctx).await.unwrap();
+    h.dispatch().await;
+    assert!(succeeded(&h, &item).await.contains(PR_ONE));
+    assert_eq!(gh.count("pr create"), 2);
+}
+
+#[tokio::test]
+async fn listed_pr_wins_over_create_validation_failure() {
+    let (h, gh) = delivering().await;
+    let (item, _) = started(&h, "direct").await;
+    gh.refuse_after_create("GraphQL: No commits between main and feature (createPullRequest)");
+    settle_changed(&h, json!({})).await;
+    assert!(succeeded(&h, &item).await.contains(PR_ONE));
+    assert_eq!(gh.count("pr create"), 1);
+}
+
 /// A harness whose repository has an `origin` and whose `gh` keeps the pull
 /// requests archond opens.
 async fn delivering() -> (Harness, FakeGh) {
@@ -1033,6 +1103,12 @@ async fn a_strict_review_whose_whole_reads_all_failed_ships_on_one_delta_pass() 
     let built = shipped_by(&h, &lead, "Built; fixed and reviewed", pass_by(&named)).await;
     let mut verdict = verdict_on(&built, "pass");
     verdict["base"] = verdict_on(&read, "fail")["head"].clone();
+    verdict["resolved_findings"] = json!(
+        first
+            .iter()
+            .map(|reviewer| format!("{reviewer}:1"))
+            .collect::<Vec<_>>()
+    );
     h.backend.complete_delegated(&delta, verdict);
     h.settle_running(|_| built.clone()).await;
     h.dispatch().await;

@@ -1,0 +1,179 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7W9H1X99N8E8DY2HTHB87N7",
+      "repo": "repo_01M7W9GTT8Z6WMTB5Z93X3SDPA",
+      "pipeline": "direct",
+      "title": "Implement ledger.py per SPEC.md with focused tests",
+      "brief": "Operator request, verbatim: \"Implement `ledger.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nGoal: implement ledger.py in the quality-ledger-transfer repository exactly as SPEC.md specifies. Context: the existing tests cover basics only. Constraints: preserve the documented API; handle every error and boundary case the spec lists; use only the Python standard library; add focused tests for the error and boundary cases beyond the existing basics. Acceptance criteria: every API item and error case in SPEC.md is implemented; the full test suite passes; the work is committed on the item's branch.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "ledger",
+        "operator-request"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7W9H24CTD1768APCZ445TZ4",
+        "summary": "Implemented ledger.py per SPEC.md (Ledger, transfer, snapshot, MAX_BALANCE) using only the standard library, with one threading.Lock per ledger so transfers are atomic and opposite transfers cannot deadlock. Validation runs at construction and before any account lookup. Added 24 focused tests to test_ledger.py for construction, amount and account errors, balance and overflow boundaries, same-account transfers, and threaded transfers that cannot hang (bounded joins). Before: the committed stub fails both original tests with NotImplementedError. After: `python3 -m unittest -v test_ledger` runs 26 tests, all OK. Commit 54a9739 (tree 743b117) on archon/hthb87n7-implement-ledger-py-per-spec-md-with-foc, under the repo's configured identity, not pushed. Review: one reviewer (agt_01M7W9K1BNJTKX8759C3KVXQRS) passed the head with no blocking findings. Open, non-blocking follow-ups: the constructor validates via items() but copies via dict(), which only matters for dict subclasses; the snapshot test samples interleavings and would probably not catch a removed lock. The reviewer's leftover claude process (PID 170094) had already exited. Nothing is left running.\nREVIEW: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9K1BNJTKX8759C3KVXQRS)\n\nSHIPPED: commit 54a973959072a2602a4980648dff4f87fb7b5882 on the run branch"
+      },
+      "created_at": "2026-11-20T10:55:08.409118599Z",
+      "updated_at": "2026-11-20T10:56:57.077042653Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7W9H24CTD1768APCZ445TZ4",
+        "item": "qi_01M7W9H1X99N8E8DY2HTHB87N7",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7W9H2FFQEGSWKZBR67JKQ87",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-z09qkmoj/archon-bench/work/20261120T084309Z/ab7937af0613474fa940be2e/.archon/data/worktrees/quality-ledger-transfer/qi_01M7W9H1X99N8E8DY2HTHB87N7",
+        "branch": "archon/hthb87n7-implement-ledger-py-per-spec-md-with-foc",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented ledger.py per SPEC.md (Ledger, transfer, snapshot, MAX_BALANCE) using only the standard library, with one threading.Lock per ledger so transfers are atomic and opposite transfers cannot deadlock. Validation runs at construction and before any account lookup. Added 24 focused tests to test_ledger.py for construction, amount and account errors, balance and overflow boundaries, same-account transfers, and threaded transfers that cannot hang (bounded joins). Before: the committed stub fails both original tests with NotImplementedError. After: `python3 -m unittest -v test_ledger` runs 26 tests, all OK. Commit 54a9739 (tree 743b117) on archon/hthb87n7-implement-ledger-py-per-spec-md-with-foc, under the repo's configured identity, not pushed. Review: one reviewer (agt_01M7W9K1BNJTKX8759C3KVXQRS) passed the head with no blocking findings. Open, non-blocking follow-ups: the constructor validates via items() but copies via dict(), which only matters for dict subclasses; the snapshot test samples interleavings and would probably not catch a removed lock. The reviewer's leftover claude process (PID 170094) had already exited. Nothing is left running.\nREVIEW: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7W9K1BNJTKX8759C3KVXQRS)\n\nSHIPPED: commit 54a973959072a2602a4980648dff4f87fb7b5882 on the run branch"
+        },
+        "cost_usd": 0.033440319999999996,
+        "started_at": "2026-11-20T10:55:08.698641870Z",
+        "finished_at": "2026-11-20T10:56:57.077042653Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7W9H2E2NXMBA4S9CE16SX63",
+        "run": "prun_01M7W9H24CTD1768APCZ445TZ4",
+        "stage_id": "implement",
+        "kind": "work",
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "aether_agent": "agt_01M7W9H2GXB0T736NVRD4D3R6C",
+        "aether_task": "tsk_01M7W9H2GXGJVTJF4NMGQPKMJ9",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "summary": "Implemented ledger.py per SPEC.md (Ledger, transfer, snapshot, MAX_BALANCE) using only the standard library, with one threading.Lock per ledger so transfers are atomic and opposite transfers cannot deadlock. Validation runs at construction and before any account lookup. Added 24 focused tests to test_ledger.py for construction, amount and account errors, balance and overflow boundaries, same-account transfers, and threaded transfers that cannot hang (bounded joins). Before: the committed stub fails both original tests with NotImplementedError. After: `python3 -m unittest -v test_ledger` runs 26 tests, all OK. Commit 54a9739 (tree 743b117) on archon/hthb87n7-implement-ledger-py-per-spec-md-with-foc, under the repo's configured identity, not pushed. Review: one reviewer (agt_01M7W9K1BNJTKX8759C3KVXQRS) passed the head with no blocking findings. Open, non-blocking follow-ups: the constructor validates via items() but copies via dict(), which only matters for dict subclasses; the snapshot test samples interleavings and would probably not catch a removed lock. The reviewer's leftover claude process (PID 170094) had already exited. Nothing is left running.\nREVIEW: pass",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v test_ledger (26 tests, OK)",
+            "python3 -m py_compile ledger.py test_ledger.py (OK)"
+          ],
+          "commit": "54a973959072a2602a4980648dff4f87fb7b5882",
+          "evidence": [
+            {
+              "after": "n/a",
+              "before": "Ran 2 tests in 0.001s\nFAILED (errors=2)  # NotImplementedError",
+              "caption": "Before: committed stub (0378d91), original tests",
+              "kind": "output"
+            },
+            {
+              "caption": "After: full test suite on commit 54a9739",
+              "kind": "output",
+              "text": "Ran 26 tests in 0.005s\n\nOK"
+            }
+          ],
+          "local_commit": "54a973959072a2602a4980648dff4f87fb7b5882",
+          "pr": {
+            "body": "Approach: one threading.Lock per ledger guards every balance read and write. transfer validates amount, then accounts, then takes the lock and runs _move, which checks source funds, destination overflow, and same-account semantics before writing both sides. snapshot copies under the lock. Single lock means no lock ordering, so opposite transfers cannot deadlock. Key files: ledger.py, test_ledger.py. Checks: python3 -m unittest -v test_ledger -> 26 tests OK; py_compile OK. Concurrency tests use bounded joins with daemon threads, so a hang fails instead of blocking. Assumptions: Ledger takes plain dicts (dict subclasses are not specially handled). Follow-ups (non-blocking, from review): constructor validates via items() but copies via dict(); snapshot-atomicity test samples interleavings and would not reliably catch a removed lock.",
+            "summary": "Made Ledger(balances), transfer and snapshot real, with validation and thread-safe atomic transfers. Now: every SPEC error and boundary case is handled and tested (26 tests). Before: stub raised NotImplementedError, 2 tests errored. Now: 26 tests OK.",
+            "title": "Implement atomic Ledger per SPEC"
+          },
+          "review": {
+            "reviewed_head": "54a973959072a2602a4980648dff4f87fb7b5882",
+            "reviewer_agents": [
+              "agt_01M7W9K1BNJTKX8759C3KVXQRS"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7W9K1BNJTKX8759C3KVXQRS",
+                "base": "0378d91430eb920320d6f298280639b12a0b84c9",
+                "findings": 2,
+                "head": "54a973959072a2602a4980648dff4f87fb7b5882",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7W9K1BNJTKX8759C3KVXQRS"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": "agt_01M7W9K1BNJTKX8759C3KVXQRS",
+            "why": "Concurrency and locking in a new module with no existing callers. Behaviour changes from stub to working implementation; tests and review confirm the lock by reading and sampled interleavings only. Reviewer kept high, reviewer agt_01M7W9K1BNJTKX8759C3KVXQRS."
+          },
+          "tree": "743b1174160477c0d5b16784bb0b2a9f6504b138"
+        },
+        "cost_usd": 0.033440319999999996,
+        "started_at": "2026-11-20T10:55:08.738333987Z",
+        "finished_at": "2026-11-20T10:56:54.474701907Z"
+      }
+    ],
+    "spent_usd": 0.033440319999999996,
+    "gates": [],
+    "delegations": {
+      "stg_01M7W9H2E2NXMBA4S9CE16SX63": {
+        "direct_usd": 0.02476562,
+        "delegated_usd": 0.0086747,
+        "agents": [
+          {
+            "agent": "agt_01M7W9K1BNJTKX8759C3KVXQRS",
+            "parent": "agt_01M7W9H2GXB0T736NVRD4D3R6C",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0086747
+          }
+        ]
+      }
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

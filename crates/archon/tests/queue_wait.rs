@@ -32,6 +32,7 @@ fn item(state: QueueState) -> QueueItem {
         autonomy: Default::default(),
         origin: None,
         stage_timeouts: Default::default(),
+        supersedes: None,
         fresh_retries: 0,
         routed_provider: None,
         provider_switch: None,
@@ -93,6 +94,8 @@ fn completion_feed() -> ServerFrame {
             seq: 1,
             at: archon_core::now(),
             entry: FeedEntry::System {
+                command_id: None,
+                command_result: None,
                 text: "completion".into(),
             },
         },

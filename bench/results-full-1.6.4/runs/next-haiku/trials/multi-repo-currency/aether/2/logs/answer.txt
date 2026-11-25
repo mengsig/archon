@@ -1,0 +1,45 @@
+Multi-currency support is implemented and committed in both repositories; all tests pass.
+
+ledger (commit 819cd95, branch main):
+- Input accepts 3 or 4 tab-separated columns. The optional fourth column is the ISO 4217 currency code, and it defaults to USD when missing.
+- The CSV header is now date,account,amount_cents,currency, and every row carries the currency.
+- A new LineError type separates currency errors (exit 2) from all other input errors (exit 1). The message still names the line number.
+- Tests: `cargo test` passes, 5 unit tests and 3 CLI integration tests (tests/cli.rs) that check the real exit codes and stderr.
+
+reports (commit 97eeb63, branch main):
+- Totals are keyed by (account, currency). Output is account,currency,total_cents, sorted by account then currency.
+- CSV without a currency column counts as USD.
+- A malformed currency prints `error: ...` to stderr and exits 2.
+- Tests: `python3 -m unittest` passes, 4 tests, including new multi-currency, legacy-CSV, and bad-currency cases.
+- End to end, ledger output piped into reports gives the expected totals, and a bad currency gives ledger exit 2.
+
+READMEs updated in both repos.
+
+Choices I made that the request did not spell out:
+- An empty fourth column (a trailing tab) counts as a malformed currency, so it exits 2.
+- Currency codes must be exactly three uppercase ASCII letters. There is no lookup against the real ISO 4217 list.
+- Commits use the repo's configured identity (mengsig). I left out the Co-Authored-By line because CLAUDE.md says not to add tool attribution, and that takes precedence over the attribution reminder.
+- `cargo` is in ~/.cargo/bin and is not on the default PATH. rustfmt is not installed, so I did not run a format check.
+
+Both repositories now handle multiple currencies, and each change is committed. `cargo test` and `python3 -m unittest` both pass.
+
+**ledger** (commit `819cd95`)
+- Input lines take an optional fourth column, the currency code. A missing column means `USD`.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed currency exits 2 and names the line. Other input errors still exit 1.
+- Tests: 5 unit tests, plus 3 new CLI tests in `tests/cli.rs` that check the real exit codes and stderr.
+
+**reports** (commit `97eeb63`)
+- Totals are per (account, currency). Output is `account,currency,total_cents`, sorted by account, then currency.
+- CSV without a `currency` column counts as `USD`.
+- A malformed currency prints an `error:` line to stderr and exits 2.
+- Tests: 4 tests, including multi-currency totals, legacy CSV, and bad currency codes.
+
+I also piped ledger into reports end to end. The totals were right, and a bad currency gave exit 2 from ledger.
+
+Choices I made that the request didn't cover:
+- An empty fourth column (a trailing tab) counts as a malformed currency and exits 2.
+- A currency code must be exactly three uppercase ASCII letters. I did not check it against the real ISO 4217 list.
+- The commits have no Co-Authored-By line. CLAUDE.md says not to add tool attribution, and I treated that as taking precedence over the attribution reminder.
+
+`cargo` is in `~/.cargo/bin`, not on the default PATH. `rustfmt` isn't installed here, so I did not run a format check.

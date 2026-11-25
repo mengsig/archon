@@ -23,6 +23,7 @@ pub mod conversation;
 pub mod cost;
 pub mod crash;
 pub mod delegation;
+pub mod design;
 pub mod effort_sizing;
 pub mod engine_login;
 pub mod error;
@@ -63,6 +64,7 @@ pub mod settings;
 pub mod steer;
 #[cfg(feature = "testing")]
 pub mod testing;
+pub mod timing_report;
 pub mod tracked;
 mod verdict_prose;
 

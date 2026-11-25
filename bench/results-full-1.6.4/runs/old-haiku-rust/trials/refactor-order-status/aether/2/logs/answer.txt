@@ -1,0 +1,24 @@
+Refactored the orders crate from String statuses to an OrderStatus enum and committed it as c64d513 on main. cargo test passes (3 existing integration tests plus 3 new unit tests in src/status.rs); clippy --all-targets is clean.
+
+What changed:
+- src/status.rs (new): OrderStatus {Pending, Paid, Shipped, Cancelled} deriving Debug, Clone, Copy, PartialEq, Eq, Hash; as_str; Display; FromStr with ParseStatusError (implements std::error::Error, message `unknown order status "<input>"`); can_transition_to encoding the four allowed edges.
+- Order::status is now OrderStatus. pay, ship and cancel check can_transition_to, which is equivalent to the old checks. Their error messages are unchanged.
+- src/lib.rs re-exports OrderStatus and ParseStatusError.
+- report::from_line parses via FromStr and keeps the original `unknown status "<x>"` error text and field-check order.
+- status_counts still returns Vec<(String, usize)> sorted by name. I keyed the BTreeMap on as_str rather than deriving Ord, because deriving Ord would sort by declaration order and change the report ordering.
+- The status literals appear only in src/status.rs.
+
+Choices to review:
+- I left tests/orders.rs unchanged. Its string literals are the external output being verified, and it still compiles.
+- The commit has no Co-Authored-By line. CLAUDE.md asks for no attribution, and it takes precedence over the reminder.
+
+The `orders` crate now uses an `OrderStatus` enum instead of strings. The work is committed as `c64d513` on `main`. `cargo test` passes (the 3 existing integration tests plus 3 new unit tests), and `cargo clippy --all-targets` is clean.
+
+- **New `src/status.rs`:** `OrderStatus` with `as_str`, `Display`, `FromStr` (error type `ParseStatusError`, which implements `std::error::Error` and names the rejected input), and `can_transition_to` for the four allowed edges. The status literals now appear only in this file.
+- **`Order::status`** is an `OrderStatus`. `pay`, `ship` and `cancel` check `can_transition_to`, which matches the old checks. Their error messages are unchanged.
+- **Crate root** re-exports `OrderStatus` and `ParseStatusError`.
+- **Report output:** `status_counts` still returns `Vec<(String, usize)>` sorted by status name. I did not derive `Ord` on the enum because that would sort by declaration order and change the report ordering. `from_line` keeps its original `unknown status "<x>"` error text.
+
+Choices to review:
+- I left `tests/orders.rs` unchanged. Its string literals check the external output, and it still compiles.
+- The commit has no `Co-Authored-By` line. CLAUDE.md says not to add attribution, and it takes precedence over the system reminder that asked for one.

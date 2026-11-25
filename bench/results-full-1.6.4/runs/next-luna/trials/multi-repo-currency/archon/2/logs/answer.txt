@@ -1,0 +1,31 @@
+Queued the coordinated two repository initiative: [ledger](</home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/f5e2e1d7b0953eebd21eaee2/ledger>) and [reports](</home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/f5e2e1d7b0953eebd21eaee2/reports>) will implement the shared currency contract in parallel. Each task includes README updates, the requested test command, and a local commit. The initiative is atomic; no push or merge was requested.
+
+Done: Group report totals by account and currency. Updated reports to accept legacy CSV as USD and current CSV with validated currency, aggregate by account and currency, and emit sorted account,currency,total_cents rows. Updated README and focused tests. PYTHONDONTWRITEBYTECODE=1 python3 -m unittest passed (3 tests); git diff --check HEAD^ HEAD passed; CLI probe confirmed invalid currency reports to stderr and exits 2. Committed as 110699191754a442fb7ce2fa30ad9889fa1f1a83. Independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8RNNW855VRKMES1APM6QH)
+
+SHIPPED: commit 110699191754a442fb7ce2fa30ad9889fa1f1a83 on the run branch
+Branch `archon/ph6yrn8g-group-report-totals-by-account-and-curre` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/f5e2e1d7b0953eebd21eaee2/reports holds it (3 files changed, 58 insertions(+), 14 deletions(-)). Review: `archon diff qi_01M7W8P0WVSF37ZHM2PH6YRN8G`; land it in `main`: `archon merge qi_01M7W8P0WVSF37ZHM2PH6YRN8G`.
+
+Done: Emit and validate transaction currencies in ledger. Added optional transaction currency parsing and four-column CSV output, defaulting missing currency to USD and validating three uppercase ASCII letters. Invalid currency reports its input line and exits 2; other malformed rows exit 1, including mixed-error rows. Updated README and focused tests. `cargo fmt -- --check`, `cargo test` (5 integration tests), and `git diff --check` passed. Committed as 48d982ad39424aae5b6797fa149fdc35362b6433; no push or merge. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8T2CCSSJZY9EEEZRZWPYE), codex/gpt-6-luna (agent agt_01M7W8WKY9JG0MFPDJM773J0ZA), codex/gpt-6-luna (agent agt_01M7W8Z34S8SYS31K7C2J46W64)
+
+SHIPPED: commit 48d982ad39424aae5b6797fa149fdc35362b6433 on the run branch
+Branch `archon/a41tz58m-emit-and-validate-transaction-currencies` in /home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/f5e2e1d7b0953eebd21eaee2/ledger holds it (4 files changed, 122 insertions(+), 15 deletions(-)). Review: `archon diff qi_01M7W8P0W9RKKJHJ79A41TZ58M`; land it in `main`: `archon merge qi_01M7W8P0W9RKKJHJ79A41TZ58M`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M7W8P0W9RKKJHJ79A41TZ58M ended and its cargo target directory went.
+
+Updated reports to accept legacy CSV as USD and current CSV with validated currency, aggregate by account and currency, and emit sorted account,currency,total_cents rows. Updated README and focused tests. PYTHONDONTWRITEBYTECODE=1 python3 -m unittest passed (3 tests); git diff --check HEAD^ HEAD passed; CLI probe confirmed invalid currency reports to stderr and exits 2. Committed as 110699191754a442fb7ce2fa30ad9889fa1f1a83. Independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8RNNW855VRKMES1APM6QH)
+
+SHIPPED: commit 110699191754a442fb7ce2fa30ad9889fa1f1a83 on the run branch
+
+Added optional transaction currency parsing and four-column CSV output, defaulting missing currency to USD and validating three uppercase ASCII letters. Invalid currency reports its input line and exits 2; other malformed rows exit 1, including mixed-error rows. Updated README and focused tests. `cargo fmt -- --check`, `cargo test` (5 integration tests), and `git diff --check` passed. Committed as 48d982ad39424aae5b6797fa149fdc35362b6433; no push or merge. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7W8T2CCSSJZY9EEEZRZWPYE), codex/gpt-6-luna (agent agt_01M7W8WKY9JG0MFPDJM773J0ZA), codex/gpt-6-luna (agent agt_01M7W8Z34S8SYS31K7C2J46W64)
+
+SHIPPED: commit 48d982ad39424aae5b6797fa149fdc35362b6433 on the run branch

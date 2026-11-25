@@ -1,0 +1,46 @@
+I found one critical authentication bypass in `verify`, plus several smaller problems. I did not change any code in the repo. The probe script is in `/tmp/tokens-review/probe.js`, outside the repo.
+
+## Findings
+
+**1. Critical: `verify` accepts a token with an empty signature, so anyone can forge a session.** (`src/tokens.js`, `verify`, lines 24–27)
+- `token.split('.')` gives `signature === ''` for `"<body>."`. The check `signature === undefined` does not catch that, and `expected.startsWith('')` is always true.
+- Input: `base64url(JSON.stringify({user:'root', exp: 9e15})) + "."` with secret `'k'.repeat(40)` returns `{"user":"root","exp":9000000000000000}`. I confirmed this by running it.
+- Fix: require a non-empty signature that equals the full MAC (see finding 2).
+
+**2. High: the signature is checked by prefix match, not an exact constant-time comparison.** (`verify`, line 27)
+- `expected.startsWith(signature)` accepts any leading slice of the correct MAC, and the comparison is not constant-time. That leaks the MAC byte by byte through timing and makes guessing easier.
+- Fix: `crypto.timingSafeEqual` on equal-length buffers, comparing the full MAC.
+- I tried a one-character prefix on a forged body. It was rejected, because the MAC is over the forged body, not the real one. So I have not shown a working prefix-only forgery. The problem is the weaker check itself.
+
+**3. Medium: `verify` throws instead of returning `null` on bad input once the MAC check passes.** (`verify`, lines 28–29)
+- `JSON.parse` on a non-JSON body throws `SyntaxError`. A body of `null` throws `TypeError` at `payload.exp`. Both are reachable through finding 1 (`toBase64Url('not json') + "."` and `toBase64Url('null') + "."`).
+- The function's contract is "payload or null", so a thrown error here is an unhandled 500 or crash on attacker input. Once finding 1 is fixed, this is only reachable with a valid MAC, but it still breaks the contract.
+- Fix: validate that the parsed payload is a plain object and wrap parse errors into `null`.
+
+**4. Medium: `verify` does not validate the secret.** (`verify`, line 26)
+- `sign` rejects secrets shorter than 32 characters, but `verify` does not. With secret `''`, a token forged with an empty key verifies. With `undefined`, `verify` throws a `TypeError`. The production failure mode is a missing or empty env var on the verifying service.
+- Fix: apply the same secret check in both functions, probably in a shared helper.
+
+**5. Low: token strings are malleable.** (`verify`, line 24)
+- The extra-segment case `"<valid token>.junk"` verifies (I confirmed it). The MAC still covers the body, so this is not a forgery. But any revocation list, replay cache, or log keyed on the raw token string can be bypassed.
+- Fix: reject tokens without exactly two segments.
+
+**6. Low: `sign` does not validate `ttlSeconds`.** (`sign`, lines 14–16)
+- A negative TTL produces an already-expired token. Zero, NaN, or Infinity also produce bad `exp` values. Those values are caught at verify time (`JSON.stringify(NaN)` becomes `null`, which is rejected), but the failure happens at the wrong place.
+- Fix: require a positive finite integer.
+
+**7. Low, design: `iat` and `exp` are in milliseconds.** (`sign`, line 16)
+- JWT convention, and most other consumers, use seconds (NumericDate). Any service that reads these claims will see expiry about 1000 times too far in the future.
+- Fix: decide the unit and document it before tomorrow's ship. Changing it later breaks existing tokens.
+
+**8. Low, design:**
+- There is no revocation or logout, so a stolen token is valid until its TTL ends (1 hour by default).
+- There is no `aud`, `iss`, or token-type claim, so a token signed for one purpose could be accepted for another if the same secret is reused.
+- The 32-character minimum counts characters, not entropy. `'a'.repeat(32)` is accepted.
+- `verify` takes a `now` option. If any caller passes a request-derived value there, expiry can be controlled by the attacker.
+
+## Test coverage gap
+`node --test` passes all 4 existing tests, but none covers an empty signature, a truncated or extra-segment signature, a malformed payload, or a bad verify-side secret. The tampered-payload test only checks a real signature on a different body, so it would not catch finding 1.
+
+## Recommendation
+Do not ship until findings 1–4 are fixed and covered by tests. Finding 1 alone is enough to forge any session.

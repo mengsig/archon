@@ -246,6 +246,14 @@ pub fn plan_dispatch(snapshot: &DispatchSnapshot) -> DispatchPlan {
 /// and next in line.
 pub fn waiting_reasons(snapshot: &DispatchSnapshot) -> BTreeMap<QueueItemId, WaitingReasonCode> {
     let plan = plan_dispatch(snapshot);
+    waiting_reasons_for_plan(snapshot, &plan)
+}
+
+/// Read the reasons from an admission pass that has already been planned.
+pub fn waiting_reasons_for_plan(
+    snapshot: &DispatchSnapshot,
+    plan: &DispatchPlan,
+) -> BTreeMap<QueueItemId, WaitingReasonCode> {
     let started: BTreeSet<_> = plan.start.iter().collect();
     snapshot
         .queued

@@ -1,0 +1,15 @@
+The rate limiter is implemented per `SPEC.md` in `ratelimit.py` and committed as `98ebf21` on `main`. All 12 tests pass: the 3 original ones plus 9 new edge-case tests.
+
+**What's in the commit**
+- **`TokenBucket`**: starts full, refills continuously and caps at capacity. `try_acquire`, `available` and `wait_time` follow the spec, with `ValueError` for `capacity` or `refill_per_sec` ≤ 0 and for `n` outside `(0, capacity]`.
+- **Clock regression**: the bucket tracks the latest time it has seen, so nothing changes until the clock passes that point.
+- **`KeyedLimiter`**: one bucket per key, kept in an `OrderedDict` for LRU eviction at `max_keys`. `try_acquire` and `wait_time` both count as a use. `len()` returns the tracked key count.
+- **Standard library only.**
+
+**Choices I made**
+- **Validation before eviction**: `KeyedLimiter` checks `n` before creating a bucket, so a bad call can't evict another key.
+- **NaN rejected**: the positivity checks are written so NaN raises `ValueError`.
+- **Tests added**: I added edge-case tests to `test_ratelimit.py` for validation, capping, fractional refill, `wait_time`, clock regression and LRU behaviour.
+- **No Co-Authored-By line**: the reminder asked for one, but CLAUDE.md says not to put Claude attribution in commits, and CLAUDE.md takes precedence. The commit uses your configured `mengsig` identity.
+
+Running the tests with `python3 -I` fails to import the module because `-I` drops the working directory from `sys.path`. Plain `python3 -m unittest test_ratelimit` works.

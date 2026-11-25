@@ -593,11 +593,11 @@ pub(super) async fn nothing_to_merge(
 pub(super) async fn verify_unreviewed(
     ctx: &DaemonContext,
     run: &PipelineRun,
-    owed: super::review::Owed,
+    owed: archon_pipeline::spec::Owed,
     outcome: StageOutcome,
 ) -> Result<StageOutcome, ArchonError> {
     let completed = matches!(outcome, StageOutcome::Completed { .. });
-    if !completed || !owed.records_ship || owed.reviewers > 0 {
+    if !completed || !owed.ship_record || owed.review.is_some_and(|duty| duty.reviewers > 0) {
         return Ok(outcome);
     }
     let Some((from, sha)) = dropped_review(ctx, run).await? else {

@@ -173,8 +173,7 @@ async fn look_once(
         Err(ArchonError::NotFound(_)) => return end(ctx, run, &watch, "repository removed").await,
         Err(error) => return Err(error),
     };
-    let binary = &ctx.config.github.binary;
-    let read = checks::of_pull_request(binary, &repo, &watch.url, waited(QUEUED_LIMIT)).await;
+    let read = timed_checks(ctx, &repo, &watch, waited(QUEUED_LIMIT)).await;
     let checks = match read {
         Ok(checks) => checks,
         Err(error) if error.is_store() => return Err(error),
@@ -200,6 +199,31 @@ async fn look_once(
         Checks::Failed { names } => report_failed(ctx, run, &watch, &names).await,
         Checks::NotStarted { names, reason } => not_started(ctx, run, watch, &names, &reason).await,
     }
+}
+
+async fn timed_checks(
+    ctx: &DaemonContext,
+    repo: &archon_core::repo::Repo,
+    watch: &Watch,
+    waited_long: bool,
+) -> Result<Checks, ArchonError> {
+    assert_eq!(
+        repo.id, watch.repo,
+        "the watcher uses the delivery's repository"
+    );
+    let pr = archon_core::pull_request::PullRequestRef::from_url(&watch.url)
+        .ok_or_else(|| ArchonError::Corrupt(format!("invalid checks watch URL: {}", watch.url)))?;
+    let binary = &ctx.config.github.binary;
+    let observed = checks::of_pull_request(binary, repo, &watch.url, waited_long).await?;
+    ctx.store.lock().await.observe_pull_request_times(
+        &pr,
+        archon_queue::store::PullRequestTimes {
+            checks_started_at: observed.started_at,
+            checks_finished_at: observed.finished_at,
+            ..Default::default()
+        },
+    )?;
+    Ok(observed.state)
 }
 
 async fn look_later(

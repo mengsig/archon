@@ -12,6 +12,8 @@ pub mod archive;
 pub mod coordination;
 mod dependencies;
 mod descendants;
+pub(crate) mod design_ledger;
+pub(crate) mod design_page;
 mod discard;
 pub(crate) mod engine_wait;
 mod failure_class;
@@ -61,10 +63,11 @@ pub(crate) mod ship;
 mod siblings;
 mod spawn;
 pub(crate) mod stage_note;
+mod stage_timing;
 mod stall;
 mod start;
 pub(crate) mod steer;
-mod swarm;
+pub(crate) mod swarm;
 mod sweep;
 mod team;
 
@@ -432,6 +435,24 @@ pub async fn reviewer_settled(
     let Some(capped) = review::reviewer_settled(ctx, lead, reviewer).await? else {
         return review::reviewer_unreadable(ctx, lead, reviewer).await;
     };
+    stop_capped_review(ctx, capped).await
+}
+
+pub(crate) async fn reviewer_stopped(
+    ctx: &DaemonContext,
+    lead: &AetherAgentId,
+    reviewer: &AetherAgentId,
+) -> Result<(), ArchonError> {
+    let Some(capped) = review::confirmation_reviewer_stopped(ctx, lead, reviewer).await? else {
+        return Ok(());
+    };
+    stop_capped_review(ctx, capped).await
+}
+
+async fn stop_capped_review(
+    ctx: &DaemonContext,
+    capped: review::Capped,
+) -> Result<(), ArchonError> {
     if stall::escalation_marked(&*ctx.store.lock().await, &capped.stage)? {
         return Ok(());
     }

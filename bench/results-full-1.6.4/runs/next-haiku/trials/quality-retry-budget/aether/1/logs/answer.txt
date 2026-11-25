@@ -1,0 +1,24 @@
+Implemented retry_delay in retry_budget.py per SPEC.md and added focused tests in test_retry_budget.py. Committed as 208259c on main (author mengsig, no attribution trailer, per CLAUDE.md). All 26 tests pass (python3 -m unittest test_retry_budget).
+
+Behavior:
+- All arguments are validated first, before any early return. Each must be a built-in int (bool and float rejected); attempt and max_attempts >= 1; elapsed, budget, base, cap, and non-None retry_after >= 0. Violations raise ValueError.
+- attempt >= max_attempts returns None. attempt beyond max is legal.
+- Backoff is min(cap, base * 2**(attempt-1)). A zero base or zero cap yields 0. Once the exponent reaches cap.bit_length(), the result is cap, so huge attempts never build a large power of two.
+- Retry-After is a floor via max(backoff, retry_after), not limited by cap.
+- Returns None when elapsed + delay >= budget; otherwise returns delay, including 0. The wait is never shortened.
+
+Choices I made: the spec requires ValueError for wrong types as well as out-of-range values, so I followed that rather than TypeError. I did not add extra assert statements, since the explicit validation serves that role.
+
+Note: the test runner must be run without -I, because -I removes the working directory from sys.path and the test module cannot be imported.
+
+I implemented `retry_delay` per `SPEC.md`, added focused tests, and committed the work as `208259c` on `main`. All 26 tests pass.
+
+- **Validation:** every argument is checked before any early return. Bools and floats are rejected, and out-of-range values raise `ValueError`. I used `ValueError` for wrong types too, because the spec says so.
+- **Attempt limit:** `attempt >= max_attempts` returns `None`.
+- **Backoff:** `min(cap, base * 2**(attempt-1))`, with zero base or zero cap giving 0. Huge attempts saturate at `cap` without building a large power of two.
+- **Retry-After:** used as a floor via `max`, and not limited by `cap`.
+- **Budget:** returns `None` when `elapsed + delay >= budget`; otherwise returns the delay, including 0.
+
+The commit uses the repo's configured identity and has no attribution trailer, because CLAUDE.md says not to add Claude attribution and overrides the reminder that asked for one. I did not add extra `assert` statements, since the explicit validation covers that role.
+
+Run the tests with `python3 -m unittest test_retry_budget`. Using `python3 -I` fails to import the module, because `-I` drops the working directory from `sys.path`.

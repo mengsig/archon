@@ -1,0 +1,40 @@
+I've queued the change as one initiative, `ini_01M7WG5KC2HWDT2P8K1J44NZTT`, with one item per repository. I have not edited either repository myself.
+
+- **`ledger`** (`qi_01M7WG5KCQTFNJ7CWF5K0ZDPH0`): optional fourth currency column, defaulting to USD. Malformed codes exit 2 with the line number on stderr. The header becomes `date,account,amount_cents,currency`.
+- **`reports`** (`qi_01M7WG5KN5AXR0SQR19VH33NEY`): totals per account and currency, output `account,currency,total_cents`, sorted by account then currency. It accepts the old CSV without a currency column and treats those rows as USD. Malformed codes exit 2.
+
+Both items use the `direct` pipeline with standard review. Each one runs its test suite (`cargo test`, `python3 -m unittest`), updates its README, and commits locally. Both are set to ship local, so nothing is pushed.
+
+Both items queued with no dependency on each other, since the shared CSV contract is written into both briefs. I'll report when they finish. If either fails, I'll read the stage output before retrying.
+
+Done: ledger: optional currency column and currency in CSV output. ledger: optional fourth currency column (default USD, must be exactly three uppercase ASCII letters). Bad code exits 2 with `line N:` on stderr; other input errors still exit 1. Output header is now date,account,amount_cents,currency, and every row carries its currency. Committed as e1021e3 on archon/5k0zdph0-ledger-optional-currency-column-and-curr (tree e5a98468f54b6f69decb51b0378f05b33f409145, base 3ef5ddd). Checks on the final head: cargo fmt --check clean, cargo clippy --all-targets -D warnings clean, cargo test 11/11 pass (baseline before the change: 2/2). Tests cover default USD, explicit EUR, malformed codes (lowercase, wrong length, non-letters, non-ASCII) exiting 2 with line number, other errors exiting 1, and binary header/row output. README updated. Review: one reviewer (agt_01M7WG820T3W6Z8WMYDQENYYRM) passed head e1021e3 with no blocking findings. Non-blocking follow-ups: an explicit empty fourth column (trailing tab) exits 2 and is untested; currency is trimmed, so " EUR " is accepted despite the README's "exactly three letters"; to_csv_row only debug_asserts currency; stdout is partly written before a later parse error (pre-existing). Nothing started by me is still running. Reviewer process pid 1046423 was handed to me; I did not kill it and it stops when this stage ends. REVIEW: pass (agt_01M7WG820T3W6Z8WMYDQENYYRM).
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WG820T3W6Z8WMYDQENYYRM)
+
+SHIPPED: commit e1021e3d1ef6f7e060f24dc0776d73afb9293982 on the run branch
+Branch `archon/5k0zdph0-ledger-optional-currency-column-and-curr` in /home/mengsig/.local/share/archon-bench/f164-rqhhzj1d/archon-bench/work/20261120T122900Z/4d8f206bf5c32bc6ea64320f/ledger holds it (4 files changed, 232 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M7WG5KCQTFNJ7CWF5K0ZDPH0`; land it in `main`: `archon merge qi_01M7WG5KCQTFNJ7CWF5K0ZDPH0`.
+
+Freed 0.0 GiB of build output: item qi_01M7WG5KCQTFNJ7CWF5K0ZDPH0 ended and its cargo target directory went.
+
+Done: reports: per-account-and-currency totals. Repair of the review record only; no code changed. Branch head c323969e98dee100f8e85ac6dbdb7c233fc01a41 (tree 293d1e9b402b73d0471014fc0b935894722b025f) implements the reports side of the contract: reports.py accepts the new header with currency and the legacy header (legacy rows count as USD), validates currency as [A-Z]{3} and exits 2 on a malformed code, exits 1 on other input errors, and prints `account,currency,total_cents` sorted by account then currency. README documents the behaviour and exit codes. Checks: `python3 -m unittest` at head, 9 tests, OK. Reviewer agt_01M7WGAWK08K3NZE0BRZHN92W7 read the whole change 08600b0..c323969 and passed it with no blocking findings; it confirmed risk high (stdout header and column count change for existing callers). Non-blocking follow-ups, all pre-existing and outside the contract: an unparseable amount_cents raises an uncaught ValueError (exit 1, traceback); account names containing commas are not CSV-quoted on output; no test covers legacy-header input containing a currency column, or non-ASCII/trailing-newline currency codes (the code handles these correctly on probing). The reviewer's leftover process pid 1061661 was reported to me; I did not stop it. Nothing is pushed.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WGAWK08K3NZE0BRZHN92W7)
+
+SHIPPED: commit c323969e98dee100f8e85ac6dbdb7c233fc01a41 on the run branch
+Branch `archon/9vh33ney-reports-per-account-and-currency-totals` in /home/mengsig/.local/share/archon-bench/f164-rqhhzj1d/archon-bench/work/20261120T122900Z/4d8f206bf5c32bc6ea64320f/reports holds it (3 files changed, 206 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M7WG5KN5AXR0SQR19VH33NEY`; land it in `main`: `archon merge qi_01M7WG5KN5AXR0SQR19VH33NEY`.
+
+Initiative finished; coordinated result queued.
+
+Repair of the review record only; no code changed. Branch head c323969e98dee100f8e85ac6dbdb7c233fc01a41 (tree 293d1e9b402b73d0471014fc0b935894722b025f) implements the reports side of the contract: reports.py accepts the new header with currency and the legacy header (legacy rows count as USD), validates currency as [A-Z]{3} and exits 2 on a malformed code, exits 1 on other input errors, and prints `account,currency,total_cents` sorted by account then currency. README documents the behaviour and exit codes. Checks: `python3 -m unittest` at head, 9 tests, OK. Reviewer agt_01M7WGAWK08K3NZE0BRZHN92W7 read the whole change 08600b0..c323969 and passed it with no blocking findings; it confirmed risk high (stdout header and column count change for existing callers). Non-blocking follow-ups, all pre-existing and outside the contract: an unparseable amount_cents raises an uncaught ValueError (exit 1, traceback); account names containing commas are not CSV-quoted on output; no test covers legacy-header input containing a currency column, or non-ASCII/trailing-newline currency codes (the code handles these correctly on probing). The reviewer's leftover process pid 1061661 was reported to me; I did not stop it. Nothing is pushed.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WGAWK08K3NZE0BRZHN92W7)
+
+SHIPPED: commit c323969e98dee100f8e85ac6dbdb7c233fc01a41 on the run branch
+
+ledger: optional fourth currency column (default USD, must be exactly three uppercase ASCII letters). Bad code exits 2 with `line N:` on stderr; other input errors still exit 1. Output header is now date,account,amount_cents,currency, and every row carries its currency. Committed as e1021e3 on archon/5k0zdph0-ledger-optional-currency-column-and-curr (tree e5a98468f54b6f69decb51b0378f05b33f409145, base 3ef5ddd). Checks on the final head: cargo fmt --check clean, cargo clippy --all-targets -D warnings clean, cargo test 11/11 pass (baseline before the change: 2/2). Tests cover default USD, explicit EUR, malformed codes (lowercase, wrong length, non-letters, non-ASCII) exiting 2 with line number, other errors exiting 1, and binary header/row output. README updated. Review: one reviewer (agt_01M7WG820T3W6Z8WMYDQENYYRM) passed head e1021e3 with no blocking findings. Non-blocking follow-ups: an explicit empty fourth column (trailing tab) exits 2 and is untested; currency is trimmed, so " EUR " is accepted despite the README's "exactly three letters"; to_csv_row only debug_asserts currency; stdout is partly written before a later parse error (pre-existing). Nothing started by me is still running. Reviewer process pid 1046423 was handed to me; I did not kill it and it stops when this stage ends. REVIEW: pass (agt_01M7WG820T3W6Z8WMYDQENYYRM).
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M7WG820T3W6Z8WMYDQENYYRM)
+
+SHIPPED: commit e1021e3d1ef6f7e060f24dc0776d73afb9293982 on the run branch

@@ -1,0 +1,17 @@
+`ledger.py` is implemented to `SPEC.md` and committed as `db77006` on `main`. All 22 tests pass, and the concurrency tests passed on five repeated runs.
+
+**Implementation (`ledger.py`)**
+- **Construction:** accepts only a dict. Account names must be non-empty strings. Balances must be built-in `int` in `[0, MAX_BALANCE]`, so booleans, floats and subclasses are rejected. The input is copied, so later changes to it don't affect the ledger.
+- **`transfer`:** validates the amount first, then looks up both accounts (`KeyError` if either is unknown). It returns `False` on insufficient funds or destination overflow, leaving balances unchanged. A same-account transfer returns `True` iff the funds suffice, and never changes the balance.
+- **`snapshot`:** returns a copy taken under the lock.
+- **Thread safety:** one `threading.Lock` per ledger covers every operation. This makes transfers and snapshots linearizable and rules out deadlock between opposite transfers.
+
+**Tests (`test_ledger.py`)**
+- Kept the two original tests.
+- Added coverage for construction and name/balance validation, copy isolation, amount validation ordering, unknown accounts, boundary and overflow cases, same-account rules, and two concurrency tests (opposite transfers, and snapshots never seeing a half-transfer).
+
+**Choices to review**
+- **Commit trailer:** the system reminder asked for a Co-Authored-By line, but the repo's CLAUDE.md says not to attribute Claude. I followed CLAUDE.md, so the commit has no trailer.
+- **Thread joins:** the concurrency tests use `join(60)` as a deadlock guard. It's a timeout, not a timing measurement, but it is the one wall-clock value in the tests.
+- **Unhashable account names:** a non-hashable `source` or `destination` (e.g. a list) raises `TypeError` from the dict lookup. The spec doesn't cover this, so I left it as is.
+- **Asserts:** the two post-mutation asserts in `transfer` restate what the checks already guarantee. They guard against future edits rather than catching a current bug.

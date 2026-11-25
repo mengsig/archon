@@ -1,0 +1,5 @@
+Implemented and committed as `d7063ca` (`Refactor order status to enum`).
+
+`OrderStatus` and `ParseStatusError` are exported from the crate root. Status parsing, display, transitions, and report behavior are handled with the enum; production status string literals appear only in `src/status.rs`.
+
+`cargo test` passed (3 integration tests), and `git diff --check` passed.

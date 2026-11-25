@@ -46,6 +46,275 @@ fn report(store: &Store, query: ModelEvidenceQuery, range: DayRange) -> ModelEvi
 }
 
 #[test]
+fn first_attempts_and_recorded_review_findings_are_reported() {
+    use archon_core::catalog::StageKind;
+    let mut store = store();
+    let item = store.insert_item(&item(None, "quality"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let mut review = running_stage(&run, 0, 0);
+    review.stage_id = "review".into();
+    review.kind = Some(StageKind::Review);
+    review.attempt = 1;
+    review.started_at = t(100);
+    review.finished_at = Some(t(120));
+    review.state = StageState::Completed;
+    review.verdict = Some(Verdict::Pass);
+    review.structured = Some(serde_json::json!({"findings": [{"title": "one"}, {"title": "two"}]}));
+    store.upsert_stage_run(&review).unwrap();
+    let evidence = report(&store, Default::default(), range(0, 1000));
+    let row = &evidence.rows[0];
+    assert_eq!(
+        (row.first_attempt_passed, row.first_attempt_verdicts),
+        (1, 1)
+    );
+    assert_eq!(row.review_findings, Some(2));
+    assert_eq!((row.fix_up_items, row.revert_items), (None, None));
+
+    review.structured = Some(serde_json::json!({"findings": []}));
+    store.upsert_stage_run(&review).unwrap();
+    let evidence = report(&store, Default::default(), range(0, 1000));
+    assert_eq!(evidence.rows[0].review_findings, Some(0));
+    review.structured = None;
+    review.verdict = None;
+    store.upsert_stage_run(&review).unwrap();
+    let evidence = report(&store, Default::default(), range(0, 1000));
+    assert_eq!(evidence.rows[0].review_findings, None);
+    assert_eq!(evidence.rows[0].first_attempt_verdicts, 0);
+}
+
+#[test]
+fn first_attempt_outcomes_exclude_retries_and_infrastructure_failures() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "attempts"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    for (n, attempt_number, state, infra) in [
+        (0, 1, StageState::Completed, false),
+        (
+            1,
+            1,
+            StageState::Failed {
+                error: "failed".into(),
+            },
+            false,
+        ),
+        (2, 2, StageState::Completed, false),
+        (
+            3,
+            1,
+            StageState::Failed {
+                error: "offline".into(),
+            },
+            true,
+        ),
+    ] {
+        let mut stage = running_stage(&run, n, n);
+        stage.stage_id = "implement".into();
+        stage.kind = Some(archon_core::catalog::StageKind::Work);
+        stage.attempt = attempt_number;
+        stage.started_at = t(100);
+        stage.finished_at = Some(t(120));
+        stage.state = state;
+        stage.infrastructure_failure = infra;
+        store.upsert_stage_run(&stage).unwrap();
+    }
+    let evidence = report(&store, Default::default(), range(0, 1000));
+    let row = &evidence.rows[0];
+    assert_eq!(
+        (row.first_attempt_passed, row.first_attempt_verdicts),
+        (1, 2)
+    );
+    assert_eq!(row.review_findings, None);
+}
+
+#[test]
+fn legacy_unknown_stage_kinds_do_not_bias_first_attempts() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "legacy"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    for n in 0..4 {
+        let mut stage = running_stage(&run, n, n);
+        stage.stage_id = "implement".into();
+        stage.kind = None;
+        stage.attempt = 1;
+        stage.started_at = t(100);
+        stage.finished_at = Some(t(120));
+        stage.state = if n == 3 {
+            StageState::Failed {
+                error: "failed".into(),
+            }
+        } else {
+            StageState::Completed
+        };
+        store.upsert_stage_run(&stage).unwrap();
+    }
+    let evidence = report(&store, Default::default(), range(0, 1000));
+    assert_eq!(
+        (
+            evidence.rows[0].first_attempt_passed,
+            evidence.rows[0].first_attempt_verdicts
+        ),
+        (0, 0)
+    );
+    assert!(
+        evidence
+            .text()
+            .contains("first_attempt_stage_pass=0/0 (unknown)")
+    );
+}
+
+fn record_work_and_failed_review(store: &mut Store, run: &PipelineRun) {
+    use archon_core::catalog::StageKind;
+    let mut work = running_stage(run, 0, 0);
+    work.stage_id = "implement".into();
+    work.kind = Some(StageKind::Work);
+    work.started_at = t(100);
+    work.finished_at = Some(t(110));
+    work.state = StageState::Completed;
+    store.upsert_stage_run(&work).unwrap();
+    let mut review = running_stage(run, 1, 1);
+    review.stage_id = "review".into();
+    review.kind = Some(StageKind::Review);
+    review.started_at = t(120);
+    review.finished_at = Some(t(140));
+    review.state = StageState::Completed;
+    review.verdict = Some(Verdict::Fail);
+    store.upsert_stage_run(&review).unwrap();
+}
+
+fn onto_fixture(
+    target: archon_core::pull_request::OntoTarget,
+    pr: archon_core::pull_request::PullRequestRef,
+    branch: &str,
+) -> Box<archon_core::pull_request::OntoPullRequest> {
+    Box::new(archon_core::pull_request::OntoPullRequest {
+        target,
+        pr,
+        node_id: None,
+        head_repository: "o/r".into(),
+        head_ref: branch.into(),
+        base_ref: "main".into(),
+        head_sha: "a".repeat(40),
+        review_only: false,
+    })
+}
+
+fn insert_outside_link(
+    store: &mut Store,
+    repo: &archon_core::repo::Repo,
+    owner: &archon_core::id::QueueItemId,
+    pr: archon_core::pull_request::PullRequestRef,
+) {
+    let mut outside = item(Some(repo), "outside window");
+    outside.created_at = t(172_800);
+    outside.onto = Some(onto_fixture(
+        archon_core::pull_request::OntoTarget::Item(owner.clone()),
+        pr,
+        "archon/x",
+    ));
+    store.insert_item(&outside, None).unwrap();
+}
+
+fn insert_other_targets(
+    store: &mut Store,
+    repo: &archon_core::repo::Repo,
+    pr: &archon_core::pull_request::PullRequestRef,
+) {
+    use archon_core::pull_request::{OntoTarget, PullRequestRef};
+    let mut same_pr = item(Some(repo), "same pr");
+    same_pr.created_at = t(250);
+    same_pr.onto = Some(onto_fixture(
+        OntoTarget::Pr(pr.number),
+        pr.clone(),
+        "different",
+    ));
+    store.insert_item(&same_pr, None).unwrap();
+    let mut same_branch = item(Some(repo), "same branch");
+    same_branch.created_at = t(260);
+    let other_pr = PullRequestRef::from_url("https://github.com/o/r/pull/3").unwrap();
+    same_branch.onto = Some(onto_fixture(
+        OntoTarget::Branch("archon/x".into()),
+        other_pr,
+        "archon/x",
+    ));
+    store.insert_item(&same_branch, None).unwrap();
+    let mut read_only = item(Some(repo), "read only");
+    read_only.created_at = t(270);
+    let mut target = onto_fixture(OntoTarget::Pr(pr.number), pr.clone(), "different");
+    target.review_only = true;
+    read_only.onto = Some(target);
+    store.insert_item(&read_only, None).unwrap();
+    let other_repo = common::repo("other-link-fixture");
+    store.insert_repo(&other_repo).unwrap();
+    let mut cross_repo = item(Some(&other_repo), "other repo");
+    cross_repo.created_at = t(280);
+    cross_repo.onto = Some(onto_fixture(
+        OntoTarget::Pr(pr.number),
+        pr.clone(),
+        "archon/x",
+    ));
+    store.insert_item(&cross_repo, None).unwrap();
+}
+
+#[test]
+fn linked_fixups_and_reverts_use_recorded_targets_and_review_timing() {
+    use archon_core::pull_request::{OntoTarget, PullRequestRef};
+    let mut store = store();
+    let repo = repo("link-fixture");
+    store.insert_repo(&repo).unwrap();
+    let owner = store
+        .insert_item(&item(Some(&repo), "owner"), None)
+        .unwrap();
+    let run = start(&mut store, &owner.id);
+    let pr = PullRequestRef::from_url("https://github.com/o/r/pull/1").unwrap();
+    store.record_run_pull_request(&run.id, &pr, None).unwrap();
+    record_work_and_failed_review(&mut store, &run);
+    let mut same_pr = item(Some(&repo), "follow up");
+    same_pr.created_at = t(200);
+    same_pr.onto = Some(onto_fixture(
+        OntoTarget::Item(owner.id.clone()),
+        pr.clone(),
+        "archon/x",
+    ));
+    store.insert_item(&same_pr, None).unwrap();
+    let mut dependent = item(Some(&repo), "address review");
+    dependent.created_at = t(210);
+    dependent.dependencies.push(owner.id.clone());
+    store.insert_item(&dependent, None).unwrap();
+    let mut too_early = item(Some(&repo), "ordinary dependency");
+    too_early.created_at = t(130);
+    too_early.dependencies.push(owner.id.clone());
+    store.insert_item(&too_early, None).unwrap();
+    let mut revert = item(Some(&repo), "Revert change");
+    revert.created_at = t(220);
+    let other_pr = PullRequestRef::from_url("https://github.com/o/r/pull/2").unwrap();
+    revert.onto = Some(onto_fixture(
+        OntoTarget::Branch("archon/x".into()),
+        other_pr,
+        "archon/x",
+    ));
+    store.insert_item(&revert, None).unwrap();
+    let mut tagged = item(Some(&repo), "undo");
+    tagged.created_at = t(230);
+    tagged.tags.push("revert".into());
+    tagged.dependencies.push(owner.id.clone());
+    store.insert_item(&tagged, None).unwrap();
+    let mut unrelated = item(Some(&repo), "Revert unrelated");
+    unrelated.created_at = t(240);
+    store.insert_item(&unrelated, None).unwrap();
+    insert_outside_link(&mut store, &repo, &owner.id, pr.clone());
+    insert_other_targets(&mut store, &repo, &pr);
+
+    let query = ModelEvidenceQuery {
+        stage: Some("implement".into()),
+        ..Default::default()
+    };
+    let evidence = report(&store, query, range(0, 1000));
+    assert_eq!(evidence.rows.len(), 1);
+    assert_eq!(evidence.rows[0].fix_up_items, Some(4));
+    assert_eq!(evidence.rows[0].revert_items, Some(2));
+}
+
+#[test]
 fn model_evidence_keeps_a_recorded_alias_apart_from_its_current_target() {
     use archon_core::model_tier::{CatalogModel, ModelCatalog};
     let mut store = store();
@@ -744,4 +1013,177 @@ fn sized_attempts_are_grouped_for_display_and_routing_reads_none_of_it() {
     );
     let unsized_report: serde_json::Value = serde_json::to_value(&plain).unwrap();
     assert!(unsized_report.get("sizing").is_none(), "{unsized_report}");
+}
+
+#[test]
+fn a_kept_agents_usage_is_split_at_the_resume_request_before_its_reply() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "kept"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let mut first = running_stage(&run, 0, 3);
+    first.started_at = t(100);
+    let lead = first.aether_agent.clone().unwrap();
+    let usage = |cost_usd, at| billed_event(&item.id, lead.clone(), cost_usd, at);
+    store.upsert_stage_run(&first).unwrap();
+    store.record_spend(&usage(1.0, 110)).unwrap();
+    first.state = StageState::Completed;
+    first.finished_at = Some(t(120));
+    store.upsert_stage_run(&first).unwrap();
+
+    let mut kept = common::stage(&run, 0);
+    kept.attempt = 2;
+    kept.started_at = t(130);
+    store.upsert_stage_run(&kept).unwrap();
+    store
+        .bind_kept_spend(&kept.id, &lead, &t(140), None)
+        .unwrap();
+    store
+        .bind_kept_spend(&kept.id, &lead, &t(150), None)
+        .unwrap();
+    // The older usage was delayed. The first usage of the repair wins the
+    // race with the resume reply, and can be replayed without a double charge.
+    store.record_spend(&usage(1.25, 135)).unwrap();
+    let estimate = SpendRow {
+        cost_basis: archon_core::cost::CostBasis::ListPrice,
+        cost_complete: Some(false),
+        ..usage(4.25, 145)
+    };
+    store.record_spend(&estimate).unwrap();
+    for _ in 0..2 {
+        store.record_spend(&usage(3.25, 146)).unwrap();
+    }
+    kept.aether_agent = Some(lead);
+    kept.state = StageState::Completed;
+    kept.finished_at = Some(t(160));
+    store.upsert_stage_run(&kept).unwrap();
+
+    let evidence = report(&store, Default::default(), range(0, 0));
+    let row = &evidence.rows[0];
+    assert_eq!(row.completed, 2);
+    assert_eq!(row.median_cost_usd, Some(1.625));
+    assert_eq!(row.p90_cost_usd, Some(2.0));
+    assert_eq!(store.spend_for_item(&item.id, false).unwrap(), 3.25);
+    assert!(store.unlinked_spend().unwrap().is_empty());
+}
+
+#[test]
+fn aether_sequence_separates_kept_turns_and_keeps_delegates_with_their_review() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "remote"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let mut original = running_stage(&run, 0, 1);
+    original.state = StageState::Completed;
+    original.finished_at = Some(t(120));
+    store.upsert_stage_run(&original).unwrap();
+
+    let (lead, old_child, new_child, nested) = (
+        common::agent(1),
+        common::agent(2),
+        common::agent(3),
+        common::agent(4),
+    );
+    let model = "codex/helper".parse().unwrap();
+    store
+        .record_delegation_event(&old_child, &lead, &model, 10)
+        .unwrap();
+    let mut repair = common::stage(&run, 0);
+    repair.attempt = 2;
+    repair.started_at = t(130);
+    store.upsert_stage_run(&repair).unwrap();
+    store
+        .bind_kept_spend(&repair.id, &lead, &t(140), Some(20))
+        .unwrap();
+    store
+        .record_delegation_event(&new_child, &lead, &model, 21)
+        .unwrap();
+    store
+        .record_delegation_event(&nested, &old_child, &model, 22)
+        .unwrap();
+
+    // All Aether timestamps precede Archon's local handoff clock.
+    for (agent, cost_usd, seq) in [
+        (lead.clone(), 1.0, 19),
+        (lead.clone(), 2.0, 23),
+        (old_child, 0.5, 24),
+        (nested, 0.25, 25),
+        (new_child, 0.125, 26),
+    ] {
+        let row = billed_event(&item.id, agent, cost_usd, i64::try_from(seq).unwrap());
+        store.record_spend_event(&row, seq).unwrap();
+    }
+    repair.aether_agent = Some(lead);
+    repair.state = StageState::Completed;
+    repair.finished_at = Some(t(150));
+    store.upsert_stage_run(&repair).unwrap();
+    let evidence = report(&store, Default::default(), range(0, 0));
+    assert_eq!(evidence.rows[0].p90_cost_usd, Some(1.75));
+    assert_eq!(evidence.rows[0].median_cost_usd, Some(1.4375));
+    assert!(store.unlinked_spend().unwrap().is_empty());
+}
+
+fn billed_event(
+    item: &archon_core::id::QueueItemId,
+    agent: archon_core::aether_ids::AetherAgentId,
+    cost_usd: f64,
+    at: i64,
+) -> SpendRow {
+    SpendRow {
+        agent,
+        item: Some(item.clone()),
+        cost_usd,
+        cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: Some(true),
+        estimated_cost_usd: 0.0,
+        input_tokens: 1,
+        output_tokens: 1,
+        at: t(at),
+    }
+}
+
+/// The stage view reads each delegate's attempt from the same ledger rows,
+/// and leaves out one whose usage the ledger could not attribute.
+#[test]
+fn delegated_stage_spend_names_each_delegates_attempt_and_skips_unattributed_ones() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "split"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let mut original = running_stage(&run, 0, 1);
+    original.state = StageState::Completed;
+    original.finished_at = Some(t(120));
+    store.upsert_stage_run(&original).unwrap();
+    let (lead, child, stray) = (common::agent(1), common::agent(2), common::agent(3));
+    let model = "codex/helper".parse().unwrap();
+    store
+        .record_delegation_event(&child, &lead, &model, 10)
+        .unwrap();
+    let mut repair = common::stage(&run, 0);
+    repair.attempt = 2;
+    repair.started_at = t(130);
+    store.upsert_stage_run(&repair).unwrap();
+    store
+        .bind_kept_spend(&repair.id, &lead, &t(140), Some(20))
+        .unwrap();
+    // The stray's usage lands before Archon learns who delegated it.
+    store
+        .record_spend_event(&billed_event(&item.id, stray.clone(), 0.5, 21), 21)
+        .unwrap();
+    store
+        .record_delegation_event(&stray, &lead, &model, 22)
+        .unwrap();
+    store
+        .record_spend_event(&billed_event(&item.id, child.clone(), 0.25, 23), 23)
+        .unwrap();
+
+    let first = store
+        .delegated_stage_spend(&lead, &original.id, false)
+        .unwrap();
+    assert_eq!(
+        first.into_iter().collect::<Vec<_>>(),
+        [(child.clone(), Some(0.25))]
+    );
+    let second = store
+        .delegated_stage_spend(&lead, &repair.id, false)
+        .unwrap();
+    assert_eq!(second.into_iter().collect::<Vec<_>>(), [(child, None)]);
+    assert_eq!(store.unlinked_spend().unwrap(), [stray]);
 }

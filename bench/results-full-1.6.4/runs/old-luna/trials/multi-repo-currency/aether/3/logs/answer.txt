@@ -1,0 +1,6 @@
+Implemented and committed both repositories:
+
+- `ledger`: `25c8eab` — adds optional currency input, defaults to USD, emits currency in CSV, and returns status 2 for malformed currency codes.
+- `reports`: `f88de47` — totals by account and currency, supports legacy CSV as USD, and returns status 2 for malformed currency codes.
+
+`python3 -m unittest` passed. I also confirmed malformed report currency produces status 2. `cargo test` could not run because Cargo and Rust are unavailable in the environment. Both repositories are clean.

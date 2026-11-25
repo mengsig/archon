@@ -1,0 +1,8 @@
+Implemented and committed in both repositories:
+
+- API pagination with default limit 20, 1–100 validation, opaque cursors, ordered results, and 400 errors for invalid parameters. README updated.
+- Client follows cursors until `next_cursor` is null or absent, preserving each cursor unchanged. README updated.
+
+Verification passed: `python3 -m unittest`, `npm test`, plus pagination checks for API ordering, invalid inputs, and client cursor forwarding. Both worktrees are clean.
+
+Commits: API `e171f61`; client `7376138`.

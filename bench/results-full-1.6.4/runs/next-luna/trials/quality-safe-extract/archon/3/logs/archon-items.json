@@ -1,0 +1,313 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M7WDRW5V85H6SPMJKSMAST8R",
+      "repo": "repo_01M7WDRDGRFC0N2ZWHHSERMD72",
+      "pipeline": "direct",
+      "title": "Implement safe_extract.py from SPEC with focused boundary tests",
+      "brief": "Implement safe_extract.py according to SPEC.md. Preserve the documented API, handle every specified error and boundary case, and add focused tests beyond the existing basic coverage. Use only the Python standard library. Run the relevant tests and commit the work locally. Acceptance: implementation conforms to every documented SPEC behavior and error/boundary case; focused tests cover those cases and pass; commit created on the assigned branch.\n\n## Amendment (2026-11-20 12:10 UTC)\n\nThis assignment is explicitly authorized by the operator. Proceed with security-sensitive extraction path and symlink validation; implement documented SPEC cases, add focused tests, run them, and commit locally. Apply careful threat analysis for filesystem escape and symlink boundary behavior. The previous direct attempt escalated because of this scope; adaptive is the required pipeline.\n\n## Amendment (2026-11-20 12:10 UTC)\n\nThis item continues with the stages of pipeline `adaptive` after its run failed at stage `implement`: ESCALATE: re-queue on adaptive. Implementing `safe_extract.py` requires security-sensitive path and symlink validation to prevent traversal and filesystem escape, which the assignment explicitly says to escalate without committing. Baseline `python -m unittest -v` ran 2 tests and both errored with NotImplementedError; no files changed and no commit was created.\nThe work that run committed is on branch `archon/ksmast8r-implement-safe-extract-py-from-spec-with` in this worktree. Continue from it; do not start over.\n",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M7WDRW5V85H6SPMJKSMAST8R",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-20T12:10:00.595724107Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-20T12:10:00.596626299Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-20T12:10:00.595724107Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "size": "small",
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M7WDT54A273M4TXDERCFAZ89",
+        "summary": "Implemented safe extraction and focused boundary tests in safe_extract.py and test_safe_extract.py; commit db6b612071144f8425b061cccc22933d5bfaf119 on the assigned branch. The 10-test unittest suite and git diff --check pass on tree 4695c1ef64debb68c8f9c03156c7d72e68cfdc8d; reviewer passed with no findings. Worktree is clean.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WDX7KF994B411M4KTGJJP8)\n\nSHIPPED: commit db6b612071144f8425b061cccc22933d5bfaf119 on the run branch"
+      },
+      "created_at": "2026-11-20T12:09:18.779183302Z",
+      "updated_at": "2026-11-20T12:12:35.899849452Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M7WDRW7A72EY33V3ZEYBST7K",
+        "item": "qi_01M7WDRW5V85H6SPMJKSMAST8R",
+        "pipeline": "direct",
+        "shipped": false,
+        "aether_run": "run_01M7WDRWHW8SF62XS195Q5NWW1",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/858c2e88b893223acee3bcf4/.archon/data/worktrees/quality-safe-extract/qi_01M7WDRW5V85H6SPMJKSMAST8R",
+        "branch": "archon/ksmast8r-implement-safe-extract-py-from-spec-with",
+        "state": {
+          "state": "failed",
+          "stage_id": "implement",
+          "error": "ESCALATE: re-queue on adaptive. Implementing `safe_extract.py` requires security-sensitive path and symlink validation to prevent traversal and filesystem escape, which the assignment explicitly says to escalate without committing. Baseline `python -m unittest -v` ran 2 tests and both errored with NotImplementedError; no files changed and no commit was created."
+        },
+        "cost_usd": 0.0031894600000000003,
+        "started_at": "2026-11-20T12:09:19.096859698Z",
+        "finished_at": "2026-11-20T12:09:43.707863707Z"
+      },
+      {
+        "id": "prun_01M7WDT54A273M4TXDERCFAZ89",
+        "item": "qi_01M7WDRW5V85H6SPMJKSMAST8R",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M7WDT5QFSN69B9Z6PBKXPR8K",
+        "workspace": "/home/mengsig/.local/share/archon-bench/f164-9rntxe1v/archon-bench/work/20261120T085850Z/858c2e88b893223acee3bcf4/.archon/data/worktrees/quality-safe-extract/qi_01M7WDRW5V85H6SPMJKSMAST8R",
+        "branch": "archon/ksmast8r-implement-safe-extract-py-from-spec-with",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe extraction and focused boundary tests in safe_extract.py and test_safe_extract.py; commit db6b612071144f8425b061cccc22933d5bfaf119 on the assigned branch. The 10-test unittest suite and git diff --check pass on tree 4695c1ef64debb68c8f9c03156c7d72e68cfdc8d; reviewer passed with no findings. Worktree is clean.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WDX7KF994B411M4KTGJJP8)\n\nSHIPPED: commit db6b612071144f8425b061cccc22933d5bfaf119 on the run branch"
+        },
+        "cost_usd": 0.014744740000000004,
+        "started_at": "2026-11-20T12:10:00.810675078Z",
+        "finished_at": "2026-11-20T12:12:35.899849452Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M7WDRWH1TQD3M1R91KGGBGCX",
+        "run": "prun_01M7WDRW7A72EY33V3ZEYBST7K",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WDRWK7B4GKJPFKSQZR8GA6",
+        "aether_task": "tsk_01M7WDRWK7BQ67QX69Y354FR1X",
+        "state": {
+          "state": "failed",
+          "error": "ESCALATE: re-queue on adaptive. Implementing `safe_extract.py` requires security-sensitive path and symlink validation to prevent traversal and filesystem escape, which the assignment explicitly says to escalate without committing. Baseline `python -m unittest -v` ran 2 tests and both errored with NotImplementedError; no files changed and no commit was created."
+        },
+        "verdict": null,
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": null,
+        "structured": null,
+        "cost_usd": 0.0031894600000000003,
+        "started_at": "2026-11-20T12:09:19.137771542Z",
+        "finished_at": "2026-11-20T12:09:43.687295898Z"
+      },
+      {
+        "id": "stg_01M7WDT5Q86VJFXS0TVS11ZWT7",
+        "run": "prun_01M7WDT54A273M4TXDERCFAZ89",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M7WDT5QN75FSQ3ZDN5BY4AE4",
+        "aether_task": "tsk_01M7WDT5QNYRJ4M0DBCN4CFZ05",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented safe extraction and focused boundary tests in safe_extract.py and test_safe_extract.py; commit db6b612071144f8425b061cccc22933d5bfaf119 on the assigned branch. The 10-test unittest suite and git diff --check pass on tree 4695c1ef64debb68c8f9c03156c7d72e68cfdc8d; reviewer passed with no findings. Worktree is clean.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v — 10 tests passed",
+            "git diff --check — passed"
+          ],
+          "commit": "db6b612071144f8425b061cccc22933d5bfaf119",
+          "evidence": [
+            {
+              "after": "python -m unittest -v: 10 tests passed; git diff --check passed.",
+              "before": "Baseline python -m unittest -v: 2 tests ran; both errored with NotImplementedError.",
+              "caption": "Extraction test results before and after the implementation.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "db6b612071144f8425b061cccc22933d5bfaf119",
+          "pr": {
+            "body": "Implemented complete batch validation, POSIX path checks, duplicate and file/directory collision detection, and lstat-based root and destination checks that reject symlinks and existing targets. Files are created exclusively and written as exact bytes; filesystem I/O failures remain visible. Added focused coverage for malformed inputs, invalid roots and paths, collisions, preexisting targets, symlinks, no-write-on-validation-failure, literal percent signs, and exact bytes. Verification: `python -m unittest -v` (10 passed) and `git diff --check` (passed), on commit db6b612071144f8425b061cccc22933d5bfaf119. A read-only reviewer passed the complete base-to-head diff with no findings. Assumption: filesystem state is stable during validation and writes, as specified. No outstanding findings.",
+            "summary": "Implemented safe regular file extraction with full-batch and path validation. Before: extraction raised NotImplementedError; now: safe nested writes work and invalid batches, paths, conflicts, and symlinks are rejected before mutation.",
+            "title": "feat: implement safe file extraction"
+          },
+          "review": {
+            "reviewed_head": "db6b612071144f8425b061cccc22933d5bfaf119",
+            "reviewer_agents": [
+              "agt_01M7WDX7KF994B411M4KTGJJP8"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M7WDX7KF994B411M4KTGJJP8",
+                "base": "e001a62c5dc78b1c61374490f1399fdbba54bd2d",
+                "findings": 0,
+                "head": "db6b612071144f8425b061cccc22933d5bfaf119",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M7WDX7KF994B411M4KTGJJP8"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": {
+              "level": "high",
+              "why": "Filesystem path validation and symlink protections are security-sensitive."
+            },
+            "why": "safe_extract.py changes security-sensitive filesystem path and symlink validation behavior; 10 focused tests pass and the complete change received a passing review with no findings."
+          },
+          "tree": "4695c1ef64debb68c8f9c03156c7d72e68cfdc8d"
+        },
+        "cost_usd": 0.014744740000000004,
+        "started_at": "2026-11-20T12:10:01.320025575Z",
+        "finished_at": "2026-11-20T12:12:33.321042831Z"
+      }
+    ],
+    "spent_usd": 0.017934200000000004,
+    "gates": [],
+    "delegations": {
+      "stg_01M7WDT5Q86VJFXS0TVS11ZWT7": {
+        "direct_usd": 0.012084640000000002,
+        "delegated_usd": 0.0026601000000000003,
+        "agents": [
+          {
+            "agent": "agt_01M7WDX7KF994B411M4KTGJJP8",
+            "parent": "agt_01M7WDT5QN75FSQ3ZDN5BY4AE4",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0026601000000000003
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-20T12:10:00.595724107Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-20T12:10:00.596626299Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-20T12:10:00.595724107Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "steers": [
+      {
+        "at": "2026-11-20T12:10:00.596678548Z",
+        "by": "orchestrator",
+        "what": "amended the brief; switched the stages still to run to `adaptive`; queued it again on its branch",
+        "note": "This assignment is explicitly authorized by the operator. Proceed with security-sensitive extraction path and symlink validation; implement documented SPEC cases, add focused tests, run them, and commit locally. Apply careful threat analysis for filesystem escape and symlink boundary behavior. The previous direct attempt escalated because of this scope; adaptive is the required pipeline."
+      }
+    ],
+    "switched_to": "adaptive"
+  }
+]

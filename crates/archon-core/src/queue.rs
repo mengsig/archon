@@ -245,6 +245,9 @@ pub struct QueueItem {
     /// The GitHub thread that asked for it; its outcome is reported there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<GithubThread>,
+    /// Earlier work this item supersedes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes: Option<QueueItemId>,
     /// Fresh retries so far; each started the item again from the base
     /// branch, on a branch of its own (ARCHITECTURE §13).
     #[serde(default)]
@@ -475,6 +478,7 @@ mod tests {
             stage_timeouts: BTreeMap::new(),
             autonomy: Autonomy::default(),
             origin: None,
+            supersedes: None,
             fresh_retries: 0,
             routed_provider: None,
             provider_switch: None,

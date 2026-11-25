@@ -100,7 +100,7 @@ async fn answers(h: &Harness, question: &QuestionId) -> Vec<(String, AnswerVia)>
 
 async fn system_notes(h: &Harness) -> Vec<String> {
     let notes = feed(h).await.into_iter().filter_map(|entry| match entry {
-        FeedEntry::System { text } => Some(text),
+        FeedEntry::System { text, .. } => Some(text),
         _ => None,
     });
     notes.collect()

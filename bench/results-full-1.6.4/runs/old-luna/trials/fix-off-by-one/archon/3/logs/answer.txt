@@ -1,0 +1,16 @@
+The failure is an off-by-one: `range(len(items) - size)` excludes the last start position. I queued a focused fix that also makes the size contract explicit, preserves slice behavior, runs the requested unittest command, and commits locally.
+
+Done: Fix sliding_windows boundary and input handling. Updated sliding_windows to reject non-integer and boolean sizes with TypeError, reject non-positive integers with ValueError, and include the final valid contiguous window while preserving slice result types. `python3 -m unittest` passed (3 tests); focused checks passed for equal/oversized sizes, empty input, tuple slices, and invalid sizes; `git diff --check` passed. Committed as 4438444829408e2a66db8bb30c467ed862ad3db5. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WAR7FJ9R0AKG8ZF2GDJMNC)
+
+SHIPPED: commit 4438444829408e2a66db8bb30c467ed862ad3db5 on the run branch
+Branch `archon/cmdfhrrs-fix-sliding-windows-boundary-and-input-h` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/1981afc7857e621970b356cf/fix-off-by-one holds it (1 file changed, 3 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M7WAPKATC5GMNGF1CMDFHRRS`; land it in `main`: `archon merge qi_01M7WAPKATC5GMNGF1CMDFHRRS`.
+
+Fixed and committed as `4438444829408e2a66db8bb30c467ed862ad3db5`. `sliding_windows` now includes the final valid window and rejects invalid sizes. `python3 -m unittest` passed, along with focused edge case checks; review passed.
+
+Updated sliding_windows to reject non-integer and boolean sizes with TypeError, reject non-positive integers with ValueError, and include the final valid contiguous window while preserving slice result types. `python3 -m unittest` passed (3 tests); focused checks passed for equal/oversized sizes, empty input, tuple slices, and invalid sizes; `git diff --check` passed. Committed as 4438444829408e2a66db8bb30c467ed862ad3db5. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WAR7FJ9R0AKG8ZF2GDJMNC)
+
+SHIPPED: commit 4438444829408e2a66db8bb30c467ed862ad3db5 on the run branch

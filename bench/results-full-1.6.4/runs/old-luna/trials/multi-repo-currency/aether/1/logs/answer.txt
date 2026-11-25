@@ -1,0 +1,6 @@
+Implemented and committed both repositories:
+
+- `ledger` — `db57a1d` (`Add currency support to ledger export`)
+- `reports` — `c86dd36` (`Group report totals by currency`)
+
+The Python suite passed. I couldn’t run `cargo test` because Cargo isn’t installed or available on PATH. Both working trees are clean.

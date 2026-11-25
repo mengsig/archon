@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ImageProof {
     pub path: PathBuf,
@@ -14,18 +12,25 @@ pub(super) struct ImageProof {
 }
 
 pub(super) fn read(path: &Path) -> Result<Vec<u8>, ArchonError> {
+    read_bounded(path, 20)
+}
+
+fn read_bounded(path: &Path, limit_mib: u64) -> Result<Vec<u8>, ArchonError> {
+    let limit = limit_mib * 1024 * 1024;
     let metadata = std::fs::metadata(path)
         .map_err(|e| ArchonError::Invalid(format!("image {}: {e}", path.display())))?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_IMAGE_BYTES {
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > limit {
         return Err(ArchonError::Invalid(format!(
-            "image {} must be a nonempty file of at most 20 MiB",
+            "image {} must be a nonempty file of at most {limit_mib} MiB",
             path.display()
         )));
     }
     let bytes = std::fs::read(path)
         .map_err(|e| ArchonError::io(format!("read image {}", path.display()), e))?;
-    if bytes.len() as u64 > MAX_IMAGE_BYTES {
-        return Err(ArchonError::Invalid("image grew beyond 20 MiB".into()));
+    if bytes.len() as u64 > limit {
+        return Err(ArchonError::Invalid(format!(
+            "image grew beyond {limit_mib} MiB"
+        )));
     }
     if archon_core::attachment::sniff_media_type(&bytes).is_none() {
         return Err(ArchonError::Invalid(format!(
@@ -34,15 +39,23 @@ pub(super) fn read(path: &Path) -> Result<Vec<u8>, ArchonError> {
         )));
     }
     assert!(!bytes.is_empty());
-    assert!(bytes.len() as u64 <= MAX_IMAGE_BYTES);
+    assert!(bytes.len() as u64 <= limit);
     Ok(bytes)
 }
 
-pub(super) fn hash(path: &Path) -> Result<String, ArchonError> {
-    Ok(Sha256::digest(read(path)?)
+pub(super) fn read_reference(path: &Path) -> Result<Vec<u8>, ArchonError> {
+    read_bounded(path, 32)
+}
+
+pub(in crate::executor) fn reference_hash(path: &Path) -> Result<String, ArchonError> {
+    Ok(digest(&read_reference(path)?))
+}
+
+pub(super) fn digest(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect::<String>())
+        .collect()
 }
 
 pub(super) fn prove(
@@ -60,7 +73,7 @@ pub(super) fn prove(
                 .ok_or_else(|| {
                     ArchonError::Invalid(format!("unknown reference {}", pair.reference))
                 })?;
-            let actual = hash(&reference.path)?;
+            let actual = reference_hash(&reference.path)?;
             if actual != reference.sha256 {
                 return Err(ArchonError::Invalid(format!(
                     "approved reference {} changed",
@@ -69,7 +82,7 @@ pub(super) fn prove(
             }
             let built = super::super::pages::inside_workspace(workspace, &pair.built)
                 .map_err(ArchonError::Invalid)
-                .and_then(|built| Ok((hash(&built)?, built)));
+                .and_then(|built| Ok((digest(&read(&built)?), built)));
             let (sha256, built) = built.map_err(|e| {
                 archon_pipeline::acceptance::results_refused(&format!(
                     "{} built image {}: {e}",
@@ -99,7 +112,7 @@ pub(super) fn prove(
 
 pub(super) fn verify(proofs: &[ImageProof]) -> Result<(), ArchonError> {
     for proof in proofs {
-        if hash(&proof.path)? != proof.sha256 {
+        if digest(&read(&proof.path)?) != proof.sha256 {
             return Err(ArchonError::Invalid(format!(
                 "acceptance evidence {} changed after build",
                 proof.path.display()

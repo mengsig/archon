@@ -1,0 +1,22 @@
+Both repos are committed and their tests pass. The ledger commit is `0d42c09` and the reports commit is `f205756`.
+
+**ledger (Rust)**
+- Input lines take an optional fourth column. A missing column means `USD`. The header is now `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed currency code prints `line N: bad currency "..."` to stderr and exits 2. Other input errors still exit 1. `parse_line` now returns a `ParseError` enum (`Malformed` / `BadCurrency`) so `main` can pick the exit status.
+- Tests: `cargo test` passes (8 tests). New ones cover explicit and default currency, rejected codes, and an end-to-end check of exit 2 and exit 1 through the binary.
+
+**reports (Python)**
+- Totals are keyed by (account, currency). Output is `account,currency,total_cents`, sorted by account then currency.
+- A CSV without a `currency` column counts as `USD`. A bad or empty currency cell prints `error: line N: ...` to stderr and exits 2.
+- Tests: `python3 -m unittest` passes (4 tests). They cover the legacy format, mixed currencies with sorting, and both exit-2 cases.
+- The end-to-end pipe `ledger | reports` works on mixed-currency input.
+
+**READMEs** in both repos describe the new columns, the currency rule, and the exit statuses.
+
+**Choices I made that you may want to change**
+- Currency values are trimmed like the other fields, so `" EUR "` is accepted. An empty fourth column is treated as a bad currency (exit 2), not as missing.
+- `ledger`'s version stays at 0.3.0. The output format changed, so you may want to bump it.
+- `reports.py` only treats currency errors as exit 2. A non-numeric `amount_cents` still ends in a traceback, as before. I left that alone because it was outside the request.
+- The commits use the repo's configured git identity (`mengsig`). I left off the Co-Authored-By trailer because CLAUDE.md says not to add Claude attribution.
+
+**Mistake I fixed:** I first wrote the reports test file to a wrong path, which created a stray directory outside the repo. I removed both and wrote the file to the correct location. It is not in either commit.

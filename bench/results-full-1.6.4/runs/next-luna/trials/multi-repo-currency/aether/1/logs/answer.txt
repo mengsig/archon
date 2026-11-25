@@ -1,0 +1,9 @@
+Implemented and committed both repositories.
+
+- `ledger`: accepts an optional uppercase three-letter currency, defaults to `USD`, includes currency in the CSV, and exits with status 2 for malformed currency codes.
+- `reports`: groups totals by account and currency, sorts by both fields, supports legacy CSV as `USD`, and exits with status 2 for malformed currency codes.
+- Updated both READMEs. Both repositories have clean working trees.
+
+Verification passed: `cargo +stable test` and `python3 -m unittest`.
+
+Commits: `ledger` `e50c008`; `reports` `1fbaac4`.

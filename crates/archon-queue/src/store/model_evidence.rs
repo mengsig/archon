@@ -7,11 +7,11 @@ use archon_core::cost::DayRange;
 use archon_core::effort_sizing::RiskClass;
 use archon_core::error::ArchonError;
 use archon_core::feedback::feedback_window;
-use archon_core::id::{FeedbackId, PipelineRunId, RepoId};
+use archon_core::id::{FeedbackId, PipelineRunId, QueueItemId, RepoId};
 use archon_core::model::{Effort, ModelChoice};
 use archon_core::model_evidence::{
     MAX_ROWS, ModelEvidenceQuery, ModelEvidenceReport, ModelEvidenceRow, ProviderEvidenceRow,
-    SizingEvidenceRow, TierEvidenceRow,
+    RoutingEvidenceRow, SizingEvidenceRow, TierEvidenceRow,
 };
 use archon_core::model_tier::{ModelCatalog, Tier};
 use archon_core::outcome::{
@@ -23,7 +23,6 @@ use archon_core::run::{StageRun, StageState, Verdict, VerdictNote};
 use rusqlite::{Connection, params};
 
 use super::codec::{SqlContext, from_json};
-use super::delegated::BENEATH;
 use super::operator_feedback as feedback;
 
 #[derive(Default)]
@@ -34,12 +33,20 @@ struct Samples {
     verdicts: usize,
     passed: usize,
     disputed: usize,
+    first_attempt_verdicts: usize,
+    first_attempt_passed: usize,
+    review_findings: Option<usize>,
+    fixups: HashSet<QueueItemId>,
+    reverts: HashSet<QueueItemId>,
 }
 
 /// Owned observations, so classification can read files without a store lock.
 #[derive(Debug)]
 pub struct ModelEvidenceSnapshot {
     attempts: Vec<Attempt>,
+    routing: Vec<RoutingEvidenceRow>,
+    candidates: Vec<String>,
+    reviews: Vec<(String, String)>,
     range: DayRange,
     estimates: bool,
 }
@@ -49,6 +56,8 @@ struct Attempt {
     stage: StageRun,
     item: QueueItem,
     pipeline: String,
+    branch: String,
+    pull_request: Option<archon_core::pull_request::PullRequestRef>,
     billed: Option<f64>,
     estimated: Option<f64>,
     /// What the agents the stage agent delegated to were charged.
@@ -72,56 +81,148 @@ pub(super) fn read(
         .as_ref()
         .map(|r| super::repos::find(conn, r))
         .transpose()?;
-    // A stage cost is complete: its agent's spend and that of every agent
-    // beneath it, so a lead that delegates is not compared as a cheap one.
-    let sql = format!(
-        "WITH RECURSIVE {BENEATH},
-         delegated(root, cost_usd, estimated_cost_usd) AS (
-             SELECT b.root, SUM(s.cost_usd), SUM(s.estimated_cost_usd)
-             FROM beneath b JOIN spend s ON s.agent = b.agent GROUP BY b.root
-         )
-         SELECT st.data, i.data, s.cost_usd, s.estimated_cost_usd, r.pipeline,
-                COALESCE(d.cost_usd, 0), COALESCE(d.estimated_cost_usd, 0)
-         FROM stage_runs st JOIN runs r ON r.id = st.run JOIN items i ON i.id = r.item
-         LEFT JOIN spend s ON s.agent = st.aether_agent
-         LEFT JOIN delegated d ON d.root = st.aether_agent
-         WHERE (?1 IS NULL OR i.repo = ?1) AND (?2 IS NULL OR r.pipeline = ?2)
-           AND (?3 IS NULL OR st.stage_id = ?3)
-           AND date(st.started_at, 'localtime') BETWEEN ?4 AND ?5"
-    );
-    let mut statement = conn.prepare(&sql).ctx("prepare model evidence")?;
+    let attempts = read_attempts(conn, query, range, repo.as_ref().map(|r| &r.id))?;
+    let (candidates, reviews) = if attempts.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        (
+            super::evidence_links::read(conn, range)?,
+            super::evidence_links::read_reviews(conn, range)?,
+        )
+    };
+    Ok(ModelEvidenceSnapshot {
+        attempts,
+        routing: super::routing::read(
+            conn,
+            repo.as_ref().map(|r| &r.id),
+            query.pipeline.as_deref(),
+            range,
+        )?,
+        candidates,
+        reviews,
+        range: *range,
+        estimates,
+    })
+}
+
+fn read_attempts(
+    conn: &Connection,
+    query: &ModelEvidenceQuery,
+    range: &DayRange,
+    repo: Option<&RepoId>,
+) -> Result<Vec<Attempt>, ArchonError> {
+    let (start, end) = super::evidence_links::utc_bounds(range)?;
+    let mut statement = conn.prepare(EVIDENCE_SQL).ctx("prepare model evidence")?;
     let mut rows = statement
         .query(params![
-            repo.as_ref().map(|r| r.id.as_str()),
+            repo.map(|id| id.as_str()),
             query.pipeline,
             query.stage,
             range.since.to_string(),
             range.until.to_string(),
+            start,
+            end,
         ])
         .ctx("query model evidence")?;
     let mut attempts = Vec::new();
     while let Some(row) = rows.next().ctx("read model evidence")? {
         let attempt = attempt(row)?;
-        // A failed engine login says nothing of the model: it is no attempt.
         if !attempt.stage.failed_on_engine_login() && !attempt.stage.zero_cost_create_refusal() {
             attempts.push(attempt);
         }
     }
-    Ok(ModelEvidenceSnapshot {
-        attempts,
-        range: *range,
-        estimates,
-    })
+    Ok(attempts)
+}
+
+const EVIDENCE_SQL: &str =
+        "WITH selected AS MATERIALIZED (
+             SELECT st.* FROM stage_runs st INDEXED BY stage_runs_by_started_at JOIN runs r ON r.id = st.run
+             JOIN items i ON i.id = r.item
+             WHERE (?1 IS NULL OR i.repo = ?1) AND (?2 IS NULL OR r.pipeline = ?2)
+               AND (?3 IS NULL OR st.stage_id = ?3)
+               AND st.started_at >= ?6 AND st.started_at < ?7
+               AND date(st.started_at, 'localtime') BETWEEN ?4 AND ?5
+         )
+         SELECT st.data, i.data,
+                SUM(CASE WHEN w.root IS NOT NULL THEN x.cost_usd END),
+                SUM(CASE WHEN w.root IS NOT NULL THEN x.estimated_cost_usd END),
+                r.pipeline,
+                SUM(CASE WHEN w.root IS NULL THEN COALESCE(x.cost_usd, 0) ELSE 0 END),
+                SUM(CASE WHEN w.root IS NULL THEN COALESCE(x.estimated_cost_usd, 0) ELSE 0 END),
+                p.host, p.repository, p.number, json_extract(r.data, '$.branch')
+         FROM selected st JOIN runs r ON r.id = st.run JOIN items i ON i.id = r.item
+         LEFT JOIN stage_spend x ON x.stage = st.id
+         LEFT JOIN stage_spend_windows w ON w.root = x.agent AND w.stage = x.stage
+         LEFT JOIN run_pull_requests p ON p.run = st.run
+         GROUP BY st.id";
+
+#[cfg(test)]
+mod snapshot_plan_tests {
+    use super::*;
+
+    #[test]
+    fn selected_attempts_drive_indexed_spend_lookup() {
+        let store = super::super::Store::open_in_memory().unwrap();
+        let sql = format!("EXPLAIN QUERY PLAN {EVIDENCE_SQL}");
+        let mut statement = store.conn.prepare(&sql).unwrap();
+        let plan: Vec<String> = statement
+            .query_map(
+                params![
+                    None::<String>,
+                    None::<String>,
+                    None::<String>,
+                    "2026-01-01",
+                    "2026-01-02",
+                    "2025-12-31",
+                    "2026-01-04"
+                ],
+                |row| row.get(3),
+            )
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert!(
+            plan.iter()
+                .any(|line| line.contains("stage_runs_by_started_at")),
+            "{plan:?}"
+        );
+        assert!(
+            plan.iter().any(|line| line.contains("stage_spend_by_stage")
+                || line.contains("sqlite_autoindex_stage_spend")),
+            "{plan:?}"
+        );
+    }
 }
 
 /// One row of `read`: a stage run, its item, and the charges on both sides.
 fn attempt(row: &rusqlite::Row<'_>) -> Result<Attempt, ArchonError> {
     let stage = row.get::<_, String>(0).ctx("read evidence stage")?;
     let item = row.get::<_, String>(1).ctx("read evidence item")?;
+    let host: Option<String> = row.get(7).ctx("read evidence PR host")?;
+    let repository: Option<String> = row.get(8).ctx("read evidence PR repository")?;
+    let number: Option<i64> = row.get(9).ctx("read evidence PR number")?;
+    let pull_request = match (host, repository, number) {
+        (None, None, None) => None,
+        (Some(host), Some(repository), Some(number)) => {
+            let url = format!("https://{host}/{repository}/pull/{number}");
+            Some(
+                archon_core::pull_request::PullRequestRef::from_url(&url).ok_or_else(|| {
+                    ArchonError::Store(format!("invalid evidence pull request {url}"))
+                })?,
+            )
+        }
+        _ => {
+            return Err(ArchonError::Store(
+                "incomplete evidence pull request".into(),
+            ));
+        }
+    };
     Ok(Attempt {
         stage: from_json(&stage, "evidence stage")?,
         item: from_json(&item, "evidence item")?,
         pipeline: row.get(4).ctx("read evidence pipeline")?,
+        branch: row.get(10).ctx("read evidence branch")?,
+        pull_request,
         billed: row.get(2).ctx("read evidence cost")?,
         estimated: row.get(3).ctx("read evidence estimate")?,
         delegated_billed: row.get(5).ctx("read delegated evidence cost")?,
@@ -149,6 +250,8 @@ impl ModelEvidenceSnapshot {
         let mut tiers: HashMap<(String, Tier, Effort), Samples> = HashMap::new();
         let mut providers: BTreeMap<String, ProviderEvidenceRow> = BTreeMap::new();
         let mut sized: HashMap<(RiskClass, PlanSource), Samples> = HashMap::new();
+        let decoded = decode_links(&self.candidates, &self.reviews)?;
+        let links = super::evidence_links::Links::new(&decoded.candidates, &decoded.reviews);
         for attempt in self.attempts {
             let stage = &attempt.stage;
             let choice = stage.current_choice();
@@ -159,7 +262,9 @@ impl ModelEvidenceSnapshot {
                 choice.without_tier(),
                 stage.host_context,
             );
-            groups.entry(key).or_default().add(sample);
+            let group = groups.entry(key).or_default();
+            group.add(sample);
+            add_links(group, &attempt, &links);
             if let (Some(class), Some(source)) =
                 (stage.sizing.risk_class, stage.sizing.effort_source)
             {
@@ -175,10 +280,58 @@ impl ModelEvidenceSnapshot {
             }
         }
         let mut report = finish(groups, tiers, self.range, self.estimates);
+        report.routing = self.routing;
         report.providers = provider_rows(providers);
         report.sizing = sizing_rows(sized);
         Ok(report)
     }
+}
+
+struct DecodedLinks {
+    candidates: Vec<QueueItem>,
+    reviews: Vec<(QueueItemId, StageRun)>,
+}
+
+fn decode_links(
+    candidates: &[String],
+    reviews: &[(String, String)],
+) -> Result<DecodedLinks, ArchonError> {
+    let candidates = candidates
+        .iter()
+        .map(|data| from_json(data, "evidence candidate item"))
+        .collect::<Result<_, _>>()?;
+    let reviews = reviews
+        .iter()
+        .map(|(id, data)| {
+            Ok((
+                QueueItemId::parse(id)?,
+                from_json(data, "evidence review stage")?,
+            ))
+        })
+        .collect::<Result<_, ArchonError>>()?;
+    Ok(DecodedLinks {
+        candidates,
+        reviews,
+    })
+}
+
+fn add_links(group: &mut Samples, attempt: &Attempt, links: &super::evidence_links::Links<'_>) {
+    let stage = &attempt.stage;
+    if !matches!(
+        stage.kind,
+        Some(archon_core::catalog::StageKind::Work | archon_core::catalog::StageKind::Team)
+    ) || stage.state != StageState::Completed
+    {
+        return;
+    }
+    links.add(
+        &attempt.item,
+        &attempt.branch,
+        attempt.pull_request.as_ref(),
+        stage.started_at,
+        &mut group.fixups,
+        &mut group.reverts,
+    );
 }
 
 fn add_provider(rows: &mut BTreeMap<String, ProviderEvidenceRow>, provider: &str, sample: Sample) {
@@ -242,6 +395,8 @@ fn sizing_rows(sized: HashMap<(RiskClass, PlanSource), Samples>) -> Vec<SizingEv
 #[derive(Clone, Copy)]
 struct Sample {
     completed: Option<Completed>,
+    first_attempt: Option<bool>,
+    review_findings: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -277,6 +432,14 @@ impl Scored {
 impl Samples {
     fn add(&mut self, sample: Sample) {
         self.attempts += 1;
+        if let Some(passed) = sample.first_attempt {
+            self.first_attempt_verdicts += 1;
+            self.first_attempt_passed += usize::from(passed);
+        }
+        debug_assert!(self.first_attempt_passed <= self.first_attempt_verdicts);
+        if let Some(count) = sample.review_findings {
+            *self.review_findings.get_or_insert(0) += count;
+        }
         let Some(done) = sample.completed else {
             return;
         };
@@ -310,6 +473,11 @@ impl Samples {
             verdicts: self.verdicts,
             passed: self.passed,
             disputed: self.disputed,
+            first_attempt_verdicts: self.first_attempt_verdicts,
+            first_attempt_passed: self.first_attempt_passed,
+            review_findings: self.review_findings,
+            fix_up_items: (!self.fixups.is_empty()).then_some(self.fixups.len()),
+            revert_items: (!self.reverts.is_empty()).then_some(self.reverts.len()),
         }
     }
 }
@@ -323,6 +491,11 @@ struct Summary {
     verdicts: usize,
     passed: usize,
     disputed: usize,
+    first_attempt_verdicts: usize,
+    first_attempt_passed: usize,
+    review_findings: Option<usize>,
+    fix_up_items: Option<usize>,
+    revert_items: Option<usize>,
 }
 
 fn sample(
@@ -332,7 +505,16 @@ fn sample(
 ) -> Result<Sample, ArchonError> {
     let stage = &attempt.stage;
     if stage.state != StageState::Completed {
-        return Ok(Sample { completed: None });
+        let first_attempt = (stage.attempt == 1
+            && !stage.infrastructure_failure
+            && (stage.kind.is_some() || stage.only_reviews == Some(true))
+            && matches!(stage.state, StageState::Failed { .. }))
+        .then_some(false);
+        return Ok(Sample {
+            completed: None,
+            first_attempt,
+            review_findings: None,
+        });
     }
     let cost = attempt.billed.unwrap_or(stage.cost_usd)
         + attempt.delegated_billed
@@ -351,20 +533,9 @@ fn sample(
         .model_segments
         .last()
         .map_or(0.0, |s| s.cost_before_usd.min(cost));
-    let minutes = match stage.finished_at {
-        Some(end) => {
-            let elapsed = end.signed_duration_since(stage.started_at);
-            if elapsed < chrono::Duration::zero() {
-                return Err(ArchonError::Store(format!(
-                    "stage {} finishes before it starts",
-                    stage.id
-                )));
-            }
-            Some(elapsed.num_milliseconds() as f64 / 60_000.0)
-        }
-        None => None,
-    };
-    let verdict = match is_verdict_stage(&attempt.item, stage)? {
+    let minutes = elapsed_minutes(stage)?;
+    let is_verdict = is_verdict_stage(&attempt.item, stage)?;
+    let verdict = match is_verdict {
         true => stage
             .verdict_reading()
             .map(|(verdict, note)| Scored::of(verdict, note)),
@@ -376,7 +547,66 @@ fn sample(
             minutes,
             verdict,
         }),
+        first_attempt: first_attempt(stage, is_verdict),
+        review_findings: review_findings(stage),
     })
+}
+
+fn elapsed_minutes(stage: &StageRun) -> Result<Option<f64>, ArchonError> {
+    let Some(end) = stage.finished_at else {
+        return Ok(None);
+    };
+    let elapsed = end.signed_duration_since(stage.started_at);
+    if elapsed < chrono::Duration::zero() {
+        return Err(ArchonError::Store(format!(
+            "stage {} finishes before it starts",
+            stage.id
+        )));
+    }
+    Ok(Some(elapsed.num_milliseconds() as f64 / 60_000.0))
+}
+
+fn first_attempt(stage: &StageRun, is_verdict: bool) -> Option<bool> {
+    if stage.attempt != 1
+        || stage.infrastructure_failure
+        || (stage.kind.is_none() && stage.only_reviews != Some(true))
+    {
+        return None;
+    }
+    let is_verdict = is_verdict
+        || matches!(
+            stage.kind,
+            Some(archon_core::catalog::StageKind::Review | archon_core::catalog::StageKind::Test)
+        )
+        || stage.only_reviews == Some(true);
+    let verdict = is_verdict
+        .then(|| {
+            stage
+                .verdict_reading()
+                .map(|(verdict, note)| Scored::of(verdict, note))
+        })
+        .flatten();
+    match verdict {
+        Some(Scored::Passed) => Some(true),
+        Some(Scored::Failed) => Some(false),
+        Some(Scored::Disputed) => None,
+        None if !is_verdict && stage.kind.is_some() => Some(!stage.review_refused()),
+        None => None,
+    }
+}
+
+fn review_findings(stage: &StageRun) -> Option<usize> {
+    if stage.kind != Some(archon_core::catalog::StageKind::Review)
+        && stage.only_reviews != Some(true)
+    {
+        return None;
+    }
+    stage
+        .structured
+        .as_ref()?
+        .get("findings")?
+        .as_array()
+        .map(Vec::len)
 }
 
 fn finish(
@@ -401,6 +631,11 @@ fn finish(
                 verdicts: s.verdicts,
                 passed: s.passed,
                 disputed: s.disputed,
+                first_attempt_verdicts: s.first_attempt_verdicts,
+                first_attempt_passed: s.first_attempt_passed,
+                review_findings: s.review_findings,
+                fix_up_items: s.fix_up_items,
+                revert_items: s.revert_items,
             }
         })
         .collect();
@@ -423,6 +658,21 @@ fn finish(
     });
     let omitted = rows.len().saturating_sub(MAX_ROWS);
     rows.truncate(MAX_ROWS);
+    ModelEvidenceReport {
+        range,
+        estimates_counted: estimates,
+        rows,
+        omitted,
+        tiers: finish_tiers(tiers),
+        providers: Vec::new(),
+        sizing: Vec::new(),
+        pipelines: Vec::new(),
+        routing: Vec::new(),
+        repo_names: Default::default(),
+    }
+}
+
+fn finish_tiers(tiers: HashMap<(String, Tier, Effort), Samples>) -> Vec<TierEvidenceRow> {
     let mut tiers: Vec<_> = tiers
         .into_iter()
         .map(|((stage, tier, effort), samples)| {
@@ -444,17 +694,7 @@ fn finish(
         .collect();
     tiers.sort_by(|a, b| (&a.stage, a.tier, a.effort).cmp(&(&b.stage, b.tier, b.effort)));
     tiers.truncate(MAX_ROWS);
-    ModelEvidenceReport {
-        range,
-        estimates_counted: estimates,
-        rows,
-        omitted,
-        tiers,
-        providers: Vec::new(),
-        sizing: Vec::new(),
-        pipelines: Vec::new(),
-        repo_names: Default::default(),
-    }
+    tiers
 }
 
 fn median(sorted: &[f64]) -> Option<f64> {

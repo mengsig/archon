@@ -1,0 +1,14 @@
+Queued as `qi_01M7WA8AKVG21WBGEKVDN7D90S` in the `direct` pipeline. It will implement the `SPEC.md` edge cases, verify behavior beyond the basic tests, and commit the work as requested.
+
+Done: Implement spec-compliant dependency-free rate limiter. Implemented TokenBucket and KeyedLimiter per SPEC.md, including continuous capped refill, rollback-safe timing, non-consuming waits and failed acquisitions, independent keyed buckets, LRU eviction, fresh buckets after eviction, and validation. Added focused edge-case regression tests. The original review found NaN validation bypasses; fixed and re-reviewed the delta. Final checks passed on the committed tree. Nothing remains open. REVIEW: pass
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WAC7XMKQQ0KXC2H38TBMAY), codex/gpt-6-luna (agent agt_01M7WAH1C7YRMV4JV6DXKSFV2F)
+
+SHIPPED: commit db5284f6376277a89259582519da477cc060ce2f on the run branch
+Branch `archon/vdn7d90s-implement-spec-compliant-dependency-free` in /home/mengsig/.local/share/archon-bench/f164-p9b3h69d/archon-bench/work/20261120T084439Z/1cd6febccdf19dc16eabe1db/feature-token-bucket holds it (2 files changed, 133 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M7WA8AKVG21WBGEKVDN7D90S`; land it in `main`: `archon merge qi_01M7WA8AKVG21WBGEKVDN7D90S`.
+
+Implemented TokenBucket and KeyedLimiter per SPEC.md, including continuous capped refill, rollback-safe timing, non-consuming waits and failed acquisitions, independent keyed buckets, LRU eviction, fresh buckets after eviction, and validation. Added focused edge-case regression tests. The original review found NaN validation bypasses; fixed and re-reviewed the delta. Final checks passed on the committed tree. Nothing remains open. REVIEW: pass
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M7WAC7XMKQQ0KXC2H38TBMAY), codex/gpt-6-luna (agent agt_01M7WAH1C7YRMV4JV6DXKSFV2F)
+
+SHIPPED: commit db5284f6376277a89259582519da477cc060ce2f on the run branch

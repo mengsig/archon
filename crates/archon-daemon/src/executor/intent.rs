@@ -24,9 +24,12 @@ pub(super) struct Pending {
     pub record: ApprovedIntent,
     pub page: PathBuf,
     pub page_sha256: String,
+    /// The record's images sit beside the page and are checked with it.
+    #[serde(default)]
+    pub linked_images: bool,
 }
 
-fn key(gate: &OperatorGate) -> String {
+pub(super) fn key(gate: &OperatorGate) -> String {
     format!(
         "proposal_intent:{}:{}:{}",
         gate.run, gate.stage_id, gate.attempt
@@ -56,7 +59,7 @@ pub(super) fn prepare(
     assert_eq!(gate.item, run.item, "freeze the gate's own item");
     if store.kv_get(&key(gate))?.is_some() {
         let saved = pending(store, gate)?;
-        verify_page(&saved)?;
+        verify_page(&saved, &saved.page)?;
         return Ok(saved.page);
     }
     let stage = stages
@@ -67,9 +70,9 @@ pub(super) fn prepare(
                 && s.state == StageState::Completed
         })
         .ok_or_else(|| ArchonError::NotFound("proposal stage".into()))?;
-    let mut record = prepare_record(ctx, run, stage, original)?;
+    let (mut record, html) = prepare_record(ctx, run, stage, original)?;
     let destination = ctx.paths.data_dir.join("approved-intent-artifacts");
-    let page = render_page(original, &record, gate.attempt)?;
+    let page = render_page(&run.workspace, original, &html, &record, gate.attempt)?;
     let bytes =
         std::fs::read(&page).map_err(|e| ArchonError::io("read proposal ledger page", e))?;
     let page_sha256 = Sha256::digest(&bytes)
@@ -85,6 +88,7 @@ pub(super) fn prepare(
         record,
         page: page.clone(),
         page_sha256,
+        linked_images: true,
     };
     let json = serde_json::to_string(&saved)?;
     store.kv_set(&key(gate), &json)?;
@@ -123,13 +127,14 @@ fn prepare_record(
     run: &PipelineRun,
     stage: &StageRun,
     original: &Path,
-) -> Result<ApprovedIntent, ArchonError> {
+) -> Result<(ApprovedIntent, String), ArchonError> {
     let mut record = make_record(run, stage)?;
     let html =
         std::fs::read_to_string(original).map_err(|e| ArchonError::io("read proposal page", e))?;
     let destination = ctx.paths.data_dir.join("approved-intent-artifacts");
-    super::intent_images::extract(&html, &destination, &mut record)?;
-    super::intent_html::extract(&html, original, &run.workspace, &destination, &mut record)?;
+    let rewritten =
+        super::intent_html::extract(&html, original, &run.workspace, &destination, &mut record)?;
+    let rewritten = super::intent_images::extract(&rewritten, &destination, &mut record)?;
     record.validate()?;
     preserve_files(ctx, &run.workspace, &mut record)?;
     let hash = Sha256::digest(html.as_bytes())
@@ -148,7 +153,7 @@ fn prepare_record(
         "a validated ledger has requirements"
     );
     assert!(record.artifacts.iter().all(|a| a.path.is_absolute()));
-    Ok(record)
+    Ok((record, rewritten))
 }
 
 const REFUSAL: &str = "proposal intent draft refused: ";
@@ -182,8 +187,12 @@ pub(super) async fn verify(
         return Ok(outcome);
     }
     let item = ctx.store.lock().await.item(&run.item)?;
-    if item.intent.is_none() && !item.model_plan.0.contains_key("intent-acceptance") {
+    let live = item.autonomy.proposal == archon_core::autonomy::ProposalMode::Live;
+    if item.intent.is_none() && !item.model_plan.0.contains_key("intent-acceptance") && !live {
         return Ok(outcome);
+    }
+    if stage.kind == Some(archon_core::catalog::StageKind::Design) {
+        return verify_design(ctx, run, stage, outcome).await;
     }
     let mut completed = stage.clone();
     completed.structured = structured.clone();
@@ -207,6 +216,60 @@ pub(super) async fn verify(
             infra: false,
         }),
     }
+}
+
+/// A design stage's result is archond's own record of the session, never the
+/// agent's `structured.approved_intent`: the session must be confirmed with an
+/// active note, and the worktree must still be what the operator approved.
+async fn verify_design(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    stage: &StageRun,
+    outcome: StageOutcome,
+) -> Result<StageOutcome, ArchonError> {
+    let refuse = |why: String| {
+        Ok(StageOutcome::Failed {
+            error: format!("{REFUSAL}{why}"),
+            infra: false,
+        })
+    };
+    let (session, worktree, item) = {
+        let store = ctx.store.lock().await;
+        let session = ctx
+            .design
+            .session_of(&store, &run.id, &stage.stage_id, stage.attempt)?;
+        let worktree = super::design_ledger::worktree_ref(&store, run)?;
+        (session, worktree, store.item(&run.item)?)
+    };
+    let Some(session) = session.filter(|s| s.state == archon_core::design::SessionState::Confirmed)
+    else {
+        return refuse(
+            "the design session was not finished and confirmed. Choose Finish in the preview, \
+             confirm it, then complete again"
+                .into(),
+        );
+    };
+    let Some(head) = session.finish_head.clone() else {
+        return refuse("the design session has no recorded finish; finish it again".into());
+    };
+    if ctx.design.worktree_at(&worktree, &head)?.is_err() {
+        let short = &head[..head.len().min(7)];
+        return refuse(format!(
+            "worktree moved after Finish: expected {short}; restore it and complete again"
+        ));
+    }
+    let approvable = {
+        let store = ctx.store.lock().await;
+        super::design_ledger::approvable_notes(ctx, &store, &worktree, &item.id, &session, &head)
+    };
+    match approvable {
+        Ok(_) => {}
+        Err(ArchonError::Invalid(why)) => {
+            return refuse(format!("{why}; add a note and finish again"));
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(outcome)
 }
 
 fn preserve_files(
@@ -234,21 +297,32 @@ fn source_path(workspace: &Path, destination: &Path, path: &Path) -> Result<Path
 }
 
 fn render_page(
+    workspace: &Path,
     original: &Path,
+    html: &str,
     record: &ApprovedIntent,
     attempt: u32,
 ) -> Result<PathBuf, ArchonError> {
-    let html =
-        std::fs::read_to_string(original).map_err(|e| ArchonError::io("read proposal page", e))?;
-    let content = archon_lavish::intent::proposal(record, &html)?;
+    let content = archon_lavish::intent::proposal(record, html)?;
+    let directory = original.parent().expect("the proposal page has a parent");
+    pages::inside_workspace(workspace, &directory.to_string_lossy())
+        .map_err(ArchonError::Invalid)?;
+    for image in &record.images {
+        let saved = crate::handlers::intent::preserve(directory, &image.path, &image.sha256)?;
+        assert_eq!(saved.file_name(), image.path.file_name());
+    }
     let page = original.with_file_name(format!("archon-intent-{attempt}.html"));
     crate::handlers::intent::save_bytes(&page, content.as_bytes())?;
+    assert_eq!(page.parent(), Some(directory));
     Ok(page)
 }
 
-pub(super) fn verify_page(saved: &Pending) -> Result<(), ArchonError> {
-    let bytes =
-        std::fs::read(&saved.page).map_err(|e| ArchonError::io("read proposal ledger page", e))?;
+pub(super) fn verify_page(saved: &Pending, page: &Path) -> Result<(), ArchonError> {
+    assert!(
+        page.is_absolute(),
+        "a frozen page names the exact file on disk"
+    );
+    let bytes = std::fs::read(page).map_err(|e| ArchonError::io("read proposal ledger page", e))?;
     if Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -259,6 +333,18 @@ pub(super) fn verify_page(saved: &Pending) -> Result<(), ArchonError> {
             "proposal ledger page changed after it was shown".into(),
         ));
     }
+    if saved.linked_images {
+        for image in &saved.record.images {
+            let path =
+                page.with_file_name(image.path.file_name().expect("preserved image filename"));
+            if super::acceptance::images::reference_hash(&path)? != image.sha256 {
+                return Err(ArchonError::Invalid(format!(
+                    "proposal image {} changed after it was shown",
+                    image.id
+                )));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -268,17 +354,33 @@ mod tests {
     use archon_core::intent::{Requirement, RequirementKind};
 
     #[test]
-    fn frozen_page_cannot_be_changed_after_presentation() {
+    fn frozen_page_and_images_cannot_be_changed_after_presentation() {
         let dir = tempfile::tempdir().unwrap();
         let original = dir.path().join("index.html");
         std::fs::write(&original, "<body>Proposal</body>").unwrap();
+        let image = b"\x89PNG\r\n\x1a\nexample";
+        let hash = Sha256::digest(image)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let asset = format!("{hash}.png");
+        let sources = dir.path().join("sources");
+        std::fs::create_dir(&sources).unwrap();
+        std::fs::write(sources.join(&asset), image).unwrap();
         let record = ApprovedIntent {
             id: "x".into(),
             version: 1,
             operator_words: "Build this".into(),
             source: IntentSource::Inbox { seq: 1 },
             artifacts: vec![],
-            images: vec![],
+            images: vec![ReferenceImage {
+                id: "screen".into(),
+                path: sources.join(&asset),
+                sha256: hash,
+                viewport: None,
+                theme: None,
+                state: None,
+            }],
             requirements: vec![Requirement {
                 id: "R1".into(),
                 text: "Title".into(),
@@ -287,7 +389,7 @@ mod tests {
                 owner: "app".into(),
             }],
         };
-        let page = render_page(&original, &record, 1).unwrap();
+        let page = render_page(dir.path(), &original, "<body>Proposal</body>", &record, 1).unwrap();
         let bytes = std::fs::read(&page).unwrap();
         let saved = Pending {
             record,
@@ -296,9 +398,24 @@ mod tests {
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>(),
+            linked_images: true,
         };
-        assert!(verify_page(&saved).is_ok());
+        assert!(verify_page(&saved, &saved.page).is_ok());
+        let asset = saved.page.with_file_name(asset);
+        std::fs::write(&asset, b"\x89PNG\r\n\x1a\nchanged").unwrap();
+        assert!(
+            verify_page(&saved, &saved.page)
+                .unwrap_err()
+                .to_string()
+                .contains("proposal image screen changed")
+        );
+        std::fs::write(&asset, image).unwrap();
         std::fs::write(&saved.page, "changed").unwrap();
-        assert!(verify_page(&saved).is_err());
+        assert!(
+            verify_page(&saved, &saved.page)
+                .unwrap_err()
+                .to_string()
+                .contains("ledger page changed")
+        );
     }
 }

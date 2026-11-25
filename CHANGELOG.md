@@ -2,6 +2,120 @@
 
 ## Unreleased
 
+## 1.6.5
+
+Released 2026-11-25.
+
+Archon 1.6.5 adds live design sessions and requires **Aether 1.4.3**.
+The installer selects `v1.4.3` for a fresh installation. To upgrade an
+existing pair, update Aether first with `aether update --version v1.4.3`
+and restart aetherd. A confirmed update run by Archon 1.6.5 selects that
+version when the installed Aether is older.
+
+### Added
+
+- Live design sessions (#497). `proposal = live` (also `archon queue add --proposal
+  live`, the New item switch and chat) inserts a first `design` stage in place
+  of `propose`. The agent runs the app's dev server and archond shows it in a
+  sandboxed headless Chromium streamed as pictures to the web app, where you
+  point at elements, comment, compare before and after, undo, and approve a
+  ledger Archon builds from its own records. Off by default. Needs `[design] enabled = true`
+  and Chrome or Chromium (`archon doctor` checks). Protocol 25 adds the design
+  requests, events and the `design_sessions` feature. See
+  [the security notes](docs/design-sessions.md#security) for preview isolation,
+  operator access and what notes share with agents.
+- Design follow-ups, references and an iteration tree. Any note can be
+  followed up with a new note that continues it; a note can reference up to
+  5 earlier ones; the Tree tab shows each chain with its versions, older
+  versions can be viewed as pictures, and **Continue from this version**
+  undoes the newer versions with new revert commits. Finish shows one card
+  per chain with its history. The agent gets the MCP read tool
+  `design_history`. Protocol 26 adds the `design_iterations` feature; store
+  schema 29 adds the design tables and 30 adds `follows` and `refs` to design
+  notes. Schema 31 preserves per-capture targets, commits and sketches when
+  multiple pictures share the same bytes. Back up the store before upgrading
+  if you need to return to an older release. A store from a build of this work's own branch, which recorded them
+  as 25 and 26, upgrades in place and keeps its design records.
+
+- Queue and PR timing reports separate dispatch, execution, retries and review
+  (#491). Model evidence includes quality signals alongside cost and timing
+  (#487). The daemon reports learned stage overruns (#486).
+- The queue links near-duplicate work (#488), advises on routing and records
+  routing misses (#490). Reviews track findings and confirm committed fixes
+  at the round cap (#489).
+
+### Changed
+
+- Archon deduplicates learned advice and retires underperforming lessons
+  (#485). SQLite, Rust dependencies and CI actions were updated (#461, #493).
+- The full benchmark compares the previous two releases with the integration
+  branch on Haiku and Luna (#460).
+
+- The mobile app shows the embedded release version and matches command
+  results by submission ID, including after a feed replay.
+
+- Stage leads take fewer turns on a small, passing change. The stage
+  contract now says a lead delegates no more whole-change reviewers than its
+  review level names, not even one to confirm a pass: a further reviewer is
+  only a read the review rules require (a delta read of a fix after a
+  blocking fail, a whole-change read after an amend or rebase, or the
+  replacement of one that counts for nothing). Leads paste the reviewer
+  verdict JSON verbatim, and the reviewer adds its `risk` call to that JSON.
+- Items whose pull request is for an integration branch (such as `next`)
+  run fast checks, not the full suite. Their stage contract now says so even
+  where the repository names no check: format, lint and the tests of the
+  crates or packages the change touches, through the CI slot script; the
+  full suite only for a release pull request, release preparation or a brief
+  that asks; and reviewers read that evidence rather than rerun the full
+  suite. Release and stacked changes keep the default checks.
+- `scripts/ci-slot.sh` keeps CI light on a shared machine, as Aether's
+  `scripts/ci_slot.sh` does: in its slot it waits for `CI_MIN_FREE_GIB` of
+  free memory (default 6, for at most `CI_MEM_WAIT_MAX_MIN`, default 30),
+  runs the command in a low-priority systemd user scope (`CPUWeight=20`,
+  `IOWeight=20`, `MemoryHigh=$CI_MEMORY_HIGH`, default `6G`) under `nice`
+  and `ionice`, and caps test threads at `CI_TEST_THREADS` (default 4).
+- A stage whose contract asks for no verdict, such as `direct`'s
+  `implement`, no longer records `verdict_note = missing_verdict_line` when
+  it settles under its run's driver.
+
+### Fixed
+
+- Stage views attribute spend, including late delegate costs, to the originating
+  attempt (#484, #496). Swarm retries rerun only the selected slots (#483).
+- The daemon repairs movable model selections refused at agent creation (#482)
+  and recovers quota-held reviewers on eligible models (#481).
+- Gate failures include their causes (#478). The daemon checks review and ship
+  records within the stage (#480), keeps reviews across chained stack landings
+  (#463) and stops retrying PR validation errors (#479).
+- The orchestrator recovers after a tool error (#462). Proposal intent
+  references stay within Aether's limits (#464).
+- The CI slot bounds its systemd probe and validates memory limits (#495).
+  Job sizing honours `CI_SLOT_MEMINFO`, and stage instructions render
+  integration branch names containing backticks correctly (#498).
+
+
+- Approved-intent acceptance honours the model the orchestrator or operator
+  pinned for `intent-acceptance` (when policy permits it and it can see the
+  images) and skips a judge whose provider is out of quota, so a spent
+  provider no longer fails the item. A retry after a usage-limit failure
+  moves to the next eligible judge. A pin that shares a builder's model or
+  vendor is labelled `acceptance: not independent`, and refused under
+  `[review] independent_acceptance = true`.
+
+- The review page at a live design session's approval gate is now a
+  decision page: a summary with the answers on top, one card per note with
+  its before and after pictures side by side, the commit and files changed
+  and its status, and the full brief folded at the end. A note whose after
+  picture was captured always shows it and binds it to the approved intent,
+  and a picture is called withheld only when you switched it off: a card that
+  had no picture when the review opened no longer counts as switched off.
+- The bench's archon arm no longer voids a trial when the orchestrator
+  delegates a helper: Aether lists the helper's events (its creation, task
+  and turns) among the orchestrator's, and the harness now skips every event
+  of an agent the orchestrator created. Any other agent's event still stops
+  the trial. Stage turns and time on the smoke tasks are back within 10% of
+  v1.6.3 (`bench/results-trim-1.6.5`).
+
 ## 1.6.4
 
 Released 2026-11-20.

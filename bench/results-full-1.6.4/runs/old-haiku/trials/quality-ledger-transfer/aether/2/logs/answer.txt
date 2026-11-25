@@ -1,0 +1,28 @@
+Implemented ledger.py per SPEC.md and committed it as 55ff328 ("Implement atomic ledger with validation and tests") on main, under the repo's configured git user (mengsig). The test suite (test_ledger.py, 24 tests, stdlib unittest) passes on three consecutive runs.
+
+Implementation:
+- Construction: non-dict input and invalid names or balances raise ValueError; bool is rejected as a balance. The input dict is copied.
+- transfer: validates the amount first, then looks up both accounts (KeyError if unknown), then runs the checks and both writes under one threading.Lock per ledger. A single lock avoids lock-ordering deadlocks for opposite transfers.
+- Insufficient funds and destination overflow return False with no change. Self-transfer returns whether the account has enough funds and never changes it.
+- snapshot returns a copy taken under the lock.
+
+Choices I made that the spec did not state:
+- A non-string account name passed to transfer raises KeyError, not TypeError, so unhashable values like lists are handled.
+- Amount and balance checks use `type(x) is int`, so int subclasses and bool are rejected.
+- I used explicit ValueError checks instead of assert statements, since the spec requires ValueError for bad input.
+
+Not done: I did not add a Co-Authored-By trailer to the commit, because the repo's CLAUDE.md says not to attribute commits to Claude. The untracked __pycache__ from my test runs was removed, so the tree is clean.
+
+I implemented `ledger.py` per `SPEC.md` and committed it as `55ff328` on `main`, under the repo's configured git user. All 24 tests in `test_ledger.py` pass on three consecutive runs, using only the standard library.
+
+- **Construction:** a non-dict input, an invalid name, or an invalid balance raises `ValueError`. `bool` is rejected as a balance. The input dict is copied.
+- **`transfer`:** the amount is validated first, then both accounts are looked up (`KeyError` if unknown). The checks and both writes run under one `threading.Lock` per ledger, so transfers are linearizable and opposite transfers cannot deadlock.
+- **Failures:** insufficient funds and destination overflow return `False` and change nothing. A self-transfer returns whether the account has enough funds and never changes it.
+- **`snapshot`:** returns a copy taken under the lock.
+
+Choices the spec did not settle:
+- A non-string account name passed to `transfer` raises `KeyError`, not `TypeError`, so unhashable values like lists are handled.
+- Amounts and balances must be exactly `int`, so int subclasses and `bool` are rejected.
+- I used explicit `ValueError` checks rather than `assert`, since the spec requires `ValueError` for bad input.
+
+I left out the `Co-Authored-By` trailer from the commit message. The repo's CLAUDE.md says not to attribute commits to Claude, and that rule takes precedence over the attribution reminder. I also removed the `__pycache__` directory my test runs created, so the working tree is clean.

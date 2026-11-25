@@ -6,7 +6,10 @@
 //! reviewer of the attempt that failed the change counts, named or not. Reads
 //! from the item's earlier runs on the branch count while it still holds their heads.
 
+mod confirm;
 mod coverage;
+mod handoff;
+mod record;
 mod restate;
 mod rounds;
 
@@ -19,6 +22,7 @@ use archon_core::repo::Repo;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
 use archon_pipeline::ShipRecord;
 use archon_pipeline::review::{self, MAX_NAMED_REVIEWERS, Reviewer, Verdict};
+use archon_pipeline::spec::Owed;
 use archon_queue::RunReview;
 
 use super::recover;
@@ -26,8 +30,13 @@ use crate::context::DaemonContext;
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack::{self, is_commit_id};
 use coverage::{Base, Held, History, Verdicts};
+pub(super) use handoff::FindingsFile;
+pub(super) use record::{attach as attach_rounds, prior_handoff};
 pub(super) use restate::reviewer_unreadable;
-pub(super) use rounds::{Capped, attempt_resumed, capped_at_completion, reviewer_settled};
+pub(super) use rounds::{
+    Capped, attempt_resumed, capped_at_completion, capped_on_failure,
+    confirmation_reviewer_stopped, review_fix_waiting, reviewer_settled, revisit_fix_wait,
+};
 
 /// Agents named in a refusal: enough to see what the lead delegated to.
 const MAX_LISTED: usize = 6;
@@ -82,15 +91,6 @@ enum Checked {
     Unanchored(String),
 }
 
-/// What a settling stage's result owes besides its gate.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct Owed {
-    /// Reviewers this item's review level asks of the stage; 0: none.
-    pub reviewers: u32,
-    /// Whether the result is also the ship record archond delivers.
-    pub records_ship: bool,
-}
-
 /// `outcome` with Archon's own finding on the review pass it claims, for a
 /// `stage` owing `owed`, and the review it verified when that pass holds.
 /// `Err` while Aether cannot be asked.
@@ -114,14 +114,12 @@ pub(super) async fn verify(
     };
     // A missing ship record binds nothing: the stage's gate refuses it.
     let record = owed
-        .records_ship
+        .ship_record
         .then(|| ShipRecord::read(Some(&structured)));
     let shipped = record.and_then(Result::ok).map(|record| record.tree);
+    let count = owed.review.map_or(0, |duty| duty.reviewers);
     let found = match review::claimed_reviewers(&structured) {
-        Some(named) if owed.reviewers > 0 => {
-            let owed = owed.reviewers;
-            Some(reviewers(ctx, run, stage, &named, owed, shipped).await?)
-        }
+        Some(named) if count > 0 => Some(reviewers(ctx, run, stage, &named, count, shipped).await?),
         _ => None,
     };
     let (implicit, reads, corrections) = match &found {
@@ -227,7 +225,14 @@ async fn reviewers(
     } = chosen;
     Ok(match checked {
         Checked::Held(held, head, fork) => {
-            let found = found((&picked, &carried), (held, head), verdicts, corrections);
+            let found = found(
+                ctx,
+                (&picked, &carried),
+                (held, head),
+                verdicts,
+                corrections,
+            )
+            .await?;
             Ok(Found { fork, ..found })
         }
         Checked::Refused(why) if !corrections.is_empty() => {
@@ -269,10 +274,10 @@ async fn check_chosen(
         let carried: &[Read] = if carrying { &carried.reads } else { &[] };
         holding(ctx, run, read, carried, owed, shipped.clone())
     };
-    // A run whose own reads make the review judges the head afresh, as one carrying none would.
+    // A run whose own whole reviews read the final head judges it afresh.
     if !carried.reads.is_empty() && picked.len() >= owed as usize {
         let alone = check_with(None, false).await?;
-        if matches!(alone, Checked::Held(..)) {
+        if matches!(&alone, Checked::Held(held, ..) if held.whole_at_head >= owed as usize) {
             return Ok(alone);
         }
     }
@@ -360,10 +365,9 @@ async fn carried_reads(
                 }
             };
             carried.reads.push((child.agent.to_string(), verdict));
-            carried.reviewers.push(Reviewer {
-                model: child.model.to_string(),
-                agent: child.agent.to_string(),
-            });
+            carried
+                .reviewers
+                .push(attributed_reviewer(ctx, child).await?);
         }
     }
     assert_eq!(
@@ -462,7 +466,7 @@ async fn left_out_fails(
         .as_ref()
         .expect("a checked stage has its agent");
     assert!(!picked.is_empty(), "a review names its reviewers");
-    let tallied = rounds::attempt_children(ctx, &stage.id).await?;
+    let mut tallied = rounds::attempt_children(ctx, &stage.id).await?;
     let mut reads = Vec::with_capacity(tallied.children.len());
     for (agent, tallied_head) in tallied.children {
         if picked.iter().any(|p| p.agent.as_str() == agent) {
@@ -474,7 +478,10 @@ async fn left_out_fails(
         let Some(child) = listed else {
             // Aether no longer lists it: any fail the tally kept still stands.
             match tallied_head {
-                Some(head) => reads.push((agent, tallied_fail(head))),
+                Some(head) => {
+                    let saved = tallied.reports.remove(&agent);
+                    reads.push((agent, tallied_fail(head, saved)));
+                }
                 None if !tallied.every_fail_kept => {
                     return Ok(Err(forgotten_unkept(&agent)));
                 }
@@ -517,8 +524,11 @@ fn forgotten_unkept(agent: &str) -> String {
 
 /// The fail of `head` the attempt's tally read, for a reviewer Aether no
 /// longer lists: read as a whole-change fail.
-fn tallied_fail(head: String) -> Verdict {
+fn tallied_fail(head: String, report: Option<record::Report>) -> Verdict {
     assert!(!head.is_empty(), "a counted fail names its head");
+    assert!(report.as_ref().is_none_or(|r| r.pass == Some(false)));
+    let (listed_findings, resolved_findings) =
+        report.map_or_else(Default::default, |r| (r.findings, r.resolved_findings));
     Verdict {
         pass: false,
         head,
@@ -526,17 +536,20 @@ fn tallied_fail(head: String) -> Verdict {
         findings: None,
         blocking: None,
         blocking_findings: Vec::new(),
+        listed_findings,
+        resolved_findings,
     }
 }
 
 /// The `picked` reviewers `held` counts at `head` (its passes, and the
 /// whole-change fails they answered), and the earlier ones it added.
-fn found(
+async fn found(
+    ctx: &DaemonContext,
     (picked, carried): (&[&Descendant], &Carried),
     (held, head): (Held, String),
     reads: Vec<Read>,
     corrections: Vec<String>,
-) -> Found {
+) -> Result<Found, ArchonError> {
     assert!(!held.passes.is_empty(), "a review that holds has a pass");
     assert!(is_commit_id(&head), "held to a full commit id");
     let mut counted: Vec<usize> = held.passes.into_iter().chain(held.answered).collect();
@@ -546,17 +559,19 @@ fn found(
         counted.iter().all(|i| *i < picked.len()),
         "only a named read counts, by its index among those picked"
     );
-    let named = counted.into_iter().map(|i| Reviewer {
-        model: picked[i].model.to_string(),
-        agent: picked[i].agent.to_string(),
-    });
+    let named = futures_util::future::try_join_all(
+        counted
+            .into_iter()
+            .map(|i| attributed_reviewer(ctx, picked[i])),
+    )
+    .await?;
     let earlier_runs = held.carried.iter().map(|agent| {
         let reviewer = carried.reviewers.iter().find(|r| r.agent == *agent);
         reviewer
             .cloned()
             .expect("a counted carried read names its reviewer")
     });
-    let reviewers: Vec<Reviewer> = named.chain(earlier_runs).collect();
+    let reviewers: Vec<Reviewer> = named.into_iter().chain(earlier_runs).collect();
     assert!(
         reviewers
             .iter()
@@ -564,14 +579,30 @@ fn found(
             .all(|(i, r)| reviewers[..i].iter().all(|o| o.agent != r.agent)),
         "each reviewer is recorded once"
     );
-    Found {
+    Ok(Found {
         reviewers,
         head,
         fork: None,
         implicit: held.implicit,
         reads,
         corrections,
-    }
+    })
+}
+
+async fn attributed_reviewer(
+    ctx: &DaemonContext,
+    child: &Descendant,
+) -> Result<Reviewer, ArchonError> {
+    assert_eq!(child.state, DescendantState::Completed);
+    let task = child
+        .task
+        .as_ref()
+        .expect("a counted reviewer completed its task");
+    let actual = ctx.backend.review_model(&child.agent, task).await?;
+    Ok(Reviewer {
+        model: actual.as_ref().unwrap_or(&child.model).to_string(),
+        agent: child.agent.to_string(),
+    })
 }
 
 /// The reviewers `named` as the lead's children, the ids it mistyped resolved

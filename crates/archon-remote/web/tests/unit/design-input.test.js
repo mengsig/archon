@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createInputBatcher, mouseEvent, wheelEvent, modifiersOf, BUSY_AFTER_MS, RETRY_MS, MAX_RETRIES, strandedReleases } from '../../src/features/design/input.js';
+import { createInputBatcher, mouseEvent, wheelEvent, modifiersOf, BUSY_AFTER_MS, RETRY_MS, MAX_RETRIES } from '../../src/features/design/input.js';
 
 function clock() {
   let t = 0;
@@ -256,30 +256,47 @@ test('a release still gets in after a refused press is put back into a full queu
   assert.deepEqual(keys.map((e) => e.action), ['down', 'up'], 'the press goes again, then its release');
 });
 
-test('a batch given up still lets go of presses that went out before it', async () => {
+// archond is told of every batch it refuses or loses, and lets go of whatever
+// is held itself; the batcher keeps no record of what reached the preview.
+test('a release refused past its retries is dropped whole, never retried without end', async () => {
   const c = clock();
   const s = slowSend();
   let overflows = 0;
-  const b = createInputBatcher({ send: s.send, onOverflow: () => { overflows += 1; }, ...c });
+  const busy = [];
+  const b = createInputBatcher({ send: s.send, onOverflow: () => { overflows += 1; }, onBusy: (on) => busy.push(on), ...c });
   const key = (action, code) => ({ type: 'key', action, key: code, code, text: null, modifiers: 0 });
   b.push(key('down', 'KeyA')); c.advance(1);
   await s.answer();
-  b.push(key('down', 'KeyB'));
-  b.push(key('up', 'KeyB'));
   b.push(key('up', 'KeyA'));
   c.advance(20);
   for (let i = 0; i <= MAX_RETRIES; i += 1) { await s.refuse(); c.advance(RETRY_MS); }
   assert.equal(overflows, 1);
-  assert.deepEqual(s.batches.at(-1), [key('up', 'KeyA')], 'only the release of the press archond took goes on');
-  await s.answer();
+  assert.equal(s.batches.length, MAX_RETRIES + 2, 'the press, then the release and its retries');
+  c.advance(RETRY_MS * 10);
+  assert.equal(s.batches.length, MAX_RETRIES + 2, 'nothing goes again after giving up');
   assert.equal(b.pending, 0);
+  assert.equal(busy.at(-1), false, 'given up and caught up: no longer waiting');
+  b.push({ type: 'text', text: 'next' }); c.advance(20);
+  assert.deepEqual(s.batches.at(-1), [{ type: 'text', text: 'next' }], 'input flows again');
 });
 
-test('stranded releases are those whose press is not in the same batch', () => {
-  const down = mouseEvent('down', { x: 1, y: 1 }, { button: 0, clickCount: 1 });
-  const up = mouseEvent('up', { x: 1, y: 1 }, { button: 0, clickCount: 1 });
-  const end = { type: 'touch', action: 'end', points: [] };
-  assert.deepEqual(strandedReleases([down, up]), []);
-  assert.deepEqual(strandedReleases([up, end, { type: 'text', text: 'x' }]), [up, end]);
-  assert.deepEqual(strandedReleases([up, down, up]), [up]);
+test('auto-repeat refused to exhaustion is dropped and its later release still goes', async () => {
+  const c = clock();
+  const s = slowSend();
+  let overflows = 0;
+  const b = createInputBatcher({ send: s.send, onOverflow: () => { overflows += 1; }, ...c });
+  const key = (action) => ({ type: 'key', action, key: 'ArrowDown', code: 'ArrowDown', text: null, modifiers: 0 });
+  b.push(key('down')); c.advance(1);
+  await s.answer();
+  for (let i = 0; i < 5; i += 1) b.push(key('down'));
+  c.advance(20);
+  assert.equal(s.batches.at(-1).length, 5, 'the repeats go as one batch');
+  for (let i = 0; i <= MAX_RETRIES; i += 1) { await s.refuse(); c.advance(RETRY_MS); }
+  assert.equal(overflows, 1);
+  assert.equal(b.pending, 0);
+  assert.equal(b.push(key('up')), true, 'the key is still down here, so its release is taken');
+  c.advance(20);
+  assert.deepEqual(s.batches.at(-1), [key('up')]);
+  await s.answer();
+  assert.equal(b.outstanding, 0);
 });

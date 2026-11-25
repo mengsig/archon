@@ -223,9 +223,9 @@ impl Browser {
     /// of whatever a lost batch left held. A failure marks this batch lost.
     pub async fn input(&self, events: &[Input]) -> Result<(), BrowserError> {
         let sh = &self.sh;
+        let mut outcome = LostUnlessDone { sh, done: false };
         let deadline = Instant::now() + INPUT_DEADLINE;
         let Ok(mut held) = tokio::time::timeout_at(deadline, sh.input.lock()).await else {
-            self.input_lost();
             return Err(BrowserError::Timeout(format!(
                 "earlier input still ran after {} s; this did not reach the app",
                 INPUT_DEADLINE.as_secs()
@@ -252,9 +252,7 @@ impl Browser {
                     INPUT_DEADLINE.as_secs()
                 )))
             });
-        if result.is_err() {
-            self.input_lost();
-        }
+        outcome.done = result.is_ok();
         result
     }
 
@@ -278,7 +276,26 @@ impl Browser {
         if !sh.input_lost.swap(false, Ordering::SeqCst) {
             return true;
         }
-        release_held(sh, &mut held).await
+        let mut outcome = LostUnlessDone { sh, done: false };
+        // An unanswered release marks input lost again itself.
+        let released = release_held(sh, &mut held).await;
+        outcome.done = true;
+        released
+    }
+}
+
+/// Marks input lost when dropped before `done`: a batch that fails, times out
+/// or is cancelled (its request dropped mid-dispatch) may have left a press held.
+struct LostUnlessDone<'a> {
+    sh: &'a Shared,
+    done: bool,
+}
+
+impl Drop for LostUnlessDone<'_> {
+    fn drop(&mut self) {
+        if !self.done {
+            self.sh.input_lost.store(true, Ordering::SeqCst);
+        }
     }
 }
 
@@ -526,6 +543,23 @@ mod tests {
         assert_eq!(sent_since(&log, next), ["keyUp ArrowDown"]);
         assert!(b.reconcile_input().await, "nothing more is owed");
         assert_eq!(sent_since(&log, next).len(), 1);
+    }
+
+    /// A request dropped mid-batch (its connection closed) leaves a press it
+    /// sent behind: the next batch lets go of it all the same.
+    #[tokio::test(start_paused = true)]
+    async fn a_batch_cancelled_after_its_press_is_released_before_the_next() {
+        let (b, log) = fake_browser(|m, p| {
+            (m == "Input.dispatchKeyEvent" && p["type"] == "keyUp").then(no_answer)
+        })
+        .await;
+        let gesture = [key(KeyAction::Down, "KeyD"), key(KeyAction::Up, "KeyD")];
+        let cut = tokio::time::timeout(Duration::from_secs(1), b.input(&gesture)).await;
+        assert!(cut.is_err(), "the batch was still waiting on its release");
+        assert!(b.sh.input_lost.load(Ordering::SeqCst));
+        let next = log.lock().unwrap().len();
+        assert!(!b.reconcile_input().await, "the fake never answers a keyUp");
+        assert_eq!(sent_since(&log, next), ["keyUp KeyD"]);
     }
 
     /// Batches that end well hold a press across them (a drag) untouched.

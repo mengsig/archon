@@ -105,8 +105,8 @@ export function plainMessage(text) {
   return /[.!?…]$/.test(said) ? said : `${said}.`;
 }
 
-// archond answers input within 20 s (READY_DEADLINE + INPUT_DEADLINE); waiting for that,
-// not a shorter guess, is what keeps one batch from overlapping the next.
+// archond answers input within 20 s (READY_DEADLINE, INPUT_DEADLINE and RELEASE_DEADLINE);
+// waiting for that, not a shorter guess, is what keeps one batch from overlapping the next.
 export const INPUT_TIMEOUT_MS = 60_000;
 
 // Input that may have reached the app only in part: say so, quietly.

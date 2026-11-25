@@ -135,14 +135,25 @@ ten a second while you scroll or type and four a second at rest, so the frame
 after a scroll stops is a fresh picture of where it stopped.
 
 Input goes to archond one request at a time, and archond ends each within
-about 20 seconds, so input runs in the order you gave it. While a request is on its way, the next wheel ticks at the same point are
-added up and only the latest pointer position is kept; no scroll distance and
-no click or key is lost. Input archond turns away because it is busy is sent
-again, in order; if it cannot be sent for about two seconds it is dropped, but
-a key or button already down is still let go. When the preview falls behind, the status line under the
-frame says "Catching up with the preview…" until it catches up; nothing pops
-up. A web app connection keeps at most 16 requests in flight, archond's limit,
-and holds any more until a reply comes.
+about 20 seconds and runs one at a time per session, so input runs in the
+order you gave it. While a request is on its way, the next wheel ticks at the
+same point are added up and only the latest pointer position is kept; no
+scroll distance and no click or key is lost. Input archond turns away because
+it is busy is sent again, in order; if it cannot be sent for about two seconds
+it is dropped. When the preview falls behind, the status line under the frame
+says "Catching up with the preview…" until it catches up; nothing pops up. A
+web app connection keeps at most 16 requests in flight, archond's limit, and
+holds any more until a reply comes.
+
+archond alone keeps track of what is held down in the preview: a key, button
+or finger counts as down once it is sent, and as up only once Chromium answers
+its release. When an input request fails, times out or is turned away (not
+ready, past the rate or the in-flight limit), it may have carried a release, so
+archond lets go of everything held before the next request runs, or within
+about three seconds if none comes. Each release has its own two-second
+deadline; one Chromium leaves unanswered is sent again later. Closing the
+session closes its browser, which lets go of everything with it. A press that
+spans requests that all succeed, such as a drag, is never cut short.
 
 ## Notes and their statuses
 
@@ -391,8 +402,8 @@ once only.
 | "Preview down" / "The app stopped responding. The agent has been told and is restarting it." | The dev server died or hangs: it did not answer an HTTP request within about two seconds (checked every few seconds). Wait, or use **Reload** and **Tell agent again**. The label clears when the app answers again. |
 | "Reconnecting…" | The connection dropped; notes are kept and sent on reconnect. |
 | "Catching up with the preview…" (status line under the frame) | You scroll or move faster than archond answers, or it turned input away for a moment. Input is merged and sent again as replies come; nothing is lost and the line clears by itself. |
-| "The preview stopped answering; some input may not have reached it." | Chromium took over 8 seconds to take a batch of input, or the preview was not ready within 10. archond dropped the rest of the batch and let go of any key, button or finger it had left down. Check the frame and repeat what did not happen; **Reload** if it stays stuck. |
-| "The preview fell behind; some input was skipped." | archond stayed too busy for about two seconds, or so much input piled up that some of it was not sent. Check the frame and repeat what did not happen. |
+| "The preview stopped answering; some input may not have reached it." | Chromium took over 8 seconds to take a batch of input, or the preview was not ready within 10. archond dropped the rest of the batch and lets go of any key, button or finger left down before the next input, or within a few seconds. Check the frame and repeat what did not happen; **Reload** if it stays stuck. |
+| "The preview fell behind; some input was skipped." | archond stayed too busy for about two seconds, or so much input piled up that some of it was not sent. archond lets go of anything left down, as above. Check the frame and repeat what did not happen. |
 | "Queued for a preview slot" | `max_sessions` browsers are running. Your notes still reach the agent. |
 | "The code history changed in a way Archon can't track; its edits may still show; add a note if something should change" (note **Failed: history changed**) | The agent made two commits, a merge, a reset below the base, or reported the wrong commit. Archon leaves the worktree as it is and moves on. |
 | "Can't undo automatically, later changes touch the same code; …" | See Undo. |

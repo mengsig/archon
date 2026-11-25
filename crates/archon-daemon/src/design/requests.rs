@@ -17,7 +17,8 @@ use crate::context::DaemonContext;
 const RESOLVES_PER_SECOND: u32 = 10;
 const INPUTS_PER_SECOND: u32 = 60;
 /// Input requests run in separate tasks. Each is ready by this deadline and the
-/// browser bounds its dispatch, so one ends well before the web app sends the next.
+/// browser bounds its turn (10 s with releases owed), so one ends within 20 s,
+/// well before the web app's 60 s wait sends the next.
 const READY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// `ready` bounded by [`READY_DEADLINE`]: past it nothing has been dispatched,
@@ -31,6 +32,22 @@ async fn within_ready_deadline<T>(
             "the preview was not ready for input within {} s; it did not reach the app",
             READY_DEADLINE.as_secs()
         ))),
+    }
+}
+
+/// Tells the session's browser its input was lost when dropped before `done`:
+/// on an error, and when the request is cancelled because its connection closed.
+struct InputOutcome<'a> {
+    service: &'a DesignService,
+    session: &'a archon_core::design::DesignSessionId,
+    done: bool,
+}
+
+impl Drop for InputOutcome<'_> {
+    fn drop(&mut self) {
+        if !self.done {
+            self.service.input_lost(self.session);
+        }
     }
 }
 
@@ -390,19 +407,22 @@ impl DesignService {
             .ok_or_else(|| ArchonError::Unavailable("there is no preview to use yet".into()))
     }
 
-    /// One input batch. Any that fails, times out or is refused may have
-    /// carried a release, so the session's browser lets go of what it holds.
+    /// One input batch. Any that fails, times out, is refused or is cancelled
+    /// may have carried a release, so the session's browser lets go of what it holds.
     async fn input(
         &self,
         ctx: &DaemonContext,
         session: &archon_core::design::DesignSessionId,
         events: Vec<InputEvent>,
     ) -> Result<Reply, ArchonError> {
-        let result = self.dispatch_input(ctx, session, events).await;
-        if result.is_err() {
-            self.input_lost(session);
-        }
-        result
+        let mut outcome = InputOutcome {
+            service: self,
+            session,
+            done: false,
+        };
+        let reply = self.dispatch_input(ctx, session, events).await?;
+        outcome.done = true;
+        Ok(reply)
     }
 
     /// An input batch for `session` failed or was refused before it ran.

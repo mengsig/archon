@@ -37,6 +37,7 @@ const SHELL = [
   `${BASE}/src/features/chat/entries.js`,
   `${BASE}/src/features/chat/outbox.js`,
   `${BASE}/src/features/commands/commands.js`,
+  `${BASE}/src/features/design/behind.js`,
   `${BASE}/src/features/design/chrome.js`,
   `${BASE}/src/features/design/compare.js`,
   `${BASE}/src/features/design/composer.js`,

@@ -8,6 +8,7 @@ import { designErrorText, isBackpressure, isLostInput } from '../../core/design.
 import { initialState, reduce, isLive, currentPath, followsNewSession, presetMismatch, pointerBlockedText, PRESET_SIZE } from './state.js';
 import { createDesignStream } from './stream.js';
 import { createStage } from './overlay.js';
+import { BEHIND, createBehindLine } from './behind.js';
 import { createComposer } from './composer.js';
 import { createNotesPanel, openUnsentDrafts } from './notes.js';
 import { createInputBatcher, textEvent } from './input.js';
@@ -29,12 +30,6 @@ const WIDE_PX = 1024;
 const SHEET_HEIGHTS = ['peek', 'half', 'full'];
 const FOLLOW_EVERY_MS = 3000;
 const FOLLOW_MAX_MS = 30_000;
-const BEHIND = {
-  busy: 'Catching up with the preview…',
-  skipped: 'The preview fell behind; some input was skipped.',
-  lost: 'The preview stopped answering; some input may not have reached it.',
-};
-const BEHIND_SHOWN_MS = 4000;
 
 export function mountDesign(view, ctx) {
   const item = ctx.route.param;
@@ -93,7 +88,7 @@ export function mountDesign(view, ctx) {
     }
   }
   const refuse = (err) => {
-    if (isBackpressure(err)) behind(BEHIND.busy);
+    if (isBackpressure(err)) behind.notice(BEHIND.busy);
     else if (err?.code === 'gone') dispatch({ type: 'event', event: { event: 'ended', reason: 'ended' } });
     else if (err?.code === 'conflict') { toast(designErrorText(err), { tone: 'red' }); stream.refresh(); }
     else if (err?.code !== 'disconnected' && err?.code !== 'timeout') toast(designErrorText(err), { tone: 'red' });
@@ -123,16 +118,7 @@ export function mountDesign(view, ctx) {
     continueWithout: () => { continued = true; render(); },
   });
   const status = buildStatusBar();
-  // The preview falling behind is one quiet status line, never a stack of toasts.
-  let behindTimer = null;
-  let behindShown = null;
-  // `forMs` null keeps the line until it is cleared.
-  function behind(message, forMs = BEHIND_SHOWN_MS) {
-    behindShown = message;
-    status.setBusy(message);
-    clearTimeout(behindTimer);
-    behindTimer = message && forMs ? setTimeout(() => status.setBusy(null), forMs) : null;
-  }
+  const behind = createBehindLine({ show: (line) => status.setBusy(line) });
   const batcher = createInputBatcher({
     send: (events) => {
       const id = session();
@@ -140,13 +126,12 @@ export function mountDesign(view, ctx) {
       return ctx.design.input(id, events).catch((err) => {
         if (session() !== id) return;
         if (isBackpressure(err)) throw err; // archond ran none of it: the batcher retries
-        if (isLostInput(err)) behind(BEHIND.lost);
+        if (isLostInput(err)) behind.notice(BEHIND.lost);
         else refuse(err);
       });
     },
-    onOverflow: () => behind(BEHIND.skipped),
-    // Caught up clears only the busy line, never a notice that input was lost.
-    onBusy: (on) => { if (on) behind(BEHIND.busy, null); else if (behindShown === BEHIND.busy) behind(null); },
+    onOverflow: () => behind.notice(BEHIND.skipped),
+    onBusy: (on) => behind.waiting(on),
   });
   const queueInput = (event) => state.frame && state.connection === 'open' && isLive(state) && batcher.push(event);
   const stage = createStage({
@@ -636,7 +621,7 @@ export function mountDesign(view, ctx) {
   render();
 
   return () => {
-    stream.stop(); batcher.stop(); clearTimeout(behindTimer); stage.destroy(); ledger.destroy();
+    stream.stop(); batcher.stop(); behind.stop(); stage.destroy(); ledger.destroy();
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', fit);
     vv?.removeEventListener('resize', onViewport);

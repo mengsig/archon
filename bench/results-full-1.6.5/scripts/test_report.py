@@ -1,0 +1,63 @@
+"""Checks for the release report's statistical and evidence boundaries."""
+import json
+import math
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+import analyze
+import collect
+import guard
+
+
+def comparison():
+    return {
+        'old': {'cost_trials': 33, 'graded': 33},
+        'new': {'cost_trials': 33, 'graded': 33},
+        'diff': [0, -.1, .1],
+        'mcnemar': {'p': 1, 'old_only': 0, 'new_only': 0},
+        'wall_ratio': [1, .8, 1.2],
+        'wall_p': .5,
+        'cost_ratio': [1.3, 1.1, 1.5],
+        'cost_p': .01,
+    }
+
+
+class ReportTests(unittest.TestCase):
+    def test_mcnemar_exact_significance_boundary(self):
+        self.assertEqual(analyze.mcnemar_exact(5, 0), .0625)
+        self.assertEqual(analyze.mcnemar_exact(6, 0), .03125)
+        self.assertEqual(analyze.mcnemar_exact(0, 0), 1)
+
+    def test_cost_regression_and_unpriced_data(self):
+        data = comparison()
+        self.assertEqual(analyze.verdict({'luna': {'archon': data}})[0], 'REGRESSION')
+        data['cost_p'] = .2
+        self.assertEqual(analyze.verdict({'luna': {'archon': data}})[0], 'NO REGRESSION')
+        data['new']['cost_trials'] = 32
+        with self.assertRaisesRegex(AssertionError, 'unpriced'):
+            analyze.verdict({'luna': {'archon': data}})
+
+    def test_missing_measurements_are_json_null(self):
+        safe = analyze.json_safe({'values': [math.nan, math.inf, 1.0]})
+        self.assertEqual(safe, {'values': [None, None, 1.0]})
+        self.assertEqual(json.loads(json.dumps(safe, allow_nan=False)), safe)
+
+    def test_copied_evidence_redacts_email(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            source = Path(directory) / 'source'
+            target = Path(directory) / 'target'
+            email = b'person@example.invalid'
+            source.write_bytes(b'answer ' + email)
+            collect.copy_sanitized(source, target, email)
+            self.assertEqual(source.read_bytes(), b'answer ' + email)
+            self.assertEqual(target.read_bytes(), b'answer [redacted-email]')
+
+    def test_guard_rejects_unrelated_process(self):
+        self.assertFalse(guard.owned(os.getpid(), 'archon-bench-old'))
+        self.assertFalse(guard.owned(os.getpid(), 'archon-bench-new'))
+
+
+if __name__ == '__main__':
+    unittest.main()

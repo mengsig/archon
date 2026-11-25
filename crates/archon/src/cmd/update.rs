@@ -9,7 +9,7 @@ mod location;
 mod release;
 mod restart;
 mod tools;
-pub(super) mod version;
+pub(crate) mod version;
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};

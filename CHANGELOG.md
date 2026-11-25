@@ -18,6 +18,8 @@
   schema 32 adds the capture to design pictures; pictures taken before it
   keep only their viewport.
 
+- Report Aether releases below the required minimum in doctor, status, update and the installer.
+
 ## 1.6.5
 
 Released 2026-11-25.

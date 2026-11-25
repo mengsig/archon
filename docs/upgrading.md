@@ -5,7 +5,7 @@ that needs more than `archon update --yes` changes. The update command
 itself is in [install.md](install.md#updating), and every release's changes
 are in the [changelog](../CHANGELOG.md).
 
-## Unreleased live design sessions
+## Live design sessions in 1.6.5
 
 Store migrations V29 through V31 follow V28. V31 preserves existing picture IDs and
 links while allowing equal images to carry separate capture metadata. Opening an earlier live-design
@@ -18,12 +18,12 @@ iteration history. The web handshake still negotiates back to 23.
 
 ## From 1.5.x to 1.6.x
 
-Archon 1.6.4 requires Aether 1.4.2 or later. Upgrade an older Aether with
-`aether update --version v1.4.2` and restart aetherd, then run
-`archon update --yes --version v1.6.4`. Upgrade Aether first: the update
-from 1.6.3 runs 1.6.3's own Aether step, which does not pin 1.4.2.
-Confirmed updates run by 1.6.4 select Aether 1.4.2 only for an older
-installation; at 1.4.2 or later they use
+Archon 1.6.5 requires Aether 1.4.3 or later. Upgrade an older Aether with
+`aether update --version v1.4.3` and restart aetherd, then run
+`archon update --yes --version v1.6.5`. Upgrade Aether first: the update
+from 1.6.4 runs 1.6.4's own Aether step, which does not pin 1.4.3.
+Confirmed updates run by 1.6.5 select Aether 1.4.3 only for an older
+installation; at 1.4.3 or later they use
 Aether's normal update, without pinning it to an older release. Keep a backup before the first daemon start: approved intent
 adds persistent requirement and clarification records. Existing queue items
 without intent keep their previous behavior.

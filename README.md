@@ -234,5 +234,5 @@ Contributors are listed by GitHub handle, and the list is maintained by hand.
 [Upgrading](docs/upgrading.md) · [Troubleshooting](docs/troubleshooting.md) ·
 [Every page](docs/README.md)
 
-Project version: **1.6.4**. Licensed under [MIT](LICENSE). For development,
+Project version: **1.6.5**. Licensed under [MIT](LICENSE). For development,
 see [CONTRIBUTING.md](CONTRIBUTING.md).

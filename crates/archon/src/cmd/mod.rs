@@ -27,7 +27,7 @@ mod settings;
 mod talk;
 mod update;
 
-const REQUIRED_AETHER_VERSION: &str = "1.4.2";
+const REQUIRED_AETHER_VERSION: &str = "1.4.3";
 
 use std::process::ExitCode;
 

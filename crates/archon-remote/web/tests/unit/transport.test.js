@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createTransport, DaemonError, CLOSE_REVOKED, CLOSE_DISABLED, MAX_IN_FLIGHT } from '../../src/core/transport.js';
+import { createTransport, DaemonError, CLOSE_REVOKED, CLOSE_DISABLED, MAX_IN_FLIGHT, LATE_REPLY_MS } from '../../src/core/transport.js';
 import { backoffDelay, retryDelay, DISABLED_RETRY_MS } from '../../src/core/backoff.js';
 
 // A scripted WebSocket and clock: tests open, answer and close sockets by hand.
@@ -273,4 +273,23 @@ test('a timed-out request keeps its slot until its late reply, and a drop fails 
   await Promise.resolve();
   assert.deepEqual(outcomes.slice(-2), ['disconnected', 'disconnected']);
   assert.equal(h.transport.waiting, 0);
+});
+
+test('slots of requests that never get a reply come free after the grace period', async () => {
+  const h = harness({ requestTimeoutMs: 1000 });
+  h.transport.start(); h.last().open(); h.last().welcome();
+  for (let i = 0; i < MAX_IN_FLIGHT; i += 1) h.transport.request('design_resolve', { i }).catch(() => {});
+  h.fire(1000);
+  let answer = null;
+  h.transport.request('item_get', { id: 'x' }).then((r) => { answer = r; });
+  assert.equal(h.transport.waiting, 1, 'hung requests still hold archond\'s slots');
+  h.fire(LATE_REPLY_MS);
+  const sent = h.last().sent.at(-1);
+  assert.equal(sent.cmd, 'item_get', 'the waiting request goes once the slots are presumed lost');
+  assert.equal(h.transport.waiting, 0);
+  h.last().reply(sent.req, { Ok: { reply: 'item', data: 1 } });
+  h.last().reply(h.last().sent[1].req, { Ok: { reply: 'design_done', data: null } });
+  await Promise.resolve();
+  assert.deepEqual(answer, { reply: 'item', data: 1 });
+  assert.equal(h.timers.filter((t) => !t.done && t.ms === LATE_REPLY_MS).length, 0, 'no grace timer is left behind');
 });

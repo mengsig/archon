@@ -13,6 +13,9 @@ export const REQUEST_TIMEOUT_MS = 20_000;
 // refuses the next (MAX_IN_FLIGHT in crates/archon-remote/src/ws/session.rs).
 // Requests past it wait here for a reply instead; these few are not counted.
 export const MAX_IN_FLIGHT = 16;
+// An expired request keeps its slot this much longer for a late reply, then
+// frees it, so hung daemon tasks cannot starve the app; archond refuses visibly.
+export const LATE_REPLY_MS = 30_000;
 const UNCOUNTED = new Set(['design_frame_ack', 'design_unsubscribe', 'subscribe_design', 'subscribe_feed', 'subscribe_changes']);
 
 export class DaemonError extends Error {
@@ -52,8 +55,9 @@ class Transport {
     this.pending = new Map();
     this.queued = [];
     // Counted requests sent and not yet answered, by req id; an expired one
-    // still holds archond's slot until its late reply comes.
+    // still holds archond's slot until its late reply or LATE_REPLY_MS.
     this.inFlight = new Set();
+    this.lateSlots = new Map();
     // Requests waiting for one of those slots on the open connection.
     this.held = [];
   }
@@ -204,7 +208,10 @@ class Transport {
   }
 
   settle(id, result) {
-    if (this.inFlight.delete(id)) this.release();
+    if (this.inFlight.delete(id)) {
+      this.freeLateSlot(id);
+      this.release();
+    }
     const entry = this.pending.get(id);
     if (!entry) return;
     this.pending.delete(id);
@@ -241,6 +248,8 @@ class Transport {
 
   failPending(err) {
     this.inFlight.clear();
+    for (const timer of this.lateSlots.values()) this.clearTimer(timer);
+    this.lateSlots.clear();
     for (const entry of [...this.pending.values(), ...this.held.splice(0)]) {
       if (entry.timer !== null) this.clearTimer(entry.timer);
       entry.reject(err);
@@ -277,12 +286,31 @@ class Transport {
     this.ws.send(JSON.stringify({ ...entry.fields, req, cmd: entry.cmd }));
   }
 
+  holdLateSlot(id) {
+    console.assert(!this.lateSlots.has(id), 'A request expired twice');
+    this.lateSlots.set(id, this.setTimer(() => {
+      this.lateSlots.delete(id);
+      if (this.inFlight.delete(id)) this.release();
+    }, LATE_REPLY_MS));
+  }
+
+  freeLateSlot(id) {
+    const timer = this.lateSlots.get(id);
+    if (timer === undefined) return;
+    this.clearTimer(timer);
+    this.lateSlots.delete(id);
+  }
+
   expire(entry) {
     const at = this.queued.indexOf(entry);
     if (at >= 0) this.queued.splice(at, 1);
     const held = this.held.indexOf(entry);
     if (held >= 0) this.held.splice(held, 1);
-    for (const [id, value] of this.pending) if (value === entry) this.pending.delete(id);
+    for (const [id, value] of this.pending) {
+      if (value !== entry) continue;
+      this.pending.delete(id);
+      if (this.inFlight.has(id)) this.holdLateSlot(id);
+    }
     entry.reject(new DaemonError('timeout', `${entry.cmd} got no answer in ${Math.round(entry.timeoutMs / 1000)} s`));
   }
 }

@@ -205,6 +205,8 @@ def trial_history(row):
 
 def findings(old_rows, new_rows, cmp_arm_tasks):
     """Tasks that flipped pass to fail or got slower, with item history."""
+    assert cmp_arm_tasks, 'no tasks to compare'
+    assert len({t['task'] for t in cmp_arm_tasks}) == len(cmp_arm_tasks), 'duplicate tasks'
     flips, slow = [], []
     for t in cmp_arm_tasks:
         o, n = t['old'], t['new']
@@ -226,6 +228,8 @@ def findings(old_rows, new_rows, cmp_arm_tasks):
 
 
 def verdict(per_model):
+    assert per_model, 'no model comparisons'
+    assert all('archon' in data for data in per_model.values()), 'missing Archon comparison'
     reasons = []
     for m, d in per_model.items():
         c = d['archon']
@@ -267,6 +271,7 @@ def main():
     runs_dir, out_dir = (Path(arg) for arg in sys.argv[1:3])
     selected = sys.argv[3:] or list(MODELS)
     assert selected and all(model in MODELS for model in selected)
+    assert runs_dir.is_dir(), 'runs directory is missing'
     per_model = {model: analyze_model(runs_dir, model) for model in selected}
     word, reasons = verdict({model: {'archon': data['comparison']['archon']} for model, data in per_model.items()})
     summary = {'verdict': word, 'reasons': reasons, 'models': per_model, 'html': 'index.html'}

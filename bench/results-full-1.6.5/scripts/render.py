@@ -36,6 +36,7 @@ def arms_rows(data):
 
 def comparison_rows(comparison):
     assert 'archon' in comparison and 'aether' in comparison
+    assert all('mcnemar' in comparison[name] for name in ('archon', 'aether'))
     rows = []
     for arm, label in [('archon', 'Archon'), ('aether', 'Direct Aether')]:
         c = comparison[arm]
@@ -57,6 +58,7 @@ def task_rows(comparison):
 
 def render_model(name, data):
     assert name and 'comparison' in data
+    assert 'arms' in data and 'aether_arms' in data
     comparison = data['comparison']['archon']
     tiles = ''.join(f'<div class="tile"><small>{label}</small><strong>{html.escape(value)}</strong></div>' for label, value in [
         ('Pass difference', f"{comparison['diff'][0] * 100:+.1f} pp"),

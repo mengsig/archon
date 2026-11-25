@@ -1,4 +1,4 @@
-"""Watch the private Luna runs' combined spend and host load."""
+"""Watch a model's private runs for combined spend and host load."""
 import os
 from pathlib import Path
 import signal
@@ -39,17 +39,19 @@ def stop(pid, expected):
 
 
 def main():
-    old_pid, new_pid = map(int, sys.argv[1:3])
+    model = sys.argv[1]
+    old_pid, new_pid = map(int, sys.argv[2:4])
+    assert model in ('luna', 'haiku')
     assert old_pid > 0 and new_pid > 0 and old_pid != new_pid
     sandbox = Path('/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK')
     report = Path('.archon/reports/bench')
     probe = sum(spend(report / f'{label}-luna-{name}-probe/aether-data/aether.db')
-                for label, name in [('old', 'protocol'), ('new', 'budget')])
+                for label, name in [('old', 'protocol'), ('new', 'budget')]) if model == 'luna' else 0.0
     assert sandbox.is_dir() and report.is_dir()
     while owned(old_pid, 'archon-bench-old') or owned(new_pid, 'archon-bench-new'):
         try:
             active = list(sandbox.glob('r-*/archon-bench/a-data/aether.db'))
-            finished = [report / f'{label}-luna/aether-data/aether.db' for label in ('old', 'new')]
+            finished = [report / f'{label}-{model}/aether-data/aether.db' for label in ('old', 'new')]
             total = probe + sum(spend(path) for path in active + finished)
             load = os.getloadavg()[1]
             print(f'load5={load:.2f} estimated_combined_usd={total:.4f}', flush=True)

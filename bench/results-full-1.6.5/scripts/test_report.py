@@ -40,6 +40,18 @@ class ReportTests(unittest.TestCase):
         self.assertEqual((pairs['old_only'], pairs['new_only']), (1, 1))
         self.assertEqual(pairs['p'], 1)
 
+    def test_equal_task_rates_still_show_opposite_flips(self):
+        def row(trial, passed, wall):
+            return {'task': 't', 'trial': trial, 'arm': 'archon', 'success': passed,
+                    'infra': False, 'wall_secs': wall, 'items': [], 'error': None, 'note': None}
+        old = [row(1, True, 100), row(2, False, 100)]
+        new = [row(1, False, 100), row(2, True, 250)]
+        task = {'task': 't', 'old': {'pass': 1, 'graded': 2, 'wall_mean': 100},
+                'new': {'pass': 1, 'graded': 2, 'wall_mean': 175}, 'wall_ratio': 1.75, 'wall_p': .5}
+        flips, slow = analyze.findings(old, new, [task], 'archon')
+        self.assertEqual((flips[0]['pairs']['old_only'], flips[0]['pairs']['new_only']), (1, 1))
+        self.assertEqual(slow[0]['slow_pairs'][0]['trial'], 2)
+
     def test_cost_regression_and_unpriced_data(self):
         data = comparison()
         self.assertEqual(analyze.verdict({'luna': {'archon': data}})[0], 'REGRESSION')

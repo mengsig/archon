@@ -13,7 +13,8 @@ use std::sync::OnceLock;
 
 use archon_core::testing::write_script;
 use release::{
-    ARCHIVE_MEMBERS, Server, aether_script, archive_members, archon_script, publish, tool_dir,
+    ARCHIVE_MEMBERS, Server, aether_script as release_aether_script, archive_members,
+    archon_script, publish, tool_dir,
 };
 
 const INSTALLER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../install.sh");
@@ -21,7 +22,7 @@ const INSTALLER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../install.sh")
 /// SHA-256 tool; `cat` is for the stand-in programs.
 const TOOLS: &[&str] = &[
     "uname", "mktemp", "mkdir", "rm", "mv", "chmod", "tar", "gzip", "cut", "head", "tr", "sed",
-    "grep", "cat",
+    "grep", "cat", "awk",
 ];
 const TARGETS: [&str; 4] = [
     "x86_64-unknown-linux-musl",
@@ -29,6 +30,10 @@ const TARGETS: [&str; 4] = [
     "x86_64-apple-darwin",
     "aarch64-apple-darwin",
 ];
+fn aether_script(min: u32, max: u32) -> String {
+    release_aether_script(min, max).replace("aether 0.9.0", "aether 1.4.3")
+}
+
 const EXIT_FAILED: i32 = 1;
 const EXIT_AETHER_FAILED: i32 = 2;
 
@@ -451,7 +456,7 @@ fn an_aether_that_is_present_is_reported_with_what_archon_needs() {
     let out = machine.install();
     let text = stdout(&out);
     assert!(out.status.success(), "{out:?}");
-    assert!(text.contains("Aether: aether 0.9.0 at "), "{text}");
+    assert!(text.contains("Aether: aether 1.4.3 at "), "{text}");
     assert!(
         text.contains(
             "Archon needs an Aether that speaks protocol 14 to 17; this one speaks 16 to 17."
@@ -488,6 +493,28 @@ fn an_aether_that_is_present_is_reported_with_what_archon_needs() {
 }
 
 #[test]
+fn aether_below_the_required_release_fails_installation() {
+    for (version, expected) in [("1.4.2", EXIT_AETHER_FAILED), ("1.4.3", 0)] {
+        let mut machine = Machine::new();
+        let script = aether_script(16, 17).replace("1.4.3", version);
+        machine.programs(&[("aether", &script)]);
+        let out = machine.install();
+        assert_eq!(out.status.code(), Some(expected), "{out:?}");
+        if expected != 0 {
+            let warning = stderr(&out);
+            assert!(
+                warning.contains("1.4.2") && warning.contains("1.4.3"),
+                "{warning}"
+            );
+            assert!(
+                warning.contains("aether update --version v1.4.3"),
+                "{warning}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_missing_aether_is_installed_beside_archon_without_asking() {
     let machine = Machine::new();
     let out = machine.install();
@@ -512,7 +539,7 @@ fn a_missing_aether_is_installed_beside_archon_without_asking() {
     );
     assert!(
         text.contains(&format!(
-            "Aether: aether 0.9.0 at {}/aether.",
+            "Aether: aether 1.4.3 at {}/aether.",
             bin.display()
         )),
         "{text}"

@@ -59,6 +59,10 @@ def findings(data):
         for flip in data['comparison'][key]:
             pairs = flip['pairs']
             lines.append(f"- {label}, {flip['task']}: {flip['old']} to {flip['new']}; {pairs['old_only']} OLD-only and {pairs['new_only']} NEW-only passes.")
+            for version, history in [('OLD', flip['old_history']), ('NEW', flip['history'])]:
+                for trial in history:
+                    if not trial['success'] and trial['first_error'] != 'none recorded':
+                        lines.append(f"  - {version} trial {trial['trial']}: {trial['first_error']}")
     for label, key in [('Archon', 'slow'), ('Direct Aether', 'aether_slow')]:
         for slow in data['comparison'][key]:
             lines.append(f"- {label}, {slow['task']}: mean wall {slow['old_mean']:.0f} s to {slow['new_mean']:.0f} s ({slow['ratio']:.2f}×, p={formatted(slow['p'], '.3f')}).")

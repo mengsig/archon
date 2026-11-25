@@ -223,8 +223,10 @@ def findings(old_rows, new_rows, cmp_arm_tasks, arm):
         pairs = paired(task_old, task_new, arm)
         if pairs['old_only'] or pairs['new_only']:
             rows = [r for r in task_new if r['arm'] == arm and not r['infra']]
+            baseline = [r for r in task_old if r['arm'] == arm and not r['infra']]
             flips.append({'task': t['task'], 'pairs': pairs,
                           'old': f"{o['pass']}/{o['graded']}", 'new': f"{n['pass']}/{n['graded']}",
+                          'old_history': [trial_history(r) for r in baseline],
                           'history': [trial_history(r) for r in rows]})
         slower = t['wall_ratio'] >= 1.5 and n['wall_mean'] - o['wall_mean'] >= 30
         if slower:

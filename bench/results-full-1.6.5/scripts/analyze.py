@@ -1,15 +1,9 @@
-"""Compare old and new Archon on the full suite and write summary.json, README.md and index.html.
-
-Usage: analyze.py <runs-dir> <out-dir> <html-out>
-runs-dir holds old-haiku, new-haiku, old-luna, new-luna (each with results/<stamp>/).
-"""
-import html
+"""Compare full-suite runs and write the numerical summary."""
 import json
 import math
 import random
 import statistics
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 MODELS = {'haiku': 'Haiku (claude-code/claude-haiku-5-5)', 'luna': 'Luna (codex/gpt-6-luna)'}

@@ -6,11 +6,15 @@ import sys
 
 
 def pct(value):
-    return f'{100 * value:.1f}%'
+    return 'n/a' if value is None else f'{100 * value:.1f}%'
 
 
 def ratio(values):
-    return f'{values[0]:.2f}× [{values[1]:.2f}, {values[2]:.2f}]'
+    return 'n/a' if any(value is None for value in values) else f'{values[0]:.2f}× [{values[1]:.2f}, {values[2]:.2f}]'
+
+
+def formatted(value, pattern):
+    return 'n/a' if value is None else format(value, pattern)
 
 
 def table(headers, rows):
@@ -29,7 +33,8 @@ def arms_rows(data):
         for label, values in [('Archon', data['arms'][arm]), ('Direct Aether', data['aether_arms'][arm])]:
             rows.append((arm.upper(), label, f"{values['pass']}/{values['graded']}",
                          pct(values['rate']), '–'.join(pct(x) for x in values['ci']),
-                         f"{values['wall_mean']:.0f} s", f"${values['cost_mean']:.4f}",
+                         formatted(values['wall_mean'], '0.0f') + ' s' if values['wall_mean'] is not None else 'n/a',
+                         '$' + formatted(values['cost_mean'], '.4f') if values['cost_mean'] is not None else 'n/a',
                          f"{values['reviewers_per_item']:.2f}", values['infra']))
     return rows
 
@@ -43,8 +48,8 @@ def comparison_rows(comparison):
         m = c['mcnemar']
         rows.append((label, f"{c['diff'][0] * 100:+.1f} pp [{c['diff'][1] * 100:+.1f}, {c['diff'][2] * 100:+.1f}]",
                      f"{m['old_only']}/{m['new_only']} of {m['pairs']} (p={m['p']:.3f})",
-                     f"{ratio(c['wall_ratio'])} (p={c['wall_p']:.3f})",
-                     f"{ratio(c['cost_ratio'])} (p={c['cost_p']:.3f})"))
+                     f"{ratio(c['wall_ratio'])} (p={formatted(c['wall_p'], '.3f')})",
+                     f"{ratio(c['cost_ratio'])} (p={formatted(c['cost_p'], '.3f')})"))
     return rows
 
 

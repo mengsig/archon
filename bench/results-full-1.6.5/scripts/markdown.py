@@ -12,6 +12,10 @@ def ratio(values):
     return 'n/a' if any(value is None for value in values) else f'{values[0]:.2f}× [{values[1]:.2f}, {values[2]:.2f}]'
 
 
+def formatted(value, pattern, prefix='', suffix=''):
+    return 'n/a' if value is None else prefix + format(value, pattern) + suffix
+
+
 def arm_table(data):
     assert set(data['arms']) == {'old', 'new'}
     assert set(data['aether_arms']) == {'old', 'new'}
@@ -20,7 +24,7 @@ def arm_table(data):
     for version in ('old', 'new'):
         for label, arms in [('Archon', data['arms']), ('Direct Aether', data['aether_arms'])]:
             a = arms[version]
-            lines.append(f"| {version.upper()} | {label} | {a['pass']}/{a['graded']} | {percent(a['rate'])} [{percent(a['ci'][0])}, {percent(a['ci'][1])}] | {a['wall_mean']:.0f} s | ${a['cost_mean']:.4f} | {a['reviewers_per_item']:.2f} | {a['infra']} |")
+            lines.append(f"| {version.upper()} | {label} | {a['pass']}/{a['graded']} | {percent(a['rate'])} [{percent(a['ci'][0])}, {percent(a['ci'][1])}] | {formatted(a['wall_mean'], '.0f', suffix=' s')} | {formatted(a['cost_mean'], '.4f', prefix='$')} | {a['reviewers_per_item']:.2f} | {a['infra']} |")
     return '\n'.join(lines)
 
 
@@ -33,7 +37,7 @@ def comparison_table(data):
         c = data[arm]
         m = c['mcnemar']
         d = c['diff']
-        lines.append(f"| {label} | {d[0] * 100:+.1f} pp [{d[1] * 100:+.1f}, {d[2] * 100:+.1f}] | {m['old_only']} / {m['new_only']} of {m['pairs']} | {m['p']:.3f} | {ratio(c['wall_ratio'])} ({c['wall_p']:.3f}) | {ratio(c['cost_ratio'])} ({c['cost_p']:.3f}) |")
+        lines.append(f"| {label} | {d[0] * 100:+.1f} pp [{d[1] * 100:+.1f}, {d[2] * 100:+.1f}] | {m['old_only']} / {m['new_only']} of {m['pairs']} | {m['p']:.3f} | {ratio(c['wall_ratio'])} ({formatted(c['wall_p'], '.3f')}) | {ratio(c['cost_ratio'])} ({formatted(c['cost_p'], '.3f')}) |")
     return '\n'.join(lines)
 
 

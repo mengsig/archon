@@ -303,7 +303,13 @@ def main():
     assert runs_dir.is_dir(), 'runs directory is missing'
     per_model = {model: analyze_model(runs_dir, model) for model in selected}
     word, reasons = verdict({model: {'archon': data['comparison']['archon']} for model, data in per_model.items()})
-    summary = {'verdict': word, 'reasons': reasons, 'models': per_model, 'html': 'index.html'}
+    budget_file = runs_dir / 'budget.json'
+    budgets = json.loads(budget_file.read_text()) if budget_file.is_file() else {}
+    for model in selected:
+        if model in budgets and budgets[model]['total_usd'] > 30:
+            reasons.append(f"{model}: combined model cost exceeded $30")
+            word = 'REGRESSION'
+    summary = {'verdict': word, 'reasons': reasons, 'models': per_model, 'budgets': budgets, 'html': 'index.html'}
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / 'summary.json').write_text(json.dumps(json_safe(summary), indent=2, allow_nan=False))
     print(word, reasons)

@@ -114,6 +114,10 @@ def render(summary):
     for name, data in summary['models'].items():
         model_id = data['meta']['new']['models']['archon']
         lines.append(model_section(f'{name.title()} ({model_id})', data))
+    if summary.get('budgets'):
+        lines.append('## Combined model spend\n')
+        for name, budget in summary['budgets'].items():
+            lines.append(f"- {name.title()}: ${budget['total_usd']:.4f} including probes and all private daemon usage.")
     lines.append(method(summary))
     return '\n'.join(lines)
 

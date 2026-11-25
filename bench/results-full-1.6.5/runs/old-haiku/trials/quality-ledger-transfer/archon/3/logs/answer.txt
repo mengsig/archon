@@ -1,0 +1,21 @@
+I've queued the `ledger.py` work as item `qi_01M88X2KFQ5GS6FMSPQXEBJ8XB` in the `quality-ledger-transfer` repository. I haven't edited the repository myself.
+
+- **Pipeline:** `direct`, one agent that implements, tests and commits on a local branch. The repository ships locally, so nothing is pushed.
+- **Review:** `standard`. This is one module with a spec, so one reviewer is enough.
+- **Model:** balanced tier at medium effort.
+- **Brief:** your request verbatim, with the instructions to read `SPEC.md` first, keep the documented API, cover every specified error and boundary case in tests, use only the standard library, run the suite, and commit.
+
+The item's outcome will be posted here when it finishes. I'll report any failure with its cause.
+
+Done: Implement ledger.py per SPEC.md with focused tests. Repair of the review record for the ledger.py implementation. No code changed in this pass. The committed head 4d2579bb (tree e20d4626) was re-read by one fresh reviewer, agt_01M88X6B7RHA9T1PS9W6ZF349A (claude-code/claude-haiku-5-5, effort medium), over the whole change from base 1ee02847. It returned verdict pass with no blocking findings. One non-blocking nit: test_snapshots_never_see_half_a_transfer is probabilistic and may not reliably catch the removal of the lock. Left as a follow-up. Check run in this pass: `python3 -B -m unittest test_ledger` gives 34 tests, OK. The reviewer's risk call is low, which stands; the rubric lists locking as high, so this mismatch is noted for the human reviewer. Nothing is left open in the code.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88X6B7RHA9T1PS9W6ZF349A)
+
+SHIPPED: commit 4d2579bb2140f3827f7ae2d1789bb7df4ba0f222 on the run branch
+Branch `archon/qxebj8xb-implement-ledger-py-per-spec-md-with-foc` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/719e9c3f00517397fb58aed6/quality-ledger-transfer holds it (2 files changed, 286 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M88X2KFQ5GS6FMSPQXEBJ8XB`; land it in `main`: `archon merge qi_01M88X2KFQ5GS6FMSPQXEBJ8XB`.
+
+Repair of the review record for the ledger.py implementation. No code changed in this pass. The committed head 4d2579bb (tree e20d4626) was re-read by one fresh reviewer, agt_01M88X6B7RHA9T1PS9W6ZF349A (claude-code/claude-haiku-5-5, effort medium), over the whole change from base 1ee02847. It returned verdict pass with no blocking findings. One non-blocking nit: test_snapshots_never_see_half_a_transfer is probabilistic and may not reliably catch the removal of the lock. Left as a follow-up. Check run in this pass: `python3 -B -m unittest test_ledger` gives 34 tests, OK. The reviewer's risk call is low, which stands; the rubric lists locking as high, so this mismatch is noted for the human reviewer. Nothing is left open in the code.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88X6B7RHA9T1PS9W6ZF349A)
+
+SHIPPED: commit 4d2579bb2140f3827f7ae2d1789bb7df4ba0f222 on the run branch

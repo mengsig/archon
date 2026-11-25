@@ -1,0 +1,322 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88S1JNSDN3TJK85PN0CAGHS",
+      "repo": "repo_01M88S174KK6X30FDQ1HJK7S8M",
+      "pipeline": "adaptive",
+      "title": "Implement safe_extract.py per SPEC.md with focused tests",
+      "brief": "Operator request, verbatim: \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nAcceptance criteria:\n- Read SPEC.md in the repository root and implement safe_extract.py exactly to it: keep the documented public API and signatures, and handle every error type and boundary case the spec names.\n- This is archive extraction, so path traversal, absolute paths, symlinks/hardlinks and similar escapes must be rejected as the spec requires.\n- Add focused tests covering each specified error and boundary case, beyond the existing basic tests. All tests must pass with the standard library only (unittest or pytest-free).\n- Keep functions under about 60 lines, validate inputs at the boundary, and never swallow errors.\n- Commit the work on the local branch as the repository's configured git user; do not add any generated-by or tool attribution lines to the commit message.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88S1JNSDN3TJK85PN0CAGHS",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T07:17:11.483752604Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T07:17:11.485653090Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T07:17:11.483752604Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88S1JPC9VS93G4J1VTYMMC0",
+        "summary": "Implemented safe_extract.extract(entries, root) per SPEC.md with focused stdlib unittest coverage. Commits on archon/pn0caghs-implement-safe-extract-py-per-spec-md-wi: 0b21c4a (feat) and d441cbe (fix after the failed review). Head d441cbe, tree 7f7c084ca40eafb96ff8208d7bf0b059c6a855bb. Verification: `python3 -B -m unittest` in the worktree, 65 tests OK. Three whole-change reviews of 0b21c4a failed on one blocking finding: an unsearchable ancestor was read as absent (os.path.lexists swallowing OSError), so earlier entries were written before PermissionError. Fixed with os.lstat that treats only FileNotFoundError as absent, plus a regression test, strict UTF-8 name check, and removal of tautological asserts and a dead short-write branch. Delta review of d441cbe passed. Open, non-blocking: a non-writable (searchable) existing ancestor still fails at write time after earlier entries are written; ENAMETOOLONG and case-insensitive collisions also surface at write time; rollback is out of spec scope. Workers: none. Reviewers: 3 whole-change reads plus 1 delta. No services started; no child processes left running from this stage beyond the completed reviewers' handed-off processes, which stop when this run ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88S4E5PTBQXZ2DWBGEJQ5FT), claude-code/claude-haiku-5-5 (agent agt_01M88S4N5KTMJYQXV2556KHP9N), claude-code/claude-haiku-5-5 (agent agt_01M88S4WXQ1N3X0X2J14T5C338), claude-code/claude-haiku-5-5 (agent agt_01M88S90GX4TRMV71CZAAQWYWV)\n\nSHIPPED: commit d441cbec0327f6eb2c1a19a030d85bb905b819ed on the run branch"
+      },
+      "created_at": "2026-11-25T07:17:11.481364157Z",
+      "updated_at": "2026-11-25T07:22:32.058156510Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88S1JPC9VS93G4J1VTYMMC0",
+        "item": "qi_01M88S1JNSDN3TJK85PN0CAGHS",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M88S1JVMHDF1MJJJYK5X1EF8",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/834358ed1aa7921d83831294/.archon/data/worktrees/quality-safe-extract/qi_01M88S1JNSDN3TJK85PN0CAGHS",
+        "branch": "archon/pn0caghs-implement-safe-extract-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract(entries, root) per SPEC.md with focused stdlib unittest coverage. Commits on archon/pn0caghs-implement-safe-extract-py-per-spec-md-wi: 0b21c4a (feat) and d441cbe (fix after the failed review). Head d441cbe, tree 7f7c084ca40eafb96ff8208d7bf0b059c6a855bb. Verification: `python3 -B -m unittest` in the worktree, 65 tests OK. Three whole-change reviews of 0b21c4a failed on one blocking finding: an unsearchable ancestor was read as absent (os.path.lexists swallowing OSError), so earlier entries were written before PermissionError. Fixed with os.lstat that treats only FileNotFoundError as absent, plus a regression test, strict UTF-8 name check, and removal of tautological asserts and a dead short-write branch. Delta review of d441cbe passed. Open, non-blocking: a non-writable (searchable) existing ancestor still fails at write time after earlier entries are written; ENAMETOOLONG and case-insensitive collisions also surface at write time; rollback is out of spec scope. Workers: none. Reviewers: 3 whole-change reads plus 1 delta. No services started; no child processes left running from this stage beyond the completed reviewers' handed-off processes, which stop when this run ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88S4E5PTBQXZ2DWBGEJQ5FT), claude-code/claude-haiku-5-5 (agent agt_01M88S4N5KTMJYQXV2556KHP9N), claude-code/claude-haiku-5-5 (agent agt_01M88S4WXQ1N3X0X2J14T5C338), claude-code/claude-haiku-5-5 (agent agt_01M88S90GX4TRMV71CZAAQWYWV)\n\nSHIPPED: commit d441cbec0327f6eb2c1a19a030d85bb905b819ed on the run branch"
+        },
+        "cost_usd": 0.11371282,
+        "started_at": "2026-11-25T07:17:11.632791273Z",
+        "finished_at": "2026-11-25T07:22:32.058156510Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88S1JV1R26DV8QV3ZWQXT7T",
+        "run": "prun_01M88S1JPC9VS93G4J1VTYMMC0",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88S1JVVF0DD25VWFVMRBF9M",
+        "aether_task": "tsk_01M88S1JVVJWW94EKAEWY5B38T",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented safe_extract.extract(entries, root) per SPEC.md with focused stdlib unittest coverage. Commits on archon/pn0caghs-implement-safe-extract-py-per-spec-md-wi: 0b21c4a (feat) and d441cbe (fix after the failed review). Head d441cbe, tree 7f7c084ca40eafb96ff8208d7bf0b059c6a855bb. Verification: `python3 -B -m unittest` in the worktree, 65 tests OK. Three whole-change reviews of 0b21c4a failed on one blocking finding: an unsearchable ancestor was read as absent (os.path.lexists swallowing OSError), so earlier entries were written before PermissionError. Fixed with os.lstat that treats only FileNotFoundError as absent, plus a regression test, strict UTF-8 name check, and removal of tautological asserts and a dead short-write branch. Delta review of d441cbe passed. Open, non-blocking: a non-writable (searchable) existing ancestor still fails at write time after earlier entries are written; ENAMETOOLONG and case-insensitive collisions also surface at write time; rollback is out of spec scope. Workers: none. Reviewers: 3 whole-change reads plus 1 delta. No services started; no child processes left running from this stage beyond the completed reviewers' handed-off processes, which stop when this run ends.",
+        "structured": {
+          "checks": [
+            "python3 -B -m unittest (in worktree, on d441cbe): Ran 65 tests, OK"
+          ],
+          "commit": "d441cbec0327f6eb2c1a19a030d85bb905b819ed",
+          "evidence": [
+            {
+              "caption": "Full unittest run on head d441cbe (no before state: the module was a NotImplementedError stub)",
+              "kind": "output",
+              "text": "Ran 65 tests in 0.009s\n\nOK"
+            }
+          ],
+          "local_commit": "d441cbec0327f6eb2c1a19a030d85bb905b819ed",
+          "pr": {
+            "body": "Approach: extract() validates the entire batch first (list shape, tuple entries, str names, bytes data, relative POSIX names with no leading /, backslash, colon, NUL, empty/./.. components, strict UTF-8). It then rejects duplicate names and file/directory collisions in either order, and checks root and every existing component with os.lstat (symlinks, dangling links, non-directory ancestors, existing targets). Only then are parents created and files written with open(..., 'xb'), so existing files are never overwritten or followed.\n\nKey files: safe_extract.py, test_safe_extract.py.\n\nChecks: python3 -B -m unittest, 65 tests OK on d441cbe.\n\nReview: three whole-change reads of 0b21c4a (fail: unsearchable ancestor treated as absent via os.path.lexists) and a delta read of d441cbe against 0b21c4a (pass). Fix commit d441cbe addresses the blocking finding.\n\nOpen, non-blocking follow-ups: (1) a non-writable but searchable existing ancestor passes validation and fails at write time after earlier entries are written; (2) names over NAME_MAX and case-insensitive-filesystem collisions are detected only at write time; (3) no rollback, which the spec excludes; (4) the house rule asks for two meaningful asserts per function; the only asserts were tautological and were removed, so helpers rely on explicit ValueError checks.\n\nAssumptions: root symlink ancestors above root are not checked (spec only covers components below root); name encoding is strict UTF-8.",
+            "summary": "Made extract(entries, root) create regular files safely. Now: whole batch is validated (names, duplicates, collisions, root, symlinks, existing targets) before any write. Before: NotImplementedError stub. Unreadable ancestors now fail during validation.",
+            "title": "feat: implement safe archive extraction per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "d441cbec0327f6eb2c1a19a030d85bb905b819ed",
+            "reviewer_agents": [
+              "agt_01M88S4E5PTBQXZ2DWBGEJQ5FT",
+              "agt_01M88S4N5KTMJYQXV2556KHP9N",
+              "agt_01M88S4WXQ1N3X0X2J14T5C338",
+              "agt_01M88S90GX4TRMV71CZAAQWYWV"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88S4E5PTBQXZ2DWBGEJQ5FT",
+                "base": "2fdad5e98845c2aa4d0f96417d3978d66eb8bddc",
+                "findings": 5,
+                "head": "0b21c4a3d4fd2d50d51a792d64045f38d0acd6eb",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M88S4N5KTMJYQXV2556KHP9N",
+                "base": "2fdad5e98845c2aa4d0f96417d3978d66eb8bddc",
+                "findings": 7,
+                "head": "0b21c4a3d4fd2d50d51a792d64045f38d0acd6eb",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M88S4WXQ1N3X0X2J14T5C338",
+                "base": "2fdad5e98845c2aa4d0f96417d3978d66eb8bddc",
+                "findings": 4,
+                "head": "0b21c4a3d4fd2d50d51a792d64045f38d0acd6eb",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M88S90GX4TRMV71CZAAQWYWV",
+                "base": "0b21c4a3d4fd2d50d51a792d64045f38d0acd6eb",
+                "findings": 2,
+                "head": "d441cbec0327f6eb2c1a19a030d85bb905b819ed",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88S4E5PTBQXZ2DWBGEJQ5FT",
+              "agt_01M88S4N5KTMJYQXV2556KHP9N",
+              "agt_01M88S4WXQ1N3X0X2J14T5C338",
+              "agt_01M88S90GX4TRMV71CZAAQWYWV"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "Security-sensitive path handling for writes under a caller-supplied root (rubric: security). Behaviour is new, not a change to existing behaviour. Reviewers: three whole-change reads rated high; the delta read rated medium. Kept at high per the when-in-doubt rule. Tests cover traversal, absolute paths, colons, symlinks, dangling links, existing targets, collisions and unreadable ancestors."
+          },
+          "risk_reviewer": "agt_01M88S4E5PTBQXZ2DWBGEJQ5FT",
+          "tree": "7f7c084ca40eafb96ff8208d7bf0b059c6a855bb"
+        },
+        "cost_usd": 0.11371282,
+        "started_at": "2026-11-25T07:17:11.649969649Z",
+        "finished_at": "2026-11-25T07:22:28.747440737Z"
+      }
+    ],
+    "spent_usd": 0.11371282,
+    "gates": [],
+    "delegations": {
+      "stg_01M88S1JV1R26DV8QV3ZWQXT7T": {
+        "direct_usd": 0.05076726,
+        "delegated_usd": 0.06294556,
+        "agents": [
+          {
+            "agent": "agt_01M88S4E5PTBQXZ2DWBGEJQ5FT",
+            "parent": "agt_01M88S1JVVF0DD25VWFVMRBF9M",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01660011
+          },
+          {
+            "agent": "agt_01M88S4N5KTMJYQXV2556KHP9N",
+            "parent": "agt_01M88S1JVVF0DD25VWFVMRBF9M",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01819764
+          },
+          {
+            "agent": "agt_01M88S4WXQ1N3X0X2J14T5C338",
+            "parent": "agt_01M88S1JVVF0DD25VWFVMRBF9M",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.015299689999999998
+          },
+          {
+            "agent": "agt_01M88S90GX4TRMV71CZAAQWYWV",
+            "parent": "agt_01M88S1JVVF0DD25VWFVMRBF9M",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01284812
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T07:17:11.483752604Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T07:17:11.485653090Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T07:17:11.483752604Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

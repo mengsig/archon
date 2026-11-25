@@ -1,0 +1,22 @@
+Cursor pagination is in `inventory-api`, and `inventory-client`'s `listItems` now follows it to the end. Both changes are committed (`0ce7b1d` in inventory-api, `b545171` in inventory-client), and both working trees are clean.
+
+**API (`inventory-api/api.py`)**
+- `GET /items` takes `limit` (integer 1–100, default 20) and `cursor`.
+- The body is `{"items": [...], "next_cursor": ...}`, ordered by `id`. `next_cursor` is `null` on the last page.
+- An invalid `limit` or `cursor` returns 400 with `{"error": "..."}`.
+- My choice: the cursor is the base64 of the last returned `id`, and each page is "ids greater than the cursor". It stays correct if items are added between requests.
+
+**Client (`inventory-client/client.js`)**
+- `listItems(transport)` sends no cursor first, then passes each `next_cursor` back unchanged until it is null or absent.
+- My addition: it throws if the server repeats a cursor, so a misbehaving server can't cause an endless loop. It also throws if `items` is missing.
+
+**Tests and docs**
+- Python: `python3 -m unittest` runs 8 tests, all passing. New tests cover the default page size, walking every page, the last page's null cursor, `limit` bounds, and invalid cursors.
+- Node: `npm test` runs 6 tests, all passing. New tests cover multi-page following with the exact cursors sent, an absent `next_cursor`, and the repeated-cursor error.
+- End to end: the Node client driving the real Python API through `api_cli.py` returned all 57 items in order.
+- Both READMEs document the new parameters, the response shape, and the client's paging behaviour.
+
+**Decisions for you to check**
+- I did not bump the client's `package.json` version (still 1.4.0). The API response shape changed, so you may want a version bump.
+- I did not add the Co-Authored-By trailer to the commits. The workspace CLAUDE.md says not to add attribution, and I treated it as overriding the reminder. Commits use the configured `mengsig` identity.
+- No PRs were opened.

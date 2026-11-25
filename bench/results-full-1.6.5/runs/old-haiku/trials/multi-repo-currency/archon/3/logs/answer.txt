@@ -1,0 +1,38 @@
+The currency change is queued as one initiative (`ini_01M88WKW7TX9C2KPNMWM6NQZB2`) with two members, both building against the same shared contract:
+
+- **`ledger`** (`qi_01M88WKW7TX9C2KPNMWM6NQZB3`): optional fourth currency column, default `USD`, new CSV header and per-row currency, malformed code exits 2 with the line number, other input errors stay at 1.
+- **`reports`** (`qi_01M88WKW8BNE0PB7V8XV7A434K`): reads old and new CSV, totals per account and currency with sorted output, malformed code exits 2.
+
+Both members use the `direct` pipeline with review `standard` and merge `manual`. Each is told to keep its tests green, update its README, and commit. The repos ship locally, so the commits stay on local branches and nothing is pushed or merged.
+
+I did not edit either repository myself. I'll report when the initiative finishes or if a member fails or blocks.
+
+Done: reports: per-currency totals. Implemented per-account, per-currency totals in reports.py, committed as c85395b on archon/xv7a434k-reports-per-currency-totals (base b1fcfa6). The CLI reads CSV on stdin. Old CSVs without a currency column count as USD. With a currency column, each code must match [A-Z]{3}; a malformed or empty code prints "error: line N: ..." to stderr and exits 2. Output is account,currency,total_cents, sorted by account then currency. Six unittest cases cover old format, new format, sorting, malformed codes and empty cells. README is updated. `python3 -m unittest` passes 6/6 on the final head. Before: account,total_cents (one row per account). Now: account,currency,total_cents. Review: a reviewer on claude-haiku-5-5 (medium) passed head c85395b with no blocking findings. Three non-blocking follow-ups: (1) test_totals_per_account_sorted only uses substring checks; (2) a short row with a missing currency cell reports "malformed currency code None" (exit 2, untested); (3) error line numbers come from reader.line_num, so quoted multi-line fields report the end line. Assumptions: an empty currency cell is malformed, not USD; a missing column means USD. Nothing is left running. Review: agent agt_01M88WN9TG3DQF3WT13PN11MKZ, verdict pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88WN9TG3DQF3WT13PN11MKZ)
+
+SHIPPED: commit c85395b3e216b9061523631c280cc853c4c1a605 on the run branch
+Branch `archon/xv7a434k-reports-per-currency-totals` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/c0d9a65718e3a6ddbf16ecbd/reports holds it (3 files changed, 130 insertions(+), 12 deletions(-)). Review: `archon diff qi_01M88WKW8BNE0PB7V8XV7A434K`; land it in `main`: `archon merge qi_01M88WKW8BNE0PB7V8XV7A434K`.
+
+Done: ledger: currency column. Ledger now accepts an optional 4th TSV currency column (exactly three uppercase ASCII letters, default USD). Output header is date,account,amount_cents,currency and every row carries a currency. A malformed currency prints `line N: bad currency "..."` to stderr and exits 2; other input errors still exit 1. Added tests: 6 library tests in tests/ledger.rs (default, explicit, malformed codes, exit-code mapping) and 4 binary tests in tests/cli.rs (default, explicit, malformed with line number and exit 2, other error exit 1). README updated. Checks at tree 3f32deb372e8154d21ddad209da968a39dfe322d: cargo fmt --check passed; cargo clippy --all-targets -D warnings passed; cargo test passed (4 CLI, 6 library). Commit 9cb861d on archon/wm6nqzb3-ledger-currency-column, not pushed. Reviewer (claude-haiku-5-5, medium) passed the head with no blocking findings. Non-blocking follow-ups: the README has no migration note for the new 3-to-4 column output shape, which breaks old consumers; an empty 4th field (trailing tab) is rejected with exit 2 rather than defaulting to USD, and this is not documented; the currency field is trimmed, so " EUR " is accepted, and this is also undocumented. Nothing is left running: no servers or processes were started. Reports repo is out of scope for this stage.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88WNSQ9ME7VJ801SDHQTSZT)
+
+SHIPPED: commit 9cb861db9a2fc907fa69dd14d05d83549291fd83 on the run branch
+Branch `archon/wm6nqzb3-ledger-currency-column` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/c0d9a65718e3a6ddbf16ecbd/ledger holds it (5 files changed, 165 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M88WKW7TX9C2KPNMWM6NQZB3`; land it in `main`: `archon merge qi_01M88WKW7TX9C2KPNMWM6NQZB3`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M88WKW7TX9C2KPNMWM6NQZB3 ended and its cargo target directory went.
+
+Implemented per-account, per-currency totals in reports.py, committed as c85395b on archon/xv7a434k-reports-per-currency-totals (base b1fcfa6). The CLI reads CSV on stdin. Old CSVs without a currency column count as USD. With a currency column, each code must match [A-Z]{3}; a malformed or empty code prints "error: line N: ..." to stderr and exits 2. Output is account,currency,total_cents, sorted by account then currency. Six unittest cases cover old format, new format, sorting, malformed codes and empty cells. README is updated. `python3 -m unittest` passes 6/6 on the final head. Before: account,total_cents (one row per account). Now: account,currency,total_cents. Review: a reviewer on claude-haiku-5-5 (medium) passed head c85395b with no blocking findings. Three non-blocking follow-ups: (1) test_totals_per_account_sorted only uses substring checks; (2) a short row with a missing currency cell reports "malformed currency code None" (exit 2, untested); (3) error line numbers come from reader.line_num, so quoted multi-line fields report the end line. Assumptions: an empty currency cell is malformed, not USD; a missing column means USD. Nothing is left running. Review: agent agt_01M88WN9TG3DQF3WT13PN11MKZ, verdict pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88WN9TG3DQF3WT13PN11MKZ)
+
+SHIPPED: commit c85395b3e216b9061523631c280cc853c4c1a605 on the run branch
+
+Ledger now accepts an optional 4th TSV currency column (exactly three uppercase ASCII letters, default USD). Output header is date,account,amount_cents,currency and every row carries a currency. A malformed currency prints `line N: bad currency "..."` to stderr and exits 2; other input errors still exit 1. Added tests: 6 library tests in tests/ledger.rs (default, explicit, malformed codes, exit-code mapping) and 4 binary tests in tests/cli.rs (default, explicit, malformed with line number and exit 2, other error exit 1). README updated. Checks at tree 3f32deb372e8154d21ddad209da968a39dfe322d: cargo fmt --check passed; cargo clippy --all-targets -D warnings passed; cargo test passed (4 CLI, 6 library). Commit 9cb861d on archon/wm6nqzb3-ledger-currency-column, not pushed. Reviewer (claude-haiku-5-5, medium) passed the head with no blocking findings. Non-blocking follow-ups: the README has no migration note for the new 3-to-4 column output shape, which breaks old consumers; an empty 4th field (trailing tab) is rejected with exit 2 rather than defaulting to USD, and this is not documented; the currency field is trimmed, so " EUR " is accepted, and this is also undocumented. Nothing is left running: no servers or processes were started. Reports repo is out of scope for this stage.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88WNSQ9ME7VJ801SDHQTSZT)
+
+SHIPPED: commit 9cb861db9a2fc907fa69dd14d05d83549291fd83 on the run branch

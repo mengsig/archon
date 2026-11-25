@@ -1,0 +1,259 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88TYNYPENKEDRG5KMWNCCM5",
+      "repo": "repo_01M88TY72YA0BNPHQZFS8F99XK",
+      "pipeline": "direct",
+      "title": "Implement retry_budget.retry_delay per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated, local chat): \"Implement `retry_budget.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nRepository files: SPEC.md (the spec), retry_budget.py (stub to implement), test_retry_budget.py (basic existing tests; keep them passing and extend).\n\nSpec summary, to be implemented exactly:\n`retry_delay(attempt, elapsed_ms, *, max_attempts=4, budget_ms=1000, base_ms=100, cap_ms=400, retry_after_ms=None) -> int | None`. All times are integer ms. `attempt` = attempts already made (initial attempt is 1); `elapsed_ms` = total elapsed time when that attempt failed. Return the wait before the next attempt, or None when no further attempt may start. Never sleep, read a clock, or mutate inputs.\n1. Validate ALL arguments before any exhausted-budget or exhausted-attempt return. Every number must be a built-in int (reject bool and float). attempt and max_attempts >= 1. elapsed_ms, budget_ms, base_ms, cap_ms, and retry_after_ms when not None >= 0. Invalid values raise ValueError. No upper integer limit. base_ms may exceed cap_ms.\n2. If attempt >= max_attempts, return None. max_attempts counts the initial attempt. attempt > max_attempts is legal.\n3. backoff = min(cap_ms, base_ms * 2**(attempt-1)). Zero base yields zero backoff; zero cap yields zero. Saturate efficiently: huge attempt values must not allocate a huge power of two (e.g. cap the exponent or short-circuit when base_ms*2**k would exceed cap_ms).\n4. If retry_after_ms is supplied, delay = max(backoff, retry_after_ms). This floor is NOT limited by cap_ms.\n5. The next attempt must start strictly BEFORE budget_ms: return None when elapsed_ms + delay >= budget_ms, otherwise return delay (including zero). Never shorten the required wait to fit the budget.\n\nConstraints: standard library only, no randomness, no clock, no network, no third-party packages. Keep functions under 60 lines, at least two meaningful assertions or explicit validation checks per non-trivial function, errors visible (no swallowed exceptions), comments only where non-obvious.\n\nTests: add focused unittest/pytest-compatible tests covering every validation rule (bool, float, negative, zero boundaries for attempt and max_attempts), attempt == max_attempts and attempt > max_attempts, zero base, zero cap, base > cap, retry_after above cap, retry_after below backoff, budget boundary (elapsed + delay == budget returns None, one less returns delay), zero-delay success, and a huge attempt value (e.g. 10**6 or larger) that returns quickly with cap.\n\nAcceptance: all tests pass (run them with the stdlib runner from the repository), validation errors raise ValueError before budget/attempt short-circuits, and the work is committed on the local branch with a clear message. Commit as the repository's configured git user; no attribution lines beyond what the repo already uses.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88TYNYPENKEDRG5KMWNCCM5",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T07:50:33.807889601Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T07:50:33.809470669Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T07:50:33.807889601Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "model_reasons": {},
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88TYP31VBCR4W15FVV5WTDS",
+        "summary": "Implemented retry_budget.retry_delay per SPEC.md in commit eca740c on archon/kmwnccm5-implement-retry-budget-retry-delay-per-s (base 57ec30a). Validation of every argument runs before the exhausted-attempt and exhausted-budget returns; bool and float are rejected; backoff saturates via an exponent shortcut with no large power of two; Retry-After is an uncapped floor; the budget check is elapsed + delay >= budget. Extended test_retry_budget.py from 3 to 29 tests covering all validation rules, attempt boundaries, zero base and cap, base > cap, retry_after cases, the budget boundary, zero delay, and a huge attempt value. Before: the 3 existing tests errored on the NotImplementedError stub. After: `python3 -m unittest -v` runs 29 tests, all OK; 10**6 attempts return 400 instantly. One test of my own had a wrong default budget and was fixed before commit. No linter is installed in this environment, so only a syntax check was run. Review: agent agt_01M88V0GAK8C4P2TSKBGFW6601 passed the head with no findings, risk low. Nothing is left running and nothing was pushed.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88V0GAK8C4P2TSKBGFW6601)\n\nSHIPPED: commit eca740c7e053d77354544addb50b40b3bab961bf on the run branch"
+      },
+      "created_at": "2026-11-25T07:50:33.686877936Z",
+      "updated_at": "2026-11-25T07:52:11.038939207Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88TYP31VBCR4W15FVV5WTDS",
+        "item": "qi_01M88TYNYPENKEDRG5KMWNCCM5",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88TYP7SH1YX1JHJRCSWGJGR",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/d7a52b930eb783f847e34c6f/.archon/data/worktrees/quality-retry-budget/qi_01M88TYNYPENKEDRG5KMWNCCM5",
+        "branch": "archon/kmwnccm5-implement-retry-budget-retry-delay-per-s",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented retry_budget.retry_delay per SPEC.md in commit eca740c on archon/kmwnccm5-implement-retry-budget-retry-delay-per-s (base 57ec30a). Validation of every argument runs before the exhausted-attempt and exhausted-budget returns; bool and float are rejected; backoff saturates via an exponent shortcut with no large power of two; Retry-After is an uncapped floor; the budget check is elapsed + delay >= budget. Extended test_retry_budget.py from 3 to 29 tests covering all validation rules, attempt boundaries, zero base and cap, base > cap, retry_after cases, the budget boundary, zero delay, and a huge attempt value. Before: the 3 existing tests errored on the NotImplementedError stub. After: `python3 -m unittest -v` runs 29 tests, all OK; 10**6 attempts return 400 instantly. One test of my own had a wrong default budget and was fixed before commit. No linter is installed in this environment, so only a syntax check was run. Review: agent agt_01M88V0GAK8C4P2TSKBGFW6601 passed the head with no findings, risk low. Nothing is left running and nothing was pushed.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88V0GAK8C4P2TSKBGFW6601)\n\nSHIPPED: commit eca740c7e053d77354544addb50b40b3bab961bf on the run branch"
+        },
+        "cost_usd": 0.03001388,
+        "started_at": "2026-11-25T07:50:33.955356780Z",
+        "finished_at": "2026-11-25T07:52:11.038939207Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88TYP7MRGECHD5RE1MA6DFC",
+        "run": "prun_01M88TYP31VBCR4W15FVV5WTDS",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88TYP7ZYVY8M4NA8F4HMH70",
+        "aether_task": "tsk_01M88TYP7ZYVY8M4NA8F4HMH71",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented retry_budget.retry_delay per SPEC.md in commit eca740c on archon/kmwnccm5-implement-retry-budget-retry-delay-per-s (base 57ec30a). Validation of every argument runs before the exhausted-attempt and exhausted-budget returns; bool and float are rejected; backoff saturates via an exponent shortcut with no large power of two; Retry-After is an uncapped floor; the budget check is elapsed + delay >= budget. Extended test_retry_budget.py from 3 to 29 tests covering all validation rules, attempt boundaries, zero base and cap, base > cap, retry_after cases, the budget boundary, zero delay, and a huge attempt value. Before: the 3 existing tests errored on the NotImplementedError stub. After: `python3 -m unittest -v` runs 29 tests, all OK; 10**6 attempts return 400 instantly. One test of my own had a wrong default budget and was fixed before commit. No linter is installed in this environment, so only a syntax check was run. Review: agent agt_01M88V0GAK8C4P2TSKBGFW6601 passed the head with no findings, risk low. Nothing is left running and nothing was pushed.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v (29 tests, OK)",
+            "ast.parse syntax check of retry_budget.py and test_retry_budget.py (ok)",
+            "timing: retry_delay(10**6, 0, max_attempts=10**7) returns 400 instantly"
+          ],
+          "commit": "eca740c7e053d77354544addb50b40b3bab961bf",
+          "evidence": [
+            {
+              "after": "Ran 29 tests in 0.001s ... OK",
+              "before": "Ran 3 tests ... FAILED (errors=3) (NotImplementedError from stub)",
+              "caption": "Unit test suite before and after the change",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "eca740c7e053d77354544addb50b40b3bab961bf",
+          "pr": {
+            "body": "Approach: _require_int validates each argument (type(value) is int, minimum bound) before any early return. _backoff_ms returns 0 for zero base or cap; when exponent >= cap.bit_length() it returns cap (exact, since base >= 1); otherwise min(cap, base << exponent). retry_delay applies max() for retry_after_ms and returns None when elapsed + delay >= budget_ms. Files: retry_budget.py, test_retry_budget.py. Checks: python3 -m unittest -v, 29 OK. No linter available here. Assumptions: validation raises ValueError with a message naming the argument. Limits: pure function, no callers in repo.",
+            "evidence": [
+              {
+                "after": "Ran 29 tests in 0.001s ... OK",
+                "before": "Ran 3 tests ... FAILED (errors=3) (NotImplementedError from stub)",
+                "caption": "Unit test suite before and after the change",
+                "kind": "output"
+              }
+            ],
+            "risk": {
+              "level": "low",
+              "why": "New pure function with no callers and no behaviour outside its own module. Tests only in test file. Reviewer confirmed the exponent shortcut and spec points; no findings."
+            },
+            "summary": "made retry_delay implement SPEC.md. now validates args, computes capped backoff, honors Retry-After floor and budget boundary. before: stub raising NotImplementedError; now: 29 passing tests.",
+            "title": "Implement retry_delay bounded retry scheduling"
+          },
+          "review": {
+            "reviewed_head": "eca740c7e053d77354544addb50b40b3bab961bf",
+            "reviewer_agents": [
+              "agt_01M88V0GAK8C4P2TSKBGFW6601"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88V0GAK8C4P2TSKBGFW6601",
+                "base": "57ec30ae6dd0d8dd7d56303f41da66f9c541369b",
+                "findings": 0,
+                "head": "eca740c7e053d77354544addb50b40b3bab961bf",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88V0GAK8C4P2TSKBGFW6601"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "low",
+            "why": "New pure function with no callers, fully unit-tested (29 tests), no security, concurrency, persistence or API surface. Reviewer agent agt_01M88V0GAK8C4P2TSKBGFW6601 confirmed low."
+          },
+          "tree": "7e018e778699a7d0a8c718fcb553b8787140b116"
+        },
+        "cost_usd": 0.03001388,
+        "started_at": "2026-11-25T07:50:33.972635325Z",
+        "finished_at": "2026-11-25T07:52:04.589261963Z"
+      }
+    ],
+    "spent_usd": 0.03001388,
+    "gates": [],
+    "delegations": {
+      "stg_01M88TYP7MRGECHD5RE1MA6DFC": {
+        "direct_usd": 0.02190821,
+        "delegated_usd": 0.008105669999999999,
+        "agents": [
+          {
+            "agent": "agt_01M88V0GAK8C4P2TSKBGFW6601",
+            "parent": "agt_01M88TYP7ZYVY8M4NA8F4HMH70",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.008105669999999999
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T07:50:33.807889601Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T07:50:33.809470669Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T07:50:33.807889601Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

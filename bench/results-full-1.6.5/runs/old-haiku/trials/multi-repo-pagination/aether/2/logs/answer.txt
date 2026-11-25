@@ -1,0 +1,28 @@
+Added cursor pagination to inventory-api GET /items and updated inventory-client listItems to follow it. Both repos are committed (inventory-api d76e44a, inventory-client b08627c) with clean trees.
+
+inventory-api:
+- GET /items takes limit (digits only, 1..100, default 20) and cursor. Body is {"items": [...], "next_cursor": string|null}. Items are ordered by id.
+- The cursor is a strict base64url encoding of the last id returned. Paging is keyset (id > last), so it is stable. Non-canonical or malformed cursors are rejected.
+- Invalid limit or cursor returns 400 with {"error": "..."}.
+- Two assertions guard the page bounds. Tests went from 3 to 8 and all pass (python3 -m unittest). README documents the change.
+
+inventory-client:
+- listItems requests the first page with no cursor, then passes each next_cursor back unchanged until it is null or absent. It throws on a page without an items array, a non-string cursor, or a repeated cursor.
+- Tests went from 3 to 10 and all pass (npm test). README updated.
+- Integration check: listItems through a Node transport that runs api_cli.py returns all 57 items in order.
+
+Choices I made:
+- Page size is the server default (20); the client does not send a limit.
+- I did not bump the client's package.json version (1.4.0). listItems now pages internally, which may warrant a bump if you publish.
+- Commit messages have no Co-Authored-By line. CLAUDE.md forbids Claude attribution and takes precedence over the attribution reminder.
+
+Cursor pagination is in place for `GET /items`, and `listItems` in the client now follows it. Both repos are committed with clean trees, and both test suites pass.
+
+- **inventory-api** (`d76e44a`): `limit` is digits only, 1..100, default 20. `cursor` is an opaque base64 encoding of the last id returned, so paging is by id and stays stable. Invalid limits or cursors get a 400 with `{"error": "..."}`. Tests went from 3 to 8, and the README documents the new parameters and body.
+- **inventory-client** (`b08627c`): `listItems` sends no cursor on the first request, then passes each `next_cursor` back unchanged until it is null or absent. It throws on a malformed page or a repeated cursor, so a buggy server can't loop forever. Tests went from 3 to 10, and the README is updated.
+- **Integration:** a Node transport that runs the real Python API through `api_cli.py` returns all 57 items in order.
+
+Decisions you may want to change:
+- The client sends no `limit`, so it uses the server default of 20 per page.
+- I did not bump the client's `package.json` version (1.4.0). It may warrant a bump if you publish.
+- The commits have no Co-Authored-By line. CLAUDE.md forbids Claude attribution and takes precedence over the attribution reminder.

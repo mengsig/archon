@@ -1,0 +1,17 @@
+The rate limiter is implemented in `ratelimit.py` per `SPEC.md`, and the work is committed as `71ff249` on `main`. All 11 tests pass: the 3 existing ones and 8 new edge-case tests I added to `test_ratelimit.py`.
+
+**What's in the implementation**
+- **`TokenBucket`** starts full and refills continuously, capped at `capacity`. `try_acquire`, `available` and `wait_time` all refill first, so they see the same token count. `wait_time` never consumes tokens.
+- **Clock regression:** the bucket remembers the latest time it has seen. If the clock goes backwards, no tokens are added or removed, and refill resumes only once the clock passes that latest time.
+- **`KeyedLimiter`** keeps one bucket per key in an `OrderedDict` ordered by recency. `try_acquire` and `wait_time` both count as a use. When a new key would exceed `max_keys`, the least recently used key is evicted, and an evicted key that returns starts full.
+- **Validation:** invalid `capacity`, `refill_per_sec` or `max_keys` raise `ValueError` at construction. Invalid `n` (`<= 0` or `> capacity`) is checked before the key table is touched, so a bad request cannot evict another key.
+- Standard library only. The only assertions are internal invariants (tokens stay within `[0, capacity]`, and the key table never exceeds `max_keys`).
+
+**Choices I made**
+- `KeyedLimiter` validates `capacity` and `refill_per_sec` up front, which is how I read the spec's "invalid … raises" wording.
+- I added tests beyond the basics because the request asked for the spec's edge cases to be followed and the existing tests did not cover them.
+
+**Things you should know**
+- I did not add the `Co-Authored-By` line from the attribution reminder. The workspace CLAUDE.md says not to add Claude attribution to commits, and it takes precedence.
+- Tests must be run as `PYTHONPATH=. python3 -m unittest test_ratelimit`. Running with `-I` fails to import the module.
+- `__pycache__/` was left untracked and not committed.

@@ -1,0 +1,22 @@
+I've queued the rate limiter as item `qi_01M88W42PE3J4GJ1PP77NETRF2` in the `feature-token-bucket` repository. I did not edit the code myself.
+
+- **Pipeline:** `direct`, one agent that implements, checks and commits. The work is a single module, so it doesn't need the multi-part pipelines.
+- **Review:** `standard`, because a rate limiter's edge cases are easy to get subtly wrong.
+- **Brief:** implement `ratelimit.py` exactly per `SPEC.md`, including error and edge cases. Add tests in `test_ratelimit.py` for those cases, use only the standard library, and commit to the local branch without pushing.
+
+The repository ships locally, so the commit stays on the local branch. I'll report back when the item finishes.
+
+Done: Implement rate limiter in ratelimit.py per SPEC.md. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 24 tests to test_ratelimit.py covering the spec's error cases and edge cases. Committed as 1fae0da on archon/77netrf2-implement-rate-limiter-in-ratelimit-py-p; nothing pushed. Before: the 3 existing tests errored on the stubs (errors=3). After: `python3 -m unittest test_ratelimit` runs 27 tests, all OK. `ruff check` and `ruff format --check` pass on both files. Review: one reviewer (agt_01M88W623G12R6F6QDV92A75ER) passed the head with no blocking findings. Open, non-blocking follow-ups: add a KeyedLimiter NaN-capacity test; add a KeyedLimiter clock-backwards test; the spec does not say whether infinite capacity is valid, and it is currently accepted. Nothing is left running; no services were started. The worktree is clean.
+REVIEW: pass by agt_01M88W623G12R6F6QDV92A75ER
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88W623G12R6F6QDV92A75ER)
+
+SHIPPED: commit 1fae0daaa7cbcd3c2c554ab8592399e8e101a80d on the run branch
+Branch `archon/77netrf2-implement-rate-limiter-in-ratelimit-py-p` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/f64b2d80d0a8463b277f6c8f/feature-token-bucket holds it (2 files changed, 251 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M88W42PE3J4GJ1PP77NETRF2`; land it in `main`: `archon merge qi_01M88W42PE3J4GJ1PP77NETRF2`.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 24 tests to test_ratelimit.py covering the spec's error cases and edge cases. Committed as 1fae0da on archon/77netrf2-implement-rate-limiter-in-ratelimit-py-p; nothing pushed. Before: the 3 existing tests errored on the stubs (errors=3). After: `python3 -m unittest test_ratelimit` runs 27 tests, all OK. `ruff check` and `ruff format --check` pass on both files. Review: one reviewer (agt_01M88W623G12R6F6QDV92A75ER) passed the head with no blocking findings. Open, non-blocking follow-ups: add a KeyedLimiter NaN-capacity test; add a KeyedLimiter clock-backwards test; the spec does not say whether infinite capacity is valid, and it is currently accepted. Nothing is left running; no services were started. The worktree is clean.
+REVIEW: pass by agt_01M88W623G12R6F6QDV92A75ER
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88W623G12R6F6QDV92A75ER)
+
+SHIPPED: commit 1fae0daaa7cbcd3c2c554ab8592399e8e101a80d on the run branch

@@ -1,0 +1,25 @@
+The root cause is in `catalog-service`: the price-update path invalidates only the product cache entry, while category listings are cached separately with a 10-minute TTL and are never invalidated. I read the code in the `ask-cache-invalidation` mirror (HEAD `9f6775e`, `package.json` name `catalog-service`). I changed nothing.
+
+**The code paths**
+
+- **Price write**: `updatePrice` in `src/pricing.js:6-13` writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That is the only invalidation it performs.
+- **Product page**: `Catalog.product` in `src/catalog.js:12-20` reads `product:<sku>` from the cache and falls back to the store on a miss. Because the entry was just deleted, the next product-page read goes to the store and shows the new price at once.
+- **Category page**: `Catalog.listing` in `src/catalog.js:22-33` caches the rendered rows under `listing:<category>:<page>` with `LISTING_TTL_SECONDS`. The rows include `priceCents`, copied from the product at build time. Nothing deletes these keys when a price changes, so they are served until they expire.
+- **TTLs** (`src/config.js:4-7`): products 3600 s, listings 600 s. The 10-minute window the support team reports is the listing TTL.
+
+**Why the delay is what it is**
+
+The listing cache holds denormalised copies of price data, and the write path only knows how to invalidate the product copy. The cache is a plain TTL cache (`src/cache.js`) with no tags, versions or reverse index, so the code has no way to find the listing entries that contain a given SKU. The only thing that bounds staleness is the 600-second TTL.
+
+The test suite does not catch this. `test/catalog.test.js:13-17` checks only that the product page updates immediately. Nothing tests the listing after an update.
+
+**Fix options**
+
+1. **Invalidate the affected listings on write.** In `updatePrice`, use the returned `updated.category` to delete that category's listing entries. Listing keys are per page, so either track the keys per category or bump a per-category version that is part of the listing key. Simple, but it needs a small change to the cache or the key scheme.
+2. **Don't copy price into listings.** Cache only the SKUs and names per page, and fill `priceCents` from the product cache or store when the listing is returned. A price change then needs no listing invalidation, at the cost of one product lookup per row (at most 24 per page, cheap if the product cache is hit). This removes the class of bug rather than patching it.
+
+I would take option 2 unless the listing build cost is mainly in the join and sort, which is cached either way. Whichever option is chosen, the test should exercise `catalog.listing` before and after `updatePrice` and assert the new price.
+
+**Caveat**
+
+The cache is an in-process `Map` (`src/cache.js`). If more than one instance of this service runs, a write handled by one instance clears only that instance's product entry. Other instances would serve stale product pages until their own TTLs expire. The support report describes the product page as updating immediately, which suggests a single process here, but this code cannot confirm the deployment topology. Check how many instances run and whether the store is shared, because a shared cache or an invalidation message would be needed for the fix to hold across instances.

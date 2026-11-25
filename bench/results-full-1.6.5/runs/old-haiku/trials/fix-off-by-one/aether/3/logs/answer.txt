@@ -1,0 +1,17 @@
+`python3 -m unittest` now passes all 3 tests, and the fix is committed as `d033688` on `main`.
+
+**The bug:** in `window.py`, the start-index loop was `range(len(items) - size)`. That stops one index short, so the last window was dropped. It also returned `[]` when the list was exactly one window long.
+
+**The fix:** the loop is now `range(len(items) - size + 1)`, which covers every valid start index. I did not touch the tests.
+
+**Edge cases I checked beyond the tests:**
+- `sliding_windows([], 1)` returns `[]`.
+- `sliding_windows([1, 2, 3], 3)` returns `[[1, 2, 3]]`.
+- `sliding_windows([1, 2], 5)` returns `[]`, since `size` is larger than the list.
+- `sliding_windows([1, 2, 3], 1)` returns `[[1], [2], [3]]`.
+
+The existing `size <= 0` guard is unchanged.
+
+**Decisions:**
+- **No `Co-Authored-By` trailer on the commit.** The attribution reminder asked for one, but your CLAUDE.md says not to add anything that names Claude, and it takes precedence over that reminder. The commit uses your configured identity (`mengsig`).
+- **`__pycache__/` is left untracked.** It was created by running the tests and is not part of the commit.

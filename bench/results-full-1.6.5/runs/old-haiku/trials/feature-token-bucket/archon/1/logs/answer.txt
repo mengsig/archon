@@ -1,0 +1,19 @@
+I've queued the rate limiter as item `qi_01M88QP8KWR4BPTHTW4QFC7E20` on the `feature-token-bucket` repository. It is not done yet; I'll report when the item finishes.
+
+- **What the item does:** Implements `TokenBucket` and `KeyedLimiter` from `SPEC.md` in `ratelimit.py`, following the spec's error and edge cases, with standard library only. It also adds tests for those cases to `test_ratelimit.py`.
+- **How it ships:** The repository is set to ship locally, so the work is committed on a local branch and not pushed.
+- **Pipeline and review:** `direct`, one balanced-tier agent at medium effort, with standard review. I chose standard review because the spec has several edge cases that are easy to miss, but the spec has no concurrency, so I did not use the stricter setting.
+- **Not done by me:** I read only the spec and checked it for concurrency terms. I did not edit the repository myself.
+
+Done: Implement token-bucket rate limiter per SPEC.md in ratelimit.py. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 17 tests covering the spec's error and edge cases in test_ratelimit.py. Committed locally as d33927f on archon/4qfc7e20-implement-token-bucket-rate-limiter-per; not pushed. Before: the 3 existing tests all errored with NotImplementedError. After: `python3 -W error -m unittest -v test_ratelimit` runs 20 tests, all OK. Review: one reviewer (agt_01M88QRV2MZJW9TYEFE6Z15ZXA, claude-haiku-5-5, medium) passed head d33927f with no blocking findings. Open, non-blocking: available(), wait_time() and the KeyedLimiter methods lack the two meaningful assertions the repo guidance asks for; no keyed-limiter test covers a backwards clock or the default max_keys/clock. Also open: the limiter is not thread-safe (the spec does not require it), and wait_time() can be off by floating-point rounding, so retrying exactly at the returned time may still fail. No lint tool is installed in this environment, so only the unittest run and py_compile were done. No servers were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88QRV2MZJW9TYEFE6Z15ZXA)
+
+SHIPPED: commit d33927f22fce75bcbef2f14e6f6462cee5a901f3 on the run branch
+Branch `archon/4qfc7e20-implement-token-bucket-rate-limiter-per` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/4c8286830c58578b03a6d02e/feature-token-bucket holds it (2 files changed, 239 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M88QP8KWR4BPTHTW4QFC7E20`; land it in `main`: `archon merge qi_01M88QP8KWR4BPTHTW4QFC7E20`.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 17 tests covering the spec's error and edge cases in test_ratelimit.py. Committed locally as d33927f on archon/4qfc7e20-implement-token-bucket-rate-limiter-per; not pushed. Before: the 3 existing tests all errored with NotImplementedError. After: `python3 -W error -m unittest -v test_ratelimit` runs 20 tests, all OK. Review: one reviewer (agt_01M88QRV2MZJW9TYEFE6Z15ZXA, claude-haiku-5-5, medium) passed head d33927f with no blocking findings. Open, non-blocking: available(), wait_time() and the KeyedLimiter methods lack the two meaningful assertions the repo guidance asks for; no keyed-limiter test covers a backwards clock or the default max_keys/clock. Also open: the limiter is not thread-safe (the spec does not require it), and wait_time() can be off by floating-point rounding, so retrying exactly at the returned time may still fail. No lint tool is installed in this environment, so only the unittest run and py_compile were done. No servers were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88QRV2MZJW9TYEFE6Z15ZXA)
+
+SHIPPED: commit d33927f22fce75bcbef2f14e6f6462cee5a901f3 on the run branch

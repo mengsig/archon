@@ -1,0 +1,14 @@
+`retry_delay` is implemented per `SPEC.md` and committed as `c638078` on `main`. All 27 tests pass with `python3 -m unittest`.
+
+**What changed**
+- `retry_budget.py`: the function now has three parts:
+  - `_validate` checks every argument before anything else. Each must be a built-in `int` (so `bool` and `float` are rejected), with the minimums from the spec. Violations raise `ValueError`.
+  - `_backoff` computes `min(cap_ms, base_ms * 2**(attempt-1))`. If `base_ms >= cap_ms` it returns `cap_ms` directly. Otherwise it clamps the shift to the bit length of `cap_ms`, so huge attempt numbers never build a large power of two.
+  - `retry_delay` applies the attempt limit, then the Retry-After floor (not capped), then the strict budget check.
+- `test_retry_budget.py`: the original three tests are kept. I added cases for type and bound validation, validation running before the attempt and budget early returns, the attempt boundary, saturation with huge values, the Retry-After floor, and the exact budget boundary.
+
+**Choices to check**
+- I left the `Co-Authored-By` trailer off the commit. The reminder asked for it, but your CLAUDE.md says not to put Claude attribution in commits, and that takes precedence.
+- Non-int types raise `ValueError`, not `TypeError`, because the spec says "invalid values raise ValueError".
+- Subclasses of `int`, such as `IntEnum`, are rejected because the spec says built-in `int`.
+- I did not commit the stray `__pycache__/` directory left by the test run.

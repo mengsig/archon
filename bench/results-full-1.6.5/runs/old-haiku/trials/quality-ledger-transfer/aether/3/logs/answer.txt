@@ -1,0 +1,10 @@
+Implemented ledger.py per SPEC.md and committed as 992d9cf on main (author mengsig). Construction validates a dict of nonempty str names to built-in int balances in [0, MAX_BALANCE] (bools rejected), copies the input, and raises ValueError otherwise. transfer() validates the amount first (ValueError), then both accounts (KeyError, including non-str names), then under a single threading.Lock checks self-transfer (returns balance >= amount, no write), source funds, and destination overflow (returns False, no write), then moves the amount. snapshot() returns a copy under the lock. Tests in test_ledger.py grew from 2 to 23, covering every error and boundary case plus two threaded tests (opposite transfers without deadlock, snapshots never seeing a half-transfer). All 23 pass with `python3 -m unittest -v test_ledger`. Note: I ran tests without `-I` because it drops the cwd from sys.path and the test module could not be imported. The working tree is clean.
+
+I implemented `ledger.py` to the spec and committed it as `992d9cf` on `main`, authored as mengsig. All 23 tests pass.
+
+- **Construction:** accepts a dict of nonempty string names to built-in ints in `[0, MAX_BALANCE]`. Bools are rejected. Anything else raises `ValueError`. The input dict is copied.
+- **`transfer`:** checks the amount first (`ValueError`), then both accounts (`KeyError`). Then, under one lock, it checks self-transfer, source funds, and destination overflow. Each failure returns `False` with no writes. A self-transfer returns `balance >= amount` and never writes.
+- **`snapshot`:** returns a copy taken under the same lock, so it never sees a half-finished transfer.
+- **Tests:** `test_ledger.py` grew from 2 to 23 tests. They cover every error path, the boundaries, self-transfers, and two threaded cases: opposite transfers without deadlock, and snapshots that always see the total preserved.
+
+I ran the tests as `python3 -m unittest -v test_ledger` without `-I`, because `-I` drops the working directory from `sys.path` and the test module could not be imported. The tree is clean, with the generated `__pycache__` removed.

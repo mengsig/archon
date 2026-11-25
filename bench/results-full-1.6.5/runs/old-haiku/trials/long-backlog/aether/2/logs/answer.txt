@@ -1,0 +1,27 @@
+Implemented TT-101 through TT-104 in tasktracker, one commit each, on main. Full suite passes: `python3 -m unittest discover -s tests -t .` runs 36 tests, all OK. Working tree is clean.
+
+- 1f8b9d9 TT-101 (dates.py): added `InvalidDate(ValueError)`. Impossible calendar dates, unsupported forms and out-of-range offsets raise it, with the original text in the message. `+Nd`, `+0d`, `today`/`tomorrow` and case/whitespace handling are unchanged. Tests in tests/test_dates.py.
+- 5400dfe TT-102 (export.py): RFC 4180 output with `id,title,tags,status,due` header, CRLF on every line, and quoting only for fields containing `,`, `"`, CR or LF (quotes doubled). Tests in tests/test_export.py.
+- 61c63bc TT-103 (search.py): quote-aware term splitting; bare words and quoted phrases match titles case-insensitively; `tag:` and `status:` filters; `QueryError(ValueError)` for unknown fields or statuses, empty field values and unterminated quotes. Blank query returns all tasks in input order. Tests in tests/test_search.py.
+- f9e79bf TT-104 (store.py): LIFO undo log for add, complete and delete. `NothingToUndo` is raised when the log is empty. Delete stores a snapshot so restoration is exact under the same id. Ids are never reused. Failed operations are not logged. Tests in tests/test_store_undo.py.
+
+Assumptions to check:
+- Undoing a `complete` sets the task to open, as the ticket literally says. It does not restore the prior status, so undoing a second complete on an already-done task reopens it.
+- `status:` values are matched case-insensitively.
+- An empty quoted phrase `""` is treated as matching everything, not as an error.
+- Commits carry no Co-Authored-By trailer, because CLAUDE.md says not to add Claude attribution.
+
+All four tickets (TT-101 to TT-104) are implemented, with one commit each on `main`. The full suite passes: `python3 -m unittest discover -s tests -t .` runs 36 tests, all OK, and the working tree is clean.
+
+- **1f8b9d9 — TT-101, impossible due dates:** added `InvalidDate(ValueError)` in `tasktracker/dates.py`. Impossible calendar dates, unsupported forms and out-of-range offsets raise it, and the message includes the original text. `+Nd`, `today` and `tomorrow` behave as before.
+- **5400dfe — TT-102, CSV export:** `to_csv` now writes RFC 4180 output with CRLF line endings. Only fields containing a comma, quote, CR or LF are quoted, and embedded quotes are doubled.
+- **61c63bc — TT-103, search query language:** quoted phrases, AND across terms, `tag:` and `status:` filters, and `QueryError` for unknown fields or statuses, empty field values and unterminated quotes. Blank queries return everything in input order.
+- **f9e79bf — TT-104, undo:** a LIFO log covers `add`, `complete` and `delete`. Undoing a delete restores the task under its original id. Ids are never reused, failed operations are not logged, and `NothingToUndo` is raised when there is nothing left to undo.
+
+Each ticket has its own test file under `tests/`.
+
+Choices the ticket left open, so you can redirect me:
+- Undoing a `complete` sets the task to open, as the ticket literally says. It does not restore the prior status, so undoing a second complete on an already-done task reopens it.
+- `status:` values are matched case-insensitively.
+- An empty quoted phrase `""` matches everything rather than raising an error.
+- The commits have no Co-Authored-By trailer, because CLAUDE.md says not to add Claude attribution to commits.

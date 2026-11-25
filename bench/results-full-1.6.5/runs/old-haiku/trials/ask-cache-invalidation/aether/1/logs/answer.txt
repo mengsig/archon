@@ -1,0 +1,25 @@
+Root cause: category listings are cached separately from products, and updatePrice() only invalidates the product cache key. Listings keep the old price until their 600s TTL expires, while product pages update immediately. No code was changed; the repro and tests are read-only.
+
+The storefront category pages show the old price for up to 10 minutes because `updatePrice()` only invalidates the product cache entry, not the cached category listings. Listings are cached for `LISTING_TTL_SECONDS` = 600s, so they keep the old price until that TTL expires. I did not change any code.
+
+**Code path**
+
+- `src/pricing.js:6-13`, `updatePrice()`: updates the store, then calls `catalog.cache.delete(productKey(sku))`. That is the only invalidation. It never touches the `listing:<category>:<page>` keys.
+- `src/catalog.js:22-33`, `Catalog.listing()`: caches the rows, including `priceCents`, under `listingKey(category, page)` for `LISTING_TTL_SECONDS` (600s, `src/config.js:7`).
+- `src/catalog.js:12-20`, `Catalog.product()`: reads the product key, which was just deleted, so it re-reads the store and shows the new price immediately. That is why product pages are correct.
+
+**Why the delay is exactly this long**
+
+Listings are a separate cache entry with a 600s TTL. The price change never removes them, so they expire only when their TTL runs out. A quick repro with an injected clock confirmed it: after `updatePrice(c, 'A1', 4500)`, `product()` returns 4500 while `listing('tools')` still returns 5000 at t=0 and t=599s, and returns 4500 at t=600s.
+
+**Why tests don't catch it**
+
+`test/catalog.test.js` checks that product prices update immediately, and that listings are paged and sorted. It never reads a listing after an update. All 3 tests pass; I ran them.
+
+**Fix options**
+
+1. **Invalidate listings on write (minimal fix).** `updatePrice` already gets the updated product back, so it knows the category. Delete every `listingKey(category, page)` for that category. The page count can be derived from `store.inCategory(category).length / PAGE_SIZE`, or the cache can track the keys per category. Add a test that reads a listing, updates the price, and expects the new price.
+2. **Category version in the key.** Include a per-category version number in `listingKey`, and bump it on price changes. Old entries are then never read. This needs a version store that does not expire.
+3. **Cache SKUs in listings, not prices.** Keep the ordered SKU list in the listing cache, and look up prices from the product path at read time. This removes the staleness by design, at the cost of more lookups per listing page. It's the cleanest long-term option if listings are read often.
+
+I'd recommend option 1 for a small, targeted fix. Option 3 is better if you want the fix to be structural and can accept the extra lookups.

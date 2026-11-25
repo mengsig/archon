@@ -1,0 +1,29 @@
+I reviewed `src/tokens.js` without changing any code. There is one critical authentication bypass, and it should block tomorrow's release.
+
+**Scope caveats**
+- No repository named `session-lib` is registered. The only registered repo is `review-seeded-bug`, so I reviewed `src/tokens.js` from its mirror.
+- The mirror is at its base commit, and the file's only commit is "bench fixture". It may not contain your just-rewritten version, so please confirm the file I reviewed matches your working copy.
+- I read the code and did not execute it. `src/encoding.js` (`fromBase64Url` / `toBase64Url`) was not reviewed.
+
+**Findings**
+
+1. **Critical: authentication bypass in `verify()`, `src/tokens.js:27`.** The check `expected.startsWith(signature)` accepts an empty signature, because every string starts with "".
+   - Input: `base64url(JSON.stringify({sub:"admin", exp: 9999999999999}))` followed by a trailing `.` and nothing else.
+   - `verify` splits this into `[body, ""]`, which passes the `undefined` check on line 25. The prefix check succeeds, the `exp` check passes, and the forged payload is returned.
+   - Anyone can mint arbitrary claims without the secret. The prefix match also accepts truncated signatures, so a single guessed character passes with probability 1/64.
+
+2. **High: non-constant-time comparison, `src/tokens.js:27`.** Even with exact equality, a `===` or `startsWith` comparison leaks timing about how many leading bytes match. Use `crypto.timingSafeEqual` on equal-length Buffers after an explicit length check.
+
+3. **Medium: no secret validation in `verify()`, `src/tokens.js:22–31`.** `sign` enforces `secret.length >= 32`, but `verify` does not. If the verifier is configured with an empty or short secret (for example, a missing env var that resolves to `""`), `createHmac('sha256', '')` still works and anyone can compute valid signatures. Apply the same check in both paths.
+
+4. **Medium: unguarded `JSON.parse`, `src/tokens.js:28`.** It runs after the signature check, so with finding 1 an attacker can reach it. A body that decodes to `null` makes `payload.exp` throw a TypeError instead of returning `null`. Validate that the parsed value is a plain object and return `null` otherwise.
+
+5. **Low: token shape not strictly checked, `src/tokens.js:24`.** `split('.')` ignores extra segments, so `body.sig.anything` verifies. Reject anything that is not exactly two parts.
+
+6. **Low: `ttlSeconds` not validated in `sign()`, `src/tokens.js:14`.** A negative, NaN or non-numeric TTL silently produces an expired token, or `exp: null` after JSON encoding. Assert `Number.isFinite(ttlSeconds) && ttlSeconds > 0`.
+
+7. **Low: design gaps.** There is no `aud`/`iss`, no revocation and no `nbf` check. These are fine only if they are intended.
+
+**Before shipping:** fix findings 1 and 2 (exact, constant-time comparison of the full MAC), apply the secret check in `verify`, and add tests for an empty signature, a truncated signature and a forged `exp`.
+
+Note: `complete_task` reported that I have no active task, so this summary is the final report and is not recorded on a task.

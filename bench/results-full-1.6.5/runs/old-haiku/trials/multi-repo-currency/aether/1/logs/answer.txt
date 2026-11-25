@@ -1,0 +1,25 @@
+Both repositories now handle currency, and both are committed. `cargo test` (8 tests, including new CLI exit-code checks) and `python3 -m unittest` (4 tests) pass, and the `ledger | reports` pipeline gives the expected output end to end.
+
+**Commits**
+- `ledger` `bd353ab`: "Add per-row currency column to ledger export"
+- `reports` `fd5b215`: "Total per account and currency in reports"
+
+**ledger**
+- Lines may have a fourth column with the currency. A line without one gets `USD`.
+- The header is now `date,account,amount_cents,currency`, and every row carries its currency.
+- `parse_line` returns a `ParseError` enum. A bad currency exits 2 and every other input error still exits 1. The message names the line, for example `line 2: bad currency "eur"`.
+- README updated.
+
+**reports**
+- Totals are keyed by `(account, currency)`. Output is `account,currency,total_cents`, sorted by account then currency.
+- CSV without a `currency` column counts as `USD`.
+- A bad currency prints `error: line N: ...` to stderr and exits 2.
+- README updated.
+
+**Choices I made that you may want to change**
+- A fourth column that is present but empty counts as a bad currency (exit 2). Only a line with no fourth column defaults to `USD`.
+- `reports.py` also rejects an empty currency value in a row, for the same reason.
+- I did not add a `Co-Authored-By` line or the Claude Code attribution to the commits. CLAUDE.md says not to, and it takes precedence over the attribution reminder. The commits use your configured `mengsig` identity.
+
+**Things I left alone**
+- The original `ledger/src/lib.rs` already had rustfmt differences (`is_iso_date` and `parse_cents`). I did not reformat them, so `cargo fmt --check` still reports those lines.

@@ -1,0 +1,238 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88XX6Y5X7SKE7MQR4Q4B34C",
+      "repo": "repo_01M88XWRVNA7D50ATFZ1JQMXRQ",
+      "pipeline": "direct",
+      "title": "Refactor order status String into OrderStatus enum",
+      "brief": "The `orders` crate stores an order's status as a `String` and compares string literals across the code. Refactor it to a proper type, keeping all observable behaviour identical (errors, report output and ordering, parsing).\n\nRequirements:\n- Add `src/status.rs` with `pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }` deriving at least `Debug, Clone, Copy, PartialEq, Eq, Hash`.\n- `OrderStatus::as_str(self) -> &'static str` returns lowercase names (\"pending\", \"paid\", \"shipped\", \"cancelled\"); `Display` prints the same.\n- `FromStr` for `OrderStatus` with `type Err = ParseStatusError`, a public error type implementing `std::error::Error` whose message names the rejected input.\n- `OrderStatus::can_transition_to(self, next: OrderStatus) -> bool` encodes the lifecycle: pending -> paid, pending -> cancelled, paid -> shipped, paid -> cancelled; nothing else.\n- `Order::status` becomes an `OrderStatus`; re-export `OrderStatus` and `ParseStatusError` from the crate root; use the enum everywhere so status string literals appear only in `src/status.rs`.\n\nAcceptance: `cargo test` passes; observable behaviour unchanged; work committed on the branch (local ship only, no push).",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88XX6Y5X7SKE7MQR4Q4B34C",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T08:42:11.277665691Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T08:42:11.297128710Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T08:42:11.277665691Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88XX6ZVBKZDS08DTE64NF5E",
+        "summary": "Replaced the orders crate's String order status with an OrderStatus enum on branch archon/r4q4b34c-refactor-order-status-string-into-orders, committed as de89f36 (tree 3919908712916cf1d251e74a6576c023f2d07ef9, base fbaa298). Changes: new src/status.rs with OrderStatus (Debug, Clone, Copy, PartialEq, Eq, Hash), as_str, Display (f.pad), can_transition_to (pending->paid, pending->cancelled, paid->shipped, paid->cancelled only), FromStr with ParseStatusError (Display \"unknown status {:?}\"); Order::status is now OrderStatus; pay/ship/cancel share a pub(crate) Order::move_to, and their error text is unchanged; report::from_line keeps its check order and error text; report::status_counts still returns Vec<(String, usize)> sorted by name; OrderStatus and ParseStatusError are re-exported from the crate root. Status literals now appear only in src/status.rs. Tests: the existing 3 integration tests were moved to the enum and a from_line error assertion was added; tests/status.rs adds the full 4x4 transition table, round trip and rejection tests. Checks, all on the final tree: cargo test passes (9 tests; baseline was 3); cargo clippy --all-targets -- -D warnings is clean; cargo fmt --check is clean. Public API break: Order::status changed type, as the brief requested; this is the only breaking change. Judgement calls: I kept status_counts' String keys to avoid a second API break; I did not add the CLAUDE.md assert density to existing functions, since this is a behaviour-preserving refactor of code that has no asserts. Independent review by agt_01M88Y0MSG0ZND3Z2B0T3K3F9Z (claude-haiku-5-5, medium) returned pass on head de89f36 with no findings and confirmed risk high. Nothing is left running; the reviewer's process had already exited. Nothing was pushed.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88Y0MSG0ZND3Z2B0T3K3F9Z)\n\nSHIPPED: commit de89f368d75c993d3067d44f959a7cebf9c751a6 on the run branch"
+      },
+      "created_at": "2026-11-25T08:42:11.269225323Z",
+      "updated_at": "2026-11-25T08:44:46.674567417Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88XX6ZVBKZDS08DTE64NF5E",
+        "item": "qi_01M88XX6Y5X7SKE7MQR4Q4B34C",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88XX78YSC1F98NZKZ5XFHCX",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/9d3a98ae3ba0cb465e6013ad/.archon/data/worktrees/refactor-order-status/qi_01M88XX6Y5X7SKE7MQR4Q4B34C",
+        "branch": "archon/r4q4b34c-refactor-order-status-string-into-orders",
+        "state": {
+          "state": "succeeded",
+          "summary": "Replaced the orders crate's String order status with an OrderStatus enum on branch archon/r4q4b34c-refactor-order-status-string-into-orders, committed as de89f36 (tree 3919908712916cf1d251e74a6576c023f2d07ef9, base fbaa298). Changes: new src/status.rs with OrderStatus (Debug, Clone, Copy, PartialEq, Eq, Hash), as_str, Display (f.pad), can_transition_to (pending->paid, pending->cancelled, paid->shipped, paid->cancelled only), FromStr with ParseStatusError (Display \"unknown status {:?}\"); Order::status is now OrderStatus; pay/ship/cancel share a pub(crate) Order::move_to, and their error text is unchanged; report::from_line keeps its check order and error text; report::status_counts still returns Vec<(String, usize)> sorted by name; OrderStatus and ParseStatusError are re-exported from the crate root. Status literals now appear only in src/status.rs. Tests: the existing 3 integration tests were moved to the enum and a from_line error assertion was added; tests/status.rs adds the full 4x4 transition table, round trip and rejection tests. Checks, all on the final tree: cargo test passes (9 tests; baseline was 3); cargo clippy --all-targets -- -D warnings is clean; cargo fmt --check is clean. Public API break: Order::status changed type, as the brief requested; this is the only breaking change. Judgement calls: I kept status_counts' String keys to avoid a second API break; I did not add the CLAUDE.md assert density to existing functions, since this is a behaviour-preserving refactor of code that has no asserts. Independent review by agt_01M88Y0MSG0ZND3Z2B0T3K3F9Z (claude-haiku-5-5, medium) returned pass on head de89f36 with no findings and confirmed risk high. Nothing is left running; the reviewer's process had already exited. Nothing was pushed.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88Y0MSG0ZND3Z2B0T3K3F9Z)\n\nSHIPPED: commit de89f368d75c993d3067d44f959a7cebf9c751a6 on the run branch"
+        },
+        "cost_usd": 0.0412086,
+        "started_at": "2026-11-25T08:42:11.543673155Z",
+        "finished_at": "2026-11-25T08:44:46.674567417Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88XX781XHQ5WNFCDEZJ56BM",
+        "run": "prun_01M88XX6ZVBKZDS08DTE64NF5E",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88XX7A8965D9KHM4WM4FPA5",
+        "aether_task": "tsk_01M88XX7A8VJB5N6VGT73JWDXC",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Replaced the orders crate's String order status with an OrderStatus enum on branch archon/r4q4b34c-refactor-order-status-string-into-orders, committed as de89f36 (tree 3919908712916cf1d251e74a6576c023f2d07ef9, base fbaa298). Changes: new src/status.rs with OrderStatus (Debug, Clone, Copy, PartialEq, Eq, Hash), as_str, Display (f.pad), can_transition_to (pending->paid, pending->cancelled, paid->shipped, paid->cancelled only), FromStr with ParseStatusError (Display \"unknown status {:?}\"); Order::status is now OrderStatus; pay/ship/cancel share a pub(crate) Order::move_to, and their error text is unchanged; report::from_line keeps its check order and error text; report::status_counts still returns Vec<(String, usize)> sorted by name; OrderStatus and ParseStatusError are re-exported from the crate root. Status literals now appear only in src/status.rs. Tests: the existing 3 integration tests were moved to the enum and a from_line error assertion was added; tests/status.rs adds the full 4x4 transition table, round trip and rejection tests. Checks, all on the final tree: cargo test passes (9 tests; baseline was 3); cargo clippy --all-targets -- -D warnings is clean; cargo fmt --check is clean. Public API break: Order::status changed type, as the brief requested; this is the only breaking change. Judgement calls: I kept status_counts' String keys to avoid a second API break; I did not add the CLAUDE.md assert density to existing functions, since this is a behaviour-preserving refactor of code that has no asserts. Independent review by agt_01M88Y0MSG0ZND3Z2B0T3K3F9Z (claude-haiku-5-5, medium) returned pass on head de89f36 with no findings and confirmed risk high. Nothing is left running; the reviewer's process had already exited. Nothing was pushed.",
+        "structured": {
+          "checks": [
+            "export CARGO_TARGET_DIR=<item cargo-target>; cargo test (9 passed: 3 in tests/orders.rs, 3 in tests/status.rs, 3 unit/doc-tests with 0 cases each)",
+            "cargo clippy --all-targets -- -D warnings (clean)",
+            "cargo fmt --check (clean)",
+            "grep for status string literals outside src/status.rs (none)"
+          ],
+          "commit": "de89f368d75c993d3067d44f959a7cebf9c751a6",
+          "evidence": {
+            "none": "Pure refactor with no visible or measurable change; behaviour is pinned by tests, which pass on the final tree."
+          },
+          "local_commit": "de89f368d75c993d3067d44f959a7cebf9c751a6",
+          "pr": {
+            "body": "Approach: src/status.rs adds OrderStatus (as_str, Display via f.pad, can_transition_to, FromStr) and ParseStatusError. Order::status is OrderStatus. Order::move_to (pub(crate)) enforces the lifecycle and builds the error as 'order N cannot be <next>: it is <current>', which matches the old messages. billing::pay, shipping::ship and Order::cancel use move_to. report::from_line parses the status and maps ParseStatusError to 'unknown status \"<input>\"', unchanged. report::status_counts keeps Vec<(String, usize)> and alphabetical ordering, keyed by as_str; it is not derived from the enum's Ord, which would sort by declaration order. Key files: src/status.rs, src/order.rs, src/report.rs, src/billing.rs, src/shipping.rs, src/lib.rs, tests/orders.rs, tests/status.rs. Checks: cargo test 9/9 pass; clippy -D warnings clean; fmt clean. Assumptions and limits: Order::status is a public field, so downstream callers that used it as a String will break; this is the requested change. status_counts keeps String keys. Existing functions were not given new asserts, since this is a behaviour-preserving refactor.",
+            "summary": "made order status a typed enum. now transitions are checked by OrderStatus::can_transition_to and status names live only in status.rs. before: status was a String compared against literals in billing, shipping and order; now: OrderStatus with identical error messages, ordering and parsing.",
+            "title": "Replace order status String with OrderStatus enum"
+          },
+          "review": {
+            "reviewed_head": "de89f368d75c993d3067d44f959a7cebf9c751a6",
+            "reviewer_agents": [
+              "agt_01M88Y0MSG0ZND3Z2B0T3K3F9Z"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88Y0MSG0ZND3Z2B0T3K3F9Z",
+                "base": "fbaa298f2d761c7eed656dfcfa7347a9caca9913",
+                "findings": 0,
+                "head": "de89f368d75c993d3067d44f959a7cebf9c751a6",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88Y0MSG0ZND3Z2B0T3K3F9Z"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "Changes the public Order::status field type, a breaking API change for callers. Behaviour is otherwise unchanged: error strings, status_counts ordering, from_line parsing and check order were all verified against base. Reviewer agt_01M88Y0MSG0ZND3Z2B0T3K3F9Z confirmed high."
+          },
+          "tree": "3919908712916cf1d251e74a6576c023f2d07ef9"
+        },
+        "cost_usd": 0.0412086,
+        "started_at": "2026-11-25T08:42:11.585585759Z",
+        "finished_at": "2026-11-25T08:44:41.523426931Z"
+      }
+    ],
+    "spent_usd": 0.0412086,
+    "gates": [],
+    "delegations": {
+      "stg_01M88XX781XHQ5WNFCDEZJ56BM": {
+        "direct_usd": 0.03454136,
+        "delegated_usd": 0.00666724,
+        "agents": [
+          {
+            "agent": "agt_01M88Y0MSG0ZND3Z2B0T3K3F9Z",
+            "parent": "agt_01M88XX7A8965D9KHM4WM4FPA5",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00666724
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T08:42:11.277665691Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T08:42:11.297128710Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T08:42:11.277665691Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

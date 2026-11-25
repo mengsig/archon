@@ -1,0 +1,221 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88QYJN9S36GYTSY2J96R5C2",
+      "repo": "repo_01M88QYAE9DD02625RPEVKC4EJ",
+      "pipeline": "direct",
+      "title": "Fix window.py bug so python3 -m unittest passes for all inputs",
+      "brief": "In this repository `python3 -m unittest` currently fails. Find and fix the bug in `window.py` so every test passes. Do not change the tests. The function must be correct for every input, not only the tested ones: check boundary cases (empty input, single element, window size equal to or larger than the input, off-by-one indexing at both ends) and fix the root cause. Add assertions only where they catch plausible bugs. Commit the fix on the local branch with a clear message; do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88QYJN9S36GYTSY2J96R5C2",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-25T06:58:04.587700505Z"
+              },
+              "effort": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-25T06:58:04.587700505Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged: the learned route's effort"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88QYJP4XE04ZSEM8GJAAAA7",
+        "summary": "Fixed the off-by-one in window.py: sliding_windows used range(len(items) - size), which dropped the final window, so [1,2] with size 2 returned [] instead of [[1,2]]. The range is now range(len(items) - size + 1). Inputs shorter than size still return []. Committed as 822acab on archon/2j96r5c2-fix-window-py-bug-so-python3-m-unittest under the configured identity mengsig; nothing pushed. Tests were not changed. Before: `python3 -m unittest` ran 3 tests, 2 failing. After: 3 tests OK. Boundary probe: s([],1)=[], s([1],1)=[[1]], s([1],2)=[], s([1,2],2)=[[1,2]], s([1,2,3],1)=[[1],[2],[3]], s([1,2,3],3)=[[1,2,3]], s([1,2,3],2)=[[1,2],[2,3]]. The repo has no linter or build step. No services were started. Open: none. Review: one low-effort reviewer (agt_01M88QZEXWPB6BMSVNQYW9E6QV) read the whole one-line change and passed it with no findings. Risk low: one-line off-by-one fix, covered by tests. Assertions were considered and not added: a length assert would be decorative. Review: pass by agt_01M88QZEXWPB6BMSVNQYW9E6QV\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88QZEXWPB6BMSVNQYW9E6QV)\n\nSHIPPED: commit 822acabe1a2fa60c192ebc21fd9262d2edb7414c on the run branch"
+      },
+      "created_at": "2026-11-25T06:58:04.585018789Z",
+      "updated_at": "2026-11-25T06:58:54.667178077Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88QYJP4XE04ZSEM8GJAAAA7",
+        "item": "qi_01M88QYJN9S36GYTSY2J96R5C2",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88QYJVR70E3BQAADZQXPNAJ",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/8be332db7b70e667a365d6e3/.archon/data/worktrees/fix-off-by-one/qi_01M88QYJN9S36GYTSY2J96R5C2",
+        "branch": "archon/2j96r5c2-fix-window-py-bug-so-python3-m-unittest",
+        "state": {
+          "state": "succeeded",
+          "summary": "Fixed the off-by-one in window.py: sliding_windows used range(len(items) - size), which dropped the final window, so [1,2] with size 2 returned [] instead of [[1,2]]. The range is now range(len(items) - size + 1). Inputs shorter than size still return []. Committed as 822acab on archon/2j96r5c2-fix-window-py-bug-so-python3-m-unittest under the configured identity mengsig; nothing pushed. Tests were not changed. Before: `python3 -m unittest` ran 3 tests, 2 failing. After: 3 tests OK. Boundary probe: s([],1)=[], s([1],1)=[[1]], s([1],2)=[], s([1,2],2)=[[1,2]], s([1,2,3],1)=[[1],[2],[3]], s([1,2,3],3)=[[1,2,3]], s([1,2,3],2)=[[1,2],[2,3]]. The repo has no linter or build step. No services were started. Open: none. Review: one low-effort reviewer (agt_01M88QZEXWPB6BMSVNQYW9E6QV) read the whole one-line change and passed it with no findings. Risk low: one-line off-by-one fix, covered by tests. Assertions were considered and not added: a length assert would be decorative. Review: pass by agt_01M88QZEXWPB6BMSVNQYW9E6QV\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88QZEXWPB6BMSVNQYW9E6QV)\n\nSHIPPED: commit 822acabe1a2fa60c192ebc21fd9262d2edb7414c on the run branch"
+        },
+        "cost_usd": 0.017761120000000002,
+        "started_at": "2026-11-25T06:58:04.762219677Z",
+        "finished_at": "2026-11-25T06:58:54.667178077Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88QYJTZWA5KDM7EY0TP5QK2",
+        "run": "prun_01M88QYJP4XE04ZSEM8GJAAAA7",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88QYJVX04Q77TMQ2GPSB175",
+        "aether_task": "tsk_01M88QYJVXMDA8VSQS59RC4G4A",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "learned",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged: the learned route's effort",
+        "summary": "Fixed the off-by-one in window.py: sliding_windows used range(len(items) - size), which dropped the final window, so [1,2] with size 2 returned [] instead of [[1,2]]. The range is now range(len(items) - size + 1). Inputs shorter than size still return []. Committed as 822acab on archon/2j96r5c2-fix-window-py-bug-so-python3-m-unittest under the configured identity mengsig; nothing pushed. Tests were not changed. Before: `python3 -m unittest` ran 3 tests, 2 failing. After: 3 tests OK. Boundary probe: s([],1)=[], s([1],1)=[[1]], s([1],2)=[], s([1,2],2)=[[1,2]], s([1,2,3],1)=[[1],[2],[3]], s([1,2,3],3)=[[1,2,3]], s([1,2,3],2)=[[1,2],[2,3]]. The repo has no linter or build step. No services were started. Open: none. Review: one low-effort reviewer (agt_01M88QZEXWPB6BMSVNQYW9E6QV) read the whole one-line change and passed it with no findings. Risk low: one-line off-by-one fix, covered by tests. Assertions were considered and not added: a length assert would be decorative. Review: pass by agt_01M88QZEXWPB6BMSVNQYW9E6QV",
+        "structured": {
+          "checks": [
+            "python3 -m unittest (before: 2 failures of 3; after: 3 tests OK)",
+            "timeout 30s python3 -c boundary probe of sliding_windows over empty, single, size>len, size==len, size==1 and interior cases (all as expected)"
+          ],
+          "commit": "822acabe1a2fa60c192ebc21fd9262d2edb7414c",
+          "evidence": [
+            {
+              "after": "Ran 3 tests ... OK",
+              "before": "FAILED (failures=2)",
+              "caption": "python3 -m unittest on the base commit: 2 of 3 tests fail (test_includes_the_last_window, test_whole_list_is_one_window)",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "822acabe1a2fa60c192ebc21fd9262d2edb7414c",
+          "pr": {
+            "body": "Approach: range(len(items) - size) became range(len(items) - size + 1) in window.py. Inputs shorter than size give a negative range and still return []. Key file: window.py (1 line). Tests unchanged. Checks: python3 -m unittest before 2 failures, after 3 OK; boundary probe matches expected output. Assumptions: no linter or build step exists in this repo. No assertion added, since a length check on the list comprehension would be decorative.",
+            "summary": "Made sliding_windows return every window. Now: the final window is included, and [1,2] with size 2 gives [[1,2]]. Before: the last window was dropped, so that case gave [].",
+            "title": "Fix off-by-one that dropped the last sliding window"
+          },
+          "review": {
+            "reviewed_head": "822acabe1a2fa60c192ebc21fd9262d2edb7414c",
+            "reviewer_agents": [
+              "agt_01M88QZEXWPB6BMSVNQYW9E6QV"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88QZEXWPB6BMSVNQYW9E6QV",
+                "base": "2e86fc4daab4610ae5ac4951100d4aae18549203",
+                "findings": 0,
+                "head": "822acabe1a2fa60c192ebc21fd9262d2edb7414c",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88QZEXWPB6BMSVNQYW9E6QV"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "low",
+            "why": "One-line off-by-one fix in window.py. Behaviour changes only for the buggy case. Covered by the existing tests, which fail before and pass after. Reviewer confirmed low."
+          },
+          "tree": "86fa2570260a2e082a57848f99c47518a99b485c"
+        },
+        "cost_usd": 0.017761120000000002,
+        "started_at": "2026-11-25T06:58:04.767466573Z",
+        "finished_at": "2026-11-25T06:58:50.027154610Z"
+      }
+    ],
+    "spent_usd": 0.017761120000000002,
+    "gates": [],
+    "delegations": {
+      "stg_01M88QYJTZWA5KDM7EY0TP5QK2": {
+        "direct_usd": 0.01319943,
+        "delegated_usd": 0.004561690000000001,
+        "agents": [
+          {
+            "agent": "agt_01M88QZEXWPB6BMSVNQYW9E6QV",
+            "parent": "agt_01M88QYJVX04Q77TMQ2GPSB175",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "low",
+            "cost_usd": 0.004561690000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-25T06:58:04.587700505Z"
+          },
+          "effort": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-25T06:58:04.587700505Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

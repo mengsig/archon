@@ -1,0 +1,35 @@
+I found one critical forgery bug in `verify()`, plus a few lower-severity issues. I changed nothing.
+
+**Scope note:** The registered repository here is `review-seeded-bug`, and its `package.json` names the package `session-lib`. I reviewed its mirror at `repos/review-seeded-bug/src/tokens.js`, base commit `643aacd`. The mirror is the local base commit without uncommitted work, so if the HMAC rewrite is not committed there, I reviewed a different version than the one you mean. Check that before relying on this review.
+
+**Findings**
+
+1. **Critical: `verify()` accepts an empty signature, so anyone can forge a token.** (`src/tokens.js:27`, `verify`)
+   - `expected.startsWith(signature)` is true when `signature` is `''`, so the MAC is never really checked.
+   - Input: `base64url('{"user":"root","exp":9e15}') + "."` with any secret. I ran this against the mirror and `verify` returned `{"user":"root","exp":9000000000000000}`.
+   - Severity: critical. Anyone can mint an arbitrary, non-expiring identity without knowing the secret.
+
+2. **Critical: `verify()` accepts any prefix of the correct signature.** (`src/tokens.js:27`)
+   - The check is a prefix match, not an equality check. Only the first character of the real MAC needs to be right, which is about 64 guesses for a fixed payload. I did not run this attack. My reasoning is from the `startsWith` logic: a correct 1-character prefix passes.
+   - It is also not a constant-time comparison, so it adds a timing side channel.
+   - Severity: critical. This follows from the same bug as finding 1 and makes brute forcing cheap.
+
+3. **High: malformed tokens that pass the signature check throw instead of returning `null`.** (`src/tokens.js:28-29`, `verify`)
+   - `JSON.parse` and `payload.exp` run without guards. With the bypass from finding 1, a body that is not JSON throws `SyntaxError`, and a body of `null` throws `TypeError`. I confirmed both in the mirror.
+   - Severity: high. Attacker-controlled input can crash or 500 the request path. Even without the bypass, a corrupt body from a bad client should return `null`, not an uncaught exception.
+
+4. **Medium: `verify()` accepts tokens with extra dot-separated segments.** (`src/tokens.js:24`, `verify`)
+   - `token.split('.')` drops everything after the second segment. `good + ".zzz"` verifies.
+   - This is not a forgery, because the MAC still covers the body, but it is lenient parsing of untrusted input. Severity: low to medium.
+
+5. **Medium: `verify()` does not check the secret.** (`src/tokens.js:22-26`, `verify`)
+   - `sign()` requires at least 32 characters, but `verify()` does not. A caller that verifies with `''` or a short key will accept tokens that anyone can sign with that same key. A missing secret also gives a raw Node `TypeError` from `createHmac`.
+   - Severity: medium. It depends on how callers pass the secret, but the validation should be symmetric.
+
+6. **Low: `sign()` does not validate `ttlSeconds`.** (`src/tokens.js:14-16`, `sign`)
+   - A `NaN` or `Infinity` TTL makes `exp` serialize to `null`. Every such token then fails verification silently, and nothing reports the bad input at signing time.
+   - Severity: low. Validate `ttlSeconds` as a positive finite number at the boundary.
+
+**Test gaps:** `test/tokens.test.js` only checks a fully forged payload with the original full-length signature. It does not cover an empty signature, a truncated signature, extra segments, malformed bodies, or a wrong-length verify secret. That is why the suite passes despite findings 1 to 3. I did not run `npm test`.
+
+**Recommendation before tomorrow:** Fix finding 1 and 2 with a full-length constant-time comparison, such as `crypto.timingSafeEqual` on equal-length buffers, and add tests for the empty and truncated signature cases. Then fix finding 3 by returning `null` on decode failures. This is a blocker for the production release.

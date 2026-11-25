@@ -1,0 +1,468 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88T8CEEFFC5E004MKW1GCMD",
+      "repo": "repo_01M88T8039Q91XHZTCY3GQ7WVY",
+      "pipeline": "direct",
+      "title": "reports: totals per account and currency",
+      "brief": "Operator's words: \"Our books now hold more than one currency. Two repositories need to change together. reports (Python) reads that CSV on stdin and prints per-account totals. It must now total per account and currency: header account,currency,total_cents, rows sorted by account then currency. CSV from the old ledger (no currency column) still works and counts as USD. A malformed currency code in the input makes reports.py print an error to stderr and exit with status 2. Keep both repositories' existing tests passing (cargo test, python3 -m unittest), update their READMEs, and commit in both.\" Your part: implement the reports side of the shared contract in the contract field. The reader must accept both the 4-column new format and the 3-column old format (treated as USD). Add unittest coverage for: per-currency totals, sorting by account then currency, legacy input, malformed currency exits 2 with message on stderr. Update README. Commit on your branch; do not push. The ledger member is building the writer in parallel; build against the contract and do not modify the ledger repository.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88T8CEEFFC5E004MKW1GCMD",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-25T07:38:23.056443366Z"
+              },
+              "effort": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-25T07:38:23.056443366Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged: the learned route's effort"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M88T8CAKVGWDMHCPTHQTMC0R",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88T8CEVG3DW95V6M6X7FG77",
+        "summary": "reports.py now totals per (account, currency). It reads an optional currency column (exactly three uppercase letters). Input without that column counts as USD. Output header is account,currency,total_cents, sorted by account then currency. A malformed code prints an error naming the line to stderr and exits 2. Committed as cf21fe0 on archon/mkw1gcmd-reports-totals-per-account-and-currency; not pushed. Checks: python3 -m unittest -v, 4/4 pass (per-currency totals, sort order, legacy USD input, malformed codes exit 2 with stderr message). Before, the old reader merged EUR and USD into one groceries total (-5700); now groceries,EUR,-5500 and groceries,USD,-200. Review: one reviewer (agt_01M88TA12JRKFBS38C26WG1Y1A) passed head cf21fe0 with no blocking findings. Open follow-ups, non-blocking: a short row in a file with a currency column reports 'malformed currency code None' (exit 2, unclear message, untested); a short row missing amount_cents raises a traceback with exit 1 (predates this change); no tests for header-only, empty stdin, or short rows. Risk is high because the CLI output header changes, which breaks old parsers. Nothing is left running.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88TA12JRKFBS38C26WG1Y1A)\n\nSHIPPED: commit cf21fe0b73a1a46e973a5f7fd0b708e414f944a7 on the run branch"
+      },
+      "created_at": "2026-11-25T07:38:22.931087817Z",
+      "updated_at": "2026-11-25T07:39:53.957793442Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88T8CEVG3DW95V6M6X7FG77",
+        "item": "qi_01M88T8CEEFFC5E004MKW1GCMD",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88T8CMYZYW7REDVW8HD1V6Y",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/010f9786cdf3ade88aa323b9/.archon/data/worktrees/reports/qi_01M88T8CEEFFC5E004MKW1GCMD",
+        "branch": "archon/mkw1gcmd-reports-totals-per-account-and-currency",
+        "state": {
+          "state": "succeeded",
+          "summary": "reports.py now totals per (account, currency). It reads an optional currency column (exactly three uppercase letters). Input without that column counts as USD. Output header is account,currency,total_cents, sorted by account then currency. A malformed code prints an error naming the line to stderr and exits 2. Committed as cf21fe0 on archon/mkw1gcmd-reports-totals-per-account-and-currency; not pushed. Checks: python3 -m unittest -v, 4/4 pass (per-currency totals, sort order, legacy USD input, malformed codes exit 2 with stderr message). Before, the old reader merged EUR and USD into one groceries total (-5700); now groceries,EUR,-5500 and groceries,USD,-200. Review: one reviewer (agt_01M88TA12JRKFBS38C26WG1Y1A) passed head cf21fe0 with no blocking findings. Open follow-ups, non-blocking: a short row in a file with a currency column reports 'malformed currency code None' (exit 2, unclear message, untested); a short row missing amount_cents raises a traceback with exit 1 (predates this change); no tests for header-only, empty stdin, or short rows. Risk is high because the CLI output header changes, which breaks old parsers. Nothing is left running.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88TA12JRKFBS38C26WG1Y1A)\n\nSHIPPED: commit cf21fe0b73a1a46e973a5f7fd0b708e414f944a7 on the run branch"
+        },
+        "cost_usd": 0.02642419,
+        "started_at": "2026-11-25T07:38:23.232444784Z",
+        "finished_at": "2026-11-25T07:39:53.957793442Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88T8CMPF10GZ097HJKCG35Y",
+        "run": "prun_01M88T8CEVG3DW95V6M6X7FG77",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88T8CN5MJFWMPGK54G33QR8",
+        "aether_task": "tsk_01M88T8CN5MJFWMPGK54G33QR9",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "learned",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged: the learned route's effort",
+        "summary": "reports.py now totals per (account, currency). It reads an optional currency column (exactly three uppercase letters). Input without that column counts as USD. Output header is account,currency,total_cents, sorted by account then currency. A malformed code prints an error naming the line to stderr and exits 2. Committed as cf21fe0 on archon/mkw1gcmd-reports-totals-per-account-and-currency; not pushed. Checks: python3 -m unittest -v, 4/4 pass (per-currency totals, sort order, legacy USD input, malformed codes exit 2 with stderr message). Before, the old reader merged EUR and USD into one groceries total (-5700); now groceries,EUR,-5500 and groceries,USD,-200. Review: one reviewer (agt_01M88TA12JRKFBS38C26WG1Y1A) passed head cf21fe0 with no blocking findings. Open follow-ups, non-blocking: a short row in a file with a currency column reports 'malformed currency code None' (exit 2, unclear message, untested); a short row missing amount_cents raises a traceback with exit 1 (predates this change); no tests for header-only, empty stdin, or short rows. Risk is high because the CLI output header changes, which breaks old parsers. Nothing is left running.",
+        "structured": {
+          "checks": [
+            "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v"
+          ],
+          "commit": "cf21fe0b73a1a46e973a5f7fd0b708e414f944a7",
+          "evidence": [
+            {
+              "after": "account,currency,total_cents\ngroceries,EUR,-5500\ngroceries,USD,-200\nrent,USD,-120000",
+              "before": "account,total_cents\ngroceries,-5700\nrent,-120000",
+              "caption": "Same new-format input through the base reports.py (before) and the branch reports.py (after). Before merges EUR and USD into one groceries total.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "cf21fe0b73a1a46e973a5f7fd0b708e414f944a7",
+          "pr": {
+            "body": "Approach: reports.py reads an optional currency column (validated with ^[A-Z]{3}$). Legacy input without the column is USD. Results are keyed by (account, currency) and rendered sorted. A MalformedCurrency error from totals() is caught in main(), written to stderr, and exits 2. Files: reports.py, test_reports.py, README.md. Checks: python3 -m unittest -v, 4 tests pass. Assumption: an empty currency cell is malformed, not USD. Follow-ups (non-blocking, from review): short rows give 'malformed currency code None' messages; short rows missing amount_cents raise a traceback (pre-existing); header-only, empty-stdin and short-row tests are missing.",
+            "summary": "made reports total per account and currency. now reads optional currency column; legacy input counts as USD; malformed code exits 2. before: account,total_cents, EUR and USD merged; now: account,currency,total_cents, sorted by account then currency.",
+            "title": "reports: total per account and currency"
+          },
+          "review": {
+            "reviewed_head": "cf21fe0b73a1a46e973a5f7fd0b708e414f944a7",
+            "reviewer_agents": [
+              "agt_01M88TA12JRKFBS38C26WG1Y1A"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88TA12JRKFBS38C26WG1Y1A",
+                "base": "9bac022",
+                "findings": 3,
+                "head": "cf21fe0",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88TA12JRKFBS38C26WG1Y1A"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "CLI output header changes from account,total_cents to account,currency,total_cents, which breaks downstream parsers. Contract-required. Also changes input parsing. Reviewer confirmed high."
+          },
+          "tree": "c87e967ccecb70fe94d729b6b5e8c2c57a28e645"
+        },
+        "cost_usd": 0.02642419,
+        "started_at": "2026-11-25T07:38:23.254880575Z",
+        "finished_at": "2026-11-25T07:39:47.397312595Z"
+      }
+    ],
+    "spent_usd": 0.02642419,
+    "gates": [],
+    "delegations": {
+      "stg_01M88T8CMPF10GZ097HJKCG35Y": {
+        "direct_usd": 0.0197654,
+        "delegated_usd": 0.006658790000000001,
+        "agents": [
+          {
+            "agent": "agt_01M88TA12JRKFBS38C26WG1Y1A",
+            "parent": "agt_01M88T8CN5MJFWMPGK54G33QR8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.006658790000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-25T07:38:23.056443366Z"
+          },
+          "effort": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-25T07:38:23.056443366Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88T8CAM2FPSM5V84PQE4EGB",
+      "repo": "repo_01M88T8029PGPRKDA2M7PHDNM2",
+      "pipeline": "direct",
+      "title": "ledger: optional per-row ISO 4217 currency column",
+      "brief": "Operator's words: \"Our books now hold more than one currency. Two repositories need to change together. ledger (Rust) converts a TSV of transactions on stdin into CSV on stdout. Input lines may now carry a fourth column, the ISO 4217 currency code (exactly three uppercase ASCII letters, e.g. EUR); when it is missing the currency is USD. The CSV header becomes date,account,amount_cents,currency and every row gets the currency. A malformed currency code must make ledger print an error naming the line number to stderr and exit with status 2 (other input errors keep exiting with status 1). Keep both repositories' existing tests passing (cargo test, python3 -m unittest), update their READMEs, and commit in both.\" Your part: implement the ledger side of the shared contract in the contract field. Add unit/integration tests for: 3-column input defaults to USD, 4-column input, header and rows, malformed code (lowercase, wrong length, digits) exits 2 with line number in stderr, existing error paths still exit 1. Update README. Commit on your branch; do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88T8CAM2FPSM5V84PQE4EGB",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T07:38:23.051531350Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T07:38:23.059358102Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T07:38:23.051531350Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M88T8CAKVGWDMHCPTHQTMC0R",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88T8CETA2QW1N8F6N40M79J",
+        "summary": "Implemented the ledger side of the optional per-row currency column on branch archon/4pqe4egb-ledger-optional-per-row-iso-4217-currenc, committed as e527980 (tree b8a30642c403a14f149964d37293d9f1ded377b6), not pushed. Input lines may carry an optional fourth tab-separated ISO 4217 code (exactly three uppercase ASCII letters); a missing code means USD. The header is now date,account,amount_cents,currency and every row carries its currency. A malformed currency code prints \"line N: bad currency ...\" to stderr and exits 2; other input errors still exit 1. Checks on the final head: cargo fmt --check clean; cargo clippy --all-targets clean; cargo test passes (5 CLI integration tests in tests/cli.rs, 7 library tests in tests/ledger.rs). The integration tests run the binary and check exit codes and the stderr line number. The README documents the new input and output format and exit codes. One reviewer (agt_01M88TA4431PTAX213S75SN58K) passed the commit with no blocking findings. Its two non-blocking notes: the currency is trimmed before validation, as date and account already are, and the README does not say so; and an empty fourth column is covered only by a unit test, not by a CLI test. Left open: the reviewer's leftover claude process (pid 2277963, not started by me) stays running until this agent ends. Nothing else I started is running. The reports side and the cross-repo contract are not touched here. Review: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88TA4431PTAX213S75SN58K)\n\nSHIPPED: commit e5279804120d1012554077d74880cb41854839bd on the run branch"
+      },
+      "created_at": "2026-11-25T07:38:22.931087817Z",
+      "updated_at": "2026-11-25T07:40:03.289130754Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88T8CETA2QW1N8F6N40M79J",
+        "item": "qi_01M88T8CAM2FPSM5V84PQE4EGB",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88T8CN0D7V2EBWH1NEK1ZHZ",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/010f9786cdf3ade88aa323b9/.archon/data/worktrees/ledger/qi_01M88T8CAM2FPSM5V84PQE4EGB",
+        "branch": "archon/4pqe4egb-ledger-optional-per-row-iso-4217-currenc",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the ledger side of the optional per-row currency column on branch archon/4pqe4egb-ledger-optional-per-row-iso-4217-currenc, committed as e527980 (tree b8a30642c403a14f149964d37293d9f1ded377b6), not pushed. Input lines may carry an optional fourth tab-separated ISO 4217 code (exactly three uppercase ASCII letters); a missing code means USD. The header is now date,account,amount_cents,currency and every row carries its currency. A malformed currency code prints \"line N: bad currency ...\" to stderr and exits 2; other input errors still exit 1. Checks on the final head: cargo fmt --check clean; cargo clippy --all-targets clean; cargo test passes (5 CLI integration tests in tests/cli.rs, 7 library tests in tests/ledger.rs). The integration tests run the binary and check exit codes and the stderr line number. The README documents the new input and output format and exit codes. One reviewer (agt_01M88TA4431PTAX213S75SN58K) passed the commit with no blocking findings. Its two non-blocking notes: the currency is trimmed before validation, as date and account already are, and the README does not say so; and an empty fourth column is covered only by a unit test, not by a CLI test. Left open: the reviewer's leftover claude process (pid 2277963, not started by me) stays running until this agent ends. Nothing else I started is running. The reports side and the cross-repo contract are not touched here. Review: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88TA4431PTAX213S75SN58K)\n\nSHIPPED: commit e5279804120d1012554077d74880cb41854839bd on the run branch"
+        },
+        "cost_usd": 0.030783290000000005,
+        "started_at": "2026-11-25T07:38:23.241006134Z",
+        "finished_at": "2026-11-25T07:40:03.289130754Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88T8CMGZBQP4XWQRGF7YCFE",
+        "run": "prun_01M88T8CETA2QW1N8F6N40M79J",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88T8CNGJT6HWPQX8R50KA35",
+        "aether_task": "tsk_01M88T8CNGJT6HWPQX8R50KA36",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented the ledger side of the optional per-row currency column on branch archon/4pqe4egb-ledger-optional-per-row-iso-4217-currenc, committed as e527980 (tree b8a30642c403a14f149964d37293d9f1ded377b6), not pushed. Input lines may carry an optional fourth tab-separated ISO 4217 code (exactly three uppercase ASCII letters); a missing code means USD. The header is now date,account,amount_cents,currency and every row carries its currency. A malformed currency code prints \"line N: bad currency ...\" to stderr and exits 2; other input errors still exit 1. Checks on the final head: cargo fmt --check clean; cargo clippy --all-targets clean; cargo test passes (5 CLI integration tests in tests/cli.rs, 7 library tests in tests/ledger.rs). The integration tests run the binary and check exit codes and the stderr line number. The README documents the new input and output format and exit codes. One reviewer (agt_01M88TA4431PTAX213S75SN58K) passed the commit with no blocking findings. Its two non-blocking notes: the currency is trimmed before validation, as date and account already are, and the README does not say so; and an empty fourth column is covered only by a unit test, not by a CLI test. Left open: the reviewer's leftover claude process (pid 2277963, not started by me) stays running until this agent ends. Nothing else I started is running. The reports side and the cross-repo contract are not touched here. Review: pass",
+        "structured": {
+          "checks": [
+            "cargo fmt --check (clean)",
+            "cargo clippy --all-targets (clean, no warnings)",
+            "cargo test (5 passed in tests/cli.rs, 7 passed in tests/ledger.rs, 0 failed)"
+          ],
+          "commit": "e5279804120d1012554077d74880cb41854839bd",
+          "evidence": [
+            {
+              "caption": "After: ledger output for a 3-column line (defaults to USD) and a 4-column EUR line",
+              "kind": "output",
+              "text": "date,account,amount_cents,currency\n2026-03-01,groceries,-4510,USD\n2026-03-02,rent,1000,EUR"
+            },
+            {
+              "caption": "After: malformed currency exits 2 and names the line; a bad line exits 1",
+              "kind": "output",
+              "text": "line 1: bad currency \"eur\"  (exit 2)\nline 1: expected 3 or 4 tab-separated fields, got 1  (exit 1)"
+            },
+            {
+              "caption": "Before (base 5624049, from src/lib.rs CSV_HEADER): header without currency; rows have 3 columns",
+              "kind": "output",
+              "text": "date,account,amount_cents"
+            }
+          ],
+          "local_commit": "e5279804120d1012554077d74880cb41854839bd",
+          "pr": {
+            "body": "Approach: parse_line accepts 3 or 4 tab-separated fields. The fourth field is validated by parse_currency (exactly 3 uppercase ASCII letters, after trim, matching how other fields are trimmed). LineError distinguishes Malformed (exit 1) from BadCurrency (exit 2); main maps it to the exit code and keeps the 'line N:' prefix, where N counts every input line including skipped ones. Key files: src/lib.rs (Entry.currency, CSV_HEADER, DEFAULT_CURRENCY, LineError, parse_currency, to_csv_row), src/main.rs (exit code mapping), tests/ledger.rs (unit tests), tests/cli.rs (binary exit code and stderr tests), README.md. Checks: cargo fmt --check, cargo clippy --all-targets, cargo test all pass (see checks). Assumptions: currency is trimmed before validation; a trailing tab with an empty fourth field is a malformed currency (exit 2). Limits: this is a breaking change to the CSV output (header and column count) and adds exit status 2; consumers must read the new format (reports side is a sibling change).",
+            "summary": "made per-row currency export happen. now can export EUR and other ISO 4217 codes next to USD default. before: header date,account,amount_cents, no currency; now: header date,account,amount_cents,currency, missing code is USD, malformed code exits 2.",
+            "title": "ledger: optional per-row ISO 4217 currency column"
+          },
+          "review": {
+            "reviewed_head": "e5279804120d1012554077d74880cb41854839bd",
+            "reviewer_agents": [
+              "agt_01M88TA4431PTAX213S75SN58K"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88TA4431PTAX213S75SN58K",
+                "base": "5624049dad93e38d52da61334c348ef2f16791d3",
+                "findings": 2,
+                "head": "e527980",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88TA4431PTAX213S75SN58K"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "Changes the CLI output format: header goes from 3 to 4 columns and every row gains a currency column, which breaks existing consumers unless updated together (the reports repo). Adds exit status 2 for a new error class. Touches src/lib.rs, src/main.rs, README.md and tests; behaviour changes, not only tests or docs. Tests: cargo test, fmt and clippy all pass. Reviewer agt_01M88TA4431PTAX213S75SN58K confirmed high."
+          },
+          "risk_reviewer": "agt_01M88TA4431PTAX213S75SN58K",
+          "tree": "b8a30642c403a14f149964d37293d9f1ded377b6"
+        },
+        "cost_usd": 0.030783290000000005,
+        "started_at": "2026-11-25T07:38:23.248162316Z",
+        "finished_at": "2026-11-25T07:40:00.149764816Z"
+      }
+    ],
+    "spent_usd": 0.030783290000000005,
+    "gates": [],
+    "delegations": {
+      "stg_01M88T8CMGZBQP4XWQRGF7YCFE": {
+        "direct_usd": 0.022681500000000004,
+        "delegated_usd": 0.008101790000000001,
+        "agents": [
+          {
+            "agent": "agt_01M88TA4431PTAX213S75SN58K",
+            "parent": "agt_01M88T8CNGJT6HWPQX8R50KA35",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.008101790000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T07:38:23.051531350Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T07:38:23.059358102Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T07:38:23.051531350Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

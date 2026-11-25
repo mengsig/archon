@@ -1,0 +1,328 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88V3R15Q993AWHK89B5BHCH",
+      "repo": "repo_01M88V3DKXH3T3XBNBYSCT36N0",
+      "pipeline": "adaptive",
+      "title": "Implement safe_extract.py per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated, local socket): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nGoal: make safe_extract.py conform to SPEC.md exactly. Preserve the public API documented in SPEC.md. Handle every error and boundary case the spec names. Add focused tests covering those cases, beyond the existing basic tests. Use only the Python standard library. Commit the work on the item's branch.\n\nAcceptance criteria: every requirement in SPEC.md is implemented and has a test; the existing test suite still passes; the new tests pass; no function exceeds 60 lines; no bare or silent exception handling; path-traversal, absolute-path, symlink and archive-bomb style checks are enforced where SPEC.md requires them.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "safe-extract"
+      ],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88V3R15Q993AWHK89B5BHCH",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T07:53:19.655519426Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T07:53:19.658677657Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T07:53:19.655519426Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:security",
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88V3R1EE4P3BRXHAG2T41SH",
+        "summary": "Implemented safe_extract.py per SPEC.md and added 29 focused unittest tests (the 2 original basics kept). Branch archon/89b5bhch-implement-safe-extract-py-per-spec-md-wi, based on a867ad4. Commits: e588480 (implementation and tests), 01fe3cd (fix for a blocking review finding: validation trusted caller str/tuple/bytes subclass methods, which allowed a '..' component to smuggle a write outside root; now exact builtin types only). Head 01fe3cdee32f06a266c0015c8457526281b0aede, tree 7e687167130caee392fcb0b5a51297bba785c769. Check: `python3 -m unittest test_safe_extract` -> Ran 29 tests OK (before: 2 errors, NotImplementedError). Every function is under 60 lines; no bare or silent except. Validation of the whole batch, root and ancestors/targets via lstat, and exclusive 'xb' creation happen before any mutation. Review: reviewers 1 and 2 passed the whole change at e588480; reviewer 3 failed it on the subclass bypass (fixed in 01fe3cd); reviewer 4 passed the delta e588480..01fe3cd. Open follow-ups (non-blocking): UTF-8-only names (lone surrogates rejected) is an extension not listed in SPEC.md; over-long path components surface as OSError, not ValueError; str/tuple/bytes/list subclasses are now refused with ValueError; symlink races and concurrent changes are out of scope per SPEC. No processes started; nothing left running; worktree clean.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88V7170MTFD6QNS3PA6QNWH), claude-code/claude-haiku-5-5 (agent agt_01M88V7981JGZJEXAC5QHTZBPT), claude-code/claude-haiku-5-5 (agent agt_01M88V7DED85N2T1K7RSRX7344), claude-code/claude-haiku-5-5 (agent agt_01M88VCTSK87TNR718P0EX5B3Q)\n\nSHIPPED: commit 01fe3cdee32f06a266c0015c8457526281b0aede on the run branch"
+      },
+      "created_at": "2026-11-25T07:53:19.653162490Z",
+      "updated_at": "2026-11-25T07:58:58.695969730Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88V3R1EE4P3BRXHAG2T41SH",
+        "item": "qi_01M88V3R15Q993AWHK89B5BHCH",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M88V3R6ND00J5YBCY8JMVS6N",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/7876d8e7625b8fa76229a0f6/.archon/data/worktrees/quality-safe-extract/qi_01M88V3R15Q993AWHK89B5BHCH",
+        "branch": "archon/89b5bhch-implement-safe-extract-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.py per SPEC.md and added 29 focused unittest tests (the 2 original basics kept). Branch archon/89b5bhch-implement-safe-extract-py-per-spec-md-wi, based on a867ad4. Commits: e588480 (implementation and tests), 01fe3cd (fix for a blocking review finding: validation trusted caller str/tuple/bytes subclass methods, which allowed a '..' component to smuggle a write outside root; now exact builtin types only). Head 01fe3cdee32f06a266c0015c8457526281b0aede, tree 7e687167130caee392fcb0b5a51297bba785c769. Check: `python3 -m unittest test_safe_extract` -> Ran 29 tests OK (before: 2 errors, NotImplementedError). Every function is under 60 lines; no bare or silent except. Validation of the whole batch, root and ancestors/targets via lstat, and exclusive 'xb' creation happen before any mutation. Review: reviewers 1 and 2 passed the whole change at e588480; reviewer 3 failed it on the subclass bypass (fixed in 01fe3cd); reviewer 4 passed the delta e588480..01fe3cd. Open follow-ups (non-blocking): UTF-8-only names (lone surrogates rejected) is an extension not listed in SPEC.md; over-long path components surface as OSError, not ValueError; str/tuple/bytes/list subclasses are now refused with ValueError; symlink races and concurrent changes are out of scope per SPEC. No processes started; nothing left running; worktree clean.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88V7170MTFD6QNS3PA6QNWH), claude-code/claude-haiku-5-5 (agent agt_01M88V7981JGZJEXAC5QHTZBPT), claude-code/claude-haiku-5-5 (agent agt_01M88V7DED85N2T1K7RSRX7344), claude-code/claude-haiku-5-5 (agent agt_01M88VCTSK87TNR718P0EX5B3Q)\n\nSHIPPED: commit 01fe3cdee32f06a266c0015c8457526281b0aede on the run branch"
+        },
+        "cost_usd": 0.1155054,
+        "started_at": "2026-11-25T07:53:19.797756831Z",
+        "finished_at": "2026-11-25T07:58:58.695969730Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88V3R6EQTTJD6R90EGGEEFK",
+        "run": "prun_01M88V3R1EE4P3BRXHAG2T41SH",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88V3R76AS135Y05J9KVHE3J",
+        "aether_task": "tsk_01M88V3R76W1T82NN85F10ZWS6",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "critical",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented safe_extract.py per SPEC.md and added 29 focused unittest tests (the 2 original basics kept). Branch archon/89b5bhch-implement-safe-extract-py-per-spec-md-wi, based on a867ad4. Commits: e588480 (implementation and tests), 01fe3cd (fix for a blocking review finding: validation trusted caller str/tuple/bytes subclass methods, which allowed a '..' component to smuggle a write outside root; now exact builtin types only). Head 01fe3cdee32f06a266c0015c8457526281b0aede, tree 7e687167130caee392fcb0b5a51297bba785c769. Check: `python3 -m unittest test_safe_extract` -> Ran 29 tests OK (before: 2 errors, NotImplementedError). Every function is under 60 lines; no bare or silent except. Validation of the whole batch, root and ancestors/targets via lstat, and exclusive 'xb' creation happen before any mutation. Review: reviewers 1 and 2 passed the whole change at e588480; reviewer 3 failed it on the subclass bypass (fixed in 01fe3cd); reviewer 4 passed the delta e588480..01fe3cd. Open follow-ups (non-blocking): UTF-8-only names (lone surrogates rejected) is an extension not listed in SPEC.md; over-long path components surface as OSError, not ValueError; str/tuple/bytes/list subclasses are now refused with ValueError; symlink races and concurrent changes are out of scope per SPEC. No processes started; nothing left running; worktree clean.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v test_safe_extract (at 01fe3cd: Ran 29 tests, OK)",
+            "python3 -m unittest -v test_safe_extract (at e588480: Ran 25 tests, OK; before the fix, tree a867ad4: 2 errors NotImplementedError)",
+            "function-length AST check on safe_extract.py and test_safe_extract.py (max 20 lines)"
+          ],
+          "commit": "01fe3cdee32f06a266c0015c8457526281b0aede",
+          "evidence": [
+            {
+              "after": "python3 -m unittest test_safe_extract\nRan 29 tests in 0.011s\nOK",
+              "before": "python3 -m unittest -v test_safe_extract\nERROR: test_nested_files ... NotImplementedError\nRan 2 tests\nFAILED (errors=2)",
+              "caption": "Test suite on the unchanged base tree (a867ad4) versus the final head (01fe3cd)",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "01fe3cdee32f06a266c0015c8457526281b0aede",
+          "pr": {
+            "body": "Approach: extract() validates everything first, then writes. Checks: exact builtin types for batch, entries, names and data (subclasses refused, since their methods can lie); names must be nonempty relative POSIX paths without leading '/', backslash, colon, NUL, or empty/'.'/'..' components, not normalized or decoded; names must encode as UTF-8. Duplicates and file/directory collisions rejected in either order. Root must be an existing real directory (lstat, not a symlink). Each existing ancestor is lstat-checked to be a real directory; each target must be absent (dangling symlinks count as present). Writes create parents and use open(..., 'xb') so nothing is overwritten or followed. Files: safe_extract.py, test_safe_extract.py. Review: e588480 read by reviewers agt_01M88V7170MTFD6QNS3PA6QNWH (pass) and agt_01M88V7981JGZJEXAC5QHTZBPT (pass); agt_01M88V7DED85N2T1K7RSRX7344 (fail: subclass bypass, fixed); delta e588480..01fe3cd by agt_01M88VCTSK87TNR718P0EX5B3Q (pass, head 01fe3cd). Non-blocking follow-ups: UTF-8 name rule is an extension beyond SPEC.md wording (consider documenting); over-long components raise OSError from lstat rather than ValueError; subclass inputs now refused (behaviour change, intended). Assumptions: entries must be exact tuples of length 2; root str must be non-empty. Limits: TOCTOU races and concurrent modification out of scope per SPEC; case-insensitive filesystem collisions not handled.",
+            "pr_risk_note": "high: security-sensitive filesystem writes",
+            "summary": "Made extract(entries, root) safe for untrusted batches. Now: whole batch validated (types, names, duplicates, file/dir collisions, root, ancestors and targets, no symlinks) before any write; exclusive creation; errors visible. Before: NotImplementedError stub, 2 failing tests. Now: 29 tests pass, including symlink, collision, subclass-bypass and I/O-error cases.",
+            "title": "feat: implement validated safe extraction per SPEC"
+          },
+          "review": {
+            "reviewed_head": "01fe3cdee32f06a266c0015c8457526281b0aede",
+            "reviewer_agents": [
+              "agt_01M88V7170MTFD6QNS3PA6QNWH",
+              "agt_01M88V7981JGZJEXAC5QHTZBPT",
+              "agt_01M88V7DED85N2T1K7RSRX7344",
+              "agt_01M88VCTSK87TNR718P0EX5B3Q"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88V7170MTFD6QNS3PA6QNWH",
+                "base": "a867ad4d225d58483a7332dc1c4d58b0c3b45612",
+                "findings": 2,
+                "head": "e588480",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M88V7981JGZJEXAC5QHTZBPT",
+                "base": "a867ad4d225d58483a7332dc1c4d58b0c3b45612",
+                "findings": 4,
+                "head": "e588480",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M88V7DED85N2T1K7RSRX7344",
+                "base": "a867ad4d225d58483a7332dc1c4d58b0c3b45612",
+                "findings": 3,
+                "head": "e588480",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M88VCTSK87TNR718P0EX5B3Q",
+                "base": "e588480",
+                "findings": 1,
+                "head": "01fe3cdee32f06a266c0015c8457526281b0aede",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88V7170MTFD6QNS3PA6QNWH",
+              "agt_01M88V7981JGZJEXAC5QHTZBPT",
+              "agt_01M88V7DED85N2T1K7RSRX7344",
+              "agt_01M88VCTSK87TNR718P0EX5B3Q"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": "agt_01M88VCTSK87TNR718P0EX5B3Q",
+            "why": "Writes files and directories under a caller-supplied root; path traversal, symlink following and overwrite protection depend on the validation and exclusive creation. A subclass bypass was found in review and fixed in 01fe3cd. Concurrency/TOCTOU is out of scope per SPEC. Reviewer agt_01M88VCTSK87TNR718P0EX5B3Q confirmed high."
+          },
+          "tree": "7e687167130caee392fcb0b5a51297bba785c769"
+        },
+        "cost_usd": 0.1155054,
+        "started_at": "2026-11-25T07:53:19.822559027Z",
+        "finished_at": "2026-11-25T07:58:53.691423525Z"
+      }
+    ],
+    "spent_usd": 0.1155054,
+    "gates": [],
+    "delegations": {
+      "stg_01M88V3R6EQTTJD6R90EGGEEFK": {
+        "direct_usd": 0.05097271,
+        "delegated_usd": 0.06453269,
+        "agents": [
+          {
+            "agent": "agt_01M88V7170MTFD6QNS3PA6QNWH",
+            "parent": "agt_01M88V3R76AS135Y05J9KVHE3J",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01382807
+          },
+          {
+            "agent": "agt_01M88V7981JGZJEXAC5QHTZBPT",
+            "parent": "agt_01M88V3R76AS135Y05J9KVHE3J",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01678454
+          },
+          {
+            "agent": "agt_01M88V7DED85N2T1K7RSRX7344",
+            "parent": "agt_01M88V3R76AS135Y05J9KVHE3J",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.027666710000000004
+          },
+          {
+            "agent": "agt_01M88VCTSK87TNR718P0EX5B3Q",
+            "parent": "agt_01M88V3R76AS135Y05J9KVHE3J",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00625337
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T07:53:19.655519426Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T07:53:19.658677657Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T07:53:19.655519426Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

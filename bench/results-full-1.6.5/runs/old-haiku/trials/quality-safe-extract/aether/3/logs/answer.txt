@@ -1,0 +1,24 @@
+Implemented `extract(entries, root)` in safe_extract.py per SPEC.md and replaced the basic tests in test_safe_extract.py with 28 focused tests. All 28 pass (`python3 -m unittest test_safe_extract`). Committed as 09ea223 "Implement validated safe extraction" on main.
+
+Behaviour:
+- Non-list batches (tuples, iterators, generators, None, dicts) raise ValueError before any access; generators are not consumed.
+- The whole batch is validated before any write: entry shape, str names, bytes data, name grammar (no leading '/', backslash, colon, NUL, empty/'.'/'..' components, unencodable surrogates), duplicates, and file/directory collisions in either order.
+- Root must be a str or Path, must not be a symlink, and must be an existing directory. Empty batches return [] only after root validation.
+- Each target path is walked with lstat: symlinks (including dangling ones) at any ancestor or the target are rejected, ancestors must be directories, and the target must be absent. Nothing is followed.
+- Writes create missing parents, then open with exclusive "xb" mode, so existing files are never overwritten. Unexpected OSErrors propagate unchanged (tested with an unwritable root, skipped when running as root).
+
+Choices and gaps:
+- Case-insensitive filesystem collisions (e.g. 'A' vs 'a' on macOS) are not detected; the spec does not mention them and the target is Linux.
+- Commit has no Co-Authored-By trailer. The user's CLAUDE.md says not to add Claude attribution, which I took to override the system reminder's trailer.
+- A stray untracked `__pycache__/` directory remains in the workspace and was not committed.
+
+I implemented `extract(entries, root)` in `safe_extract.py` and replaced the basic tests with 28 focused tests. All 28 pass with `python3 -m unittest test_safe_extract`. The work is committed as `09ea223` on `main`.
+
+- **Batch validation:** Everything is checked before any write. Non-list batches are rejected without consuming them. Malformed entries, invalid names, duplicates and file/directory collisions in either order all raise `ValueError`.
+- **Root and target checks:** The root must exist, be a real directory and not be a symlink. Every existing component below the root is checked with `lstat`, so symlinks (including dangling ones) and non-directory ancestors are rejected without being followed. Existing targets are never overwritten.
+- **Writes:** Missing parents are created, then each file is opened with exclusive `"xb"` mode. Unexpected I/O errors propagate.
+
+Choices and gaps:
+- Case-insensitive filesystem collisions (for example `A` vs `a` on macOS) are not detected. The spec doesn't mention them and the target is Linux.
+- The commit has no Co-Authored-By trailer. Your CLAUDE.md says not to add Claude attribution, and I took that to override the system reminder's trailer.
+- An untracked `__pycache__/` directory is left in the workspace and was not committed.

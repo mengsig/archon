@@ -1,0 +1,21 @@
+Queued the work as item `qi_01M88XA8FDWV9487PTPRVY36GC` in the `quality-retry-budget` repository. I didn't edit the repo myself, since the orchestrator hands changes to the queue.
+
+- **Pipeline:** `direct`, one agent that implements, tests and commits locally. The repo ships `local`, so nothing is pushed.
+- **Brief:** implement `retry_budget.py` per `SPEC.md`, keep the documented API, cover every error and boundary case, extend the existing tests, use only the standard library, run the suite, and commit without attribution lines.
+- **Review:** `standard` (one reviewer), because the module is new and shared-facing but small.
+- **Model:** balanced tier at medium effort.
+
+I haven't read `SPEC.md` or the existing code, so I can't yet confirm the spec is complete or that the brief covers it. I'll report when the item finishes, or sooner if it fails.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md, committed as 4de1bd0 on archon/prvy36gc-implement-retry-budget-py-per-spec-md-wi (not pushed). Validation raises ValueError for non-int (bool/float included) or below-minimum arguments before any early return; attempt >= max_attempts returns None; backoff is min(cap, base*2**(attempt-1)) with saturation that avoids large powers of two; a Retry-After floor is not limited by cap; delays ending at or after budget_ms return None without shortening. Extended test_retry_budget.py from 3 to 28 tests covering each rule and boundary. Before: the 3 existing tests errored with NotImplementedError. After: `python3 -m unittest -v` runs 28 tests, all OK; `python3 -m py_compile` on both files passes. pyflakes is not installed here, so no lint was run. Full check ran on tree 1f6b6cea586b0babbae7f43b1c485f138fb35b06. Review: one reviewer (agt_01M88XFGTY08WY4FBG27HY520H, claude-haiku-5-5 at effort low, since the diff is small and isolated) passed head 4de1bd0 with no blocking findings. Non-blocking follow-ups: bool/float rejection is not tested for budget_ms and cap_ms keywords (implementation is correct); not amended to keep the reviewed head. Nothing left running. REVIEW: pass (agt_01M88XFGTY08WY4FBG27HY520H).
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88XFGTY08WY4FBG27HY520H)
+
+SHIPPED: commit 4de1bd0567488b87790446a84721fac0621a248f on the run branch
+Branch `archon/prvy36gc-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/b81de0b834f386c898d539ba/quality-retry-budget holds it (2 files changed, 174 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M88XA8FDWV9487PTPRVY36GC`; land it in `main`: `archon merge qi_01M88XA8FDWV9487PTPRVY36GC`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md, committed as 4de1bd0 on archon/prvy36gc-implement-retry-budget-py-per-spec-md-wi (not pushed). Validation raises ValueError for non-int (bool/float included) or below-minimum arguments before any early return; attempt >= max_attempts returns None; backoff is min(cap, base*2**(attempt-1)) with saturation that avoids large powers of two; a Retry-After floor is not limited by cap; delays ending at or after budget_ms return None without shortening. Extended test_retry_budget.py from 3 to 28 tests covering each rule and boundary. Before: the 3 existing tests errored with NotImplementedError. After: `python3 -m unittest -v` runs 28 tests, all OK; `python3 -m py_compile` on both files passes. pyflakes is not installed here, so no lint was run. Full check ran on tree 1f6b6cea586b0babbae7f43b1c485f138fb35b06. Review: one reviewer (agt_01M88XFGTY08WY4FBG27HY520H, claude-haiku-5-5 at effort low, since the diff is small and isolated) passed head 4de1bd0 with no blocking findings. Non-blocking follow-ups: bool/float rejection is not tested for budget_ms and cap_ms keywords (implementation is correct); not amended to keep the reviewed head. Nothing left running. REVIEW: pass (agt_01M88XFGTY08WY4FBG27HY520H).
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88XFGTY08WY4FBG27HY520H)
+
+SHIPPED: commit 4de1bd0567488b87790446a84721fac0621a248f on the run branch

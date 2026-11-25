@@ -1,0 +1,36 @@
+Both repos now carry a currency through the pipeline and are committed.
+
+ledger (commit 1713d94): an optional fourth TSV column holds the ISO 4217 code and defaults to USD. The CSV header is `date,account,amount_cents,currency`, and every row carries its currency. A malformed code exits 2 with `line N: bad currency ...` on stderr. Other input errors still exit 1. `cargo test`: 9 passed, including end-to-end checks of the binary's exit codes.
+
+reports (commit 610b2b5): totals are keyed by (account, currency). Output is `account,currency,total_cents`, sorted by account then currency. CSV without a currency column counts as USD. A malformed code prints an error to stderr and exits 2. `python3 -m unittest`: 5 passed.
+
+Verified end to end: ledger output piped into reports gives the expected per-currency totals.
+
+READMEs in both repos are updated. Git identity was the configured mengsig user. I left off the Co-Authored-By trailer because CLAUDE.md forbids Claude attribution in commits.
+
+Choices to review:
+- A present but empty fourth column (a trailing tab) is treated as a malformed currency and exits 2, not as the USD default.
+- Reports' bad-currency message includes the CSV line number (header = line 1).
+- I did not add extra asserts beyond the validation at the boundaries, since the existing code validates with Result and CLAUDE.md asks for meaningful asserts only.
+
+Both repositories now carry currency through the pipeline, and each has a commit. Both test suites pass, and an end-to-end run from ledger into reports produces the expected per-currency totals.
+
+**ledger** (commit `1713d94`)
+- An optional fourth TSV column holds the ISO 4217 code and defaults to `USD`.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed code prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1.
+- `cargo test`: 9 passed, including checks of the real binary's exit codes.
+
+**reports** (commit `610b2b5`)
+- Totals are keyed by account and currency, and the output is `account,currency,total_cents`, sorted by account then currency.
+- CSV without a `currency` column counts as `USD`.
+- A malformed code prints an error to stderr and exits 2.
+- `python3 -m unittest`: 5 passed.
+
+Both READMEs are updated.
+
+Choices to review:
+- **Empty fourth column:** a trailing tab with nothing after it is treated as a malformed currency and exits 2, not as the `USD` default.
+- **Line numbers in reports:** the bad-currency error gives the CSV line number, counting the header as line 1.
+- **Commit attribution:** I left off the `Co-Authored-By` trailer. Your CLAUDE.md forbids Claude attribution in commits, and I treated that as taking precedence over the attribution reminder. Commits use the configured `mengsig` identity.
+- **Asserts:** I did not add asserts beyond the boundary validation. The existing code validates with `Result`, and I did not want to add asserts just to meet a quota.

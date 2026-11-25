@@ -1,0 +1,18 @@
+All four tickets are implemented, each in its own commit, and the suite passes: 37 tests, up from 4, run with `python3 -m unittest discover -s tests -t .`. The standard library is the only dependency.
+
+| Commit | Ticket | Change |
+|---|---|---|
+| `df73531` | TT-101 | `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible dates and any unsupported form. Message includes the original text. |
+| `7ba1df7` | TT-102 | `to_csv` emits RFC 4180 output: quotes fields containing `,` `"` CR or LF, doubles embedded quotes, and ends every line with CRLF. |
+| `4a946f1` | TT-103 | `search` supports quoted phrases, `tag:NAME`, `status:open|done`, and ANDed terms. Invalid queries raise `QueryError`. |
+| `2d3fc30` | TT-104 | `TaskStore.undo()` walks back a LIFO log of add, complete and delete. `NothingToUndo` is raised when the log is empty. |
+
+Tests are in `tests/test_dates.py`, `test_export.py`, `test_search.py` and `test_undo.py`.
+
+Assumptions I made where the ticket was silent or left room:
+- **TT-104, undo of complete:** the log records the task's previous status and restores it, rather than forcing `open`. These differ only when a task was already `done` before `complete` was called on it.
+- **TT-103, quotes:** a term that starts with a quote is a literal phrase, so `"tag:work"` is a title search. Quotes inside a field value only group whitespace, so `tag:"big project"` matches the tag `big project`.
+- **TT-103, empty or odd values:** `tag:` with no name raises `QueryError`. `status:` values are case-insensitive, matching tags. Any `x:y` term with an unknown field raises, including something like `10:30`.
+- **Commit messages:** I left out the Co-Authored-By line from the reminder. CLAUDE.md says not to add Claude attribution, and it takes precedence.
+
+Not done: I did not add the CLAUDE.md-style assert density everywhere. I added a few invariant asserts in `parse_due`, `search` and `undo`, and left the rest of the functions as they were. The `tasktracker/__pycache__/` and `tests/__pycache__/` directories are untracked and were not committed.

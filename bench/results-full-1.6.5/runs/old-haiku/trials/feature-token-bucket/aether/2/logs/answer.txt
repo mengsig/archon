@@ -1,0 +1,11 @@
+`ratelimit.py` now implements both classes from `SPEC.md`, and the work is committed as `eae165a` on `main`. All 14 tests pass: the 3 original ones plus 11 new ones for the spec's error and edge cases.
+
+- **`TokenBucket`**: validates capacity and rate, starts full, and refills fractionally, capped at capacity. `try_acquire`, `available` and `wait_time` follow the spec. If the clock goes backwards, nothing accrues until it passes the latest time seen.
+- **`KeyedLimiter`**: validates `max_keys` and the bucket parameters at construction. Keys are kept in LRU order; both `try_acquire` and `wait_time` count as a use. The oldest key is evicted when a new one would exceed `max_keys`, and an evicted key returns full. `len()` reports the tracked key count.
+
+Choices I made beyond the spec's wording:
+- **Invalid requests don't create keys.** `KeyedLimiter` checks `n` before touching the key table, so a bad call can't evict another key.
+- **Added tests.** I extended `test_ratelimit.py` because the existing tests only covered basics. The commit touches that file as well as `ratelimit.py`.
+- **No attribution in the commit.** Your CLAUDE.md says not to mention Claude, which overrides the Co-Authored-By line in the system reminder. The commit is authored as `mengsig`, the identity already configured in the repo.
+
+The test command is `python3 -I -m unittest discover -s . -p test_ratelimit.py`. Plain `python3 -I -m unittest test_ratelimit` fails because `-I` drops the working directory from the import path.

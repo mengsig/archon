@@ -1,0 +1,252 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88RQ3VVXXNHQN21S0FJZS1S",
+      "repo": "repo_01M88RPRJ9X3KZNDHA127YDBDW",
+      "pipeline": "direct",
+      "title": "Implement ledger.py per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated): \"Implement `ledger.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nRead SPEC.md first and implement every requirement in it. Keep the documented API exactly as specified. Handle each specified error and boundary case explicitly, and fail visibly rather than silently. Extend test_ledger.py (or add focused tests alongside it) to cover each specified error and boundary case, not just the basics. Use only the Python standard library. Run the test suite and confirm it passes before finishing. Commit the work on the item's branch; do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "ledger",
+        "spec"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88RQ3VVXXNHQN21S0FJZS1S",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T07:11:28.653458222Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T07:11:28.671175372Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T07:11:28.653458222Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88RQ3Z3XN7QRWJM19WXMQX2",
+        "summary": "Implemented Ledger per SPEC.md in ledger.py (constructor validation with copied input, amount validation before account lookup, KeyError for unknown accounts, False with no change for insufficient funds or destination overflow, same-account semantics, one lock for atomic transfers and snapshots). Extended test_ledger.py from 2 to 30 tests covering every SPEC error and boundary case plus bounded concurrency checks with join timeouts. Before: both existing tests errored with NotImplementedError. After: `python3 -m unittest -v` passes 30/30, and three repeat runs also passed. Committed as d489a28 on the item branch; not pushed. Open, non-blocking follow-ups from review: the snapshot-atomicity test would catch a missing lock only probabilistically, and no test pins KeyError precedence over False when the source is short and the destination is unknown. No processes were started, so nothing is left running. The review passed at head d489a28 with reviewer agt_01M88RRYBTN2W4E9F6RCS7SHCN; its two findings are non-blocking.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RRYBTN2W4E9F6RCS7SHCN)\n\nSHIPPED: commit d489a28d97ceb95146c336148cd54ec3cd77fb5e on the run branch"
+      },
+      "created_at": "2026-11-25T07:11:28.635133191Z",
+      "updated_at": "2026-11-25T07:13:15.700093466Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88RQ3Z3XN7QRWJM19WXMQX2",
+        "item": "qi_01M88RQ3VVXXNHQN21S0FJZS1S",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88RQ46770NVZVDZYDT8D7MP",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/23edb293904f04ee13b0657d/.archon/data/worktrees/quality-ledger-transfer/qi_01M88RQ3VVXXNHQN21S0FJZS1S",
+        "branch": "archon/s0fjzs1s-implement-ledger-py-per-spec-md-with-foc",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented Ledger per SPEC.md in ledger.py (constructor validation with copied input, amount validation before account lookup, KeyError for unknown accounts, False with no change for insufficient funds or destination overflow, same-account semantics, one lock for atomic transfers and snapshots). Extended test_ledger.py from 2 to 30 tests covering every SPEC error and boundary case plus bounded concurrency checks with join timeouts. Before: both existing tests errored with NotImplementedError. After: `python3 -m unittest -v` passes 30/30, and three repeat runs also passed. Committed as d489a28 on the item branch; not pushed. Open, non-blocking follow-ups from review: the snapshot-atomicity test would catch a missing lock only probabilistically, and no test pins KeyError precedence over False when the source is short and the destination is unknown. No processes were started, so nothing is left running. The review passed at head d489a28 with reviewer agt_01M88RRYBTN2W4E9F6RCS7SHCN; its two findings are non-blocking.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RRYBTN2W4E9F6RCS7SHCN)\n\nSHIPPED: commit d489a28d97ceb95146c336148cd54ec3cd77fb5e on the run branch"
+        },
+        "cost_usd": 0.030012240000000003,
+        "started_at": "2026-11-25T07:11:28.900160356Z",
+        "finished_at": "2026-11-25T07:13:15.700093466Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88RQ45H9P08V5KMJ0N438J5",
+        "run": "prun_01M88RQ3Z3XN7QRWJM19WXMQX2",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88RQ47S5PBD1ZJY8BFHJR0T",
+        "aether_task": "tsk_01M88RQ47SEHAWZEVZAH789W2A",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented Ledger per SPEC.md in ledger.py (constructor validation with copied input, amount validation before account lookup, KeyError for unknown accounts, False with no change for insufficient funds or destination overflow, same-account semantics, one lock for atomic transfers and snapshots). Extended test_ledger.py from 2 to 30 tests covering every SPEC error and boundary case plus bounded concurrency checks with join timeouts. Before: both existing tests errored with NotImplementedError. After: `python3 -m unittest -v` passes 30/30, and three repeat runs also passed. Committed as d489a28 on the item branch; not pushed. Open, non-blocking follow-ups from review: the snapshot-atomicity test would catch a missing lock only probabilistically, and no test pins KeyError precedence over False when the source is short and the destination is unknown. No processes were started, so nothing is left running. The review passed at head d489a28 with reviewer agt_01M88RRYBTN2W4E9F6RCS7SHCN; its two findings are non-blocking.",
+        "structured": {
+          "checks": [
+            "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v (30 tests, OK; repeated 3 times, OK)"
+          ],
+          "commit": "d489a28d97ceb95146c336148cd54ec3cd77fb5e",
+          "evidence": [
+            {
+              "after": "(see next entry)",
+              "before": "Ran 2 tests ... FAILED (errors=2) at ledger.py:8 raise NotImplementedError",
+              "caption": "Test suite before the change: both existing tests error with NotImplementedError",
+              "kind": "output"
+            },
+            {
+              "after": "Ran 30 tests in 0.004s OK",
+              "caption": "Test suite after the change on the item branch",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "d489a28d97ceb95146c336148cd54ec3cd77fb5e",
+          "pr": {
+            "body": "Approach: single threading.Lock guards validation of accounts, funds and overflow and both writes; snapshot takes the same lock and returns a copy. No nested locks, so opposite transfers cannot deadlock. Key files: ledger.py, test_ledger.py. Checks: python3 -m unittest -v, 30 tests OK. Assumptions: non-string account names are treated as unknown and raise KeyError; bool and int subclasses are rejected as balances and amounts. Non-blocking review follow-ups: make the snapshot-atomicity test more deterministic; add a test for KeyError precedence over False when the destination is unknown.",
+            "summary": "made Ledger(balances), transfer and snapshot work per SPEC.md. now bounded, validated, thread-safe. before: NotImplementedError stubs, 2 basic tests; now: 30 tests covering all spec error and boundary cases plus concurrency.",
+            "title": "Implement Ledger per SPEC.md with focused tests"
+          },
+          "review": {
+            "reviewed_head": "d489a28d97ceb95146c336148cd54ec3cd77fb5e",
+            "reviewer_agents": [
+              "agt_01M88RRYBTN2W4E9F6RCS7SHCN"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88RRYBTN2W4E9F6RCS7SHCN",
+                "base": "9811ad4c3f3bd485fab869a6e574f3deecb52bed",
+                "findings": 2,
+                "head": "d489a28d97ceb95146c336148cd54ec3cd77fb5e",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88RRYBTN2W4E9F6RCS7SHCN"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "New lock-based concurrency code in ledger.py, with tests in test_ledger.py. No existing callers. Risk comes from the locking, so the level is high by the concurrency rule. Review passed with high risk confirmed."
+          },
+          "tree": "eddb60e81580c6c77064b385d4e8ed55c0848332"
+        },
+        "cost_usd": 0.030012240000000003,
+        "started_at": "2026-11-25T07:11:28.945062360Z",
+        "finished_at": "2026-11-25T07:13:06.493355013Z"
+      }
+    ],
+    "spent_usd": 0.030012240000000003,
+    "gates": [],
+    "delegations": {
+      "stg_01M88RQ45H9P08V5KMJ0N438J5": {
+        "direct_usd": 0.021127330000000003,
+        "delegated_usd": 0.008884910000000001,
+        "agents": [
+          {
+            "agent": "agt_01M88RRYBTN2W4E9F6RCS7SHCN",
+            "parent": "agt_01M88RQ47S5PBD1ZJY8BFHJR0T",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.008884910000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T07:11:28.653458222Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T07:11:28.671175372Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T07:11:28.653458222Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

@@ -1,0 +1,28 @@
+Implemented `extract(entries, root)` in safe_extract.py per SPEC.md and added focused stdlib unittest coverage in test_safe_extract.py (35 tests, all passing via `python3 -m unittest test_safe_extract`). Committed as 3b348b8 on main.
+
+Behavior:
+- Non-list batches (tuples, iterators, generators, even empty) raise ValueError without consuming them.
+- Root must be a str or Path naming an existing real directory (not a symlink); missing or file roots raise ValueError.
+- The whole batch is validated before any write: entry shape (2-tuple, str name, bytes data), name rules (no empty/leading-slash/backslash/colon/NUL, no empty, '.' or '..' components), duplicate names, and file/directory collisions in either order.
+- On disk, each path component below root is lstat-checked: symlinks (including dangling) and non-directory ancestors are rejected, and the target must be absent.
+- Validation performs no writes. Writes use exclusive 'xb' creation, so existing files are never overwritten. Parent directories are created as needed, and the input order is returned.
+- Unexpected OSErrors propagate.
+
+Assumptions and limits:
+- Entries must be exact tuples, so a list [name, data] is rejected as malformed.
+- Name collisions are case-sensitive. On a case-insensitive filesystem, 'A' and 'a' in one batch would fail mid-write, which the spec's rollback exclusion allows but does not prevent.
+- Symlink tests are skipped where os.symlink is unavailable.
+
+`extract(entries, root)` is implemented in `safe_extract.py` per `SPEC.md`, with focused stdlib tests. The work is committed as `3b348b8` on `main`. All 35 tests pass with `python3 -m unittest test_safe_extract`.
+
+**What it does**
+- **Batch shape:** a non-list (tuple, iterator, generator, or empty) raises `ValueError` and is not consumed.
+- **Root:** must be an existing real directory, given as a `str` or `Path`. A missing root, a file root, or a symlink root raises `ValueError`.
+- **Validation before writing:** the whole batch is checked first. That covers entry shape, name rules, duplicate names, and file/directory collisions in either order. It also covers on-disk conflicts: every component below root is `lstat`-checked, so symlinks (including dangling ones) and non-directory ancestors are rejected, and each target must be absent. Validation performs no writes.
+- **Writing:** files are created exclusively (`'xb'`), so existing files are never overwritten. Missing parent directories are created, and the names come back in input order.
+- **Errors:** unexpected I/O errors propagate.
+
+**Choices I made**
+- Entries must be exact tuples, so a `[name, data]` list is rejected as malformed.
+- Collision checks are case-sensitive. On a case-insensitive filesystem, `A` and `a` in one batch would fail partway through the writes. The spec puts rollback out of scope, so I left this as is.
+- Symlink tests are skipped where `os.symlink` is unavailable.

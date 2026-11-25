@@ -1,0 +1,23 @@
+Queued the work as item `qi_01M88RQ3VVXXNHQN21S0FJZS1S`. I did not edit the repository myself.
+
+- **Repository:** `quality-ledger-transfer`, base `main`, ship mode `local`, so the work is committed on a local branch and not pushed.
+- **Pipeline:** `direct`, one agent that implements, tests and commits. The repo is small (`SPEC.md`, `ledger.py`, `test_ledger.py`), so one author is enough.
+- **Review:** `standard`. The change is a data ledger, which is shared-code risk, but not security or concurrency, so `strict` isn't warranted.
+- **Merge:** `manual`. Nothing merges without your say.
+
+The brief tells the agent to implement every requirement in `SPEC.md`, keep the documented API exactly, handle each specified error and boundary case explicitly, extend the tests to cover those cases, use only the standard library, and commit without pushing. I didn't set a model plan, so the pipeline's default applies.
+
+I'll post the outcome when the item finishes.
+
+Done: Implement ledger.py per SPEC.md with focused tests. Implemented Ledger per SPEC.md in ledger.py (constructor validation with copied input, amount validation before account lookup, KeyError for unknown accounts, False with no change for insufficient funds or destination overflow, same-account semantics, one lock for atomic transfers and snapshots). Extended test_ledger.py from 2 to 30 tests covering every SPEC error and boundary case plus bounded concurrency checks with join timeouts. Before: both existing tests errored with NotImplementedError. After: `python3 -m unittest -v` passes 30/30, and three repeat runs also passed. Committed as d489a28 on the item branch; not pushed. Open, non-blocking follow-ups from review: the snapshot-atomicity test would catch a missing lock only probabilistically, and no test pins KeyError precedence over False when the source is short and the destination is unknown. No processes were started, so nothing is left running. The review passed at head d489a28 with reviewer agt_01M88RRYBTN2W4E9F6RCS7SHCN; its two findings are non-blocking.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RRYBTN2W4E9F6RCS7SHCN)
+
+SHIPPED: commit d489a28d97ceb95146c336148cd54ec3cd77fb5e on the run branch
+Branch `archon/s0fjzs1s-implement-ledger-py-per-spec-md-with-foc` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/23edb293904f04ee13b0657d/quality-ledger-transfer holds it (2 files changed, 269 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M88RQ3VVXXNHQN21S0FJZS1S`; land it in `main`: `archon merge qi_01M88RQ3VVXXNHQN21S0FJZS1S`.
+
+Implemented Ledger per SPEC.md in ledger.py (constructor validation with copied input, amount validation before account lookup, KeyError for unknown accounts, False with no change for insufficient funds or destination overflow, same-account semantics, one lock for atomic transfers and snapshots). Extended test_ledger.py from 2 to 30 tests covering every SPEC error and boundary case plus bounded concurrency checks with join timeouts. Before: both existing tests errored with NotImplementedError. After: `python3 -m unittest -v` passes 30/30, and three repeat runs also passed. Committed as d489a28 on the item branch; not pushed. Open, non-blocking follow-ups from review: the snapshot-atomicity test would catch a missing lock only probabilistically, and no test pins KeyError precedence over False when the source is short and the destination is unknown. No processes were started, so nothing is left running. The review passed at head d489a28 with reviewer agt_01M88RRYBTN2W4E9F6RCS7SHCN; its two findings are non-blocking.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RRYBTN2W4E9F6RCS7SHCN)
+
+SHIPPED: commit d489a28d97ceb95146c336148cd54ec3cd77fb5e on the run branch

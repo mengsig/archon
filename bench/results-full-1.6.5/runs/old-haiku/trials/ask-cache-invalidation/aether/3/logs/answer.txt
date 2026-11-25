@@ -1,0 +1,32 @@
+## Root cause
+
+Category listings are cached separately from products, and `updatePrice` never invalidates the listing cache. Listings keep the old price until their TTL expires.
+
+**The write path** (`src/pricing.js:6-13`):
+```js
+const updated = catalog.store.update(sku, { priceCents });
+catalog.cache.delete(productKey(sku));   // only product:<sku> is evicted
+return updated;
+```
+
+**The read paths** (`src/catalog.js`):
+- `product(sku)` (lines 12-20) caches under `product:<sku>` with `PRODUCT_TTL_SECONDS = 3600`. The delete above evicts that entry, so the next product-page read goes to the store and shows the new price. This is why product pages look immediate.
+- `listing(category, page)` (lines 22-33) caches each page under `listing:<category>:<page>` with `LISTING_TTL_SECONDS = 600` (`src/config.js:7`). Each cached row includes `priceCents` (line 29). Nothing evicts these keys when a price changes, so they serve the old price until they expire.
+
+**Why it's about ten minutes:** `LISTING_TTL_SECONDS` is 600 seconds. A listing page's staleness is bounded by when that page was last filled, not by when the price changed. A page filled just before the change can be stale for almost the full 600 seconds.
+
+**Reproduction** (run against the repo, no files changed): with a fake clock, the listing shows 5000 after `updatePrice(c, 'A1', 4500)`, while `product('A1')` shows 4500. The listing still shows 5000 at t=599s and returns 4500 only at t=600s.
+
+## Fix options
+
+1. **Invalidate listings on price change (preferred).** In `updatePrice`, evict the listing entries for the product's category. The simplest version is a per-category generation counter: include it in `listingKey`, and bump it in `updatePrice`. Old entries then become unreachable and expire on their own. The alternative is to track which listing keys belong to each category and delete them. Both need the SKU's category, which `updatePrice` can read from `catalog.store`.
+2. **Lower `LISTING_TTL_SECONDS`.** This is a quick mitigation, but it only shrinks the window and adds store load for expensive listing builds. It doesn't fix the cause.
+3. **Don't cache price in listings.** Listings could be cached as sorted SKU/page structure and have prices joined at read time from the product cache. This is more work and changes the cache design.
+
+I'd go with option 1. Add a test: call `listing` to fill the cache, call `updatePrice`, then assert the listing shows the new price. The existing tests don't cover this, which is why it wasn't caught.
+
+## Caveat
+
+The cache is an in-process `Map` (`src/cache.js`), and `createCatalog` makes a separate cache for each catalog instance. If `updatePrice` runs in one process and listings are served by another, neither fix helps the other process. Product pages would then be stale for up to an hour. Check whether the service runs multiple instances. If it does, the fix needs a shared cache or an explicit invalidation message to the other instances.
+
+No code was changed. The test suite was not run.

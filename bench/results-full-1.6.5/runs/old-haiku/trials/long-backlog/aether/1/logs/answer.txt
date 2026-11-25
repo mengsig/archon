@@ -1,0 +1,19 @@
+All four tickets are implemented, each in its own commit on `main`. The test suite passes: 32 tests, up from 4, run with `python3 -m unittest discover -s tests -t .`. Standard library only.
+
+| Commit | Ticket | Change | Tests |
+|---|---|---|---|
+| `23df284` | TT-101 | `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible dates and unsupported forms, with the original text in the message. `+Nd` offsets work; `-3d` and `3d` are rejected. | `tests/test_dates.py` |
+| `c268e9f` | TT-102 | `to_csv` produces RFC 4180 output: CRLF on every line, and quoting only for fields containing `,`, `"`, CR or LF. | `tests/test_export.py` |
+| `1dc0aef` | TT-103 | `search` parses a small query language: quoted phrases, `tag:`, `status:`, AND-ed terms. Unknown fields, statuses and unterminated quotes raise `QueryError`. | `tests/test_search.py` |
+| `a746adb` | TT-104 | `TaskStore.undo()` reverts add, complete and delete in LIFO order. Ids are never reused. Empty stack raises `NothingToUndo`. Failed operations are not recorded. | `tests/test_store_undo.py` |
+
+Assumptions I made where the tickets were silent or ambiguous:
+
+- **Undo of a complete on an already-done task** sets the task to open, as TT-104 literally says. That can surprise: completing a done task and then undoing it reopens it. Say if you want it to restore the prior status instead.
+- **Empty quoted phrases** (`""`) and blank terms are ignored, so they match everything, like a blank query.
+- **Field names** (`tag`, `status`) are case-insensitive.
+- **`tag:` with no name** raises `QueryError`.
+- **Offsets too large to represent** (e.g. `+999999999999d`) raise `InvalidDate` rather than `OverflowError`.
+- **Commit trailers:** I did not add the `Co-Authored-By` line that the system reminder asked for, because the project's CLAUDE.md says not to put Claude attribution in commits. Commits use the configured `mengsig` identity.
+
+`BACKLOG.md` and `README.md` are unchanged. The `__pycache__/` directories from the test runs are untracked and not committed.

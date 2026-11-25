@@ -1,0 +1,42 @@
+Reviewed src/tokens.js (read-only, no code changed). Critical: verify() (line 27) uses expected.startsWith(signature), so an empty or one-character signature is accepted; base64url(JSON {"user":"root","exp":9e15}) + "." verifies, and a 64-character sweep forges a token. Existing tests don't cover truncated signatures, so all 4 pass. High: test gap. Medium: verify() throws TypeError on malformed payloads (e.g. base64url("null") + "."), and verify() does not validate its secret, so an empty key accepts forged tokens. Low: extra '.' segments accepted; sign() accepts NaN ttl (exp becomes null); weak secret length check; no revocation or aud/iss. Do not ship until the signature comparison is fixed (exact, constant-time via timingSafeEqual) and tested.
+
+I found one critical forgery bug in `src/tokens.js` that should block the release. I changed no code; the probes were read-only, and the existing 4 tests pass.
+
+## Findings
+
+**1. Critical: `verify()` accepts any signature that is a prefix of the real MAC, including an empty one.**
+- **File and line:** `src/tokens.js`, function `verify`, line 27: `if (!expected.startsWith(signature)) return null;`
+- **What goes wrong:** `startsWith` only checks that the supplied signature is a prefix of the correct MAC. An empty signature is a prefix of everything, so the check always passes. An attacker can forge a token for any payload without the secret.
+- **Concrete input (verified):** `base64url('{"user":"root","exp":9000000000000000}') + "."` returns `{"user":"root","exp":9e15}`. A one-character signature also works: trying all 64 base64url characters, `g` was accepted in my run, so forgery takes at most 64 guesses.
+- **Severity:** Critical. Any endpoint trusting these tokens is open to authentication bypass and privilege escalation (for example, `user: "root"`).
+- **Fix direction:** require the full signature and compare it in constant time, e.g. `crypto.timingSafeEqual` on equal-length Buffers.
+
+**2. High: the test suite does not catch finding 1.**
+- **File:** `test/tokens.test.js`. The "tampered payloads are rejected" test reuses the full original signature, so it never tries a truncated or empty one.
+- **Fix direction:** add cases for `body.` (empty), a one-character signature, and a signature with a wrong last character.
+
+**3. Medium: `verify()` throws on attacker-controlled input instead of returning `null`.**
+- **File and lines:** `src/tokens.js`, function `verify`, lines 28–29.
+- **Concrete input (verified):** `base64url("null") + "."` throws `TypeError: Cannot read properties of null (reading 'exp')`. Malformed base64 or JSON throws from `JSON.parse` as well.
+- **Impact:** in a request handler, an unauthenticated client can trigger an uncaught exception. Once finding 1 is fixed, this is reachable only with a valid signature, but a malformed payload should still produce `null` or a domain error.
+- **Fix direction:** guard the parse, check that the payload is a plain object, and return `null` on failure.
+
+**4. Medium: `verify()` does not validate its secret.**
+- **File and line:** `src/tokens.js`, function `verify`, line 26. `sign()` enforces a minimum length on line 15; `verify()` does not.
+- **Concrete input (verified):** a verifier configured with an empty secret accepts a token whose MAC was computed with an empty key, so forgery needs no secret. A misconfigured deployment would accept forged tokens silently.
+- **Fix direction:** apply the same secret validation in `verify()`, ideally via one shared helper.
+
+**5. Low: `split('.')` silently ignores extra segments.**
+- **File and line:** `src/tokens.js`, function `verify`, line 24. `<valid token>.junk` verifies. The MAC still has to match, so this is not a bypass, but strict parsing should reject tokens without exactly two segments.
+
+**6. Low: `sign()` accepts invalid TTLs silently.**
+- **File and line:** `src/tokens.js`, function `sign`, line 16. `ttlSeconds: NaN` yields `exp: null` in the JSON, so the token is signed and then never verifies. Validate `ttlSeconds` as a finite positive number.
+
+**7. Low: the secret check is weak.**
+- **File and line:** `src/tokens.js`, function `sign`, line 15. It counts only `.length`, so 32 repeated characters pass, and a non-string secret whose `.length` is undefined also passes the check. Consider requiring a string or Buffer of at least 32 bytes.
+
+**8. Low, design: no `iat`/`exp` sanity checks in `verify()`, and no revocation.**
+- `verify()` checks only `exp`. Tokens cannot be revoked before expiry, and there is no audience or issuer binding. These may be intentional, but they should be decided before release.
+
+## Recommendation
+Do not ship until finding 1 is fixed and covered by a test. Findings 3 and 4 should also be fixed before release. Findings 2 and 5–8 are cheap and worth doing in the same change.

@@ -1,0 +1,22 @@
+**Root cause:** `updatePrice` invalidates only the product cache entry. The category listing cache is not invalidated, so category pages serve the old price until its 600-second TTL expires.
+
+**Repository mismatch:** The only registered repository is `ask-cache-invalidation`, and the mirror at HEAD `75af255` has no `catalog-service` directory. I read its `src/` files, which contain the catalog code the report describes. If `catalog-service` is a different repository, I need it registered before I can check that code.
+
+**The code path**
+
+- **Price change** (`src/pricing.js:54-61`): `updatePrice` writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. Only `product:<sku>` is removed.
+- **Product page** (`src/catalog.js:24-32`): `product(sku)` reads the cache, misses after the delete, and reloads from the store. It shows the new price immediately.
+- **Category page** (`src/catalog.js:34-45`): `listing(category, page)` caches full rows, `{sku, name, priceCents}`, under `listing:<category>:<page>`. The price is copied into the cached rows, and nothing removes those rows when a price changes. They are served until expiry.
+- **TTLs** (`src/config.js:102-105`): listings use `LISTING_TTL_SECONDS = 600`, which is the "about ten minutes" in the report. Products use 3600 seconds, but they are invalidated explicitly, so that TTL does not cause the delay.
+
+**Why the delay is that long:** The design depends on TTL alone for listings. The comment says listings are cached because they are expensive to build, but the cache holds a copy of the price, so a price change needs an explicit invalidation that never happens.
+
+**Fix options**
+
+1. **Recommended: keep only SKU order in the listing cache and read prices live.** Cache the expensive filter/sort result as a list of SKUs per page, then hydrate `name` and `priceCents` through `product(sku)`. Product lookups are cached and invalidated correctly, so prices are fresh and the listing build cost stays cached.
+2. **Alternative: invalidate listings on price change.** `updatePrice` would look up the SKU's category and delete its `listing:<category>:*` keys. This needs a category-to-keys index, because the cache has no prefix delete. It is more code and must be kept in sync with every write path.
+3. **Not a real fix:** lowering `LISTING_TTL_SECONDS` only shrinks the window and adds rebuild load.
+
+**Caveat:** `TtlCache` is an in-process `Map`. If `catalog-service` runs as several instances, `updatePrice` clears only the local instance, so the fix must also reach the other instances, for example through a shared cache or a pub/sub invalidation message. Product pages would then also be stale on other instances for up to an hour, so the report's "product page updates immediately" suggests a single process here. I did not read `test/catalog.test.js`.
+
+I changed no code.

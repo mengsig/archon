@@ -48,6 +48,7 @@ def database_spend(run_dir):
 
 def collect_budgets(source, destination):
     assert source.is_dir() and destination.is_dir()
+    assert not destination.resolve().is_relative_to(source.resolve()), 'output must be outside source'
     budgets = {}
     for model in ('luna', 'haiku'):
         versions = {version: database_spend(source / f'{version}-{model}') for version in ('old', 'new')}

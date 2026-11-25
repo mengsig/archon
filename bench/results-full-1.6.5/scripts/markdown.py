@@ -43,6 +43,7 @@ def comparison_table(data):
 
 def task_table(tasks):
     assert tasks and len({task['task'] for task in tasks}) == len(tasks)
+    assert all(0 <= task[arm]['pass'] <= task[arm]['graded'] for task in tasks for arm in ('old', 'new'))
     lines = ['| Task | OLD pass | NEW pass | OLD wall | NEW wall |', '|---|---:|---:|---:|---:|']
     for task in tasks:
         old, new = task['old'], task['new']
@@ -54,6 +55,7 @@ def task_table(tasks):
 
 def findings(data):
     assert 'infra_errors' in data and 'comparison' in data
+    assert all(key in data['comparison'] for key in ('flips', 'slow', 'aether_flips', 'aether_slow'))
     lines = []
     for label, key in [('Archon', 'flips'), ('Direct Aether', 'aether_flips')]:
         for flip in data['comparison'][key]:
@@ -76,6 +78,7 @@ def findings(data):
 
 def model_section(name, data):
     assert name and 'comparison' in data
+    assert 'archon' in data['comparison'] and 'arms' in data and 'aether_arms' in data
     c = data['comparison']['archon']
     loss = c['diff'][2] < 0 or (c['mcnemar']['p'] < .05 and c['mcnemar']['old_only'] > c['mcnemar']['new_only'])
     cost = c['cost_ratio'][1] > 1 and c['cost_p'] < .05

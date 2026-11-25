@@ -8,7 +8,8 @@ from pathlib import Path
 
 
 def owned(pid, expected):
-    assert pid > 0 and expected in {'archon-bench-old', 'archon-bench-new'}
+    assert pid > 0
+    assert expected in {'archon-bench-old', 'archon-bench-new'}
     cmdline = Path(f'/proc/{pid}/cmdline')
     try:
         args = cmdline.read_bytes().split(b'\0')

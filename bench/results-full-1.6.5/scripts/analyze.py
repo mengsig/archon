@@ -29,19 +29,27 @@ def load_run(run_dir):
 
 
 def load_items(stamp, row):
+    assert row['arm'] in ('archon', 'aether') and row['trial'] > 0
+    assert row['task'] and Path(row['task']).name == row['task'], 'invalid task path'
     path = stamp / 'trials' / row['task'] / row['arm'] / str(row['trial']) / 'logs' / 'archon-items.json'
     if row['arm'] != 'archon' or not path.is_file():
         return []
-    return json.loads(path.read_text())
+    items = json.loads(path.read_text())
+    assert isinstance(items, list), 'item capture must be a list'
+    return items
 
 
 def effective_cost(r):
+    assert r['cost_usd'] is None or math.isfinite(r['cost_usd']) and r['cost_usd'] >= 0
+    assert r['estimated_cost_usd'] is None or math.isfinite(r['estimated_cost_usd']) and r['estimated_cost_usd'] >= 0
     if r['cost_usd'] is None and r['estimated_cost_usd'] is None:
         return None
     return (r['cost_usd'] or 0.0) + (r['estimated_cost_usd'] or 0.0)
 
 
 def wilson(k, n):
+    assert isinstance(k, int) and isinstance(n, int)
+    assert 0 <= k <= n, 'invalid pass count'
     if n == 0:
         return (float('nan'), float('nan'))
     p = k / n
@@ -53,6 +61,8 @@ def wilson(k, n):
 
 def newcombe_diff(k1, n1, k0, n0):
     """Difference p1 - p0 with the Newcombe hybrid-score interval."""
+    assert 0 <= k1 <= n1
+    assert 0 <= k0 <= n0
     if n1 == 0 or n0 == 0:
         return (float('nan'),) * 3
     l1, u1 = wilson(k1, n1)
@@ -63,6 +73,8 @@ def newcombe_diff(k1, n1, k0, n0):
 
 
 def mcnemar_exact(b, c):
+    assert isinstance(b, int) and b >= 0
+    assert isinstance(c, int) and c >= 0
     n = b + c
     if n == 0:
         return 1.0
@@ -73,6 +85,8 @@ def mcnemar_exact(b, c):
 
 def mann_whitney_p(xs, ys):
     """Two-sided normal-approximation Mann-Whitney U with tie correction."""
+    assert all(math.isfinite(value) for value in xs)
+    assert all(math.isfinite(value) for value in ys)
     n1, n2 = len(xs), len(ys)
     if n1 < 2 or n2 < 2:
         return float('nan')
@@ -124,6 +138,8 @@ def graded(rows, arm):
 
 def stage_stats(row):
     """Stage records and delegated reviewer agents over the trial's items."""
+    assert isinstance(row['items'], list)
+    assert all(isinstance(item['stages'], list) and isinstance(item.get('delegations', {}), dict) for item in row['items'])
     stages = sum(len(i['stages']) for i in row['items'])
     reviewers = sum(len(d['agents']) for i in row['items'] for d in i.get('delegations', {}).values())
     return stages, reviewers
@@ -161,6 +177,8 @@ def paired(old_rows, new_rows, arm):
     key = lambda r: (r['task'], r['trial'])
     old = {key(r): r for r in graded(old_rows, arm)}
     new = {key(r): r for r in graded(new_rows, arm)}
+    assert len(old) == len(graded(old_rows, arm)), 'duplicate baseline pairs'
+    assert len(new) == len(graded(new_rows, arm)), 'duplicate candidate pairs'
     shared = sorted(set(old) & set(new))
     b = sum(old[k]['success'] and not new[k]['success'] for k in shared)
     c = sum(new[k]['success'] and not old[k]['success'] for k in shared)
@@ -171,7 +189,9 @@ def paired(old_rows, new_rows, arm):
 
 
 def compare(old_rows, new_rows, arm):
+    assert arm in ('archon', 'aether')
     o, n = arm_summary(old_rows, arm), arm_summary(new_rows, arm)
+    assert o['pass'] <= o['graded'] and n['pass'] <= n['graded']
     d, lo, hi = newcombe_diff(n['pass'], n['graded'], o['pass'], o['graded'])
     wr = ratio_ci(n['wall'], o['wall'])
     cr = ratio_ci(n['cost'], o['cost'])
@@ -181,6 +201,8 @@ def compare(old_rows, new_rows, arm):
 
 
 def task_table(old_rows, new_rows, arm):
+    assert arm in ('archon', 'aether')
+    assert all(row['task'] for row in old_rows + new_rows), 'empty task name'
     tasks = sorted({r['task'] for r in old_rows + new_rows})
     out = []
     for t in tasks:
@@ -193,7 +215,9 @@ def task_table(old_rows, new_rows, arm):
 
 
 def trial_history(row):
-    """Item histories and the first error of one Archon trial."""
+    """Item histories and the first error of one trial."""
+    assert row['arm'] in ('archon', 'aether') and row['wall_secs'] >= 0
+    assert isinstance(row['items'], list)
     hist = []
     for it in row['items']:
         stages = [f"{s['stage_id']}#{s['attempt']}:{s['state'].get('state')}/{s.get('verdict')}" for s in it['stages']]

@@ -21,8 +21,13 @@ def spend(path):
     assert path.name == 'aether.db'
     if not path.exists():
         return 0.0
-    with sqlite3.connect(f'file:{path}?mode=ro', uri=True, timeout=5) as db:
-        row = db.execute('SELECT COALESCE(SUM(cost_usd + COALESCE(estimated_cost_usd, 0)), 0) FROM agent_usage').fetchone()
+    try:
+        with sqlite3.connect(f'file:{path}?mode=ro', uri=True, timeout=5) as db:
+            row = db.execute('SELECT COALESCE(SUM(cost_usd + COALESCE(estimated_cost_usd, 0)), 0) FROM agent_usage').fetchone()
+    except sqlite3.OperationalError:
+        if not path.exists():
+            return 0.0
+        raise
     assert row is not None and row[0] >= 0
     return row[0]
 

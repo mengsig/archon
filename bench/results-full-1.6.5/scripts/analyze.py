@@ -11,9 +11,12 @@ Z = 1.959964
 
 
 def load_run(run_dir):
-    stamps = sorted((run_dir / 'results').iterdir())
-    assert len(stamps) == 1, f'{run_dir}: expected one results stamp, got {stamps}'
-    stamp = stamps[0]
+    if (run_dir / 'results.jsonl').is_file():
+        stamp = run_dir
+    else:
+        stamps = sorted((run_dir / 'results').iterdir())
+        assert len(stamps) == 1, f'{run_dir}: expected one results stamp, got {stamps}'
+        stamp = stamps[0]
     rows = [json.loads(line) for line in (stamp / 'results.jsonl').read_text().splitlines() if line.strip()]
     assert rows, f'{run_dir}: no trial data'
     for row in rows:

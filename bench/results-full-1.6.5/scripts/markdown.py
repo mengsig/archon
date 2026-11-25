@@ -101,7 +101,7 @@ Intervals are 95% Wilson for rates, Newcombe hybrid for rate differences, and 4,
 
 Two Luna setup probes were excluded: the candidate harness could not connect to the OLD daemon (protocol 26 versus 24), and an initial NEW run was stopped to correct its individual budget. Their private Aether databases recorded approximately $0.002024 and $0.006364, respectively; both are included in the combined model guard. The failed protocol cell is an infrastructure error, not a graded outcome. Agents ran without the optional systemd resource scope because the isolated environment had no user bus.
 
-The full trial records and grading evidence are in `runs/`. `summary.json` contains the numerical results and per-run binary hashes; `index.html` is the visual report. Scripts in `scripts/` document the run and analysis.
+The full trial records and grading evidence are in `runs/`. `summary.json` contains the numerical results and per-run binary hashes; `index.html` is the visual report. Scripts in `scripts/` document the run and analysis. From the repository root, regenerate the numeric and visual reports with `python3 bench/results-full-1.6.5/scripts/analyze.py bench/results-full-1.6.5/runs bench/results-full-1.6.5`, then run `render.py` and `markdown.py` with `bench/results-full-1.6.5` as their argument.
 """
 
 

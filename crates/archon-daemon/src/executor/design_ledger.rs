@@ -7,13 +7,13 @@ use std::path::{Path, PathBuf};
 
 use archon_core::design::{
     DesignAsset, DesignAssetId, DesignNote, DesignSession, FinishChoices, NoteKind, NoteStatus,
-    ReplyAuthor, SessionState, Target, Viewport, undone_by,
+    ReplyAuthor, SessionState, Target, undone_by,
 };
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::intent::{
-    ApprovedIntent, IntentArtifact, IntentBinding, IntentSource, ReferenceImage, Requirement,
-    RequirementKind, Viewport as ImageViewport,
+    ApprovedIntent, ImageCapture, IntentArtifact, IntentBinding, IntentSource, ReferenceImage,
+    Requirement, RequirementKind, Viewport as ImageViewport,
 };
 use archon_core::run::{OperatorGate, PipelineRun, StageRun, StageState};
 use archon_queue::Store;
@@ -47,7 +47,10 @@ pub(crate) struct LedgerNote {
 pub(crate) struct LedgerPicture {
     pub path: PathBuf,
     pub sha256: String,
-    pub viewport: Viewport,
+    /// The CSS viewport the picture was taken at.
+    pub viewport: ImageViewport,
+    /// How the browser took it; none for a picture stored before it said.
+    pub capture: Option<ImageCapture>,
     pub caption: String,
 }
 
@@ -142,17 +145,12 @@ pub(crate) fn build_draft(
                     id: image_id.clone(),
                     path: picture.path.clone(),
                     sha256: picture.sha256.clone(),
-                    // The viewport the picture was taken at is what the
-                    // build must match. The session knows no theme or app
-                    // state, so it records none: the caption ("captured
-                    // from the preview at commit …") is where the picture
-                    // came from, never a state a built image could show.
-                    viewport: Some(ImageViewport {
-                        width: picture.viewport.w,
-                        height: picture.viewport.h,
-                    }),
+                    // The build must match how the picture was taken; the session knows
+                    // no theme or app state (its caption is no state), so records none.
+                    viewport: Some(picture.viewport),
                     theme: None,
                     state: None,
+                    capture: picture.capture,
                 });
                 requirement.kind = RequirementKind::Visual;
                 requirement.images = vec![image_id];
@@ -188,9 +186,9 @@ pub(super) fn worktree_ref(store: &Store, run: &PipelineRun) -> Result<WorktreeR
 }
 
 /// The CSS viewport of `preset`, as the preview browser sets it.
-fn preset_viewport(preset: archon_core::design::ViewportPreset) -> Viewport {
-    let (w, h) = preset.size();
-    Viewport { w, h, preset }
+fn preset_viewport(preset: archon_core::design::ViewportPreset) -> ImageViewport {
+    let (width, height) = preset.size();
+    ImageViewport { width, height }
 }
 
 /// The picture a note takes into the ledger, and whether the operator left
@@ -230,16 +228,24 @@ fn ledger_picture(
         .as_deref()
         .or(note.captured_commit.as_deref())
         .unwrap_or(head);
+    // The viewport the browser recorded taking it at; for a picture stored
+    // before it did, its target's preset, else the note's (`capture_final`).
+    let viewport = asset.capture.map_or_else(
+        || {
+            preset_viewport(
+                note.target
+                    .as_ref()
+                    .map_or(note.viewport.preset, |t| t.viewport.preset),
+            )
+        },
+        |capture| capture.viewport,
+    );
+    assert!(viewport.width > 0 && viewport.height > 0);
     LedgerPicture {
         path: ctx.design.asset_path(asset),
         sha256: asset.sha256.clone(),
-        // The viewport the picture was taken at: its target's preset, else
-        // the note's (`capture_final`).
-        viewport: preset_viewport(
-            note.target
-                .as_ref()
-                .map_or(note.viewport.preset, |t| t.viewport.preset),
-        ),
+        viewport,
+        capture: asset.capture,
         caption: format!(
             "captured from the preview at commit {} {}",
             &commit[..commit.len().min(7)],
@@ -537,7 +543,7 @@ fn card_pictures(
             assert_eq!(reference.sha256, picture.sha256);
             let caption = format!(
                 "{}, {}x{}",
-                picture.caption, picture.viewport.w, picture.viewport.h
+                picture.caption, picture.viewport.width, picture.viewport.height
             );
             read_pic(
                 &reference.path,
@@ -807,7 +813,7 @@ fn freeze_pages<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archon_core::design::ViewportPreset;
+    use archon_core::design::{Viewport, ViewportPreset};
     use std::collections::BTreeMap;
 
     const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 1, 2, 3];
@@ -820,6 +826,13 @@ mod tests {
         }
     }
 
+    fn image_viewport() -> ImageViewport {
+        ImageViewport {
+            width: 1440,
+            height: 900,
+        }
+    }
+
     fn picture(dir: &Path, name: &str) -> LedgerPicture {
         let path = dir.join(name);
         let bytes = [PNG, name.as_bytes()].concat();
@@ -827,7 +840,8 @@ mod tests {
         LedgerPicture {
             path,
             sha256: sha_hex(&bytes),
-            viewport: viewport(),
+            viewport: image_viewport(),
+            capture: None,
             caption: "captured from the preview at commit 3f9c2a1 2026-11-21 10:00 UTC".into(),
         }
     }
@@ -850,6 +864,7 @@ mod tests {
             viewport: None,
             theme: None,
             state: None,
+            capture: None,
         };
         let requirement = |id: &str| Requirement {
             id: id.into(),
@@ -905,6 +920,44 @@ mod tests {
         draft.validate().unwrap();
         let json = serde_json::to_string(&draft).unwrap();
         assert!(!json.contains("before") && !json.contains("after"));
+    }
+
+    /// S4: the final picture was 2880x1800, the page at a 1440x900 viewport
+    /// and DPR 1, the clip at scale 2. The ledger keeps those conditions for
+    /// acceptance to hold the build to, not the viewport alone.
+    #[test]
+    fn a_picture_s_capture_conditions_reach_the_ledger() {
+        use archon_core::intent::{CaptureArea, CaptureMethod};
+        let dir = tempfile::tempdir().unwrap();
+        let capture = ImageCapture {
+            method: CaptureMethod::PageScreenshot,
+            viewport: image_viewport(),
+            device_scale_factor: 1.0,
+            mobile: false,
+            area: CaptureArea {
+                x: 0,
+                y: 0,
+                width: 1440,
+                height: 900,
+            },
+            screenshot_scale: 2.0,
+            pixels: ImageViewport {
+                width: 2880,
+                height: 1800,
+            },
+        };
+        let mut picture = picture(dir.path(), "d3.png");
+        picture.capture = Some(capture);
+        let notes = [note("D3", "Change the heading", Some(picture))];
+        let draft = build_draft(None, "Garden notes", &notes, None).unwrap();
+        let image = &draft.images[0];
+        assert_eq!(image.capture, Some(capture));
+        assert_eq!(image.viewport, Some(capture.viewport));
+        draft.validate().unwrap();
+        let json = serde_json::to_value(&draft).unwrap();
+        assert_eq!(json["images"][0]["capture"]["pixels"]["width"], 2880);
+        assert_eq!(json["images"][0]["capture"]["device_scale_factor"], 1.0);
+        assert_eq!(json["images"][0]["capture"]["screenshot_scale"], 2.0);
     }
 
     #[test]

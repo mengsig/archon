@@ -283,6 +283,26 @@ in-between pictures are never part of it and never sent to a later model.
 Review and acceptance then check the shipped UI against these pictures and
 your words.
 
+Each picture in the ledger records how the preview browser took it: the
+viewport the page was laid out at, the page's device scale factor and mobile
+emulation, which also turns touch input on (1 and off for the desktop
+preview; a replay must set both, or `pointer: coarse` pages lay out
+otherwise), the area shown (the whole
+viewport or a region), the screenshot's own clip scale (2 for the final
+pictures, less if the size budget lowered it) and its size in pixels.
+Pictures never include the design overlay. The clip scale is not the page's
+device scale factor: a page laid out at a factor of 2 can match CSS
+resolution queries the preview did not, and lay out differently in a picture
+of the same size.
+
+The build is told to take its own picture the same way and to copy the
+reference's capture into its result. Acceptance refuses a result that
+declares another capture, or a built picture of another pixel size, before
+any judge compares the two. Archon cannot see how a built picture was taken,
+so a judge who sees a pair taken differently anyway (another crop, zoom,
+viewport or overlay) fails it as a capture mismatch rather than as a gap in
+the build.
+
 The page shown at the gate is a decision page. At the top are a summary (how
 many notes changed the app, the checks the agent reported, what approving
 does) and the answers. Each note then has a card: your words, what you

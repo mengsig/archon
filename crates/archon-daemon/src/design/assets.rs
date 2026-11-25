@@ -7,7 +7,9 @@ use archon_core::design::{
 };
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
+use archon_core::intent::{CaptureArea, CaptureMethod, ImageCapture, Viewport as ImageSize};
 use archon_core::protocol::{DesignAssetView, Reply};
+use archon_design_browser as adb;
 use base64::Engine as _;
 use sha2::{Digest, Sha256};
 
@@ -17,9 +19,14 @@ use crate::context::DaemonContext;
 /// Pending assets nobody uses are deleted after this long.
 const UNUSED_AFTER: chrono::Duration = chrono::Duration::hours(1);
 
-/// Width and height of a PNG, JPEG or WebP, read from its header.
+/// Width and height of a PNG, JPEG, GIF or WebP, read from its header.
 pub(crate) fn dimensions(mime: &str, bytes: &[u8]) -> Option<(u32, u32)> {
     match mime {
+        "image/gif" => {
+            let w = u16::from_le_bytes(bytes.get(6..8)?.try_into().ok()?);
+            let h = u16::from_le_bytes(bytes.get(8..10)?.try_into().ok()?);
+            Some((u32::from(w), u32::from(h)))
+        }
         "image/png" => {
             if bytes.len() < 24 {
                 return None;
@@ -126,6 +133,35 @@ pub(crate) struct NewAsset<'a> {
     pub width: u32,
     pub height: u32,
     pub sketch: Option<&'a str>,
+    /// How the preview browser took it; none for an upload or sketch.
+    pub capture: Option<ImageCapture>,
+}
+
+/// How the preview browser took `picture`, as the ledger records it.
+pub(crate) fn capture_of(picture: &adb::Picture) -> ImageCapture {
+    let taken = picture.capture;
+    let capture = ImageCapture {
+        method: CaptureMethod::PageScreenshot,
+        viewport: ImageSize {
+            width: taken.viewport_w,
+            height: taken.viewport_h,
+        },
+        device_scale_factor: taken.device_scale_factor,
+        mobile: taken.mobile,
+        area: CaptureArea {
+            x: taken.x,
+            y: taken.y,
+            width: taken.w,
+            height: taken.h,
+        },
+        screenshot_scale: taken.screenshot_scale,
+        pixels: ImageSize {
+            width: picture.width,
+            height: picture.height,
+        },
+    };
+    assert!(capture.is_valid(), "a browser picture has a nonempty area");
+    capture
 }
 
 impl DesignService {
@@ -156,6 +192,7 @@ impl DesignService {
             target: new.target,
             note: new.note,
             commit: new.commit,
+            capture: new.capture,
             created_at: archon_core::now(),
         };
         let path = self.asset_path(&asset);
@@ -314,6 +351,7 @@ impl DesignService {
                     width,
                     height,
                     sketch: sketch.as_deref(),
+                    capture: None,
                 },
             )
             .await?
@@ -405,4 +443,40 @@ pub(crate) fn caption_of(asset: &DesignAsset) -> Option<String> {
         super::short(commit),
         asset.created_at.format("%H:%M UTC")
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A final picture of a 1440x900 viewport, the page at DPR 1 and the clip
+    /// at scale 2, records both scales apart; a GIF's size is read too.
+    #[test]
+    fn a_browser_picture_records_its_viewport_area_and_scales() {
+        let picture = adb::Picture {
+            mime: "image/jpeg",
+            bytes: vec![0xff, 0xd8, 0xff],
+            width: 2880,
+            height: 1800,
+            capture: adb::PictureCapture {
+                viewport_w: 1440,
+                viewport_h: 900,
+                device_scale_factor: 1.0,
+                mobile: false,
+                x: 0,
+                y: 0,
+                w: 1440,
+                h: 900,
+                screenshot_scale: 2.0,
+            },
+        };
+        let capture = capture_of(&picture);
+        assert!(capture.whole_viewport());
+        assert_eq!(capture.device_scale_factor, 1.0);
+        assert_eq!(capture.screenshot_scale, 2.0);
+        assert_eq!((capture.pixels.width, capture.pixels.height), (2880, 1800));
+        let gif = b"GIF89a\x40\x01\xf0\x00".to_vec();
+        assert_eq!(dimensions("image/gif", &gif), Some((320, 240)));
+        assert_eq!(dimensions("image/gif", b"GIF89a"), None);
+    }
 }

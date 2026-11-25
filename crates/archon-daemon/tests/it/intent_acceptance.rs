@@ -31,10 +31,20 @@ pub(crate) async fn fixture_on(
 /// [`fixture_on`] in a pipeline given as its name, the TOML to add it to the
 /// repository from when the harness lacks it, and its stages' model plan.
 pub(crate) async fn fixture_in(
-    mut config: archon_core::config::Config,
-    (pipeline, toml, mut plan): (&str, Option<&str>, archon_core::model::ModelPlan),
+    config: archon_core::config::Config,
+    pipeline: (&str, Option<&str>, archon_core::model::ModelPlan),
     references: bool,
     vision: &[&str],
+) -> (Harness, FakeAether, QueueItem) {
+    fixture_of(config, pipeline, (references, vision), record).await
+}
+
+/// [`fixture_in`] with the approved ledger `ledger` writes.
+pub(crate) async fn fixture_of(
+    mut config: archon_core::config::Config,
+    (pipeline, toml, mut plan): (&str, Option<&str>, archon_core::model::ModelPlan),
+    (references, vision): (bool, &[&str]),
+    ledger: impl FnOnce(&Harness) -> ApprovedIntent,
 ) -> (Harness, FakeAether, QueueItem) {
     config.worktrees.keep_on_success = true;
     let h = Harness::with_config(config).await;
@@ -52,7 +62,7 @@ pub(crate) async fn fixture_in(
             .replace(Some(std::sync::Arc::new(client)))
             .unwrap();
     }
-    let intent = record(&h);
+    let intent = ledger(&h);
     let binding = IntentBinding {
         id: intent.id.clone(),
         version: 1,
@@ -141,7 +151,7 @@ async fn settle_within(h: &Harness, data: Value, timeout: Duration) {
         .expect("dispatch must not deadlock");
 }
 
-async fn to_acceptance(h: &Harness, item: &QueueItem) {
+pub(crate) async fn to_acceptance(h: &Harness, item: &QueueItem) {
     settle(h, evidence(h, item, "implemented").await).await;
     assert!(h.running().await.iter().all(|s| s.stage_id == "review"));
     settle(h, json!({"verdict":"pass","findings":[]})).await;

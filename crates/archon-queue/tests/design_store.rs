@@ -140,6 +140,7 @@ fn intent(id: &str, version: u32, ids: &[&str], images: &[&str]) -> ApprovedInte
                 viewport: None,
                 theme: None,
                 state: None,
+                capture: None,
             })
             .collect(),
         requirements: ids
@@ -174,6 +175,7 @@ fn asset(item: &QueueItemId, sha: &str, source: AssetSource, bytes: u64) -> Desi
         target: None,
         note: None,
         commit: None,
+        capture: None,
         created_at: t(0),
     }
 }
@@ -680,6 +682,61 @@ fn a_retaken_before_picture_replaces_the_old_one_and_survives_a_reload() {
     assert_eq!(store.design_asset(item, &second.id).unwrap(), Some(second));
 }
 
+/// A picture keeps how the browser took it, and the same bytes taken another
+/// way are another record: the ledger must name the conditions of its own.
+#[test]
+fn a_picture_keeps_its_capture_conditions() {
+    use archon_core::intent::{CaptureArea, CaptureMethod, ImageCapture, Viewport as Size};
+    let (mut store, _repo, items) = seeded(1);
+    let item = &items[0].id;
+    let capture = ImageCapture {
+        method: CaptureMethod::PageScreenshot,
+        viewport: Size {
+            width: 1440,
+            height: 900,
+        },
+        device_scale_factor: 1.0,
+        mobile: false,
+        area: CaptureArea {
+            x: 0,
+            y: 0,
+            width: 1440,
+            height: 900,
+        },
+        screenshot_scale: 2.0,
+        pixels: Size {
+            width: 2880,
+            height: 1800,
+        },
+    };
+    let taken = DesignAsset {
+        capture: Some(capture),
+        ..asset(item, "cc", AssetSource::Final, 100)
+    };
+    let stored = store.design_asset_put(taken).unwrap();
+    assert_eq!(stored.capture, Some(capture));
+    let read = store.design_asset(item, &stored.id).unwrap().unwrap();
+    assert_eq!(read.capture, Some(capture));
+    let unknown = store
+        .design_asset_put(asset(item, "cc", AssetSource::Final, 100))
+        .unwrap();
+    assert_ne!(unknown.id, stored.id);
+    assert_eq!(unknown.capture, None);
+    let page_at_2x = ImageCapture {
+        device_scale_factor: 2.0,
+        screenshot_scale: 1.0,
+        ..capture
+    };
+    let other = DesignAsset {
+        capture: Some(page_at_2x),
+        ..asset(item, "cc", AssetSource::Final, 100)
+    };
+    let other = store.design_asset_put(other).unwrap();
+    assert!(other.id != stored.id && other.id != unknown.id);
+    let read = store.design_asset(item, &other.id).unwrap().unwrap();
+    assert_eq!(read.capture, Some(page_at_2x));
+}
+
 #[test]
 fn sweeping_one_capture_keeps_a_shared_picture_used_by_a_note() {
     let (mut store, _repo, items) = seeded(2);
@@ -947,7 +1004,7 @@ fn the_migration_applies_to_an_existing_database() {
     assert_eq!(versions(&conn), 28);
     drop(conn);
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(versions(&rusqlite::Connection::open(&path).unwrap()), 31);
+    assert_eq!(versions(&rusqlite::Connection::open(&path).unwrap()), 32);
     assert_eq!(store.item(&item.id).unwrap().title, "x");
     let session = live(&mut store, &item.id);
     assert_eq!(add(&mut store, &item.id, &session, "k"), "D1");

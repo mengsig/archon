@@ -35,6 +35,7 @@ use archon_core::id::QueueItemId;
 use archon_core::protocol::{DesignEvent, DesignNoteView, WelcomeDevice};
 use archon_queue::Store;
 
+pub(crate) use self::assets::dimensions;
 pub use self::browser::{
     BrowserFactory, BrowserRegistration, FrameFeed, PreviewBrowser, RealFactory,
 };

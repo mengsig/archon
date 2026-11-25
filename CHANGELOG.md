@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- A live design whose layout did not change no longer fails intent
+  acceptance with a "layout gap". The ledger recorded only the CSS viewport
+  of a picture shot at clip scale 2, so a 1440×900 reference was a 2880×1800
+  image; the build took its picture at 720×450 and scale 2 to make 1440×900
+  pixels, the narrower page reflowed, and the judge failed it. Each ledger
+  picture now records how the browser took it: viewport, the page's device
+  scale factor, its mobile and touch emulation, area, the screenshot's clip
+  scale and pixel size, never the overlay. The build is told to replay
+  exactly that and copy it into its result; acceptance refuses a result declaring another
+  capture, or a built picture of another pixel size, before judging, and a
+  judge reports a pair still taken differently as a capture mismatch. Store
+  schema 32 adds the capture to design pictures; pictures taken before it
+  keep only their viewport.
+
 - Report Aether releases below the required minimum in doctor, status, update and the installer.
 
 ## 1.6.5

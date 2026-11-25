@@ -1,6 +1,6 @@
 use archon_core::acceptance::RequirementResult;
 use archon_core::error::ArchonError;
-use archon_core::intent::ApprovedIntent;
+use archon_core::intent::{ApprovedIntent, ReferenceImage};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -82,7 +82,11 @@ pub(super) fn prove(
             }
             let built = super::super::pages::inside_workspace(workspace, &pair.built)
                 .map_err(ArchonError::Invalid)
-                .and_then(|built| Ok((digest(&read(&built)?), built)));
+                .and_then(|built| {
+                    let bytes = read(&built)?;
+                    taken_alike(reference, &bytes)?;
+                    Ok((digest(&bytes), built))
+                });
             let (sha256, built) = built.map_err(|e| {
                 archon_pipeline::acceptance::results_refused(&format!(
                     "{} built image {}: {e}",
@@ -108,6 +112,36 @@ pub(super) fn prove(
     );
     assert!(proofs.iter().all(|p| p.sha256.len() == 64));
     Ok(proofs)
+}
+
+/// Refuses a built image that cannot have been taken the way `reference` was:
+/// its pixel size is the recorded viewport or area at the recorded scale, so
+/// another size means another viewport, scale or crop, never like with like.
+fn taken_alike(reference: &ReferenceImage, built: &[u8]) -> Result<(), ArchonError> {
+    let Some(capture) = reference.capture.as_ref() else {
+        return Ok(());
+    };
+    assert!(
+        capture.is_valid(),
+        "the approved ledger validated the capture"
+    );
+    let size = archon_core::attachment::sniff_media_type(built)
+        .and_then(|mime| crate::design::dimensions(mime, built));
+    let Some((width, height)) = size else {
+        return Err(ArchonError::Invalid(format!(
+            "its pixel size cannot be read, so it cannot be shown to match reference {}",
+            reference.id
+        )));
+    };
+    if capture.fits(width, height) {
+        return Ok(());
+    }
+    Err(ArchonError::Invalid(format!(
+        "it is {width}x{height} pixels, but reference {} was taken as {}. Retake the built \
+         image the same way, so the two compare like with like",
+        reference.id,
+        capture.describe()
+    )))
 }
 
 pub(super) fn verify(proofs: &[ImageProof]) -> Result<(), ArchonError> {

@@ -39,6 +39,16 @@ class ReportTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'unpriced'):
             analyze.verdict({'luna': {'archon': data}})
 
+    def test_pass_loss_and_slowdown_trigger_guard(self):
+        data = comparison()
+        data['cost_p'] = .5
+        data['diff'] = [-.2, -.3, -.1]
+        self.assertEqual(analyze.verdict({'luna': {'archon': data}})[0], 'REGRESSION')
+        data['diff'] = [0, -.1, .1]
+        data['wall_ratio'] = [1.3, 1.1, 1.5]
+        data['wall_p'] = .01
+        self.assertEqual(analyze.verdict({'luna': {'archon': data}})[0], 'REGRESSION')
+
     def test_missing_measurements_are_json_null(self):
         safe = analyze.json_safe({'values': [math.nan, math.inf, 1.0]})
         self.assertEqual(safe, {'values': [None, None, 1.0]})

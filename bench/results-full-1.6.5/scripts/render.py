@@ -5,6 +5,32 @@ from pathlib import Path
 import sys
 
 
+STYLE = """
+:root{font-family:system-ui,sans-serif;color:#20231f;background:#f5f5f3}
+body{margin:0}
+main{max-width:1440px;margin:auto;padding:clamp(1rem,3vw,3rem)}
+h1{font-size:clamp(2rem,5vw,4rem);margin:.3rem 0}
+h2{margin-top:2.5rem}
+h3{margin-top:2rem}
+.banner{background:#1c1e1b;color:white;padding:2rem;border-radius:1rem}
+.status{display:inline-block;background:#285dce;color:white;padding:.5rem .8rem;border-radius:.5rem;font-weight:800}
+.lead{max-width:70ch;line-height:1.5}
+section{background:white;margin-top:1.5rem;padding:1.5rem;border-radius:1rem;min-width:0}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:.75rem;margin:1rem 0}
+.tile{background:#eeeeec;padding:1rem;border-radius:.7rem;min-width:0}
+.tile small,.tile strong{display:block}
+.tile strong{font-size:1.2rem;margin-top:.4rem;overflow-wrap:anywhere}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;text-align:left;font-size:.9rem}
+th,td{padding:.7rem;border-bottom:1px solid #e3e5e0;vertical-align:top}
+th{color:#444c43;white-space:nowrap}
+td{overflow-wrap:anywhere}
+.notes{line-height:1.6;max-width:90ch}
+@media(max-width:600px){section{padding:1rem}
+}
+
+"""
+
 def pct(value):
     return 'n/a' if value is None else f'{100 * value:.1f}%'
 
@@ -87,7 +113,7 @@ def render(summary):
     details = ''.join(f'<li>{html.escape(reason)}</li>' for reason in reasons)
     models = ''.join(render_model(name.title(), data) for name, data in summary['models'].items())
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Archon 1.6.5 benchmark</title><style>
-:root{{font-family:system-ui,sans-serif;color:#20231f;background:#f5f5f3}}body{{margin:0}}main{{max-width:1440px;margin:auto;padding:clamp(1rem,3vw,3rem)}}h1{{font-size:clamp(2rem,5vw,4rem);margin:.3rem 0}}h2{{margin-top:2.5rem}}h3{{margin-top:2rem}}.banner{{background:#1c1e1b;color:white;padding:2rem;border-radius:1rem}}.status{{display:inline-block;background:#285dce;color:white;padding:.5rem .8rem;border-radius:.5rem;font-weight:800}}.lead{{max-width:70ch;line-height:1.5}}section{{background:white;margin-top:1.5rem;padding:1.5rem;border-radius:1rem;min-width:0}}.tiles{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:.75rem;margin:1rem 0}}.tile{{background:#eeeeec;padding:1rem;border-radius:.7rem;min-width:0}}.tile small,.tile strong{{display:block}}.tile strong{{font-size:1.2rem;margin-top:.4rem;overflow-wrap:anywhere}}.table-wrap{{overflow-x:auto}}table{{width:100%;border-collapse:collapse;text-align:left;font-size:.9rem}}th,td{{padding:.7rem;border-bottom:1px solid #e3e5e0;vertical-align:top}}th{{color:#444c43;white-space:nowrap}}td{{overflow-wrap:anywhere}}.notes{{line-height:1.6;max-width:90ch}}@media(max-width:600px){{section{{padding:1rem}}}}
+{STYLE}
 </style></head><body><main><div class="banner"><span class="status">{html.escape(summary['verdict'])}</span><h1>Archon 1.6.5 benchmark</h1><p class="lead">Full suite, three trials per task, medium effort. Published Archon 1.6.4 versus the candidate on Aether 1.4.3.</p><ul>{details}</ul></div>{models}<section class="notes"><h2>Reading these results</h2><p>Intervals are 95% Wilson for pass rates and percentile bootstrap for ratios of means. McNemar is an exact paired test; wall and cost p-values use Mann–Whitney. Three trials per task leave substantial uncertainty. Cost includes billed and estimated usage.</p><p>See README.md and summary.json in this directory for provenance, run data, exclusions, flipped tasks, and limitations.</p></section></main></body></html>'''
 
 

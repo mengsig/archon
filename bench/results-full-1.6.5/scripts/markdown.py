@@ -59,6 +59,9 @@ def findings(data):
         for flip in data['comparison'][key]:
             pairs = flip['pairs']
             lines.append(f"- {label}, {flip['task']}: {flip['old']} to {flip['new']}; {pairs['old_only']} OLD-only and {pairs['new_only']} NEW-only passes.")
+    for label, key in [('Archon', 'slow'), ('Direct Aether', 'aether_slow')]:
+        for slow in data['comparison'][key]:
+            lines.append(f"- {label}, {slow['task']}: mean wall {slow['old_mean']:.0f} s to {slow['new_mean']:.0f} s ({slow['ratio']:.2f}×, p={formatted(slow['p'], '.3f')}).")
     for version, errors in data['infra_errors'].items():
         for error in errors:
             lines.append(f"- Infra, {version.upper()} {error['arm']} {error['task']} trial {error['trial']}: {error['error']}")
@@ -74,7 +77,7 @@ def model_section(name, data):
     gaps = ', '.join(f"{version.upper()} {label}: {arm['cost_gaps']}" for label, arms in [('Archon', data['arms']), ('Aether', data['aether_arms'])] for version, arm in arms.items() if arm['cost_gaps']) or 'none reported'
     caveat = ' Some recorded totals are floors, so actual cost differences remain uncertain.' if gaps != 'none reported' else ''
     statement = f"Cost gaps: {gaps}.{caveat}\n\nSignificant pass-rate drop: {'yes' if loss else 'no'}; significant recorded-cost increase: {'yes' if cost else 'no'}; significant slowdown: {'yes' if wall else 'no'}."
-    return f"## {name}\n\n{statement}\n\n{arm_table(data)}\n\n### NEW versus OLD\n\n{comparison_table(data['comparison'])}\n\n### Archon per task\n\n{task_table(data['comparison']['tasks_archon'])}\n\n### Paired flips and infrastructure\n\n{findings(data)}\n"
+    return f"## {name}\n\n{statement}\n\n{arm_table(data)}\n\n### NEW versus OLD\n\n{comparison_table(data['comparison'])}\n\n### Archon per task\n\n{task_table(data['comparison']['tasks_archon'])}\n\n### Paired flips, slower tasks and infrastructure\n\n{findings(data)}\n"
 
 
 def method(summary):

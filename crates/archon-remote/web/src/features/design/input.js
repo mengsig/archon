@@ -115,9 +115,10 @@ export function createInputBatcher({
     if (key !== null && (up || action === 'move') && !held) return false;
     if (merge(event)) return true;
 
-    // Each admitted press reserves space for its release, even after it is sent.
+    // Each admitted press reserves space for its release, even after it is sent;
+    // a refused batch put back may overrun it, so a release always gets in.
     const reserve = down && !held ? 1 : up ? -1 : 0;
-    while (queue.length + pressed.size + 1 + reserve > MAX_QUEUED) {
+    while (!up && queue.length + pressed.size + 1 + reserve > MAX_QUEUED) {
       const at = queue.findIndex((e) => e.type === 'wheel' || e.action === 'move');
       if (at !== -1) { queue.splice(at, 1); continue; }
       if (!overflowReported) { overflowReported = true; onOverflow(); }
@@ -126,7 +127,7 @@ export function createInputBatcher({
     if (down) pressed.add(key);
     if (up) pressed.delete(key);
     queue.push(event);
-    console.assert(queue.length + pressed.size <= MAX_QUEUED, 'Input queue exceeded its release reserve');
+    console.assert(queue.length + pressed.size <= MAX_QUEUED + maxEvents, 'Input queue exceeded its release reserve');
     console.assert(!up || !pressed.has(key), 'Input release did not clear its press');
     return true;
   }

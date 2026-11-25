@@ -238,3 +238,20 @@ test('a stop forgets an outstanding reply, so a late one cannot unbalance the co
   assert.equal(b.outstanding, 1);
   assert.equal(s.batches.length, 2);
 });
+
+test('a release still gets in after a refused press is put back into a full queue', async () => {
+  const c = clock();
+  const s = slowSend();
+  const b = createInputBatcher({ send: s.send, ...c });
+  const key = (action) => ({ type: 'key', action, key: 'a', code: 'KeyA', text: null, modifiers: 0 });
+  b.push(key('down')); c.advance(1);
+  let admitted = 0;
+  while (b.push({ type: 'text', text: 'x' })) admitted += 1;
+  assert.ok(admitted > 400, 'the queue filled up to its release reserve');
+  await s.refuse();
+  assert.equal(b.push(key('up')), true, 'the release of a press archond will get is never refused');
+  c.advance(RETRY_MS);
+  for (let i = 0; i < 20 && s.replies.length > 0; i += 1) { await s.answer(); c.advance(20); }
+  const keys = s.batches.slice(1).flat().filter((e) => e.type === 'key');
+  assert.deepEqual(keys.map((e) => e.action), ['down', 'up'], 'the press goes again, then its release');
+});

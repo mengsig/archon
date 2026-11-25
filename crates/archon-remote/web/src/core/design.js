@@ -43,7 +43,7 @@ export function designCommands(request) {
     unsubscribe: (sub) => request('design_unsubscribe', { sub }).then(expect('design_done')),
     asset: (item, id) => request('design_asset', { item, id }).then(expect('design_asset')),
     ack: (sub, seq) => request('design_frame_ack', { sub, seq }).then(expect('design_done')),
-    input: (session, events) => request('design_input', { session, events }).then(expect('design_done')),
+    input: (session, events) => request('design_input', { session, events }, { timeoutMs: INPUT_TIMEOUT_MS }).then(expect('design_done')),
     resolve: (session, x, y, depth = 0, select = false) => request('design_resolve', { session, x, y, depth, select }).then(expect('design_resolved')),
     region: (session, box) => request('design_region', { session, box }).then(expect('design_resolved')),
     upload: (fields) => request('design_upload', { blank: false, ...fields }, { timeoutMs: 60_000 }).then(expect('design_resolved', 'design_asset')),
@@ -103,6 +103,16 @@ export function plainMessage(text) {
   if (!rest) return '';
   const said = rest[0].toUpperCase() + rest.slice(1);
   return /[.!?…]$/.test(said) ? said : `${said}.`;
+}
+
+// archond answers input within 10 s (INPUT_DEADLINE); waiting for that answer,
+// not a shorter guess, is what keeps one batch from overlapping the next.
+export const INPUT_TIMEOUT_MS = 60_000;
+
+// Input that may have reached the app only in part: say so, quietly.
+export function isLostInput(err) {
+  return err?.code === 'timeout'
+    || (err?.code === 'unavailable' && /may not have reached the app/.test(String(err?.message ?? '')));
 }
 
 // archond refusing a request past its in-flight cap, or input past its rate:

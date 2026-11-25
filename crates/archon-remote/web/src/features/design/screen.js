@@ -4,7 +4,7 @@ import { h } from '../../ui/dom.js';
 import { emptyState } from '../../ui/components.js';
 import { confirmSheet, openSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
-import { designErrorText, isBackpressure } from '../../core/design.js';
+import { designErrorText, isBackpressure, isLostInput } from '../../core/design.js';
 import { initialState, reduce, isLive, currentPath, followsNewSession, presetMismatch, pointerBlockedText, PRESET_SIZE } from './state.js';
 import { createDesignStream } from './stream.js';
 import { createStage } from './overlay.js';
@@ -29,7 +29,11 @@ const WIDE_PX = 1024;
 const SHEET_HEIGHTS = ['peek', 'half', 'full'];
 const FOLLOW_EVERY_MS = 3000;
 const FOLLOW_MAX_MS = 30_000;
-const BEHIND = { busy: 'Catching up with the preview…', skipped: 'The preview fell behind; some input was skipped.' };
+const BEHIND = {
+  busy: 'Catching up with the preview…',
+  skipped: 'The preview fell behind; some input was skipped.',
+  lost: 'The preview stopped answering; some input may not have reached it.',
+};
 const BEHIND_SHOWN_MS = 4000;
 
 export function mountDesign(view, ctx) {
@@ -134,7 +138,8 @@ export function mountDesign(view, ctx) {
       return ctx.design.input(id, events).catch((err) => {
         if (session() !== id) return;
         if (isBackpressure(err)) throw err; // archond ran none of it: the batcher retries
-        refuse(err);
+        if (isLostInput(err)) behind(BEHIND.lost);
+        else refuse(err);
       });
     },
     onOverflow: () => behind(BEHIND.skipped),

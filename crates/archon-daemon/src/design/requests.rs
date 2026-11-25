@@ -16,6 +16,23 @@ use crate::context::DaemonContext;
 /// Most hover and select resolves a second, and input requests a second.
 const RESOLVES_PER_SECOND: u32 = 10;
 const INPUTS_PER_SECOND: u32 = 60;
+/// Input requests run in separate tasks; ending each by this deadline, well
+/// inside the web app's wait for its reply, keeps one from overlapping the next.
+const INPUT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// `dispatch` bounded by [`INPUT_DEADLINE`]: past it the rest of the batch is
+/// dropped, and the caller hears that some input may not have arrived.
+async fn within_input_deadline(
+    dispatch: impl std::future::Future<Output = Result<(), ArchonError>>,
+) -> Result<(), ArchonError> {
+    match tokio::time::timeout(INPUT_DEADLINE, dispatch).await {
+        Ok(done) => done,
+        Err(_) => Err(ArchonError::Unavailable(format!(
+            "the preview took over {} s to take input; some of it may not have reached the app",
+            INPUT_DEADLINE.as_secs()
+        ))),
+    }
+}
 
 fn validate_input(event: &InputEvent, width: u32, height: u32) -> Result<(), ArchonError> {
     let point =
@@ -400,9 +417,12 @@ impl DesignService {
             st.counters.inputs += events.len() as u64;
             st.pending_input = Some(std::time::Instant::now());
         }
-        let browser = self.browser_for_input(ctx, session).await?;
         let mapped: Vec<adb::Input> = events.into_iter().map(input_of).collect();
-        browser.input(&mapped).await.map_err(unavailable)?;
+        within_input_deadline(async {
+            let browser = self.browser_for_input(ctx, session).await?;
+            browser.input(&mapped).await.map_err(unavailable)
+        })
+        .await?;
         Ok(Reply::DesignDone)
     }
 
@@ -574,6 +594,19 @@ mod input_tests {
         assert!(validate_input(&touch(vec![finger]), 40, 60).is_ok());
         assert!(validate_input(&touch(vec![finger, finger]), 40, 60).is_err());
         assert!(validate_input(&touch(vec![finger]), 1, 1).is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn input_that_hangs_ends_by_its_deadline_and_says_so() {
+        let started = tokio::time::Instant::now();
+        let hung = within_input_deadline(std::future::pending()).await;
+        assert!(
+            matches!(&hung, Err(ArchonError::Unavailable(m)) if m.contains("may not have reached"))
+        );
+        assert_eq!(started.elapsed(), INPUT_DEADLINE);
+        assert!(within_input_deadline(async { Ok(()) }).await.is_ok());
+        let failed = within_input_deadline(async { Err(ArchonError::Invalid("x".into())) }).await;
+        assert!(matches!(failed, Err(ArchonError::Invalid(_))));
     }
 
     #[test]

@@ -2,17 +2,28 @@
 
 ## Unreleased
 
+## 1.6.5
+
+Released 2026-11-25.
+
+Archon 1.6.5 adds live design sessions and requires **Aether 1.4.3**.
+The installer selects `v1.4.3` for a fresh installation. To upgrade an
+existing pair, update Aether first with `aether update --version v1.4.3`
+and restart aetherd. A confirmed update run by Archon 1.6.5 selects that
+version when the installed Aether is older.
+
 ### Added
 
-- Live design sessions. `proposal = live` (also `archon queue add --proposal
+- Live design sessions (#497). `proposal = live` (also `archon queue add --proposal
   live`, the New item switch and chat) inserts a first `design` stage in place
   of `propose`. The agent runs the app's dev server and archond shows it in a
   sandboxed headless Chromium streamed as pictures to the web app, where you
   point at elements, comment, compare before and after, undo, and approve a
-  ledger Archon builds from its own records. Needs `[design] enabled = true`
+  ledger Archon builds from its own records. Off by default. Needs `[design] enabled = true`
   and Chrome or Chromium (`archon doctor` checks). Protocol 25 adds the design
   requests, events and the `design_sessions` feature. See
-  [docs/design-sessions.md](docs/design-sessions.md).
+  [the security notes](docs/design-sessions.md#security) for preview isolation,
+  operator access and what notes share with agents.
 - Design follow-ups, references and an iteration tree. Any note can be
   followed up with a new note that continues it; a note can reference up to
   5 earlier ones; the Tree tab shows each chain with its versions, older
@@ -26,7 +37,19 @@
   if you need to return to an older release. A store from a build of this work's own branch, which recorded them
   as 25 and 26, upgrades in place and keeps its design records.
 
+- Queue and PR timing reports separate dispatch, execution, retries and review
+  (#491). Model evidence includes quality signals alongside cost and timing
+  (#487). The daemon reports learned stage overruns (#486).
+- The queue links near-duplicate work (#488), advises on routing and records
+  routing misses (#490). Reviews track findings and confirm committed fixes
+  at the round cap (#489).
+
 ### Changed
+
+- Archon deduplicates learned advice and retires underperforming lessons
+  (#485). SQLite, Rust dependencies and CI actions were updated (#461, #493).
+- The full benchmark compares the previous two releases with the integration
+  branch on Haiku and Luna (#460).
 
 - The mobile app shows the embedded release version and matches command
   results by submission ID, including after a feed replay.
@@ -56,6 +79,20 @@
   it settles under its run's driver.
 
 ### Fixed
+
+- Stage views attribute spend, including late delegate costs, to the originating
+  attempt (#484, #496). Swarm retries rerun only the selected slots (#483).
+- The daemon repairs movable model selections refused at agent creation (#482)
+  and recovers quota-held reviewers on eligible models (#481).
+- Gate failures include their causes (#478). The daemon checks review and ship
+  records within the stage (#480), keeps reviews across chained stack landings
+  (#463) and stops retrying PR validation errors (#479).
+- The orchestrator recovers after a tool error (#462). Proposal intent
+  references stay within Aether's limits (#464).
+- The CI slot bounds its systemd probe and validates memory limits (#495).
+  Job sizing honours `CI_SLOT_MEMINFO`, and stage instructions render
+  integration branch names containing backticks correctly (#498).
+
 
 - Approved-intent acceptance honours the model the orchestrator or operator
   pinned for `intent-acceptance` (when policy permits it and it can see the

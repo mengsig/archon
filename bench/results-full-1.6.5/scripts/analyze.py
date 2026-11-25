@@ -102,7 +102,9 @@ def mann_whitney_p(xs, ys):
 
 def ratio_ci(new, old, draws=4000, seed=7):
     """Ratio of means new/old with a percentile bootstrap interval."""
-    if not new or not old:
+    assert draws > 0
+    assert all(value >= 0 for value in new + old), 'negative measurement'
+    if not new or not old or statistics.fmean(old) <= 0:
         return (float('nan'),) * 3
     rng = random.Random(seed)
     est = statistics.fmean(new) / statistics.fmean(old)
@@ -112,6 +114,8 @@ def ratio_ci(new, old, draws=4000, seed=7):
         b = statistics.fmean(rng.choices(old, k=len(old)))
         if b > 0:
             samples.append(a / b)
+    if not samples:
+        return (float('nan'),) * 3
     samples.sort()
     return (est, samples[int(0.025 * len(samples))], samples[int(0.975 * len(samples)) - 1])
 
@@ -236,6 +240,7 @@ def verdict(per_model):
     reasons = []
     for m, d in per_model.items():
         c = d['archon']
+        assert all(c[arm]['cost_trials'] == c[arm]['graded'] for arm in ('old', 'new')), f'{m}: unpriced trials'
         assert all(math.isfinite(value) for value in c['diff']), f'{m}: ungraded comparison'
         assert all(math.isfinite(value) for value in c['wall_ratio'] + c['cost_ratio']), f'{m}: unpriced or untimed comparison'
         if c['diff'][2] < 0:

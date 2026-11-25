@@ -108,7 +108,8 @@ def render(summary):
     lines += [f'- {reason}' for reason in summary['reasons']]
     lines.append('\n[Visual report](index.html) · [Numeric summary](summary.json)\n')
     for name, data in summary['models'].items():
-        lines.append(model_section(name.title(), data))
+        model_id = data['meta']['new']['models']['archon']
+        lines.append(model_section(f'{name.title()} ({model_id})', data))
     lines.append(method(summary))
     return '\n'.join(lines)
 

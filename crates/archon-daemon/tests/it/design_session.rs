@@ -842,7 +842,9 @@ async fn an_upload_must_be_an_image() {
 #[tokio::test]
 async fn disabled_sessions_refuse_requests() {
     let f = Fixture::with(design_config()).await;
-    let mut off = crate::common::Harness::new().await;
+    let mut config = design_config();
+    config.design.enabled = false;
+    let mut off = crate::common::Harness::with_config(config).await;
     assert!(!off.ctx.design.enabled());
     let refused = off
         .cli(Request::DesignReload {

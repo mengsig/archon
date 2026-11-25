@@ -710,6 +710,8 @@ async fn a_capture_error_after_commit_does_not_abort_cancellation_or_agent_clean
 #[tokio::test]
 async fn distillation_reserves_a_global_daily_budget_and_disabling_cancels_queued_work() {
     let mut config = archon_core::config::Config::default();
+    // This budget test mutates its context and does not exercise design sessions.
+    config.design.enabled = false;
     config.learning.distill_every = 1;
     config.learning.distill_daily_budget_usd = 1.0;
     let mut h = Harness::with_config(config).await;

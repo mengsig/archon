@@ -86,7 +86,10 @@ async fn lost_node_and_stage_replies_replay_the_frozen_identity_after_restart() 
             vec![]
         });
         let fleet = script_fleet(&aether);
-        let mut h = harness(&aether).await;
+        let mut config = Config::default();
+        // This identity replay test needs an unbound context, not design sessions.
+        config.design.enabled = false;
+        let mut h = harness_with_config(&aether, ClientOptions::default(), config).await;
         reconnect(&h, &aether).await;
         if stage_pending {
             aether.script(

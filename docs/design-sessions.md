@@ -15,7 +15,7 @@ ever reaches your browser: only pictures and JSON.
 
 ## Contents
 
-- [Turning it on](#turning-it-on)
+- [Configuration](#configuration)
 - [Starting a session](#starting-a-session)
 - [Using the design screen](#using-the-design-screen)
 - [Notes and their statuses](#notes-and-their-statuses)
@@ -29,9 +29,11 @@ ever reaches your browser: only pictures and JSON.
 - [Security](#security)
 - [Troubleshooting](#troubleshooting)
 
-## Turning it on
+## Configuration
 
-Design sessions are off by default. In `config.toml`:
+Design sessions are on by default and start only for items with `proposal = live`.
+To turn them off, set `enabled = false` under `[design]` in `config.toml`.
+The defaults and other options are:
 
 ```toml
 [design]

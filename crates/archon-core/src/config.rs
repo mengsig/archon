@@ -119,7 +119,7 @@ pub struct DesignConfig {
 impl Default for DesignConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             browser: None,
             browser_sandbox: BrowserSandbox::Required,
             max_sessions: 2,
@@ -1502,7 +1502,11 @@ mod tests {
     fn design_defaults_and_parse() {
         let default: Config = toml::from_str("").unwrap();
         assert_eq!(default.design, DesignConfig::default());
-        assert!(!default.design.enabled);
+        assert!(default.design.enabled);
+        let partial: Config = toml::from_str("[design]\nmax_sessions = 3").unwrap();
+        assert!(partial.design.enabled);
+        let disabled: Config = toml::from_str("[design]\nenabled = false").unwrap();
+        assert!(!disabled.design.enabled);
         assert_eq!(default.design.browser_sandbox, BrowserSandbox::Required);
         assert_eq!(default.design.max_sessions, 2);
         let set: Config = toml::from_str(

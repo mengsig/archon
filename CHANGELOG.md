@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- Live design sessions are enabled by default. Only items with `proposal = live`
+  start a design stage; set `[design] enabled = false` to turn sessions off.
+
 ### Fixed
 
 - A live design whose layout did not change no longer fails intent

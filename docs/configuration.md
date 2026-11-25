@@ -349,7 +349,7 @@ branch_prefix = "archon/"      # run branches are named <prefix><id>-<slug>
 binary = "lavish-axi"          # the Lavish command
 
 [design]                       # live design sessions (design-sessions.md)
-enabled = false                # true allows `proposal = live`; false refuses it
+enabled = true                 # true allows `proposal = live`; false refuses it
 browser = ""                   # path to Chrome or Chromium; empty finds one
 browser_sandbox = "required"   # "required", or "off" (adds --no-sandbox; the UI shows a badge)
 max_sessions = 2               # live headless browsers on this host
@@ -358,11 +358,12 @@ max_sessions = 2               # live headless browsers on this host
 binary = "gh"                  # the command `github_reply` posts with
 ```
 
-`[design]` turns on [live design
-sessions](design-sessions.md). `enabled` is `false` until you set it. With it
-off, `proposal = live` is refused with a clear message and a running live
-stage fails with "design sessions turned off". Serve all preview assets through the item's registered
-dev-server origin. Verifying socket ownership requires a Linux daemon host
+[Live design sessions](design-sessions.md) are enabled by default and run only
+for items with `proposal = live`. Set `[design] enabled = false` to turn them
+off. With it off, `proposal = live` is refused with a clear message and a
+running live stage fails with "design sessions turned off". Serve all preview
+assets through the item's registered dev-server origin. Verifying socket
+ownership requires a Linux daemon host
 with access to the dev server’s `/proc` records. Remove nonempty `[design] allow_hosts` lists from
 `.archon/repo.toml`.
 

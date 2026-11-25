@@ -558,6 +558,10 @@ async fn a_repeat_import_returns_without_reader_connections() {
     let github = Github::new();
     github.serve(5, issue_json(5, "an issue", "the work"), "W/\"i1\"");
     let mut h = harness(&github).await;
+    let mut config = h.ctx.config.clone();
+    // This reader-lock test mutates its context and does not exercise design sessions.
+    config.design.enabled = false;
+    h.restart_with(config);
     let first = import(&h, 5, None).await.unwrap();
     let ctx = std::sync::Arc::get_mut(&mut h.ctx).expect("the harness alone holds its context");
     ctx.readers = archon_daemon::readers::Readers::default();

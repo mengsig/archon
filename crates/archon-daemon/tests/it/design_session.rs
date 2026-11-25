@@ -2141,3 +2141,54 @@ async fn a_page_note_done_with_a_path_is_pictured_on_that_page() {
     let last_capture = browser.calls(|c| c.captures.last().cloned()).unwrap();
     assert_eq!(last_capture.0, None, "the whole view, not a crop");
 }
+
+fn click(action: archon_core::protocol::MouseAction, x: f64) -> archon_core::protocol::InputEvent {
+    archon_core::protocol::InputEvent::Mouse {
+        action,
+        x,
+        y: 10.0,
+        button: archon_core::protocol::MouseButton::Left,
+        click_count: 1,
+        modifiers: 0,
+    }
+}
+
+/// A press reached the browser and its release was refused before it ran
+/// (unready, out of bounds, past the rate): the browser hears the batch was
+/// lost each time, so it lets go of the press before the next batch.
+#[tokio::test]
+async fn a_refused_release_after_an_accepted_press_tells_the_browser_input_was_lost() {
+    use archon_core::protocol::MouseAction;
+    let f = Fixture::new().await;
+    let input = |events| Request::DesignInput {
+        session: f.session.clone(),
+        events,
+    };
+    let pressed = f
+        .operator(input(vec![click(MouseAction::Down, 10.0)]))
+        .await;
+    assert!(matches!(pressed, Ok(Reply::DesignDone)), "{pressed:?}");
+    let browser = f.factory.browser(0);
+    assert_eq!(browser.calls.lock().unwrap().inputs_lost, 0);
+
+    let outside = f.operator(input(vec![click(MouseAction::Up, 1e9)])).await;
+    assert!(
+        matches!(outside, Err(ArchonError::Invalid(_))),
+        "{outside:?}"
+    );
+    assert_eq!(browser.calls.lock().unwrap().inputs_lost, 1);
+
+    let mut refused = 0;
+    for _ in 0..80 {
+        if f.operator(input(vec![click(MouseAction::Up, 10.0)]))
+            .await
+            .is_err()
+        {
+            refused += 1;
+        }
+    }
+    assert!(refused > 0, "past the rate, input is refused");
+    let calls = browser.calls.lock().unwrap();
+    assert_eq!(calls.inputs_lost, 1 + refused);
+    assert!(calls.inputs >= 1, "the press went to the browser");
+}

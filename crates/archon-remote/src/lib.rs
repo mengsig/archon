@@ -72,6 +72,9 @@ pub trait Backend: Send + Sync + 'static {
     }
     /// The protocol features archond serves, for a session's `welcome`.
     fn features(&self) -> Vec<&'static str>;
+    /// `request` was refused unrun, past the session's in-flight cap. A
+    /// backend whose requests carry state across each other (held preview input) hears it.
+    fn refused(&self, _request: &Request) {}
 }
 
 /// One `subscribe_feed` on a device's WebSocket.

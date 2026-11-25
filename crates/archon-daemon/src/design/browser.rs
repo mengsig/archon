@@ -45,6 +45,12 @@ pub trait PreviewBrowser: Send + Sync {
     async fn reload(&self) -> Result<(), adb::BrowserError>;
     async fn set_viewport(&self, viewport: adb::Viewport) -> Result<(), adb::BrowserError>;
     async fn input(&self, events: &[adb::Input]) -> Result<(), adb::BrowserError>;
+    /// A batch failed or was refused before it ran: whatever it would have let
+    /// go is released before the next batch, or by [`Self::reconcile_input`].
+    fn input_lost(&self);
+    /// The idle cleanup after a lost batch: let go of everything still held.
+    /// True when nothing a lost batch may have left is held any more.
+    async fn reconcile_input(&self) -> bool;
     async fn start_screencast(&self) -> Result<Box<dyn FrameFeed>, adb::BrowserError>;
     async fn stop_screencast(&self) -> Result<(), adb::BrowserError>;
     async fn capture(
@@ -247,6 +253,18 @@ impl PreviewBrowser for Real {
     }
     async fn input(&self, events: &[adb::Input]) -> Result<(), adb::BrowserError> {
         self.get()?.input(events).await
+    }
+    fn input_lost(&self) {
+        // A closed browser took everything it held with it.
+        if let Ok(browser) = self.get() {
+            browser.input_lost();
+        }
+    }
+    async fn reconcile_input(&self) -> bool {
+        match self.get() {
+            Ok(browser) => browser.reconcile_input().await,
+            Err(_) => true,
+        }
     }
     async fn start_screencast(&self) -> Result<Box<dyn FrameFeed>, adb::BrowserError> {
         let relay = self.get()?.start_screencast().await?;
@@ -1206,6 +1224,10 @@ impl DesignService {
                     feeder.abort();
                 }
             }
+        }
+        // A lost batch's held input is let go within a tick, even if no batch follows.
+        if !browser.reconcile_input().await {
+            tracing::debug!(%session, "held preview input is still owed a release");
         }
         let rss = browser.rss_bytes();
         if memory_limit_reached(rss, &mut rt.st().rss_over_since, Instant::now()) {

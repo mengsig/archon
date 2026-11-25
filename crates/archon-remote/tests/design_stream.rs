@@ -24,13 +24,24 @@ type Socket = tokio_tungstenite::WebSocketStream<TcpStream>;
 struct Fake {
     subscribed: Mutex<Vec<(DesignSubscription, watch::Receiver<u64>)>>,
     handled: Mutex<Vec<Request>>,
+    /// Requests refused unrun past the in-flight cap.
+    refused: Mutex<Vec<Request>>,
 }
 
 #[async_trait::async_trait]
 impl Backend for Fake {
     async fn handle(&self, _: &WelcomeDevice, request: Request) -> Result<Reply, ArchonError> {
+        let stalls = matches!(request, Request::DesignInput { .. });
         self.handled.lock().unwrap().push(request);
+        if stalls {
+            // A preview that never answers: each input holds its slot.
+            std::future::pending::<()>().await;
+        }
         Ok(Reply::Ok)
+    }
+
+    fn refused(&self, request: &Request) {
+        self.refused.lock().unwrap().push(request.clone());
     }
 
     async fn feed(&self, sub: FeedSubscription, frames: mpsc::Sender<ServerFrame>) {
@@ -364,4 +375,32 @@ async fn leaving_the_view_frees_its_slot_with_feed_and_changes_still_live() {
         .await;
         assert_eq!(done["result"]["Ok"]["reply"], "design_done");
     }
+}
+
+/// Input refused past the in-flight cap never ran, so whatever release it
+/// carried is lost: the backend hears of it to let go of held input.
+#[tokio::test]
+async fn input_refused_past_the_in_flight_cap_is_reported_to_the_backend() {
+    let harness = Harness::start().await;
+    let mut socket = harness.socket(DeviceRole::Operator).await;
+    let session = DesignSessionId::new();
+    for n in 0..16 {
+        let request = serde_json::json!({
+            "req": 10 + n, "cmd": "design_input", "session": session, "events": [],
+        });
+        socket
+            .send(Message::text(request.to_string()))
+            .await
+            .unwrap();
+    }
+    let over = serde_json::json!({
+        "req": 40, "cmd": "design_input", "session": session, "events": [],
+    });
+    let refused = exchange(&mut socket, over).await;
+    assert_eq!(refused["result"]["Err"]["code"], "unavailable", "{refused}");
+    let told = harness.backend.refused.lock().unwrap().clone();
+    assert!(
+        matches!(told.as_slice(), [Request::DesignInput { session: s, .. }] if *s == session),
+        "{told:?}"
+    );
 }

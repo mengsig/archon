@@ -390,7 +390,29 @@ impl DesignService {
             .ok_or_else(|| ArchonError::Unavailable("there is no preview to use yet".into()))
     }
 
+    /// One input batch. Any that fails, times out or is refused may have
+    /// carried a release, so the session's browser lets go of what it holds.
     async fn input(
+        &self,
+        ctx: &DaemonContext,
+        session: &archon_core::design::DesignSessionId,
+        events: Vec<InputEvent>,
+    ) -> Result<Reply, ArchonError> {
+        let result = self.dispatch_input(ctx, session, events).await;
+        if result.is_err() {
+            self.input_lost(session);
+        }
+        result
+    }
+
+    /// An input batch for `session` failed or was refused before it ran.
+    pub(crate) fn input_lost(&self, session: &archon_core::design::DesignSessionId) {
+        if let Some(browser) = self.existing_runtime(session).and_then(|rt| rt.browser()) {
+            browser.input_lost();
+        }
+    }
+
+    async fn dispatch_input(
         &self,
         ctx: &DaemonContext,
         session: &archon_core::design::DesignSessionId,

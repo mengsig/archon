@@ -325,6 +325,7 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
         return subscribe(session, id, Stream::Design(design), None);
     }
     let Ok(permit) = session.in_flight.clone().try_acquire_owned() else {
+        session.backend.refused(&request);
         let message =
             format!("at most {MAX_IN_FLIGHT} requests may be in flight; wait for a reply");
         return queue(session, error_frame(id, ErrorCode::Unavailable, message));

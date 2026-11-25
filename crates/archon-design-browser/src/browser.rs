@@ -19,7 +19,7 @@ use tokio::time::Instant;
 
 use crate::cdp::{CLOSED_EVENT, Cdp, CdpEvent, MAX_FRAME};
 use crate::containment::Containment;
-use crate::input::{Held, command};
+use crate::input::Held;
 use crate::launch::{
     SHELL_SCRIPT, classify_stderr, kill_group, launch_args, launch_env, process_start_time,
     write_profile_preferences,
@@ -29,15 +29,11 @@ use crate::proxy::{Policy, Proxy};
 use crate::relay::{FrameRelay, RelayShared};
 use crate::sanitize::clean;
 use crate::{
-    BrowserError, BrowserEvent, ClipRect, Input, LaunchSpec, MAX_IMAGE_BYTES, Picture,
-    PictureCapture, Viewport, jpeg_dims,
+    BrowserError, BrowserEvent, ClipRect, LaunchSpec, MAX_IMAGE_BYTES, Picture, PictureCapture,
+    Viewport, jpeg_dims,
 };
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
-/// One input request's dispatch, then letting go of what it left held: both
-/// well inside the 60 s the web app waits, so its next batch never overlaps.
-pub(crate) const INPUT_DEADLINE: Duration = Duration::from_secs(8);
-const RELEASE_DEADLINE: Duration = Duration::from_secs(2);
 /// Stream frames: four a second at rest, ten (the relay's most) while the
 /// operator scrolls or types, so a scroll is followed and its end shown soon.
 const IDLE_FRAME_INTERVAL: Duration = Duration::from_millis(250);
@@ -91,8 +87,6 @@ struct State {
     poll: Option<JoinHandle<()>>,
     /// When input was last dispatched: frames come faster for a while after it.
     last_input: Option<Instant>,
-    /// Keys, buttons and fingers sent down and not yet up.
-    held: Held,
 }
 
 #[derive(Debug)]
@@ -107,6 +101,12 @@ pub(crate) struct Shared {
     /// differs from one already in flight into a tiled copy (the page at 1x
     /// repeated across the 2x canvas), so two never overlap on this target.
     shot: tokio::sync::Mutex<()>,
+    /// Held for a whole input batch or cleanup, so batches reach Chrome one at
+    /// a time, in order; it guards what they left pressed. See `input.rs`.
+    pub(crate) input: tokio::sync::Mutex<Held>,
+    /// A batch failed, timed out or was refused: what it would have let go
+    /// may still be held, so everything held is released before the next.
+    pub(crate) input_lost: std::sync::atomic::AtomicBool,
 }
 
 /// A headless Chromium driven over CDP.
@@ -207,6 +207,11 @@ where
 }
 
 impl Shared {
+    /// Input is about to go to the page: frames come faster for a while.
+    pub(crate) fn input_started(&self) {
+        self.st.lock().unwrap().last_input = Some(Instant::now());
+    }
+
     pub(crate) async fn call(&self, method: &str, params: Value) -> Result<Value, BrowserError> {
         self.check_containment()?;
         let reply = self
@@ -944,6 +949,8 @@ impl Browser {
             events,
             relay,
             shot: tokio::sync::Mutex::new(()),
+            input: tokio::sync::Mutex::new(Held::default()),
+            input_lost: std::sync::atomic::AtomicBool::new(false),
             st: Mutex::new(State {
                 url: String::new(),
                 main_frame: None,
@@ -953,7 +960,6 @@ impl Browser {
                 viewport: vp,
                 poll: None,
                 last_input: None,
-                held: Held::default(),
             }),
         });
         let event_task = tokio::spawn(handle_events(sh.clone(), rx, documents));
@@ -1042,53 +1048,6 @@ impl Browser {
         self.sh.reset_zoom().await;
         self.sh.st.lock().unwrap().viewport = v;
         Ok(())
-    }
-
-    /// Dispatch input events in order, within [`INPUT_DEADLINE`]. Past it the
-    /// rest is dropped and whatever is held down is let go, so nothing sticks.
-    pub async fn input(&self, events: &[Input]) -> Result<(), BrowserError> {
-        self.sh.st.lock().unwrap().last_input = Some(Instant::now());
-        let dispatch = async {
-            for e in events {
-                self.sh.st.lock().unwrap().held.note(e);
-                let (method, params) = command(e);
-                self.sh.call(method, params).await?;
-            }
-            Ok(())
-        };
-        let Ok(done) = tokio::time::timeout(INPUT_DEADLINE, dispatch).await else {
-            let released = self.release_held().await;
-            let held = if released.is_ok() {
-                ""
-            } else {
-                "; a held key or button may still be down"
-            };
-            return Err(BrowserError::Timeout(format!(
-                "input took over {} s; some of it may not have reached the app{held}",
-                INPUT_DEADLINE.as_secs()
-            )));
-        };
-        done
-    }
-
-    /// Let go of every key, button and finger still held. Chrome runs a target's
-    /// commands in order, so these follow any press it has yet to act on.
-    async fn release_held(&self) -> Result<(), BrowserError> {
-        let releases = std::mem::take(&mut self.sh.st.lock().unwrap().held).releases();
-        let release = async {
-            for e in &releases {
-                let (method, params) = command(e);
-                self.sh.call(method, params).await?;
-            }
-            Ok::<(), BrowserError>(())
-        };
-        let result = tokio::time::timeout(RELEASE_DEADLINE, release)
-            .await
-            .unwrap_or_else(|_| Err(BrowserError::Timeout("releasing held input".into())));
-        if let Err(error) = &result {
-            tracing::warn!(%error, count = releases.len(), "held preview input was not released");
-        }
-        result
     }
 
     /// Start delivering verified viewport captures at up to four frames per second.
@@ -1718,61 +1677,6 @@ mod capture_tests {
             b.capture(None, 1.0).await,
             Err(BrowserError::Protocol(_))
         ));
-    }
-
-    /// A batch cut short by its deadline must not leave Chrome holding a press:
-    /// whatever was sent down is let go, and the caller hears input was lost.
-    #[tokio::test(start_paused = true)]
-    async fn input_that_hangs_is_cut_short_and_lets_go_of_what_it_held() {
-        let (b, log) = fake_browser(|m, p| {
-            (m == "Input.dispatchKeyEvent" && p["type"] == "rawKeyDown")
-                .then(crate::testutil::no_answer)
-        })
-        .await;
-        let press = |action| Input::Mouse {
-            action,
-            x: 5.0,
-            y: 6.0,
-            button: crate::MouseButton::Left,
-            click_count: 1,
-            modifiers: 0,
-        };
-        let key = |action| Input::Key {
-            action,
-            key: "b".into(),
-            code: "KeyB".into(),
-            text: None,
-            modifiers: 0,
-        };
-        log.lock().unwrap().clear();
-        let events = [
-            press(crate::MouseAction::Down),
-            key(crate::KeyAction::Down),
-            key(crate::KeyAction::Up),
-            press(crate::MouseAction::Up),
-        ];
-        let lost = b.input(&events).await;
-        assert!(
-            matches!(&lost, Err(BrowserError::Timeout(m)) if m.contains("may not have reached")),
-            "{lost:?}"
-        );
-        let sent: Vec<String> = log
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(m, _)| m.starts_with("Input."))
-            .map(|(_, p)| p["type"].as_str().unwrap_or_default().to_owned())
-            .collect();
-        assert_eq!(
-            sent,
-            ["mousePressed", "rawKeyDown", "mouseReleased", "keyUp"]
-        );
-        b.input(&[
-            press(crate::MouseAction::Down),
-            press(crate::MouseAction::Up),
-        ])
-        .await
-        .expect("input goes on after a cut-short batch");
     }
 
     #[test]

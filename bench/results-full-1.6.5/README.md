@@ -1,6 +1,6 @@
 # Archon 1.6.5 full benchmark — incomplete
 
-The Luna full suite is complete. Haiku is pending restoration of Claude Code authentication, so there is no full-suite verdict or final HTML report yet.
+The Luna full suite is complete. Haiku is running at `--parallel 3` after an operator-directed restart, so there is no full-suite verdict or final HTML report yet. The earlier 12 OLD and 10 NEW cells are excluded but retained under `runs/probes/`; their $1.227877 observed spend counts toward the Haiku guard.
 
 Luna Archon passed 29/33 OLD and 30/33 NEW. McNemar p = 1.000; NEW/OLD wall ratio was 1.04 [0.73, 1.47], p = 0.560; recorded-cost ratio was 0.98 [0.68, 1.40], p = 0.631. None of these changes is statistically significant. Direct Aether passed 30/33 in both runs. Mixed cost gaps affect 23 OLD and 22 NEW Archon trials, so actual cost differences remain uncertain. Combined observed Luna usage, including two excluded setup probes, was $2.126978.
 

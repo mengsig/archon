@@ -1,0 +1,21 @@
+I've queued the fix as item `qi_01M88P7ES9AKNGJ76YVP6RZQQS` in the `fix-off-by-one` repository. I did not edit the repository myself, since my role is to route changes through the queue.
+
+- **Pipeline:** `direct`, one agent that makes the change, runs the tests, and commits.
+- **Review:** `standard`, because `window.py` is shared code and a subtle off-by-one could hide there.
+- **Brief:** run `python3 -m unittest` to see the failures, fix the bug so the function is correct for all inputs including edge cases, leave the tests unchanged, and commit on the local branch.
+- **Shipping:** the repository ships `local`, so the commit stays on a local branch and nothing is pushed.
+
+I'll report the outcome when the item finishes.
+
+Done: Fix window.py bug so python3 -m unittest passes. Fixed the off-by-one in window.py sliding_windows: the comprehension iterated range(len(items) - size), which dropped the final window. It now uses range(len(items) - size + 1). Committed on archon/vp6rzqqs-fix-window-py-bug-so-python3-m-unittest as 5b994dc (tree 86fa257); not pushed. Tests: before, `python3 -m unittest` failed 2 of 3 (FAILED, failures=2); after, all 3 pass (OK). Edge cases were probed: [] with size 1 gives [], [1] with size 1 gives [[1]], size larger than the input gives [], size equal to the input gives one window, and non-positive size still raises ValueError. No test files changed. Review: one read-only reviewer (agt_01M88P88X4V3J1V3HVXEFFYK1K) passed head 5b994dc against base ca58b51 with no findings. Left open: the untracked __pycache__/ from the test run is not committed. Nothing is running and no services were started. Review: pass by agt_01M88P88X4V3J1V3HVXEFFYK1K
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88P88X4V3J1V3HVXEFFYK1K)
+
+SHIPPED: commit 5b994dcee1095702a741063b87728a2abc9f97da on the run branch
+Branch `archon/vp6rzqqs-fix-window-py-bug-so-python3-m-unittest` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-d56p74a0/archon-bench/work/20261125T062211Z/0cb959533b6c82470671adb7/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M88P7ES9AKNGJ76YVP6RZQQS`; land it in `main`: `archon merge qi_01M88P7ES9AKNGJ76YVP6RZQQS`.
+
+Fixed the off-by-one in window.py sliding_windows: the comprehension iterated range(len(items) - size), which dropped the final window. It now uses range(len(items) - size + 1). Committed on archon/vp6rzqqs-fix-window-py-bug-so-python3-m-unittest as 5b994dc (tree 86fa257); not pushed. Tests: before, `python3 -m unittest` failed 2 of 3 (FAILED, failures=2); after, all 3 pass (OK). Edge cases were probed: [] with size 1 gives [], [1] with size 1 gives [[1]], size larger than the input gives [], size equal to the input gives one window, and non-positive size still raises ValueError. No test files changed. Review: one read-only reviewer (agt_01M88P88X4V3J1V3HVXEFFYK1K) passed head 5b994dc against base ca58b51 with no findings. Left open: the untracked __pycache__/ from the test run is not committed. Nothing is running and no services were started. Review: pass by agt_01M88P88X4V3J1V3HVXEFFYK1K
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88P88X4V3J1V3HVXEFFYK1K)
+
+SHIPPED: commit 5b994dcee1095702a741063b87728a2abc9f97da on the run branch

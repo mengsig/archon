@@ -1,0 +1,39 @@
+Implemented per-row currency across `ledger` (Rust) and `reports` (Python) and committed in both repos. Both suites pass: `cargo test` 8/8 in ledger, `python3 -m unittest` 4/4 in reports. The ledger-to-reports pipeline was checked end to end.
+
+ledger (commit 1ffcf12 on main):
+- Lines take an optional 4th TSV column, the currency. It defaults to USD when the column is missing.
+- The currency must be exactly three uppercase ASCII letters. A malformed code prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1.
+- Output header is `date,account,amount_cents,currency`, and every row carries its currency.
+- `parse_line` now returns a `LineError` enum (`Input` / `Currency`) with `exit_code()`. This is a small API change within the crate.
+- README updated. Tests added for the default currency, explicit currency, malformed currency codes, and the binary's exit codes and output.
+
+reports (commit ff9f9ec on main):
+- Totals are keyed by (account, currency). Output is `account,currency,total_cents`, sorted by account then currency.
+- CSV with no `currency` column counts as USD. A malformed code prints `line N: ...` to stderr and exits 2.
+- README updated. Tests cover the new format, mixed currencies, legacy CSV, and the exit-2 path.
+
+Choices I made:
+- The currency is trimmed like the other fields, so `EUR ` is accepted.
+- An empty 4th column is treated as malformed (exit 2), not as the USD default.
+- Commits carry no attribution line, because the CLAUDE.md rule against it takes precedence over the attribution reminder.
+
+Working trees are clean. The 4 cargo/unittest runs were done without writing into the repos (cargo target went to the Aether build cache; I removed the stray `__pycache__`).
+
+Both repositories now handle per-row currency and are committed. `cargo test` passes 8/8 in `ledger`, and `python3 -m unittest` passes 4/4 in `reports`. I also ran the two tools end to end, and a malformed code exits 2 as specified.
+
+**ledger** (commit `1ffcf12`)
+- A line may have an optional fourth TSV column with the currency. It defaults to `USD`.
+- The code must be exactly three uppercase ASCII letters. A malformed code prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1.
+- The header is `date,account,amount_cents,currency`, and every row includes its currency.
+- README updated, with tests for the defaults, explicit codes, bad codes, and the binary's exit codes.
+
+**reports** (commit `ff9f9ec`)
+- Totals are per (account, currency). The output is `account,currency,total_cents`, sorted by account and then currency.
+- CSV without a `currency` column counts as `USD`. A malformed code prints `line N: ...` to stderr and exits 2.
+- README updated, with tests for the new format, mixed currencies, legacy input, and the exit-2 path.
+
+Choices I made that you may want to change:
+- `parse_line` now returns a `LineError` enum (`Input` or `Currency`) that carries the exit code. This changes a public function signature in the crate.
+- An empty fourth column is an error (exit 2), not a fallback to `USD`.
+- Currency codes are trimmed like the other fields, so `EUR ` is accepted.
+- The commits have no attribution line, because your CLAUDE.md says not to add one. This overrides the attribution reminder.

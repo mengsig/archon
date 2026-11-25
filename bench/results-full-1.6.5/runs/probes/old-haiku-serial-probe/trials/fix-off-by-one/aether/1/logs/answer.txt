@@ -1,0 +1,14 @@
+Fixed the off-by-one in window.py's sliding_windows and committed it as f644f52 on main. The loop used range(len(items) - size), which dropped the final window; it now uses range(len(items) - size + 1). All 3 tests pass (python3 -m unittest), and the tests were not changed. Edge cases checked by hand: empty list returns [], size equal to length returns one window, size greater than length returns [], and size 1 returns every single item. The size <= 0 ValueError check is unchanged. The working tree is clean. The commit has no Co-Authored-By or Claude attribution line, because the repo's CLAUDE.md says not to add one and it takes precedence over the attribution reminder.
+
+The bug is fixed and committed as `f644f52` on `main`. `python3 -m unittest` now passes all 3 tests, and I did not touch the tests.
+
+**The bug:** `sliding_windows` built its loop with `range(len(items) - size)`, which stops one window early and drops the last one. The fix is `range(len(items) - size + 1)`, the number of windows a list of that length contains.
+
+**Edge cases:** I checked these by hand, and they behave correctly:
+- An empty list returns `[]`.
+- A size equal to the list length returns one window.
+- A size greater than the list length returns `[]`.
+- A size of 1 returns each item as its own window.
+- The existing `ValueError` for a size of 0 or less is unchanged.
+
+**Commit:** The commit uses the repo's configured git identity. I left out the `Co-Authored-By` line from the attribution reminder, because the repo's CLAUDE.md says not to add Claude attribution and takes precedence over that reminder. The working tree is clean.

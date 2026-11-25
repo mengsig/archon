@@ -1,0 +1,274 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88P0ETBT1FRMZYDW8B7Q53H",
+      "repo": "repo_01M88P02JC5PZ9ZF4HR1SWRRKF",
+      "pipeline": "direct",
+      "title": "Implement rate limiter per SPEC.md in ratelimit.py",
+      "brief": "Operator request (verbatim): \"Implement the rate limiter described in `SPEC.md` in `ratelimit.py` (the module currently only has stubs). Follow the spec exactly, including its error cases and edge cases; the tests in `test_ratelimit.py` only cover the basics. Keep it dependency-free (standard library only) and commit your work.\"\n\nGoal: make ratelimit.py implement every behaviour in SPEC.md, including all error cases and edge cases (e.g. clock moving backwards, max_keys limits, validation of constructor arguments). Acceptance: every SPEC.md requirement is implemented and covered by tests you add to test_ratelimit.py; the existing tests still pass; standard library only; no comments beyond what is non-obvious; functions under 60 lines. Commit the work on the item's branch with a clear message.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88P0ETBT1FRMZYDW8B7Q53H",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T06:24:09.170888582Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T06:24:09.170888582Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T06:24:09.170888582Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88P0F0900WQJRBH2ME6NCJD",
+        "summary": "Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py, with 25 unit tests in test_ratelimit.py covering every requirement and error case. Committed as f5d98a857fd6360a97604f114e1687e8d0c5c081 (tree 5831715d2a60c90514210d05e5656fd5c87195ee) on archon/w8b7q53h-implement-rate-limiter-per-spec-md-in-ra, under the repo's configured identity; not pushed. Standard library only. Checks: python3 -m unittest -v test_ratelimit gives 25 OK; before the change the 3 existing tests errored with NotImplementedError. Review: pass with no blocking findings, reviewer agt_01M88P2HW369XY3KMYB9SR5XM6. Non-blocking follow-ups: a wait_time round trip can miss by about 3e-10 tokens from float rounding, and a clock returning NaN at construction leaves the bucket without refill; neither is covered by a test. Assumed no thread-safety requirement, since the spec is silent. Still running: reviewer's leftover process pid 1955561 (a claude -p session); it stops when this stage ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88P2HW369XY3KMYB9SR5XM6)\n\nSHIPPED: commit f5d98a857fd6360a97604f114e1687e8d0c5c081 on the run branch"
+      },
+      "created_at": "2026-11-25T06:24:09.035193858Z",
+      "updated_at": "2026-11-25T06:26:24.804298146Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88P0F0900WQJRBH2ME6NCJD",
+        "item": "qi_01M88P0ETBT1FRMZYDW8B7Q53H",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88P0F8CPDDXK3W6HZJY220G",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-z4sn2xp1/archon-bench/work/20261125T062211Z/2172b91c58091c39e1cc3e14/.archon/data/worktrees/feature-token-bucket/qi_01M88P0ETBT1FRMZYDW8B7Q53H",
+        "branch": "archon/w8b7q53h-implement-rate-limiter-per-spec-md-in-ra",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py, with 25 unit tests in test_ratelimit.py covering every requirement and error case. Committed as f5d98a857fd6360a97604f114e1687e8d0c5c081 (tree 5831715d2a60c90514210d05e5656fd5c87195ee) on archon/w8b7q53h-implement-rate-limiter-per-spec-md-in-ra, under the repo's configured identity; not pushed. Standard library only. Checks: python3 -m unittest -v test_ratelimit gives 25 OK; before the change the 3 existing tests errored with NotImplementedError. Review: pass with no blocking findings, reviewer agt_01M88P2HW369XY3KMYB9SR5XM6. Non-blocking follow-ups: a wait_time round trip can miss by about 3e-10 tokens from float rounding, and a clock returning NaN at construction leaves the bucket without refill; neither is covered by a test. Assumed no thread-safety requirement, since the spec is silent. Still running: reviewer's leftover process pid 1955561 (a claude -p session); it stops when this stage ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88P2HW369XY3KMYB9SR5XM6)\n\nSHIPPED: commit f5d98a857fd6360a97604f114e1687e8d0c5c081 on the run branch"
+        },
+        "cost_usd": 0.04278730000000001,
+        "started_at": "2026-11-25T06:24:09.410474367Z",
+        "finished_at": "2026-11-25T06:26:24.804298146Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88P0F7PW97FNN43X6EC9BMD",
+        "run": "prun_01M88P0F0900WQJRBH2ME6NCJD",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88P0F9JQX4XDZP8XJTFVMNY",
+        "aether_task": "tsk_01M88P0F9JQX4XDZP8XJTFVMNZ",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py, with 25 unit tests in test_ratelimit.py covering every requirement and error case. Committed as f5d98a857fd6360a97604f114e1687e8d0c5c081 (tree 5831715d2a60c90514210d05e5656fd5c87195ee) on archon/w8b7q53h-implement-rate-limiter-per-spec-md-in-ra, under the repo's configured identity; not pushed. Standard library only. Checks: python3 -m unittest -v test_ratelimit gives 25 OK; before the change the 3 existing tests errored with NotImplementedError. Review: pass with no blocking findings, reviewer agt_01M88P2HW369XY3KMYB9SR5XM6. Non-blocking follow-ups: a wait_time round trip can miss by about 3e-10 tokens from float rounding, and a clock returning NaN at construction leaves the bucket without refill; neither is covered by a test. Assumed no thread-safety requirement, since the spec is silent. Still running: reviewer's leftover process pid 1955561 (a claude -p session); it stops when this stage ends.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v test_ratelimit"
+          ],
+          "commit": "f5d98a857fd6360a97604f114e1687e8d0c5c081",
+          "evidence": {
+            "none": "Pure library module with no visible output; behaviour is covered by the unit test run."
+          },
+          "local_commit": "f5d98a857fd6360a97604f114e1687e8d0c5c081",
+          "pr": {
+            "body": "Approach: TokenBucket refills lazily from the injected clock; a clock reading not later than the last seen time (or NaN) adds nothing. KeyedLimiter keeps an OrderedDict of per-key buckets, moves a key to the end on each use (try_acquire and wait_time), and evicts the least recently used key before creating one at max_keys. n and constructor arguments are validated with ValueError before any state changes. Files: ratelimit.py, test_ratelimit.py. Checks: python3 -m unittest -v test_ratelimit, 25 tests OK. Assumptions: no thread-safety requirement. Non-blocking follow-ups: wait_time round trip can miss by ~3e-10 tokens from float rounding; NaN clock at construction leaves the bucket without refill.",
+            "summary": "Made ratelimit.py work. Now: TokenBucket and KeyedLimiter follow SPEC.md, including validation, clock-backwards handling and LRU eviction. Before: all methods raised NotImplementedError; now: 25 tests pass.",
+            "title": "Implement token bucket and keyed rate limiter per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "f5d98a857fd6360a97604f114e1687e8d0c5c081",
+            "reviewer_agents": [
+              "agt_01M88P2HW369XY3KMYB9SR5XM6"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88P2HW369XY3KMYB9SR5XM6",
+                "base": "43dfe1be36276f6550878be4cf40d0482b8b90e7",
+                "findings": 2,
+                "head": "f5d98a857fd6360a97604f114e1687e8d0c5c081",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88P2HW369XY3KMYB9SR5XM6"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M88P2HW369XY3KMYB9SR5XM6:1": {
+                "blocking": false,
+                "description": "wait_time round trip can fail by float epsilon: sleeping the returned wait and then calling try_acquire(n) returned False in 4,678 of 20,000 random probes; worst token shortfall about 3.5e-10 (rounding from absolute clock values, not a logic error). at ratelimit.py:46",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88P0F7PW97FNN43X6EC9BMD"
+                },
+                "id": "agt_01M88P2HW369XY3KMYB9SR5XM6:1",
+                "resolved_in": null
+              },
+              "agt_01M88P2HW369XY3KMYB9SR5XM6:2": {
+                "blocking": false,
+                "description": "A clock returning NaN at construction sets _last to NaN, so the bucket never refills; no test covers this and the spec does not address it. at ratelimit.py:26",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88P0F7PW97FNN43X6EC9BMD"
+                },
+                "id": "agt_01M88P2HW369XY3KMYB9SR5XM6:2",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "f5d98a857fd6360a97604f114e1687e8d0c5c081",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88P2HW369XY3KMYB9SR5XM6",
+                    "base": "43dfe1be36276f6550878be4cf40d0482b8b90e7",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M88P2HW369XY3KMYB9SR5XM6:1",
+                      "agt_01M88P2HW369XY3KMYB9SR5XM6:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "New feature in ratelimit.py and test_ratelimit.py with no callers; no security or persistence impact. Reviewer confirmed medium."
+          },
+          "tree": "5831715d2a60c90514210d05e5656fd5c87195ee"
+        },
+        "cost_usd": 0.04278730000000001,
+        "started_at": "2026-11-25T06:24:09.462680960Z",
+        "finished_at": "2026-11-25T06:26:21.570593865Z"
+      }
+    ],
+    "spent_usd": 0.04278730000000001,
+    "gates": [],
+    "delegations": {
+      "stg_01M88P0F7PW97FNN43X6EC9BMD": {
+        "direct_usd": 0.028217150000000007,
+        "delegated_usd": 0.01457015,
+        "agents": [
+          {
+            "agent": "agt_01M88P2HW369XY3KMYB9SR5XM6",
+            "parent": "agt_01M88P0F9JQX4XDZP8XJTFVMNY",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01457015
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T06:24:09.170888582Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T06:24:09.170888582Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T06:24:09.170888582Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

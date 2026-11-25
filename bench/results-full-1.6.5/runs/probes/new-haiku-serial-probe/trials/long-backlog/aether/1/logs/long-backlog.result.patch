@@ -1,0 +1,213 @@
+diff --git a/tasktracker/dates.py b/tasktracker/dates.py
+index 91f8d3e..26b392d 100644
+--- a/tasktracker/dates.py
++++ b/tasktracker/dates.py
+@@ -1,4 +1,3 @@
+-import calendar
+ import re
+ from datetime import date, timedelta
+ 
+@@ -6,8 +5,13 @@ ISO = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
+ OFFSET = re.compile(r"\+(\d+)d")
+ 
+ 
++class InvalidDate(ValueError):
++    pass
++
++
+ def parse_due(text, today):
+     """A due date from `YYYY-MM-DD`, `today`, `tomorrow` or `+Nd`."""
++    assert isinstance(today, date), "today must be a date"
+     cleaned = text.strip().lower()
+     if cleaned == "today":
+         return today
+@@ -15,11 +19,22 @@ def parse_due(text, today):
+         return today + timedelta(days=1)
+     offset = OFFSET.fullmatch(cleaned)
+     if offset:
+-        return today + timedelta(days=int(offset.group(1)))
++        return _shift(today, int(offset.group(1)), text)
+     iso = ISO.fullmatch(cleaned)
+     if not iso:
+-        raise ValueError(f"unrecognised due date: {text}")
+-    year, month, day = (int(g) for g in iso.groups())
+-    month = min(max(month, 1), 12)
+-    day = min(max(day, 1), calendar.monthrange(year, month)[1])
+-    return date(year, month, day)
++        raise InvalidDate(f"unrecognised due date: {text}")
++    return _calendar_date(*(int(g) for g in iso.groups()), text)
++
++
++def _shift(today, days, text):
++    try:
++        return today + timedelta(days=days)
++    except OverflowError:
++        raise InvalidDate(f"due date out of range: {text}") from None
++
++
++def _calendar_date(year, month, day, text):
++    try:
++        return date(year, month, day)
++    except ValueError:
++        raise InvalidDate(f"impossible date: {text}") from None
+diff --git a/tasktracker/export.py b/tasktracker/export.py
+index 723fc52..33595a3 100644
+--- a/tasktracker/export.py
++++ b/tasktracker/export.py
+@@ -1,6 +1,23 @@
++SPECIAL_CHARS = (",", '"', "\r", "\n")
++HEADER = ["id", "title", "tags", "status", "due"]
++
++
+ def to_csv(tasks):
+-    lines = ["id,title,tags,status,due"]
+-    for task in tasks:
+-        due = task.due.isoformat() if task.due else ""
+-        lines.append(f"{task.id},{task.title},{';'.join(task.tags)},{task.status},{due}")
+-    return "\n".join(lines) + "\n"
++    rows = [HEADER] + [_row(task) for task in tasks]
++    return "".join(_csv_line(fields) + "\r\n" for fields in rows)
++
++
++def _row(task):
++    due = task.due.isoformat() if task.due else ""
++    return [str(task.id), task.title, ";".join(task.tags), task.status, due]
++
++
++def _csv_line(fields):
++    return ",".join(_csv_field(field) for field in fields)
++
++
++def _csv_field(value):
++    assert isinstance(value, str), f"CSV field must be str, got {type(value)}"
++    if not any(char in value for char in SPECIAL_CHARS):
++        return value
++    return '"' + value.replace('"', '""') + '"'
+diff --git a/tasktracker/search.py b/tasktracker/search.py
+index 2c7648a..e6ea520 100644
+--- a/tasktracker/search.py
++++ b/tasktracker/search.py
+@@ -1,2 +1,60 @@
++import re
++
++from .models import DONE, OPEN
++
++TERM = re.compile(r'"([^"]*)"|([^\s"]+)')
++STATUSES = (OPEN, DONE)
++
++
++class QueryError(ValueError):
++    pass
++
++
+ def search(tasks, query):
+-    return [task for task in tasks if query in task.title]
++    assert isinstance(query, str), "query must be a string"
++    predicates = [_parse_term(term) for term in _split_terms(query)]
++    return [task for task in tasks if all(matches(task) for matches in predicates)]
++
++
++def _split_terms(query):
++    if query.count('"') % 2:
++        raise QueryError(f"unterminated quote in query: {query}")
++    terms = []
++    for match in TERM.finditer(query):
++        phrase, word = match.groups()
++        terms.append((phrase, True) if phrase is not None else (word, False))
++    return terms
++
++
++def _parse_term(term):
++    text, quoted = term
++    if quoted:
++        return _title_contains(text)
++    field, separator, value = text.partition(":")
++    if not separator:
++        return _title_contains(text)
++    field = field.lower()
++    if field == "tag":
++        if not value:
++            raise QueryError(f"missing value in search term: {text}")
++        return _has_tag(value)
++    if field == "status":
++        return _has_status(value)
++    raise QueryError(f"unknown search field: {text}")
++
++
++def _title_contains(text):
++    needle = text.lower()
++    return lambda task: needle in task.title.lower()
++
++
++def _has_tag(name):
++    wanted = name.lower()
++    return lambda task: any(tag.lower() == wanted for tag in task.tags)
++
++
++def _has_status(value):
++    status = value.lower()
++    if status not in STATUSES:
++        raise QueryError(f"unknown status: {value}")
++    return lambda task: task.status == status
+diff --git a/tests/test_basic.py b/tests/test_basic.py
+index 7d1a523..7cf4de8 100644
+--- a/tests/test_basic.py
++++ b/tests/test_basic.py
+@@ -1,7 +1,8 @@
++import re
+ import unittest
+ from datetime import date
+ 
+-from tasktracker.dates import parse_due
++from tasktracker.dates import InvalidDate, parse_due
+ from tasktracker.export import to_csv
+ from tasktracker.search import search
+ from tasktracker.store import TaskStore, UnknownTask
+@@ -25,6 +26,22 @@ class BasicTest(unittest.TestCase):
+         self.assertEqual(parse_due("2026-03-12", TODAY), date(2026, 3, 12))
+         self.assertEqual(parse_due(" Tomorrow ", TODAY), date(2026, 3, 11))
+         self.assertEqual(parse_due("+5d", TODAY), date(2026, 3, 15))
++        self.assertEqual(parse_due("TODAY", TODAY), date(2026, 3, 10))
++        self.assertEqual(parse_due("+0d", TODAY), date(2026, 3, 10))
++        self.assertEqual(parse_due("2028-02-29", TODAY), date(2028, 2, 29))
++
++    def test_impossible_dates_are_rejected(self):
++        for text in ["2026-02-30", "2025-02-29", "2026-04-31", "2026-13-01", "2026-00-10", "0000-01-01"]:
++            with self.subTest(text=text), self.assertRaisesRegex(InvalidDate, re.escape(text)):
++                parse_due(text, TODAY)
++
++    def test_unsupported_forms_are_rejected(self):
++        for text in ["-3d", "3d", "+3", "soon", "", "2026/03/10", "+99999999999d"]:
++            with self.subTest(text=text), self.assertRaises(InvalidDate):
++                parse_due(text, TODAY)
++
++    def test_invalid_date_is_a_value_error(self):
++        self.assertTrue(issubclass(InvalidDate, ValueError))
+ 
+     def test_export_simple(self):
+         store = TaskStore()
+@@ -32,6 +49,24 @@ class BasicTest(unittest.TestCase):
+         lines = to_csv(store.all()).splitlines()
+         self.assertEqual(lines, ["id,title,tags,status,due", "1,plain title,a;b,open,2026-04-01"])
+ 
++    def test_export_quotes_special_fields(self):
++        store = TaskStore()
++        store.add('buy milk, eggs', tags=["home"])
++        store.add('say "hi"', tags=["a,b", "c"], due=date(2026, 5, 2))
++        store.add("two\nlines")
++        store.add("cr\rhere")
++        self.assertEqual(
++            to_csv(store.all()),
++            "id,title,tags,status,due\r\n"
++            '1,"buy milk, eggs",home,open,\r\n'
++            '2,"say ""hi""","a,b;c",open,2026-05-02\r\n'
++            '3,"two\nlines",,open,\r\n'
++            '4,"cr\rhere",,open,\r\n',
++        )
++
++    def test_export_empty_store_has_only_header(self):
++        self.assertEqual(to_csv([]), "id,title,tags,status,due\r\n")
++
+     def test_search_by_word(self):
+         store = TaskStore()
+         store.add("write report")

@@ -1,0 +1,21 @@
+I've queued the fix as item `qi_01M88P8CZ3MMSCXNP9EQWGCJQF`. I haven't touched the repository myself, since the work has to go through an item.
+
+- **Repository:** `fix-off-by-one` (base `main`, ship mode local, so the fix is committed on a local branch and not pushed).
+- **Pipeline:** `direct`, one agent that runs `python3 -m unittest`, fixes the bug in `window.py` without changing the tests, checks that every input is handled correctly, reruns the tests, and commits.
+- **Review:** `standard`, one reviewer, since the change touches shared logic.
+- **Notify:** tagged, so you'll hear when it finishes.
+
+I'll report the outcome, including the test results, once the item finishes.
+
+Done: Fix window.py bug so python3 -m unittest passes. Fixed the off-by-one in window.py sliding_windows. The loop bound was len(items) - size, which dropped the final window; it is now len(items) - size + 1. Before: python3 -m unittest FAILED (failures=2). After: Ran 3 tests, OK, plus edge checks (empty list, len < size, len == size, size 1, size 0 still raises). Committed as d88c76e (tree 86fa2570260a2e082a57848f99c47518a99b485c) on archon/eqwgcjqf-fix-window-py-bug-so-python3-m-unittest; not pushed. Independent reviewer agt_01M88P937VW8JC5TXXZJPY8A4C passed the head with no findings. Nothing left running; the worktree is clean. Test files untouched.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88P937VW8JC5TXXZJPY8A4C)
+
+SHIPPED: commit d88c76e8feb9fa041c301f042338ddeefdf78917 on the run branch
+Branch `archon/eqwgcjqf-fix-window-py-bug-so-python3-m-unittest` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-z4sn2xp1/archon-bench/work/20261125T062211Z/9418b4e6fd434ecb06804899/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M88P8CZ3MMSCXNP9EQWGCJQF`; land it in `main`: `archon merge qi_01M88P8CZ3MMSCXNP9EQWGCJQF`.
+
+Fixed the off-by-one in window.py sliding_windows. The loop bound was len(items) - size, which dropped the final window; it is now len(items) - size + 1. Before: python3 -m unittest FAILED (failures=2). After: Ran 3 tests, OK, plus edge checks (empty list, len < size, len == size, size 1, size 0 still raises). Committed as d88c76e (tree 86fa2570260a2e082a57848f99c47518a99b485c) on archon/eqwgcjqf-fix-window-py-bug-so-python3-m-unittest; not pushed. Independent reviewer agt_01M88P937VW8JC5TXXZJPY8A4C passed the head with no findings. Nothing left running; the worktree is clean. Test files untouched.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88P937VW8JC5TXXZJPY8A4C)
+
+SHIPPED: commit d88c76e8feb9fa041c301f042338ddeefdf78917 on the run branch

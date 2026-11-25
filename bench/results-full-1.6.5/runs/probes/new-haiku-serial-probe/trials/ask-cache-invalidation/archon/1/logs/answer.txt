@@ -1,0 +1,27 @@
+**Root cause:** `updatePrice` invalidates only the product cache entry. Category listing pages are cached separately and are never invalidated, so they keep serving the old `priceCents` until their 600-second TTL expires. That matches the roughly ten-minute delay.
+
+I read the `catalog-service` source in the `ask-cache-invalidation` mirror at HEAD `47ddfc2` (the base commit). I changed nothing and did not run the tests.
+
+**The code paths:**
+
+- **Write path, `src/pricing.js` `updatePrice`:** it updates the store, then calls `catalog.cache.delete(productKey(sku))`. Only `product:<sku>` is removed. No listing key is touched.
+- **Product read, `src/catalog.js` `product`:** it reads `product:<sku>` from the cache and falls back to the store on a miss. Because the write path removed that key, the next product-page read goes to the store and returns the new price. That is why product pages update immediately.
+- **Listing read, `src/catalog.js` `listing`:** it reads `listing:<category>:<page>` from the cache. On a hit it returns the stored rows, and those rows carry `priceCents` copied at build time (lines 27–29). Nothing removes them when a price changes, so they stay stale until expiry.
+- **TTLs, `src/config.js`:** `PRODUCT_TTL_SECONDS: 3600` and `LISTING_TTL_SECONDS: 600`. The listing TTL is the ~10-minute window Support is seeing.
+- **Key scheme, `src/keys.js`:** listing keys are `listing:<category>:<page>`. A price change does not know which category or page keys hold that SKU, so it has no way to invalidate them with the current code.
+
+Sorting is by name, so a price change does not reorder listings. Only the cached `priceCents` value is wrong.
+
+**Fix options, in order of preference:**
+
+1. **Do not copy price into listing rows.** Cache only `sku` and `name`, then hydrate `priceCents` at read time from the product cache or store. Prices are then always read through the path that is already invalidated. This is the smallest correct change.
+2. **Bump a per-category generation.** Put a version in the listing key, e.g. `listing:<category>:<version>:<page>`, and increment the category's version in `updatePrice`. Old entries then expire unused. This needs a category lookup in `updatePrice`, which the store can provide.
+3. **Shorten `LISTING_TTL_SECONDS`.** This only shrinks the window and adds load. It is not a real fix.
+
+Option 1 also avoids the same bug for any future field copied into listings.
+
+**Caveats:**
+
+- The cache is an in-process `Map` (`src/cache.js`). If `catalog-service` runs as several instances, each one holds its own cache, and deleting a key in one instance does not clear the others. In that setup, product pages could also show stale prices for up to `PRODUCT_TTL_SECONDS` (one hour) on other instances. Nothing in this repository shows the deployment topology, so this is unverified.
+- The fix should also cover name or category changes. Only `updatePrice` exists here, so I could not check other write paths.
+- A test for this bug is missing. The existing test covers only product-page freshness (`test/catalog.test.js`). A test that reads a listing, calls `updatePrice`, and expects the listing to reflect the new price would fail today.

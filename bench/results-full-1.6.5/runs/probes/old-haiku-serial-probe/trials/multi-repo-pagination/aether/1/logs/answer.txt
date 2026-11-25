@@ -1,0 +1,21 @@
+Cursor pagination is in `GET /items` and `listItems` now follows `next_cursor` to the end. Both repos are committed and their tests pass (`python3 -m unittest`: 8 tests; `npm test`: 6 tests).
+
+**Commits**
+- `inventory-api` `7bc91a8`: `api.py`, `test_api.py`, `README.md`
+- `inventory-client` `372b524`: `client.js`, `test/client.test.js`, `README.md`
+
+**API behaviour**
+- `limit` must be plain digits from 1 to 100; it defaults to 20.
+- `cursor` is base64url of the last item id returned. Invalid values return 400 with `{"error": "..."}`.
+- The body is `{"items", "next_cursor"}`, and `next_cursor` is `null` on the last page.
+- An end-to-end run of the real client against the real API returned all 57 items in order.
+
+**Client behaviour**
+- The first request sends no cursor, and later requests pass `next_cursor` back unchanged.
+- It stops when `next_cursor` is `null` or absent.
+- I added two guards that the spec did not ask for: it rejects a page without an `items` array, and it rejects a server that repeats a cursor. Without the second one, a misbehaving server would loop forever.
+
+**Choices I made**
+- The cursor is an encoded item id, so each page starts after the last id served and the ordering stays stable.
+- Over HTTP the cursor contains `=` padding, so the README tells callers to URL-encode it in the query string.
+- I did not add a Co-Authored-By trailer to the commits. The CLAUDE.md rule against Claude attribution overrides the system reminder's trailer request.

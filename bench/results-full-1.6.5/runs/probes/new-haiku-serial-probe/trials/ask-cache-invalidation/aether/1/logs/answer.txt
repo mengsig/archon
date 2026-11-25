@@ -1,0 +1,31 @@
+Root cause: updatePrice (src/pricing.js:6-13) invalidates only the product cache entry (`product:<sku>`, line 11). It never touches the listing cache entries (`listing:<category>:<page>`, built in src/catalog.js:22-33). Those entries store a projection that includes priceCents, and they are set with LISTING_TTL_SECONDS = 600 (src/config.js:7), so a stale listing lives up to 10 minutes. Product pages call catalog.product(), which re-reads the store after the delete, so they update at once.
+
+Why 10 minutes: listings are cached on purpose, because the join and sort are expensive (config.js:5-6). The invalidation was written for the product key only. Listings are keyed by category and page, and TtlCache (src/cache.js) has no prefix or tag delete, so updatePrice cannot easily find every affected page without knowing the category and page count.
+
+Reproduced with node -e (no files written): after updatePrice(A1 -> 4500), product('A1') returns 4500 while listing('tools') still returns 5000. The listing flips to 4500 only at t = 600 s. npm test passes (3/3), but no test covers a listing after a price change, which is why this was missed.
+
+Fix options:
+1. Best: don't cache price in the listing. Cache only the sku order per category/page and hydrate name/price from the product cache or store at read time. This removes the stale path and keeps the expensive sort cached.
+2. Or on updatePrice, look up the product's category before updating, then delete every listing page for that category. This needs a prefix delete or a per-category version key in listingKey.
+3. Stopgap: lower LISTING_TTL_SECONDS. This only shrinks the window and adds load.
+Add a regression test: update a price, then assert listing('tools') shows the new price.
+
+No code was changed.
+
+**Root cause:** `updatePrice` invalidates only the product cache entry and never touches the category listing entries, which keep their own 10-minute TTL.
+
+- **Invalidation (`src/pricing.js:6-13`):** after the store update, it calls `catalog.cache.delete(productKey(sku))` and nothing else. Listing entries are keyed `listing:<category>:<page>` (`src/keys.js:4`), so they are never removed.
+- **Product path (`src/catalog.js:12-20`):** `product()` misses the cache after the delete and re-reads the store, so product pages update immediately.
+- **Listing path (`src/catalog.js:22-33`):** `listing()` caches rows that include `priceCents` (the projection on line 29) under `LISTING_TTL_SECONDS = 600` (`src/config.js:7`). Until that TTL expires, category pages serve the old price.
+- **Why the delay is what it is:** the long listing TTL is intentional. The config comment says listings are expensive to build (joins and sorting), so they are cached separately. The invalidation was only written for the product key. `TtlCache` (`src/cache.js`) has no prefix or tag delete, and listing keys are per category and page, so `updatePrice` cannot easily clear every affected page.
+
+**Reproduction** (run with `node -e`, no files written): after `updatePrice(catalog, 'A1', 4500)`, `product('A1')` returns 4500 while `listing('tools')` still returns 5000. The listing changes only once the clock passes 600 s. `npm test` passes 3/3, but no test checks a listing after a price change, which is why this went unnoticed.
+
+**Fix options:**
+1. **Preferred:** stop caching price in listings. Cache only the SKU order per category and page, and fill in name and price from the product cache or store at read time. This removes the stale path and keeps the expensive sort cached.
+2. **Alternative:** in `updatePrice`, look up the product's category before the update, then delete all listing pages for that category. This needs a prefix delete on `TtlCache` or a per-category version number in `listingKey`.
+3. **Stopgap:** lower `LISTING_TTL_SECONDS`. This shrinks the window but adds rebuild load.
+
+Whichever fix you pick, add a regression test: change a price, then assert that `listing('tools')` shows the new value.
+
+No code was changed.

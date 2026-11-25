@@ -1,0 +1,12 @@
+The fix is in and committed as `f3173d7`. `python3 -m unittest` now runs 3 tests and passes.
+
+**The bug:** `sliding_windows` looped over `range(len(items) - size)`, which leaves out the final window. For `[1, 2, 3]` with size 2 it returned `[[1, 2]]` instead of `[[1, 2], [2, 3]]`. The loop bound is now `range(len(items) - size + 1)`.
+
+**Correct for all inputs:**
+- If `size > len(items)`, the bound is zero or negative, so `range` is empty and the result is `[]`. That is the right answer, since no full window exists.
+- An empty list returns `[]`.
+- `size <= 0` still raises `ValueError`, as before.
+
+I also checked these directly: `[]` with size 1, `[1]` with size 1, `[1, 2]` with size 3, `[1, 2, 3]` with size 3, and `[1, 2, 3, 4]` with size 2.
+
+I only changed `window.py` and did not touch the tests. The commit has the Co-Authored-By line from your instructions. The `__pycache__/` directory from running the tests is untracked and I left it out of the commit.

@@ -53,10 +53,10 @@ def collect_budgets(source, destination):
     for model in ('luna', 'haiku'):
         versions = {version: database_spend(source / f'{version}-{model}') for version in ('old', 'new')}
         probes = {}
-        if model == 'luna':
-            for label in ('old-luna-protocol-probe', 'new-luna-budget-probe'):
-                probes[label] = database_spend(source / label)
-                collect_run(source / label, destination / 'probes' / label)
+        labels = ('old-luna-protocol-probe', 'new-luna-budget-probe') if model == 'luna' else ('old-haiku-serial-probe', 'new-haiku-serial-probe')
+        for label in labels:
+            probes[label] = database_spend(source / label)
+            collect_run(source / label, destination / 'probes' / label)
         total = sum(entry['usd'] for entry in list(versions.values()) + list(probes.values()))
         budgets[model] = {'runs': versions, 'probes': probes, 'total_usd': total}
     (destination / 'budget.json').write_text(json.dumps(budgets, indent=2) + '\n')
@@ -70,7 +70,7 @@ def main():
     for label in ('old-luna', 'new-luna', 'old-haiku', 'new-haiku'):
         collect_run(source / label, destination / label)
     collect_budgets(source, destination)
-    for model in ('luna', 'haiku'):
+    for model in ('luna', 'haiku', 'haiku-serial'):
         guard = source / f'{model}-guard.log'
         assert guard.is_file(), f'missing {model} guard log'
         shutil.copy2(guard, destination / guard.name)

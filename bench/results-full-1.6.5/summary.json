@@ -5340,5 +5340,5 @@
   "budgets": {},
   "html": null,
   "luna_verdict": "NO REGRESSION",
-  "status": "Haiku pending Claude Code authentication"
+  "status": "Haiku running at parallel 3 after operator-directed restart"
 }

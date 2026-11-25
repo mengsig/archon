@@ -1,0 +1,19 @@
+placeholder
+
+I made an error and need to flag it before anything else. I meant to stop the hung background shell task with TaskStop, but I called `fail_task` on the whole assignment with the placeholder text "placeholder". That marked task `tsk_01M88PMP5RNBMKN745V8MMGG0S` failed, which was not what I intended, and the harness has ended my turn. I can't make further tool calls, so I can't undo it or finish the work myself.
+
+**Where the repository stands** (`long-backlog`, branch `main`):
+
+- **TT-101 (committed `17dc07b`):** `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible dates, unsupported forms and out-of-range offsets. Offsets `-3d`/`3d` are rejected. Tests were added and the suite passed.
+- **TT-102 (committed `7bcd899`):** `to_csv` is RFC 4180: CRLF line endings, quoting for comma/quote/CR/LF, doubled quotes. Tests were added and the suite passed.
+- **TT-103 (not committed):** `tasktracker/search.py` has the query parser (quoted phrases, AND, `tag:`, `status:`, `QueryError`). The implementation ran, and the tests were passing before the last edit. The last edit tidied the parser and added tests, and that edit left a stray `cat >> /dev/null` that hung the shell. I have not run the suite since, so the current state of this change is unverified.
+- **TT-104 (not started):** `TaskStore.undo()` and `NothingToUndo`.
+
+**Stuck background process:** the hung shell command (`ba2ndg75b`) may still be running. Stop it with `TaskStop` or kill it manually.
+
+**Other notes:**
+- The working tree has uncommitted changes to `tasktracker/search.py` and `tests/test_basic.py`.
+- I did not commit TT-103 or TT-104 because I hadn't verified them.
+- I had decided not to add the `Co-Authored-By` trailer, because the repository's CLAUDE.md says not to add attribution lines.
+
+**To resume:** the task needs to be reopened or reassigned, since it is now marked failed. Then the next steps are: run `python3 -m unittest discover -s tests -t .` on TT-103 and commit it if green, then implement TT-104 with tests and commit it separately.

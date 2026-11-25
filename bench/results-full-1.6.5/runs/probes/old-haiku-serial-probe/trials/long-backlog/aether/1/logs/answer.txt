@@ -1,0 +1,18 @@
+All four backlog tickets are implemented and committed separately on `main`, with the full suite passing: 43 tests, up from 4 at baseline. The tree is clean.
+
+| Commit | Ticket | Change |
+|---|---|---|
+| `8339c74` | TT-101 | `parse_due` raises `InvalidDate` (a `ValueError` subclass) instead of clamping. Impossible dates, unsupported forms and out-of-range offsets are rejected; `-3d` and `3d` are rejected. Tests in `tests/test_dates.py`. |
+| `2786766` | TT-102 | `to_csv` uses the stdlib `csv` writer with CRLF endings and `QUOTE_MINIMAL`, which quotes on comma, quote, CR and LF and doubles embedded quotes. Tests in `tests/test_export.py`. |
+| `c64adce` | TT-103 | `search` parses a small query language: quoted phrases, `tag:`, `status:`. Unknown fields and statuses, empty values and unterminated quotes raise `QueryError` before any task is checked. Tests in `tests/test_search.py`. |
+| `72c0fac` | TT-104 | `TaskStore.undo()` walks a LIFO log of add, complete and delete. Undoing a delete restores a snapshot under the same id; ids are never reused. `NothingToUndo` is raised when the log is empty. Tests in `tests/test_undo.py`. |
+
+Assumptions I made where the backlog was silent:
+- **TT-104, repeated complete:** undoing a `complete` restores the task's previous status rather than always forcing `open`. This matters only when completing an already-done task. Undoing that second completion leaves it done.
+- **TT-104, delete snapshot:** the snapshot is taken at delete time, so a caller mutating the returned task cannot change what undo restores.
+- **TT-104, return value:** `undo()` returns the affected task. The backlog did not specify one.
+- **TT-103, status values:** `status:` is matched case-insensitively, the same as tags.
+- **TT-103, quoting:** a quoted term is always literal text, so `"status:open"` searches for that string rather than filtering.
+- **TT-101, large offsets:** an offset too large for a date (e.g. `+99999999999d`) raises `InvalidDate` rather than an `OverflowError`.
+
+I used only the standard library, and the README is unchanged.

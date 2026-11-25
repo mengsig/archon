@@ -47,8 +47,8 @@ def main():
     assert old_pid > 0 and new_pid > 0 and old_pid != new_pid
     sandbox = Path('/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK')
     report = Path('.archon/reports/bench')
-    probe_paths = [report / f'{label}-luna-{name}-probe/aether-data/aether.db'
-                   for label, name in [('old', 'protocol'), ('new', 'budget')]] if model == 'luna' else []
+    labels = ['old-luna-protocol-probe', 'new-luna-budget-probe'] if model == 'luna' else ['old-haiku-serial-probe', 'new-haiku-serial-probe']
+    probe_paths = [report / label / 'aether-data/aether.db' for label in labels]
     assert all(path.is_file() for path in probe_paths), 'missing probe usage'
     probe = sum(spend(path) for path in probe_paths)
     assert sandbox.is_dir() and report.is_dir()
@@ -64,9 +64,8 @@ def main():
                 stop(old_pid, 'archon-bench-old')
                 stop(new_pid, 'archon-bench-new')
                 return 1
-            if load > 12 and owned(new_pid, 'archon-bench-new'):
-                print('Load exceeded 12; dropping to one run', flush=True)
-                stop(new_pid, 'archon-bench-new')
+            if load > 12:
+                print('Load exceeds 12; operator review may be needed', flush=True)
             time.sleep(20)
         except (OSError, sqlite3.Error) as error:
             print(f'Guard failed: {error}', flush=True)

@@ -1,0 +1,27 @@
+I didn't edit `ratelimit.py` or commit myself. Changes to a repository go through the Archon queue, so I enqueued the work as item `qi_01M88P0HM4Q43MG8DXVTT6461C` on `feature-token-bucket`.
+
+What the item will do:
+- **Spec:** implement `TokenBucket` and `KeyedLimiter` exactly as `SPEC.md` describes, including the `ValueError` cases, starting full, capped refill, clock regression handling, and LRU eviction with evicted keys starting full.
+- **Tests:** add tests to `test_ratelimit.py` for the error and edge cases, with the existing tests still passing.
+- **Dependencies:** standard library only.
+- **Pipeline:** `direct`, one agent, with standard review (one reviewer). I picked standard rather than strict because the change is a single module with no concurrency or security surface.
+- **Commit:** the repo ships in `local` mode, so the commit stays on a local branch and is not pushed.
+
+Two things to check when it finishes:
+- The commit author comes from the repo's configured git identity. I haven't verified it is yours, so confirm the author before relying on the commit.
+- The commit message will have no attribution lines, as you asked.
+
+I'll report the outcome when the item finishes.
+
+Done: Implement token bucket and keyed rate limiter in ratelimit.py per SPEC.md. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 15 tests in test_ratelimit.py covering validation, refill and cap, fractional tokens, wait_time not consuming tokens, clock regression, LRU eviction (try_acquire and wait_time both count as use), evicted keys starting full, and len(). Committed as ab9c302 on archon/vtt6461c-implement-token-bucket-and-keyed-rate-li; not pushed. Checks: `python3 -m unittest -v test_ratelimit` on the final tree gives 18 tests, OK; the base stubs fail with 21 errors. No pyflakes or ruff is installed, so no linter ran; both files parse. Reviewer agt_01M88P2QX5E077E6VCTC5RXJPK passed head ab9c302 with no blocking findings. Open follow-ups (non-blocking): max_keys is not checked to be an integer (2.5 is accepted); available() and wait_time() have fewer than two assertions; KeyedLimiter re-validates n before delegating to TokenBucket, which duplicates the check. No processes were started. Review: {"review": {"verdict": "pass", "reviewers": ["agt_01M88P2QX5E077E6VCTC5RXJPK"]}}
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88P2QX5E077E6VCTC5RXJPK)
+
+SHIPPED: commit ab9c302f8f5f29f99532599a3642bb62573c0656 on the run branch
+Branch `archon/vtt6461c-implement-token-bucket-and-keyed-rate-li` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-d56p74a0/archon-bench/work/20261125T062211Z/19489167f17a51bf1427fa34/feature-token-bucket holds it (2 files changed, 202 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M88P0HM4Q43MG8DXVTT6461C`; land it in `main`: `archon merge qi_01M88P0HM4Q43MG8DXVTT6461C`.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 15 tests in test_ratelimit.py covering validation, refill and cap, fractional tokens, wait_time not consuming tokens, clock regression, LRU eviction (try_acquire and wait_time both count as use), evicted keys starting full, and len(). Committed as ab9c302 on archon/vtt6461c-implement-token-bucket-and-keyed-rate-li; not pushed. Checks: `python3 -m unittest -v test_ratelimit` on the final tree gives 18 tests, OK; the base stubs fail with 21 errors. No pyflakes or ruff is installed, so no linter ran; both files parse. Reviewer agt_01M88P2QX5E077E6VCTC5RXJPK passed head ab9c302 with no blocking findings. Open follow-ups (non-blocking): max_keys is not checked to be an integer (2.5 is accepted); available() and wait_time() have fewer than two assertions; KeyedLimiter re-validates n before delegating to TokenBucket, which duplicates the check. No processes were started. Review: {"review": {"verdict": "pass", "reviewers": ["agt_01M88P2QX5E077E6VCTC5RXJPK"]}}
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88P2QX5E077E6VCTC5RXJPK)
+
+SHIPPED: commit ab9c302f8f5f29f99532599a3642bb62573c0656 on the run branch

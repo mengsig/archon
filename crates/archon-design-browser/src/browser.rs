@@ -19,7 +19,7 @@ use tokio::time::Instant;
 
 use crate::cdp::{CLOSED_EVENT, Cdp, CdpEvent, MAX_FRAME};
 use crate::containment::Containment;
-use crate::keys::virtual_key_code;
+use crate::input::{Held, command};
 use crate::launch::{
     SHELL_SCRIPT, classify_stderr, kill_group, launch_args, launch_env, process_start_time,
     write_profile_preferences,
@@ -29,11 +29,15 @@ use crate::proxy::{Policy, Proxy};
 use crate::relay::{FrameRelay, RelayShared};
 use crate::sanitize::clean;
 use crate::{
-    BrowserError, BrowserEvent, ClipRect, Input, KeyAction, LaunchSpec, MAX_IMAGE_BYTES,
-    MouseAction, MouseButton, Picture, PictureCapture, TouchAction, Viewport, jpeg_dims,
+    BrowserError, BrowserEvent, ClipRect, Input, LaunchSpec, MAX_IMAGE_BYTES, Picture,
+    PictureCapture, Viewport, jpeg_dims,
 };
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
+/// One input request's dispatch, then letting go of what it left held: both
+/// well inside the 60 s the web app waits, so its next batch never overlaps.
+pub(crate) const INPUT_DEADLINE: Duration = Duration::from_secs(8);
+const RELEASE_DEADLINE: Duration = Duration::from_secs(2);
 /// Stream frames: four a second at rest, ten (the relay's most) while the
 /// operator scrolls or types, so a scroll is followed and its end shown soon.
 const IDLE_FRAME_INTERVAL: Duration = Duration::from_millis(250);
@@ -87,6 +91,8 @@ struct State {
     poll: Option<JoinHandle<()>>,
     /// When input was last dispatched: frames come faster for a while after it.
     last_input: Option<Instant>,
+    /// Keys, buttons and fingers sent down and not yet up.
+    held: Held,
 }
 
 #[derive(Debug)]
@@ -166,15 +172,6 @@ pub(crate) fn path_of(url: &str) -> String {
             p.split(['?', '#']).next().unwrap_or("/").to_string()
         }
         None => url.to_string(),
-    }
-}
-
-fn button_name(b: MouseButton) -> &'static str {
-    match b {
-        MouseButton::None => "none",
-        MouseButton::Left => "left",
-        MouseButton::Middle => "middle",
-        MouseButton::Right => "right",
     }
 }
 
@@ -956,6 +953,7 @@ impl Browser {
                 viewport: vp,
                 poll: None,
                 last_input: None,
+                held: Held::default(),
             }),
         });
         let event_task = tokio::spawn(handle_events(sh.clone(), rx, documents));
@@ -1046,71 +1044,51 @@ impl Browser {
         Ok(())
     }
 
-    /// Dispatch input events in order.
+    /// Dispatch input events in order, within [`INPUT_DEADLINE`]. Past it the
+    /// rest is dropped and whatever is held down is let go, so nothing sticks.
     pub async fn input(&self, events: &[Input]) -> Result<(), BrowserError> {
         self.sh.st.lock().unwrap().last_input = Some(Instant::now());
-        for e in events {
-            let (method, params) = match e {
-                Input::Mouse {
-                    action,
-                    x,
-                    y,
-                    button,
-                    click_count,
-                    modifiers,
-                } => (
-                    "Input.dispatchMouseEvent",
-                    json!({
-                        "type": match action { MouseAction::Move => "mouseMoved", MouseAction::Down => "mousePressed", MouseAction::Up => "mouseReleased" },
-                        "x": x, "y": y, "button": button_name(*button), "clickCount": click_count, "modifiers": modifiers,
-                    }),
-                ),
-                Input::Wheel {
-                    x,
-                    y,
-                    dx,
-                    dy,
-                    modifiers,
-                } => (
-                    "Input.dispatchMouseEvent",
-                    json!({"type": "mouseWheel", "x": x, "y": y, "deltaX": dx, "deltaY": dy, "modifiers": modifiers}),
-                ),
-                Input::Key {
-                    action,
-                    key,
-                    code,
-                    text,
-                    modifiers,
-                } => {
-                    let ty = match (action, text.as_deref().is_some_and(|t| !t.is_empty())) {
-                        (KeyAction::Up, _) => "keyUp",
-                        (KeyAction::Down, true) => "keyDown",
-                        (KeyAction::Down, false) => "rawKeyDown",
-                    };
-                    let mut p =
-                        json!({"type": ty, "key": key, "code": code, "modifiers": modifiers});
-                    // Chrome scrolls, deletes and tabs by the key code, not the key name.
-                    if let Some(vk) = virtual_key_code(key, code) {
-                        p["windowsVirtualKeyCode"] = json!(vk);
-                        p["nativeVirtualKeyCode"] = json!(vk);
-                    }
-                    if let (KeyAction::Down, Some(t)) = (action, text) {
-                        p["text"] = json!(t);
-                    }
-                    ("Input.dispatchKeyEvent", p)
-                }
-                Input::Text { text } => ("Input.insertText", json!({"text": text})),
-                Input::Touch { action, points } => (
-                    "Input.dispatchTouchEvent",
-                    json!({
-                        "type": match action { TouchAction::Start => "touchStart", TouchAction::Move => "touchMove", TouchAction::End => "touchEnd", TouchAction::Cancel => "touchCancel" },
-                        "touchPoints": points.iter().map(|p| json!({"x": p.x, "y": p.y, "id": p.id})).collect::<Vec<_>>(),
-                    }),
-                ),
+        let dispatch = async {
+            for e in events {
+                self.sh.st.lock().unwrap().held.note(e);
+                let (method, params) = command(e);
+                self.sh.call(method, params).await?;
+            }
+            Ok(())
+        };
+        let Ok(done) = tokio::time::timeout(INPUT_DEADLINE, dispatch).await else {
+            let released = self.release_held().await;
+            let held = if released.is_ok() {
+                ""
+            } else {
+                "; a held key or button may still be down"
             };
-            self.sh.call(method, params).await?;
+            return Err(BrowserError::Timeout(format!(
+                "input took over {} s; some of it may not have reached the app{held}",
+                INPUT_DEADLINE.as_secs()
+            )));
+        };
+        done
+    }
+
+    /// Let go of every key, button and finger still held. Chrome runs a target's
+    /// commands in order, so these follow any press it has yet to act on.
+    async fn release_held(&self) -> Result<(), BrowserError> {
+        let releases = std::mem::take(&mut self.sh.st.lock().unwrap().held).releases();
+        let release = async {
+            for e in &releases {
+                let (method, params) = command(e);
+                self.sh.call(method, params).await?;
+            }
+            Ok::<(), BrowserError>(())
+        };
+        let result = tokio::time::timeout(RELEASE_DEADLINE, release)
+            .await
+            .unwrap_or_else(|_| Err(BrowserError::Timeout("releasing held input".into())));
+        if let Err(error) = &result {
+            tracing::warn!(%error, count = releases.len(), "held preview input was not released");
         }
-        Ok(())
+        result
     }
 
     /// Start delivering verified viewport captures at up to four frames per second.
@@ -1740,6 +1718,61 @@ mod capture_tests {
             b.capture(None, 1.0).await,
             Err(BrowserError::Protocol(_))
         ));
+    }
+
+    /// A batch cut short by its deadline must not leave Chrome holding a press:
+    /// whatever was sent down is let go, and the caller hears input was lost.
+    #[tokio::test(start_paused = true)]
+    async fn input_that_hangs_is_cut_short_and_lets_go_of_what_it_held() {
+        let (b, log) = fake_browser(|m, p| {
+            (m == "Input.dispatchKeyEvent" && p["type"] == "rawKeyDown")
+                .then(crate::testutil::no_answer)
+        })
+        .await;
+        let press = |action| Input::Mouse {
+            action,
+            x: 5.0,
+            y: 6.0,
+            button: crate::MouseButton::Left,
+            click_count: 1,
+            modifiers: 0,
+        };
+        let key = |action| Input::Key {
+            action,
+            key: "b".into(),
+            code: "KeyB".into(),
+            text: None,
+            modifiers: 0,
+        };
+        log.lock().unwrap().clear();
+        let events = [
+            press(crate::MouseAction::Down),
+            key(crate::KeyAction::Down),
+            key(crate::KeyAction::Up),
+            press(crate::MouseAction::Up),
+        ];
+        let lost = b.input(&events).await;
+        assert!(
+            matches!(&lost, Err(BrowserError::Timeout(m)) if m.contains("may not have reached")),
+            "{lost:?}"
+        );
+        let sent: Vec<String> = log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, _)| m.starts_with("Input."))
+            .map(|(_, p)| p["type"].as_str().unwrap_or_default().to_owned())
+            .collect();
+        assert_eq!(
+            sent,
+            ["mousePressed", "rawKeyDown", "mouseReleased", "keyUp"]
+        );
+        b.input(&[
+            press(crate::MouseAction::Down),
+            press(crate::MouseAction::Up),
+        ])
+        .await
+        .expect("input goes on after a cut-short batch");
     }
 
     #[test]

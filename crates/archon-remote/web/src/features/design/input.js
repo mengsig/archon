@@ -13,6 +13,27 @@ export const RETRY_MS = 250;
 export const MAX_RETRIES = 8;
 
 const round = (v) => Math.round(v * 10) / 10;
+// What a press holds down until its release, or null for events that hold nothing.
+const heldKey = (e) => (e.type === 'key' ? `key:${e.code || e.key}`
+  : e.type === 'mouse' && e.button !== 'none' ? `mouse:${e.button}`
+    : e.type === 'touch' ? 'touch' : null);
+const isPress = (e) => e.action === 'down' || e.action === 'start';
+const isRelease = (e) => e.action === 'up' || e.action === 'end' || e.action === 'cancel';
+
+// Releases in `events` whose press went out before them: dropping one would
+// leave its key, button or finger down in Chrome.
+export function strandedReleases(events) {
+  const pressedHere = new Set();
+  const stranded = [];
+  for (const e of events) {
+    const key = heldKey(e);
+    if (key === null) continue;
+    if (isPress(e)) pressedHere.add(key);
+    else if (isRelease(e) && !pressedHere.delete(key)) stranded.push(e);
+  }
+  console.assert(stranded.length <= events.length, 'Stranded releases come from the batch');
+  return stranded;
+}
 
 // `send(events)` may return a promise: the batch counts as outstanding until it
 // settles. A rejection means archond refused it unrun; it goes again first.
@@ -67,13 +88,15 @@ export function createInputBatcher({
     reply.then(() => settled(false), () => settled(true));
   }
 
-  // Releases must not be lost, so a refused batch goes first again, a few times.
+  // A refused batch goes first again, a few times; given up, it still keeps
+  // the releases of presses already sent, so nothing stays held down.
   function retry(events) {
     console.assert(events.length > 0 && events.length <= maxEvents, 'Only a sent batch is retried');
     if (retries >= MAX_RETRIES) {
       retries = 0;
       setBusy(false);
       onOverflow();
+      queue = strandedReleases(events).concat(queue);
     } else {
       retries += 1;
       queue = events.concat(queue);
@@ -105,14 +128,11 @@ export function createInputBatcher({
   }
 
   function admit(event) {
-    const { type, action } = event;
-    const key = type === 'key' ? `key:${event.code || event.key}`
-      : type === 'mouse' && event.button !== 'none' ? `mouse:${event.button}`
-      : type === 'touch' ? 'touch' : null;
-    const down = key !== null && (action === 'down' || action === 'start');
-    const up = key !== null && (action === 'up' || action === 'end' || action === 'cancel');
+    const key = heldKey(event);
+    const down = key !== null && isPress(event);
+    const up = key !== null && isRelease(event);
     const held = pressed.has(key);
-    if (key !== null && (up || action === 'move') && !held) return false;
+    if (key !== null && (up || event.action === 'move') && !held) return false;
     if (merge(event)) return true;
 
     // Each admitted press reserves space for its release, even after it is sent;

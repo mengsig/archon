@@ -16,20 +16,20 @@ use crate::context::DaemonContext;
 /// Most hover and select resolves a second, and input requests a second.
 const RESOLVES_PER_SECOND: u32 = 10;
 const INPUTS_PER_SECOND: u32 = 60;
-/// Input requests run in separate tasks; ending each by this deadline, well
-/// inside the web app's wait for its reply, keeps one from overlapping the next.
-const INPUT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+/// Input requests run in separate tasks. Each is ready by this deadline and the
+/// browser bounds its dispatch, so one ends well before the web app sends the next.
+const READY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// `dispatch` bounded by [`INPUT_DEADLINE`]: past it the rest of the batch is
-/// dropped, and the caller hears that some input may not have arrived.
-async fn within_input_deadline(
-    dispatch: impl std::future::Future<Output = Result<(), ArchonError>>,
-) -> Result<(), ArchonError> {
-    match tokio::time::timeout(INPUT_DEADLINE, dispatch).await {
+/// `ready` bounded by [`READY_DEADLINE`]: past it nothing has been dispatched,
+/// and the caller hears that its input did not reach the app.
+async fn within_ready_deadline<T>(
+    ready: impl std::future::Future<Output = Result<T, ArchonError>>,
+) -> Result<T, ArchonError> {
+    match tokio::time::timeout(READY_DEADLINE, ready).await {
         Ok(done) => done,
         Err(_) => Err(ArchonError::Unavailable(format!(
-            "the preview took over {} s to take input; some of it may not have reached the app",
-            INPUT_DEADLINE.as_secs()
+            "the preview was not ready for input within {} s; it did not reach the app",
+            READY_DEADLINE.as_secs()
         ))),
     }
 }
@@ -396,14 +396,27 @@ impl DesignService {
         session: &archon_core::design::DesignSessionId,
         events: Vec<InputEvent>,
     ) -> Result<Reply, ArchonError> {
-        let row = self.current(ctx, session).await?;
         if events.len() > MAX_INPUT_EVENTS {
             return Err(ArchonError::Invalid(format!(
                 "at most {MAX_INPUT_EVENTS} input events a request"
             )));
         }
+        let browser = within_ready_deadline(self.ready_for_input(ctx, session, &events)).await?;
+        let mapped: Vec<adb::Input> = events.into_iter().map(input_of).collect();
+        browser.input(&mapped).await.map_err(unavailable)?;
+        Ok(Reply::DesignDone)
+    }
+
+    /// Checks `events` and the rate, then the browser to send them to.
+    async fn ready_for_input(
+        &self,
+        ctx: &DaemonContext,
+        session: &archon_core::design::DesignSessionId,
+        events: &[InputEvent],
+    ) -> Result<std::sync::Arc<dyn PreviewBrowser>, ArchonError> {
+        let row = self.current(ctx, session).await?;
         let (width, height) = row.viewport_preset.size();
-        for event in &events {
+        for event in events {
             validate_input(event, width, height)?;
         }
         let rt = self.runtime(&row.id);
@@ -417,13 +430,7 @@ impl DesignService {
             st.counters.inputs += events.len() as u64;
             st.pending_input = Some(std::time::Instant::now());
         }
-        let mapped: Vec<adb::Input> = events.into_iter().map(input_of).collect();
-        within_input_deadline(async {
-            let browser = self.browser_for_input(ctx, session).await?;
-            browser.input(&mapped).await.map_err(unavailable)
-        })
-        .await?;
-        Ok(Reply::DesignDone)
+        self.browser_for_input(ctx, session).await
     }
 
     async fn resolve(
@@ -597,15 +604,16 @@ mod input_tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn input_that_hangs_ends_by_its_deadline_and_says_so() {
+    async fn input_whose_preview_is_not_ready_ends_by_its_deadline_and_says_so() {
         let started = tokio::time::Instant::now();
-        let hung = within_input_deadline(std::future::pending()).await;
+        let hung = within_ready_deadline::<()>(std::future::pending()).await;
         assert!(
-            matches!(&hung, Err(ArchonError::Unavailable(m)) if m.contains("may not have reached"))
+            matches!(&hung, Err(ArchonError::Unavailable(m)) if m.contains("did not reach the app"))
         );
-        assert_eq!(started.elapsed(), INPUT_DEADLINE);
-        assert!(within_input_deadline(async { Ok(()) }).await.is_ok());
-        let failed = within_input_deadline(async { Err(ArchonError::Invalid("x".into())) }).await;
+        assert_eq!(started.elapsed(), READY_DEADLINE);
+        assert_eq!(within_ready_deadline(async { Ok(7) }).await.ok(), Some(7));
+        let failed =
+            within_ready_deadline::<()>(async { Err(ArchonError::Invalid("x".into())) }).await;
         assert!(matches!(failed, Err(ArchonError::Invalid(_))));
     }
 

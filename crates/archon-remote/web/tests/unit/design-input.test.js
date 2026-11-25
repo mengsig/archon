@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createInputBatcher, mouseEvent, wheelEvent, modifiersOf, BUSY_AFTER_MS, RETRY_MS, MAX_RETRIES } from '../../src/features/design/input.js';
+import { createInputBatcher, mouseEvent, wheelEvent, modifiersOf, BUSY_AFTER_MS, RETRY_MS, MAX_RETRIES, strandedReleases } from '../../src/features/design/input.js';
 
 function clock() {
   let t = 0;
@@ -254,4 +254,32 @@ test('a release still gets in after a refused press is put back into a full queu
   for (let i = 0; i < 20 && s.replies.length > 0; i += 1) { await s.answer(); c.advance(20); }
   const keys = s.batches.slice(1).flat().filter((e) => e.type === 'key');
   assert.deepEqual(keys.map((e) => e.action), ['down', 'up'], 'the press goes again, then its release');
+});
+
+test('a batch given up still lets go of presses that went out before it', async () => {
+  const c = clock();
+  const s = slowSend();
+  let overflows = 0;
+  const b = createInputBatcher({ send: s.send, onOverflow: () => { overflows += 1; }, ...c });
+  const key = (action, code) => ({ type: 'key', action, key: code, code, text: null, modifiers: 0 });
+  b.push(key('down', 'KeyA')); c.advance(1);
+  await s.answer();
+  b.push(key('down', 'KeyB'));
+  b.push(key('up', 'KeyB'));
+  b.push(key('up', 'KeyA'));
+  c.advance(20);
+  for (let i = 0; i <= MAX_RETRIES; i += 1) { await s.refuse(); c.advance(RETRY_MS); }
+  assert.equal(overflows, 1);
+  assert.deepEqual(s.batches.at(-1), [key('up', 'KeyA')], 'only the release of the press archond took goes on');
+  await s.answer();
+  assert.equal(b.pending, 0);
+});
+
+test('stranded releases are those whose press is not in the same batch', () => {
+  const down = mouseEvent('down', { x: 1, y: 1 }, { button: 0, clickCount: 1 });
+  const up = mouseEvent('up', { x: 1, y: 1 }, { button: 0, clickCount: 1 });
+  const end = { type: 'touch', action: 'end', points: [] };
+  assert.deepEqual(strandedReleases([down, up]), []);
+  assert.deepEqual(strandedReleases([up, end, { type: 'text', text: 'x' }]), [up, end]);
+  assert.deepEqual(strandedReleases([up, down, up]), [up]);
 });

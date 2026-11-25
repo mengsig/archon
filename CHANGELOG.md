@@ -21,7 +21,8 @@
   frames come ten a second while you scroll.
 - Fast scrolling no longer floods archond with input or shows a red "at most
   16 requests may be in flight" error. Input goes one request at a time, and
-  archond ends each within 10 seconds, so it runs in order; meanwhile wheel ticks at a point add up and pointer moves keep the
+  archond ends each within about 20 seconds, letting go of anything a cut-short
+  batch left held down, so it runs in order; meanwhile wheel ticks at a point add up and pointer moves keep the
   latest, and input archond turns away while busy is sent again. The web app
   holds any request past archond's in-flight limit until a reply comes, and a
   request that never gets a reply frees its place after 30 seconds. A preview

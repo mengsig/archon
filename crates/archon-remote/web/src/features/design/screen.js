@@ -125,8 +125,10 @@ export function mountDesign(view, ctx) {
   const status = buildStatusBar();
   // The preview falling behind is one quiet status line, never a stack of toasts.
   let behindTimer = null;
+  let behindShown = null;
   // `forMs` null keeps the line until it is cleared.
   function behind(message, forMs = BEHIND_SHOWN_MS) {
+    behindShown = message;
     status.setBusy(message);
     clearTimeout(behindTimer);
     behindTimer = message && forMs ? setTimeout(() => status.setBusy(null), forMs) : null;
@@ -143,7 +145,8 @@ export function mountDesign(view, ctx) {
       });
     },
     onOverflow: () => behind(BEHIND.skipped),
-    onBusy: (on) => behind(on ? BEHIND.busy : null, null),
+    // Caught up clears only the busy line, never a notice that input was lost.
+    onBusy: (on) => { if (on) behind(BEHIND.busy, null); else if (behindShown === BEHIND.busy) behind(null); },
   });
   const queueInput = (event) => state.frame && state.connection === 'open' && isLive(state) && batcher.push(event);
   const stage = createStage({

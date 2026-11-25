@@ -7,6 +7,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
 use crate::Browser;
 
+/// A scripted answer that makes the peer never answer, as a hung Chrome.
+pub(crate) fn no_answer() -> Value {
+    json!({"<no answer>": true})
+}
+
 /// What a peer says to a method its test did not script: an unscrolled page, or `{}`.
 fn unscripted(method: &str) -> Value {
     match method {
@@ -75,6 +80,9 @@ async fn fake_browser_with(
                     "Target.attachToTarget" => json!({"sessionId": "S1"}),
                     _ => answer(&method, &msg["params"]).unwrap_or_else(|| unscripted(&method)),
                 };
+                if result == no_answer() {
+                    continue;
+                }
                 let mut out =
                     serde_json::to_vec(&json!({"id": msg["id"], "result": result})).unwrap();
                 out.push(0);

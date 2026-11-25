@@ -205,4 +205,5 @@ test('backpressure, lost input and real failures are told apart', () => {
   assert.equal(isBackpressure(err('policy', 'too many input requests; slow down')), true);
   assert.equal(isLostInput(err('timeout', 'design_input got no answer in 60 s')), true);
   assert.equal(isLostInput(null), false);
+  assert.equal(isLostInput(err('unavailable', 'the preview was not ready for input within 10 s; it did not reach the app')), true);
 });

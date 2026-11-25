@@ -1,0 +1,14 @@
+Queued **“Fix `window.py` for all inputs and commit”** as `qi_01M88BXN7S1MHF6NE2X8TMR5SV`. The work will leave tests unchanged, run `python3 -m unittest`, and commit the fix.
+
+Done: Fix window.py for all inputs and commit. Fixed sliding_windows to include every valid start position, including the final window and a window equal to the input length. python3 -m unittest passed (3 tests); independent review passed with boundary checks. Committed as 5ab1d2bb9f3205e7cd2cd3a8e7d94dd6b3ccf36e. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88BZ3CG5XNMNZMBHWZ90RAF)
+
+SHIPPED: commit 5ab1d2bb9f3205e7cd2cd3a8e7d94dd6b3ccf36e on the run branch
+Branch `archon/x8tmr5sv-fix-window-py-for-all-inputs-and-commit` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/defa41d9dded2cbf5b184baf/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M88BXN7S1MHF6NE2X8TMR5SV`; land it in `main`: `archon merge qi_01M88BXN7S1MHF6NE2X8TMR5SV`.
+
+Fixed sliding_windows to include every valid start position, including the final window and a window equal to the input length. python3 -m unittest passed (3 tests); independent review passed with boundary checks. Committed as 5ab1d2bb9f3205e7cd2cd3a8e7d94dd6b3ccf36e. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88BZ3CG5XNMNZMBHWZ90RAF)
+
+SHIPPED: commit 5ab1d2bb9f3205e7cd2cd3a8e7d94dd6b3ccf36e on the run branch

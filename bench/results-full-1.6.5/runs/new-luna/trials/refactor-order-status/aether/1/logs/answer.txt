@@ -1,0 +1,5 @@
+Implemented and committed as `e3ad491` (`Refactor order status to enum`).
+
+`OrderStatus` now handles parsing, display, and lifecycle transitions; the crate re-exports it and `ParseStatusError`. Existing error messages and report ordering are preserved.
+
+`cargo test` passes (3 integration tests). Git working tree is clean.

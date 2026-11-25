@@ -1,0 +1,188 @@
+diff --git a/ledger.py b/ledger.py
+index 42f2e88..b94d6d0 100644
+--- a/ledger.py
++++ b/ledger.py
+@@ -1,14 +1,38 @@
+ """Bounded, thread-safe ledger. See SPEC.md."""
+ 
++import threading
++
+ MAX_BALANCE = 2**63 - 1
+ 
+ 
+ class Ledger:
+     def __init__(self, balances):
+-        raise NotImplementedError
++        if not isinstance(balances, dict):
++            raise ValueError("balances must be a dict")
++        for name, balance in balances.items():
++            if not isinstance(name, str) or not name:
++                raise ValueError("account names must be nonempty strings")
++            if type(balance) is not int or not 0 <= balance <= MAX_BALANCE:
++                raise ValueError("balances must be integers in range")
++        self._balances = balances.copy()
++        self._lock = threading.Lock()
+ 
+     def transfer(self, source, destination, amount):
+-        raise NotImplementedError
++        if type(amount) is not int or not 1 <= amount <= MAX_BALANCE:
++            raise ValueError("amount must be an integer in range")
++        with self._lock:
++            source_balance = self._balances[source]
++            destination_balance = self._balances[destination]
++            if source == destination:
++                return source_balance >= amount
++            if source_balance < amount:
++                return False
++            if destination_balance + amount > MAX_BALANCE:
++                return False
++            self._balances[source] = source_balance - amount
++            self._balances[destination] = destination_balance + amount
++            return True
+ 
+     def snapshot(self):
+-        raise NotImplementedError
++        with self._lock:
++            return self._balances.copy()
+diff --git a/test_ledger.py b/test_ledger.py
+index b8089e7..292a0fe 100644
+--- a/test_ledger.py
++++ b/test_ledger.py
+@@ -1,6 +1,8 @@
+ import unittest
++from concurrent.futures import ThreadPoolExecutor
++import threading
+ 
+-from ledger import Ledger
++from ledger import Ledger, MAX_BALANCE
+ 
+ 
+ class LedgerBasics(unittest.TestCase):
+@@ -13,3 +15,127 @@ class LedgerBasics(unittest.TestCase):
+         ledger = Ledger({"a": 2, "b": 0})
+         self.assertIs(ledger.transfer("a", "b", 3), False)
+         self.assertEqual(ledger.snapshot(), {"a": 2, "b": 0})
++
++
++class LedgerSpecifiedCases(unittest.TestCase):
++    def test_constructor_validation(self):
++        for invalid in (None, [], {"": 0}, {1: 0}, {"a": -1},
++                        {"a": MAX_BALANCE + 1}, {"a": True}, {"a": 1.0}):
++            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
++                Ledger(invalid)
++        self.assertEqual(Ledger({}).snapshot(), {})
++
++    def test_constructor_copies_input_and_snapshot(self):
++        balances = {"a": 5, "b": 0}
++        ledger = Ledger(balances)
++        balances["a"] = 100
++        balances["new"] = 1
++        snapshot = ledger.snapshot()
++        snapshot["a"] = 200
++        snapshot["new"] = 2
++        self.assertEqual(ledger.snapshot(), {"a": 5, "b": 0})
++
++    def test_amount_validation_precedes_account_lookup(self):
++        ledger = Ledger({"a": 1})
++        for amount in (0, -1, MAX_BALANCE + 1, True, 1.0):
++            with self.subTest(amount=amount), self.assertRaises(ValueError):
++                ledger.transfer("missing", "also missing", amount)
++        with self.assertRaises(KeyError):
++            ledger.transfer("missing", "a", 1)
++
++    def test_destination_overflow_is_atomic(self):
++        ledger = Ledger({"a": 4, "b": MAX_BALANCE - 2})
++        before = ledger.snapshot()
++        self.assertFalse(ledger.transfer("a", "b", 3))
++        self.assertEqual(ledger.snapshot(), before)
++
++    def test_same_account_checks_funds_without_mutation(self):
++        ledger = Ledger({"a": MAX_BALANCE})
++        before = ledger.snapshot()
++        self.assertTrue(ledger.transfer("a", "a", MAX_BALANCE))
++        self.assertEqual(ledger.snapshot(), before)
++        small = Ledger({"a": 3})
++        self.assertFalse(small.transfer("a", "a", 4))
++        self.assertEqual(small.snapshot(), {"a": 3})
++
++    def test_concurrent_opposite_transfers_preserve_total(self):
++        ledger = Ledger({"a": 1000, "b": 1000})
++
++        def move(source, destination):
++            for _ in range(500):
++                ledger.transfer(source, destination, 1)
++
++        with ThreadPoolExecutor(max_workers=8) as pool:
++            futures = [pool.submit(move, *pair) for pair in
++                       (("a", "b"), ("b", "a")) * 4]
++            for future in futures:
++                future.result(timeout=5)
++        result = ledger.snapshot()
++        self.assertEqual(sum(result.values()), 2000)
++        self.assertTrue(all(0 <= balance <= MAX_BALANCE
++                            for balance in result.values()))
++
++    def test_snapshots_during_transfers_preserve_total(self):
++        ledger = Ledger({"a": 1000, "b": 1000})
++        rounds = 20
++        actual_lock = threading.Lock()
++        transfer_holds_lock = [threading.Event() for _ in range(rounds)]
++        snapshot_waiting_for_lock = [threading.Event() for _ in range(rounds)]
++        allow_transfer_to_finish = [threading.Event() for _ in range(rounds)]
++        snapshot_completed = [threading.Event() for _ in range(rounds)]
++        transfer_thread_id = []
++        transfer_index = []
++
++        class ObservedLock:
++            def __enter__(self):
++                is_transfer = threading.get_ident() == transfer_thread_id[0]
++                if is_transfer:
++                    index = len(transfer_index)
++                    transfer_index.append(index)
++                    actual_lock.acquire()
++                    transfer_holds_lock[index].set()
++                    if not allow_transfer_to_finish[index].wait(timeout=2):
++                        actual_lock.release()
++                        raise TimeoutError("snapshot did not join active transfer")
++                    return self
++                index = len(transfer_index) - 1
++                snapshot_waiting_for_lock[index].set()
++                actual_lock.acquire()
++                return self
++
++            def __exit__(self, *_):
++                actual_lock.release()
++
++        ledger._lock = ObservedLock()
++        transfer_future = None
++        snapshot_future = None
++        try:
++            with ThreadPoolExecutor(max_workers=2,
++                                    thread_name_prefix="ledger-transfer") as pool:
++                def transfer_once():
++                    transfer_thread_id.append(threading.get_ident())
++                    for index in range(rounds):
++                        ledger.transfer("a", "b", 1)
++                        if not snapshot_completed[index].wait(timeout=2):
++                            raise TimeoutError("snapshot did not complete")
++
++                transfer_future = pool.submit(transfer_once)
++                for index in range(rounds):
++                    self.assertTrue(transfer_holds_lock[index].wait(timeout=2))
++                    snapshot_future = pool.submit(ledger.snapshot)
++                    self.assertTrue(snapshot_waiting_for_lock[index].wait(timeout=2))
++                    # The snapshot has attempted to acquire the lock while
++                    # this transfer owns it. It can observe only a whole
++                    # transaction after the transfer completes.
++                    allow_transfer_to_finish[index].set()
++                    snapshot = snapshot_future.result(timeout=2)
++                    self.assertEqual(snapshot["a"] + snapshot["b"], 2000)
++                    snapshot_completed[index].set()
++                transfer_future.result(timeout=2)
++        finally:
++            for event in allow_transfer_to_finish + snapshot_completed:
++                event.set()
++            for future in (transfer_future, snapshot_future):
++                if future is not None:
++                    if not future.done():
++                        future.cancel()

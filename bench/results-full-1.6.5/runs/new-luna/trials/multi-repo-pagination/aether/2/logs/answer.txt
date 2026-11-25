@@ -1,0 +1,6 @@
+Implemented and committed cursor pagination in both repositories.
+
+- API commit: `81988da` — validates `limit` and `cursor`, returns ordered pages with `next_cursor`, and documents the endpoint.
+- Client commit: `3955dc4` — follows cursors until the final page and documents the behavior.
+- Tests pass: `python3 -m unittest` and `npm test`.
+- Both working trees are clean.

@@ -1,0 +1,36 @@
+======================================================================
+ERROR: test_duplicate_and_prefix_collisions (test_safe_extract_hidden.ExtractEdges.test_duplicate_and_prefix_collisions) (names=('a/b', 'a'))
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/e5552e93a068c70775bbca6e/quality-safe-extract/test_safe_extract_hidden.py", line 38, in test_duplicate_and_prefix_collisions
+    extract([(name, b"data") for name in names], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/e5552e93a068c70775bbca6e/quality-safe-extract/safe_extract.py", line 86, in extract
+    with target.open("xb") as stream:
+         ~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.14/pathlib/__init__.py", line 771, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileExistsError: [Errno 17] File exists: '/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/e5552e93a068c70775bbca6e/quality-safe-extract/tmpfgg759z5/out/a'
+
+======================================================================
+FAIL: test_duplicate_and_prefix_collisions (test_safe_extract_hidden.ExtractEdges.test_duplicate_and_prefix_collisions)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/e5552e93a068c70775bbca6e/quality-safe-extract/test_safe_extract_hidden.py", line 39, in test_duplicate_and_prefix_collisions
+    self.assertEqual(list(self.root.iterdir()), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/home/mengsig/.local/share/arc[135 chars]/a')] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+PosixPath('/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/e5552e93a068c70775bbca6e/quality-safe-extract/tmpfgg759z5/out/a')
+
+- [PosixPath('/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/e5552e93a068c70775bbca6e/quality-safe-extract/tmpfgg759z5/out/a')]
++ []
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.008s
+
+FAILED (failures=1, errors=1)
+expect_tests: python3 exited 1

@@ -1,0 +1,14 @@
+Queued as **qi_01M88E7TRGME44KCHBB1H2R8AE** on the `direct` pipeline. It covers the spec-compliant implementation, focused error and boundary tests, and a commit. The repository uses local shipping; no parallel agents were started.
+
+Done: Implement retry_budget.py to SPEC.md. Implemented retry_delay per SPEC.md and added focused validation and boundary tests. Final checks passed (9 tests, py_compile, diff check); independent review passed with no findings. Committed as bca04dadaa379799f339d1cb6ae4288cacef81e3.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88EA0JEB97QV468Z3348R06)
+
+SHIPPED: commit bca04dadaa379799f339d1cb6ae4288cacef81e3 on the run branch
+Branch `archon/b1h2r8ae-implement-retry-budget-py-to-spec-md` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/ee4560c8ec4e218dfc3801e0/quality-retry-budget holds it (2 files changed, 76 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M88E7TRGME44KCHBB1H2R8AE`; land it in `main`: `archon merge qi_01M88E7TRGME44KCHBB1H2R8AE`.
+
+Implemented retry_delay per SPEC.md and added focused validation and boundary tests. Final checks passed (9 tests, py_compile, diff check); independent review passed with no findings. Committed as bca04dadaa379799f339d1cb6ae4288cacef81e3.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88EA0JEB97QV468Z3348R06)
+
+SHIPPED: commit bca04dadaa379799f339d1cb6ae4288cacef81e3 on the run branch

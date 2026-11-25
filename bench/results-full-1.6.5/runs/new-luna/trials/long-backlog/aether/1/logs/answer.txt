@@ -1,0 +1,8 @@
+Implemented and committed all four tickets separately:
+
+- TT-101 `8bdfbcb` — reject invalid due dates
+- TT-102 `61c8178` — RFC 4180 CSV export
+- TT-103 `b770408` — search query syntax
+- TT-104 `18d12c6` — undo task operations
+
+The requested test suite passes: **9 tests, OK**. The working tree is clean.

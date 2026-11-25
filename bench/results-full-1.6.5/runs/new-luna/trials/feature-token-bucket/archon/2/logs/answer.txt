@@ -1,0 +1,16 @@
+Queued **Implement SPEC.md rate limiter** (`qi_01M887PZZA2B7EYEEZTT42DMYS`) in the `feature-token-bucket` repository. It will implement the spec, run the existing tests and focused checks, and commit the change.
+
+The quota update shows Codex at 32% remaining and on pace to run out before reset, so I routed this focused task to the fast tier to conserve quota.
+
+Done: Implement SPEC.md rate limiter. Implemented the specified token bucket and keyed LRU limiter, with focused edge-case tests. Final checks passed: 9 unit tests, bytecode compilation, and diff whitespace validation. Committed as b732885480a6c3553a0ad04067e36cc783425fce; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M887SXY9FYD0AH54VAJV6NXB)
+
+SHIPPED: commit b732885480a6c3553a0ad04067e36cc783425fce on the run branch
+Branch `archon/tt42dmys-implement-spec-md-rate-limiter` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/f75704f7b4cacf2e77d70a4f/feature-token-bucket holds it (2 files changed, 118 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M887PZZA2B7EYEEZTT42DMYS`; land it in `main`: `archon merge qi_01M887PZZA2B7EYEEZTT42DMYS`.
+
+Implemented the specified token bucket and keyed LRU limiter, with focused edge-case tests. Final checks passed: 9 unit tests, bytecode compilation, and diff whitespace validation. Committed as b732885480a6c3553a0ad04067e36cc783425fce; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M887SXY9FYD0AH54VAJV6NXB)
+
+SHIPPED: commit b732885480a6c3553a0ad04067e36cc783425fce on the run branch

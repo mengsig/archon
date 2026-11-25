@@ -1,0 +1,3 @@
+Implemented and committed as `989a702` (`Refactor order status to enum`).
+
+`OrderStatus` now drives order operations and report parsing, preserving the existing error messages and sorted report output. `cargo test` passed (3 integration tests), and `git diff --check` passed.

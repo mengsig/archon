@@ -1,0 +1,3 @@
+Implemented the specified token bucket and keyed LRU limiter in [ratelimit.py](/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/bc76e452533620424637850e/feature-token-bucket/ratelimit.py). `git diff --check` passed; tests were not run.
+
+Committed as `aba39b3` (`Implement token bucket rate limiter`).

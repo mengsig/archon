@@ -1,0 +1,5 @@
+Implemented and committed as `993bbd8` (`Implement bounded thread-safe ledger`).
+
+`ledger.py` now enforces the spec’s validation order and balance limits, handles self-transfers and overflow atomically, and uses a lock to make transfers and snapshots thread-safe. Added focused tests for invalid inputs, copying, unknown accounts, overflow, and self-transfers.
+
+`git diff --check` passed. I did not run the test suite.

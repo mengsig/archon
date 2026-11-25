@@ -1,0 +1,3 @@
+Fixed the sliding window endpoint in [window.py](/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/c24b7b9e84c248adb4bfe98f/fix-off-by-one/window.py). `python3 -m unittest` passes all 3 tests.
+
+Committed as `5d7fdbe` (`Fix sliding window endpoint`). Repository is clean.

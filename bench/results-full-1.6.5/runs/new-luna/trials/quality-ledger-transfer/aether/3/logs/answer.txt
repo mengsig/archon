@@ -1,0 +1,3 @@
+Implemented the thread-safe ledger API and added validation, aliasing, overflow, self-transfer, and concurrency tests.
+
+All six tests pass, and `git diff --check` is clean. Committed as `ed2c225` (`Implement atomic bounded ledger`). The workspace has an untracked `__pycache__/` directory from the test run.

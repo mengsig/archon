@@ -1,0 +1,62 @@
+Queued TT-101 through TT-104 as four independent direct items, each required to add tests, run the requested unittest suite, use only the standard library, and commit separately. The repository model policy allows only codex/gpt-6-luna (maximum medium effort), so I could not route these to another provider; the current quota pace estimates the Codex primary window may run out around 2026-11-26 15:03 UTC, before reset on 2026-11-28 20:29 UTC.
+
+Queued all four tickets as separate `direct` items in `long-backlog`:
+
+- TT-101: `qi_01M8889G280KQZBXS2E85AKDYE`
+- TT-102: `qi_01M8889G3HQNVDVBV19SCREE5T`
+- TT-103: `qi_01M8889FZWA6RRQYEZS2Y7ZEME`
+- TT-104: `qi_01M8889FYAHP2990T6DEXY5CN5`
+
+Each item requires the specified acceptance criteria, new tests, the requested unittest command, standard-library-only changes, and its own commit. The repository policy allows only `codex/gpt-6-luna`; I’ve also relayed the quota pace estimate to you.
+
+Done: TT-102: RFC 4180 CSV export. Implemented and committed RFC 4180 CSV export with focused tests. The required unittest suite and diff check pass; independent review passed with no findings. Commit 6a16408eefb3d618efe474f1cb03d20adfdda6f3; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888BEJP4XF7PG76SNA04119)
+
+SHIPPED: commit 6a16408eefb3d618efe474f1cb03d20adfdda6f3 on the run branch
+Branch `archon/9scree5t-tt-102-rfc-4180-csv-export` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/2dfc678595ca16d2b3894b33/long-backlog holds it (2 files changed, 26 insertions(+), 5 deletions(-)). Review: `archon diff qi_01M8889G3HQNVDVBV19SCREE5T`; land it in `main`: `archon merge qi_01M8889G3HQNVDVBV19SCREE5T`.
+
+Done: TT-104: Undo. Implemented TT-104 undo history for successful add, complete, and delete operations, including exact delete restoration and monotonic IDs. Added six focused tests. Baseline: 4 tests passed; final requested unittest command: 10 tests passed, with git diff --check clean. Commit 9894c48478a23c0538e4e0117baeab7964d31c13 (tree b4ad70843bff718cc13761d5bf02cf68e42bc276). Independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888BX9Q4ADEZH6FBW95T8HM)
+
+SHIPPED: commit 9894c48478a23c0538e4e0117baeab7964d31c13 on the run branch
+Branch `archon/dexy5cn5-tt-104-undo` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/2dfc678595ca16d2b3894b33/long-backlog holds it (2 files changed, 76 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8889FYAHP2990T6DEXY5CN5`; land it in `main`: `archon merge qi_01M8889FYAHP2990T6DEXY5CN5`.
+
+Done: TT-103: Search query syntax. Implemented TT-103 query parsing with quoted phrases, AND matching, case-insensitive titles and tags, status filters, and QueryError validation; added focused search tests. `python3 -m unittest discover -s tests -t .` passed (10 tests), and `git diff --check` passed. Independent review approved commit be33b81576eb63b06601b88c6782561ecce27fea with no findings. No open items.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888C01DVBF2P91RK2B89K3A)
+
+SHIPPED: commit be33b81576eb63b06601b88c6782561ecce27fea on the run branch
+Branch `archon/s2y7zeme-tt-103-search-query-syntax` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/2dfc678595ca16d2b3894b33/long-backlog holds it (2 files changed, 108 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8889FZWA6RRQYEZS2Y7ZEME`; land it in `main`: `archon merge qi_01M8889FZWA6RRQYEZS2Y7ZEME`.
+
+Done: TT-101: Reject impossible due dates. Implemented TT-101 in tasktracker/dates.py and added focused regression tests in tests/test_basic.py. Impossible calendar dates, unsupported forms, and oversized numeric components now raise InvalidDate with the original text; supported dates and relative forms remain accepted. `python3 -m unittest discover -s tests -t .` passed (6 tests); `git diff --check` passed. Committed as fa3aff14fc0c7823d4d31d9087633f0d6a8b5160. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888BFFG4KCKGF7W8QF2F3XR), codex/gpt-6-luna (agent agt_01M888E39GYMM993SFN1JM95X8), codex/gpt-6-luna (agent agt_01M888FY34XD0PWSSCJ875KHFG)
+
+SHIPPED: commit fa3aff14fc0c7823d4d31d9087633f0d6a8b5160 on the run branch
+Branch `archon/e85akdye-tt-101-reject-impossible-due-dates` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/2dfc678595ca16d2b3894b33/long-backlog holds it (2 files changed, 32 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8889G280KQZBXS2E85AKDYE`; land it in `main`: `archon merge qi_01M8889G280KQZBXS2E85AKDYE`.
+
+Implemented and committed RFC 4180 CSV export with focused tests. The required unittest suite and diff check pass; independent review passed with no findings. Commit 6a16408eefb3d618efe474f1cb03d20adfdda6f3; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888BEJP4XF7PG76SNA04119)
+
+SHIPPED: commit 6a16408eefb3d618efe474f1cb03d20adfdda6f3 on the run branch
+
+Implemented TT-101 in tasktracker/dates.py and added focused regression tests in tests/test_basic.py. Impossible calendar dates, unsupported forms, and oversized numeric components now raise InvalidDate with the original text; supported dates and relative forms remain accepted. `python3 -m unittest discover -s tests -t .` passed (6 tests); `git diff --check` passed. Committed as fa3aff14fc0c7823d4d31d9087633f0d6a8b5160. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888BFFG4KCKGF7W8QF2F3XR), codex/gpt-6-luna (agent agt_01M888E39GYMM993SFN1JM95X8), codex/gpt-6-luna (agent agt_01M888FY34XD0PWSSCJ875KHFG)
+
+SHIPPED: commit fa3aff14fc0c7823d4d31d9087633f0d6a8b5160 on the run branch
+
+Implemented TT-103 query parsing with quoted phrases, AND matching, case-insensitive titles and tags, status filters, and QueryError validation; added focused search tests. `python3 -m unittest discover -s tests -t .` passed (10 tests), and `git diff --check` passed. Independent review approved commit be33b81576eb63b06601b88c6782561ecce27fea with no findings. No open items.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888C01DVBF2P91RK2B89K3A)
+
+SHIPPED: commit be33b81576eb63b06601b88c6782561ecce27fea on the run branch
+
+Implemented TT-104 undo history for successful add, complete, and delete operations, including exact delete restoration and monotonic IDs. Added six focused tests. Baseline: 4 tests passed; final requested unittest command: 10 tests passed, with git diff --check clean. Commit 9894c48478a23c0538e4e0117baeab7964d31c13 (tree b4ad70843bff718cc13761d5bf02cf68e42bc276). Independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888BX9Q4ADEZH6FBW95T8HM)
+
+SHIPPED: commit 9894c48478a23c0538e4e0117baeab7964d31c13 on the run branch

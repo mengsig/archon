@@ -1,0 +1,16 @@
+Queued as **qi_01M889HTYVN0MWBBHD4S5KQTGV** on the adaptive pipeline. It covers `ledger.py`, focused tests for the specified edge cases and thread safety, and a commit. I chose the balanced tier at medium effort to conserve Codex quota; the repository workflow will report the result.
+
+Failed: Implement atomic thread-safe ledger from SPEC.md — build: ESCALATE: the review of stage build (attempt 1) failed 4 rounds, the last at head 0ea10911e1d7f2eff88911d944f298e22c9de58e, each a commit a reviewer failed with a blocking finding, so Archon stopped it instead of another round. Full detail: archon queue show qi_01M889HTYVN0MWBBHD4S5KQTGV --full
+
+Done: Implement atomic thread-safe ledger from SPEC.md. Deterministic snapshot/transfer overlap coverage committed in test_ledger.py. `python -m unittest -v` passed (9 tests); diff check passed. Full-change and delta reviews passed; both new reviewers reported no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88A8KFADW8WE6BB38Z4F4ZK), codex/gpt-6-luna (agent agt_01M88A8KFZPPE3515H8M53SY7S), codex/gpt-6-luna (agent agt_01M889MHTGP57W8ET74GW6SV2V), codex/gpt-6-luna (agent agt_01M889MHV8W9ATXXQ6KGZWJMWW), codex/gpt-6-luna (agent agt_01M889MHW20WXC1MQR53ME0A5S)
+
+SHIPPED: commit 87eecdf7b1a69704a525ab47f315d0492e484e09 on the run branch
+Branch `archon/4s5kqtgv-implement-atomic-thread-safe-ledger-from` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/887e3e36006018bafbd4492f/quality-ledger-transfer holds it (2 files changed, 154 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M889HTYVN0MWBBHD4S5KQTGV`; land it in `main`: `archon merge qi_01M889HTYVN0MWBBHD4S5KQTGV`.
+
+Deterministic snapshot/transfer overlap coverage committed in test_ledger.py. `python -m unittest -v` passed (9 tests); diff check passed. Full-change and delta reviews passed; both new reviewers reported no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88A8KFADW8WE6BB38Z4F4ZK), codex/gpt-6-luna (agent agt_01M88A8KFZPPE3515H8M53SY7S), codex/gpt-6-luna (agent agt_01M889MHTGP57W8ET74GW6SV2V), codex/gpt-6-luna (agent agt_01M889MHV8W9ATXXQ6KGZWJMWW), codex/gpt-6-luna (agent agt_01M889MHW20WXC1MQR53ME0A5S)
+
+SHIPPED: commit 87eecdf7b1a69704a525ab47f315d0492e484e09 on the run branch

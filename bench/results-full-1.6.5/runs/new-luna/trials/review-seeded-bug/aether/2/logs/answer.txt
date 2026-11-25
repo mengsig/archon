@@ -1,0 +1,7 @@
+## Findings
+
+- **Critical — `src/tokens.js:27`, `verify`: accepts empty or truncated signatures.** `expected.startsWith(signature)` treats the signature as a prefix instead of requiring an exact match. For example, an attacker can base64url-encode `{"user":"root","exp":9999999999999}` and submit `<body>.` with an empty signature. The prefix check passes, so `verify` returns the forged claims. Any nonempty prefix of the real MAC also passes. Require an exact, fixed-length MAC comparison; use a constant-time comparison after validating the signature’s format and length.
+
+- **Medium — `src/tokens.js:28`, `verify`: malformed signed-looking input throws instead of returning `null`.** For example, `verify("%%%....", secret)` reaches `JSON.parse` and throws a `SyntaxError` because the base64url decoder is permissive. A caller that doesn’t catch this can turn an invalid token into a request failure. Catch decoding and parsing errors and return `null`, consistent with the function’s documented behavior.
+
+The test suite doesn’t cover either case.

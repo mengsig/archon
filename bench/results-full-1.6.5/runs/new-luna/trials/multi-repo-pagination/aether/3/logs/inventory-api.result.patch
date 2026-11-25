@@ -1,0 +1,71 @@
+diff --git a/README.md b/README.md
+index 1a55755..be1bbe9 100644
+--- a/README.md
++++ b/README.md
+@@ -6,7 +6,7 @@ In-memory inventory service. `api.handle(request)` maps a request
+ 
+ ## Endpoints
+ 
+-- `GET /items` → `{"items": [...]}`: every item, ordered by `id`.
++- `GET /items?limit=20&cursor=...` → `{"items": [...], "next_cursor": ...}`: items ordered by `id` in pages. `limit` is optional (1–100, default 20); supply the returned opaque `next_cursor` as `cursor` to fetch the next page. `next_cursor` is `null` on the last page. Invalid limits and cursors return 400 with `{"error": "..."}`.
+ - `GET /items/<id>` → the item, 404 when unknown, 400 when `id` is not a number.
+ 
+ Run the tests with `python3 -m unittest`.
+diff --git a/api.py b/api.py
+index aba1605..0c4f89a 100644
+--- a/api.py
++++ b/api.py
+@@ -5,6 +5,9 @@ response is `{"status": int, "body": object}`; the transport layer lives
+ elsewhere.
+ """
+ 
++import base64
++import binascii
++
+ from data import ITEMS
+ 
+ 
+@@ -21,8 +24,42 @@ def handle(request):
+ 
+ 
+ def list_items(query):
++    raw_limit = query.get("limit", 20)
++    if isinstance(raw_limit, bool):
++        return _error(400, "limit must be an integer from 1 to 100")
++    try:
++        limit = int(raw_limit)
++    except (TypeError, ValueError):
++        return _error(400, "limit must be an integer from 1 to 100")
++    if str(limit) != str(raw_limit) or not 1 <= limit <= 100:
++        return _error(400, "limit must be an integer from 1 to 100")
++
+     items = sorted(ITEMS, key=lambda item: item["id"])
+-    return {"status": 200, "body": {"items": items}}
++    after_id = None
++    if "cursor" in query:
++        cursor = query["cursor"]
++        try:
++            if not isinstance(cursor, str) or not cursor:
++                raise ValueError
++            decoded = base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True)
++            after_id = int(decoded.decode("ascii"))
++            if decoded != str(after_id).encode("ascii"):
++                raise ValueError
++            if base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=") != cursor:
++                raise ValueError
++            if not any(item["id"] == after_id for item in items):
++                raise ValueError
++        except (ValueError, UnicodeDecodeError, binascii.Error):
++            return _error(400, "invalid cursor")
++
++    if after_id is not None:
++        items = [item for item in items if item["id"] > after_id]
++    page = items[:limit]
++    next_cursor = None
++    if len(items) > limit:
++        encoded = str(page[-1]["id"]).encode("ascii")
++        next_cursor = base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("=")
++    return {"status": 200, "body": {"items": page, "next_cursor": next_cursor}}
+ 
+ 
+ def get_item(raw_id):

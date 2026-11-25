@@ -1,0 +1,14 @@
+Queued as **qi_01M8868WBV1P6RNRYKBBWD0FPC** in the direct pipeline. It will implement `ledger.py` from `SPEC.md`, add focused tests for documented errors and boundaries, run the relevant tests, and commit the work. I set the implementation effort to low to conserve Codex quota; standard review is enabled.
+
+Done: Implement ledger.py per SPEC.md with boundary tests. Implemented the bounded, thread-safe ledger and focused boundary tests. All 10 unit tests, bytecode compilation, and diff checks pass. Committed as 6a121c14e54ab65bfec9102f4cc396f483da4146; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M886B8VZ3A73C6XN5K55NQ37)
+
+SHIPPED: commit 6a121c14e54ab65bfec9102f4cc396f483da4146 on the run branch
+Branch `archon/bbwd0fpc-implement-ledger-py-per-spec-md-with-bou` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/0fd0bcd70f6f9a3916e9954a/quality-ledger-transfer holds it (2 files changed, 114 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M8868WBV1P6RNRYKBBWD0FPC`; land it in `main`: `archon merge qi_01M8868WBV1P6RNRYKBBWD0FPC`.
+
+Implemented the bounded, thread-safe ledger and focused boundary tests. All 10 unit tests, bytecode compilation, and diff checks pass. Committed as 6a121c14e54ab65bfec9102f4cc396f483da4146; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M886B8VZ3A73C6XN5K55NQ37)
+
+SHIPPED: commit 6a121c14e54ab65bfec9102f4cc396f483da4146 on the run branch

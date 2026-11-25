@@ -1,0 +1,5 @@
+The root cause is the separate category listing cache. `Catalog.listing()` caches each category and page under `listing:<category>:<page>` for `LISTING_TTL_SECONDS`, which is **600 seconds (10 minutes)**. The cached rows include `priceCents`.
+
+`updatePrice()` updates the store and deletes only the product cache entry (`product:<sku>`). That makes product pages see the new price immediately, while any already-cached category listing keeps its old price until that listing entry expires.
+
+The fix is to invalidate the affected category listing entries when a price changes—ideally all cached pages for that product’s category—or use a cache strategy that refreshes listings when their source data changes. The ten-minute TTL can remain as a fallback.

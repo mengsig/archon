@@ -1,0 +1,5 @@
+Implemented and committed as `8825089` (`Refactor order status into enum`).
+
+`OrderStatus` now represents order state throughout the crate, with parsing, display, and transition checks. Existing error messages and report behavior are preserved.
+
+`cargo test` passed (3 integration tests), and the working tree is clean.

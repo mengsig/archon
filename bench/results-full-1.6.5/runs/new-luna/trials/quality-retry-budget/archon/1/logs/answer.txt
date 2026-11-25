@@ -1,0 +1,14 @@
+Queued as **qi_01M886HVVVSNVNMX5NRR5W83Y1** on `direct`, with standard review. The implementation is routed to the policy permitted Codex fast tier at low effort to conserve quota. It will implement the spec, add focused tests, run checks, and commit locally.
+
+Done: Implement retry_budget.py per SPEC.md. Implemented SPEC.md behavior for retry_delay, including complete argument validation, bounded exponential backoff, Retry-After floors, and strict time budget handling. Added focused regression tests; all 9 tests, compileall, and diff checks passed. Committed as ddbc0e4e71c3766929d9ba6b30d9d16255aff09f; independent review passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M886NCVRWT9XKD60A5GJRZBW)
+
+SHIPPED: commit ddbc0e4e71c3766929d9ba6b30d9d16255aff09f on the run branch
+Branch `archon/rr5w83y1-implement-retry-budget-py-per-spec-md` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/7bf3b2763285ef9e8320a938/quality-retry-budget holds it (2 files changed, 94 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M886HVVVSNVNMX5NRR5W83Y1`; land it in `main`: `archon merge qi_01M886HVVVSNVNMX5NRR5W83Y1`.
+
+Implemented SPEC.md behavior for retry_delay, including complete argument validation, bounded exponential backoff, Retry-After floors, and strict time budget handling. Added focused regression tests; all 9 tests, compileall, and diff checks passed. Committed as ddbc0e4e71c3766929d9ba6b30d9d16255aff09f; independent review passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M886NCVRWT9XKD60A5GJRZBW)
+
+SHIPPED: commit ddbc0e4e71c3766929d9ba6b30d9d16255aff09f on the run branch

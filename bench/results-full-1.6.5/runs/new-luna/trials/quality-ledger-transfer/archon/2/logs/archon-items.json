@@ -1,0 +1,653 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M889HTYVN0MWBBHD4S5KQTGV",
+      "repo": "repo_01M889GHKTKCXS36P98W8J80TR",
+      "pipeline": "adaptive",
+      "title": "Implement atomic thread-safe ledger from SPEC.md",
+      "brief": "Implement ledger.py exactly to SPEC.md, preserving the documented API and standard-library-only constraint. Add focused tests for the specified validation, error ordering, overflow/atomicity, same-account, copy isolation, and thread-safety boundary cases; existing tests cover basics only. Run the tests and commit the work as requested by the operator. Acceptance: all specified cases pass, no third-party dependencies, and the implementation commit is delivered. Keep the change confined to ledger.py and focused tests.\n\n## Amendment (2026-11-25 02:56 UTC)\n\nContinue on the existing branch from reviewed head 0ea10911e1d7f2eff88911d944f298e22c9de58e. Resolve all open findings before completion. test_ledger.py must deterministically guarantee snapshot calls overlap active transfer workload; barriers only at start, a busy loop, or a worker parked between transfers are insufficient. Ensure the worker cannot wait forever if a snapshot assertion fails (bounded waits/finally cleanup). Preserve the requirement that concurrent snapshots detect half-transfer states, not only final totals. Prior review history counts; delta-review fixes and add any necessary full-change reads.\n",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "fast",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M889HTYVN0MWBBHD4S5KQTGV",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T02:56:32.321055467Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T02:56:32.321055467Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T02:56:32.321055467Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:concurrency",
+          "review:strict"
+        ],
+        "size": "medium",
+        "keys": {
+          "build": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:concurrency",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "build": "The previous model choice fell back to fast and did not close the review findings. Keep within the configured medium effort ceiling while explicitly resolving those findings."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88A4A2RYR4Q1EN698914K1M",
+        "summary": "Deterministic snapshot/transfer overlap coverage committed in test_ledger.py. `python -m unittest -v` passed (9 tests); diff check passed. Full-change and delta reviews passed; both new reviewers reported no findings.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M88A8KFADW8WE6BB38Z4F4ZK), codex/gpt-6-luna (agent agt_01M88A8KFZPPE3515H8M53SY7S), codex/gpt-6-luna (agent agt_01M889MHTGP57W8ET74GW6SV2V), codex/gpt-6-luna (agent agt_01M889MHV8W9ATXXQ6KGZWJMWW), codex/gpt-6-luna (agent agt_01M889MHW20WXC1MQR53ME0A5S)\n\nSHIPPED: commit 87eecdf7b1a69704a525ab47f315d0492e484e09 on the run branch"
+      },
+      "created_at": "2026-11-25T02:46:27.035500950Z",
+      "updated_at": "2026-11-25T03:00:28.247081082Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M889HV02S7QYT152PAMPE98V",
+        "item": "qi_01M889HTYVN0MWBBHD4S5KQTGV",
+        "pipeline": "adaptive",
+        "shipped": false,
+        "aether_run": "run_01M889HV7Y7CWDZ9GP04EYJ6ZJ",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/887e3e36006018bafbd4492f/.archon/data/worktrees/quality-ledger-transfer/qi_01M889HTYVN0MWBBHD4S5KQTGV",
+        "branch": "archon/4s5kqtgv-implement-atomic-thread-safe-ledger-from",
+        "state": {
+          "state": "failed",
+          "stage_id": "build",
+          "error": "ESCALATE: the review of stage `build` (attempt 1) failed 4 rounds, the last at head `0ea10911e1d7f2eff88911d944f298e22c9de58e`, each a commit a reviewer failed with a blocking finding, so Archon stopped it instead of another round. You decide: continue with `retry_item` (not `fresh`) and a `brief_append` that names this head and the open findings, so its new lead fixes them and delta-reviews only the commits after this head, since earlier reviews still count, adding only the whole-change reads they lack; accept this head with `retry_item` and a `brief_append` that moves the open findings to follow-ups, whose new lead has the head read whole again by as many reviewers as the review level needs; or stop by leaving the item failed. Open blocking findings, from the last round: The worker is no longer deliberately parked between transfers, so this improves the test, but it does not guarantee that any snapshot overlaps transfer activity. After `transfers_started` is set, the main thread may run all 100 snapshots before the worker is scheduled again. The original finding is therefore not reliably resolved. at test_ledger.py:91 [agt_01M88A1WJ92TEE9HKK036E5WW3:1]. Earlier rounds also listed, for the last round's reviewers to verify: The concurrency test checks only the final total and bounds after all workers finish; it never calls snapshot concurrently with transfers, so it cannot detect snapshots observing one leg of a transfer without the other. at test_ledger.py:60 (remedy: Add a deterministic concurrent test that repeatedly snapshots while transfers run and asserts every observed snapshot is a valid whole-ledger state (f; The test adds concurrent snapshot checks for a constant total, but the barrier only synchronizes the initial start. It does not ensure the main thread takes a snapshot while transfers are in progress: the worker can finish before the sampling loop executes, and successful coverage depends on scheduling. The assertion that snapshots > 0 then becomes timing-sensitive rather than guaranteeing overlap; The handshake guarantees a snapshot while the worker future is unfinished, but the worker is parked on snapshot_taken.wait() after its first transfer. The snapshot cannot overlap a transfer, so this test does not exercise whether snapshots can observe a half-transfer. It also replaces repeated snapshot sampling with one snapshot in that idle interval.. The reviewers' results (agt_01M889MHW20WXC1MQR53ME0A5S, agt_01M889S8H0TWVA3DQ3ZAE8YA4K, agt_01M889X44PNCR7K37F503DPG1Z, agt_01M88A1WJ92TEE9HKK036E5WW3) hold every finding in full."
+        },
+        "cost_usd": 0.05147602000000001,
+        "started_at": "2026-11-25T02:46:27.269470525Z",
+        "finished_at": "2026-11-25T02:55:43.577046880Z"
+      },
+      {
+        "id": "prun_01M88A4A2RYR4Q1EN698914K1M",
+        "item": "qi_01M889HTYVN0MWBBHD4S5KQTGV",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M88A4A5CHXJM0J1DM4Z08PQD",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/887e3e36006018bafbd4492f/.archon/data/worktrees/quality-ledger-transfer/qi_01M889HTYVN0MWBBHD4S5KQTGV",
+        "branch": "archon/4s5kqtgv-implement-atomic-thread-safe-ledger-from",
+        "state": {
+          "state": "succeeded",
+          "summary": "Deterministic snapshot/transfer overlap coverage committed in test_ledger.py. `python -m unittest -v` passed (9 tests); diff check passed. Full-change and delta reviews passed; both new reviewers reported no findings.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M88A8KFADW8WE6BB38Z4F4ZK), codex/gpt-6-luna (agent agt_01M88A8KFZPPE3515H8M53SY7S), codex/gpt-6-luna (agent agt_01M889MHTGP57W8ET74GW6SV2V), codex/gpt-6-luna (agent agt_01M889MHV8W9ATXXQ6KGZWJMWW), codex/gpt-6-luna (agent agt_01M889MHW20WXC1MQR53ME0A5S)\n\nSHIPPED: commit 87eecdf7b1a69704a525ab47f315d0492e484e09 on the run branch"
+        },
+        "cost_usd": 0.02304888,
+        "started_at": "2026-11-25T02:56:32.400466227Z",
+        "finished_at": "2026-11-25T03:00:28.247081082Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M889HV79BBK2C2NQF3NPHG8J",
+        "run": "prun_01M889HV02S7QYT152PAMPE98V",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M889HV94X3NS7SBTD71H0HFM",
+        "aether_task": "tsk_01M889HV94X3NS7SBTD71H0HFN",
+        "state": {
+          "state": "failed",
+          "error": "ESCALATE: the review of stage `build` (attempt 1) failed 4 rounds, the last at head `0ea10911e1d7f2eff88911d944f298e22c9de58e`, each a commit a reviewer failed with a blocking finding, so Archon stopped it instead of another round. You decide: continue with `retry_item` (not `fresh`) and a `brief_append` that names this head and the open findings, so its new lead fixes them and delta-reviews only the commits after this head, since earlier reviews still count, adding only the whole-change reads they lack; accept this head with `retry_item` and a `brief_append` that moves the open findings to follow-ups, whose new lead has the head read whole again by as many reviewers as the review level needs; or stop by leaving the item failed. Open blocking findings, from the last round: The worker is no longer deliberately parked between transfers, so this improves the test, but it does not guarantee that any snapshot overlaps transfer activity. After `transfers_started` is set, the main thread may run all 100 snapshots before the worker is scheduled again. The original finding is therefore not reliably resolved. at test_ledger.py:91 [agt_01M88A1WJ92TEE9HKK036E5WW3:1]. Earlier rounds also listed, for the last round's reviewers to verify: The concurrency test checks only the final total and bounds after all workers finish; it never calls snapshot concurrently with transfers, so it cannot detect snapshots observing one leg of a transfer without the other. at test_ledger.py:60 (remedy: Add a deterministic concurrent test that repeatedly snapshots while transfers run and asserts every observed snapshot is a valid whole-ledger state (f; The test adds concurrent snapshot checks for a constant total, but the barrier only synchronizes the initial start. It does not ensure the main thread takes a snapshot while transfers are in progress: the worker can finish before the sampling loop executes, and successful coverage depends on scheduling. The assertion that snapshots > 0 then becomes timing-sensitive rather than guaranteeing overlap; The handshake guarantees a snapshot while the worker future is unfinished, but the worker is parked on snapshot_taken.wait() after its first transfer. The snapshot cannot overlap a transfer, so this test does not exercise whether snapshots can observe a half-transfer. It also replaces repeated snapshot sampling with one snapshot in that idle interval.. The reviewers' results (agt_01M889MHW20WXC1MQR53ME0A5S, agt_01M889S8H0TWVA3DQ3ZAE8YA4K, agt_01M889X44PNCR7K37F503DPG1Z, agt_01M88A1WJ92TEE9HKK036E5WW3) hold every finding in full."
+        },
+        "verdict": null,
+        "risk_class": "elevated",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; the plan pins medium",
+        "summary": null,
+        "structured": {
+          "review_rounds": {
+            "findings": {
+              "agt_01M889MHW20WXC1MQR53ME0A5S:1": {
+                "blocking": true,
+                "description": "The concurrency test checks only the final total and bounds after all workers finish; it never calls snapshot concurrently with transfers, so it cannot detect snapshots observing one leg of a transfer without the other. at test_ledger.py:60 (remedy: Add a deterministic concurrent test that repeatedly snapshots while transfers run and asserts every observed snapshot is a valid whole-ledger state (f",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M889HV79BBK2C2NQF3NPHG8J"
+                },
+                "id": "agt_01M889MHW20WXC1MQR53ME0A5S:1",
+                "resolved_in": null
+              },
+              "agt_01M88A1WJ92TEE9HKK036E5WW3:1": {
+                "blocking": true,
+                "description": "The worker is no longer deliberately parked between transfers, so this improves the test, but it does not guarantee that any snapshot overlaps transfer activity. After `transfers_started` is set, the main thread may run all 100 snapshots before the worker is scheduled again. The original finding is therefore not reliably resolved. at test_ledger.py:91",
+                "found_in": {
+                  "number": 4,
+                  "stage": "stg_01M889HV79BBK2C2NQF3NPHG8J"
+                },
+                "id": "agt_01M88A1WJ92TEE9HKK036E5WW3:1",
+                "resolved_in": null
+              },
+              "agt_01M88A1WJ92TEE9HKK036E5WW3:2": {
+                "blocking": false,
+                "description": "The worker can loop indefinitely until `snapshot_taken` is set. If a snapshot assertion fails, control skips that event update, and the executor context manager waits for the worker to finish; the test can hang instead of reporting the failure. at test_ledger.py:91",
+                "found_in": {
+                  "number": 4,
+                  "stage": "stg_01M889HV79BBK2C2NQF3NPHG8J"
+                },
+                "id": "agt_01M88A1WJ92TEE9HKK036E5WW3:2",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "b83bbe16bbaf49ad8fd66c4e8d4657db9fe0ff81",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M889MHTGP57W8ET74GW6SV2V",
+                    "base": "6bfc130bbd0737be6204d67b07d7c95736cc77ee",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M889MHV8W9ATXXQ6KGZWJMWW",
+                    "base": "6bfc130bbd0737be6204d67b07d7c95736cc77ee",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M889MHW20WXC1MQR53ME0A5S",
+                    "base": "6bfc130bbd0737be6204d67b07d7c95736cc77ee",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M889MHW20WXC1MQR53ME0A5S:1"
+                    ],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "7d4ca9c58f8440a1710b576a562df2096509ccaa",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M889QF4AWMM0XET5VRMDTR3Q",
+                    "base": "b83bbe16bbaf49ad8fd66c4e8d4657db9fe0ff81",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M889S8H0TWVA3DQ3ZAE8YA4K",
+                    "base": "b83bbe16bbaf49ad8fd66c4e8d4657db9fe0ff81",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M889MHW20WXC1MQR53ME0A5S:1"
+                    ],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "0aa014d0c5070b9c064ca31578a24157f772b18e",
+                "number": 3,
+                "reviews": [
+                  {
+                    "agent": "agt_01M889VNF6Y667XY5VGPKM59GR",
+                    "base": "7d4ca9c58f8440a1710b576a562df2096509ccaa",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M889X44PNCR7K37F503DPG1Z",
+                    "base": "7d4ca9c58f8440a1710b576a562df2096509ccaa",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M889MHW20WXC1MQR53ME0A5S:1"
+                    ],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "0ea10911e1d7f2eff88911d944f298e22c9de58e",
+                "number": 4,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88A1WJ92TEE9HKK036E5WW3",
+                    "base": "0aa014d0c5070b9c064ca31578a24157f772b18e",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M88A1WJ92TEE9HKK036E5WW3:1",
+                      "agt_01M88A1WJ92TEE9HKK036E5WW3:2"
+                    ],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": true,
+                    "verdict": "fail"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "cost_usd": 0.05147602000000001,
+        "started_at": "2026-11-25T02:46:27.305271459Z",
+        "finished_at": "2026-11-25T02:55:43.555580775Z"
+      },
+      {
+        "id": "stg_01M88A4A557C22VF4ZTWKMBSA1",
+        "run": "prun_01M88A4A2RYR4Q1EN698914K1M",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "fast",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88A4A62SNT640NS7XEKNXE7",
+        "aether_task": "tsk_01M88A4A62SNT640NS7XEKNXE8",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "critical",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; the plan pins medium",
+        "summary": "Deterministic snapshot/transfer overlap coverage committed in test_ledger.py. `python -m unittest -v` passed (9 tests); diff check passed. Full-change and delta reviews passed; both new reviewers reported no findings.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (9 tests passed)",
+            "git diff 6bfc130bbd0737be6204d67b07d7c95736cc77ee...HEAD --check (passed)"
+          ],
+          "commit": "87eecdf7b1a69704a525ab47f315d0492e484e09",
+          "evidence": [
+            {
+              "caption": "Focused test run on final head: all 9 ledger tests passed.",
+              "kind": "output",
+              "text": "Ran 9 tests in 0.003s\nOK"
+            }
+          ],
+          "local_commit": "87eecdf7b1a69704a525ab47f315d0492e484e09",
+          "pr": {
+            "body": "Updated test_ledger.py with a deterministic lock handshake. Each transfer waits while holding the ledger lock until a snapshot has attempted acquisition; the transfer then completes and the snapshot verifies total balance. All waits are bounded and cleanup releases worker gates. Verified with `python -m unittest -v` (9 tests passed) and `git diff 6bfc130bbd0737be6204d67b07d7c95736cc77ee...HEAD --check` (passed). The full-change review covered 6bfc130bbd0737be6204d67b07d7c95736cc77ee..87eecdf7b1a69704a525ab47f315d0492e484e09; the delta review covered 0ea10911e1d7f2eff88911d944f298e22c9de58e..87eecdf7b1a69704d4f298e22d944f298e22d944f298e22c9de58e..87eecdf7b1a69704a525ab47f315d0492e484e09. Both passed with no findings. No follow-ups remain.",
+            "summary": "Made concurrent snapshot coverage prove overlap with active transfers. Before: scheduler timing could let snapshots run after the worker finished. Now: 20 snapshots are coordinated against transfers holding the ledger lock, and every captured total is checked.",
+            "title": "test snapshots during active transfers"
+          },
+          "review": {
+            "implicit_reviewer_agents": [
+              "agt_01M889QF4AWMM0XET5VRMDTR3Q",
+              "agt_01M889S8H0TWVA3DQ3ZAE8YA4K",
+              "agt_01M889VNF6Y667XY5VGPKM59GR",
+              "agt_01M889X44PNCR7K37F503DPG1Z",
+              "agt_01M88A1WJ92TEE9HKK036E5WW3"
+            ],
+            "reviewed_head": "87eecdf7b1a69704a525ab47f315d0492e484e09",
+            "reviewer_agents": [
+              "agt_01M88A8KFADW8WE6BB38Z4F4ZK",
+              "agt_01M88A8KFZPPE3515H8M53SY7S",
+              "agt_01M889MHTGP57W8ET74GW6SV2V",
+              "agt_01M889MHV8W9ATXXQ6KGZWJMWW",
+              "agt_01M889MHW20WXC1MQR53ME0A5S"
+            ],
+            "reviewer_id_corrections": [
+              "agt_01M889MHW20WXC1MQR53ME0A5S is none of the lead's agents and matches none uniquely: used its completed reviewers with a verdict"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88A8KFADW8WE6BB38Z4F4ZK",
+                "base": "6bfc130bbd0737be6204d67b07d7c95736cc77ee",
+                "findings": 0,
+                "head": "87eecdf7b1a69704a525ab47f315d0492e484e09",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M88A8KFZPPE3515H8M53SY7S",
+                "base": "0ea10911e1d7f2eff88911d944f298e22c9de58e",
+                "findings": 0,
+                "head": "87eecdf7b1a69704a525ab47f315d0492e484e09",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M889MHW20WXC1MQR53ME0A5S",
+              "agt_01M88A1WJ92TEE9HKK036E5WW3",
+              "agt_01M88A8KFADW8WE6BB38Z4F4ZK",
+              "agt_01M88A8KFZPPE3515H8M53SY7S"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M889MHW20WXC1MQR53ME0A5S:1": {
+                "blocking": true,
+                "description": "The concurrency test checks only the final total and bounds after all workers finish; it never calls snapshot concurrently with transfers, so it cannot detect snapshots observing one leg of a transfer without the other. at test_ledger.py:60 (remedy: Add a deterministic concurrent test that repeatedly snapshots while transfers run and asserts every observed snapshot is a valid whole-ledger state (f",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M889HV79BBK2C2NQF3NPHG8J"
+                },
+                "id": "agt_01M889MHW20WXC1MQR53ME0A5S:1",
+                "resolved_in": {
+                  "number": 1,
+                  "stage": "stg_01M88A4A557C22VF4ZTWKMBSA1"
+                }
+              },
+              "agt_01M88A1WJ92TEE9HKK036E5WW3:1": {
+                "blocking": true,
+                "description": "The worker is no longer deliberately parked between transfers, so this improves the test, but it does not guarantee that any snapshot overlaps transfer activity. After `transfers_started` is set, the main thread may run all 100 snapshots before the worker is scheduled again. The original finding is therefore not reliably resolved. at test_ledger.py:91",
+                "found_in": {
+                  "number": 4,
+                  "stage": "stg_01M889HV79BBK2C2NQF3NPHG8J"
+                },
+                "id": "agt_01M88A1WJ92TEE9HKK036E5WW3:1",
+                "resolved_in": {
+                  "number": 1,
+                  "stage": "stg_01M88A4A557C22VF4ZTWKMBSA1"
+                }
+              },
+              "agt_01M88A1WJ92TEE9HKK036E5WW3:2": {
+                "blocking": false,
+                "description": "The worker can loop indefinitely until `snapshot_taken` is set. If a snapshot assertion fails, control skips that event update, and the executor context manager waits for the worker to finish; the test can hang instead of reporting the failure. at test_ledger.py:91",
+                "found_in": {
+                  "number": 4,
+                  "stage": "stg_01M889HV79BBK2C2NQF3NPHG8J"
+                },
+                "id": "agt_01M88A1WJ92TEE9HKK036E5WW3:2",
+                "resolved_in": {
+                  "number": 1,
+                  "stage": "stg_01M88A4A557C22VF4ZTWKMBSA1"
+                }
+              }
+            },
+            "rounds": [
+              {
+                "head": "87eecdf7b1a69704a525ab47f315d0492e484e09",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88A8KFADW8WE6BB38Z4F4ZK",
+                    "base": "6bfc130bbd0737be6204d67b07d7c95736cc77ee",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M88A8KFZPPE3515H8M53SY7S",
+                    "base": "0ea10911e1d7f2eff88911d944f298e22c9de58e",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "The task tests a concurrency and locking invariant. The implementation is unchanged in this retry; test_ledger.py now forces each snapshot attempt to overlap a transfer critical section. The full test suite passed."
+          },
+          "tree": "e244a6d39eb2f179e588ddc45e8a0da50d2f425e"
+        },
+        "cost_usd": 0.02304888,
+        "started_at": "2026-11-25T02:56:32.421417602Z",
+        "finished_at": "2026-11-25T03:00:25.988495382Z"
+      }
+    ],
+    "spent_usd": 0.07452490000000002,
+    "gates": [],
+    "delegations": {
+      "stg_01M889HV79BBK2C2NQF3NPHG8J": {
+        "direct_usd": 0.03045978000000001,
+        "delegated_usd": 0.02101624,
+        "agents": [
+          {
+            "agent": "agt_01M889MHTGP57W8ET74GW6SV2V",
+            "parent": "agt_01M889HV94X3NS7SBTD71H0HFM",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00196202
+          },
+          {
+            "agent": "agt_01M889MHV8W9ATXXQ6KGZWJMWW",
+            "parent": "agt_01M889HV94X3NS7SBTD71H0HFM",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00106786
+          },
+          {
+            "agent": "agt_01M889MHW20WXC1MQR53ME0A5S",
+            "parent": "agt_01M889HV94X3NS7SBTD71H0HFM",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.003820960000000001
+          },
+          {
+            "agent": "agt_01M889QF4AWMM0XET5VRMDTR3Q",
+            "parent": "agt_01M889HV94X3NS7SBTD71H0HFM",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.003669860000000001
+          },
+          {
+            "agent": "agt_01M889S8H0TWVA3DQ3ZAE8YA4K",
+            "parent": "agt_01M889HV94X3NS7SBTD71H0HFM",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0028595400000000003
+          },
+          {
+            "agent": "agt_01M889VNF6Y667XY5VGPKM59GR",
+            "parent": "agt_01M889HV94X3NS7SBTD71H0HFM",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0019448
+          },
+          {
+            "agent": "agt_01M889X44PNCR7K37F503DPG1Z",
+            "parent": "agt_01M889HV94X3NS7SBTD71H0HFM",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0035068600000000005
+          },
+          {
+            "agent": "agt_01M88A1WJ92TEE9HKK036E5WW3",
+            "parent": "agt_01M889HV94X3NS7SBTD71H0HFM",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00218434
+          }
+        ]
+      },
+      "stg_01M88A4A557C22VF4ZTWKMBSA1": {
+        "direct_usd": 0.01455582,
+        "delegated_usd": 0.00849306,
+        "agents": [
+          {
+            "agent": "agt_01M88A8KFADW8WE6BB38Z4F4ZK",
+            "parent": "agt_01M88A4A62SNT640NS7XEKNXE7",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0026485600000000003
+          },
+          {
+            "agent": "agt_01M88A8KFZPPE3515H8M53SY7S",
+            "parent": "agt_01M88A4A62SNT640NS7XEKNXE7",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0058445
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T02:56:32.321055467Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T02:56:32.321055467Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T02:56:32.321055467Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

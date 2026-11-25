@@ -1,0 +1,8 @@
+Implemented TT-101 through TT-104, added tests, and committed each ticket separately:
+
+- `14a6296` — TT-101 due date validation
+- `ec70c1d` — TT-102 RFC 4180 CSV export
+- `5804aa0` — TT-103 search query syntax
+- `f872764` — TT-104 undo
+
+The requested test suite passes: **14 tests**. The working tree is clean.

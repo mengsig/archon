@@ -1,0 +1,609 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M885Q4FZY33YY50NXB7DSW8D",
+      "repo": "repo_01M885P52MNR7GFESJT3E8W6WP",
+      "pipeline": "direct",
+      "title": "Make listItems fetch all cursor-paginated pages",
+      "brief": "Implement client side according to the shared API contract: listItems(transport) resolves all items in order by repeatedly following next_cursor until null or absent. First request sends no cursor; pass subsequent cursor value back unchanged. Update README and tests; run npm test. Commit changes.",
+      "priority": "normal",
+      "dependencies": [
+        "qi_01M885Q4FCA1QQXMXEDCET9D8D"
+      ],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M885Q4FZY33YY50NXB7DSW8D",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T01:39:26.336425521Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T01:39:26.354099082Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T01:39:26.336425521Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M885Q4FCA1QQXMXEDCET9D8C",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88605FKNKHQF5DZAEM8W1TW",
+        "summary": "Implemented cursor pagination for listItems: it accumulates pages in order, omits cursor on the first request, forwards opaque cursor values unchanged, and stops on null or absent next_cursor. Updated README and tests. Baseline npm test passed 3/3; final npm test passed 5/5 and git diff --check passed. Commit b06c46306765d28b7a18cfb7f361b8b6abc626b7; review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M886255J0BGVFQC8GHPR4TQY)\n\nSHIPPED: commit b06c46306765d28b7a18cfb7f361b8b6abc626b7 on the run branch"
+      },
+      "created_at": "2026-11-25T01:39:26.316206029Z",
+      "updated_at": "2026-11-25T01:46:13.828033642Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88605FKNKHQF5DZAEM8W1TW",
+        "item": "qi_01M885Q4FZY33YY50NXB7DSW8D",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88605M3B8F6KABW1N7SRRM2",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/796f76fe0026a55de487b5fb/.archon/data/worktrees/inventory-client/qi_01M885Q4FZY33YY50NXB7DSW8D",
+        "branch": "archon/xb7dsw8d-make-listitems-fetch-all-cursor-paginate",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented cursor pagination for listItems: it accumulates pages in order, omits cursor on the first request, forwards opaque cursor values unchanged, and stops on null or absent next_cursor. Updated README and tests. Baseline npm test passed 3/3; final npm test passed 5/5 and git diff --check passed. Commit b06c46306765d28b7a18cfb7f361b8b6abc626b7; review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M886255J0BGVFQC8GHPR4TQY)\n\nSHIPPED: commit b06c46306765d28b7a18cfb7f361b8b6abc626b7 on the run branch"
+        },
+        "cost_usd": 0.01023496,
+        "started_at": "2026-11-25T01:44:22.383538208Z",
+        "finished_at": "2026-11-25T01:46:13.828033642Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88605KST81DM1S9XYK3N79Y",
+        "run": "prun_01M88605FKNKHQF5DZAEM8W1TW",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88605ME2ZQ8Q2AKFYHVSFSW",
+        "aether_task": "tsk_01M88605MEGBT1D97MQK757H6E",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented cursor pagination for listItems: it accumulates pages in order, omits cursor on the first request, forwards opaque cursor values unchanged, and stops on null or absent next_cursor. Updated README and tests. Baseline npm test passed 3/3; final npm test passed 5/5 and git diff --check passed. Commit b06c46306765d28b7a18cfb7f361b8b6abc626b7; review passed with no findings. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "npm test (before: 3/3 passed)",
+            "npm test (after: 5/5 passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "b06c46306765d28b7a18cfb7f361b8b6abc626b7",
+          "evidence": [
+            {
+              "caption": "Baseline tests before pagination changes",
+              "kind": "output",
+              "text": "npm test: 3 tests passed, 0 failed."
+            },
+            {
+              "after": "npm test: 5 tests passed, 0 failed. git diff --check passed.",
+              "before": "npm test: 3 tests passed, 0 failed.",
+              "caption": "Final pagination tests",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "b06c46306765d28b7a18cfb7f361b8b6abc626b7",
+          "pr": {
+            "body": "Updated client.js to request /items without a cursor initially, append each page, and pass each returned cursor unchanged until null or absent. README documents the behavior; tests cover cursor preservation, ordered aggregation, and absent-cursor termination. npm test passed (5/5); git diff --check passed. Existing transport interface retained.",
+            "summary": "Made listItems fetch every cursor page in order. Before: returned only the first page; now: follows next_cursor through completion.",
+            "title": "Fetch all item cursor pages"
+          },
+          "review": {
+            "reviewed_head": "b06c46306765d28b7a18cfb7f361b8b6abc626b7",
+            "reviewer_agents": [
+              "agt_01M886255J0BGVFQC8GHPR4TQY"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M886255J0BGVFQC8GHPR4TQY",
+                "base": "4f8d99579e6a0c32d3ddb1a22561d514ef02fda6",
+                "findings": 0,
+                "head": "b06c46306765d28b7a18cfb7f361b8b6abc626b7",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M886255J0BGVFQC8GHPR4TQY"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {},
+            "rounds": [
+              {
+                "head": "b06c46306765d28b7a18cfb7f361b8b6abc626b7",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M886255J0BGVFQC8GHPR4TQY",
+                    "base": "4f8d99579e6a0c32d3ddb1a22561d514ef02fda6",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M886255J0BGVFQC8GHPR4TQY",
+            "why": "Contained behavior change behind existing listItems interface; sequential pagination changes the number of requests and is covered by focused tests. Independent review passed with no findings."
+          },
+          "tree": "1170179365b21a8d1ce1a5942db648db1a30e5d9"
+        },
+        "cost_usd": 0.01023496,
+        "started_at": "2026-11-25T01:44:22.393296460Z",
+        "finished_at": "2026-11-25T01:46:10.779444012Z"
+      }
+    ],
+    "spent_usd": 0.01023496,
+    "gates": [],
+    "delegations": {
+      "stg_01M88605KST81DM1S9XYK3N79Y": {
+        "direct_usd": 0.0073570200000000014,
+        "delegated_usd": 0.0028779400000000007,
+        "agents": [
+          {
+            "agent": "agt_01M886255J0BGVFQC8GHPR4TQY",
+            "parent": "agt_01M88605ME2ZQ8Q2AKFYHVSFSW",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.0028779400000000007
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T01:39:26.336425521Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T01:39:26.354099082Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T01:39:26.336425521Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M885Q4FCA1QQXMXEDCET9D8D",
+      "repo": "repo_01M885P51PZW23ZC8CD347YDEV",
+      "pipeline": "direct",
+      "title": "Implement cursor pagination for GET /items",
+      "brief": "Implement the API side of the approved request. GET /items supports optional limit integer 1..100 default 20, and opaque cursor from an earlier response. Return {\"items\":[...],\"next_cursor\": string|null}, stable ordered by id, null at final page. Invalid limit/cursor must return 400 and {\"error\":\"...\"}. Update README and tests; run python3 -m unittest. Commit changes. Explore existing API/data model and choose a cursor format that is opaque to clients and safely detects invalid cursors.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M885Q4FCA1QQXMXEDCET9D8D",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T01:39:26.317837975Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T01:39:26.353940407Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T01:39:26.317837975Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M885Q4FCA1QQXMXEDCET9D8C",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M885Q4J3H3BMJHNYDPRH9KK2",
+        "summary": "Added cursor pagination to GET /items with default limit 20, bounds 1–100, stable ID ordering, opaque versioned cursors, and 400 errors for invalid input. README and tests updated; oversized decimal limits are handled safely. python3 -m unittest (5 tests) and git diff --check pass. No open review findings.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M885SJPJY3XNGQ96RJ80SHSN), codex/gpt-6-luna (agent agt_01M885VH0D43MVGQPXT4D46CX9), codex/gpt-6-luna (agent agt_01M885XYQ1QTMZB698TTVADCYN)\n\nSHIPPED: commit 1d4999df21a664798fe46a886a89a32cf69c2c94 on the run branch"
+      },
+      "created_at": "2026-11-25T01:39:26.316206029Z",
+      "updated_at": "2026-11-25T01:44:22.107514659Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M885Q4J3H3BMJHNYDPRH9KK2",
+        "item": "qi_01M885Q4FCA1QQXMXEDCET9D8D",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M885Q4S0Y2E5CKHAT6CEK8FW",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/796f76fe0026a55de487b5fb/.archon/data/worktrees/inventory-api/qi_01M885Q4FCA1QQXMXEDCET9D8D",
+        "branch": "archon/dcet9d8d-implement-cursor-pagination-for-get-item",
+        "state": {
+          "state": "succeeded",
+          "summary": "Added cursor pagination to GET /items with default limit 20, bounds 1–100, stable ID ordering, opaque versioned cursors, and 400 errors for invalid input. README and tests updated; oversized decimal limits are handled safely. python3 -m unittest (5 tests) and git diff --check pass. No open review findings.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M885SJPJY3XNGQ96RJ80SHSN), codex/gpt-6-luna (agent agt_01M885VH0D43MVGQPXT4D46CX9), codex/gpt-6-luna (agent agt_01M885XYQ1QTMZB698TTVADCYN)\n\nSHIPPED: commit 1d4999df21a664798fe46a886a89a32cf69c2c94 on the run branch"
+        },
+        "cost_usd": 0.02776902,
+        "started_at": "2026-11-25T01:39:26.568172178Z",
+        "finished_at": "2026-11-25T01:44:22.107514659Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M885Q4RC5SG272ABYA7DW3TN",
+        "run": "prun_01M885Q4J3H3BMJHNYDPRH9KK2",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M885Q4T7K1D5PHPF54BJSP9E",
+        "aether_task": "tsk_01M885Q4T7K1D5PHPF54BJSP9F",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Added cursor pagination to GET /items with default limit 20, bounds 1–100, stable ID ordering, opaque versioned cursors, and 400 errors for invalid input. README and tests updated; oversized decimal limits are handled safely. python3 -m unittest (5 tests) and git diff --check pass. No open review findings.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest (5 tests, pass)",
+            "git diff --check (pass)"
+          ],
+          "commit": "1d4999df21a664798fe46a886a89a32cf69c2c94",
+          "evidence": [
+            {
+              "after": "Final: default page of 20 with string next_cursor; limit=7 traversal covers IDs 1–57 exactly once, with null on the last page.",
+              "before": "Baseline: 57 items in one response; no next_cursor.",
+              "caption": "Pagination changes GET /items from one full response to default-sized pages; cursors traverse all records in order.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "1d4999df21a664798fe46a886a89a32cf69c2c94",
+          "pr": {
+            "body": "Implemented pagination in api.py with URL-safe base64 JSON cursors containing a version and last item ID. Limits default to 20 and accept integers 1–100; invalid limits and cursors return HTTP 400 with an error body. Long decimal limits are normalized and bounded before conversion. Tests cover default page size, complete traversal of the 57-item catalogue, invalid limits/cursors, and existing item behavior. README documents the response and query contract. Checks: python3 -m unittest (5 tests, pass); git diff --check (pass). Cursors are opaque by contract and validated structurally against the in-memory catalogue.",
+            "summary": "GET /items now returns ordered pages with an opaque continuation cursor. Before: all 57 items in one response; now: default pages of 20 can be traversed until next_cursor is null.",
+            "title": "Add cursor pagination to items endpoint"
+          },
+          "review": {
+            "resolved_findings": [
+              "agt_01M885SJPJY3XNGQ96RJ80SHSN:1"
+            ],
+            "reviewed_head": "1d4999df21a664798fe46a886a89a32cf69c2c94",
+            "reviewer_agents": [
+              "agt_01M885SJPJY3XNGQ96RJ80SHSN",
+              "agt_01M885VH0D43MVGQPXT4D46CX9",
+              "agt_01M885XYQ1QTMZB698TTVADCYN"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M885SJPJY3XNGQ96RJ80SHSN",
+                "base": "621a61b621e8dcf24f8bceb57ab1cebc69088351",
+                "findings": 1,
+                "head": "3429304db2d2c1323e1aaea430c478ead76d794e",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M885VH0D43MVGQPXT4D46CX9",
+                "base": "3429304db2d2c1323e1aaea430c478ead76d794e",
+                "findings": 0,
+                "head": "1d4999df21a664798fe46a886a89a32cf69c2c94",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M885XYQ1QTMZB698TTVADCYN",
+                "base": "3429304db2d2c1323e1aaea430c478ead76d794e",
+                "findings": 0,
+                "head": "1d4999df21a664798fe46a886a89a32cf69c2c94",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M885SJPJY3XNGQ96RJ80SHSN",
+              "agt_01M885VH0D43MVGQPXT4D46CX9",
+              "agt_01M885XYQ1QTMZB698TTVADCYN"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M885SJPJY3XNGQ96RJ80SHSN:1": {
+                "blocking": true,
+                "description": "Very long decimal limit can escape as an exception at api.py:34",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M885Q4RC5SG272ABYA7DW3TN"
+                },
+                "id": "agt_01M885SJPJY3XNGQ96RJ80SHSN:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M885Q4RC5SG272ABYA7DW3TN"
+                }
+              }
+            },
+            "rounds": [
+              {
+                "head": "3429304db2d2c1323e1aaea430c478ead76d794e",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M885SJPJY3XNGQ96RJ80SHSN",
+                    "base": "621a61b621e8dcf24f8bceb57ab1cebc69088351",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M885SJPJY3XNGQ96RJ80SHSN:1"
+                    ],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": true,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "1d4999df21a664798fe46a886a89a32cf69c2c94",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M885VH0D43MVGQPXT4D46CX9",
+                    "base": "3429304db2d2c1323e1aaea430c478ead76d794e",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M885XYQ1QTMZB698TTVADCYN",
+                    "base": "3429304db2d2c1323e1aaea430c478ead76d794e",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "pagination-resolution-confirm",
+            "why": "Contained behavior change to the existing GET /items API, affecting its response shape and adding pagination. No persistence, authentication, or concurrency code changed. Tests passed and review findings were resolved."
+          },
+          "tree": "5a921b27295b9a7e9c14cadb2865f10e8b7ca6cc"
+        },
+        "cost_usd": 0.02776902,
+        "started_at": "2026-11-25T01:39:26.604212976Z",
+        "finished_at": "2026-11-25T01:44:19.118143796Z"
+      }
+    ],
+    "spent_usd": 0.02776902,
+    "gates": [],
+    "delegations": {
+      "stg_01M885Q4RC5SG272ABYA7DW3TN": {
+        "direct_usd": 0.01709698,
+        "delegated_usd": 0.01067204,
+        "agents": [
+          {
+            "agent": "agt_01M885SJPJY3XNGQ96RJ80SHSN",
+            "parent": "agt_01M885Q4T7K1D5PHPF54BJSP9E",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00365706
+          },
+          {
+            "agent": "agt_01M885VH0D43MVGQPXT4D46CX9",
+            "parent": "agt_01M885Q4T7K1D5PHPF54BJSP9E",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.0026839800000000003
+          },
+          {
+            "agent": "agt_01M885XYQ1QTMZB698TTVADCYN",
+            "parent": "agt_01M885Q4T7K1D5PHPF54BJSP9E",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.004331000000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T01:39:26.317837975Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T01:39:26.353940407Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T01:39:26.317837975Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

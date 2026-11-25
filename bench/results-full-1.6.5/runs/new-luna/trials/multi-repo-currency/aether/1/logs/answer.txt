@@ -1,0 +1,7 @@
+Implemented and committed both repositories.
+
+- `ledger` now accepts an optional currency column, defaults it to USD, includes it in CSV output, and exits with status 2 for malformed currency codes. Commit: `9c098f2`.
+- `reports` now totals by account and currency, supports legacy CSV without a currency column as USD, and exits with status 2 for malformed codes. Commit: `eaf49c9`.
+- Updated both READMEs.
+
+Verification passed: `cargo test` and `python3 -m unittest`. Both repositories have clean working trees.

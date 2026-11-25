@@ -1,0 +1,242 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8868WBV1P6RNRYKBBWD0FPC",
+      "repo": "repo_01M88686DMWCG67DSMFVF0DPKB",
+      "pipeline": "direct",
+      "title": "Implement ledger.py per SPEC.md with boundary tests",
+      "brief": "Implement ledger.py according to SPEC.md. Preserve the documented API, handle every specified error and boundary case, and add focused tests. Existing tests cover basics only. Use the Python standard library and commit your work. Inspect SPEC.md and existing code/tests first. Keep scope to this module and focused tests. Ensure every documented API behavior, error, and boundary is covered. Run the relevant tests and commit the completed work. Do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8868WBV1P6RNRYKBBWD0FPC",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T01:49:07.837835799Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T01:49:07.837835799Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Routine single-module implementation; low effort reduces quota use while focused tests cover specified behavior."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8868WC9RZG6NCKMNZQ8PWHK",
+        "summary": "Implemented the bounded, thread-safe ledger and focused boundary tests. All 10 unit tests, bytecode compilation, and diff checks pass. Committed as 6a121c14e54ab65bfec9102f4cc396f483da4146; independent review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M886B8VZ3A73C6XN5K55NQ37)\n\nSHIPPED: commit 6a121c14e54ab65bfec9102f4cc396f483da4146 on the run branch"
+      },
+      "created_at": "2026-11-25T01:49:07.835280404Z",
+      "updated_at": "2026-11-25T01:51:31.182002649Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8868WC9RZG6NCKMNZQ8PWHK",
+        "item": "qi_01M8868WBV1P6RNRYKBBWD0FPC",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8868WGRD83J0W76FRH40JAG",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/0fd0bcd70f6f9a3916e9954a/.archon/data/worktrees/quality-ledger-transfer/qi_01M8868WBV1P6RNRYKBBWD0FPC",
+        "branch": "archon/bbwd0fpc-implement-ledger-py-per-spec-md-with-bou",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the bounded, thread-safe ledger and focused boundary tests. All 10 unit tests, bytecode compilation, and diff checks pass. Committed as 6a121c14e54ab65bfec9102f4cc396f483da4146; independent review passed with no findings. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M886B8VZ3A73C6XN5K55NQ37)\n\nSHIPPED: commit 6a121c14e54ab65bfec9102f4cc396f483da4146 on the run branch"
+        },
+        "cost_usd": 0.016784140000000003,
+        "started_at": "2026-11-25T01:49:07.982631840Z",
+        "finished_at": "2026-11-25T01:51:31.182002649Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8868WGKVVYBY6928Q03MKB2",
+        "run": "prun_01M8868WC9RZG6NCKMNZQ8PWHK",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "low"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8868WH1QCTPKQRBWG5EQBY3",
+        "aether_task": "tsk_01M8868WH1R3CNXE9KK61BDSJW",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins low",
+        "summary": "Implemented the bounded, thread-safe ledger and focused boundary tests. All 10 unit tests, bytecode compilation, and diff checks pass. Committed as 6a121c14e54ab65bfec9102f4cc396f483da4146; independent review passed with no findings. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (10 passed)",
+            "python -m compileall -q ledger.py test_ledger.py (passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "6a121c14e54ab65bfec9102f4cc396f483da4146",
+          "evidence": [
+            {
+              "after": "Ran 10 tests; all passed.",
+              "before": "Ran 2 tests; both errored because Ledger methods raised NotImplementedError.",
+              "caption": "Baseline and final unit test outcomes",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "6a121c14e54ab65bfec9102f4cc396f483da4146",
+          "pr": {
+            "body": "Added strict built-in type and range validation, a per-ledger lock for linearizable transfers and snapshots, and defensive copies. Added focused boundary and concurrency tests in test_ledger.py. Verification: unit tests (10 passed), compileall (passed), diff check (passed). No external dependencies.",
+            "summary": "Implemented the specified bounded, thread-safe Ledger. Transfers now validate amounts, reject insufficient funds and overflow atomically, preserve self-transfer semantics, and snapshots return independent copies. Before: both existing tests failed on the stub; now: all 10 tests pass.",
+            "title": "Implement bounded atomic ledger"
+          },
+          "review": {
+            "reviewed_head": "6a121c14e54ab65bfec9102f4cc396f483da4146",
+            "reviewer_agents": [
+              "agt_01M886B8VZ3A73C6XN5K55NQ37"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M886B8VZ3A73C6XN5K55NQ37",
+                "base": "173160d16b0df968e7ae810923a2dc5ce3ca2ce3",
+                "findings": 0,
+                "head": "6a121c14e54ab65bfec9102f4cc396f483da4146",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M886B8VZ3A73C6XN5K55NQ37"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {},
+            "rounds": [
+              {
+                "head": "6a121c14e54ab65bfec9102f4cc396f483da4146",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M886B8VZ3A73C6XN5K55NQ37",
+                    "base": "173160d16b0df968e7ae810923a2dc5ce3ca2ce3",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained behavior change behind the existing Ledger interface. A per-ledger lock protects lookups, checks, writes, and snapshots. Independent whole-change review passed with no findings."
+          },
+          "tree": "094d605395d5b4013e15a866a99191f720752495"
+        },
+        "cost_usd": 0.016784140000000003,
+        "started_at": "2026-11-25T01:49:07.987783299Z",
+        "finished_at": "2026-11-25T01:51:23.611934777Z"
+      }
+    ],
+    "spent_usd": 0.016784140000000003,
+    "gates": [],
+    "delegations": {
+      "stg_01M8868WGKVVYBY6928Q03MKB2": {
+        "direct_usd": 0.012163880000000004,
+        "delegated_usd": 0.004620260000000001,
+        "agents": [
+          {
+            "agent": "agt_01M886B8VZ3A73C6XN5K55NQ37",
+            "parent": "agt_01M8868WH1QCTPKQRBWG5EQBY3",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.004620260000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T01:49:07.837835799Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T01:49:07.837835799Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

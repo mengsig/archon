@@ -1,0 +1,9 @@
+Implemented cursor pagination across both repositories.
+
+- API pages are ordered by `id`, default to 20 items, accept limits from 1 to 100, and return a `next_cursor` or `null`. Invalid limits and cursors return 400.
+- The client follows cursors until one is `null` or absent, passing each cursor through unchanged.
+- Updated both READMEs.
+
+Verification passed: `python3 -m unittest`, `npm test`, and manual checks for page ordering, cursor handoff, and invalid API parameters.
+
+Commits: API `d28deaa`; client `4a0c136`. Both repositories are clean.

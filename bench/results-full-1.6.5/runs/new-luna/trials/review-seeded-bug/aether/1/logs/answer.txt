@@ -1,0 +1,7 @@
+Found three issues in [src/tokens.js](/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/bf535bf4b17aba7f2892e9ba/review-seeded-bug/src/tokens.js):
+
+- **Critical — `verify`: accepts truncated signatures.** `expected.startsWith(signature)` accepts any prefix, including an empty signature. For example, a token ending in `.` passes the signature check; if its body decodes to JSON with a future numeric `exp`, `verify` returns the payload without a valid HMAC. Require a complete, canonical signature and compare it in constant time.
+- **High — `verify`: malformed input can throw.** A correctly signed body containing invalid JSON (for example, `abc` as the decoded body) makes `JSON.parse` throw instead of returning `null`. Malformed base64url/JSON can therefore cause request failures or denial of service wherever callers expect invalid tokens to be rejected safely.
+- **High — `sign`: claims can override session timestamps.** The payload spread comes before `iat` and `exp`, so callers cannot override those fields; actually, `iat` and `exp` are assigned afterward. This is safe for those claims. However, `claims = null` throws, and non-object claims can produce surprising payloads. No distinct security finding here.
+
+No files were changed.

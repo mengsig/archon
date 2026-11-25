@@ -1,0 +1,1 @@
+Fixed the off-by-one bound in [window.py](/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/14b2c0a3e5fa56a83fff605d/fix-off-by-one/window.py). `python3 -m unittest` passes, and the change is committed as `b662b74` (`Fix sliding window endpoint`). The working tree is clean.

@@ -1,0 +1,10 @@
+Implemented all four tickets, added coverage, and ran `python3 -m unittest discover -s tests -t .` successfully (9 tests). The diff check is clean.
+
+Commits:
+
+- TT-101 `fff962a` — reject impossible due dates
+- TT-102 `8ca441c` — RFC 4180 CSV export
+- TT-103 `706474f` — structured search queries
+- TT-104 `13fba5b` — LIFO undo
+
+The test run left untracked `__pycache__` directories in the workspace.

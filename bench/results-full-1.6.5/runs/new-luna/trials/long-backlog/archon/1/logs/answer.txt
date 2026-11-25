@@ -1,0 +1,57 @@
+All four tickets are queued as separate commits, in sequence to limit Codex quota use:
+
+- TT-101: `qi_01M884N4Z1JSGQMKB3PC6RZX3M`
+- TT-102: `qi_01M884N4ZM5Y5VC1BZVMAQ6Q9V`
+- TT-103: `qi_01M884N50CY2A468N8SK3B5QE5`
+- TT-104: `qi_01M884N516FQ21P7478PSZ5WB7`
+
+Each item includes the ticket criteria, added tests, the requested full unittest command, standard-library-only constraint, and its own commit. They’re queued, not completed yet. Codex quota is projected to run out before its reset; this repo’s model policy permits only Codex, so I set each implementation to low effort and serialized the work.
+
+Done: TT-101: Reject impossible due dates. TT-101 is already implemented and committed as dee021b6716f473cb6442529c6f5bd8da9f5f8c3. Impossible dates and unsupported forms raise InvalidDate; offsets and case-insensitive keywords are covered. Required unittest suite passes (6 tests); working tree is clean. No code changes were needed on this repair turn.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit dee021b6716f473cb6442529c6f5bd8da9f5f8c3 on the run branch
+Branch `archon/pc6rzx3m-tt-101-reject-impossible-due-dates` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/b711dc9b45aa6bc1808dc185/long-backlog holds it (2 files changed, 22 insertions(+), 6 deletions(-)). Review: `archon diff qi_01M884N4Z1JSGQMKB3PC6RZX3M`; land it in `main`: `archon merge qi_01M884N4Z1JSGQMKB3PC6RZX3M`.
+
+Done: TT-102: RFC 4180 CSV export. Implemented RFC 4180 CSV escaping and CRLF output in tasktracker/export.py, with tests for special characters, ordering, and empty/ISO due dates. `python3 -m unittest discover -s tests -t .` passed (7 tests); `git diff --check` passed. Committed as b19c9d532fdf1c9d02ec75c687fa54bd96434b37; working tree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit b19c9d532fdf1c9d02ec75c687fa54bd96434b37 on the run branch
+
+Done: TT-103: Search query syntax. Implemented TT-103 query parsing and filters in tasktracker.search, with coverage for ANDed terms, quoted phrases, case-insensitive title/tag/status matching, blank queries, ordering, and invalid syntax. Full unittest suite passed (10 tests); git diff --check passed. Commit cd9c4246c37dba7df391cf99909ba37e50c35b03. No known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit cd9c4246c37dba7df391cf99909ba37e50c35b03 on the run branch
+
+Done: TT-104: Undo. Implemented undo history for successful add, complete, and delete operations in tasktracker.store.TaskStore. Undo restores deleted tasks exactly, reopens completed tasks, removes added tasks without reusing IDs, and raises NothingToUndo when history is empty. Added four behavior tests. Required unittest discovery passed (14 tests); git diff --check passed. Commit 6d747fc38e2c68999858cb060b58f49cd86bc957; tree cdfc83e600f861a288c65f985ceb71bcaa9a28a9. No known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 6d747fc38e2c68999858cb060b58f49cd86bc957 on the run branch
+
+Implemented undo history for successful add, complete, and delete operations in tasktracker.store.TaskStore. Undo restores deleted tasks exactly, reopens completed tasks, removes added tasks without reusing IDs, and raises NothingToUndo when history is empty. Added four behavior tests. Required unittest discovery passed (14 tests); git diff --check passed. Commit 6d747fc38e2c68999858cb060b58f49cd86bc957; tree cdfc83e600f861a288c65f985ceb71bcaa9a28a9. No known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 6d747fc38e2c68999858cb060b58f49cd86bc957 on the run branch
+
+Implemented TT-103 query parsing and filters in tasktracker.search, with coverage for ANDed terms, quoted phrases, case-insensitive title/tag/status matching, blank queries, ordering, and invalid syntax. Full unittest suite passed (10 tests); git diff --check passed. Commit cd9c4246c37dba7df391cf99909ba37e50c35b03. No known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit cd9c4246c37dba7df391cf99909ba37e50c35b03 on the run branch
+
+Implemented RFC 4180 CSV escaping and CRLF output in tasktracker/export.py, with tests for special characters, ordering, and empty/ISO due dates. `python3 -m unittest discover -s tests -t .` passed (7 tests); `git diff --check` passed. Committed as b19c9d532fdf1c9d02ec75c687fa54bd96434b37; working tree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit b19c9d532fdf1c9d02ec75c687fa54bd96434b37 on the run branch
+
+TT-101 is already implemented and committed as dee021b6716f473cb6442529c6f5bd8da9f5f8c3. Impossible dates and unsupported forms raise InvalidDate; offsets and case-insensitive keywords are covered. Required unittest suite passes (6 tests); working tree is clean. No code changes were needed on this repair turn.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit dee021b6716f473cb6442529c6f5bd8da9f5f8c3 on the run branch

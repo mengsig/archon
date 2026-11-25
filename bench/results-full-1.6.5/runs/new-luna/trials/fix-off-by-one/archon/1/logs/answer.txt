@@ -1,0 +1,3 @@
+I found the registered repository, `fix-off-by-one`, and the `direct` pipeline fits this single-function fix. The quota report shows Codex is on pace to run out before its reset, so I’m keeping the run to one author at the default effort.
+
+I can’t commit the fix from this orchestrator role: repository changes and commits must be made by the queued pipeline. The request to commit is included in the work item. The current autonomy ceiling is `merge=manual`; I’ll report the item’s outcome when the daemon posts it.

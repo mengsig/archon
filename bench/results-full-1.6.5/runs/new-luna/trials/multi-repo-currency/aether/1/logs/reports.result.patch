@@ -1,0 +1,64 @@
+diff --git a/README.md b/README.md
+index 25e668a..e36b36a 100644
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,6 @@
+ # reports
+ 
+-`python3 reports.py < ledger.csv` prints `account,total_cents`, one row per
+-account in alphabetical order, from the CSV that `ledger` exports.
++`python3 reports.py < ledger.csv` prints `account,currency,total_cents`, one
++row per account and currency, sorted by account then currency. CSV files without
++a `currency` column are treated as USD. Currency codes must be three uppercase
++ASCII letters; malformed codes are reported on stderr with exit status 2.
+diff --git a/reports.py b/reports.py
+index 8061226..417789b 100644
+--- a/reports.py
++++ b/reports.py
+@@ -7,26 +7,39 @@ import csv
+ import sys
+ 
+ 
++def is_currency_code(code):
++    return len(code) == 3 and all("A" <= char <= "Z" for char in code)
++
++
+ def totals(rows):
+-    """{account: total_cents} from CSV dict rows."""
++    """{(account, currency): total_cents} from CSV dict rows."""
+     result = {}
+     for row in rows:
+         account = row["account"]
+-        result[account] = result.get(account, 0) + int(row["amount_cents"])
++        currency = row.get("currency") or "USD"
++        if not is_currency_code(currency):
++            raise ValueError(f"bad currency code {currency!r}")
++        key = (account, currency)
++        result[key] = result.get(key, 0) + int(row["amount_cents"])
+     return result
+ 
+ 
+ def render(result):
+-    lines = ["account,total_cents"]
+-    for account in sorted(result):
+-        lines.append(f"{account},{result[account]}")
++    lines = ["account,currency,total_cents"]
++    for account, currency in sorted(result):
++        lines.append(f"{account},{currency},{result[(account, currency)]}")
+     return "\n".join(lines) + "\n"
+ 
+ 
+ def main():
+     rows = csv.DictReader(sys.stdin)
+-    sys.stdout.write(render(totals(rows)))
++    try:
++        sys.stdout.write(render(totals(rows)))
++    except ValueError as error:
++        print(f"error: {error}", file=sys.stderr)
++        return 2
++    return 0
+ 
+ 
+ if __name__ == "__main__":
+-    main()
++    sys.exit(main())

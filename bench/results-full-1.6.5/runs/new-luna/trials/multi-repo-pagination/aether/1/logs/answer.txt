@@ -1,0 +1,9 @@
+Implemented and committed in both repositories.
+
+- API pagination supports `limit` (default 20, range 1–100) and opaque cursors, returning ordered pages with `next_cursor` or `null`. Invalid parameters return 400.
+- `listItems(transport)` follows cursors until `next_cursor` is null or absent, passing each cursor unchanged.
+- Updated both READMEs and added pagination coverage.
+
+Checks passed: `python3 -m unittest` and `npm test`. Both working trees are clean.
+
+Commits: API `6414755`; client `541c716`.

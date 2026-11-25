@@ -360,9 +360,10 @@ binary = "gh"                  # the command `github_reply` posts with
 
 [Live design sessions](design-sessions.md) are enabled by default and run only
 for items with `proposal = live`. Set `[design] enabled = false` to turn them
-off. With it off, `proposal = live` is refused with a clear message and a running live
-stage fails with "design sessions turned off". Serve all preview assets through the item's registered
-dev-server origin. Verifying socket ownership requires a Linux daemon host
+off. With it off, `proposal = live` is refused with a clear message and a
+running live stage fails with "design sessions turned off". Serve all preview
+assets through the item's registered dev-server origin. Verifying socket
+ownership requires a Linux daemon host
 with access to the dev server’s `/proc` records. Remove nonempty `[design] allow_hosts` lists from
 `.archon/repo.toml`.
 

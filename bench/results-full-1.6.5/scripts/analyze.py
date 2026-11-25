@@ -25,7 +25,9 @@ def load_run(run_dir):
     for row in rows:
         row['infra'] = not row['success'] and row['error'] is not None
         row['items'] = load_items(stamp, row)
-    return {'rows': rows, 'meta': json.loads((stamp / 'run.json').read_text()), 'stamp': stamp}
+    start = json.loads((run_dir / 'start.json').read_text())
+    assert 'hashes' in start and 'archon' in start['hashes'], 'binary hashes are missing'
+    return {'rows': rows, 'meta': json.loads((stamp / 'run.json').read_text()), 'start': start, 'stamp': stamp}
 
 
 def load_items(stamp, row):
@@ -266,6 +268,7 @@ def analyze_model(runs_dir, model):
     assert old['meta']['trials'] == new['meta']['trials'] == 3
     assert all(run['meta']['completed'] == run['meta']['planned'] for run in (old, new)), 'incomplete run'
     for run in (old, new):
+        assert run['start'].get('exit') == 0, 'run did not exit successfully'
         keys = [(row['task'], row['arm'], row['trial']) for row in run['rows']]
         assert len(keys) == run['meta']['planned'], 'missing trial records'
         assert len(set(keys)) == len(keys), 'duplicate trial records'
@@ -273,6 +276,7 @@ def analyze_model(runs_dir, model):
             'arms': {name: arm_summary(run['rows'], 'archon') for name, run in (('old', old), ('new', new))},
             'aether_arms': {name: arm_summary(run['rows'], 'aether') for name, run in (('old', old), ('new', new))},
             'meta': {name: run['meta'] for name, run in (('old', old), ('new', new))},
+            'starts': {name: run['start'] for name, run in (('old', old), ('new', new))},
             'infra_errors': {name: [{'task': row['task'], 'arm': row['arm'], 'trial': row['trial'], 'error': row['error']}
                                     for row in run['rows'] if row['infra']]
                              for name, run in (('old', old), ('new', new))}}

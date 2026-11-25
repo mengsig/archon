@@ -33,7 +33,8 @@ pub struct ImageCapture {
     /// The page's emulated device pixel ratio, which CSS resolution queries,
     /// `srcset` and `window.devicePixelRatio` see.
     pub device_scale_factor: f64,
-    /// Whether the page was emulated as a mobile, touch device.
+    /// Whether the page was emulated as a mobile device with touch input: the
+    /// preview sets both from this one bit, so a replay must too.
     pub mobile: bool,
     /// What the picture shows: the whole viewport, or a region of the page.
     pub area: CaptureArea,
@@ -89,8 +90,9 @@ impl ImageCapture {
         let text = format!(
             "a Chromium page screenshot with no browser chrome, toolbar or design overlay: \
              emulate the page at a {vw}x{vh} CSS px viewport with deviceScaleFactor {dsf} and \
-             mobile {mobile} (Emulation.setDeviceMetricsOverride; in Playwright, viewport \
-             {vw}x{vh}, deviceScaleFactor {dsf}, isMobile {mobile}), {top}then call \
+             mobile {mobile} (Emulation.setDeviceMetricsOverride), with touch {mobile} \
+             (Emulation.setTouchEmulationEnabled; in Playwright, viewport {vw}x{vh}, \
+             deviceScaleFactor {dsf}, isMobile {mobile}, hasTouch {mobile}), {top}then call \
              Page.captureScreenshot with clip {{x: {}, y: {}, width: {}, height: {}, scale: {s}}} \
              (in Playwright, through a CDP session), never a larger deviceScaleFactor in place \
              of the clip scale, so the image is {}x{} pixels",
@@ -158,7 +160,8 @@ mod tests {
         let words = capture.describe();
         for part in [
             "1440x900 CSS px viewport with deviceScaleFactor 1 and mobile false",
-            "isMobile false",
+            "isMobile false, hasTouch false",
+            "with touch false (Emulation.setTouchEmulationEnabled",
             "scroll to the top",
             "clip {x: 0, y: 0, width: 1440, height: 900, scale: 2}",
             "2880x1800 pixels",

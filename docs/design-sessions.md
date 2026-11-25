@@ -285,7 +285,9 @@ your words.
 
 Each picture in the ledger records how the preview browser took it: the
 viewport the page was laid out at, the page's device scale factor and mobile
-emulation (1 and off for the desktop preview), the area shown (the whole
+emulation, which also turns touch input on (1 and off for the desktop
+preview; a replay must set both, or `pointer: coarse` pages lay out
+otherwise), the area shown (the whole
 viewport or a region), the screenshot's own clip scale (2 for the final
 pictures, less if the size budget lowered it) and its size in pixels.
 Pictures never include the design overlay. The clip scale is not the page's

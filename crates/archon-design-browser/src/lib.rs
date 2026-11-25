@@ -198,7 +198,7 @@ pub struct PictureCapture {
     pub viewport_h: u32,
     /// The page's emulated device pixel ratio (`deviceScaleFactor`).
     pub device_scale_factor: f64,
-    /// Whether the page was emulated as a mobile device.
+    /// Whether the page was emulated as a mobile device with touch input.
     pub mobile: bool,
     /// Left, from the page's left edge.
     pub x: u32,

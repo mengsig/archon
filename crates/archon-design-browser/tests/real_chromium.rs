@@ -580,6 +580,65 @@ async fn a_picture_records_the_page_dpr_apart_from_the_screenshot_scale() {
     b.close().await.unwrap();
 }
 
+/// S4 review: the preview's phone viewport turns touch on with mobile, so a
+/// `pointer: coarse` page lays out its phone card and the capture says mobile.
+#[tokio::test]
+async fn a_phone_picture_is_taken_with_touch_and_records_it_as_mobile() {
+    let Some((binary, path)) = browser_options() else {
+        return;
+    };
+    let root = tempfile::tempdir().unwrap();
+    let at = |touch| Viewport {
+        width: 390,
+        height: 844,
+        touch,
+        dpr: 1.0,
+    };
+    let body = "<html><head><style>body{margin:0}#card{width:140px;height:80px;background:#0a0}\
+        @media (pointer: coarse){#card{width:340px}}</style></head>\
+        <body><div id=\"card\"></div></body></html>";
+    let page = serve(move |_| page_body(body)).await;
+    let spec = LaunchSpec {
+        binary,
+        profile_dir: root.path().join("ds_touch"),
+        sandbox: std::env::var("ARCHON_DESIGN_SANDBOX_OFF").as_deref() != Ok("1"),
+        preview_url: format!("http://127.0.0.1:{page}/"),
+        upstream_guard: TestUpstream::allowing(),
+        viewport: at(false),
+        path_env: path,
+        lang: "C.UTF-8".into(),
+        tz: "UTC".into(),
+    };
+    let Some(b) = launch(spec).await else { return };
+    let mut shots = Vec::new();
+    for touch in [false, true] {
+        b.set_viewport(at(touch)).await.unwrap();
+        b.navigate(&format!("http://127.0.0.1:{page}/"))
+            .await
+            .unwrap();
+        let _ = b
+            .wait_network_idle(Duration::from_millis(300), Duration::from_secs(10))
+            .await;
+        let card = b.resolve_selector("#card", None).await.unwrap().unwrap();
+        shots.push((card.w, b.capture(None, 2.0).await.unwrap()));
+    }
+    let [(desk_card, desk), (phone_card, phone)] = &shots[..] else {
+        unreachable!("two shots were taken");
+    };
+    assert_eq!(
+        (*desk_card, *phone_card),
+        (140.0, 340.0),
+        "touch changes the layout"
+    );
+    assert_eq!((desk.width, desk.height), (phone.width, phone.height));
+    assert!(!desk.capture.mobile);
+    assert!(
+        phone.capture.mobile,
+        "a touch picture records mobile, which means touch"
+    );
+    b.close().await.unwrap();
+}
+
 #[tokio::test]
 async fn js_navigation_to_a_blob_stops_before_disclosure() {
     assert_disclosure_stops("location.assign(fixture())", &["main-frame document"]).await;

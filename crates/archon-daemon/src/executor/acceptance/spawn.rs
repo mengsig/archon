@@ -498,7 +498,8 @@ one pair per reference: {reference: <image id>, built: <workspace image path>,
 viewport: {width,height}, theme, state}. Match the approved viewport, theme and
 state. Where a reference records its `capture`, take the built image the same way
 and copy that `capture` into the pair unchanged: emulate the page at the recorded
-`viewport`, `device_scale_factor` and `mobile`, then take Chromium's
+`viewport`, `device_scale_factor` and `mobile`, with touch emulation on exactly when
+`mobile` is (Emulation.setTouchEmulationEnabled, Playwright hasTouch), then take Chromium's
 Page.captureScreenshot of the recorded `area` at clip scale `screenshot_scale`, with
 no overlay. A larger page device scale factor in place of the clip scale can change
 the layout. Archon refuses a pair declaring another capture, or a built image of

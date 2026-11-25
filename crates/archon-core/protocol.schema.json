@@ -8147,7 +8147,7 @@
           "$ref": "#/$defs/CaptureMethod"
         },
         "mobile": {
-          "description": "Whether the page was emulated as a mobile, touch device.",
+          "description": "Whether the page was emulated as a mobile device with touch input: the\npreview sets both from this one bit, so a replay must too.",
           "type": "boolean"
         },
         "pixels": {

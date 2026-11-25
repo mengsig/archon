@@ -1555,6 +1555,11 @@ mod capture_tests {
             })
             .collect();
         assert_eq!(shots, vec![(70, 1.0), (40, 1.0), (40, 0.5)]);
+        assert_eq!(
+            pic.capture.screenshot_scale, 0.5,
+            "the scale that fit is recorded"
+        );
+        assert_eq!((pic.capture.w, pic.capture.h), (100, 50));
         // The wire JSON of a data-URL frame stays under 768 KiB.
         let wire = json!({"jpeg_b64": B64.encode(&pic.bytes), "w": pic.width, "h": pic.height})
             .to_string();

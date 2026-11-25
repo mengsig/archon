@@ -138,6 +138,7 @@ pub fn archon_script(version: &str) -> String {
     const SCRIPT: &str = r#"#!/bin/sh
 case "$*" in
 --version) echo 'archon VERSION' ;;
+'--json update --requirements') echo '{"min":14,"max":17,"minimum_version":"0.9.0"}' ;;
 'update --requirements') printf 'aether_protocol_min 14\naether_protocol_max 17\n' ;;
 *) echo "fake archon VERSION: $*" ;;
 esac

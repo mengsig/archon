@@ -18,10 +18,12 @@ const MIN_KEY: &str = "aether_protocol_min";
 const MAX_KEY: &str = "aether_protocol_max";
 
 /// The Aether protocols an archon speaks, oldest to newest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Requirement {
     pub min: u32,
     pub max: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_version: Option<String>,
 }
 
 impl Requirement {
@@ -30,6 +32,7 @@ impl Requirement {
         Self {
             min: MIN_PROTOCOL_VERSION,
             max: PROTOCOL_VERSION,
+            minimum_version: Some(crate::cmd::REQUIRED_AETHER_VERSION.to_owned()),
         }
     }
 
@@ -38,28 +41,25 @@ impl Requirement {
         format!("{MIN_KEY} {}\n{MAX_KEY} {}", self.min, self.max)
     }
 
-    pub fn parse(text: &str) -> anyhow::Result<Self> {
-        let number = |key: &str| {
-            text.lines()
-                .find_map(|line| {
-                    line.strip_prefix(key)?
-                        .strip_prefix(' ')?
-                        .parse::<u32>()
-                        .ok()
-                })
-                .with_context(|| format!("no `{key} <number>` line"))
-        };
-        let (min, max) = (number(MIN_KEY)?, number(MAX_KEY)?);
-        anyhow::ensure!(min <= max, "the protocol range {min}..{max} is empty");
-        Ok(Self { min, max })
-    }
-
     /// Ask the archon at `archon` what it speaks.
     pub async fn of(archon: &Path) -> anyhow::Result<Self> {
-        let args = [OsStr::new("update"), OsStr::new("--requirements")];
+        let args = [
+            OsStr::new("--json"),
+            OsStr::new("update"),
+            OsStr::new("--requirements"),
+        ];
         let output = tools::run(archon, &args, PROBE_TIMEOUT).await?;
-        Self::parse(&String::from_utf8_lossy(&output.stdout))
-            .with_context(|| format!("reading what {} needs", archon.display()))
+        let requirement: Self = serde_json::from_slice(&output.stdout)
+            .with_context(|| format!("reading what {} needs", archon.display()))?;
+        anyhow::ensure!(
+            requirement.min <= requirement.max,
+            "the protocol range is empty"
+        );
+        anyhow::ensure!(
+            requirement.minimum_version.is_some(),
+            "the target Archon did not report its minimum Aether release"
+        );
+        Ok(requirement)
     }
 }
 
@@ -107,6 +107,11 @@ pub fn verdict(archon: &str, needed: Requirement, served: Option<&Served>) -> (b
         let line = format!("Aether: no `aether` on PATH; {needs}. Install Aether before use.");
         return (false, line);
     };
+    if let Some(problem) =
+        version_problem(archon, needed.minimum_version.as_deref(), &served.version)
+    {
+        return (false, problem);
+    }
     let speaks = format!(
         "{} speaks protocol {} to {}",
         served.version, served.min, served.max
@@ -122,6 +127,42 @@ pub fn verdict(archon: &str, needed: Requirement, served: Option<&Served>) -> (b
     (true, format!("Aether: {speaks}; {needs}: compatible."))
 }
 
+fn version_problem(archon: &str, minimum: Option<&str>, version_line: &str) -> Option<String> {
+    let Some(minimum) = minimum else {
+        return Some(format!(
+            "Aether: {archon} did not report its minimum Aether release; run `archon doctor` after updating."
+        ));
+    };
+    let minimum = match minimum.parse::<super::version::Version>() {
+        Ok(version) => version,
+        Err(_) => {
+            return Some(format!(
+                "Aether: {archon} reported an invalid minimum release {minimum}; run `archon doctor`."
+            ));
+        }
+    };
+    let installed = version_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|v| v.parse::<super::version::Version>().ok());
+    match installed {
+        Some(version) if version < minimum => {
+            return Some(format!(
+                "Aether: {} is below the {minimum} required by {archon}; run `aether update --version v{minimum}`.",
+                version_line
+            ));
+        }
+        None => {
+            return Some(format!(
+                "Aether: cannot compare {} with required {minimum}; run `archon doctor`.",
+                version_line
+            ));
+        }
+        _ => {}
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,30 +176,51 @@ mod tests {
     }
 
     #[test]
-    fn a_requirement_survives_its_own_text_and_states_this_build() {
+    fn requirements_include_the_minimum_in_json_and_keep_the_text_format() {
         let own = Requirement::own();
-        assert_eq!((own.min, own.max), (MIN_PROTOCOL_VERSION, PROTOCOL_VERSION));
-        assert_eq!(Requirement::parse(&own.render()).unwrap(), own);
-        let padded = format!("note\n{}\nmore\n", own.render());
-        assert_eq!(Requirement::parse(&padded).unwrap(), own);
-        for text in [
-            "",
-            "aether_protocol_min 14",
-            "aether_protocol_min x\naether_protocol_max 17",
-            "aether_protocol_min 18\naether_protocol_max 17",
-        ] {
-            assert!(Requirement::parse(text).is_err(), "{text}");
-        }
+        let encoded = serde_json::to_string(&own).unwrap();
+        let decoded: Requirement = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, own);
+        assert_eq!(
+            own.minimum_version.as_deref(),
+            Some(crate::cmd::REQUIRED_AETHER_VERSION)
+        );
+        assert_eq!(
+            own.render(),
+            format!("{MIN_KEY} {}\n{MAX_KEY} {}", own.min, own.max)
+        );
+    }
+
+    #[test]
+    fn minimum_release_is_checked_even_when_protocols_overlap() {
+        let needed = Requirement::own();
+        let mut aether = Served {
+            version: "aether 1.4.2".into(),
+            min: 17,
+            max: 26,
+        };
+        let (ok, line) = verdict("archon 1.6.5", needed.clone(), Some(&aether));
+        assert!(
+            !ok && line.contains("1.4.2") && line.contains("1.4.3"),
+            "{line}"
+        );
+        assert!(line.contains("aether update"));
+        aether.version = "aether 1.4.3".into();
+        assert!(verdict("archon 1.6.5", needed, Some(&aether)).0);
     }
 
     #[test]
     fn an_aether_is_compatible_when_the_ranges_overlap() {
-        let needed = Requirement { min: 14, max: 17 };
+        let needed = Requirement {
+            min: 14,
+            max: 17,
+            minimum_version: Some("0.9.0".into()),
+        };
         for (min, max) in [(14, 17), (16, 17), (12, 14), (17, 19)] {
-            let (ok, line) = verdict("archon 2.0.0", needed, Some(&served(min, max)));
+            let (ok, line) = verdict("archon 2.0.0", needed.clone(), Some(&served(min, max)));
             assert!(ok && line.ends_with("compatible."), "{min}..{max}: {line}");
         }
-        let (ok, line) = verdict("archon 2.0.0", needed, Some(&served(12, 13)));
+        let (ok, line) = verdict("archon 2.0.0", needed.clone(), Some(&served(12, 13)));
         assert!(!ok && line.ends_with("Run `aether update`."), "{line}");
         assert!(
             line.contains("aether 0.9.0 speaks protocol 12 to 13"),
@@ -168,13 +230,13 @@ mod tests {
             line.contains("archon 2.0.0 needs protocol 14 to 17"),
             "{line}"
         );
-        let (ok, line) = verdict("archon 2.0.0", needed, Some(&served(18, 19)));
+        let (ok, line) = verdict("archon 2.0.0", needed.clone(), Some(&served(18, 19)));
         assert!(
             !ok && line.contains("newer than archon 2.0.0 supports"),
             "{line}"
         );
         assert!(!line.contains("aether update"), "{line}");
-        let (ok, line) = verdict("archon 2.0.0", needed, None);
+        let (ok, line) = verdict("archon 2.0.0", needed.clone(), None);
         assert!(!ok && line.contains("no `aether` on PATH"), "{line}");
     }
 }

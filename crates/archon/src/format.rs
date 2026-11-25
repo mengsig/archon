@@ -351,7 +351,22 @@ pub fn aether_link(link: &AetherLinkStatus) -> String {
             daemon_version,
             protocol_version,
             ..
-        } => format!("connected (aetherd {daemon_version}, protocol {protocol_version})"),
+        } => {
+            let connected =
+                format!("connected (aetherd {daemon_version}, protocol {protocol_version})");
+            let minimum: crate::cmd::update::version::Version = crate::cmd::REQUIRED_AETHER_VERSION
+                .parse()
+                .expect("the required Aether release is valid");
+            match daemon_version.parse::<crate::cmd::update::version::Version>() {
+                Ok(version) if version < minimum => format!(
+                    "{connected}; below required Aether {minimum}; run `aether update --version v{minimum}` and restart aetherd"
+                ),
+                Err(_) => format!(
+                    "{connected}; cannot compare with required Aether {minimum}; run `archon doctor`"
+                ),
+                _ => connected,
+            }
+        }
         AetherLinkStatus::Disconnected { error, retry_at } => {
             let retry = retry_at
                 .map(|at| {
@@ -949,6 +964,21 @@ pub(crate) mod tests {
     use archon_core::protocol::GcStatus;
 
     use super::*;
+
+    #[test]
+    fn aether_status_warns_for_old_releases() {
+        let link = |version: &str| AetherLinkStatus::Connected {
+            daemon_version: version.into(),
+            protocol_version: 26,
+            instance_id: "test".into(),
+        };
+        let old = aether_link(&link("1.4.2"));
+        assert!(old.contains("1.4.2") && old.contains("1.4.3"), "{old}");
+        assert!(old.contains("aether update"), "{old}");
+        let current = aether_link(&link("1.4.3"));
+        assert!(current.contains("connected"), "{current}");
+        assert!(!current.contains("below required"), "{current}");
+    }
 
     #[test]
     fn the_chain_says_which_stage_delegates_its_reviewers() {

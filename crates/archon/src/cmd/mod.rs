@@ -25,9 +25,9 @@ mod reports;
 pub(crate) mod schema;
 mod settings;
 mod talk;
-mod update;
+pub(crate) mod update;
 
-const REQUIRED_AETHER_VERSION: &str = "1.4.3";
+pub(crate) const REQUIRED_AETHER_VERSION: &str = "1.4.3";
 
 use std::process::ExitCode;
 

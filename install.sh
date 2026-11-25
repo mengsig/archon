@@ -234,11 +234,27 @@ aether_retry_command() {
     printf 'curl -fsSL %s | AETHER_VERSION="%s" AETHER_INSTALL_DIR="%s" sh\n' "$AETHER_INSTALL_URL" "$AETHER_VERSION" "$INSTALL_DIR"
 }
 
+# Compare release cores numerically; a prerelease of the minimum is older.
+aether_version_ok() {
+    printf '%s\n' "$1" | awk -v minimum="${AETHER_VERSION#v}" '
+        { if ($1 != "aether" || $2 !~ /^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$/) exit 2
+          sub(/^v/, "", $2); split($2, suffix, "-"); split(suffix[1], have, "."); split(minimum, need, ".")
+          for (i = 1; i <= 3; i++) { if (have[i]+0 < need[i]+0) exit 1; if (have[i]+0 > need[i]+0) exit 0 }
+          if (suffix[2] != "") exit 1
+        }'
+}
+
 # report_aether PROGRAM: its version, and whether this archon can use it.
 report_aether() {
     version=$("$1" --version 2>/dev/null | head -n 1) || version=""
     say "Aether: ${version:-unknown version} at $1."
     say "This Archon release requires Aether ${AETHER_VERSION#v} or later; update an existing installation with aether update."
+    if aether_version_ok "$version"; then
+        :
+    else
+        warn "Aether ${version:-unknown version} does not meet the required ${AETHER_VERSION#v}; update with 'aether update --version $AETHER_VERSION' and restart aetherd."
+        AETHER_STEP_FAILED=1
+    fi
     "$INSTALL_DIR/archon" update --requirements >"$STAGING/requirements" 2>/dev/null || true
     "$1" schema >"$STAGING/aether-schema" 2>/dev/null || true
     need_min=$(number_after aether_protocol_min "$STAGING/requirements")

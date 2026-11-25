@@ -14,7 +14,8 @@ def owned(pid, expected):
         args = cmdline.read_bytes().split(b'\0')
     except FileNotFoundError:
         return False
-    return bool(args[0]) and Path(os.fsdecode(args[0])).name == expected
+    binary = Path('.archon/reports/bench/bin') / expected
+    return bool(args[0]) and Path(os.fsdecode(args[0])).resolve() == binary.resolve()
 
 
 def spend(path):
@@ -45,8 +46,10 @@ def main():
     assert old_pid > 0 and new_pid > 0 and old_pid != new_pid
     sandbox = Path('/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK')
     report = Path('.archon/reports/bench')
-    probe = sum(spend(report / f'{label}-luna-{name}-probe/aether-data/aether.db')
-                for label, name in [('old', 'protocol'), ('new', 'budget')]) if model == 'luna' else 0.0
+    probe_paths = [report / f'{label}-luna-{name}-probe/aether-data/aether.db'
+                   for label, name in [('old', 'protocol'), ('new', 'budget')]] if model == 'luna' else []
+    assert all(path.is_file() for path in probe_paths), 'missing probe usage'
+    probe = sum(spend(path) for path in probe_paths)
     assert sandbox.is_dir() and report.is_dir()
     while owned(old_pid, 'archon-bench-old') or owned(new_pid, 'archon-bench-new'):
         try:

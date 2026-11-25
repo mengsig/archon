@@ -4,7 +4,7 @@
 import { h } from '../../ui/dom.js';
 import { keyEvent } from './keymap.js';
 import { mouseEvent, wheelEvent, touchEvent, modifiersOf } from './input.js';
-import { toApp, effectiveScale, fitScale, boxToScreen, normalizeDrag, classifyTwoFinger, clampZoom, nudgeBox, centredBox } from './scale.js';
+import { toApp, effectiveScale, fitScale, boxToScreen, normalizeDrag, classifyTwoFinger, clampZoom, nudgeBox, centredBox, wheelDeltas, round } from './scale.js';
 import { createSwitchGate } from './switching.js';
 
 const DRAG_PX = 6;
@@ -102,8 +102,9 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
   layer.addEventListener('wheel', (e) => {
     if (getMode() !== 'interact') return;
     e.preventDefault();
-    const p = point(e);
-    onInput(wheelEvent(p, Math.round(e.deltaX), Math.round(e.deltaY), modifiersOf(e)));
+    const { dx, dy } = wheelDeltas(e, scale(), frame.h);
+    if (dx === 0 && dy === 0) return;
+    onInput(wheelEvent(point(e), dx, dy, modifiersOf(e)));
   }, { passive: false });
 
   layer.addEventListener('pointerdown', (e) => {
@@ -192,7 +193,7 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
       } else {
         const rect = canvas.getBoundingClientRect();
         const centre = toApp((next[0].x + next[1].x) / 2, (next[0].y + next[1].y) / 2, rect, frame);
-        onInput(wheelEvent(centre, Math.round(-g.dx / scale()), Math.round(-g.dy / scale()), 0));
+        onInput(wheelEvent(centre, round(-g.dx / scale()), round(-g.dy / scale()), 0));
       }
     } else if (touches.size === 1) onInput(touchEvent('move', [...touches.values()]));
   }

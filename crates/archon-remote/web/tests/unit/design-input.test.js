@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createInputBatcher, mouseEvent, wheelEvent, modifiersOf } from '../../src/features/design/input.js';
+import { createInputBatcher, mouseEvent, wheelEvent, modifiersOf, BUSY_AFTER_MS } from '../../src/features/design/input.js';
 
 function clock() {
   let t = 0;
@@ -115,4 +115,75 @@ test('saturation preserves releases for all admitted presses and reports skipped
   assert.deepEqual(sent.slice(0, 3), down);
   assert.deepEqual(sent.slice(-3), up);
   assert.equal(sent.filter((e) => e.code === 'KeyB').length, 0);
+});
+
+// A send whose replies the test answers by hand.
+function slowSend() {
+  const batches = [];
+  const replies = [];
+  return {
+    batches, replies,
+    send: (events) => { batches.push(events); return new Promise((resolve) => replies.push(resolve)); },
+    answer: async () => { replies.shift()(); await Promise.resolve(); await Promise.resolve(); },
+  };
+}
+
+test('at most two input requests await a reply; meanwhile wheel ticks add up and moves keep the latest', async () => {
+  const c = clock();
+  const s = slowSend();
+  const b = createInputBatcher({ send: s.send, ...c });
+  for (let i = 0; i < 300; i += 1) {
+    b.push(wheelEvent({ x: 5, y: 5 }, 1, 10));
+    b.push(mouseEvent('move', { x: i, y: i }, { button: null }));
+    c.advance(4); // a fast trackpad: 250 events a second for 1.2 s
+  }
+  assert.equal(s.batches.length, 2, 'no third request before a reply');
+  assert.equal(b.outstanding, 2);
+  await s.answer();
+  c.advance(20);
+  assert.equal(s.batches.length, 3);
+  const caughtUp = s.batches[2];
+  const sent = s.batches.slice(0, 2).flat();
+  assert.equal(caughtUp.length, 2, 'one summed wheel and the latest move');
+  const wheels = [...sent, ...caughtUp].filter((e) => e.type === 'wheel');
+  assert.equal(wheels.reduce((sum, e) => sum + e.dy, 0), 3000, 'no scroll distance is lost');
+  assert.equal(wheels.reduce((sum, e) => sum + e.dx, 0), 300);
+  assert.deepEqual(caughtUp.at(-1), mouseEvent('move', { x: 299, y: 299 }, { button: null }));
+});
+
+test('waiting on replies shows one quiet busy signal that clears when input flows again', async () => {
+  const c = clock();
+  const s = slowSend();
+  const busy = [];
+  const b = createInputBatcher({ send: s.send, onBusy: (on) => busy.push(on), ...c });
+  b.push({ type: 'text', text: 'a' });
+  c.advance(20);
+  b.push({ type: 'text', text: 'b' });
+  c.advance(20);
+  b.push({ type: 'text', text: 'c' });
+  c.advance(BUSY_AFTER_MS - 50);
+  assert.deepEqual(busy, [], 'a short wait says nothing');
+  for (let i = 0; i < 10; i += 1) { b.push({ type: 'text', text: String(i) }); c.advance(10); }
+  c.advance(100);
+  assert.deepEqual(busy, [true], 'said once, however much input waits');
+  await s.answer();
+  c.advance(20);
+  assert.deepEqual(busy, [true, false]);
+  assert.equal(s.batches.length, 3);
+});
+
+test('a stop forgets outstanding replies, so late ones cannot unbalance the count', async () => {
+  const c = clock();
+  const s = slowSend();
+  const b = createInputBatcher({ send: s.send, ...c });
+  b.push({ type: 'text', text: 'a' }); c.advance(20);
+  b.push({ type: 'text', text: 'b' }); c.advance(20);
+  b.stop();
+  assert.equal(b.outstanding, 0);
+  await s.answer();
+  await s.answer();
+  assert.equal(b.outstanding, 0);
+  b.push({ type: 'text', text: 'c' }); c.advance(20);
+  assert.equal(b.outstanding, 1);
+  assert.equal(s.batches.length, 3);
 });

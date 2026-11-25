@@ -140,10 +140,17 @@ export function buildStatusBar() {
   const live = h('p', { class: 'sr-only', role: 'status', 'aria-live': 'polite' });
   const frameText = h('p', { class: 'design-frame-text' });
   const hosts = h('details', { class: 'design-hosts', hidden: true }, h('summary', { text: '' }), h('ul', { class: 'plain-list' }));
-  const el = h('footer', { class: 'design-status' }, frameText, text, hosts, live);
+  // One quiet line for the preview falling behind; it replaces, never stacks.
+  const busy = h('p', { class: 'design-busy', role: 'status', hidden: true });
+  const el = h('footer', { class: 'design-status' }, frameText, text, busy, hosts, live);
   let lastLive = '';
   return {
     element: el, frameText,
+    setBusy(message) {
+      const shown = message || '';
+      if (busy.textContent !== shown) busy.textContent = shown;
+      busy.hidden = !shown;
+    },
     update(state, { path }) {
       const sha = state.previewCommit ?? state.session?.finish_head;
       const commit = sha ? `preview at ${sha.slice(0, 7)}` : '';

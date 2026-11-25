@@ -9,6 +9,11 @@ export const CLOSE_DISABLED = 4403;
 const CLOSE_HELLO_FAILED = 4000;
 const CLOSE_RESUBSCRIBE = 4001;
 export const REQUEST_TIMEOUT_MS = 20_000;
+// archond answers at most this many requests at once on one connection and
+// refuses the next (MAX_IN_FLIGHT in crates/archon-remote/src/ws/session.rs).
+// Requests past it wait here for a reply instead; these few are not counted.
+export const MAX_IN_FLIGHT = 16;
+const UNCOUNTED = new Set(['design_frame_ack', 'design_unsubscribe', 'subscribe_design', 'subscribe_feed', 'subscribe_changes']);
 
 export class DaemonError extends Error {
   constructor(code, message) {
@@ -46,6 +51,16 @@ class Transport {
     this.restartCause = null;
     this.pending = new Map();
     this.queued = [];
+    // Counted requests sent and not yet answered, by req id; an expired one
+    // still holds archond's slot until its late reply comes.
+    this.inFlight = new Set();
+    // Requests waiting for one of those slots on the open connection.
+    this.held = [];
+  }
+
+  // Requests waiting for a free slot, for the app's quiet busy indicator.
+  get waiting() {
+    return this.held.length;
   }
 
   get state() {
@@ -189,6 +204,7 @@ class Transport {
   }
 
   settle(id, result) {
+    if (this.inFlight.delete(id)) this.release();
     const entry = this.pending.get(id);
     if (!entry) return;
     this.pending.delete(id);
@@ -224,7 +240,8 @@ class Transport {
   }
 
   failPending(err) {
-    for (const entry of this.pending.values()) {
+    this.inFlight.clear();
+    for (const entry of [...this.pending.values(), ...this.held.splice(0)]) {
       if (entry.timer !== null) this.clearTimer(entry.timer);
       entry.reject(err);
     }
@@ -240,14 +257,31 @@ class Transport {
 
   dispatch(entry) {
     if (!this.ws || this.current !== 'open') throw new Error('dispatch needs an open connection');
+    const counted = !UNCOUNTED.has(entry.cmd);
+    if (counted && (this.inFlight.size >= MAX_IN_FLIGHT || this.held.length > 0)) this.held.push(entry);
+    else this.send(entry, counted);
+  }
+
+  // A slot came free: the oldest waiting requests go, in order.
+  release() {
+    while (this.held.length > 0 && this.inFlight.size < MAX_IN_FLIGHT && this.ws && this.current === 'open') {
+      this.send(this.held.shift(), true);
+    }
+  }
+
+  send(entry, counted) {
     const req = this.nextReq++;
     this.pending.set(req, entry);
+    if (counted) this.inFlight.add(req);
+    console.assert(this.inFlight.size <= MAX_IN_FLIGHT, 'More requests in flight than archond answers');
     this.ws.send(JSON.stringify({ ...entry.fields, req, cmd: entry.cmd }));
   }
 
   expire(entry) {
     const at = this.queued.indexOf(entry);
     if (at >= 0) this.queued.splice(at, 1);
+    const held = this.held.indexOf(entry);
+    if (held >= 0) this.held.splice(held, 1);
     for (const [id, value] of this.pending) if (value === entry) this.pending.delete(id);
     entry.reject(new DaemonError('timeout', `${entry.cmd} got no answer in ${Math.round(entry.timeoutMs / 1000)} s`));
   }

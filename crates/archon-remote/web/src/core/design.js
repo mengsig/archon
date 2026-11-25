@@ -105,6 +105,14 @@ export function plainMessage(text) {
   return /[.!?…]$/.test(said) ? said : `${said}.`;
 }
 
+// archond refusing a request past its in-flight cap, or input past its rate:
+// the app is ahead of the daemon. It waits, so these are rare and never shown as errors.
+export function isBackpressure(err) {
+  const message = String(err?.message ?? '');
+  return (err?.code === 'unavailable' && /requests may be in flight/.test(message))
+    || (err?.code === 'policy' && /too many input requests/.test(message));
+}
+
 export function designErrorText(err) {
   return REFUSALS[err?.code] ?? (plainMessage(err?.message) || 'Something went wrong.');
 }

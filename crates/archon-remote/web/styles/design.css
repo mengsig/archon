@@ -80,6 +80,7 @@
 .design-type .input { flex: 1; }
 .design-status { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); padding: var(--space-2) var(--space-4); font-size: 13px; color: var(--text-2); }
 .design-status p { margin: 0; }
+.design-busy { font-style: italic; }
 .design-frame-text { color: var(--text); }
 .design-hosts summary { cursor: pointer; color: var(--amber); }
 

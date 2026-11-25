@@ -4,7 +4,7 @@ import { h } from '../../ui/dom.js';
 import { emptyState } from '../../ui/components.js';
 import { confirmSheet, openSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
-import { designErrorText } from '../../core/design.js';
+import { designErrorText, isBackpressure } from '../../core/design.js';
 import { initialState, reduce, isLive, currentPath, followsNewSession, presetMismatch, pointerBlockedText, PRESET_SIZE } from './state.js';
 import { createDesignStream } from './stream.js';
 import { createStage } from './overlay.js';
@@ -29,6 +29,8 @@ const WIDE_PX = 1024;
 const SHEET_HEIGHTS = ['peek', 'half', 'full'];
 const FOLLOW_EVERY_MS = 3000;
 const FOLLOW_MAX_MS = 30_000;
+const BEHIND = { busy: 'Catching up with the preview…', skipped: 'The preview fell behind; some input was skipped.' };
+const BEHIND_SHOWN_MS = 4000;
 
 export function mountDesign(view, ctx) {
   const item = ctx.route.param;
@@ -87,7 +89,8 @@ export function mountDesign(view, ctx) {
     }
   }
   const refuse = (err) => {
-    if (err?.code === 'gone') dispatch({ type: 'event', event: { event: 'ended', reason: 'ended' } });
+    if (isBackpressure(err)) behind(BEHIND.busy);
+    else if (err?.code === 'gone') dispatch({ type: 'event', event: { event: 'ended', reason: 'ended' } });
     else if (err?.code === 'conflict') { toast(designErrorText(err), { tone: 'red' }); stream.refresh(); }
     else if (err?.code !== 'disconnected' && err?.code !== 'timeout') toast(designErrorText(err), { tone: 'red' });
   };
@@ -116,13 +119,22 @@ export function mountDesign(view, ctx) {
     continueWithout: () => { continued = true; render(); },
   });
   const status = buildStatusBar();
+  // The preview falling behind is one quiet status line, never a stack of toasts.
+  let behindTimer = null;
+  // `forMs` null keeps the line until it is cleared.
+  function behind(message, forMs = BEHIND_SHOWN_MS) {
+    status.setBusy(message);
+    clearTimeout(behindTimer);
+    behindTimer = message && forMs ? setTimeout(() => status.setBusy(null), forMs) : null;
+  }
   const batcher = createInputBatcher({
     send: (events) => {
       const id = session();
-      if (!id || !state.frame || !isLive(state) || state.connection !== 'open') return;
-      ctx.design.input(id, events).catch((err) => { if (session() === id) refuse(err); });
+      if (!id || !state.frame || !isLive(state) || state.connection !== 'open') return undefined;
+      return ctx.design.input(id, events).catch((err) => { if (session() === id) refuse(err); });
     },
-    onOverflow: () => toast('The preview could not keep up. Some input was skipped.', { tone: 'amber' }),
+    onOverflow: () => behind(BEHIND.skipped),
+    onBusy: (on) => behind(on ? BEHIND.busy : null, null),
   });
   const queueInput = (event) => state.frame && state.connection === 'open' && isLive(state) && batcher.push(event);
   const stage = createStage({
@@ -259,13 +271,23 @@ export function mountDesign(view, ctx) {
     if (text) toast(text);
     return Boolean(text);
   }
+  // One hover read at a time; a pointer that moved meanwhile reads its latest place next.
+  let hovering = false;
+  let hoverNext = null;
   async function hoverAt(p) {
     if (pointerBlockedText(state)) return;
+    if (hovering) { hoverNext = p; return; }
+    hovering = true;
     const ticket = ++tickets;
     try {
       const r = await ctx.design.resolve(session(), p.x, p.y, 0, false);
       if (ticket === tickets && state.mode === 'comment') stage.setHover(r.target.box, r.label);
-    } catch (e) { if (e.code === 'gone') refuse(e); }
+    } catch (e) { if (e.code === 'gone') refuse(e); } finally {
+      hovering = false;
+      const next = hoverNext;
+      hoverNext = null;
+      if (next && state.mode === 'comment') hoverAt(next);
+    }
   }
   async function pickAt(p) {
     if (waitingForSize()) return;
@@ -602,7 +624,7 @@ export function mountDesign(view, ctx) {
   render();
 
   return () => {
-    stream.stop(); batcher.stop(); stage.destroy(); ledger.destroy();
+    stream.stop(); batcher.stop(); clearTimeout(behindTimer); stage.destroy(); ledger.destroy();
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', fit);
     vv?.removeEventListener('resize', onViewport);

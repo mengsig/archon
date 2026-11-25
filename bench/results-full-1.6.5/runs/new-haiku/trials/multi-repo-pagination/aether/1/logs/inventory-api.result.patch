@@ -1,0 +1,134 @@
+diff --git a/README.md b/README.md
+index 1a55755..ce90fcd 100644
+--- a/README.md
++++ b/README.md
+@@ -6,7 +6,16 @@ In-memory inventory service. `api.handle(request)` maps a request
+ 
+ ## Endpoints
+ 
+-- `GET /items` → `{"items": [...]}`: every item, ordered by `id`.
++- `GET /items` → `{"items": [...], "next_cursor": <string or null>}`: one page
++  of items, ordered by `id`.
++  - `limit` (optional): integer from 1 to 100, default 20 items per page.
++  - `cursor` (optional): the `next_cursor` from a previous response. Treat it
++    as opaque and send it back unchanged. Omit it for the first page.
++  - `next_cursor` is `null` on the last page. Follow it until it is `null` to
++    read every item.
++  - An invalid `limit` or `cursor` returns 400 with `{"error": "..."}`.
+ - `GET /items/<id>` → the item, 404 when unknown, 400 when `id` is not a number.
+ 
++Example: `{"method": "GET", "path": "/items", "query": {"limit": "2"}}`.
++
+ Run the tests with `python3 -m unittest`.
+diff --git a/api.py b/api.py
+index aba1605..652f88d 100644
+--- a/api.py
++++ b/api.py
+@@ -5,8 +5,13 @@ response is `{"status": int, "body": object}`; the transport layer lives
+ elsewhere.
+ """
+ 
++import base64
++
+ from data import ITEMS
+ 
++DEFAULT_LIMIT = 20
++MAX_LIMIT = 100
++
+ 
+ def handle(request):
+     if request.get("method") != "GET":
+@@ -21,8 +26,44 @@ def handle(request):
+ 
+ 
+ def list_items(query):
+-    items = sorted(ITEMS, key=lambda item: item["id"])
+-    return {"status": 200, "body": {"items": items}}
++    limit = _parse_limit(query.get("limit"))
++    if limit is None:
++        return _error(400, f"limit must be an integer from 1 to {MAX_LIMIT}")
++    after = None
++    if "cursor" in query:
++        after = _decode_cursor(query["cursor"])
++        if after is None:
++            return _error(400, "cursor is invalid")
++    ordered = sorted(ITEMS, key=lambda item: item["id"])
++    pending = [item for item in ordered if after is None or item["id"] > after]
++    page = pending[:limit]
++    assert len(page) <= limit
++    assert after is None or all(item["id"] > after for item in page)
++    next_cursor = _encode_cursor(page[-1]["id"]) if len(pending) > limit else None
++    return {"status": 200, "body": {"items": page, "next_cursor": next_cursor}}
++
++
++def _parse_limit(raw):
++    if raw is None:
++        return DEFAULT_LIMIT
++    if not (raw.isascii() and raw.isdigit()):
++        return None
++    limit = int(raw)
++    return limit if 1 <= limit <= MAX_LIMIT else None
++
++
++def _encode_cursor(item_id):
++    return base64.urlsafe_b64encode(str(item_id).encode("ascii")).decode("ascii")
++
++
++def _decode_cursor(raw):
++    try:
++        text = base64.urlsafe_b64decode(raw.encode("ascii")).decode("ascii")
++    except ValueError:
++        return None
++    if not (text.isascii() and text.isdigit()):
++        return None
++    return int(text)
+ 
+ 
+ def get_item(raw_id):
+diff --git a/test_api.py b/test_api.py
+index 55cd1fd..b3e207f 100644
+--- a/test_api.py
++++ b/test_api.py
+@@ -24,6 +24,42 @@ class ApiTest(unittest.TestCase):
+     def test_only_get(self):
+         self.assertEqual(handle({"method": "POST", "path": "/items"})["status"], 405)
+ 
++    def test_default_page_size_and_cursor(self):
++        body = get("/items")["body"]
++        self.assertEqual(len(body["items"]), 20)
++        self.assertIsNotNone(body["next_cursor"])
++
++    def test_cursor_walk_returns_every_item_in_order(self):
++        seen = []
++        query = {}
++        while True:
++            body = get("/items", limit="10", **query)["body"]
++            seen.extend(item["id"] for item in body["items"])
++            if body["next_cursor"] is None:
++                break
++            query = {"cursor": body["next_cursor"]}
++        self.assertEqual(seen, list(range(1, 58)))
++
++    def test_last_page_has_null_cursor(self):
++        first = get("/items", limit="57")["body"]
++        self.assertEqual(len(first["items"]), 57)
++        self.assertIsNone(first["next_cursor"])
++
++    def test_limit_bounds(self):
++        self.assertEqual(len(get("/items", limit="100")["body"]["items"]), 57)
++        for bad in ["0", "101", "-1", "abc", "", "2.5", " 5"]:
++            with self.subTest(limit=bad):
++                res = get("/items", limit=bad)
++                self.assertEqual(res["status"], 400)
++                self.assertIn("error", res["body"])
++
++    def test_invalid_cursor_is_400(self):
++        for bad in ["", "!!!", "bm90LWEtbnVtYmVy"]:
++            with self.subTest(cursor=bad):
++                res = get("/items", cursor=bad)
++                self.assertEqual(res["status"], 400)
++                self.assertIn("error", res["body"])
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

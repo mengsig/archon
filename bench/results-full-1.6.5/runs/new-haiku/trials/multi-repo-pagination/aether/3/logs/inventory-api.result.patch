@@ -1,0 +1,168 @@
+diff --git a/README.md b/README.md
+index 1a55755..ebc4e1e 100644
+--- a/README.md
++++ b/README.md
+@@ -6,7 +6,17 @@ In-memory inventory service. `api.handle(request)` maps a request
+ 
+ ## Endpoints
+ 
+-- `GET /items` → `{"items": [...]}`: every item, ordered by `id`.
++- `GET /items` → `{"items": [...], "next_cursor": <string or null>}`: one page
++  of items, ordered by `id`.
++  - `limit` (optional): an integer from 1 to 100; default 20.
++  - `cursor` (optional): the `next_cursor` from a previous response. Pass it back
++    unchanged to get the following page. Treat it as opaque.
++  - `next_cursor` is `null` on the last page.
++  - An invalid `limit` or `cursor` returns 400 with `{"error": "..."}`.
+ - `GET /items/<id>` → the item, 404 when unknown, 400 when `id` is not a number.
+ 
++Example: `{"method": "GET", "path": "/items", "query": {"limit": "2"}}` returns
++items 1 and 2 with a `next_cursor`. Send that cursor back as
++`{"query": {"limit": "2", "cursor": "<next_cursor>"}}` to get items 3 and 4.
++
+ Run the tests with `python3 -m unittest`.
+diff --git a/api.py b/api.py
+index aba1605..fe0f526 100644
+--- a/api.py
++++ b/api.py
+@@ -5,8 +5,14 @@ response is `{"status": int, "body": object}`; the transport layer lives
+ elsewhere.
+ """
+ 
++import base64
++import re
++
+ from data import ITEMS
+ 
++DEFAULT_LIMIT = 20
++MAX_LIMIT = 100
++
+ 
+ def handle(request):
+     if request.get("method") != "GET":
+@@ -21,8 +27,21 @@ def handle(request):
+ 
+ 
+ def list_items(query):
+-    items = sorted(ITEMS, key=lambda item: item["id"])
+-    return {"status": 200, "body": {"items": items}}
++    limit = _parse_limit(query.get("limit"))
++    if limit is None:
++        return _error(400, f"limit must be an integer from 1 to {MAX_LIMIT}")
++    after_id = _parse_cursor(query.get("cursor"))
++    if after_id is None:
++        return _error(400, "invalid cursor")
++
++    remaining = sorted(
++        (item for item in ITEMS if item["id"] > after_id),
++        key=lambda item: item["id"],
++    )
++    page = remaining[:limit]
++    has_more = len(remaining) > limit
++    next_cursor = _encode_cursor(page[-1]["id"]) if has_more else None
++    return {"status": 200, "body": {"items": page, "next_cursor": next_cursor}}
+ 
+ 
+ def get_item(raw_id):
+@@ -36,3 +55,34 @@ def get_item(raw_id):
+ 
+ def _error(status, message):
+     return {"status": status, "body": {"error": message}}
++
++
++def _parse_limit(raw):
++    """Return the page size, or None when `raw` is not an integer in 1..MAX_LIMIT."""
++    if raw is None:
++        return DEFAULT_LIMIT
++    if not re.fullmatch(r"[0-9]+", raw):
++        return None
++    limit = int(raw)
++    if not 1 <= limit <= MAX_LIMIT:
++        return None
++    return limit
++
++
++def _encode_cursor(last_id):
++    assert isinstance(last_id, int) and last_id >= 0, "cursor ids are non-negative ints"
++    return base64.urlsafe_b64encode(str(last_id).encode()).decode().rstrip("=")
++
++
++def _parse_cursor(raw):
++    """Return the id to page after, or None when `raw` was not issued by `_encode_cursor`."""
++    if raw is None:
++        return 0
++    padded = raw + "=" * (-len(raw) % 4)
++    try:
++        decoded = base64.urlsafe_b64decode(padded).decode()
++    except ValueError:
++        return None
++    if not re.fullmatch(r"[0-9]+", decoded):
++        return None
++    return int(decoded)
+diff --git a/test_api.py b/test_api.py
+index 55cd1fd..ead04d4 100644
+--- a/test_api.py
++++ b/test_api.py
+@@ -7,6 +7,20 @@ def get(path, **query):
+     return handle({"method": "GET", "path": path, "query": query})
+ 
+ 
++def walk_pages(**query):
++    """Follow next_cursor from the first page and return every item id, in order."""
++    ids = []
++    cursor = None
++    while True:
++        params = dict(query, **({"cursor": cursor} if cursor else {}))
++        res = get("/items", **params)
++        assert res["status"] == 200, res
++        ids.extend(item["id"] for item in res["body"]["items"])
++        cursor = res["body"]["next_cursor"]
++        if cursor is None:
++            return ids
++
++
+ class ApiTest(unittest.TestCase):
+     def test_items_are_ordered_by_id(self):
+         res = get("/items")
+@@ -15,6 +29,41 @@ class ApiTest(unittest.TestCase):
+         self.assertEqual(ids[0], 1)
+         self.assertEqual(ids, sorted(ids))
+ 
++    def test_default_page_size_is_20(self):
++        body = get("/items")["body"]
++        self.assertEqual(len(body["items"]), 20)
++        self.assertIsNotNone(body["next_cursor"])
++
++    def test_walking_pages_returns_every_item_once_in_order(self):
++        self.assertEqual(walk_pages(), list(range(1, 58)))
++        self.assertEqual(walk_pages(limit="7"), list(range(1, 58)))
++        self.assertEqual(walk_pages(limit="57"), list(range(1, 58)))
++
++    def test_last_page_has_null_cursor(self):
++        first = get("/items", limit="50")["body"]
++        body = get("/items", limit="50", cursor=first["next_cursor"])["body"]
++        self.assertEqual([item["id"] for item in body["items"]], list(range(51, 58)))
++        self.assertIsNone(body["next_cursor"])
++
++    def test_exact_multiple_ends_with_null_cursor(self):
++        body = get("/items", limit="57")["body"]
++        self.assertEqual(len(body["items"]), 57)
++        self.assertIsNone(body["next_cursor"])
++
++    def test_limit_bounds(self):
++        for raw in ["1", "100"]:
++            self.assertEqual(get("/items", limit=raw)["status"], 200)
++        for raw in ["0", "101", "-1", "1.5", "", "abc", " 5"]:
++            res = get("/items", limit=raw)
++            self.assertEqual(res["status"], 400, raw)
++            self.assertIn("limit", res["body"]["error"])
++
++    def test_invalid_cursor_is_400(self):
++        for raw in ["!!!", "bm9wZQ", "LTE="]:
++            res = get("/items", cursor=raw)
++            self.assertEqual(res["status"], 400, raw)
++            self.assertIn("cursor", res["body"]["error"])
++
+     def test_single_item(self):
+         res = get("/items/5")
+         self.assertEqual(res["body"]["sku"], "SKU-0005")

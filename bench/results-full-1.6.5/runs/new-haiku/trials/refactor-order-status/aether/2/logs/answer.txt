@@ -1,0 +1,27 @@
+Refactored the orders crate so Order::status is an OrderStatus enum. Committed as b79a69b on main (git user mengsig, no attribution line). cargo test passes: 5 tests (the 3 original plus 2 new ones for parsing/display and the transition table).
+
+What changed:
+- src/status.rs (new): OrderStatus { Pending, Paid, Shipped, Cancelled } deriving Debug, Clone, Copy, PartialEq, Eq, Hash. Provides as_str(), Display (same lowercase text), FromStr with Err = ParseStatusError, and can_transition_to() encoding pending->paid, pending->cancelled, paid->shipped, paid->cancelled. ParseStatusError implements Error and its message is `unknown status "<input>"`.
+- lib.rs re-exports OrderStatus and ParseStatusError from the crate root.
+- order.rs, billing.rs, shipping.rs: pay/ship/cancel now check can_transition_to, so their error messages are unchanged. is_open, outstanding_cents and ready_to_ship compare enum variants.
+- report.rs: from_line uses FromStr and passes its error message through, so the CSV error text is unchanged.
+- The status string literals now appear only in src/status.rs (checked by grep over src/).
+
+Decisions to review:
+- report::status_counts now returns Vec<(OrderStatus, usize)> instead of Vec<(String, usize)>. This is a public signature change. Output order is still sorted by the lowercase name, not by enum declaration order, so the output matches the old code.
+- tests/orders.rs still contains the expected error-message strings such as "order 2 cannot be shipped: it is pending". These are the observable output being asserted, so I kept them as literals.
+- I did not add asserts to the functions. The existing code had none, and adding them would change behaviour (panic instead of Err), so I left that out of scope.
+
+The `orders` crate now stores status as an `OrderStatus` enum, and the work is committed as `b79a69b` on `main`. `cargo test` passes with 5 tests: the 3 original ones and 2 new ones covering parsing/display and the transition table.
+
+- **`src/status.rs` (new):** the enum with `as_str`, `Display`, `FromStr` and `can_transition_to`, plus the public `ParseStatusError`. Its message is `unknown status "<input>"`.
+- **Crate root:** `OrderStatus` and `ParseStatusError` are re-exported from `lib.rs`.
+- **Transitions:** `pay`, `ship` and `cancel` now check `can_transition_to`. Their error messages are unchanged.
+- **CSV parsing:** `from_line` uses `FromStr` and passes the error through, so its message is unchanged.
+- **Literals:** the status string literals now appear only in `src/status.rs`.
+
+Two decisions you may want to review:
+- **Public signature change:** `report::status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. Its output is still sorted by the lowercase name, so ordering is unchanged.
+- **Test literals:** `tests/orders.rs` still contains the expected error-message strings, such as `"order 2 cannot be shipped: it is pending"`. Those strings are the observable output being checked, so I kept them.
+
+I did not add asserts to the functions. The original code had none, and adding them would change behaviour by panicking instead of returning `Err`.

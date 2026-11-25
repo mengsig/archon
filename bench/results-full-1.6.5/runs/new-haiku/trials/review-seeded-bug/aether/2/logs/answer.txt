@@ -1,0 +1,57 @@
+I found one critical forgery bug in `verify`. Nothing in the repo was changed; the inline checks ran from the command line only. The existing suite passes (`npm test`: 0 failures) because none of its tests cover a missing or truncated signature.
+
+## Findings
+
+**1. Critical: `verify` accepts an empty or truncated signature, so any payload can be forged.**
+- **File/function:** `src/tokens.js`, `verify()`, line 27: `if (!expected.startsWith(signature)) return null;`
+- **What goes wrong:** `startsWith` checks only that the supplied signature is a prefix of the real one. An empty string is a prefix of everything, and so is a single character.
+- **Concrete input:** `base64url('{"user":"root","exp":9e15}') + "."` (empty signature, no secret needed). I ran this and `verify` returned `{ user: 'root', exp: 9000000000000000 }`.
+- **Also:** because one character is enough, an attacker can recover the real signature one character at a time (about 64 guesses per position, roughly 2,800 requests for 43 characters) and then forge any claims.
+- **Severity:** Critical. Authentication is fully bypassed, and this ships tomorrow.
+- **Fix direction:** Compare the full digest with `crypto.timingSafeEqual` on equal-length Buffers, and reject any signature that is not exactly the expected length.
+
+**2. High: the signature comparison is not constant-time.**
+- **File/function:** `src/tokens.js`, `verify()`, line 27.
+- **What goes wrong:** `startsWith` returns early at the first mismatched byte. Response timing can reveal how many leading bytes of a guessed signature are correct, which makes the byte-by-byte attack in finding 1 practical even if the prefix bug is fixed.
+- **Severity:** High. Fix together with finding 1.
+
+**3. Medium: `verify` throws instead of returning `null` for a signed but malformed payload.**
+- **File/function:** `src/tokens.js`, `verify()`, line 28 (`JSON.parse(fromBase64Url(body))`) and line 29 (`payload.exp`).
+- **What goes wrong:** The docstring says `verify` returns `null` for anything invalid. Instead:
+  - `body = "bm90LWpzb24"` (`not-json`) throws `SyntaxError`.
+  - A payload of `null` throws `TypeError: Cannot read properties of null (reading 'exp')`.
+- **Impact:** Combined with finding 1, an unauthenticated request with a non-JSON body and an empty signature crashes the verification path. That is an unhandled exception on request handling, so it is a denial of service on that path.
+- **Severity:** Medium.
+- **Fix direction:** Wrap the parse in a try/catch that returns `null`, and check that the parsed value is a plain object before reading `exp`.
+
+**4. Medium: `verify` does not validate the secret, unlike `sign`.**
+- **File/function:** `src/tokens.js`, `verify()` (no check) versus `sign()` line 15.
+- **What goes wrong:** `sign` refuses secrets shorter than 32 characters, but `verify` accepts any value. If a verifier is configured with `''` or a short key, anyone can compute a valid HMAC with that key and the token will verify.
+- **Severity:** Medium. This is a configuration-time risk, not an exploit in the code as written.
+- **Fix direction:** Share one secret-validation helper between `sign` and `verify`.
+
+**5. Low: extra dot-separated segments are silently ignored.**
+- **File/function:** `src/tokens.js`, `verify()`, line 24 (`const [body, signature] = token.split('.')`).
+- **What goes wrong:** `validToken + ".garbage"` verifies. The token is malleable and a strict parser would reject it.
+- **Severity:** Low.
+- **Fix direction:** Require exactly two non-empty parts.
+
+**6. Low: a non-finite or invalid TTL produces a token that silently never verifies.**
+- **File/function:** `src/tokens.js`, `sign()`, line 16.
+- **What goes wrong:** `ttlSeconds: NaN` makes `exp` NaN, which `JSON.stringify` turns into `null`. The token is issued but `verify` always returns `null`. A negative TTL issues a token that is already expired. Neither failure is visible at the call site.
+- **Severity:** Low.
+- **Fix direction:** Assert that `ttlSeconds` is a finite positive number.
+
+**7. Nit: test coverage gap.**
+- **File:** `test/tokens.test.js`.
+- **What goes wrong:** The "tampered payloads are rejected" test reuses the real signature, so it passes even though the verification check is broken. There is no test for an empty, truncated, or extra-segment signature, or for malformed payloads.
+- **Fix direction:** Add tests for findings 1, 3 and 5 before shipping.
+
+**8. Nit: `exp` and `iat` are in milliseconds.**
+- **File/function:** `src/tokens.js`, `sign()`, line 16.
+- **What goes wrong:** JWT convention and most tooling use seconds. Any consumer that assumes seconds will treat tokens as valid for about 1,000 times longer than intended.
+- **Severity:** Nit, but it is a cross-system interoperability hazard, so worth deciding before release.
+
+## Recommendation
+
+Do not ship until findings 1–4 are fixed and the tests cover the forged-signature cases. The fix for 1 and 2 is a few lines: use `timingSafeEqual` on the full digest with a length check, and handle parse failures by returning `null`.

@@ -1,0 +1,25 @@
+**Root cause: `updatePrice` invalidates only the product cache entry, and category listings hold their own copies of price that nothing invalidates. They expire on their own TTL, which is 600 s, about ten minutes.**
+
+I read the code in the repository mirror `repos/ask-cache-invalidation` (base commit `9f6775e`). The `catalog-service` name in your message doesn't match this repo, and the code is in `src/`. I'm assuming this is the right service; tell me if not.
+
+**The path**
+
+1. A merchant's price change goes through `updatePrice` in `src/pricing.js:6-13`. It writes to the store, then calls `catalog.cache.delete(productKey(sku))`, which removes only `product:<sku>`.
+2. Product pages call `Catalog.product` (`src/catalog.js:12-20`). That reads the `product:<sku>` key, so after the delete it refetches from the store and shows the new price at once.
+3. Category pages call `Catalog.listing` (`src/catalog.js:22-33`). It caches the whole page under `listing:<category>:<page>` with `LISTING_TTL_SECONDS` (`src/config.js:7`, 600 s). The cached rows are copies, each with `{ sku, name, priceCents }`. The old price is therefore stored inside the listing value, and the product-key delete never reaches it.
+
+**Why the delay is what it is**
+
+- The listing cache is a separate key space from the product cache. The delete in `updatePrice` names one key and does not know which listing pages contain the SKU.
+- The only thing that ends a stale listing is its TTL, so the window is up to 600 s. The comment at `src/config.js:5-6` says listings are cached separately because they are expensive to build. That reasoning is sound, but the separate cache was never tied to price updates.
+- The same gap affects pages beyond page 0 and any category the product moves between, since neither is invalidated.
+
+**The fix options**
+
+- **Best:** keep the listing cache but make the price update invalidate it. `updatePrice` already has `updated.category`, so it could delete `listing:<category>:<page>` for every page in that category. That needs a way to enumerate the keys, such as a category-to-listing-keys index in `TtlCache` or a per-category version number in the listing key. Deleting every page would also handle SKUs that move pages after sorting.
+- **Alternative:** do not store price in the listing at all. Store SKUs only, then look up each price from the product cache or store when rendering. The listing then has no stale price to hold, at the cost of more lookups per page.
+- **Smallest, but weaker:** drop `LISTING_TTL_SECONDS` to a few seconds. That shrinks the window but does not remove it, and it adds rebuild load.
+
+I'd recommend the first option, because it fixes the cause and keeps the cache's purpose. The fix should also add a test next to `test/catalog.test.js:13-18`. It should call `listing` before and after `updatePrice` and assert the new price shows on the category page. The current tests cover only the product page, which is why this wasn't caught.
+
+No code was changed.

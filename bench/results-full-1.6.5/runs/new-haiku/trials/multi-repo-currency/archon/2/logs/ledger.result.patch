@@ -1,0 +1,304 @@
+diff --git a/README.md b/README.md
+index d04f33a..65eed23 100644
+--- a/README.md
++++ b/README.md
+@@ -6,8 +6,23 @@ Converts a transaction log to CSV for the reporting tools.
+ cargo run -q < transactions.tsv > ledger.csv
+ ```
+ 
+-Input: one transaction per line, `date<TAB>account<TAB>amount` (ISO date,
+-amount with up to two decimals). Blank lines and `#` comments are skipped.
++Input: one transaction per line, `date<TAB>account<TAB>amount[<TAB>currency]`.
+ 
+-Output: `date,account,amount_cents`. Any malformed line stops the export
+-with `line N: ...` on stderr and exit status 1.
++- `date`: ISO date (`YYYY-MM-DD`).
++- `amount`: decimal with up to two places, e.g. `12.34`, `-5`, `0.5`.
++- `currency` (optional): an ISO 4217 code, exactly three uppercase ASCII
++  letters, e.g. `EUR`. When the column is missing the currency is `USD`.
++
++Blank lines and `#` comments are skipped.
++
++Output: `date,account,amount_cents,currency`, one row per transaction, with
++the currency on every row (`USD` for three-column input).
++
++Exit status:
++
++- `0`: success.
++- `1`: malformed input line (wrong field count, date, account or amount).
++- `2`: malformed currency code (for example `usd`, `EURO` or `U5D`).
++
++On failure the export stops with `line N: ...` on stderr, where `N` is the
++line number in the input, counting blank and comment lines.
+diff --git a/src/lib.rs b/src/lib.rs
+index 051009d..5d0d61a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,28 +5,64 @@ pub struct Entry {
+     pub date: String,
+     pub account: String,
+     pub amount_cents: i64,
++    pub currency: String,
+ }
+ 
+-pub const CSV_HEADER: &str = "date,account,amount_cents";
++pub const CSV_HEADER: &str = "date,account,amount_cents,currency";
++pub const DEFAULT_CURRENCY: &str = "USD";
+ 
+-/// Parse one TSV line: `date<TAB>account<TAB>amount`.
+-pub fn parse_line(line: &str) -> Result<Entry, String> {
++/// A rejected input line. The variant decides the process exit status.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum LineError {
++    /// Wrong field count, date, account or amount; exit status 1.
++    Malformed(String),
++    /// Currency is not three uppercase ASCII letters; exit status 2.
++    BadCurrency(String),
++}
++
++impl LineError {
++    pub fn message(&self) -> &str {
++        match self {
++            LineError::Malformed(msg) | LineError::BadCurrency(msg) => msg,
++        }
++    }
++
++    pub fn exit_code(&self) -> u8 {
++        match self {
++            LineError::Malformed(_) => 1,
++            LineError::BadCurrency(_) => 2,
++        }
++    }
++}
++
++/// Parse one TSV line: `date<TAB>account<TAB>amount[<TAB>currency]`.
++/// A missing currency column means `DEFAULT_CURRENCY`.
++pub fn parse_line(line: &str) -> Result<Entry, LineError> {
+     let fields: Vec<&str> = line.split('\t').collect();
+-    if fields.len() != 3 {
+-        return Err(format!("expected 3 tab-separated fields, got {}", fields.len()));
++    if fields.len() != 3 && fields.len() != 4 {
++        return Err(LineError::Malformed(format!(
++            "expected 3 or 4 tab-separated fields, got {}",
++            fields.len()
++        )));
+     }
+     let date = fields[0].trim();
+     if !is_iso_date(date) {
+-        return Err(format!("bad date {date:?}"));
++        return Err(LineError::Malformed(format!("bad date {date:?}")));
+     }
+     let account = fields[1].trim();
+     if account.is_empty() || account.contains(',') {
+-        return Err(format!("bad account {account:?}"));
++        return Err(LineError::Malformed(format!("bad account {account:?}")));
++    }
++    let amount_cents = parse_cents(fields[2].trim()).map_err(LineError::Malformed)?;
++    let currency = fields.get(3).map_or(DEFAULT_CURRENCY, |field| field.trim());
++    if !is_iso_currency(currency) {
++        return Err(LineError::BadCurrency(format!("bad currency {currency:?}")));
+     }
+     Ok(Entry {
+         date: date.to_string(),
+         account: account.to_string(),
+-        amount_cents: parse_cents(fields[2].trim())?,
++        amount_cents,
++        currency: currency.to_string(),
+     })
+ }
+ 
+@@ -35,7 +71,14 @@ fn is_iso_date(s: &str) -> bool {
+     b.len() == 10
+         && b[4] == b'-'
+         && b[7] == b'-'
+-        && b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
++        && b.iter()
++            .enumerate()
++            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
++}
++
++/// ISO 4217 shape: exactly three uppercase ASCII letters.
++fn is_iso_currency(s: &str) -> bool {
++    s.len() == 3 && s.bytes().all(|c| c.is_ascii_uppercase())
+ }
+ 
+ /// `"12.34"` → 1234, `"-5"` → -500, `"0.5"` → 50.
+@@ -52,12 +95,17 @@ pub fn parse_cents(s: &str) -> Result<i64, String> {
+     if !valid {
+         return Err(format!("bad amount {s:?}"));
+     }
+-    let whole: i64 = whole.parse().map_err(|_| format!("amount {s:?} is too large"))?;
++    let whole: i64 = whole
++        .parse()
++        .map_err(|_| format!("amount {s:?} is too large"))?;
+     let frac: i64 = format!("{frac:0<2}").parse().expect("two ascii digits");
+     let cents = whole * 100 + frac;
+     Ok(if negative { -cents } else { cents })
+ }
+ 
+ pub fn to_csv_row(entry: &Entry) -> String {
+-    format!("{},{},{}", entry.date, entry.account, entry.amount_cents)
++    format!(
++        "{},{},{},{}",
++        entry.date, entry.account, entry.amount_cents, entry.currency
++    )
+ }
+diff --git a/src/main.rs b/src/main.rs
+index b2095b9..842b701 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -15,8 +15,8 @@ fn main() -> ExitCode {
+         match parse_line(&line) {
+             Ok(entry) => writeln!(out, "{}", to_csv_row(&entry)).expect("writing stdout"),
+             Err(e) => {
+-                eprintln!("line {}: {e}", index + 1);
+-                return ExitCode::from(1);
++                eprintln!("line {}: {}", index + 1, e.message());
++                return ExitCode::from(e.exit_code());
+             }
+         }
+     }
+diff --git a/tests/cli.rs b/tests/cli.rs
+new file mode 100644
+index 0000000..df63b86
+--- /dev/null
++++ b/tests/cli.rs
+@@ -0,0 +1,82 @@
++use std::io::Write;
++use std::process::{Command, Stdio};
++
++struct Run {
++    code: Option<i32>,
++    stdout: String,
++    stderr: String,
++}
++
++fn run_ledger(input: &str) -> Run {
++    let mut child = Command::new(env!("CARGO_BIN_EXE_ledger"))
++        .stdin(Stdio::piped())
++        .stdout(Stdio::piped())
++        .stderr(Stdio::piped())
++        .spawn()
++        .expect("spawn ledger");
++    child
++        .stdin
++        .take()
++        .expect("piped stdin")
++        .write_all(input.as_bytes())
++        .expect("write stdin");
++    let output = child.wait_with_output().expect("wait ledger");
++    Run {
++        code: output.status.code(),
++        stdout: String::from_utf8(output.stdout).expect("utf8 stdout"),
++        stderr: String::from_utf8(output.stderr).expect("utf8 stderr"),
++    }
++}
++
++#[test]
++fn three_column_input_defaults_to_usd() {
++    let run = run_ledger("2026-03-01\tgroceries\t-45.10\n");
++    assert_eq!(run.code, Some(0));
++    assert_eq!(
++        run.stdout,
++        "date,account,amount_cents,currency\n2026-03-01,groceries,-4510,USD\n"
++    );
++}
++
++#[test]
++fn four_column_input_carries_currency() {
++    let run = run_ledger("2026-03-01\tcafe\t3.50\tEUR\n2026-03-02\tfuel\t10\tUSD\n");
++    assert_eq!(run.code, Some(0));
++    assert_eq!(
++        run.stdout,
++        "date,account,amount_cents,currency\n\
++         2026-03-01,cafe,350,EUR\n\
++         2026-03-02,fuel,1000,USD\n"
++    );
++}
++
++#[test]
++fn malformed_currency_exits_2_naming_line() {
++    for (input, bad_line) in [
++        ("2026-03-01\tcafe\t1\tUSD\n2026-03-02\tfuel\t2\teur\n", 2),
++        ("# note\n\n2026-03-01\tcafe\t1\tUSDX\n", 3),
++        ("2026-03-01\tcafe\t1\tU5D\n", 1),
++    ] {
++        let run = run_ledger(input);
++        assert_eq!(run.code, Some(2), "input {input:?}");
++        assert!(
++            run.stderr.starts_with(&format!("line {bad_line}: ")),
++            "input {input:?} stderr {:?}",
++            run.stderr
++        );
++    }
++}
++
++#[test]
++fn other_input_errors_still_exit_1() {
++    let bad_date = run_ledger("March 1\tgroceries\t1\n");
++    assert_eq!(bad_date.code, Some(1));
++    assert!(bad_date.stderr.starts_with("line 1: "));
++
++    let bad_amount = run_ledger("2026-03-01\tgroceries\t1.234\n");
++    assert_eq!(bad_amount.code, Some(1));
++
++    let short = run_ledger("2026-03-01\tgroceries\n");
++    assert_eq!(short.code, Some(1));
++    assert!(short.stderr.starts_with("line 1: "));
++}
+diff --git a/tests/ledger.rs b/tests/ledger.rs
+index 6293987..943c56c 100644
+--- a/tests/ledger.rs
++++ b/tests/ledger.rs
+@@ -1,4 +1,4 @@
+-use ledger::{parse_cents, parse_line, to_csv_row};
++use ledger::{parse_cents, parse_line, to_csv_row, LineError};
+ 
+ #[test]
+ fn parses_amounts() {
+@@ -18,3 +18,45 @@ fn parses_lines() {
+     assert!(parse_line("2026-03-01\tgroceries").is_err());
+     assert!(parse_line("March 1\tgroceries\t1").is_err());
+ }
++
++#[test]
++fn three_column_line_defaults_to_usd() {
++    let entry = parse_line("2026-03-01\tgroceries\t-45.10").unwrap();
++    assert_eq!(entry.currency, "USD");
++    assert_eq!(to_csv_row(&entry), "2026-03-01,groceries,-4510,USD");
++}
++
++#[test]
++fn four_column_line_keeps_currency() {
++    let entry = parse_line("2026-03-01\tcafe\t3.50\tEUR").unwrap();
++    assert_eq!(entry.currency, "EUR");
++    assert_eq!(entry.amount_cents, 350);
++    assert_eq!(to_csv_row(&entry), "2026-03-01,cafe,350,EUR");
++}
++
++#[test]
++fn malformed_currency_is_bad_currency() {
++    for line in [
++        "2026-03-01\tcafe\t1\teur",
++        "2026-03-01\tcafe\t1\tEURO",
++        "2026-03-01\tcafe\t1\tEU",
++        "2026-03-01\tcafe\t1\tU5D",
++        "2026-03-01\tcafe\t1\t",
++    ] {
++        let err = parse_line(line).unwrap_err();
++        assert!(
++            matches!(err, LineError::BadCurrency(_)),
++            "{line:?} gave {err:?}"
++        );
++        assert_eq!(err.exit_code(), 2);
++    }
++}
++
++#[test]
++fn structural_errors_keep_exit_1() {
++    let too_many = parse_line("2026-03-01\tcafe\t1\tUSD\textra").unwrap_err();
++    assert!(matches!(too_many, LineError::Malformed(_)));
++    assert_eq!(too_many.exit_code(), 1);
++    let bad_amount = parse_line("2026-03-01\tcafe\tx\tUSD").unwrap_err();
++    assert_eq!(bad_amount.exit_code(), 1);
++}

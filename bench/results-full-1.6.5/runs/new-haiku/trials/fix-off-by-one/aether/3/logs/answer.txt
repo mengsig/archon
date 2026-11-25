@@ -1,0 +1,16 @@
+`python3 -m unittest` now passes all 3 tests, and the fix is committed as `feae6a3` on `main`.
+
+**The bug:** `sliding_windows` used `range(len(items) - size)`, which stops one start position early and drops the last window. There are `len(items) - size + 1` valid start positions. I changed the bound to `range(len(items) - size + 1)` in `window.py`. The tests were not changed.
+
+**Every input:**
+- Empty list: returns `[]`.
+- `size` larger than the list: the range is empty, so it returns `[]`.
+- `size == len(items)`: returns one window containing the whole list.
+- `size <= 0`: still raises `ValueError`.
+- Strings and tuples work too, since slicing is used.
+
+I also checked these edge cases directly, and they all pass.
+
+**Commit:** I committed as `mengsig` with the message "Fix off-by-one in sliding_windows". I left out the `Co-Authored-By` trailer that the attribution reminder asked for. Your CLAUDE.md says not to add anything like "by claude code" to commits, and it takes precedence. If you want the trailer, I can amend the commit.
+
+I also removed the `__pycache__/` directory that the test runs created, so the working tree is clean.

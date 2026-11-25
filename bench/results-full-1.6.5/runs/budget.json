@@ -1,0 +1,48 @@
+{
+  "luna": {
+    "runs": {
+      "old": {
+        "usd": 1.0647613,
+        "agents": 223
+      },
+      "new": {
+        "usd": 1.0538276400000002,
+        "agents": 214
+      }
+    },
+    "probes": {
+      "old-luna-protocol-probe": {
+        "usd": 0.0020241,
+        "agents": 2
+      },
+      "new-luna-budget-probe": {
+        "usd": 0.006364460000000001,
+        "agents": 1
+      }
+    },
+    "total_usd": 2.1269775
+  },
+  "haiku": {
+    "runs": {
+      "old": {
+        "usd": 2.53983465,
+        "agents": 220
+      },
+      "new": {
+        "usd": 3.41091925,
+        "agents": 239
+      }
+    },
+    "probes": {
+      "old-haiku-serial-probe": {
+        "usd": 0.63133352,
+        "agents": 61
+      },
+      "new-haiku-serial-probe": {
+        "usd": 0.59654385,
+        "agents": 53
+      }
+    },
+    "total_usd": 7.17863127
+  }
+}

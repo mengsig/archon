@@ -1,0 +1,22 @@
+The work is queued as item `qi_01M88WH09PWW1RADJFQRBPWG84` (repo `quality-safe-extract`, `direct` pipeline).
+
+- **Brief:** Your request verbatim, plus the instructions to follow `SPEC.md` as the contract, keep the documented API, cover every specified error and boundary case, use only the standard library, and commit without tool attribution.
+- **Review:** `strict`, because archive extraction carries path-traversal risk. The reviewers will check this.
+- **Model:** a balanced-tier model at medium effort. Your policy caps effort at medium, so I could not request high. The reviewers are the extra check on the security-sensitive parts.
+- **Shipping:** the repository ships locally, so the commit lands on a local branch and is not pushed.
+- **Notify:** tagged so you are told when it finishes, whether it succeeds or fails.
+
+I have not read `SPEC.md` or the code myself. The item's agent does that. I'll report the outcome when it finishes.
+
+Done: Implement safe_extract.py per SPEC.md. Implemented safe_extract.extract per SPEC.md on archon/qrbpwg84-implement-safe-extract-py-per-spec-md. Head b6755c8 (tree 8bd37050). Before: stub raising NotImplementedError, 2 failing tests. Now: validates the whole batch before any write, writes exact bytes with O_EXCL, and 30 tests pass (2 existing unchanged, 28 new covering each SPEC error and boundary case). Four reviewers passed with no blocking findings: three whole-change reviews at 3fc0a1c and one delta at b6755c8. Non-blocking follow-ups left open: case-insensitive filesystems can fail after partial writes; Path('') is accepted as root while '' is rejected; a >255-byte component raises OSError rather than ValueError; a root path like 'link/..' traverses a symlink; assertion density is below the CLAUDE.md target in some helpers. Nothing is running. The ad-hoc reviewer processes end when this stage ends. Judgment call: the rule to escalate on security work was read as allowing this new standalone module to ship at risk high. Review: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88WN34YJN58VZKP3WFF9V1P), claude-code/claude-haiku-5-5 (agent agt_01M88WNAVQ884H5M1YMHF248TZ), claude-code/claude-haiku-5-5 (agent agt_01M88WNJ0C5JVWDKN6HYB40WHE), claude-code/claude-haiku-5-5 (agent agt_01M88WRYC5BWDFVDRRXT60W91N)
+
+SHIPPED: commit b6755c8a6e4659d762952ee3abfd1048b9d9bb0b on the run branch
+Branch `archon/qrbpwg84-implement-safe-extract-py-per-spec-md` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/ad034e6311c61ed4bd36172c/quality-safe-extract holds it (2 files changed, 344 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M88WH09PWW1RADJFQRBPWG84`; land it in `main`: `archon merge qi_01M88WH09PWW1RADJFQRBPWG84`.
+
+Implemented safe_extract.extract per SPEC.md on archon/qrbpwg84-implement-safe-extract-py-per-spec-md. Head b6755c8 (tree 8bd37050). Before: stub raising NotImplementedError, 2 failing tests. Now: validates the whole batch before any write, writes exact bytes with O_EXCL, and 30 tests pass (2 existing unchanged, 28 new covering each SPEC error and boundary case). Four reviewers passed with no blocking findings: three whole-change reviews at 3fc0a1c and one delta at b6755c8. Non-blocking follow-ups left open: case-insensitive filesystems can fail after partial writes; Path('') is accepted as root while '' is rejected; a >255-byte component raises OSError rather than ValueError; a root path like 'link/..' traverses a symlink; assertion density is below the CLAUDE.md target in some helpers. Nothing is running. The ad-hoc reviewer processes end when this stage ends. Judgment call: the rule to escalate on security work was read as allowing this new standalone module to ship at risk high. Review: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88WN34YJN58VZKP3WFF9V1P), claude-code/claude-haiku-5-5 (agent agt_01M88WNAVQ884H5M1YMHF248TZ), claude-code/claude-haiku-5-5 (agent agt_01M88WNJ0C5JVWDKN6HYB40WHE), claude-code/claude-haiku-5-5 (agent agt_01M88WRYC5BWDFVDRRXT60W91N)
+
+SHIPPED: commit b6755c8a6e4659d762952ee3abfd1048b9d9bb0b on the run branch

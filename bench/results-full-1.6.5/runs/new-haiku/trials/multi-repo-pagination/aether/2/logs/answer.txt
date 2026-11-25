@@ -1,0 +1,24 @@
+Both repos now paginate `GET /items`, the client follows the cursors, and both are committed. Both test suites pass, and an end-to-end run of the client against the real Python API returns all 57 items in order.
+
+**Commits**
+- `inventory-api` `05b5493`: "Paginate GET /items with limit and opaque cursor"
+- `inventory-client` `db371d8`: "Follow next_cursor in listItems"
+
+**API (`inventory-api/api.py`)**
+- `limit` must be ASCII digits in 1..100; absent means 20. Anything else returns 400.
+- `cursor` is URL-safe base64 of the last id on the page. Items after that id are returned, and `next_cursor` is `null` when nothing remains. Undecodable or non-numeric cursors return 400.
+- Items are sorted once at import time, not on every request.
+
+**Client (`inventory-client/client.js`)**
+- `listItems` sends no query on the first request, then passes `next_cursor` back unchanged until it is `null` or absent.
+- It throws if the server repeats a cursor, so a buggy server can't loop forever. That is a choice I made beyond the brief.
+
+**Tests**
+- API: 7 pass. New tests cover a full walk, the default page size, invalid limits, and invalid cursors.
+- Client: 7 pass. New tests cover multi-page order, the first request having no cursor, an absent `next_cursor`, repeated cursors, and 400 responses.
+
+**READMEs** are updated in both repos to document the query parameters, the response shape, and the client's paging behaviour.
+
+**Decisions for you to check**
+- **No `Co-Authored-By` trailer.** The system reminder asked for one, but the repo's CLAUDE.md forbids Claude attribution in commits, and CLAUDE.md takes precedence. The commits use the repo's configured `mengsig` identity.
+- **Cursor format** is base64 of the last id, not an HMAC or signed token. It is opaque to clients but not tamper-proof, and tampering only changes which page you get.

@@ -1,0 +1,404 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88QPKVEP1HMDZG36PGRFKEP",
+      "repo": "repo_01M88QNR1JP5PSCVXBH125CRPA",
+      "pipeline": "direct",
+      "title": "Implement token-bucket rate limiter per SPEC.md",
+      "brief": "Operator request (authenticated, verbatim): \"Implement the rate limiter described in `SPEC.md` in `ratelimit.py` (the module currently only has stubs). Follow the spec exactly, including its error cases and edge cases; the tests in `test_ratelimit.py` only cover the basics. Keep it dependency-free (standard library only) and commit your work.\"\n\nGoal: replace the NotImplementedError stubs in ratelimit.py with working TokenBucket and KeyedLimiter classes exactly as SPEC.md defines them.\n\nConstraints:\n- Read SPEC.md first and treat it as the authority. Implement every rule: ValueError for capacity/refill_per_sec <= 0, for n <= 0 or n > capacity, and for max_keys < 1; new buckets start full; fractional tokens; tokens never exceed capacity; wait_time does not consume tokens and returns 0.0 when acquirable now; clock going backwards changes nothing until it passes the latest time already seen; KeyedLimiter LRU eviction where try_acquire and wait_time both count as use, evicted keys restart full; len() returns the number of tracked keys.\n- Time is read only via the injected clock callable. No other dependency (standard library only; the module already imports time, keep it at most).\n- Keep functions under 60 lines, flat control flow, at least two meaningful assertions or explicit validation at the boundary, no try/except that hides errors, no unnecessary comments.\n- Add tests for the edge cases in SPEC.md (error cases, clock going backwards, eviction order including use via wait_time, evicted key returns full, fractional refill, cap at capacity, wait_time not consuming tokens) to test_ratelimit.py. Keep the existing tests passing.\n- Run `python -m unittest` in the repository and make sure it passes before finishing.\n- Commit the work to the current branch with a clear message. Do not push. Commit as the configured git user only; do not add generated-by or Claude attribution lines.\n- Do not change SPEC.md.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88QPKVEP1HMDZG36PGRFKEP",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T06:53:43.669927463Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T06:53:43.669927463Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T06:53:43.669927463Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88QPKW9RM3CQAA2NCRH33PH",
+        "summary": "Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py and added 15 tests to test_ratelimit.py (18 total, all pass with python -m unittest). Committed on archon/6pgrfkep-implement-token-bucket-rate-limiter-per as 82a280f, fc5b294, 84bafb5 under the configured identity; not pushed. Review: three reviewers. The first two read the change and found float-precision bugs, now fixed; the last one passed the head 84bafb5. Nothing is left open. Still running: none; the reviewer processes were stopped by PID.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88QYWYFHR49FBR4T9DJB9KQ), claude-code/claude-haiku-5-5 (agent agt_01M88QSGZ0Q6T1B4481AKZHZ0Z)\n\nSHIPPED: commit 84bafb592d7ba51a940a653bae741ceb2e276c5a on the run branch"
+      },
+      "created_at": "2026-11-25T06:53:43.662336523Z",
+      "updated_at": "2026-11-25T06:59:50.233670468Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88QPKW9RM3CQAA2NCRH33PH",
+        "item": "qi_01M88QPKVEP1HMDZG36PGRFKEP",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88QPM12VZFVR5PP9QEHN2PF",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/95847394750fc760332f9148/.archon/data/worktrees/feature-token-bucket/qi_01M88QPKVEP1HMDZG36PGRFKEP",
+        "branch": "archon/6pgrfkep-implement-token-bucket-rate-limiter-per",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py and added 15 tests to test_ratelimit.py (18 total, all pass with python -m unittest). Committed on archon/6pgrfkep-implement-token-bucket-rate-limiter-per as 82a280f, fc5b294, 84bafb5 under the configured identity; not pushed. Review: three reviewers. The first two read the change and found float-precision bugs, now fixed; the last one passed the head 84bafb5. Nothing is left open. Still running: none; the reviewer processes were stopped by PID.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88QYWYFHR49FBR4T9DJB9KQ), claude-code/claude-haiku-5-5 (agent agt_01M88QSGZ0Q6T1B4481AKZHZ0Z)\n\nSHIPPED: commit 84bafb592d7ba51a940a653bae741ceb2e276c5a on the run branch"
+        },
+        "cost_usd": 0.10008771999999998,
+        "started_at": "2026-11-25T06:53:43.819871840Z",
+        "finished_at": "2026-11-25T06:59:50.233670468Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88QPM0XEM68YBSKKXK4GXZ3",
+        "run": "prun_01M88QPKW9RM3CQAA2NCRH33PH",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88QPM1N3VX1HA4GMXBT11PX",
+        "aether_task": "tsk_01M88QPM1NJGY1H762ZXAQTM79",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; the plan pins medium",
+        "summary": "Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py and added 15 tests to test_ratelimit.py (18 total, all pass with python -m unittest). Committed on archon/6pgrfkep-implement-token-bucket-rate-limiter-per as 82a280f, fc5b294, 84bafb5 under the configured identity; not pushed. Review: three reviewers. The first two read the change and found float-precision bugs, now fixed; the last one passed the head 84bafb5. Nothing is left open. Still running: none; the reviewer processes were stopped by PID.",
+        "structured": {
+          "checks": [
+            "python -m unittest"
+          ],
+          "commit": "84bafb592d7ba51a940a653bae741ceb2e276c5a",
+          "evidence": [
+            {
+              "after": "Ran 18 tests ... OK on head 84bafb5",
+              "before": "Ran 3 tests ... FAILED (errors=3)",
+              "caption": "python -m unittest on the base commit: all tests error with NotImplementedError",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "84bafb592d7ba51a940a653bae741ceb2e276c5a",
+          "pr": {
+            "body": "Approach: ratelimit.py replaces the stubs. TokenBucket refills from an injected clock and never moves its latest-seen time backwards. try_acquire is an exact tokens >= n check. wait_time returns 0.0 when acquirable now, otherwise deficit/rate plus a small padding (4 ulp of clock and token arithmetic) so that advancing the clock by it always succeeds. KeyedLimiter keeps an OrderedDict of buckets; try_acquire and wait_time both count as use; n is validated before any eviction. Files: ratelimit.py, test_ratelimit.py. Checks: python -m unittest, 18 tests OK. Probe: 50000 random cases per clock base (-1e8, 0, 1e6, 1e8, 1e9) gave 0 misses and 0 early admits. Assumptions: the padding makes wait_time exceed the exact time by about 1e-7 s at large clocks; otherwise the spec's exact semantics are kept. Standard library only.",
+            "summary": "Made the rate limiter work: TokenBucket and KeyedLimiter now implement SPEC.md. Now: validated params, start-full buckets, exact try_acquire, wait_time padded for clock rounding, LRU eviction of keys. Before: both classes raised NotImplementedError.",
+            "title": "Implement token-bucket rate limiter per SPEC"
+          },
+          "review": {
+            "reviewed_head": "84bafb592d7ba51a940a653bae741ceb2e276c5a",
+            "reviewer_agents": [
+              "agt_01M88QYWYFHR49FBR4T9DJB9KQ",
+              "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88QYWYFHR49FBR4T9DJB9KQ",
+                "base": "fc5b294180287c9d5eec169e909afaa264dceca4",
+                "findings": 0,
+                "head": "84bafb592d7ba51a940a653bae741ceb2e276c5a",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z",
+                "base": "d12281412d623b9054bbccd57a560b64c251774e",
+                "findings": 3,
+                "head": "82a280ff7daee4054425f891abff589fc5ac55d9",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M88QVRD7DDKE5XMH9M9XGXKK",
+                "base": "82a280ff7daee4054425f891abff589fc5ac55d9",
+                "findings": 2,
+                "head": "fc5b294180287c9d5eec169e909afaa264dceca4",
+                "verdict": "fail"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88QYWYFHR49FBR4T9DJB9KQ",
+              "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z",
+              "agt_01M88QVRD7DDKE5XMH9M9XGXKK"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z:1": {
+                "blocking": true,
+                "description": "wait_time() is not reliable at realistic monotonic clock values. _has_tokens uses an absolute-scale rel_tol=1e-12 against n, but the clock's float rounding grows with its magnitude. Advancing the clock by wait_time() then leaves try_acquire() False. Reproduced: clock base 1e6, TokenBucket(7, 49.0), try_acquire(7), wait_time(7)=0.142857..., advance, try_acquire(7) is False. Base 1e8 failed 7 of 72 ",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88QPM0XEM68YBSKKXK4GXZ3"
+                },
+                "id": "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z:1",
+                "resolved_in": {
+                  "number": 3,
+                  "stage": "stg_01M88QPM0XEM68YBSKKXK4GXZ3"
+                }
+              },
+              "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z:2": {
+                "blocking": false,
+                "description": "Test coverage gap: test_advancing_by_wait_time_always_succeeds only uses clock values starting at 0.0, so it cannot catch the large-clock failure above. Add a case with a large starting clock (e.g. 1e6 or 1e8). at test_ratelimit.py:104",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88QPM0XEM68YBSKKXK4GXZ3"
+                },
+                "id": "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M88QPM0XEM68YBSKKXK4GXZ3"
+                }
+              },
+              "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z:3": {
+                "blocking": false,
+                "description": "_has_tokens also accepts available slightly below n (within 1e-12 relative), and the subsequent max(0.0, ...) clamp admits the request. This is a tiny over-admission that departs from the SPEC's 'remove nothing and return False' wording. Acceptable only if the tolerance is redesigned. at ratelimit.py:8",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88QPM0XEM68YBSKKXK4GXZ3"
+                },
+                "id": "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z:3",
+                "resolved_in": {
+                  "number": 3,
+                  "stage": "stg_01M88QPM0XEM68YBSKKXK4GXZ3"
+                }
+              },
+              "agt_01M88QVRD7DDKE5XMH9M9XGXKK:1": {
+                "blocking": true,
+                "description": "The new slack 4*ulp(clock)*refill_per_sec is in tokens and grows with rate. At high rate and large clock it admits whole tokens from an empty bucket, which breaks SPEC's rule that try_acquire succeeds only with at least n tokens. Probe: capacity 1, base 1e8, rate 1e8: try_acquire(1) on an empty bucket returns True; base 1e9, rate 1e7: True. This is the admission-slack concern in agt_01M88QSGZ0Q6T1",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M88QPM0XEM68YBSKKXK4GXZ3"
+                },
+                "id": "agt_01M88QVRD7DDKE5XMH9M9XGXKK:1",
+                "resolved_in": {
+                  "number": 3,
+                  "stage": "stg_01M88QPM0XEM68YBSKKXK4GXZ3"
+                }
+              },
+              "agt_01M88QVRD7DDKE5XMH9M9XGXKK:2": {
+                "blocking": false,
+                "description": "The slack uses math.ulp(max(1.0, self._last)). For a negative clock the ulp is taken at 1.0, which is far too small. Probe: base -1e8 gives 24111 of 50000 wait-then-acquire misses, while bases 0, 1e6, 1e8 and 1e9 give 0. The spec does not say the clock is non-negative, but time.monotonic is in practice. Fix is abs(self._last) in place of self._last. at ratelimit.py:42",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M88QPM0XEM68YBSKKXK4GXZ3"
+                },
+                "id": "agt_01M88QVRD7DDKE5XMH9M9XGXKK:2",
+                "resolved_in": {
+                  "number": 3,
+                  "stage": "stg_01M88QPM0XEM68YBSKKXK4GXZ3"
+                }
+              }
+            },
+            "rounds": [
+              {
+                "head": "82a280ff7daee4054425f891abff589fc5ac55d9",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z",
+                    "base": "d12281412d623b9054bbccd57a560b64c251774e",
+                    "finding_count": 3,
+                    "finding_ids": [
+                      "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z:1",
+                      "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z:2",
+                      "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z:3"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "fc5b294180287c9d5eec169e909afaa264dceca4",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88QVRD7DDKE5XMH9M9XGXKK",
+                    "base": "82a280ff7daee4054425f891abff589fc5ac55d9",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M88QVRD7DDKE5XMH9M9XGXKK:1",
+                      "agt_01M88QVRD7DDKE5XMH9M9XGXKK:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": true,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "84bafb592d7ba51a940a653bae741ceb2e276c5a",
+                "number": 3,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88QYWYFHR49FBR4T9DJB9KQ",
+                    "base": "fc5b294180287c9d5eec169e909afaa264dceca4",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "low",
+            "why": "New standard-library module with no security, auth or concurrency surface; behaviour follows SPEC.md, verified by 18 tests and a randomized probe. Reviewer agt_01M88QYWYFHR49FBR4T9DJB9KQ set low after the exact-admission fix. Earlier reviews rated medium and found float-precision bugs, now fixed."
+          },
+          "tree": "189969ab55cada3ecd7cbe7072891f2ded29606e"
+        },
+        "cost_usd": 0.10008771999999998,
+        "started_at": "2026-11-25T06:53:43.837322186Z",
+        "finished_at": "2026-11-25T06:59:46.158813986Z"
+      }
+    ],
+    "spent_usd": 0.10008771999999998,
+    "gates": [],
+    "delegations": {
+      "stg_01M88QPM0XEM68YBSKKXK4GXZ3": {
+        "direct_usd": 0.06544134999999998,
+        "delegated_usd": 0.034646369999999996,
+        "agents": [
+          {
+            "agent": "agt_01M88QSGZ0Q6T1B4481AKZHZ0Z",
+            "parent": "agt_01M88QPM1N3VX1HA4GMXBT11PX",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00861263
+          },
+          {
+            "agent": "agt_01M88QVRD7DDKE5XMH9M9XGXKK",
+            "parent": "agt_01M88QPM1N3VX1HA4GMXBT11PX",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01290762
+          },
+          {
+            "agent": "agt_01M88QYWYFHR49FBR4T9DJB9KQ",
+            "parent": "agt_01M88QPM1N3VX1HA4GMXBT11PX",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.013126120000000002
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T06:53:43.669927463Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T06:53:43.669927463Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T06:53:43.669927463Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

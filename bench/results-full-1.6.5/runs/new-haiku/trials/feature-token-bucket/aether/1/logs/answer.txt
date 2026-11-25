@@ -1,0 +1,17 @@
+`TokenBucket` and `KeyedLimiter` are implemented in `ratelimit.py` per `SPEC.md`, standard library only. The work is committed as `63811e4` on `main`, and all 14 tests pass (`python3 -m unittest -v test_ratelimit`).
+
+**What the implementation does**
+- **Validation:** `capacity`, `refill_per_sec` and `max_keys` are checked at construction. Bad request sizes (`n <= 0` or `n > capacity`) raise `ValueError` in `try_acquire` and `wait_time`.
+- **Refill:** tokens accrue as a float and are capped at `capacity`.
+- **Clock going backwards:** the bucket tracks the latest time it has seen and adds nothing until the clock passes it.
+- **Keyed eviction:** `KeyedLimiter` uses an `OrderedDict`. Both `try_acquire` and `wait_time` count as a use. When a new key would exceed `max_keys`, the least recently used key is evicted first.
+
+**Choices I made where the spec was silent**
+- `wait_time(key)` on an unseen key creates a bucket, because the spec says it counts as a use.
+- An invalid `n` is rejected before any bucket is created or evicted, so a bad call cannot evict another key.
+- Validation failures raise `ValueError` with the offending value in the message.
+
+**Tests**
+- I added 11 edge-case tests to `test_ratelimit.py` alongside the 3 existing ones. They cover invalid parameters and request sizes, failed acquires consuming nothing, the capacity cap, fractional refill, `wait_time`, the backwards clock, LRU eviction, `wait_time` counting as a use, and `len`.
+
+The commit message carries the Co-Authored-By line from the attribution reminder. I removed the generated `__pycache__/` directory so the tree is clean.

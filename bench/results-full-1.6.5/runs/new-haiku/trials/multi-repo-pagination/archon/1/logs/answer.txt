@@ -1,0 +1,34 @@
+I queued the pagination work as one initiative (`ini_01M88RT68X9RJCD28MHQQJX6QZ`) with one item per repository. I have not changed either repository myself.
+
+- **`inventory-api`** (`qi_01M88RT68X9RJCD28MHQQJX6R0`): adds `limit` and `cursor` to `GET /items`, returns `{"items", "next_cursor"}`, returns 400 with `{"error"}` for invalid values, adds tests, and updates the README.
+- **`inventory-client`** (`qi_01M88RT6920TCTM9FFSH1HPH17`): makes `listItems(transport)` follow `next_cursor` until it is null or absent, adds tests, and updates the README.
+
+Both items use the `direct` pipeline with standard review. Both repositories ship locally, so the work is committed on a local branch and not pushed. The shared contract in the initiative spells out the parameter rules, response shape and error behaviour, so the two items can be built in parallel. I'll report back when the items finish.
+
+Done: Add cursor pagination to GET /items. Added cursor pagination to GET /items in inventory-api, committed on archon/hqqjx6r0-add-cursor-pagination-to-get-items as f824b14 (not pushed). `limit` (integer 1..100, default 20) and `cursor` (the id of the last item on the previous page) are optional. The response is {"items", "next_cursor"}, ordered by id, with next_cursor null on the last page. A bad limit or cursor returns 400 with {"error"}. Tests cover default and max limit, invalid values, multi-page traversal (limit 10, ids 1..57, no gaps or duplicates), the last page, and an exact-fit page. README documents the parameters and response shape. Checks: `python3 -m unittest` passes 11/11 on f824b14. Before the change, the new tests fail against the original api.py (16 failures, 3 errors across subtests). An independent reviewer (agt_01M88RVNJCZ2K5QW9SP0K8WM4E) passed the change at f824b14 with no findings, risk low. Non-blocking follow-up: a non-string query value (e.g. a JSON integer passed via api_cli.py) raises AttributeError instead of returning 400. This also applies to the existing handler, and the request contract is {str: str}. Nothing is left running. The client side (inventory-client listItems) is out of scope for this stage.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RVNJCZ2K5QW9SP0K8WM4E)
+
+SHIPPED: commit f824b14d3b7c104d5c587bddd060b5a70786b190 on the run branch
+Branch `archon/hqqjx6r0-add-cursor-pagination-to-get-items` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/4289baf2b5c0b5c28265ea9a/inventory-api holds it (3 files changed, 106 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M88RT68X9RJCD28MHQQJX6R0`; land it in `main`: `archon merge qi_01M88RT68X9RJCD28MHQQJX6R0`.
+
+Done: Make listItems follow next_cursor. listItems(transport) in inventory-client now follows next_cursor until it is null or absent, sends no cursor on the first request, passes each cursor back unchanged, and resolves to all items in server order. It throws on a page without an items array or a page that repeats its cursor. Committed as b520898 on archon/sh1hph17-make-listitems-follow-next-cursor (tree ba64e6e4e1e6b91b7211624e220554a7fb9e3c97). Not pushed. Checks: npm test 9/9 pass (baseline 3/3). Review: agt_01M88RVE08XSFGRP9G4N80R4Z1 passed the head with non-blocking follow-ups only. Open: cycle detection covers only a self-loop, and the README still says "ordered by id" though the code keeps server order. The inventory-api side belongs to sibling item qi_01M88RT68X9RJCD28MHQQJX6R0 and was not touched here. No processes were started or left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RVE08XSFGRP9G4N80R4Z1)
+
+SHIPPED: commit b520898e71a255e3947a3d44f80903a27d096f7d on the run branch
+Branch `archon/sh1hph17-make-listitems-follow-next-cursor` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/4289baf2b5c0b5c28265ea9a/inventory-client holds it (3 files changed, 83 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M88RT6920TCTM9FFSH1HPH17`; land it in `main`: `archon merge qi_01M88RT6920TCTM9FFSH1HPH17`.
+
+Initiative finished; coordinated result queued.
+
+listItems(transport) in inventory-client now follows next_cursor until it is null or absent, sends no cursor on the first request, passes each cursor back unchanged, and resolves to all items in server order. It throws on a page without an items array or a page that repeats its cursor. Committed as b520898 on archon/sh1hph17-make-listitems-follow-next-cursor (tree ba64e6e4e1e6b91b7211624e220554a7fb9e3c97). Not pushed. Checks: npm test 9/9 pass (baseline 3/3). Review: agt_01M88RVE08XSFGRP9G4N80R4Z1 passed the head with non-blocking follow-ups only. Open: cycle detection covers only a self-loop, and the README still says "ordered by id" though the code keeps server order. The inventory-api side belongs to sibling item qi_01M88RT68X9RJCD28MHQQJX6R0 and was not touched here. No processes were started or left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RVE08XSFGRP9G4N80R4Z1)
+
+SHIPPED: commit b520898e71a255e3947a3d44f80903a27d096f7d on the run branch
+
+Added cursor pagination to GET /items in inventory-api, committed on archon/hqqjx6r0-add-cursor-pagination-to-get-items as f824b14 (not pushed). `limit` (integer 1..100, default 20) and `cursor` (the id of the last item on the previous page) are optional. The response is {"items", "next_cursor"}, ordered by id, with next_cursor null on the last page. A bad limit or cursor returns 400 with {"error"}. Tests cover default and max limit, invalid values, multi-page traversal (limit 10, ids 1..57, no gaps or duplicates), the last page, and an exact-fit page. README documents the parameters and response shape. Checks: `python3 -m unittest` passes 11/11 on f824b14. Before the change, the new tests fail against the original api.py (16 failures, 3 errors across subtests). An independent reviewer (agt_01M88RVNJCZ2K5QW9SP0K8WM4E) passed the change at f824b14 with no findings, risk low. Non-blocking follow-up: a non-string query value (e.g. a JSON integer passed via api_cli.py) raises AttributeError instead of returning 400. This also applies to the existing handler, and the request contract is {str: str}. Nothing is left running. The client side (inventory-client listItems) is out of scope for this stage.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RVNJCZ2K5QW9SP0K8WM4E)
+
+SHIPPED: commit f824b14d3b7c104d5c587bddd060b5a70786b190 on the run branch

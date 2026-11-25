@@ -1,0 +1,28 @@
+I found one critical forgery bug in `src/tokens.js`, plus several lesser problems. I changed no code.
+
+**Which code I reviewed:** the only `src/tokens.js` on disk is in the mirror of `review-seeded-bug` (its `package.json` is named `session-lib`). That mirror is at a single commit, `35ea5d9 bench fixture`, so I could not confirm it is the rewrite you mean. If your rewrite is elsewhere, point me at it and I'll re-run this.
+
+**Findings**
+
+1. **Critical — `verify`, `src/tokens.js:27`: signature check is a prefix match.** `expected.startsWith(signature)` accepts any prefix of the real signature, including the empty string. Anyone can take any body and append a `.`, and it verifies. I confirmed this in Node:
+   - Input: `base64url({"user":"root","exp":9e15}) + "."` with any secret. Result: `{ user: 'root', exp: 9000000000000000 }`.
+   
+   This is a full authentication bypass that needs no secret. Fix: compare the full signature with a constant-time comparison (`crypto.timingSafeEqual` on equal-length buffers).
+
+2. **High — `verify`, `src/tokens.js:28–29`: malformed payloads throw instead of returning `null`.** The body is parsed before any expiry check and without a try/catch. Because of finding 1, an attacker can reach this with no secret:
+   - Input: `bnVsbA.` (base64url of `null`, empty signature). Result: `TypeError: Cannot read properties of null (reading 'exp')`.
+   - Input with a non-JSON body also throws `SyntaxError`.
+   
+   Callers that expect `null` for invalid tokens will crash, or fail open if they catch broadly. Fix: fixing finding 1 removes the reachable path; also validate that the parsed payload is a non-null object.
+
+3. **Medium — `verify`, `src/tokens.js:24`: extra segments are ignored.** `token.split('.')` takes the first two parts, so `validToken + ".junk"` verifies. This is lenient, not directly exploitable, but it breaks the "exact format" contract. Fix: require exactly two parts.
+
+4. **Medium — `verify`, `src/tokens.js:22`: no secret validation.** `sign` enforces a 32-character minimum, but `verify` does not. A verifier configured with an empty secret (for example, a missing environment variable that defaults to `''`) accepts tokens signed with the empty key. I confirmed a token built with `createHmac('sha256','')` verifies against an empty-string secret. Fix: apply the same length check in `verify`.
+
+5. **Low — test gap, `test/tokens.test.js:18`.** The tamper test reuses the real signature, so it passes even with the prefix bug. Nothing tests an empty, truncated, or extra-segment signature, or a malformed payload. The suite passes now (`npm test`: 0 failures), which is why the bug in finding 1 is not caught.
+
+6. **Low — `verify`, `src/tokens.js:29`: no `iat` check.** Tokens with an `iat` in the future are accepted. Only matters if clock skew or a future `iat` is a concern for your callers.
+
+**Not a problem:** `sign` cannot be made to set a custom `exp` because the spread runs before `exp` is assigned. Non-finite TTLs serialize `exp` to `null` and are rejected by `verify`.
+
+**Severity for tomorrow's release:** finding 1 blocks shipping. Findings 2 to 4 should be fixed in the same change, and 5 should come with the fix as regression tests.

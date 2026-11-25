@@ -1,0 +1,30 @@
+**Root cause: the listing cache is never invalidated on a price change.**
+
+**The code path**
+
+- `src/pricing.js:6-13`, `updatePrice`, writes the new price to the store and then calls `catalog.cache.delete(productKey(sku))`. It removes only the `product:<sku>` entry.
+- `src/catalog.js:22-33`, `Catalog.listing`, caches the category page under `listing:<category>:<page>`. Each cached row is `{ sku, name, priceCents }`, so the price is copied into the cache.
+- `src/config.js:7`: `LISTING_TTL_SECONDS = 600`. That is the "about ten minutes".
+
+So the two paths are:
+
+- **Product page:** `Catalog.product` reads through `product:<sku>`. `updatePrice` deletes that key, so the next read refetches from the store. It updates immediately.
+- **Category page:** `Catalog.listing` reads `listing:<category>:<page>`. Nothing deletes that key, so the stale price stays until the 600-second TTL expires.
+
+**Why the delay is what it is**
+
+The delay is the listing TTL. The listing cache is the only copy of `priceCents` that outlives the write, and the write path doesn't know which listing pages contain the SKU. The `config.js` comment says listings are cached separately because they are expensive to build, which is why they get a longer TTL. That reasoning is about build cost, but it ignores that price is data the listing holds and the merchant changes.
+
+**Scope and limits of what I checked**
+
+- I read `src/*.js` and `test/catalog.test.js` in the `ask-cache-invalidation` mirror at HEAD `9c9e627`. I did not read the storefront code that renders category pages, so I'm inferring it serves `Catalog.listing` directly.
+- The existing tests cover product-page freshness after an update and the paging/sort order. No test checks a listing after `updatePrice`, which is why this slipped through.
+- The cache is an in-process `Map`. If storefront instances are separate processes, invalidating one process's cache would not clear the others, and the 10-minute staleness would then also apply to product pages. Support's report says product pages update immediately, so this is probably one process, but it's worth confirming.
+
+**Fix options (no code changed)**
+
+1. **Recommended: don't cache price in listings.** Cache only the ordered SKU/name rows for a category page. In `Catalog.listing`, look up each SKU's current price through `Catalog.product`, which is already invalidated on update. Price changes never move a row, because the sort is by name, so the cached ordering stays correct. This removes the stale path entirely, at the cost of up to 24 cached product lookups per listing render (cheap, since they hit the product cache).
+2. **Invalidate listings on write.** In `updatePrice`, delete the category's listing keys, which means tracking which pages exist per category or adding a prefix-delete to `TtlCache`. It works, but it adds state to keep in sync.
+3. **Shorten the listing TTL.** This only shrinks the window and keeps the staleness, so I would not use it alone.
+
+I'd take option 1 and add a test: update a price, then assert `catalog.listing('tools')` returns the new price. Option 1 also removes the "why is listing cached separately" question from the config comment.

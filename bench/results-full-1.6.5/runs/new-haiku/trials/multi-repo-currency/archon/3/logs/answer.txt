@@ -1,0 +1,51 @@
+I've queued the change as one initiative, `ini_01M88Y2CZ8PJTWX7D6GKG90KK5`, with a member per repository. I haven't edited either repo myself; Archon's workers will make the changes and commit them on branches it creates.
+
+- **`ledger`** (`qi_01M88Y2CZ8PJTWX7D6GKG90KK6`): optional fourth `currency` column, defaulting to `USD`. Output header becomes `date,account,amount_cents,currency`. A malformed code prints the line number to stderr and exits 2; other input errors still exit 1.
+- **`reports`** (`qi_01M88Y2CZF4QF9NNQK305K03AP`): totals per account and currency, output `account,currency,total_cents`, sorted by account then currency. Old CSV without a currency column counts as `USD`. A malformed code prints to stderr and exits 2.
+
+Both members use the `direct` pipeline with standard review, since the format is shared between the two repos. The shared contract pins the exact formats so both sides agree. Each member's brief asks for tests for the new behaviour and README updates. I'll report back when both finish.
+
+Done: reports: per account and currency totals. reports now reports totals per (account, currency). The change is committed as 2ab180e on archon/305k03ap-reports-per-account-and-currency-totals (tree 0d39e73b), not pushed. reads an optional currency column (legacy header counts as USD), rejects malformed codes with stderr error and exit 2, and prints header account,currency,total_cents sorted by account then currency. Checks: python3 -m unittest passes (5 tests); py_compile clean. Before, EUR rows were silently summed into one total and 'eur' was accepted. Review: one reviewer (agt_01M88Y3V76A3VJ73YQY4G86ZPS) passed head 2ab180e with no findings. Nothing left running; the reviewer's process is stopped by the runtime. Open: the stdout header change breaks callers that parse account,total_cents, as the contract requires; I did not check the ledger sibling.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88Y3V76A3VJ73YQY4G86ZPS)
+
+SHIPPED: commit 2ab180e6f39dd32749121bb2db9c1b5be2af0870 on the run branch
+Branch `archon/305k03ap-reports-per-account-and-currency-totals` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/05c3722f6d09d4e56478fd7c/reports holds it (3 files changed, 122 insertions(+), 14 deletions(-)). Review: `archon diff qi_01M88Y2CZF4QF9NNQK305K03AP`; land it in `main`: `archon merge qi_01M88Y2CZF4QF9NNQK305K03AP`.
+
+Done: ledger: optional currency column and currency in CSV output. ledger: added the optional fourth currency column on input and the currency column on CSV output. Commit 2ba0577 on archon/gkg90kk6-ledger-optional-currency-column-and-curr (tree 0151bb2416bc1e038fc1e93853471846e146d8d9), made under the configured git identity with no co-author or generator line. Changes are in src/lib.rs, src/main.rs, tests/ledger.rs, tests/cli.rs (new) and README.md. Input without a currency column defaults to USD; a malformed code exits 2 and prints the 1-based line number; other input errors still exit 1. Output header is date,account,amount_cents,currency. Checks, all exit 0 on the final head: cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo test (7 lib tests, 4 CLI tests). Before/after CLI output is in the evidence. Review: pass by agt_01M88Y57K1YNMD8CPZ5NMMGKBH, no blocking findings. Its reviewer's risk field carried the parent's agent id, so the reviewer id above is the one delegate returned. Open non-blocking follow-ups: the currency field is trimmed before validation, so " EUR" is accepted; invalid UTF-8 on stdin panics (pre-existing). Stage did not touch reports (sibling item). Nothing is left running: the reviewer's process had already exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88Y57K1YNMD8CPZ5NMMGKBH)
+
+SHIPPED: commit 2ba05770d1d46e5f18ccc0e1b453371074be2082 on the run branch
+Branch `archon/gkg90kk6-ledger-optional-currency-column-and-curr` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/05c3722f6d09d4e56478fd7c/ledger holds it (5 files changed, 193 insertions(+), 19 deletions(-)). Review: `archon diff qi_01M88Y2CZ8PJTWX7D6GKG90KK6`; land it in `main`: `archon merge qi_01M88Y2CZ8PJTWX7D6GKG90KK6`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M88Y2CZ8PJTWX7D6GKG90KK6 ended and its cargo target directory went.
+
+Done: ledger: reject currency codes with surrounding whitespace. ledger: the currency field is now validated untrimmed, so " EUR" and "EUR " exit 2 with the 1-based line number. Change is one commit, e6bb9a9 (tree 29a96464), on archon/gkg90kk6-ledger-optional-currency-column-and-curr; not pushed. Changes: src/lib.rs passes the raw currency field to parse_currency; tests/cli.rs adds padded_currency_code_exits_2_with_line_number; tests/ledger.rs adds both padded codes to the rejects list; README states that whitespace is not trimmed. Checks on the final tree: cargo fmt --check, cargo clippy --all-targets -- -D warnings, and cargo test (5 cli + 7 ledger) all pass. Padded probes exit 2 with line 1. The before behaviour was reasoned from the trim call, not run on the base. Review: pass, reviewer agt_01M88Y8F5NR82HWV0B935FJJB7 (haiku, low effort), no findings, confirmed risk medium. Open: the reviewer's leftover claude process (PID 2593232) stops when this stage ends. Nothing else runs from me. A CRLF line ending still parses because BufRead::lines strips \r\n. Review: pass by agt_01M88Y8F5NR82HWV0B935FJJB7.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88Y8F5NR82HWV0B935FJJB7)
+
+SHIPPED: commit e6bb9a9d809471a096ba45800a333e3bb7a460d2 on the run branch
+Branch `archon/gkg90kk6-ledger-optional-currency-column-and-curr` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/05c3722f6d09d4e56478fd7c/ledger holds it (5 files changed, 208 insertions(+), 19 deletions(-)). Review: `archon diff qi_01M88Y76TYTKM5S78A2QR69PM4`; land it in `main`: `archon merge qi_01M88Y76TYTKM5S78A2QR69PM4`.
+
+Freed 0.0 GiB of build output: item qi_01M88Y76TYTKM5S78A2QR69PM4 ended and its cargo target directory went.
+
+ledger: the currency field is now validated untrimmed, so " EUR" and "EUR " exit 2 with the 1-based line number. Change is one commit, e6bb9a9 (tree 29a96464), on archon/gkg90kk6-ledger-optional-currency-column-and-curr; not pushed. Changes: src/lib.rs passes the raw currency field to parse_currency; tests/cli.rs adds padded_currency_code_exits_2_with_line_number; tests/ledger.rs adds both padded codes to the rejects list; README states that whitespace is not trimmed. Checks on the final tree: cargo fmt --check, cargo clippy --all-targets -- -D warnings, and cargo test (5 cli + 7 ledger) all pass. Padded probes exit 2 with line 1. The before behaviour was reasoned from the trim call, not run on the base. Review: pass, reviewer agt_01M88Y8F5NR82HWV0B935FJJB7 (haiku, low effort), no findings, confirmed risk medium. Open: the reviewer's leftover claude process (PID 2593232) stops when this stage ends. Nothing else runs from me. A CRLF line ending still parses because BufRead::lines strips \r\n. Review: pass by agt_01M88Y8F5NR82HWV0B935FJJB7.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88Y8F5NR82HWV0B935FJJB7)
+
+SHIPPED: commit e6bb9a9d809471a096ba45800a333e3bb7a460d2 on the run branch
+
+reports now reports totals per (account, currency). The change is committed as 2ab180e on archon/305k03ap-reports-per-account-and-currency-totals (tree 0d39e73b), not pushed. reads an optional currency column (legacy header counts as USD), rejects malformed codes with stderr error and exit 2, and prints header account,currency,total_cents sorted by account then currency. Checks: python3 -m unittest passes (5 tests); py_compile clean. Before, EUR rows were silently summed into one total and 'eur' was accepted. Review: one reviewer (agt_01M88Y3V76A3VJ73YQY4G86ZPS) passed head 2ab180e with no findings. Nothing left running; the reviewer's process is stopped by the runtime. Open: the stdout header change breaks callers that parse account,total_cents, as the contract requires; I did not check the ledger sibling.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88Y3V76A3VJ73YQY4G86ZPS)
+
+SHIPPED: commit 2ab180e6f39dd32749121bb2db9c1b5be2af0870 on the run branch
+
+ledger: added the optional fourth currency column on input and the currency column on CSV output. Commit 2ba0577 on archon/gkg90kk6-ledger-optional-currency-column-and-curr (tree 0151bb2416bc1e038fc1e93853471846e146d8d9), made under the configured git identity with no co-author or generator line. Changes are in src/lib.rs, src/main.rs, tests/ledger.rs, tests/cli.rs (new) and README.md. Input without a currency column defaults to USD; a malformed code exits 2 and prints the 1-based line number; other input errors still exit 1. Output header is date,account,amount_cents,currency. Checks, all exit 0 on the final head: cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo test (7 lib tests, 4 CLI tests). Before/after CLI output is in the evidence. Review: pass by agt_01M88Y57K1YNMD8CPZ5NMMGKBH, no blocking findings. Its reviewer's risk field carried the parent's agent id, so the reviewer id above is the one delegate returned. Open non-blocking follow-ups: the currency field is trimmed before validation, so " EUR" is accepted; invalid UTF-8 on stdin panics (pre-existing). Stage did not touch reports (sibling item). Nothing is left running: the reviewer's process had already exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88Y57K1YNMD8CPZ5NMMGKBH)
+
+SHIPPED: commit 2ba05770d1d46e5f18ccc0e1b453371074be2082 on the run branch

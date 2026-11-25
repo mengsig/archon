@@ -1,0 +1,20 @@
+I've queued the work as item `qi_01M88W6G4V0F9RDQKB8VQS1HHX`. It is not finished yet.
+
+- **Repository:** `quality-ledger-transfer`, base `main`, ship mode `local`, so the work is committed on a local branch and not pushed.
+- **Pipeline:** `direct`, one agent that implements, tests and commits. Review is `standard`, since ledger code can hide data bugs.
+- **Scope:** implement `ledger.py` to match `SPEC.md` with no public API changes, add focused stdlib tests for every specified error and boundary case, and commit.
+
+The repository is small (`SPEC.md` is 23 lines, `ledger.py` 14, `test_ledger.py` 479 bytes), so I didn't read the spec myself. I'll report back when the item finishes or fails.
+
+Done: Implement ledger.py per SPEC.md with focused tests. Implemented Ledger per SPEC.md in ledger.py and added 27 focused tests in test_ledger.py. All 29 tests pass under `python3 -m unittest`. Committed as 993d6442fc9028236d1d31953656076c6f065371 (tree 0848c752726eb278a9585e962c4c7a3cbb323e20) on archon/8vqs1hhx-implement-ledger-py-per-spec-md-with-foc; not pushed. Public API unchanged. Concurrency: one threading.Lock guards all operations; concurrency tests fail rather than hang. Risk: high (locking). Reviewer agt_01M88W896FB0HF4NPSX41A6XGJ passed the head with no blocking findings. Open, non-blocking: unhashable account names raise TypeError rather than KeyError (SPEC.md does not define it); str subclasses are accepted as names. A reviewer child process (pid 2429271) was handed back and will stop when this task ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88W896FB0HF4NPSX41A6XGJ)
+
+SHIPPED: commit 993d6442fc9028236d1d31953656076c6f065371 on the run branch
+Branch `archon/8vqs1hhx-implement-ledger-py-per-spec-md-with-foc` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/d8ab31ead21972f82747255b/quality-ledger-transfer holds it (2 files changed, 251 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M88W6G4V0F9RDQKB8VQS1HHX`; land it in `main`: `archon merge qi_01M88W6G4V0F9RDQKB8VQS1HHX`.
+
+Implemented Ledger per SPEC.md in ledger.py and added 27 focused tests in test_ledger.py. All 29 tests pass under `python3 -m unittest`. Committed as 993d6442fc9028236d1d31953656076c6f065371 (tree 0848c752726eb278a9585e962c4c7a3cbb323e20) on archon/8vqs1hhx-implement-ledger-py-per-spec-md-with-foc; not pushed. Public API unchanged. Concurrency: one threading.Lock guards all operations; concurrency tests fail rather than hang. Risk: high (locking). Reviewer agt_01M88W896FB0HF4NPSX41A6XGJ passed the head with no blocking findings. Open, non-blocking: unhashable account names raise TypeError rather than KeyError (SPEC.md does not define it); str subclasses are accepted as names. A reviewer child process (pid 2429271) was handed back and will stop when this task ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88W896FB0HF4NPSX41A6XGJ)
+
+SHIPPED: commit 993d6442fc9028236d1d31953656076c6f065371 on the run branch

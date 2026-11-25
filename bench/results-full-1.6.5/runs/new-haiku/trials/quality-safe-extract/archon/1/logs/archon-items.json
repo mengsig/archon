@@ -1,0 +1,596 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88SSSS4KCXMFY330V109W8Y",
+      "repo": "repo_01M88SSAP756C1KR3JWPCJJM2C",
+      "pipeline": "direct",
+      "title": "Implement safe_extract.py per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated, local socket): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nRepository root contains SPEC.md (the authoritative spec), safe_extract.py (stub) and test_safe_extract.py (basic tests). Read SPEC.md fully first. Implement every behaviour and error case it specifies, preserving the documented public API exactly. Add focused tests in test_safe_extract.py covering each specified error and boundary case (path traversal, absolute paths, symlinks/hardlinks if specified, size/count limits if specified, empty archives, etc., as the spec defines). Use only the Python standard library. Run the tests and make them pass. Commit the work with a clear message; do not push.\n\nFollow the repository's coding rules: functions under 60 lines, meaningful assertions at boundaries, no swallowed exceptions, errors visible and preserved.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88SSSS4KCXMFY330V109W8Y",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T07:30:25.238497856Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T07:30:25.238497856Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T07:30:25.238497856Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:security",
+          "review:strict"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "cancelled",
+        "reason": "archon-bench: trial timeout"
+      },
+      "created_at": "2026-11-25T07:30:25.188719027Z",
+      "updated_at": "2026-11-25T07:42:10.612541010Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88SSSYW021VERDW2GP1P7KC",
+        "item": "qi_01M88SSSS4KCXMFY330V109W8Y",
+        "pipeline": "direct",
+        "shipped": false,
+        "aether_run": "run_01M88SSTC2MF2YSJP2JZD93VPE",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/158949faa03fdcf3568780ea/.archon/data/worktrees/quality-safe-extract/qi_01M88SSSS4KCXMFY330V109W8Y",
+        "branch": "archon/0v109w8y-implement-safe-extract-py-per-spec-md-wi",
+        "state": {
+          "state": "cancelled",
+          "reason": "archon-bench: trial timeout"
+        },
+        "cost_usd": 0.35431834,
+        "started_at": "2026-11-25T07:30:25.594270214Z",
+        "finished_at": "2026-11-25T07:42:10.612541010Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88SSTACNF49F9W4FAFW1V48",
+        "run": "prun_01M88SSSYW021VERDW2GP1P7KC",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88SSTE95VNE9QJC7CEXD7F8",
+        "aether_task": "tsk_01M88SSTE9QA6TABD3AW56QSZD",
+        "state": {
+          "state": "cancelled"
+        },
+        "verdict": null,
+        "risk_class": "critical",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; the plan pins medium",
+        "summary": "pipeline run prun_01M88SSSYW021VERDW2GP1P7KC finished",
+        "structured": {
+          "review_rounds": {
+            "findings": {
+              "agt_01M88SX6VWADDYXVWWDYEX1319:1": {
+                "blocking": true,
+                "description": "A root whose path passes through a regular file (e.g. 'file/sub') makes os.lstat raise NotADirectoryError instead of ValueError, because _lstat_or_none only catches FileNotFoundError. SPEC.md requires invalid roots to be rejected with ValueError. Verified by running extract([('a', b'1')], '<tmp>/f/sub') where f is a regular file: NotADirectoryError was raised. No test covers this case. Fix: treat ",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88SX6VWADDYXVWWDYEX1319:1",
+                "resolved_in": null
+              },
+              "agt_01M88SXC8FMEB7WJ8ZXXBF556Q:1": {
+                "blocking": true,
+                "description": "A root beneath a regular file (e.g. file/sub) makes os.lstat raise NotADirectoryError, not ValueError. SPEC requires invalid roots to be rejected with ValueError. No test covers this case. at safe_extract.py:32",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88SXC8FMEB7WJ8ZXXBF556Q:1",
+                "resolved_in": null
+              },
+              "agt_01M88SXC8FMEB7WJ8ZXXBF556Q:2": {
+                "blocking": true,
+                "description": "root='' is accepted because Path('') is '.', so entries are written into the process CWD. SPEC requires root to name an existing directory. No test covers this. at safe_extract.py:31",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88SXC8FMEB7WJ8ZXXBF556Q:2",
+                "resolved_in": null
+              },
+              "agt_01M88SXC8FMEB7WJ8ZXXBF556Q:3": {
+                "blocking": false,
+                "description": "A PathLike whose __fspath__ returns bytes passes the isinstance check and then raises TypeError from Path(), not ValueError as SPEC requires for invalid roots. No test covers this. at safe_extract.py:31",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88SXC8FMEB7WJ8ZXXBF556Q:3",
+                "resolved_in": null
+              },
+              "agt_01M88T0TYVAGBXMY77CE52KSD0:1": {
+                "blocking": true,
+                "description": "No regression test for a PathLike whose __fspath__ returns bytes. The delta changed this path (TypeError from pathlib before, ValueError now at safe_extract.py:32-33) but test_invalid_root_types_are_rejected only passes raw bytes, which never reach os.fspath. at test_safe_extract.py:191",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T0TYVAGBXMY77CE52KSD0:1",
+                "resolved_in": null
+              },
+              "agt_01M88T0TYVAGBXMY77CE52KSD0:2": {
+                "blocking": true,
+                "description": "A root whose path traverses a self-referencing symlink (e.g. loop/x with loop -> loop) raises OSError ELOOP rather than ValueError. Verified by probe. Nothing is written, and the error stays visible, but the spec says invalid roots raise ValueError. at safe_extract.py:139",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T0TYVAGBXMY77CE52KSD0:2",
+                "resolved_in": null
+              },
+              "agt_01M88T0TYVAGBXMY77CE52KSD0:3": {
+                "blocking": false,
+                "description": "Batch collision checks are exact-string only. On case-insensitive or normalizing filesystems (e.g. macOS default), entries 'A' and 'a' pass validation, and the second open('xb') fails after earlier files were already created, leaving a partial batch. Not reproducible on this Linux host (verified 'A' and 'a' both created). Failure is loud and rollback after I/O errors is out of spec scope. at safe_",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T0TYVAGBXMY77CE52KSD0:3",
+                "resolved_in": null
+              },
+              "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:1": {
+                "blocking": false,
+                "description": "Most non-trivial functions have fewer than 2 assertions: extract, _check_root, _plan_batch, _parse_entry, _name_parts, _check_batch_conflicts and _check_target_absent have none; _make_parent_dirs has one. _write_new_file has two. Rule 3 gap only; behaviour is covered by tests. at safe_extract.py:10",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:1",
+                "resolved_in": null
+              },
+              "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:2": {
+                "blocking": false,
+                "description": "A PathLike whose __fspath__ returns bytes is rejected with ValueError by safe_extract.py:32, but no test covers it. test_invalid_root_types_are_rejected only passes a raw bytes object. at test_safe_extract.py:192",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:2",
+                "resolved_in": null
+              },
+              "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:3": {
+                "blocking": true,
+                "description": "A PathLike whose __fspath__ returns a non-str, non-bytes value (e.g. int) makes os.fspath raise TypeError, not the ValueError the spec requires for invalid roots. Judged non-blocking: the caller's object violates the os.PathLike protocol, and the fix is a one-line wrap. Not covered by tests. at safe_extract.py:29",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:3",
+                "resolved_in": null
+              },
+              "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:4": {
+                "blocking": false,
+                "description": "I/O-error tests are skipped when running as root (geteuid()==0), and only PermissionError is exercised. No test covers other unexpected OSError types (ENOSPC, EIO) staying visible. Partial disposition of the earlier I/O-coverage note. at test_safe_extract.py:301",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:4",
+                "resolved_in": null
+              },
+              "agt_01M88T15HC7ZZX36QR496CR2G1:1": {
+                "blocking": true,
+                "description": "The bytes-returning os.PathLike root branch in _check_root (safe_extract.py:31-33, added in 74f99e2) is untested. test_invalid_root_types_are_rejected covers only 42, None and raw bytes, so the new ValueError path has no test. Earlier reviewer marked this non-blocking; blocking here per the missing-test rule. at test_safe_extract.py:191",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T15HC7ZZX36QR496CR2G1:1",
+                "resolved_in": null
+              },
+              "agt_01M88T15HC7ZZX36QR496CR2G1:2": {
+                "blocking": false,
+                "description": "A path component over the filesystem limit (e.g. a 300-byte name) or an over-long root makes os.lstat raise OSError ENAMETOOLONG instead of ValueError. Probed: it fires during validation, before any write, so no partial write occurs and the error stays visible. SPEC.md does not enumerate a length limit, so this is a deviation only in error type. Likewise a PermissionError from lstat on root propag",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T15HC7ZZX36QR496CR2G1:2",
+                "resolved_in": null
+              },
+              "agt_01M88T4F3HW361HVT2NMNGPSW7:6": {
+                "blocking": false,
+                "description": "No test for a dangling symlink as root (spec: root must not be a symlink). Code returns ValueError via the same not-a-directory branch as the live-symlink test, so this is a coverage nit, not a bug. Verified by probe. at test_safe_extract.py:163",
+                "found_in": {
+                  "number": 3,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T4F3HW361HVT2NMNGPSW7:6",
+                "resolved_in": null
+              },
+              "agt_01M88T4F3HW361HVT2NMNGPSW7:7": {
+                "blocking": false,
+                "description": "Spec says never follow links 'even links to locations inside root'. Tests cover that for an ancestor (line 252) but not for a symlink at the target pointing inside root. Same code path (lstat finds the entry, reports exists), so a coverage nit. at test_safe_extract.py:237",
+                "found_in": {
+                  "number": 3,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T4F3HW361HVT2NMNGPSW7:7",
+                "resolved_in": null
+              },
+              "agt_01M88T4F3HW361HVT2NMNGPSW7:8": {
+                "blocking": false,
+                "description": "test_nested_files and test_empty_batch create their temp dirs in '.' (cwd), while the other tests use the system temp dir. Both are cleaned up, but the inconsistency makes these two depend on a writable cwd. Hygiene nit. at test_safe_extract.py:11",
+                "found_in": {
+                  "number": 3,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T4F3HW361HVT2NMNGPSW7:8",
+                "resolved_in": null
+              },
+              "agt_01M88T4N47Y54F0QXHWTNJJQTA:6": {
+                "blocking": false,
+                "description": "An overlong component (>255 bytes) raises OSError ENAMETOOLONG from lstat during validation, not ValueError. Nothing is written. at safe_extract.py:96",
+                "found_in": {
+                  "number": 3,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T4N47Y54F0QXHWTNJJQTA:6",
+                "resolved_in": null
+              },
+              "agt_01M88T4N47Y54F0QXHWTNJJQTA:7": {
+                "blocking": false,
+                "description": "A root string such as '<tmp>/link/..' passes validation when link is a symlink, because the path resolves to a real directory. at safe_extract.py:28",
+                "found_in": {
+                  "number": 3,
+                  "stage": "stg_01M88SSTACNF49F9W4FAFW1V48"
+                },
+                "id": "agt_01M88T4N47Y54F0QXHWTNJJQTA:7",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "f237ed3b3ca5480fac7defbd565c1048b1249ee6",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88SX6VWADDYXVWWDYEX1319",
+                    "base": "d1718e0ebe9581cc6d4de37782a36ffee2454e48",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M88SX6VWADDYXVWWDYEX1319:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  },
+                  {
+                    "agent": "agt_01M88SXC8FMEB7WJ8ZXXBF556Q",
+                    "base": "d1718e0ebe9581cc6d4de37782a36ffee2454e48",
+                    "finding_count": 3,
+                    "finding_ids": [
+                      "agt_01M88SXC8FMEB7WJ8ZXXBF556Q:1",
+                      "agt_01M88SXC8FMEB7WJ8ZXXBF556Q:2",
+                      "agt_01M88SXC8FMEB7WJ8ZXXBF556Q:3"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "74f99e29e4ab882fd7790d504919f5075b951424",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88T0TYVAGBXMY77CE52KSD0",
+                    "base": "d1718e0ebe9581cc6d4de37782a36ffee2454e48",
+                    "finding_count": 3,
+                    "finding_ids": [
+                      "agt_01M88T0TYVAGBXMY77CE52KSD0:1",
+                      "agt_01M88T0TYVAGBXMY77CE52KSD0:2",
+                      "agt_01M88T0TYVAGBXMY77CE52KSD0:3"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  },
+                  {
+                    "agent": "agt_01M88T0ZSSQR1RY5JA9FZHZMP1",
+                    "base": "d1718e0ebe9581cc6d4de37782a36ffee2454e48",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:1",
+                      "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:2",
+                      "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:3",
+                      "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M88T15HC7ZZX36QR496CR2G1",
+                    "base": "d1718e0ebe9581cc6d4de37782a36ffee2454e48",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M88T15HC7ZZX36QR496CR2G1:1",
+                      "agt_01M88T15HC7ZZX36QR496CR2G1:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "d55519f7c3746318680765d8d3ccbebe5f69e187",
+                "number": 3,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88T49SDF5QSH4EQFMPWB1EN",
+                    "base": "d1718e0ebe9581cc6d4de37782a36ffee2454e48",
+                    "finding_count": 5,
+                    "finding_ids": [
+                      "agt_01M88T0TYVAGBXMY77CE52KSD0:2",
+                      "agt_01M88T0TYVAGBXMY77CE52KSD0:3",
+                      "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:1",
+                      "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:3",
+                      "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M88T4F3HW361HVT2NMNGPSW7",
+                    "base": "d1718e0ebe9581cc6d4de37782a36ffee2454e48",
+                    "finding_count": 8,
+                    "finding_ids": [
+                      "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:3",
+                      "agt_01M88T0TYVAGBXMY77CE52KSD0:2",
+                      "agt_01M88T0TYVAGBXMY77CE52KSD0:3",
+                      "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:1",
+                      "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:4",
+                      "agt_01M88T4F3HW361HVT2NMNGPSW7:6",
+                      "agt_01M88T4F3HW361HVT2NMNGPSW7:7",
+                      "agt_01M88T4F3HW361HVT2NMNGPSW7:8"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "fail"
+                  },
+                  {
+                    "agent": "agt_01M88T4N47Y54F0QXHWTNJJQTA",
+                    "base": "d1718e0ebe9581cc6d4de37782a36ffee2454e48",
+                    "finding_count": 7,
+                    "finding_ids": [
+                      "agt_01M88T0TYVAGBXMY77CE52KSD0:2",
+                      "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:3",
+                      "agt_01M88T0TYVAGBXMY77CE52KSD0:3",
+                      "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:1",
+                      "agt_01M88T0ZSSQR1RY5JA9FZHZMP1:4",
+                      "agt_01M88T4N47Y54F0QXHWTNJJQTA:6",
+                      "agt_01M88T4N47Y54F0QXHWTNJJQTA:7"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "fail"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "cost_usd": 0.35431833999999995,
+        "started_at": "2026-11-25T07:30:25.740089272Z",
+        "finished_at": "2026-11-25T07:42:10.655566206Z"
+      }
+    ],
+    "spent_usd": 0.35431834,
+    "gates": [],
+    "delegations": {
+      "stg_01M88SSTACNF49F9W4FAFW1V48": {
+        "direct_usd": 0.20066507,
+        "delegated_usd": 0.15365326999999998,
+        "agents": [
+          {
+            "agent": "agt_01M88SX6VWADDYXVWWDYEX1319",
+            "parent": "agt_01M88SSTE95VNE9QJC7CEXD7F8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.009540819999999998
+          },
+          {
+            "agent": "agt_01M88SXC8FMEB7WJ8ZXXBF556Q",
+            "parent": "agt_01M88SSTE95VNE9QJC7CEXD7F8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01459494
+          },
+          {
+            "agent": "agt_01M88SXGSGF3VAA7HCN0D3C1BA",
+            "parent": "agt_01M88SSTE95VNE9QJC7CEXD7F8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01444972
+          },
+          {
+            "agent": "agt_01M88T0TYVAGBXMY77CE52KSD0",
+            "parent": "agt_01M88SSTE95VNE9QJC7CEXD7F8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.018716499999999997
+          },
+          {
+            "agent": "agt_01M88T0ZSSQR1RY5JA9FZHZMP1",
+            "parent": "agt_01M88SSTE95VNE9QJC7CEXD7F8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.019778659999999997
+          },
+          {
+            "agent": "agt_01M88T15HC7ZZX36QR496CR2G1",
+            "parent": "agt_01M88SSTE95VNE9QJC7CEXD7F8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01914778
+          },
+          {
+            "agent": "agt_01M88T49SDF5QSH4EQFMPWB1EN",
+            "parent": "agt_01M88SSTE95VNE9QJC7CEXD7F8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01614639
+          },
+          {
+            "agent": "agt_01M88T4F3HW361HVT2NMNGPSW7",
+            "parent": "agt_01M88SSTE95VNE9QJC7CEXD7F8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.021269289999999996
+          },
+          {
+            "agent": "agt_01M88T4N47Y54F0QXHWTNJJQTA",
+            "parent": "agt_01M88SSTE95VNE9QJC7CEXD7F8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.020009170000000003
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T07:30:25.238497856Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T07:30:25.238497856Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T07:30:25.238497856Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

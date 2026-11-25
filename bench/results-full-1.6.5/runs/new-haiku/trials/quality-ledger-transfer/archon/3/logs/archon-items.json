@@ -1,0 +1,675 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88YT55NJPAH76VD5KNAK5PF",
+      "repo": "repo_01M88YN5B1EW7MZPFT7Q2ZPJEE",
+      "pipeline": "direct",
+      "title": "Harden ledger concurrency tests and validation bypass",
+      "brief": "Follow-up to the ledger.py work on this branch. Make the test suite fail rather than hang on a concurrency regression: give every thread join a timeout and assert the thread finished. Make test_snapshots_never_see_a_half_transfer fail if its writer thread raises, by collecting thread exceptions and re-raising them in the test. Make the validation in ledger.py not depend on a dict subclass overriding items(): read the ledger's balances through a plain-dict copy or direct iteration that the validation cannot be bypassed through. Keep the change small, keep all tests passing, and keep the standard library only. Commit on the item's branch with a clear message and no attribution lines.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "ledger",
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88YT55NJPAH76VD5KNAK5PF",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T08:57:59.736007236Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T08:57:59.736007236Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T08:57:59.736007236Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:concurrency"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:concurrency"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88YT56C2VB38PSCJZ9KJMCE",
+        "summary": "Hardened ledger validation and concurrency tests on archon/f7jsygeg-implement-ledger-py-per-spec-md-with-tes. Head 94e4756 (tree a8d08028de47d5dd0e905d321c545e992997b827), one commit on top of 7d242d2: 4c61721 plus the review fix 94e4756. Not pushed.\n\nWhat changed: ledger.py __init__ validates and copies entries read via dict.items, so a dict subclass overriding items() can no longer store invalid balances (before: accepted {'bad': -5}; now: ValueError). test_ledger.py: every thread join is bounded (2s) and asserts the thread finished; worker threads are daemon; the snapshot reader runs in a joined thread; writer exceptions are re-raised. No lock or transfer logic changed. Standard library only.\n\nChecks on 94e4756: python3 -B -m unittest, 23 tests OK. Mutant probes in temp copies: a deadlocked writer fails the snapshot test in about 2s; the old ledger.py fails the new bypass test; a raising writer surfaces its error.\n\nReview: agt_01M88YW5PSWN6GMBXXN9PKC9M2 failed 4c61721 with one blocking finding (snapshot loop could hang). Fixed in 94e4756 (Review-Fix trailer). agt_01M88YY2C0VTGTABQPA333YPZG passed the delta; agt_01M88Z040Y6G42BVKXMBZ4S69A confirmed agt_01M88YW5PSWN6GMBXXN9PKC9M2:1 resolved and passed the head. Open non-blocking follow-ups, deferred: :2 bare asserts in _transfer_locked are stripped under python -O (pre-existing from 7d242d2, not changed); :3 half-transfer detection is probabilistic (a deterministic barrier-based check would be a separate change).\n\nRisk: medium (validation behaviour change in shipped code; reviewers rated low as test-only). Nothing left running: the reviewer-left processes were stopped by PID. No servers were started.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88YW5PSWN6GMBXXN9PKC9M2), claude-code/claude-haiku-5-5 (agent agt_01M88YY2C0VTGTABQPA333YPZG), claude-code/claude-haiku-5-5 (agent agt_01M88Z040Y6G42BVKXMBZ4S69A)\n\nSHIPPED: commit 94e4756c739479835d54e1d8c60ed3e45f3f2138 on the run branch"
+      },
+      "created_at": "2026-11-25T08:57:59.733811839Z",
+      "updated_at": "2026-11-25T09:02:03.430607271Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88YT56C2VB38PSCJZ9KJMCE",
+        "item": "qi_01M88YT55NJPAH76VD5KNAK5PF",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88YT58T1FWRRS8CJ8335MPX",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/3e5ff7ee6ed0b9d32d95fe90/.archon/data/worktrees/quality-ledger-transfer/qi_01M88YNM8J03WGKVAFF7JSYGEG",
+        "branch": "archon/f7jsygeg-implement-ledger-py-per-spec-md-with-tes",
+        "state": {
+          "state": "succeeded",
+          "summary": "Hardened ledger validation and concurrency tests on archon/f7jsygeg-implement-ledger-py-per-spec-md-with-tes. Head 94e4756 (tree a8d08028de47d5dd0e905d321c545e992997b827), one commit on top of 7d242d2: 4c61721 plus the review fix 94e4756. Not pushed.\n\nWhat changed: ledger.py __init__ validates and copies entries read via dict.items, so a dict subclass overriding items() can no longer store invalid balances (before: accepted {'bad': -5}; now: ValueError). test_ledger.py: every thread join is bounded (2s) and asserts the thread finished; worker threads are daemon; the snapshot reader runs in a joined thread; writer exceptions are re-raised. No lock or transfer logic changed. Standard library only.\n\nChecks on 94e4756: python3 -B -m unittest, 23 tests OK. Mutant probes in temp copies: a deadlocked writer fails the snapshot test in about 2s; the old ledger.py fails the new bypass test; a raising writer surfaces its error.\n\nReview: agt_01M88YW5PSWN6GMBXXN9PKC9M2 failed 4c61721 with one blocking finding (snapshot loop could hang). Fixed in 94e4756 (Review-Fix trailer). agt_01M88YY2C0VTGTABQPA333YPZG passed the delta; agt_01M88Z040Y6G42BVKXMBZ4S69A confirmed agt_01M88YW5PSWN6GMBXXN9PKC9M2:1 resolved and passed the head. Open non-blocking follow-ups, deferred: :2 bare asserts in _transfer_locked are stripped under python -O (pre-existing from 7d242d2, not changed); :3 half-transfer detection is probabilistic (a deterministic barrier-based check would be a separate change).\n\nRisk: medium (validation behaviour change in shipped code; reviewers rated low as test-only). Nothing left running: the reviewer-left processes were stopped by PID. No servers were started.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88YW5PSWN6GMBXXN9PKC9M2), claude-code/claude-haiku-5-5 (agent agt_01M88YY2C0VTGTABQPA333YPZG), claude-code/claude-haiku-5-5 (agent agt_01M88Z040Y6G42BVKXMBZ4S69A)\n\nSHIPPED: commit 94e4756c739479835d54e1d8c60ed3e45f3f2138 on the run branch"
+        },
+        "cost_usd": 0.06670953,
+        "started_at": "2026-11-25T08:57:59.812092881Z",
+        "finished_at": "2026-11-25T09:02:03.430607271Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88YT58NJGVNNN5HC4R459EQ",
+        "run": "prun_01M88YT56C2VB38PSCJZ9KJMCE",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88YT58ZMSPDWJY62NZ4TAJ9",
+        "aether_task": "tsk_01M88YT58ZMSPDWJY62NZ4TAJA",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; the plan pins medium",
+        "summary": "Hardened ledger validation and concurrency tests on archon/f7jsygeg-implement-ledger-py-per-spec-md-with-tes. Head 94e4756 (tree a8d08028de47d5dd0e905d321c545e992997b827), one commit on top of 7d242d2: 4c61721 plus the review fix 94e4756. Not pushed.\n\nWhat changed: ledger.py __init__ validates and copies entries read via dict.items, so a dict subclass overriding items() can no longer store invalid balances (before: accepted {'bad': -5}; now: ValueError). test_ledger.py: every thread join is bounded (2s) and asserts the thread finished; worker threads are daemon; the snapshot reader runs in a joined thread; writer exceptions are re-raised. No lock or transfer logic changed. Standard library only.\n\nChecks on 94e4756: python3 -B -m unittest, 23 tests OK. Mutant probes in temp copies: a deadlocked writer fails the snapshot test in about 2s; the old ledger.py fails the new bypass test; a raising writer surfaces its error.\n\nReview: agt_01M88YW5PSWN6GMBXXN9PKC9M2 failed 4c61721 with one blocking finding (snapshot loop could hang). Fixed in 94e4756 (Review-Fix trailer). agt_01M88YY2C0VTGTABQPA333YPZG passed the delta; agt_01M88Z040Y6G42BVKXMBZ4S69A confirmed agt_01M88YW5PSWN6GMBXXN9PKC9M2:1 resolved and passed the head. Open non-blocking follow-ups, deferred: :2 bare asserts in _transfer_locked are stripped under python -O (pre-existing from 7d242d2, not changed); :3 half-transfer detection is probabilistic (a deterministic barrier-based check would be a separate change).\n\nRisk: medium (validation behaviour change in shipped code; reviewers rated low as test-only). Nothing left running: the reviewer-left processes were stopped by PID. No servers were started.",
+        "structured": {
+          "checks": [
+            "python3 -B -m unittest (23 tests OK, on 94e4756)",
+            "deadlock mutant probe: test_snapshots_never_see_a_half_transfer fails in ~2s (temp copy)",
+            "old ledger.py vs new subclass-bypass test: fails (temp copy)",
+            "writer-raises probe: test errors with the writer's exception (temp copy)",
+            "subclass bypass probe on 94e4756: rejected"
+          ],
+          "commit": "94e4756c739479835d54e1d8c60ed3e45f3f2138",
+          "evidence": [
+            {
+              "after": "rejected: invalid balance for 'bad': -5",
+              "before": "accepted; stored: {'a': 1, 'bad': -5}",
+              "caption": "Constructor rejects a dict subclass whose items() lies about an invalid balance",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "94e4756c739479835d54e1d8c60ed3e45f3f2138",
+          "pr": {
+            "body": "Approach: ledger.py __init__ validates and copies entries from dict.items(balances), bypassing subclass overrides. test_ledger.py: _join_or_fail helper asserts each thread finished within 2s; worker threads are daemon; snapshot reader runs in a joined daemon thread; writer exceptions are collected and re-raised. No lock or transfer logic changed. Checks: unittest 23 OK on final head; probes listed above. Review: first reviewer failed one blocking finding (fixed, Review-Fix: agt_01M88YW5PSWN6GMBXXN9PKC9M2:1); delta and disposition reviewers passed. Deferred non-blocking: asserts in _transfer_locked are stripped under python -O (pre-existing); half-transfer detection is probabilistic. Assumptions: standard library only; no push.",
+            "summary": "Made ledger validation tamper-proof and concurrency tests fail instead of hang. Before: dict subclass overriding items() could store invalid balances; a deadlocked snapshot test hung and writer exceptions were lost. Now: validation reads real storage via dict.items; every thread join asserts completion; writer errors re-raise.",
+            "title": "Harden ledger validation and concurrency tests"
+          },
+          "review": {
+            "reviewed_head": "94e4756c739479835d54e1d8c60ed3e45f3f2138",
+            "reviewer_agents": [
+              "agt_01M88YW5PSWN6GMBXXN9PKC9M2",
+              "agt_01M88YY2C0VTGTABQPA333YPZG",
+              "agt_01M88Z040Y6G42BVKXMBZ4S69A"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88YW5PSWN6GMBXXN9PKC9M2",
+                "base": "256e3ad7346adb7bb4c83602ca6ef685bf0c8bc5",
+                "findings": 3,
+                "head": "4c6172138d5d5b5bc7be7106aa829b61de42436c",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M88YY2C0VTGTABQPA333YPZG",
+                "base": "4c6172138d5d5b5bc7be7106aa829b61de42436c",
+                "findings": 0,
+                "head": "94e4756c739479835d54e1d8c60ed3e45f3f2138",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M88Z040Y6G42BVKXMBZ4S69A",
+                "base": "4c6172138d5d5b5bc7be7106aa829b61de42436c",
+                "findings": 0,
+                "head": "94e4756c739479835d54e1d8c60ed3e45f3f2138",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88YW5PSWN6GMBXXN9PKC9M2",
+              "agt_01M88YY2C0VTGTABQPA333YPZG",
+              "agt_01M88Z040Y6G42BVKXMBZ4S69A"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M88YW5PSWN6GMBXXN9PKC9M2:1": {
+                "blocking": true,
+                "description": "test_snapshots_never_see_a_half_transfer polls done.is_set() in an unbounded loop that also calls ledger.snapshot() (which needs the same lock). If the writer thread deadlocks, the main thread spins or blocks forever before _join_or_fail runs, so the test hangs instead of failing as the intent requires. at test_ledger.py:187",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88YT58NJGVNNN5HC4R459EQ"
+                },
+                "id": "agt_01M88YW5PSWN6GMBXXN9PKC9M2:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M88YT58NJGVNNN5HC4R459EQ"
+                }
+              },
+              "agt_01M88YW5PSWN6GMBXXN9PKC9M2:2": {
+                "blocking": false,
+                "description": "Invariant checks in _transfer_locked are bare assert statements; they are stripped under python -O, so production correctness checks depend on interpreter flags. at ledger.py:59",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88YT58NJGVNNN5HC4R459EQ"
+                },
+                "id": "agt_01M88YW5PSWN6GMBXXN9PKC9M2:2",
+                "resolved_in": null
+              },
+              "agt_01M88YW5PSWN6GMBXXN9PKC9M2:3": {
+                "blocking": false,
+                "description": "The snapshot test only detects half-transfers probabilistically: if the writer finishes before the main loop observes intermediate states, it passes trivially. A deterministic check (e.g., a barrier or a snapshot count floor) would make the test stronger. at test_ledger.py:168",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88YT58NJGVNNN5HC4R459EQ"
+                },
+                "id": "agt_01M88YW5PSWN6GMBXXN9PKC9M2:3",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "4c6172138d5d5b5bc7be7106aa829b61de42436c",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88YW5PSWN6GMBXXN9PKC9M2",
+                    "base": "256e3ad7346adb7bb4c83602ca6ef685bf0c8bc5",
+                    "finding_count": 3,
+                    "finding_ids": [
+                      "agt_01M88YW5PSWN6GMBXXN9PKC9M2:1",
+                      "agt_01M88YW5PSWN6GMBXXN9PKC9M2:2",
+                      "agt_01M88YW5PSWN6GMBXXN9PKC9M2:3"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "94e4756c739479835d54e1d8c60ed3e45f3f2138",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88YY2C0VTGTABQPA333YPZG",
+                    "base": "4c6172138d5d5b5bc7be7106aa829b61de42436c",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M88Z040Y6G42BVKXMBZ4S69A",
+                    "base": "4c6172138d5d5b5bc7be7106aa829b61de42436c",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M88Z040Y6G42BVKXMBZ4S69A",
+            "why": "Touches ledger.py constructor validation (behaviour change: dict subclasses with lying items() are now handled correctly) and concurrency tests. No lock or transfer logic changed. Reviewers rated low (test-only delta) but the validation change is in shipped code, so kept medium. Review 1 found one blocking hang risk, fixed and re-reviewed."
+          },
+          "tree": "a8d08028de47d5dd0e905d321c545e992997b827"
+        },
+        "cost_usd": 0.06670953,
+        "started_at": "2026-11-25T08:57:59.829120993Z",
+        "finished_at": "2026-11-25T09:01:57.956871027Z"
+      }
+    ],
+    "spent_usd": 0.06670953,
+    "gates": [],
+    "delegations": {
+      "stg_01M88YT58NJGVNNN5HC4R459EQ": {
+        "direct_usd": 0.04675279,
+        "delegated_usd": 0.01995674,
+        "agents": [
+          {
+            "agent": "agt_01M88YW5PSWN6GMBXXN9PKC9M2",
+            "parent": "agt_01M88YT58ZMSPDWJY62NZ4TAJ9",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01052263
+          },
+          {
+            "agent": "agt_01M88YY2C0VTGTABQPA333YPZG",
+            "parent": "agt_01M88YT58ZMSPDWJY62NZ4TAJ9",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "low",
+            "cost_usd": 0.005115150000000001
+          },
+          {
+            "agent": "agt_01M88Z040Y6G42BVKXMBZ4S69A",
+            "parent": "agt_01M88YT58ZMSPDWJY62NZ4TAJ9",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "low",
+            "cost_usd": 0.00431896
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T08:57:59.736007236Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T08:57:59.736007236Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T08:57:59.736007236Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88YNM8J03WGKVAFF7JSYGEG",
+      "repo": "repo_01M88YN5B1EW7MZPFT7Q2ZPJEE",
+      "pipeline": "direct",
+      "title": "Implement ledger.py per SPEC.md with tests",
+      "brief": "Implement `ledger.py` in the repository root according to `SPEC.md`. Preserve the documented API exactly, handle every specified error and boundary case, and add focused tests covering them (the existing tests cover basics only; extend them, do not delete them). Use the Python standard library only. Read SPEC.md first and treat it as the source of truth. Run the test suite before finishing and make sure it passes. Commit the work on the item's branch with a clear message; do not add attribution lines to the commit.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "ledger",
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88YNM8J03WGKVAFF7JSYGEG",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T08:55:31.361564566Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T08:55:31.361564566Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T08:55:31.361564566Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88YNMA0ARNG7C7KZ417RAWA",
+        "summary": "Implemented ledger.py per SPEC.md (one threading.Lock per ledger; validation of names, balances, amounts; KeyError for unknown accounts; False for insufficient funds or destination overflow; same-account rule) and extended test_ledger.py to 22 tests, keeping the original two. Commit 7d242d2 on archon/f7jsygeg-implement-ledger-py-per-spec-md-with-tes, tree c9c7f189bfaa5d1258ee2f982862585aafd81867, no attribution lines. Checks: python3 -m unittest 22 OK (5 repeats OK); before: 2 errors from NotImplementedError. Reviewer agt_01M88YQGD83GV0X5FMKMHSEJD7 passed the head with no blocking findings. Open non-blocking follow-ups: test_snapshots_never_see_a_half_transfer does not fail if the writer thread raises; concurrency tests could hang rather than fail on a deadlock regression; validation via items() could be bypassed by a dict subclass that overrides items(). Risk: reviewer rated low; the author rated high because the rubric lists concurrency as high. The reviewer's call stands per contract, so the orchestrator should decide. Reviewer process pid 2625764 was left running by Aether and stops when this task ends. Nothing else was started. REVIEW: pass by agt_01M88YQGD83GV0X5FMKMHSEJD7.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88YQGD83GV0X5FMKMHSEJD7)\n\nSHIPPED: commit 7d242d25d948fc73c496a441775efe4f3f238759 on the run branch"
+      },
+      "created_at": "2026-11-25T08:55:31.346163992Z",
+      "updated_at": "2026-11-25T08:57:54.255393974Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88YNMA0ARNG7C7KZ417RAWA",
+        "item": "qi_01M88YNM8J03WGKVAFF7JSYGEG",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88YNMGQ8Q2YJAS1R6PEJY84",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/3e5ff7ee6ed0b9d32d95fe90/.archon/data/worktrees/quality-ledger-transfer/qi_01M88YNM8J03WGKVAFF7JSYGEG",
+        "branch": "archon/f7jsygeg-implement-ledger-py-per-spec-md-with-tes",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented ledger.py per SPEC.md (one threading.Lock per ledger; validation of names, balances, amounts; KeyError for unknown accounts; False for insufficient funds or destination overflow; same-account rule) and extended test_ledger.py to 22 tests, keeping the original two. Commit 7d242d2 on archon/f7jsygeg-implement-ledger-py-per-spec-md-with-tes, tree c9c7f189bfaa5d1258ee2f982862585aafd81867, no attribution lines. Checks: python3 -m unittest 22 OK (5 repeats OK); before: 2 errors from NotImplementedError. Reviewer agt_01M88YQGD83GV0X5FMKMHSEJD7 passed the head with no blocking findings. Open non-blocking follow-ups: test_snapshots_never_see_a_half_transfer does not fail if the writer thread raises; concurrency tests could hang rather than fail on a deadlock regression; validation via items() could be bypassed by a dict subclass that overrides items(). Risk: reviewer rated low; the author rated high because the rubric lists concurrency as high. The reviewer's call stands per contract, so the orchestrator should decide. Reviewer process pid 2625764 was left running by Aether and stops when this task ends. Nothing else was started. REVIEW: pass by agt_01M88YQGD83GV0X5FMKMHSEJD7.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88YQGD83GV0X5FMKMHSEJD7)\n\nSHIPPED: commit 7d242d25d948fc73c496a441775efe4f3f238759 on the run branch"
+        },
+        "cost_usd": 0.03824964,
+        "started_at": "2026-11-25T08:55:31.558761744Z",
+        "finished_at": "2026-11-25T08:57:54.255393974Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88YNMG42EV7SWMWYQQXCDMQ",
+        "run": "prun_01M88YNMA0ARNG7C7KZ417RAWA",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88YNMHN5P12Q4MATY777EXJ",
+        "aether_task": "tsk_01M88YNMHN5P12Q4MATY777EXK",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "Implemented ledger.py per SPEC.md (one threading.Lock per ledger; validation of names, balances, amounts; KeyError for unknown accounts; False for insufficient funds or destination overflow; same-account rule) and extended test_ledger.py to 22 tests, keeping the original two. Commit 7d242d2 on archon/f7jsygeg-implement-ledger-py-per-spec-md-with-tes, tree c9c7f189bfaa5d1258ee2f982862585aafd81867, no attribution lines. Checks: python3 -m unittest 22 OK (5 repeats OK); before: 2 errors from NotImplementedError. Reviewer agt_01M88YQGD83GV0X5FMKMHSEJD7 passed the head with no blocking findings. Open non-blocking follow-ups: test_snapshots_never_see_a_half_transfer does not fail if the writer thread raises; concurrency tests could hang rather than fail on a deadlock regression; validation via items() could be bypassed by a dict subclass that overrides items(). Risk: reviewer rated low; the author rated high because the rubric lists concurrency as high. The reviewer's call stands per contract, so the orchestrator should decide. Reviewer process pid 2625764 was left running by Aether and stops when this task ends. Nothing else was started. REVIEW: pass by agt_01M88YQGD83GV0X5FMKMHSEJD7.",
+        "structured": {
+          "checks": [
+            "python3 -m py_compile ledger.py test_ledger.py",
+            "python3 -m unittest (22 tests, OK; repeated 5 times, all OK)"
+          ],
+          "commit": "7d242d25d948fc73c496a441775efe4f3f238759",
+          "evidence": [
+            {
+              "after": "Ran 22 tests in 0.004s ... OK",
+              "before": "Ran 2 tests ... FAILED (errors=2): NotImplementedError",
+              "caption": "python3 -m unittest on the branch base vs head",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "7d242d25d948fc73c496a441775efe4f3f238759",
+          "pr": {
+            "body": "Approach: one threading.Lock per Ledger; every read and write happens under it, so transfers are linearizable and opposite transfers cannot deadlock. Amount is validated before account lookup; unknown accounts raise KeyError; insufficient funds and destination overflow return False with no change; same-account transfers return True iff funded and never change balances. Key files: ledger.py, test_ledger.py (original 2 tests kept). Checks: python3 -m unittest, 22 OK. Reviewer agt_01M88YQGD83GV0X5FMKMHSEJD7 passed the head with no blocking findings. Non-blocking follow-ups: (1) test_snapshots_never_see_a_half_transfer does not fail if the writer thread raises; (2) concurrency tests could hang rather than fail if a deadlock regresses; (3) validation uses items() so a dict subclass overriding items() could be copied unvalidated; spec says 'a dict', so not a violation.",
+            "summary": "Made Ledger(balances), transfer() and snapshot() work per SPEC.md. Now atomic and thread-safe via one lock per ledger. Before: all methods raised NotImplementedError (2 test errors). Now: 22 tests pass.",
+            "title": "Implement atomic Ledger per SPEC.md with tests"
+          },
+          "review": {
+            "reviewed_head": "7d242d25d948fc73c496a441775efe4f3f238759",
+            "reviewer_agents": [
+              "agt_01M88YQGD83GV0X5FMKMHSEJD7"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88YQGD83GV0X5FMKMHSEJD7",
+                "base": "256e3ad7346adb7bb4c83602ca6ef685bf0c8bc5",
+                "findings": 4,
+                "head": "7d242d25d948fc73c496a441775efe4f3f238759",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88YQGD83GV0X5FMKMHSEJD7"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M88YQGD83GV0X5FMKMHSEJD7:1": {
+                "blocking": false,
+                "description": "test_snapshots_never_see_a_half_transfer swallows worker exceptions: the worker's finally only sets done, so a transfer that raises (e.g. KeyError or ValueError) stops the loop early and the test still passes, since every observed total is still 1500.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88YNMG42EV7SWMWYQQXCDMQ"
+                },
+                "id": "agt_01M88YQGD83GV0X5FMKMHSEJD7:1",
+                "resolved_in": null
+              },
+              "agt_01M88YQGD83GV0X5FMKMHSEJD7:2": {
+                "blocking": false,
+                "description": "Concurrency tests can hang rather than fail if a deadlock regresses. In test_snapshots, the main thread's snapshot() blocks on the same lock the stuck worker holds, so there is no timeout. In test_opposite_transfers the threads are non-daemon, so a stuck thread can keep the interpreter alive after the assertion fails.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88YNMG42EV7SWMWYQQXCDMQ"
+                },
+                "id": "agt_01M88YQGD83GV0X5FMKMHSEJD7:2",
+                "resolved_in": null
+              },
+              "agt_01M88YQGD83GV0X5FMKMHSEJD7:3": {
+                "blocking": false,
+                "description": "JOIN_SECONDS uses wall-clock timeouts for deadlock detection. SPEC.md says tests use no wall-clock calculations; I read this as allowing timeouts but not timing-derived expectations. The 2 s budget is generous for about 2000 in-memory transfers, but this is a possible spec-wording conflict.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88YNMG42EV7SWMWYQQXCDMQ"
+                },
+                "id": "agt_01M88YQGD83GV0X5FMKMHSEJD7:3",
+                "resolved_in": null
+              },
+              "agt_01M88YQGD83GV0X5FMKMHSEJD7:4": {
+                "blocking": false,
+                "description": "Constructor validates via balances.items() and then copies with dict(balances). For a dict subclass that overrides items() or __iter__, the validated pairs and the copied contents can differ. The spec says 'a dict', so this is an edge case and not a spec violation as written.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88YNMG42EV7SWMWYQQXCDMQ"
+                },
+                "id": "agt_01M88YQGD83GV0X5FMKMHSEJD7:4",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "7d242d25d948fc73c496a441775efe4f3f238759",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88YQGD83GV0X5FMKMHSEJD7",
+                    "base": "256e3ad7346adb7bb4c83602ca6ef685bf0c8bc5",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M88YQGD83GV0X5FMKMHSEJD7:1",
+                      "agt_01M88YQGD83GV0X5FMKMHSEJD7:2",
+                      "agt_01M88YQGD83GV0X5FMKMHSEJD7:3",
+                      "agt_01M88YQGD83GV0X5FMKMHSEJD7:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "low",
+            "reviewer": "agt_01M88YQGD83GV0X5FMKMHSEJD7",
+            "why": "Reviewer rated low: one non-reentrant lock around pure in-memory work, no nested locking or I/O, amounts validated before touching state. Author rated high because the rubric lists concurrency as high; the reviewer's call stands per contract. Files touched: ledger.py, test_ledger.py only; no existing callers. Tests run: 22 OK. No review blockers."
+          },
+          "tree": "c9c7f189bfaa5d1258ee2f982862585aafd81867"
+        },
+        "cost_usd": 0.03824964,
+        "started_at": "2026-11-25T08:55:31.588666586Z",
+        "finished_at": "2026-11-25T08:57:50.560230626Z"
+      }
+    ],
+    "spent_usd": 0.03824964,
+    "gates": [],
+    "delegations": {
+      "stg_01M88YNMG42EV7SWMWYQQXCDMQ": {
+        "direct_usd": 0.026767919999999997,
+        "delegated_usd": 0.01148172,
+        "agents": [
+          {
+            "agent": "agt_01M88YQGD83GV0X5FMKMHSEJD7",
+            "parent": "agt_01M88YNMHN5P12Q4MATY777EXJ",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01148172
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T08:55:31.361564566Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T08:55:31.361564566Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T08:55:31.361564566Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

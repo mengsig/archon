@@ -1,0 +1,44 @@
+I've queued the multi-currency change as one initiative with two items, one per repository. Both are running now.
+
+- **`ledger`** (`qi_01M88VJ1SA9NBDWSDA8BAZKRPR`): optional fourth currency column, defaulting to USD; header `date,account,amount_cents,currency`; a malformed code exits 2 with the line number on stderr.
+- **`reports`** (`qi_01M88VJ1SD76MJZ16C2GAEGNGC`): totals per `account,currency`, sorted by account then currency; CSV without a currency column counts as USD; a malformed code exits 2.
+
+Both use the `direct` pipeline with standard review, since they share a data format. The shared contract is in initiative `ini_01M88VJ1S9TTYA8K7Z815A15E8`. Repos are `ship: local`, so the work commits on local branches and nothing is pushed.
+
+Choices I made that the request didn't settle:
+- Sort order is plain string order on account, then currency.
+- Input TSV lines are parsed as before; I did not add a header-line rule.
+
+I'll report when both items finish.
+
+Done: reports: totals per account and currency. Implemented per-account, per-currency totals in reports (branch archon/2gaegngc-reports-totals-per-account-and-currency). Commit d82d143 (tree aad8959), on top of ecd9410; not pushed. Changes: reports.py reads the optional currency column (missing means USD), groups by (account, currency), prints account,currency,total_cents sorted by account then currency, and exits 2 with a stderr error on a malformed code (must match [A-Z]{3}). test_reports.py adds tests for old CSV without currency, multi-currency split, sorting, and malformed codes exiting 2. README documents input, USD default, output, and exit codes. Checks: python3 -m unittest -v, 5/5 OK; manual run shows the before/after split (EUR row no longer merged into USD). Review: agt_01M88VKNSP26PKSF8ZEW7JR2SZ returned pass with no blocking findings. Non-blocking follow-ups, not changed: README says ISO 4217 but only the shape is checked; a short row reports 'invalid currency code None'; header detection is case-sensitive; account names with commas are not CSV-quoted (pre-existing). Risk high: the stdout header changes, so existing callers break. Nothing left running from me; the reviewer's leftover process had already exited.
+REVIEW: pass by agt_01M88VKNSP26PKSF8ZEW7JR2SZ
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88VKNSP26PKSF8ZEW7JR2SZ)
+
+SHIPPED: commit d82d143b236b0b434e26a1d173c818a022afd1ff on the run branch
+Branch `archon/2gaegngc-reports-totals-per-account-and-currency` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/b041d3d36b06bb490df1ea2e/reports holds it (3 files changed, 130 insertions(+), 12 deletions(-)). Review: `archon diff qi_01M88VJ1SD76MJZ16C2GAEGNGC`; land it in `main`: `archon merge qi_01M88VJ1SD76MJZ16C2GAEGNGC`.
+
+Done: ledger: add per-row currency column. Ledger per-row currency column is done and committed on archon/8bazkrpr-ledger-add-per-row-currency-column at 0b81623 (tree f5438fda), on top of base 26631526. The converter accepts an optional fourth TSV column (ISO 4217, exactly three uppercase ASCII letters), defaults to USD, and writes the header date,account,amount_cents,currency with a currency on every row. A bad currency prints `line N: ...` to stderr and exits 2. Other input errors still exit 1. Checks: cargo test passes (4 CLI tests in tests/cli.rs, 6 library tests), clippy -D warnings and fmt --check are clean. An independent reviewer (agt_01M88VM3V5NKX9VT5DFFA75H7Q) passed the head with no blocking findings. Open, non-blocking follow-ups: document currency trimming and the empty-fourth-column rule in the README, note that a line with both a bad amount and a bad currency exits 1, and the reports consumer still needs the sibling change. Nothing was pushed. The reviewer process was stopped and no servers were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88VM3V5NKX9VT5DFFA75H7Q)
+
+SHIPPED: commit 0b81623245d4c378e90e9126b8c95e936b087f7f on the run branch
+Branch `archon/8bazkrpr-ledger-add-per-row-currency-column` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/b041d3d36b06bb490df1ea2e/ledger holds it (5 files changed, 205 insertions(+), 18 deletions(-)). Review: `archon diff qi_01M88VJ1SA9NBDWSDA8BAZKRPR`; land it in `main`: `archon merge qi_01M88VJ1SA9NBDWSDA8BAZKRPR`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M88VJ1SA9NBDWSDA8BAZKRPR ended and its cargo target directory went.
+
+Implemented per-account, per-currency totals in reports (branch archon/2gaegngc-reports-totals-per-account-and-currency). Commit d82d143 (tree aad8959), on top of ecd9410; not pushed. Changes: reports.py reads the optional currency column (missing means USD), groups by (account, currency), prints account,currency,total_cents sorted by account then currency, and exits 2 with a stderr error on a malformed code (must match [A-Z]{3}). test_reports.py adds tests for old CSV without currency, multi-currency split, sorting, and malformed codes exiting 2. README documents input, USD default, output, and exit codes. Checks: python3 -m unittest -v, 5/5 OK; manual run shows the before/after split (EUR row no longer merged into USD). Review: agt_01M88VKNSP26PKSF8ZEW7JR2SZ returned pass with no blocking findings. Non-blocking follow-ups, not changed: README says ISO 4217 but only the shape is checked; a short row reports 'invalid currency code None'; header detection is case-sensitive; account names with commas are not CSV-quoted (pre-existing). Risk high: the stdout header changes, so existing callers break. Nothing left running from me; the reviewer's leftover process had already exited.
+REVIEW: pass by agt_01M88VKNSP26PKSF8ZEW7JR2SZ
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88VKNSP26PKSF8ZEW7JR2SZ)
+
+SHIPPED: commit d82d143b236b0b434e26a1d173c818a022afd1ff on the run branch
+
+Ledger per-row currency column is done and committed on archon/8bazkrpr-ledger-add-per-row-currency-column at 0b81623 (tree f5438fda), on top of base 26631526. The converter accepts an optional fourth TSV column (ISO 4217, exactly three uppercase ASCII letters), defaults to USD, and writes the header date,account,amount_cents,currency with a currency on every row. A bad currency prints `line N: ...` to stderr and exits 2. Other input errors still exit 1. Checks: cargo test passes (4 CLI tests in tests/cli.rs, 6 library tests), clippy -D warnings and fmt --check are clean. An independent reviewer (agt_01M88VM3V5NKX9VT5DFFA75H7Q) passed the head with no blocking findings. Open, non-blocking follow-ups: document currency trimming and the empty-fourth-column rule in the README, note that a line with both a bad amount and a bad currency exits 1, and the reports consumer still needs the sibling change. Nothing was pushed. The reviewer process was stopped and no servers were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88VM3V5NKX9VT5DFFA75H7Q)
+
+SHIPPED: commit 0b81623245d4c378e90e9126b8c95e936b087f7f on the run branch

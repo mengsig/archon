@@ -1,0 +1,522 @@
+diff --git a/tasktracker/dates.py b/tasktracker/dates.py
+index 91f8d3e..7d3e012 100644
+--- a/tasktracker/dates.py
++++ b/tasktracker/dates.py
+@@ -1,4 +1,3 @@
+-import calendar
+ import re
+ from datetime import date, timedelta
+ 
+@@ -6,8 +5,14 @@ ISO = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
+ OFFSET = re.compile(r"\+(\d+)d")
+ 
+ 
++class InvalidDate(ValueError):
++    pass
++
++
+ def parse_due(text, today):
+     """A due date from `YYYY-MM-DD`, `today`, `tomorrow` or `+Nd`."""
++    assert isinstance(text, str), "due date text must be a string"
++    assert isinstance(today, date), "today must be a date"
+     cleaned = text.strip().lower()
+     if cleaned == "today":
+         return today
+@@ -15,11 +20,22 @@ def parse_due(text, today):
+         return today + timedelta(days=1)
+     offset = OFFSET.fullmatch(cleaned)
+     if offset:
+-        return today + timedelta(days=int(offset.group(1)))
++        return _add_days(text, today, int(offset.group(1)))
+     iso = ISO.fullmatch(cleaned)
+     if not iso:
+-        raise ValueError(f"unrecognised due date: {text}")
+-    year, month, day = (int(g) for g in iso.groups())
+-    month = min(max(month, 1), 12)
+-    day = min(max(day, 1), calendar.monthrange(year, month)[1])
+-    return date(year, month, day)
++        raise InvalidDate(f"unrecognised due date: {text}")
++    return _calendar_date(text, *(int(group) for group in iso.groups()))
++
++
++def _add_days(text, today, days):
++    try:
++        return today + timedelta(days=days)
++    except OverflowError as exc:
++        raise InvalidDate(f"due date out of range: {text}") from exc
++
++
++def _calendar_date(text, year, month, day):
++    try:
++        return date(year, month, day)
++    except ValueError as exc:
++        raise InvalidDate(f"impossible calendar date: {text}") from exc
+diff --git a/tasktracker/export.py b/tasktracker/export.py
+index 723fc52..2ebd66b 100644
+--- a/tasktracker/export.py
++++ b/tasktracker/export.py
+@@ -1,6 +1,18 @@
++import csv
++import io
++
++HEADER = ["id", "title", "tags", "status", "due"]
++
++
+ def to_csv(tasks):
+-    lines = ["id,title,tags,status,due"]
++    buffer = io.StringIO()
++    writer = csv.writer(buffer, lineterminator="\r\n")
++    writer.writerow(HEADER)
+     for task in tasks:
+-        due = task.due.isoformat() if task.due else ""
+-        lines.append(f"{task.id},{task.title},{';'.join(task.tags)},{task.status},{due}")
+-    return "\n".join(lines) + "\n"
++        writer.writerow(_row(task))
++    return buffer.getvalue()
++
++
++def _row(task):
++    due = task.due.isoformat() if task.due else ""
++    return [task.id, task.title, ";".join(task.tags), task.status, due]
+diff --git a/tasktracker/search.py b/tasktracker/search.py
+index 2c7648a..009b3b9 100644
+--- a/tasktracker/search.py
++++ b/tasktracker/search.py
+@@ -1,2 +1,79 @@
++from typing import NamedTuple
++
++from .models import DONE, OPEN
++
++
++class QueryError(ValueError):
++    pass
++
++
++class Term(NamedTuple):
++    text: str
++    quoted: bool
++
++
+ def search(tasks, query):
+-    return [task for task in tasks if query in task.title]
++    """Tasks matching every term of `query`, in input order."""
++    assert isinstance(query, str), "query must be a string"
++    predicates = [_predicate(term) for term in _split_terms(query)]
++    return [task for task in tasks if all(matches(task) for matches in predicates)]
++
++
++def _split_terms(query):
++    terms = []
++    chars = []
++    quoted = False
++    in_quotes = False
++    started = False
++    for char in query:
++        if char == '"':
++            in_quotes = not in_quotes
++            quoted = started = True
++        elif char.isspace() and not in_quotes:
++            if started:
++                terms.append(Term("".join(chars), quoted))
++            chars, quoted, started = [], False, False
++        else:
++            chars.append(char)
++            started = True
++    if in_quotes:
++        raise QueryError(f"unterminated quote in query: {query}")
++    if started:
++        terms.append(Term("".join(chars), quoted))
++    return terms
++
++
++def _predicate(term):
++    if term.quoted:
++        return _title_contains(term.text)
++    field, separator, value = term.text.partition(":")
++    if not separator:
++        return _title_contains(term.text)
++    return _field_predicate(field, value)
++
++
++def _field_predicate(field, value):
++    if field.lower() == "tag":
++        return _has_tag(value)
++    if field.lower() == "status":
++        return _has_status(value)
++    raise QueryError(f"unknown search field: {field}")
++
++
++def _title_contains(text):
++    needle = text.lower()
++    return lambda task: needle in task.title.lower()
++
++
++def _has_tag(name):
++    wanted = name.lower()
++    if not wanted:
++        raise QueryError("tag: needs a tag name")
++    return lambda task: any(tag.lower() == wanted for tag in task.tags)
++
++
++def _has_status(value):
++    wanted = value.lower()
++    if wanted not in (OPEN, DONE):
++        raise QueryError(f"unknown status: {value}")
++    return lambda task: task.status == wanted
+diff --git a/tasktracker/store.py b/tasktracker/store.py
+index 2b07e8a..2a65388 100644
+--- a/tasktracker/store.py
++++ b/tasktracker/store.py
+@@ -1,14 +1,32 @@
+-from .models import DONE, Task
++from dataclasses import dataclass
++
++from .models import DONE, OPEN, Task
++
++ADD = "add"
++COMPLETE = "complete"
++DELETE = "delete"
+ 
+ 
+ class UnknownTask(KeyError):
+     pass
+ 
+ 
++class NothingToUndo(Exception):
++    pass
++
++
++@dataclass(frozen=True)
++class _Change:
++    kind: str
++    task: Task
++    previous_status: str = OPEN
++
++
+ class TaskStore:
+     def __init__(self):
+         self._tasks = {}
+         self._next_id = 1
++        self._history = []
+ 
+     def add(self, title, tags=(), due=None):
+         if not title.strip():
+@@ -16,6 +34,7 @@ class TaskStore:
+         task = Task(self._next_id, title.strip(), list(tags), due=due)
+         self._tasks[task.id] = task
+         self._next_id += 1
++        self._history.append(_Change(ADD, task))
+         return task
+ 
+     def get(self, task_id):
+@@ -26,13 +45,40 @@ class TaskStore:
+ 
+     def complete(self, task_id):
+         task = self.get(task_id)
++        self._history.append(_Change(COMPLETE, task, task.status))
+         task.status = DONE
+         return task
+ 
+     def delete(self, task_id):
+         task = self.get(task_id)
+         del self._tasks[task_id]
++        self._history.append(_Change(DELETE, task))
+         return task
+ 
++    def undo(self):
++        """Revert the most recent add, complete or delete and return its task."""
++        if not self._history:
++            raise NothingToUndo("there is no add, complete or delete to undo")
++        change = self._history.pop()
++        if change.kind == ADD:
++            self._undo_add(change.task)
++        elif change.kind == COMPLETE:
++            self._undo_complete(change.task, change.previous_status)
++        else:
++            self._undo_delete(change.task)
++        return change.task
++
++    def _undo_add(self, task):
++        assert task.id in self._tasks, "an added task must still exist when undone"
++        del self._tasks[task.id]
++
++    def _undo_complete(self, task, previous_status):
++        assert task.id in self._tasks, "a completed task must still exist when undone"
++        task.status = previous_status
++
++    def _undo_delete(self, task):
++        assert task.id not in self._tasks, "a deleted task's id cannot be reused"
++        self._tasks[task.id] = task
++
+     def all(self):
+         return sorted(self._tasks.values(), key=lambda t: t.id)
+diff --git a/tests/test_dates.py b/tests/test_dates.py
+new file mode 100644
+index 0000000..422fb4f
+--- /dev/null
++++ b/tests/test_dates.py
+@@ -0,0 +1,43 @@
++import unittest
++from datetime import date
++
++from tasktracker.dates import InvalidDate, parse_due
++
++TODAY = date(2026, 3, 10)
++
++
++class ParseDueTest(unittest.TestCase):
++    def test_iso_dates(self):
++        self.assertEqual(parse_due("2028-02-29", TODAY), date(2028, 2, 29))
++
++    def test_impossible_calendar_dates_are_rejected(self):
++        for text in ["2026-02-30", "2025-02-29", "2026-04-31", "2026-13-01", "2026-00-10"]:
++            with self.subTest(text=text):
++                with self.assertRaises(InvalidDate) as ctx:
++                    parse_due(text, TODAY)
++                self.assertIn(text, str(ctx.exception))
++
++    def test_unrecognised_text_raises_invalid_date(self):
++        for text in ["next week", "2026-3-1", "", "3d", "-3d", "+3", "+-3d"]:
++            with self.subTest(text=text):
++                with self.assertRaises(InvalidDate):
++                    parse_due(text, TODAY)
++
++    def test_offsets(self):
++        self.assertEqual(parse_due("+0d", TODAY), TODAY)
++        self.assertEqual(parse_due("+5d", TODAY), date(2026, 3, 15))
++
++    def test_offset_out_of_range_raises_invalid_date(self):
++        with self.assertRaises(InvalidDate):
++            parse_due("+99999999999d", TODAY)
++
++    def test_keywords_ignore_case_and_whitespace(self):
++        self.assertEqual(parse_due("  TODAY ", TODAY), TODAY)
++        self.assertEqual(parse_due(" Tomorrow ", TODAY), date(2026, 3, 11))
++
++    def test_invalid_date_is_a_value_error(self):
++        self.assertTrue(issubclass(InvalidDate, ValueError))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_export.py b/tests/test_export.py
+new file mode 100644
+index 0000000..130a309
+--- /dev/null
++++ b/tests/test_export.py
+@@ -0,0 +1,45 @@
++import unittest
++from datetime import date
++
++from tasktracker.export import to_csv
++from tasktracker.models import Task
++
++
++class ToCsvTest(unittest.TestCase):
++    def test_empty_export_is_header_only(self):
++        self.assertEqual(to_csv([]), "id,title,tags,status,due\r\n")
++
++    def test_plain_fields_are_not_quoted_and_lines_end_with_crlf(self):
++        tasks = [Task(1, "plain", ["a", "b"], "open", date(2026, 4, 1)), Task(2, "bare")]
++        self.assertEqual(
++            to_csv(tasks),
++            "id,title,tags,status,due\r\n1,plain,a;b,open,2026-04-01\r\n2,bare,,open,\r\n",
++        )
++
++    def test_comma_in_title_is_quoted(self):
++        tasks = [Task(1, "milk, eggs")]
++        self.assertIn('1,"milk, eggs",,open,\r\n', to_csv(tasks))
++
++    def test_quotes_are_doubled_and_field_wrapped(self):
++        tasks = [Task(1, 'say "hi"')]
++        self.assertIn('1,"say ""hi""",,open,\r\n', to_csv(tasks))
++
++    def test_newlines_and_carriage_returns_are_quoted(self):
++        tasks = [Task(1, "line one\nline two"), Task(2, "cr\rhere")]
++        output = to_csv(tasks)
++        self.assertIn('1,"line one\nline two",,open,\r\n', output)
++        self.assertIn('2,"cr\rhere",,open,\r\n', output)
++
++    def test_tags_containing_comma_are_quoted(self):
++        tasks = [Task(1, "t", ["x,y", "z"])]
++        self.assertIn('1,t,"x,y;z",open,\r\n', to_csv(tasks))
++
++    def test_rows_keep_input_order(self):
++        tasks = [Task(3, "third"), Task(1, "first")]
++        rows = to_csv(tasks).split("\r\n")
++        self.assertEqual(rows[1].split(",")[0], "3")
++        self.assertEqual(rows[2].split(",")[0], "1")
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_search.py b/tests/test_search.py
+new file mode 100644
+index 0000000..59787c6
+--- /dev/null
++++ b/tests/test_search.py
+@@ -0,0 +1,71 @@
++import unittest
++
++from tasktracker.models import Task
++from tasktracker.search import QueryError, search
++
++TASKS = [
++    Task(1, "Write report", ["work"], "open"),
++    Task(2, "Buy milk", ["home", "Errands"], "done"),
++    Task(3, "fix login page", ["Work", "urgent"], "open"),
++    Task(4, "Fix LOGIN bug", [], "done"),
++]
++
++
++def ids(tasks):
++    return [task.id for task in tasks]
++
++
++class SearchTest(unittest.TestCase):
++    def test_bare_word_matches_title_case_insensitively(self):
++        self.assertEqual(ids(search(TASKS, "report")), [1])
++        self.assertEqual(ids(search(TASKS, "LOGIN")), [3, 4])
++
++    def test_bare_word_does_not_match_tags(self):
++        self.assertEqual(ids(search(TASKS, "urgent")), [])
++
++    def test_quoted_phrase_is_one_term(self):
++        self.assertEqual(ids(search(TASKS, '"fix login"')), [3, 4])
++        self.assertEqual(ids(search(TASKS, '"fix page"')), [])
++        self.assertEqual(ids(search(TASKS, "fix page")), [3])
++
++    def test_terms_are_anded(self):
++        self.assertEqual(ids(search(TASKS, "fix login status:open")), [3])
++
++    def test_tag_matches_exact_tag_case_insensitively(self):
++        self.assertEqual(ids(search(TASKS, "tag:work")), [1, 3])
++        self.assertEqual(ids(search(TASKS, "tag:errand")), [])
++        self.assertEqual(ids(search(TASKS, "tag:ERRANDS")), [2])
++
++    def test_status_filters(self):
++        self.assertEqual(ids(search(TASKS, "status:open")), [1, 3])
++        self.assertEqual(ids(search(TASKS, "STATUS:Done")), [2, 4])
++
++    def test_blank_query_matches_everything_in_order(self):
++        self.assertEqual(ids(search(TASKS, "")), [1, 2, 3, 4])
++        self.assertEqual(ids(search(TASKS, "   \t ")), [1, 2, 3, 4])
++
++    def test_no_tasks_gives_empty_result(self):
++        self.assertEqual(search([], "anything"), [])
++
++    def test_unknown_field_raises(self):
++        with self.assertRaises(QueryError):
++            search(TASKS, "due:today")
++
++    def test_unknown_status_raises(self):
++        with self.assertRaises(QueryError):
++            search(TASKS, "status:closed")
++
++    def test_empty_tag_name_raises(self):
++        with self.assertRaises(QueryError):
++            search(TASKS, "tag:")
++
++    def test_unterminated_quote_raises(self):
++        with self.assertRaises(QueryError):
++            search(TASKS, '"fix login')
++
++    def test_quoted_colon_is_a_phrase_not_a_field(self):
++        self.assertEqual(ids(search(TASKS, '"due:today"')), [])
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_store_undo.py b/tests/test_store_undo.py
+new file mode 100644
+index 0000000..5f5fd54
+--- /dev/null
++++ b/tests/test_store_undo.py
+@@ -0,0 +1,87 @@
++import unittest
++
++from tasktracker.models import DONE, OPEN
++from tasktracker.store import NothingToUndo, TaskStore, UnknownTask
++
++
++class UndoTest(unittest.TestCase):
++    def test_undo_add_removes_task_and_keeps_id_unused(self):
++        store = TaskStore()
++        task = store.add("write report")
++        store.undo()
++        self.assertEqual(store.all(), [])
++        with self.assertRaises(UnknownTask):
++            store.get(task.id)
++        self.assertEqual(store.add("buy milk").id, task.id + 1)
++
++    def test_undo_complete_reopens_task(self):
++        store = TaskStore()
++        task = store.add("write report")
++        store.complete(task.id)
++        store.undo()
++        self.assertEqual(store.get(task.id).status, OPEN)
++
++    def test_undo_delete_restores_task_under_same_id(self):
++        store = TaskStore()
++        task = store.add("write report", tags=["work"])
++        store.complete(task.id)
++        store.delete(task.id)
++        store.undo()
++        restored = store.get(task.id)
++        self.assertEqual((restored.id, restored.title, restored.tags, restored.status),
++                         (task.id, "write report", ["work"], DONE))
++
++    def test_undo_walks_back_lifo_across_kinds(self):
++        store = TaskStore()
++        a = store.add("a")
++        b = store.add("b")
++        store.complete(a.id)
++        store.delete(b.id)
++        store.undo()
++        self.assertEqual([t.id for t in store.all()], [a.id, b.id])
++        self.assertEqual(store.get(a.id).status, DONE)
++        store.undo()
++        self.assertEqual(store.get(a.id).status, OPEN)
++        store.undo()
++        self.assertEqual([t.id for t in store.all()], [a.id])
++
++    def test_undo_returns_affected_task(self):
++        store = TaskStore()
++        task = store.add("a")
++        self.assertIs(store.undo(), task)
++
++    def test_nothing_to_undo_raises(self):
++        store = TaskStore()
++        with self.assertRaises(NothingToUndo):
++            store.undo()
++        store.add("a")
++        store.undo()
++        with self.assertRaises(NothingToUndo):
++            store.undo()
++
++    def test_failed_operations_are_not_recorded(self):
++        store = TaskStore()
++        store.add("a")
++        with self.assertRaises(UnknownTask):
++            store.complete(99)
++        with self.assertRaises(UnknownTask):
++            store.delete(99)
++        with self.assertRaises(ValueError):
++            store.add("   ")
++        store.undo()
++        self.assertEqual(store.all(), [])
++        with self.assertRaises(NothingToUndo):
++            store.undo()
++
++    def test_undone_changes_are_not_undone_twice(self):
++        store = TaskStore()
++        store.add("a")
++        store.undo()
++        store.add("b")
++        store.undo()
++        with self.assertRaises(NothingToUndo):
++            store.undo()
++
++
++if __name__ == "__main__":
++    unittest.main()

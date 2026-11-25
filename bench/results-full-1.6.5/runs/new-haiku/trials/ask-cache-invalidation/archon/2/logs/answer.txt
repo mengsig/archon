@@ -1,0 +1,26 @@
+**Root cause:** `updatePrice` invalidates only the product cache entry. It never invalidates the category listing entries, which hold their own copies of `priceCents`, so they keep the old price until their TTL expires.
+
+**The code path** (`src/pricing.js`, `src/catalog.js`, `src/cache.js`):
+
+- `updatePrice` updates the store, then calls `catalog.cache.delete(productKey(sku))`. Only `product:<sku>` is removed.
+- `Catalog.product(sku)` reads `product:<sku>`, so the product page reads fresh data as soon as the entry is gone.
+- `Catalog.listing(category, page)` caches the whole page under `listing:<category>:<page>` with `LISTING_TTL_SECONDS` (600 s). The cached rows are `{ sku, name, priceCents }` copies, so the change never reaches them.
+- `TtlCache.set` sets `expiresAt` once, at write time, and nothing refreshes it. A listing page is therefore stale until 600 s after it was last filled, which is where the "up to about ten minutes" comes from.
+
+**Why the delay is that length:** `src/config.js` gives listings a 600 s TTL because they are costly to build (the comment says joins and sorting). The TTL is a deliberate trade-off, but it is applied to data that a price change can alter. Nothing in the write path invalidates it.
+
+**Why the test does not catch it:** `test/catalog.test.js` checks that the product page updates. It has no case that reads a listing before and after `updatePrice`.
+
+**Fix options:**
+
+1. **Invalidate the affected listings on write.** In `updatePrice`, look up the product's category and delete its listing pages. Pages are keyed by category and page number, so the cache needs a way to delete by prefix (for example, a `deleteByPrefix('listing:<category>:')` method on `TtlCache`). This is a small, targeted change.
+2. **Cache only the ordering, and hydrate prices at read time.** A listing stores the SKU order for each page, and `listing()` fetches current prices from the product path. Price changes then need no invalidation, though the read costs more per row. Note that this does not cover name changes unless names are hydrated the same way.
+3. **Lower `LISTING_TTL_SECONDS`.** This shrinks the window but does not remove it, and it raises rebuild cost.
+
+I recommend option 1 as the smallest correct fix, plus a regression test that reads a listing, calls `updatePrice`, and asserts the new price on the next listing read. Before that, you may want to confirm whether any other code path writes product fields (names, categories) through `store.update`, because the same stale-listing problem would apply to those.
+
+**Notes on the investigation:**
+
+- The repository registered in Archon is named `a[REDACTED]`. The code I read is its mirror at `repos/ask-cache-invalidation` (HEAD `5b6f211`, base commit only, no uncommitted work). Its `package.json` name is `catalog-service` 2.3.1, so I treated it as the service you meant.
+- I did not run the tests or change any code. The conclusion comes from reading the source.
+- Within this single process the write and the cache delete run synchronously, so no interleaving reintroduces the stale value. A shared or multi-process cache would need its own check.

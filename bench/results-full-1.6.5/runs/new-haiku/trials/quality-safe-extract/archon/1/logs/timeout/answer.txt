@@ -1,0 +1,10 @@
+I've queued the implementation as item `qi_01M88SSSS4KCXMFY330V109W8Y`. It runs in the `direct` pipeline on `quality-safe-extract`, with strict review, and will commit locally without pushing, since that repo ships local.
+
+Choices I made:
+- **Pipeline and review:** one author, because the work is a single module and its tests. Strict review because it is archive extraction, where path traversal and similar bugs are security issues.
+- **Effort:** medium. My first attempt at high effort was refused because the configured maximum is medium. I did not try to raise the ceiling, since only the operator can do that.
+- **Scope:** the agent reads `SPEC.md` in full, keeps the documented API unchanged, covers every specified error and boundary case, and adds tests in `test_safe_extract.py`. It must use only the standard library and must pass the tests before committing.
+
+I have not read `SPEC.md` or the stub myself, so I can't yet say whether the spec has edge cases the agent might miss. I'll report the outcome when the item finishes, including the test results and the commit.
+
+Cancelled: Implement safe_extract.py per SPEC.md with focused tests. archon-bench: trial timeout

@@ -1,0 +1,13 @@
+`extract` is implemented in `safe_extract.py` and committed as `c4a2235`. The full suite passes: 36 tests, run with `python3 -m unittest test_safe_extract`. I used the standard library only.
+
+**How it works:** `extract` validates the whole batch before any filesystem write. Validation covers the list type, entry shape, name and data types, the name rules, duplicates and file/directory collisions in both orders, and the root. Each target's path below the root is checked with `lstat`, so symlinks (including dangling ones) and non-directory ancestors are rejected. Only after that does it create parent directories and write each file with exclusive `"xb"` mode, so existing files are never overwritten or followed through a link. Unexpected I/O errors propagate.
+
+**Choices I made where the spec was silent:**
+- Names must encode as strict UTF-8, so lone surrogates are rejected as invalid Unicode. Names are not otherwise decoded or normalized.
+- `root` must be a non-empty `str` or `Path`. An empty string is rejected rather than treated as the current directory.
+- `data` must be `bytes`. `bytearray` and `memoryview` are rejected.
+- A symlinked ancestor *above* the root (for example `/tmp` on some systems) is not checked, since the spec only covers components below root.
+
+**Tests:** I kept the two original tests and added 34 covering each spec rule. Among them: non-list batches (including tuples, iterators and generators) are rejected without being consumed, a late invalid entry creates nothing, symlink cases, and an injected `OSError` propagates.
+
+**Not committed:** a `__pycache__/` directory from the test run. `pytest` isn't installed here, so I ran the tests with `unittest`.

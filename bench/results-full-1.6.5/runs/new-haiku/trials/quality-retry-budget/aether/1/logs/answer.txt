@@ -1,0 +1,20 @@
+Implemented `retry_delay` in retry_budget.py per SPEC.md and expanded test_retry_budget.py. Committed as 11b400b on main (author mengsig, with the Co-Authored-By line from the attribution reminder). All 32 unittest tests pass (`python3 -m unittest -v test_retry_budget`, run from the repo directory).
+
+Implementation notes:
+- All arguments are validated first, before the attempt-limit and budget early returns. Each must be an exact `int` (bool and float are rejected, and so are other types). Violations raise ValueError with the argument name.
+- Backoff saturates without big powers: if base.bit_length() + (attempt-1) exceeds cap.bit_length(), it returns cap directly. A brute-force check against min(cap, base*2**(attempt-1)) over base/cap in 0..69 and attempt in 1..79 found 0 mismatches.
+- Retry-After is applied as an uncapped floor via max(backoff, retry_after_ms).
+- The budget check is `elapsed + delay >= budget` → None, so a retry must start strictly before budget_ms.
+
+Assumption: the spec's "Invalid values raise ValueError" applies to wrong types as well as out-of-range values, so wrong types also raise ValueError rather than TypeError.
+
+The working tree is clean; the generated __pycache__ was removed.
+
+I implemented `retry_delay` in `retry_budget.py` per `SPEC.md`, expanded `test_retry_budget.py`, and committed both as `11b400b` on `main`. All 32 tests pass.
+
+- **Validation:** every argument is checked before the attempt-limit and budget early returns. Each must be an exact `int`, so bools and floats are rejected. Violations raise `ValueError`.
+- **Backoff:** it saturates without building large powers of two. I checked it against the naive `min(cap, base * 2**(attempt-1))` over a small grid and found no mismatches.
+- **Retry-After:** applied as an uncapped minimum wait.
+- **Budget:** a retry is refused unless `elapsed + delay < budget`.
+
+I read "Invalid values raise ValueError" as covering wrong types too, so a non-int raises `ValueError` rather than `TypeError`.

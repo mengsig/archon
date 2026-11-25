@@ -1,0 +1,10 @@
+`retry_budget.py` now implements `retry_delay` as specified in `SPEC.md`, with focused tests. The work is committed as `b15edf9` on `main`, and the test suite passes (29 tests).
+
+**What changed**
+- **`retry_budget.py`**: all six numeric arguments are validated first, as `int` and not `bool`, with the minimums from the spec. Invalid values raise `ValueError`. After validation, the function returns `None` when `attempt >= max_attempts`, otherwise it computes the backoff, applies the `retry_after_ms` floor, and checks the budget.
+- **Backoff saturation**: when the shift is at least `cap_ms.bit_length()`, the result is `cap_ms` directly, so huge attempt values never build a large power of two. Zero base or zero cap returns 0.
+- **`test_retry_budget.py`**: the original three tests are kept. New tests cover type and range validation, validation running before early returns, saturation at huge attempts, the `retry_after` floor not being capped, and the strict `elapsed + delay < budget` rule.
+
+**Choices I made**
+- The `ValueError` checks are explicit `if` statements rather than `assert`, because the spec requires `ValueError` and asserts can be stripped under `-O`.
+- I ran the tests with plain `python3 -m unittest` rather than `-I`, since `-I` removes the working directory from `sys.path` and the test module can't be imported. These are the repo's own files, not untrusted downloads.

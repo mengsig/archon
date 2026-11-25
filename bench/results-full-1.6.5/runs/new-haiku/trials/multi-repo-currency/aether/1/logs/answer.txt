@@ -1,0 +1,21 @@
+Both repositories now handle currency, and each has a commit: `ledger` at `cf87e3a` and `reports` at `92dca3a`. Both test suites pass (`cargo test`: 9 tests, `python3 -m unittest`: 5 tests), and the two tools work together in a pipeline.
+
+**`ledger`**
+- Lines take an optional fourth column. The ISO code must be exactly three uppercase ASCII letters; a missing column means `USD`.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed code prints `line N: bad currency ...` to stderr and exits 2. Other errors still exit 1.
+- New tests cover the default, an explicit `EUR`, rejected codes, and the exit statuses through the real binary.
+
+**`reports`**
+- Output is `account,currency,total_cents`, sorted by account, then currency.
+- CSV without a `currency` column is counted as `USD`.
+- A malformed code prints `error: line N: ...` to stderr and exits 2.
+
+Both READMEs are updated to match.
+
+Choices I made that you may want to change:
+- An empty fourth column (a trailing tab) counts as a malformed currency and exits 2. It is not treated as "missing".
+- `reports` also exits 2 when a row has the currency column but is short (no value). That keeps a truncated row from being silently counted as `USD`.
+- Error messages in `reports` include the line number, which the spec did not require.
+
+The commits use the repo's configured `mengsig` identity with the Co-Authored-By trailer from the system instructions.

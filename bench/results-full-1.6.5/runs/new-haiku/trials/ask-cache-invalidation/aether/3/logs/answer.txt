@@ -1,0 +1,28 @@
+The root cause is in `src/catalog.js`, and the delay is the listing TTL. I reproduced it with an injected clock and changed nothing in the repo.
+
+**Responsible code path**
+
+- `pricing.js` `updatePrice()` writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That clears only the `product:<sku>` entry, which is why the product page is correct immediately.
+- `catalog.js` `listing(category, page)` caches whole page results under `listing:<category>:<page>` with `LISTING_TTL_SECONDS` (600 s, `config.js:7`). Each cached row is a projected snapshot `{ sku, name, priceCents }`, so the price lives inside the listing cache entry.
+- Nothing invalidates listing keys. `updatePrice` has no way to find them: it doesn't know the product's category, and `TtlCache` has no index or prefix-delete.
+
+**Why it lasts up to ~10 minutes**
+
+- A listing entry is only evicted when `expiresAt` passes, which is `set time + 600 s`. Reads don't extend it.
+- The repro confirms it. After `updatePrice(catalog, 'A1', 4500)`, `product('A1')` returns 4500, but `listing('tools')` still returns 5000. At 599 s it's still 5000, and at 600 s it becomes 4500.
+- The worst-case staleness is exactly `LISTING_TTL_SECONDS`.
+
+**Why it isn't a product-page problem**
+
+- The product cache is invalidated on write, so the 3600 s product TTL never shows stale data after an update.
+
+**Fix options**
+
+1. **Recommended: stop caching price in listings.** Cache only the ordered SKU list per page, and hydrate `priceCents` from `product()` at read time. Price changes don't affect membership or order, since the sort is by name. Product cache hits make the hydration cheap, but it does add a lookup per row on a cold product cache.
+2. **Invalidate listings on write.** Look up the product's category, then delete every `listing:<category>:<page>` key for that category. This is simple, but it needs a category-to-keys index or a per-category version in the key, and it is the more fragile option.
+3. **Lower `LISTING_TTL_SECONDS`.** This only shrinks the window and adds load. I wouldn't use it as the fix.
+
+**Caveats**
+
+- This is a single in-process `Map`. If the service runs as multiple instances, `cache.delete` only clears the instance that handled the write. The other instances would then serve stale product data for up to an hour (`PRODUCT_TTL_SECONDS`), and stale listings for up to ten minutes. Support's report suggests the product page is served from the writing instance, so check the deployment topology before picking a fix. A shared cache or a pub/sub invalidation would be needed in that case.
+- The existing tests (`test/catalog.test.js`, 3 passing) cover the product path only. Nothing asserts that a listing reflects a price update, which is why this went unnoticed. A regression test should check `listing()` immediately after `updatePrice()`.

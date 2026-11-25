@@ -347,7 +347,7 @@ def main():
             reasons.append(f"{model}: combined model cost exceeded $30")
             word = 'REGRESSION'
     summary = {'verdict': word, 'reasons': reasons, 'models': per_model, 'budgets': budgets, 'html': 'index.html',
-               'limitations': ['Independent e2e validation overlapped Haiku runs by 08:32 UTC; wall times and timeouts are confounded, including timeout-related pass/fail outcomes.']}
+               'limitations': ['Independent e2e validation overlapped Haiku runs by 08:32 UTC; wall times, costs and timeouts are confounded, including timeout-related pass/fail outcomes.']}
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / 'summary.json').write_text(json.dumps(json_safe(summary), indent=2, allow_nan=False))
     print(word, reasons)

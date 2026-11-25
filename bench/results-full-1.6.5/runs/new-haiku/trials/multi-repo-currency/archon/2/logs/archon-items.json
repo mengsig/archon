@@ -1,0 +1,627 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88VJ1SD76MJZ16C2GAEGNGC",
+      "repo": "repo_01M88VHKJ8VWT06BHQ6G0R5HCB",
+      "pipeline": "direct",
+      "title": "reports: totals per account and currency",
+      "brief": "In the reports repository (Python), read the CSV produced by ledger on stdin and print per-account totals per account AND currency. Output header `account,currency,total_cents`, rows sorted by account then currency. CSV without a `currency` column (old ledger output) is accepted and every row counts as USD. A malformed currency code (must be exactly three uppercase ASCII letters) prints an error to stderr and exits with status 2. Add or update unittest tests covering: old CSV without currency, new CSV with multiple currencies, sorting, and malformed codes exit 2. Update the README to document the input format, the USD default, the output format and the exit codes. Commit in the reports repository only.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88VJ1SD76MJZ16C2GAEGNGC",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T08:01:08.398922748Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T08:01:08.416222486Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T08:01:08.398922748Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M88VJ1S9TTYA8K7Z815A15E8",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88VJ1T7D4CS1EXP2H9PW2BV",
+        "summary": "Implemented per-account, per-currency totals in reports (branch archon/2gaegngc-reports-totals-per-account-and-currency). Commit d82d143 (tree aad8959), on top of ecd9410; not pushed. Changes: reports.py reads the optional currency column (missing means USD), groups by (account, currency), prints account,currency,total_cents sorted by account then currency, and exits 2 with a stderr error on a malformed code (must match [A-Z]{3}). test_reports.py adds tests for old CSV without currency, multi-currency split, sorting, and malformed codes exiting 2. README documents input, USD default, output, and exit codes. Checks: python3 -m unittest -v, 5/5 OK; manual run shows the before/after split (EUR row no longer merged into USD). Review: agt_01M88VKNSP26PKSF8ZEW7JR2SZ returned pass with no blocking findings. Non-blocking follow-ups, not changed: README says ISO 4217 but only the shape is checked; a short row reports 'invalid currency code None'; header detection is case-sensitive; account names with commas are not CSV-quoted (pre-existing). Risk high: the stdout header changes, so existing callers break. Nothing left running from me; the reviewer's leftover process had already exited.\nREVIEW: pass by agt_01M88VKNSP26PKSF8ZEW7JR2SZ\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88VKNSP26PKSF8ZEW7JR2SZ)\n\nSHIPPED: commit d82d143b236b0b434e26a1d173c818a022afd1ff on the run branch"
+      },
+      "created_at": "2026-11-25T08:01:08.393929439Z",
+      "updated_at": "2026-11-25T08:03:07.287960132Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88VJ1T7D4CS1EXP2H9PW2BV",
+        "item": "qi_01M88VJ1SD76MJZ16C2GAEGNGC",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88VJ20HVKDHJFJ5VRCRCX9G",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/b041d3d36b06bb490df1ea2e/.archon/data/worktrees/reports/qi_01M88VJ1SD76MJZ16C2GAEGNGC",
+        "branch": "archon/2gaegngc-reports-totals-per-account-and-currency",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented per-account, per-currency totals in reports (branch archon/2gaegngc-reports-totals-per-account-and-currency). Commit d82d143 (tree aad8959), on top of ecd9410; not pushed. Changes: reports.py reads the optional currency column (missing means USD), groups by (account, currency), prints account,currency,total_cents sorted by account then currency, and exits 2 with a stderr error on a malformed code (must match [A-Z]{3}). test_reports.py adds tests for old CSV without currency, multi-currency split, sorting, and malformed codes exiting 2. README documents input, USD default, output, and exit codes. Checks: python3 -m unittest -v, 5/5 OK; manual run shows the before/after split (EUR row no longer merged into USD). Review: agt_01M88VKNSP26PKSF8ZEW7JR2SZ returned pass with no blocking findings. Non-blocking follow-ups, not changed: README says ISO 4217 but only the shape is checked; a short row reports 'invalid currency code None'; header detection is case-sensitive; account names with commas are not CSV-quoted (pre-existing). Risk high: the stdout header changes, so existing callers break. Nothing left running from me; the reviewer's leftover process had already exited.\nREVIEW: pass by agt_01M88VKNSP26PKSF8ZEW7JR2SZ\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88VKNSP26PKSF8ZEW7JR2SZ)\n\nSHIPPED: commit d82d143b236b0b434e26a1d173c818a022afd1ff on the run branch"
+        },
+        "cost_usd": 0.03384616000000001,
+        "started_at": "2026-11-25T08:01:08.579517998Z",
+        "finished_at": "2026-11-25T08:03:07.287960132Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88VJ20B7V9ZSBH4YN8K98W7",
+        "run": "prun_01M88VJ1T7D4CS1EXP2H9PW2BV",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88VJ216DA6N7FJZ1JVEVW3S",
+        "aether_task": "tsk_01M88VJ216TA1X7YQ2RZGFN9F8",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented per-account, per-currency totals in reports (branch archon/2gaegngc-reports-totals-per-account-and-currency). Commit d82d143 (tree aad8959), on top of ecd9410; not pushed. Changes: reports.py reads the optional currency column (missing means USD), groups by (account, currency), prints account,currency,total_cents sorted by account then currency, and exits 2 with a stderr error on a malformed code (must match [A-Z]{3}). test_reports.py adds tests for old CSV without currency, multi-currency split, sorting, and malformed codes exiting 2. README documents input, USD default, output, and exit codes. Checks: python3 -m unittest -v, 5/5 OK; manual run shows the before/after split (EUR row no longer merged into USD). Review: agt_01M88VKNSP26PKSF8ZEW7JR2SZ returned pass with no blocking findings. Non-blocking follow-ups, not changed: README says ISO 4217 but only the shape is checked; a short row reports 'invalid currency code None'; header detection is case-sensitive; account names with commas are not CSV-quoted (pre-existing). Risk high: the stdout header changes, so existing callers break. Nothing left running from me; the reviewer's leftover process had already exited.\nREVIEW: pass by agt_01M88VKNSP26PKSF8ZEW7JR2SZ",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v (5 tests, OK)",
+            "python3 reports.py sample run: exit 0, header account,currency,total_cents",
+            "python3 reports.py with currency 'us': stderr error, exit 2"
+          ],
+          "commit": "d82d143b236b0b434e26a1d173c818a022afd1ff",
+          "evidence": [
+            {
+              "after": "account,currency,total_cents\ngroceries,EUR,-4510\ngroceries,USD,-990\nrent,USD,-120000",
+              "before": "account,total_cents\ngroceries,-5500\nrent,-120000",
+              "caption": "Same ledger input before and after the change: EUR row was merged into USD before; now split",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "d82d143b236b0b434e26a1d173c818a022afd1ff",
+          "pr": {
+            "body": "Approach: reports.py groups totals by (account, currency). Currency presence is decided from the CSV header; absent column means USD; present column must fullmatch [A-Z]{3} or main prints an error to stderr and exits 2 with nothing on stdout. Files: reports.py, test_reports.py, README.md. Checks: python3 -m unittest -v, 5/5 OK; sample run output checked. Tests cover old CSV without currency, multi-currency split, account-then-currency sorting, and malformed codes (usd, US, USDX, U5D, empty) exiting 2. Review agt_01M88VKNSP26PKSF8ZEW7JR2SZ: pass, no blocking findings. Non-blocking follow-ups, not changed: README says ISO 4217 but only the shape is checked (XYZ accepted); a short row reports 'invalid currency code None'; header detection is case-sensitive; render() does not CSV-quote account names containing commas (pre-existing). Assumption: the header change is intended and downstream callers are updated together.",
+            "summary": "made reports split totals by currency. now reads optional currency column (missing = USD), prints account,currency,total_cents sorted by account then currency, and exits 2 on malformed codes. before: EUR rows merged into USD total (groceries,-5500); now: groceries,EUR,-4510 and groceries,USD,-990.",
+            "title": "reports: total per account and currency"
+          },
+          "review": {
+            "reviewed_head": "d82d143b236b0b434e26a1d173c818a022afd1ff",
+            "reviewer_agents": [
+              "agt_01M88VKNSP26PKSF8ZEW7JR2SZ"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88VKNSP26PKSF8ZEW7JR2SZ",
+                "base": "ecd94104e51aa7472c6a4ffe15f96ab9bd118999",
+                "findings": 5,
+                "head": "d82d143b236b0b434e26a1d173c818a022afd1ff",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88VKNSP26PKSF8ZEW7JR2SZ"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:1": {
+                "blocking": false,
+                "description": "README says currency must be a 'valid' ISO 4217 code, but the code only checks three uppercase ASCII letters, so e.g. XYZ is accepted at README.md:18",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88VJ20B7V9ZSBH4YN8K98W7"
+                },
+                "id": "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:1",
+                "resolved_in": null
+              },
+              "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:2": {
+                "blocking": false,
+                "description": "A short row with the currency column present reports 'invalid currency code None' (the DictReader missing value is None); the message is unclear but the exit code 2 and empty stdout are correct at reports.py:22",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88VJ20B7V9ZSBH4YN8K98W7"
+                },
+                "id": "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:2",
+                "resolved_in": null
+              },
+              "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:3": {
+                "blocking": false,
+                "description": "Header detection is case-sensitive: a 'Currency' header is not detected, so every row silently counts as USD at reports.py:47",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88VJ20B7V9ZSBH4YN8K98W7"
+                },
+                "id": "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:3",
+                "resolved_in": null
+              },
+              "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:4": {
+                "blocking": false,
+                "description": "render() does not CSV-quote account names; an account containing a comma (e.g. quoted 'a,b') produces a malformed output row. Pre-existing behaviour, not changed by this diff at reports.py:40",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88VJ20B7V9ZSBH4YN8K98W7"
+                },
+                "id": "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:4",
+                "resolved_in": null
+              },
+              "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:5": {
+                "blocking": false,
+                "description": "No test covers a short row or a non-USD/default-path edge beyond those listed; coverage of the spec's main cases is otherwise adequate at test_reports.py:60",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88VJ20B7V9ZSBH4YN8K98W7"
+                },
+                "id": "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:5",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "d82d143b236b0b434e26a1d173c818a022afd1ff",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88VKNSP26PKSF8ZEW7JR2SZ",
+                    "base": "ecd94104e51aa7472c6a4ffe15f96ab9bd118999",
+                    "finding_count": 5,
+                    "finding_ids": [
+                      "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:1",
+                      "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:2",
+                      "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:3",
+                      "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:4",
+                      "agt_01M88VKNSP26PKSF8ZEW7JR2SZ:5"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "stdout header changes from account,total_cents to account,currency,total_cents and rows gain a column, which breaks existing callers parsing by position or header. Reviewer confirmed high."
+          },
+          "tree": "aad8959ad62cec16b0f470aab4e73b5b9ee37cf8"
+        },
+        "cost_usd": 0.03384616000000001,
+        "started_at": "2026-11-25T08:01:08.619514723Z",
+        "finished_at": "2026-11-25T08:03:03.501007060Z"
+      }
+    ],
+    "spent_usd": 0.03384616000000001,
+    "gates": [],
+    "delegations": {
+      "stg_01M88VJ20B7V9ZSBH4YN8K98W7": {
+        "direct_usd": 0.024491630000000007,
+        "delegated_usd": 0.00935453,
+        "agents": [
+          {
+            "agent": "agt_01M88VKNSP26PKSF8ZEW7JR2SZ",
+            "parent": "agt_01M88VJ216DA6N7FJZ1JVEVW3S",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00935453
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T08:01:08.398922748Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T08:01:08.416222486Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T08:01:08.398922748Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88VJ1SA9NBDWSDA8BAZKRPR",
+      "repo": "repo_01M88VHKHA2A3WD39Y4VZ4535D",
+      "pipeline": "direct",
+      "title": "ledger: add per-row currency column",
+      "brief": "In the ledger repository (Rust), make the TSV-to-CSV converter accept an optional fourth column carrying an ISO 4217 currency code (exactly three uppercase ASCII letters). When the column is missing the currency is USD. Output header becomes `date,account,amount_cents,currency` and every row gets its currency. A malformed currency code must print an error naming the line number to stderr and exit with status 2; other input errors keep exiting with status 1. Add or update tests covering: 3-column input defaulting to USD, 4-column input, malformed codes (lowercase, wrong length, digits) giving exit 2 with the line number, and existing error cases still exiting 1. Update the README to document the new column, the default, and the exit codes. Keep functions short and validate inputs at the parse boundary. Commit in the ledger repository only.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88VJ1SA9NBDWSDA8BAZKRPR",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T08:01:08.395873058Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T08:01:08.416048620Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T08:01:08.395873058Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M88VJ1S9TTYA8K7Z815A15E8",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88VJ1T6X5ECFSPT8GHKS212",
+        "summary": "Ledger per-row currency column is done and committed on archon/8bazkrpr-ledger-add-per-row-currency-column at 0b81623 (tree f5438fda), on top of base 26631526. The converter accepts an optional fourth TSV column (ISO 4217, exactly three uppercase ASCII letters), defaults to USD, and writes the header date,account,amount_cents,currency with a currency on every row. A bad currency prints `line N: ...` to stderr and exits 2. Other input errors still exit 1. Checks: cargo test passes (4 CLI tests in tests/cli.rs, 6 library tests), clippy -D warnings and fmt --check are clean. An independent reviewer (agt_01M88VM3V5NKX9VT5DFFA75H7Q) passed the head with no blocking findings. Open, non-blocking follow-ups: document currency trimming and the empty-fourth-column rule in the README, note that a line with both a bad amount and a bad currency exits 1, and the reports consumer still needs the sibling change. Nothing was pushed. The reviewer process was stopped and no servers were started.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88VM3V5NKX9VT5DFFA75H7Q)\n\nSHIPPED: commit 0b81623245d4c378e90e9126b8c95e936b087f7f on the run branch"
+      },
+      "created_at": "2026-11-25T08:01:08.393929439Z",
+      "updated_at": "2026-11-25T08:03:21.596711030Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88VJ1T6X5ECFSPT8GHKS212",
+        "item": "qi_01M88VJ1SA9NBDWSDA8BAZKRPR",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88VJ20KD97GADCCQ64JJZ4G",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/b041d3d36b06bb490df1ea2e/.archon/data/worktrees/ledger/qi_01M88VJ1SA9NBDWSDA8BAZKRPR",
+        "branch": "archon/8bazkrpr-ledger-add-per-row-currency-column",
+        "state": {
+          "state": "succeeded",
+          "summary": "Ledger per-row currency column is done and committed on archon/8bazkrpr-ledger-add-per-row-currency-column at 0b81623 (tree f5438fda), on top of base 26631526. The converter accepts an optional fourth TSV column (ISO 4217, exactly three uppercase ASCII letters), defaults to USD, and writes the header date,account,amount_cents,currency with a currency on every row. A bad currency prints `line N: ...` to stderr and exits 2. Other input errors still exit 1. Checks: cargo test passes (4 CLI tests in tests/cli.rs, 6 library tests), clippy -D warnings and fmt --check are clean. An independent reviewer (agt_01M88VM3V5NKX9VT5DFFA75H7Q) passed the head with no blocking findings. Open, non-blocking follow-ups: document currency trimming and the empty-fourth-column rule in the README, note that a line with both a bad amount and a bad currency exits 1, and the reports consumer still needs the sibling change. Nothing was pushed. The reviewer process was stopped and no servers were started.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88VM3V5NKX9VT5DFFA75H7Q)\n\nSHIPPED: commit 0b81623245d4c378e90e9126b8c95e936b087f7f on the run branch"
+        },
+        "cost_usd": 0.03707539,
+        "started_at": "2026-11-25T08:01:08.576676159Z",
+        "finished_at": "2026-11-25T08:03:21.596711030Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88VJ1ZRRJARGX0NH33QXD11",
+        "run": "prun_01M88VJ1T6X5ECFSPT8GHKS212",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88VJ21BVMBSMP27PJ9B0060",
+        "aether_task": "tsk_01M88VJ21BVMBSMP27PJ9B0061",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Ledger per-row currency column is done and committed on archon/8bazkrpr-ledger-add-per-row-currency-column at 0b81623 (tree f5438fda), on top of base 26631526. The converter accepts an optional fourth TSV column (ISO 4217, exactly three uppercase ASCII letters), defaults to USD, and writes the header date,account,amount_cents,currency with a currency on every row. A bad currency prints `line N: ...` to stderr and exits 2. Other input errors still exit 1. Checks: cargo test passes (4 CLI tests in tests/cli.rs, 6 library tests), clippy -D warnings and fmt --check are clean. An independent reviewer (agt_01M88VM3V5NKX9VT5DFFA75H7Q) passed the head with no blocking findings. Open, non-blocking follow-ups: document currency trimming and the empty-fourth-column rule in the README, note that a line with both a bad amount and a bad currency exits 1, and the reports consumer still needs the sibling change. Nothing was pushed. The reviewer process was stopped and no servers were started.",
+        "structured": {
+          "checks": [
+            "cargo test",
+            "cargo clippy --all-targets -- -D warnings",
+            "cargo fmt --check",
+            "cargo run -q with 4-column input (EUR) and with lowercase currency (exit 2)"
+          ],
+          "commit": "0b81623245d4c378e90e9126b8c95e936b087f7f",
+          "evidence": [
+            {
+              "after": "date,account,amount_cents,currency\n2026-03-01,groceries,-4510,USD",
+              "before": "date,account,amount_cents\n2026-03-01,groceries,-4510",
+              "caption": "3-column input now defaults to USD: before (base format) vs after",
+              "kind": "output"
+            },
+            {
+              "after": "line 1: bad currency \"usd\"\ndate,account,amount_cents,currency\n(exit status 2)",
+              "caption": "Lowercase currency exits 2 and names the line (after)",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "0b81623245d4c378e90e9126b8c95e936b087f7f",
+          "pr": {
+            "body": "Approach: parse_line accepts 3 or 4 tab-separated fields. Currency is validated at the parse boundary (exactly three ASCII uppercase letters); a bad code returns LineError::BadCurrency, which maps to exit 2. Other errors are LineError::Malformed and map to exit 1. The binary prints `line N: ...` for either. Key files: src/lib.rs, src/main.rs, tests/ledger.rs (parser unit tests), tests/cli.rs (new; process-level exit-code and stderr tests), README.md. Checks: cargo test passes (4 CLI, 6 library); clippy -D warnings clean; fmt --check clean. Assumptions: currency fields are trimmed like the other fields; an empty fourth column is rejected (exit 2) rather than treated as missing. Known follow-ups (non-blocking, from review): document the trimming and empty-column choice in README; note that a line with both a bad amount and a bad currency exits 1 (structural and amount checks run first). Downstream consumers of the CSV header need the sibling reports change.",
+            "summary": "made the ledger export carry a currency per row. now accepts an optional 4th TSV column (ISO 4217); default USD. before: date,account,amount_cents; now: date,account,amount_cents,currency; bad currency exits 2, other input errors exit 1.",
+            "title": "ledger: add per-row currency column"
+          },
+          "review": {
+            "reviewed_head": "0b81623245d4c378e90e9126b8c95e936b087f7f",
+            "reviewer_agents": [
+              "agt_01M88VM3V5NKX9VT5DFFA75H7Q"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88VM3V5NKX9VT5DFFA75H7Q",
+                "base": "26631526d2592a792e6673f4ab6544ecd48ef0d9",
+                "findings": 4,
+                "head": "0b81623245d4c378e90e9126b8c95e936b087f7f",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88VM3V5NKX9VT5DFFA75H7Q"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M88VM3V5NKX9VT5DFFA75H7Q:1": {
+                "blocking": false,
+                "description": "Empty fourth field (trailing tab, e.g. '2026-03-01\\tcafe\\t1\\t') exits 2 with 'bad currency \"\"'. Spec says a missing column means USD; an empty present column is ambiguous. Document the choice in README or treat empty as missing. at src/lib.rs:88",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88VJ1ZRRJARGX0NH33QXD11"
+                },
+                "id": "agt_01M88VM3V5NKX9VT5DFFA75H7Q:1",
+                "resolved_in": null
+              },
+              "agt_01M88VM3V5NKX9VT5DFFA75H7Q:2": {
+                "blocking": false,
+                "description": "Currency is trimmed, so ' EUR' is accepted, while README says 'exactly three uppercase ASCII letters'. This matches the author's stated trimming choice, but the README does not mention trimming. at README.md:14",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88VJ1ZRRJARGX0NH33QXD11"
+                },
+                "id": "agt_01M88VM3V5NKX9VT5DFFA75H7Q:2",
+                "resolved_in": null
+              },
+              "agt_01M88VM3V5NKX9VT5DFFA75H7Q:3": {
+                "blocking": false,
+                "description": "The output header and row shape change (new fourth column on every row), which breaks existing downstream consumers until the sibling reports item lands. Known and documented in the README; no version bump in Cargo.toml (0.3.0). at src/lib.rs:8",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88VJ1ZRRJARGX0NH33QXD11"
+                },
+                "id": "agt_01M88VM3V5NKX9VT5DFFA75H7Q:3",
+                "resolved_in": null
+              },
+              "agt_01M88VM3V5NKX9VT5DFFA75H7Q:4": {
+                "blocking": false,
+                "description": "Validation order means a line with both a bad amount and a bad currency exits 1, not 2. This follows the code order and is not stated in the README exit-code list. Consistent with the current behaviour but worth a sentence. at src/lib.rs:83",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88VJ1ZRRJARGX0NH33QXD11"
+                },
+                "id": "agt_01M88VM3V5NKX9VT5DFFA75H7Q:4",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "0b81623245d4c378e90e9126b8c95e936b087f7f",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88VM3V5NKX9VT5DFFA75H7Q",
+                    "base": "26631526d2592a792e6673f4ab6544ecd48ef0d9",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M88VM3V5NKX9VT5DFFA75H7Q:1",
+                      "agt_01M88VM3V5NKX9VT5DFFA75H7Q:2",
+                      "agt_01M88VM3V5NKX9VT5DFFA75H7Q:3",
+                      "agt_01M88VM3V5NKX9VT5DFFA75H7Q:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Changes the CLI output header and row shape (interchange format consumed by reports), which breaks existing callers until the sibling reports change lands. Touches src/lib.rs, src/main.rs, tests, README. Behaviour change is intentional and fully covered by tests. Reviewer confirmed high."
+          },
+          "tree": "f5438fdaaeb7717875fcce7d0992a25031ccf635"
+        },
+        "cost_usd": 0.03707539,
+        "started_at": "2026-11-25T08:01:08.600733493Z",
+        "finished_at": "2026-11-25T08:03:17.797761010Z"
+      }
+    ],
+    "spent_usd": 0.03707539,
+    "gates": [],
+    "delegations": {
+      "stg_01M88VJ1ZRRJARGX0NH33QXD11": {
+        "direct_usd": 0.02619661,
+        "delegated_usd": 0.01087878,
+        "agents": [
+          {
+            "agent": "agt_01M88VM3V5NKX9VT5DFFA75H7Q",
+            "parent": "agt_01M88VJ21BVMBSMP27PJ9B0060",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01087878
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T08:01:08.395873058Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T08:01:08.416048620Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T08:01:08.395873058Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

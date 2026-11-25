@@ -1,0 +1,38 @@
+The multi-currency change is queued as one initiative (`ini_01M88RKEYW71AAJR5BB7RPCZDR`) with two items, one per repository. I did not edit either repository myself.
+
+- **`ledger`** (`qi_01M88RKEYYASS9CZM2SNYKD6FJ`): accepts the optional fourth currency column, defaults to `USD`, and validates the code. A malformed code prints the line number to stderr and exits 2; other input errors still exit 1. Output header becomes `date,account,amount_cents,currency`.
+- **`reports`** (`qi_01M88RKF2PY8CTK3CVP1KHFD6M`): totals per account and currency, sorted by account then currency, with header `account,currency,total_cents`. Old CSV without a currency column counts as `USD`. A malformed code exits 2.
+
+Both items use the `direct` pipeline with standard review. The shared CSV format is written into the initiative contract so both sides build against the same spec. Each item must keep `cargo test` or `python3 -m unittest` passing and update its README.
+
+Both repositories ship `local`, so each change is committed on a local branch and nothing is pushed. I'll report back when both items finish.
+
+Done: reports: totals per account and currency. Reports now totals per account and currency. Commit f8abe61 on archon/p1khfd6m-reports-totals-per-account-and-currency (based on 5aa4180; not pushed). Changed reports.py, test_reports.py, README.md. Input may have a currency column; missing means USD. Output header is account,currency,total_cents, sorted by account then currency. Malformed currency prints the line number to stderr and exits 2. Checks: python3 -m unittest, 5/5 OK, run on the final head. Review: agt_01M88RN2FZ7NA2FGKNK37FWAWE passed f8abe61 with no blocking findings. Risk is high because the CLI output header changes and mixed-currency accounts now split per currency. Follow-ups, not blocking: short rows with a missing currency cell report 'malformed currency code None'; short rows missing account or amount_cents still raise a traceback (pre-existing). Nothing is left running. The reviewer's processes had already exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RN2FZ7NA2FGKNK37FWAWE)
+
+SHIPPED: commit f8abe617c5c24e866b32eb7a6370a0f2080a9bcc on the run branch
+Branch `archon/p1khfd6m-reports-totals-per-account-and-currency` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/a9a902ba133a7f3e5db9f9ba/reports holds it (3 files changed, 109 insertions(+), 13 deletions(-)). Review: `archon diff qi_01M88RKF2PY8CTK3CVP1KHFD6M`; land it in `main`: `archon merge qi_01M88RKF2PY8CTK3CVP1KHFD6M`.
+
+Done: ledger: multi-currency TSV to CSV. Ledger side of the multi-currency contract is done and committed as 61ae1ee on archon/snykd6fj-ledger-multi-currency-tsv-to-csv (not pushed). Input takes an optional 4th currency column; a missing one defaults to USD. A currency must be exactly three uppercase ASCII letters. The header is now date,account,amount_cents,currency and every row carries the currency. A malformed currency exits 2 with `line N:` on stderr; other input errors still exit 1. Checks: cargo test passes (11 tests, including new tests/cli.rs covering default USD, explicit currency, malformed currency and line numbers); cargo clippy --all-targets -D warnings is clean. cargo fmt --check fails on main before this change, so I ran cargo fmt on src/lib.rs. Review: agt_01M88RP7RH066FSMT07WNZFG6J passed the head with no blocking findings. Open non-blocking follow-ups: README should say surrounding whitespace on the currency is ignored; the header is written before parsing, so a failed export leaves a header-only stdout (pre-existing); the date check is shape-only (pre-existing). The reports side is a sibling item and not touched here. Nothing is left running: the reviewer's leftover process (PID 2158975) was stopped.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RP7RH066FSMT07WNZFG6J)
+
+SHIPPED: commit 61ae1eeb079499ca6dda5670708f3aadc3d29f25 on the run branch
+Branch `archon/snykd6fj-ledger-multi-currency-tsv-to-csv` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/a9a902ba133a7f3e5db9f9ba/ledger holds it (5 files changed, 208 insertions(+), 18 deletions(-)). Review: `archon diff qi_01M88RKEYYASS9CZM2SNYKD6FJ`; land it in `main`: `archon merge qi_01M88RKEYYASS9CZM2SNYKD6FJ`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M88RKEYYASS9CZM2SNYKD6FJ ended and its cargo target directory went.
+
+Reports now totals per account and currency. Commit f8abe61 on archon/p1khfd6m-reports-totals-per-account-and-currency (based on 5aa4180; not pushed). Changed reports.py, test_reports.py, README.md. Input may have a currency column; missing means USD. Output header is account,currency,total_cents, sorted by account then currency. Malformed currency prints the line number to stderr and exits 2. Checks: python3 -m unittest, 5/5 OK, run on the final head. Review: agt_01M88RN2FZ7NA2FGKNK37FWAWE passed f8abe61 with no blocking findings. Risk is high because the CLI output header changes and mixed-currency accounts now split per currency. Follow-ups, not blocking: short rows with a missing currency cell report 'malformed currency code None'; short rows missing account or amount_cents still raise a traceback (pre-existing). Nothing is left running. The reviewer's processes had already exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RN2FZ7NA2FGKNK37FWAWE)
+
+SHIPPED: commit f8abe617c5c24e866b32eb7a6370a0f2080a9bcc on the run branch
+
+Ledger side of the multi-currency contract is done and committed as 61ae1ee on archon/snykd6fj-ledger-multi-currency-tsv-to-csv (not pushed). Input takes an optional 4th currency column; a missing one defaults to USD. A currency must be exactly three uppercase ASCII letters. The header is now date,account,amount_cents,currency and every row carries the currency. A malformed currency exits 2 with `line N:` on stderr; other input errors still exit 1. Checks: cargo test passes (11 tests, including new tests/cli.rs covering default USD, explicit currency, malformed currency and line numbers); cargo clippy --all-targets -D warnings is clean. cargo fmt --check fails on main before this change, so I ran cargo fmt on src/lib.rs. Review: agt_01M88RP7RH066FSMT07WNZFG6J passed the head with no blocking findings. Open non-blocking follow-ups: README should say surrounding whitespace on the currency is ignored; the header is written before parsing, so a failed export leaves a header-only stdout (pre-existing); the date check is shape-only (pre-existing). The reports side is a sibling item and not touched here. Nothing is left running: the reviewer's leftover process (PID 2158975) was stopped.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RP7RH066FSMT07WNZFG6J)
+
+SHIPPED: commit 61ae1eeb079499ca6dda5670708f3aadc3d29f25 on the run branch

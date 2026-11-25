@@ -1,0 +1,45 @@
+Review of src/tokens.js (review-seeded-bug). No code changed. Verdict: not safe to ship. verify() has an authentication bypass that lets anyone forge claims without the secret.
+
+Findings, most severe first:
+
+1. CRITICAL, src/tokens.js verify(), line 27: `expected.startsWith(signature)` is a prefix check, and an empty signature is a prefix of everything. A token ending in "." (empty signature) passes the MAC check for any body. Verified by running the code: `base64url({"user":"root","exp":9e15}) + "."` returns the forged payload. Any caller that trusts verify() for identity gets full auth bypass. Fix: compare the full digest with crypto.timingSafeEqual after a length check.
+
+2. HIGH, src/tokens.js verify(), line 27: the same prefix check accepts any non-empty prefix of the real signature. Verified: a token with only the first character of the valid signature is accepted, and a wrong first character is rejected. An attacker can recover the signature one character at a time (about 64 guesses per position, roughly 2,800 requests for a 43-character SHA-256 digest) if the service reveals accept/reject and is not rate-limited. The comparison is also not constant-time, which adds a timing side channel. Fix is the same as #1.
+
+3. MEDIUM, src/tokens.js verify(), line 28: JSON.parse of the body is unguarded, and the result is dereferenced without a null check. A body that decodes to `null` throws TypeError ("Cannot read properties of null (reading 'exp')") instead of returning null. Verified. Reachable directly through the bypass in #1, and in general any malformed-but-validly-signed payload produces an uncaught exception rather than the documented null contract. Fix: guard the parse and check the payload is a non-null object.
+
+4. LOW, src/tokens.js verify(), line 24: `token.split('.')` ignores extra segments, so `<valid token>.junk` verifies. Verified. This makes tokens malleable (multiple accepted encodings of one token), which matters if tokens are used as cache or dedupe keys or in logs. Fix: require exactly two segments.
+
+5. LOW, src/tokens.js verify(): no validation of the secret, while sign() enforces a minimum length. verify() with a short or empty secret silently accepts tokens. Fix: share the same secret check.
+
+6. NIT, src/tokens.js sign(), line 15: the length check counts characters, not bytes or entropy, so a 32-character repeated-character secret passes. Also a non-string secret (e.g. a number of 40) passes the `.length < 32` check because `undefined < 32` is false, and only fails later inside createHmac with an unclear error.
+
+7. TEST GAP, test/tokens.test.js: the tampering test reuses a real signature on a different body, so it cannot detect the empty or prefix signature bypasses. Missing cases: empty signature, one-character signature, extra segment, `null` payload, and short-secret verify. Add these alongside the fix.
+
+Not a problem: expiry logic (exp is compared as a number after the MAC check, and sign() overwrites claims.exp/iat), and encoding.js.
+
+Ship recommendation: block the release until #1 and #2 are fixed and tests for the bypass cases are added.
+
+**Verdict: do not ship.** `verify()` in `src/tokens.js` has an authentication bypass that lets anyone forge claims without the secret. I changed no code. I ran a few probes against the module (no files written).
+
+**Findings, most severe first:**
+
+1. **Critical — `src/tokens.js`, `verify()`, line 27.** `expected.startsWith(signature)` is a prefix check, and an empty string is a prefix of everything. A token ending in `.` (empty signature) passes for any body.
+   - Verified: `base64url('{"user":"root","exp":9e15}') + "."` returns the forged payload.
+   - Fix: compare the full digest with `crypto.timingSafeEqual` after a length check.
+
+2. **High — `src/tokens.js`, `verify()`, line 27.** The same prefix check accepts any non-empty prefix of the real signature. A correct first character is accepted and a wrong one is rejected (verified). The comparison is also not constant-time. An attacker who can see accept/reject results could recover the signature one character at a time, roughly 64 guesses per position, which is about 2,800 requests for a 43-character digest. Fix is the same as #1.
+
+3. **Medium — `src/tokens.js`, `verify()`, line 28.** `JSON.parse` is unguarded and the result is dereferenced without a null check. A payload that decodes to `null` throws `TypeError` instead of returning `null` (verified). This is reachable through #1 and, in general, violates the function's "payload or null" contract.
+
+4. **Low — `src/tokens.js`, `verify()`, line 24.** `split('.')` ignores extra segments, so `<valid token>.junk` verifies (verified). Tokens become malleable, which matters if they are used as cache keys, dedupe keys, or in logs.
+
+5. **Low — `src/tokens.js`, `verify()`.** `verify()` does not apply the secret-length check that `sign()` enforces, so a short secret is silently accepted on the verify side.
+
+6. **Nit — `src/tokens.js`, `sign()`, line 15.** The length check counts characters, not bytes or entropy, so a 40-character repeated-character secret passes. A non-string secret such as the number 40 also passes the check and fails later inside `createHmac` with an unclear error.
+
+7. **Test gap — `test/tokens.test.js`.** The tamper test reuses a real signature on a different body, so it cannot detect either bypass. Missing cases: empty signature, partial signature, extra segment, `null` payload, and short secret passed to `verify`.
+
+**Not a problem:** expiry handling. `exp` is checked after the MAC check, and `sign()` overwrites any caller-supplied `exp`/`iat`. `src/encoding.js` is a thin wrapper and looks fine.
+
+**Recommendation:** block the release until #1 and #2 are fixed (full-digest `timingSafeEqual`, exactly two segments) and tests for the bypass cases are added.

@@ -1,0 +1,21 @@
+The rate limiter work is queued as item `qi_01M88QPKVEP1HMDZG36PGRFKEP`. I did not edit the repository myself: the workspace is a read-only mirror, and the work has to go through an Archon item.
+
+- **Pipeline:** `direct`, one agent that implements, tests and commits. The commit lands on a local branch and is not pushed, which matches "commit your work".
+- **Review:** `standard`, since the spec has many precise edge cases.
+- **Effort:** `medium`. My first attempt asked for `high`, but the configured maximum is `medium`, so I resubmitted at that level.
+- **Brief:** the item requires the spec's error cases, clock-regression behaviour, LRU eviction (with `wait_time` counting as a use), and fractional refill. It also requires new edge-case tests in `test_ratelimit.py`, standard library only, and a passing `python -m unittest`. It forbids changing `SPEC.md` and adding attribution lines to the commit.
+
+I'll post the outcome when the item finishes, or earlier if it fails or gets blocked.
+
+Done: Implement token-bucket rate limiter per SPEC.md. Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py and added 15 tests to test_ratelimit.py (18 total, all pass with python -m unittest). Committed on archon/6pgrfkep-implement-token-bucket-rate-limiter-per as 82a280f, fc5b294, 84bafb5 under the configured identity; not pushed. Review: three reviewers. The first two read the change and found float-precision bugs, now fixed; the last one passed the head 84bafb5. Nothing is left open. Still running: none; the reviewer processes were stopped by PID.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88QYWYFHR49FBR4T9DJB9KQ), claude-code/claude-haiku-5-5 (agent agt_01M88QSGZ0Q6T1B4481AKZHZ0Z)
+
+SHIPPED: commit 84bafb592d7ba51a940a653bae741ceb2e276c5a on the run branch
+Branch `archon/6pgrfkep-implement-token-bucket-rate-limiter-per` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/95847394750fc760332f9148/feature-token-bucket holds it (2 files changed, 209 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M88QPKVEP1HMDZG36PGRFKEP`; land it in `main`: `archon merge qi_01M88QPKVEP1HMDZG36PGRFKEP`.
+
+Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py and added 15 tests to test_ratelimit.py (18 total, all pass with python -m unittest). Committed on archon/6pgrfkep-implement-token-bucket-rate-limiter-per as 82a280f, fc5b294, 84bafb5 under the configured identity; not pushed. Review: three reviewers. The first two read the change and found float-precision bugs, now fixed; the last one passed the head 84bafb5. Nothing is left open. Still running: none; the reviewer processes were stopped by PID.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88QYWYFHR49FBR4T9DJB9KQ), claude-code/claude-haiku-5-5 (agent agt_01M88QSGZ0Q6T1B4481AKZHZ0Z)
+
+SHIPPED: commit 84bafb592d7ba51a940a653bae741ceb2e276c5a on the run branch

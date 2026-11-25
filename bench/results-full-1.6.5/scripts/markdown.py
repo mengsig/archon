@@ -124,7 +124,11 @@ The trial records and grading evidence are in `runs/`; occurrences of the config
 def render(summary):
     assert summary['verdict'] in ('NO REGRESSION', 'REGRESSION')
     assert summary['models']
-    lines = [f"# Archon 1.6.5 full benchmark\n\n**{summary['verdict']}**\n"]
+    haiku = summary['models']['haiku']['arms']
+    assert (haiku['old']['pass'], haiku['new']['pass']) == (32, 29), 'update the Haiku headline'
+    lines = [f"# Archon 1.6.5 full benchmark\n\n**{summary['verdict']}**\n",
+             "Haiku Archon: OLD 32/33 versus NEW 29/33, McNemar p=0.25. Recorded cost rose 1.43× [0.97, 2.06] and wall time rose 1.49×; these are possible regressions that do not meet the significance criteria and are confounded by overlapping e2e validation. Cost gaps also leave actual cost uncertain.\n",
+             "NEW Haiku Archon failures: multi-repo-pagination trials 1 and 2 returned wrong results; quality-safe-extract trial 1 and quality-retry-budget trial 3 timed out. Both timed-out trials passed post-timeout grading but count as failures.\n"]
     lines += [f'- {reason}' for reason in summary['reasons']]
     lines.append('\n[Visual report](index.html) · [Numeric summary](summary.json)\n')
     for name, data in summary['models'].items():

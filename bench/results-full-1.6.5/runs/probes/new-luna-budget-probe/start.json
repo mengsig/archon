@@ -1,0 +1,16 @@
+{
+  "candidate_commit": "c4bcaa9f8eff80ca81917f9ddaf65a866abb3690",
+  "head": "a51631da1694fd1f4b3c34f6d21dde57a2260ed1",
+  "arm": "new",
+  "model": "luna",
+  "parallel": "1",
+  "load5": 2.5498046875,
+  "hashes": {
+    "archon": "472d8f96480b524cd2d7b535ebc368325ae03ea9e8e40f3915c8fa49c4020253",
+    "aether": "3a795ff2a718e8c227ac66ad6bbefd2cfe1838bfcbf77b37eac10e56ca3cc923",
+    "archon-bench": "6d5650cdfd790bc18c2cef9563c42c2cda919f21c54ad568c0e28b90764dd0f8"
+  },
+  "start": "2026-11-25T01:10:42.567828+00:00",
+  "exit": -2,
+  "end": "2026-11-25T01:12:07.855526+00:00"
+}

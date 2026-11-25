@@ -1,0 +1,181 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88Z3WFFAD70PVV7EC4K3X86",
+      "repo": "repo_01M88Z3DC9CQY6HTSZ9KKK878R",
+      "pipeline": "direct",
+      "title": "Implement retry_budget.py per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated, verbatim): \"Implement `retry_budget.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nContext: repository quality-retry-budget has SPEC.md, retry_budget.py (stub) and test_retry_budget.py (basic tests). Read SPEC.md first; it is the source of truth.\n\nRequirements:\n- Keep the exact signature: retry_delay(attempt, elapsed_ms, *, max_attempts=4, budget_ms=1000, base_ms=100, cap_ms=400, retry_after_ms=None) -> int | None.\n- Validate ALL arguments before any early return. Numbers must be built-in int (reject bool and float). attempt and max_attempts >= 1; elapsed_ms, budget_ms, base_ms, cap_ms and non-None retry_after_ms >= 0. Raise ValueError on invalid input. No upper limit on ints.\n- attempt >= max_attempts -> None (attempt > max_attempts is legal).\n- backoff = min(cap_ms, base_ms * 2**(attempt-1)); zero base or zero cap yields zero; saturate without building a huge power of two (e.g. cap the exponent or short-circuit when base_ms is 0 or the shift exceeds the cap's bit length).\n- If retry_after_ms supplied: delay = max(backoff, retry_after_ms); the floor is not limited by cap_ms.\n- If elapsed_ms + delay >= budget_ms -> None; otherwise return delay (zero allowed). Never shorten the wait.\n- Never sleep, read a clock, use randomness, network or third-party packages; do not mutate inputs.\n\nTests: extend test_retry_budget.py with focused stdlib unittest tests covering every validation error (bool, float, negative, zero attempt, zero max_attempts, each argument), attempt boundary (== and > max_attempts), exponent saturation with huge attempt values, zero base/zero cap, base > cap, retry_after above and below backoff and above cap, budget boundary (exactly equal to budget -> None, one less -> allowed), and zero delay returned. Run the tests and confirm they pass.\n\nCode style: functions under 60 lines, at least two meaningful assertions/validations per non-trivial function at the boundary, no try/except that hides failure, no comments except where non-obvious (max 2 lines each), no abstractions beyond the spec.\n\nGit: commit the work on the local branch with a clear message. Use the existing git identity of the repository only; do not set or override user.name/user.email. Do not push. Do not add any attribution lines mentioning Claude, Anthropic, or generated-by tooling. Do not delegate.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88Z3WFFAD70PVV7EC4K3X86",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T09:03:18.636097887Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T09:03:18.636097887Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T09:03:18.636097887Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Small pure function with a precise spec; medium effort covers the boundary cases and tests."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "cancelled",
+        "reason": "archon-bench: trial timeout"
+      },
+      "created_at": "2026-11-25T09:03:18.511891030Z",
+      "updated_at": "2026-11-25T09:15:04.596096279Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88Z3WKYGMFQPC4P3PN8VF6E",
+        "item": "qi_01M88Z3WFFAD70PVV7EC4K3X86",
+        "pipeline": "direct",
+        "shipped": false,
+        "aether_run": "run_01M88Z3WRQSNS2D1J3TSWMJ3SW",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/2a3a25a638ca3bc3eed2f9fb/.archon/data/worktrees/quality-retry-budget/qi_01M88Z3WFFAD70PVV7EC4K3X86",
+        "branch": "archon/ec4k3x86-implement-retry-budget-py-per-spec-md-wi",
+        "state": {
+          "state": "cancelled",
+          "reason": "archon-bench: trial timeout"
+        },
+        "cost_usd": 0.02030869,
+        "started_at": "2026-11-25T09:03:18.782360797Z",
+        "finished_at": "2026-11-25T09:15:04.596096279Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88Z3WRH9M77A0BSZ010G43T",
+        "run": "prun_01M88Z3WKYGMFQPC4P3PN8VF6E",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88Z3WSBAX06C44T1PAMTJD9",
+        "aether_task": "tsk_01M88Z3WSBRGNXQQNTVMRVNSVT",
+        "state": {
+          "state": "cancelled"
+        },
+        "verdict": null,
+        "risk_class": "elevated",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; the plan pins medium",
+        "summary": "pipeline run prun_01M88Z3WKYGMFQPC4P3PN8VF6E finished",
+        "structured": null,
+        "cost_usd": 0.02030869,
+        "started_at": "2026-11-25T09:03:18.800971041Z",
+        "finished_at": "2026-11-25T09:15:04.678671995Z"
+      }
+    ],
+    "spent_usd": 0.02030869,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T09:03:18.636097887Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T09:03:18.636097887Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T09:03:18.636097887Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

@@ -1,0 +1,22 @@
+Both repositories now handle currencies, and each has a commit: `ledger` `fa2ef0d` and `reports` `6ff1c81`. `cargo test` and `python3 -m unittest` both pass in their repos, and I ran the binaries by hand to check the error paths.
+
+**ledger (Rust)**
+- Lines take an optional fourth column. A missing column means `USD`.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed currency code prints `line N: bad currency "eur": ...` to stderr and exits 2. Other input errors still exit 1.
+- `parse_line` now returns a `ParseError` enum with `Malformed` and `BadCurrency` variants, so `main` can pick the exit code.
+- A 3-column line that is otherwise valid still works. Field counts other than 3 or 4 are rejected as malformed.
+- Tests added for currency parsing, malformed codes, and field counts. The existing assertions are unchanged except the one that checked the old row format, which now checks the full row.
+
+**reports (Python)**
+- Output is `account,currency,total_cents`, sorted by account then currency.
+- A CSV without a `currency` column totals as `USD`.
+- A malformed code prints `error: ...` to stderr and exits 2, with no partial output on stdout.
+- Tests added for per-currency totals, the USD fallback for old CSV, and the exit-2 path. The original test passes unchanged.
+
+Both READMEs describe the new formats and exit codes.
+
+**Choices I made that you may want to change**
+- An empty fourth column (`...\t\n`) counts as a malformed currency and exits 2. I read "present but empty" as malformed, not as "missing".
+- A short CSV row in `reports` (fewer fields than the header) also exits 2, with the message `bad currency None`. The message is clumsy but the failure is visible.
+- I did not add a Claude co-author trailer to the commits. CLAUDE.md says not to attribute work to Claude, and I treated that as overriding the reminder that asked for one.

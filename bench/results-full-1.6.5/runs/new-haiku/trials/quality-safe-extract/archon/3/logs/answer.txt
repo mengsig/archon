@@ -1,0 +1,24 @@
+I queued the work rather than editing the repository myself, since orchestrators don't change repos directly.
+
+- **Item:** `qi_01M88ZSVZH01FP0DC9XAYXGF25`, "Implement safe_extract.py per SPEC.md with focused tests", on repo `quality-safe-extract`.
+- **Pipeline:** `direct`, one author.
+- **Review:** `strict`, because archive extraction is security-sensitive (path traversal, symlinks, size limits).
+- **Shipping:** local only (the repo is registered with `ship local`), so the work is committed on a local branch and nothing is pushed.
+- **Acceptance:** the brief asks for the SPEC.md API and every specified error and boundary case, focused tests, standard library only, existing tests passing, and a commit with no attribution lines.
+
+I'll report back when the item finishes. If it fails, I'll read its stage results and retry or split it.
+
+Done: Implement safe_extract.py per SPEC.md with focused tests. Implemented safe_extract.extract per SPEC.md with 35 unit tests (2 original, 33 new), all passing. Head 83b19ec, tree d7d8afc7269e129262a99bffcc79da96c9a35e9a, on archon/xayxgf25-implement-safe-extract-py-per-spec-md-wi, not pushed. Three whole-change reviewers found blocking issues (a root below a regular file raised NotADirectoryError; a missing existing-ancestor test; subclass inputs could change between validation and write). All fixed in 83b19ec, with Review-Fix trailers. A delta reviewer verified the fixes and passed the head. Open non-blocking follow-ups: case-fold intra-batch collisions on case-insensitive filesystems (not testable here, SPEC silent); ENAMETOOLONG raises OSError rather than ValueError; assertion density in validation helpers; ExtractBasics still writes temp dirs into cwd; Path('') is accepted as '.' (a deliberate call, not a spec-defined rule). Nothing left running. Review: pass.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88ZX0ZDA0J3YPN5Y192QRWK), claude-code/claude-haiku-5-5 (agent agt_01M88ZX5YJC98HESRN7254VSXX), claude-code/claude-haiku-5-5 (agent agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH), claude-code/claude-haiku-5-5 (agent agt_01M89018G1QNZK2T9GZ4T98TVP)
+
+SHIPPED: commit 83b19ec8ba2edf439a7f3cae3b425fbf4225774e on the run branch
+Branch `archon/xayxgf25-implement-safe-extract-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/5b51ccafd1ec06740a22bcef/quality-safe-extract holds it (2 files changed, 321 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M88ZSVZH01FP0DC9XAYXGF25`; land it in `main`: `archon merge qi_01M88ZSVZH01FP0DC9XAYXGF25`.
+
+Implemented safe_extract.extract per SPEC.md with 35 unit tests (2 original, 33 new), all passing. Head 83b19ec, tree d7d8afc7269e129262a99bffcc79da96c9a35e9a, on archon/xayxgf25-implement-safe-extract-py-per-spec-md-wi, not pushed. Three whole-change reviewers found blocking issues (a root below a regular file raised NotADirectoryError; a missing existing-ancestor test; subclass inputs could change between validation and write). All fixed in 83b19ec, with Review-Fix trailers. A delta reviewer verified the fixes and passed the head. Open non-blocking follow-ups: case-fold intra-batch collisions on case-insensitive filesystems (not testable here, SPEC silent); ENAMETOOLONG raises OSError rather than ValueError; assertion density in validation helpers; ExtractBasics still writes temp dirs into cwd; Path('') is accepted as '.' (a deliberate call, not a spec-defined rule). Nothing left running. Review: pass.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88ZX0ZDA0J3YPN5Y192QRWK), claude-code/claude-haiku-5-5 (agent agt_01M88ZX5YJC98HESRN7254VSXX), claude-code/claude-haiku-5-5 (agent agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH), claude-code/claude-haiku-5-5 (agent agt_01M89018G1QNZK2T9GZ4T98TVP)
+
+SHIPPED: commit 83b19ec8ba2edf439a7f3cae3b425fbf4225774e on the run branch

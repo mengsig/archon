@@ -1,0 +1,22 @@
+Implemented ledger.py per SPEC.md and expanded test_ledger.py; committed as 02e2e90 on main. All 23 tests pass (python3 -m unittest test_ledger).
+
+Implementation:
+- Construction validates a dict of nonempty str names to int balances in [0, MAX_BALANCE]. Booleans and non-int types are rejected with ValueError. The input dict is copied.
+- transfer validates the amount before any account lookup. Unknown accounts raise KeyError. Insufficient funds or destination overflow return False with no change. Same-account transfers return True iff funds are sufficient and never change the balance.
+- snapshot returns a copy.
+- A single per-ledger threading.Lock guards every operation, which gives linearizability and rules out deadlock between opposite transfers.
+
+Assumptions to review:
+- A non-string account name passed to transfer (e.g. a list) raises KeyError, not TypeError, so every unknown account reports the same way.
+- Commit has no Co-Authored-By line. The user's CLAUDE.md says not to add Claude attribution, which overrides the reminder's line.
+
+I implemented `ledger.py` to the spec and expanded the tests. The work is committed as `02e2e90` on `main`, and all 23 tests pass with `python3 -m unittest test_ledger`.
+
+- **Construction:** validates a dict of non-empty string names to integer balances in `[0, MAX_BALANCE]`. Booleans and other non-int types are rejected with `ValueError`. The input dict is copied.
+- **`transfer`:** validates the amount before looking up accounts. Unknown accounts raise `KeyError`. Insufficient funds or destination overflow return `False` and leave balances unchanged. Same-account transfers return `True` iff funds are sufficient and never change the balance.
+- **`snapshot`:** returns a copy.
+- **Concurrency:** one `threading.Lock` per ledger guards every operation. That makes each operation indivisible and rules out deadlock between opposite transfers.
+
+Two choices to review:
+- A non-string account name passed to `transfer` (for example a list) raises `KeyError`, not `TypeError`, so every unknown account is reported the same way.
+- The commit has no `Co-Authored-By` line. The user's CLAUDE.md says not to add Claude attribution, and I followed it over the reminder's line.

@@ -1,0 +1,13 @@
+`python3 -m unittest` now passes all 3 tests, and the fix is committed as `26da53d` on `main`.
+
+**The bug:** `sliding_windows` built its range with `range(len(items) - size)`. A list of `n` items has `n - size + 1` windows, so the loop stopped one window short and dropped the last one. That's why `[1, 2, 3]` with size 2 returned `[[1, 2]]` and `[1, 2]` with size 2 returned `[]`.
+
+**The fix:** one line in `window.py`, changing the range to `range(len(items) - size + 1)`. I did not touch the tests.
+
+**Other inputs:** the existing checks already cover the rest. When `size > len(items)` the range is empty and the function returns `[]`, which is correct. An empty list also returns `[]`. The `size <= 0` guard still raises `ValueError`. I also checked `[]`, `[1]` with size 1 and size 2, `[1, 2, 3]` with size 3, and `[1, 2, 3, 4]` with size 1 by hand. All gave the expected results.
+
+**Choices to confirm:**
+- **Commit identity:** I used the repo's configured git identity, `mengsig <[redacted-email]>`. The email in your account context is `mengsig@icloud.com`, so if you want that address on the commit, it needs to be changed.
+- **No Co-Authored-By trailer:** the system reminder asked for one, but the project's CLAUDE.md says not to add Claude attribution. I followed CLAUDE.md.
+
+There is an untracked `__pycache__/` directory from the test runs. I left it out of the commit.

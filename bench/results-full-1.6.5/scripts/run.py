@@ -2,13 +2,13 @@ import datetime
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 
 WORK = Path.cwd()
 REPORT = WORK / '.archon/reports/bench'
@@ -70,7 +70,7 @@ def stop_daemon(proc, root, env):
     assert str(root) in env['AETHER_SOCKET']
     if proc.poll() is None:
         stopped = subprocess.run([str(root / 'bin/aether'), 'stop', '--socket', env['AETHER_SOCKET']],
-                                 env=env, capture_output=True, timeout=30)
+                                 env=env, capture_output=True, timeout=30, check=False)
         if stopped.returncode:
             print(f'Stop request exited {stopped.returncode}; terminating owned PID {proc.pid}', flush=True)
             proc.terminate()
@@ -132,7 +132,7 @@ def run(arm, model, label, parallel='1', only='', budget='30'):
                 if proc.poll() is not None:
                     raise RuntimeError(f'aetherd exited {proc.returncode}')
                 ready = subprocess.run([str(root / 'bin/aether'), 'status', '--socket', env['AETHER_SOCKET']],
-                                       env=env, capture_output=True, timeout=10)
+                                       env=env, capture_output=True, timeout=10, check=False)
                 if ready.returncode == 0:
                     break
                 time.sleep(1)
@@ -141,7 +141,7 @@ def run(arm, model, label, parallel='1', only='', budget='30'):
             command = bench_command(root, env, model, destination, parallel, arm, only, budget)
             print(f'Start {label}: load5={record["load5"]:.2f}', flush=True)
             with (destination / 'smoke.log').open('w') as bench_log:
-                outcome = subprocess.run(command, env=env, stdout=bench_log, stderr=subprocess.STDOUT)
+                outcome = subprocess.run(command, env=env, stdout=bench_log, stderr=subprocess.STDOUT, check=False)
             record['exit'] = outcome.returncode
             record['end'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             (destination / 'start.json').write_text(json.dumps(record, indent=2))

@@ -1,7 +1,7 @@
 """Render the benchmark comparison as Markdown."""
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def percent(value):

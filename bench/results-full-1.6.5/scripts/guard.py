@@ -1,10 +1,10 @@
 """Watch a model's private runs for combined spend and host load."""
 import os
-from pathlib import Path
 import signal
 import sqlite3
 import sys
 import time
+from pathlib import Path
 
 
 def owned(pid, expected):

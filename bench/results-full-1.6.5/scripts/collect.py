@@ -1,9 +1,9 @@
 """Copy the trial evidence needed to reproduce the report."""
-from pathlib import Path
 import json
 import shutil
 import sqlite3
 import sys
+from pathlib import Path
 
 
 def collect_run(source, destination):

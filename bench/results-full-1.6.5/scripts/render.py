@@ -1,9 +1,8 @@
 """Render the numerical summary as a standalone benchmark report."""
 import html
 import json
-from pathlib import Path
 import sys
-
+from pathlib import Path
 
 STYLE = """
 :root{font-family:system-ui,sans-serif;color:#20231f;background:#f5f5f3}

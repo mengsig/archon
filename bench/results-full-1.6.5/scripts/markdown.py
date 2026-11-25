@@ -71,7 +71,9 @@ def model_section(name, data):
     loss = c['diff'][2] < 0 or (c['mcnemar']['p'] < .05 and c['mcnemar']['old_only'] > c['mcnemar']['new_only'])
     cost = c['cost_ratio'][1] > 1 and c['cost_p'] < .05
     wall = c['wall_ratio'][1] > 1 and c['wall_p'] < .05
-    statement = f"Significant pass-rate drop: {'yes' if loss else 'no'}; significant cost increase: {'yes' if cost else 'no'}; significant slowdown: {'yes' if wall else 'no'}."
+    gaps = ', '.join(f"{version.upper()} {label}: {arm['cost_gaps']}" for label, arms in [('Archon', data['arms']), ('Aether', data['aether_arms'])] for version, arm in arms.items() if arm['cost_gaps']) or 'none reported'
+    caveat = ' Some recorded totals are floors, so actual cost differences remain uncertain.' if gaps != 'none reported' else ''
+    statement = f"Cost gaps: {gaps}.{caveat}\n\nSignificant pass-rate drop: {'yes' if loss else 'no'}; significant recorded-cost increase: {'yes' if cost else 'no'}; significant slowdown: {'yes' if wall else 'no'}."
     return f"## {name}\n\n{statement}\n\n{arm_table(data)}\n\n### NEW versus OLD\n\n{comparison_table(data['comparison'])}\n\n### Archon per task\n\n{task_table(data['comparison']['tasks_archon'])}\n\n### Paired flips and infrastructure\n\n{findings(data)}\n"
 
 

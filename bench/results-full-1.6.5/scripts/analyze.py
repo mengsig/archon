@@ -4,6 +4,7 @@ import math
 import random
 import statistics
 import sys
+from collections import Counter
 from pathlib import Path
 
 MODELS = {'haiku': 'Haiku (claude-code/claude-haiku-5-5)', 'luna': 'Luna (codex/gpt-6-luna)'}
@@ -129,6 +130,8 @@ def stage_stats(row):
 
 
 def arm_summary(rows, arm):
+    assert arm in ('archon', 'aether')
+    assert all(row['arm'] in ('archon', 'aether') for row in rows)
     g = graded(rows, arm)
     k = sum(r['success'] for r in g)
     lo, hi = wilson(k, len(g))
@@ -144,6 +147,7 @@ def arm_summary(rows, arm):
         'wall_median': statistics.median(walls) if walls else float('nan'),
         'cost': costs, 'cost_mean': statistics.fmean(costs) if costs else float('nan'),
         'cost_total': sum(costs), 'cost_trials': len(costs),
+        'cost_gaps': dict(Counter(r['cost_gap'] for r in g if r.get('cost_gap'))),
         'stages': [s for s, _ in per_trial], 'reviewers': [v for _, v in per_trial], 'items': items,
         'stages_per_item': sum(s for s, _ in per_trial) / max(1, sum(items)),
         'reviewers_per_item': sum(v for _, v in per_trial) / max(1, sum(items)),

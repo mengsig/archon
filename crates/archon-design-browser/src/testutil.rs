@@ -7,6 +7,16 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
 use crate::Browser;
 
+/// What a peer says to a method its test did not script: an unscrolled page, or `{}`.
+fn unscripted(method: &str) -> Value {
+    match method {
+        "Page.getLayoutMetrics" => {
+            json!({"cssVisualViewport": {"pageX": 0.0, "pageY": 0.0, "scale": 1.0}})
+        }
+        _ => json!({}),
+    }
+}
+
 /// Methods seen by the peer.
 pub(crate) type Log = Arc<Mutex<Vec<(String, Value)>>>;
 
@@ -63,7 +73,7 @@ async fn fake_browser_with(
                     .push((method.clone(), msg["params"].clone()));
                 let result = match method.as_str() {
                     "Target.attachToTarget" => json!({"sessionId": "S1"}),
-                    _ => answer(&method, &msg["params"]).unwrap_or(json!({})),
+                    _ => answer(&method, &msg["params"]).unwrap_or_else(|| unscripted(&method)),
                 };
                 let mut out =
                     serde_json::to_vec(&json!({"id": msg["id"], "result": result})).unwrap();

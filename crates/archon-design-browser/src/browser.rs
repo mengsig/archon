@@ -340,8 +340,10 @@ impl Shared {
         if clip.is_some() {
             self.reset_zoom().await;
         }
-        let layout = self.layout().await;
-        let picture = self.capture_area(clip, &layout, dpr).await;
+        let picture = match self.layout().await {
+            Ok(layout) => self.capture_area(clip, &layout, dpr).await,
+            Err(error) => Err(error),
+        };
         if clip.is_some() {
             self.reset_zoom().await;
         }
@@ -349,12 +351,12 @@ impl Shared {
     }
 
     /// Where the visible part of the page is and how big the page is, in CSS
-    /// px; a browser that does not say counts as unscrolled and unbounded.
-    pub(crate) async fn layout(&self) -> PageLayout {
-        let Ok(m) = self.call("Page.getLayoutMetrics", json!({})).await else {
-            return PageLayout::default();
-        };
-        PageLayout::from_metrics(&m)
+    /// px. Guessing would shoot or hit-test the wrong place, so it fails instead.
+    pub(crate) async fn layout(&self) -> Result<PageLayout, BrowserError> {
+        let m = self.call("Page.getLayoutMetrics", json!({})).await?;
+        PageLayout::from_metrics(&m).ok_or_else(|| {
+            BrowserError::Protocol("Chrome did not say where the page is scrolled".into())
+        })
     }
 
     async fn capture_area(
@@ -1352,28 +1354,30 @@ impl Default for PageLayout {
 }
 
 impl PageLayout {
-    pub(crate) fn from_metrics(m: &Value) -> Self {
+    /// None when the visible area's place or zoom is missing or not a number.
+    pub(crate) fn from_metrics(m: &Value) -> Option<Self> {
         let visual = &m["cssVisualViewport"];
+        // An overscrolled page can report a small negative offset; it shows the top.
         let offset = |key: &str| {
             visual[key]
                 .as_f64()
-                .filter(|v| v.is_finite() && *v >= 0.0)
-                .unwrap_or(0.0)
+                .filter(|v| v.is_finite())
+                .map(|v| v.max(0.0))
         };
         let size = &m["cssContentSize"];
         let size = match (size["width"].as_f64(), size["height"].as_f64()) {
             (Some(w), Some(h)) if w >= 1.0 && h >= 1.0 => Some((w, h)),
             _ => None,
         };
-        let zoom = visual["scale"]
-            .as_f64()
-            .filter(|z| z.is_finite() && *z > 0.0)
-            .unwrap_or(1.0);
-        Self {
-            scroll: (offset("pageX"), offset("pageY")),
+        let zoom = match visual.get("scale") {
+            None => 1.0,
+            Some(scale) => scale.as_f64().filter(|z| z.is_finite() && *z > 0.0)?,
+        };
+        Some(Self {
+            scroll: (offset("pageX")?, offset("pageY")?),
             size,
             zoom,
-        }
+        })
     }
 
     /// The whole view as Chrome shows it, and the screenshot scale that draws
@@ -1707,14 +1711,35 @@ mod capture_tests {
     }
 
     #[test]
-    fn a_browser_without_metrics_counts_as_unscrolled() {
-        let layout = PageLayout::from_metrics(&json!({}));
-        assert_eq!(layout, PageLayout::default());
-        let odd = PageLayout::from_metrics(&json!({
-            "cssVisualViewport": {"pageX": -4.0, "pageY": "x"},
+    fn a_layout_without_a_visible_area_is_refused_not_guessed() {
+        assert_eq!(PageLayout::from_metrics(&json!({})), None);
+        let odd = json!({"cssVisualViewport": {"pageX": -4.0, "pageY": "x"}});
+        assert_eq!(PageLayout::from_metrics(&odd), None);
+        let flat = json!({"cssVisualViewport": {"pageX": 0.0, "pageY": 0.0, "scale": 0.0}});
+        assert_eq!(PageLayout::from_metrics(&flat), None);
+        let overscrolled = PageLayout::from_metrics(&json!({
+            "cssVisualViewport": {"pageX": -4.0, "pageY": 12.0},
             "cssContentSize": {"width": 0.0, "height": 10.0},
         }));
-        assert_eq!(odd, PageLayout::default());
+        let expected = PageLayout {
+            scroll: (0.0, 12.0),
+            ..PageLayout::default()
+        };
+        assert_eq!(overscrolled, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn a_browser_that_hides_its_layout_gives_no_frame() {
+        let (b, _log) = fake_browser(|m, _| match m {
+            "Page.captureScreenshot" => Some(json!({"data": jpeg_of(64)})),
+            "Page.getLayoutMetrics" => Some(json!({})),
+            _ => None,
+        })
+        .await;
+        assert!(matches!(
+            b.capture(None, 1.0).await,
+            Err(BrowserError::Protocol(_))
+        ));
     }
 
     #[test]

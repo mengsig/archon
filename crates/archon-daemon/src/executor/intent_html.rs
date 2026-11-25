@@ -100,6 +100,7 @@ fn preserve_local_image(
         viewport: None,
         theme: None,
         state: None,
+        capture: None,
     });
     Ok(name)
 }

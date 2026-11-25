@@ -196,11 +196,32 @@ impl PreviewBrowser for FakeBrowser {
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| jpeg(16, 16));
+        let (viewport_w, viewport_h) = self
+            .calls
+            .lock()
+            .unwrap()
+            .viewports
+            .last()
+            .map_or((1440, 900), |v| (v.width, v.height));
+        let clip = clip.unwrap_or(adb::ClipRect {
+            x: 0.0,
+            y: 0.0,
+            w: f64::from(viewport_w),
+            h: f64::from(viewport_h),
+        });
         Ok(adb::Picture {
             mime: "image/jpeg",
             bytes,
             width: 16,
             height: 16,
+            area: adb::PictureArea {
+                viewport_w,
+                viewport_h,
+                x: clip.x.max(0.0) as u32,
+                y: clip.y.max(0.0) as u32,
+                w: (clip.w as u32).max(1),
+                h: (clip.h as u32).max(1),
+            },
         })
     }
     async fn resolve(

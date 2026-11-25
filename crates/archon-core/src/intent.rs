@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+mod capture;
+pub use capture::{CaptureArea, CaptureMethod, ImageCapture};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ApprovedIntent {
     pub id: String,
@@ -40,9 +43,13 @@ pub struct ReferenceImage {
     pub theme: Option<String>,
     #[serde(default)]
     pub state: Option<String>,
+    /// How Archon took the picture (a live design's), for a built picture
+    /// to be taken the same way; none for an image the operator supplied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture: Option<ImageCapture>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Viewport {
     pub width: u32,
     pub height: u32,
@@ -137,6 +144,10 @@ impl ApprovedIntent {
                     .viewport
                     .as_ref()
                     .is_some_and(|v| v.width == 0 || v.height == 0)
+                || image
+                    .capture
+                    .as_ref()
+                    .is_some_and(|c| !c.is_valid() || image.viewport.as_ref() != Some(&c.viewport))
             {
                 return Err(ArchonError::Invalid(format!(
                     "invalid reference image {:?}",
@@ -237,12 +248,13 @@ impl ApprovedIntent {
                 listed.len()
             ));
         }
-        let invented =
-            |i: &&ReferenceImage| i.viewport.is_some() || i.theme.is_some() || i.state.is_some();
+        let invented = |i: &&ReferenceImage| {
+            i.viewport.is_some() || i.theme.is_some() || i.state.is_some() || i.capture.is_some()
+        };
         if let Some(image) = self.images.iter().find(invented) {
             return Some(format!(
-                "reference image {:?} carries a viewport, theme or state, which an attachment \
-                 does not prove the operator approved",
+                "reference image {:?} carries a viewport, theme or state, or capture \
+                 conditions, which an attachment does not prove the operator approved",
                 image.id
             ));
         }
@@ -357,6 +369,7 @@ mod tests {
             viewport: None,
             theme: None,
             state: None,
+            capture: None,
         }
     }
 

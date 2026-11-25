@@ -146,6 +146,7 @@ fn stored(
         target: None,
         note: Some(note.to_owned()),
         commit: Some(commit.to_owned()),
+        capture: None,
         created_at: archon_core::now(),
     };
     let path = h.ctx.design.asset_path(&asset);

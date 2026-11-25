@@ -184,6 +184,26 @@ pub struct Picture {
     pub width: u32,
     /// Pixel height.
     pub height: u32,
+    /// What it shows, so the same picture can be taken of a build.
+    pub area: PictureArea,
+}
+
+/// The page area a picture shows, in whole CSS px, and the viewport the page
+/// was laid out at. The picture's pixels over `w` × `h` are its scale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PictureArea {
+    /// Viewport width.
+    pub viewport_w: u32,
+    /// Viewport height.
+    pub viewport_h: u32,
+    /// Left, from the page's left edge.
+    pub x: u32,
+    /// Top, from the page's top edge.
+    pub y: u32,
+    /// Width.
+    pub w: u32,
+    /// Height.
+    pub h: u32,
 }
 
 /// One screencast frame.

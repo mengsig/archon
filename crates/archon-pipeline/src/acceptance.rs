@@ -483,6 +483,7 @@ mod tests {
                 }),
                 theme: Some("light".into()),
                 state: Some("loaded".into()),
+                capture: None,
             }],
             requirements: vec![Requirement {
                 id: "R1".into(),

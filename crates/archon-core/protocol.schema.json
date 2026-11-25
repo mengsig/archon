@@ -834,6 +834,48 @@
       ],
       "type": "object"
     },
+    "CaptureArea": {
+      "description": "A rectangle of the page in whole CSS pixels, from its top-left corner.",
+      "properties": {
+        "height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "x": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "y": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "CaptureMethod": {
+      "description": "How a picture was taken.",
+      "oneOf": [
+        {
+          "const": "page_screenshot",
+          "description": "The browser's own screenshot of the page (Chromium's\n`Page.captureScreenshot`): no browser chrome, toolbar or design overlay.",
+          "type": "string"
+        }
+      ]
+    },
     "CarriedReview": {
       "description": "A review that covers a later head than the commit it passed: every commit\nsince merges in only what the pull request's base holds.",
       "properties": {
@@ -8089,6 +8131,33 @@
       ],
       "type": "object"
     },
+    "ImageCapture": {
+      "description": "The conditions a reference picture was taken in. Its device scale factor is\n`pixels` over `area`; a built picture taken the same way has its `pixels`.",
+      "properties": {
+        "area": {
+          "$ref": "#/$defs/CaptureArea",
+          "description": "What the picture shows: the whole viewport, or a region of the page."
+        },
+        "method": {
+          "$ref": "#/$defs/CaptureMethod"
+        },
+        "pixels": {
+          "$ref": "#/$defs/Viewport",
+          "description": "The picture's size in device pixels."
+        },
+        "viewport": {
+          "$ref": "#/$defs/Viewport",
+          "description": "The CSS viewport the page was laid out at."
+        }
+      },
+      "required": [
+        "method",
+        "viewport",
+        "area",
+        "pixels"
+      ],
+      "type": "object"
+    },
     "ImageRef": {
       "description": "An image a message carried, as the feed records it: no bytes.",
       "properties": {
@@ -13512,6 +13581,17 @@
     },
     "ReferenceImage": {
       "properties": {
+        "capture": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageCapture"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How Archon took the picture (a live design's), for a built picture\nto be taken the same way; none for an image the operator supplied."
+        },
         "id": {
           "type": "string"
         },

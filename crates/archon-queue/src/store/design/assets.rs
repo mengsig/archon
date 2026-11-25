@@ -30,8 +30,17 @@ impl Store {
             .as_ref()
             .map(|t| to_json(t, "asset target"))
             .transpose()?;
+        let capture = asset
+            .capture
+            .as_ref()
+            .map(|c| to_json(c, "asset capture"))
+            .transpose()?;
+        let json = AssetJson {
+            target: target.as_deref(),
+            capture: capture.as_deref(),
+        };
         let stored =
-            if let Some(id) = matching_capture(&tx, &asset, target.as_deref(), sketch)? {
+            if let Some(id) = matching_capture(&tx, &asset, json, sketch)? {
                 let updated = tx.execute(
                 "UPDATE design_assets SET last_used_at = MAX(last_used_at, ?1) WHERE id = ?2",
                 params![ts(&asset.created_at), id],
@@ -46,7 +55,7 @@ impl Store {
                 if !fits_asset_cap(&tx, &asset, sketch)? {
                     return Ok(None);
                 }
-                insert_asset(&tx, &asset, target.as_deref(), sketch)?;
+                insert_asset(&tx, &asset, json, sketch)?;
                 asset_by_id(&tx, &asset.item, &asset.id)?.expect("the inserted capture exists")
             };
         debug_assert_eq!(stored.item, asset.item);
@@ -153,17 +162,24 @@ const UNUSED_ASSET: &str = "last_used_at < ?1 AND NOT EXISTS (
     SELECT 1 FROM design_notes n WHERE n.item = design_assets.item
        AND design_assets.id IN (n.before_asset, n.after_asset, n.final_asset))";
 
+/// An asset's JSON columns, encoded.
+#[derive(Clone, Copy)]
+struct AssetJson<'a> {
+    target: Option<&'a str>,
+    capture: Option<&'a str>,
+}
+
 fn matching_capture(
     conn: &Connection,
     asset: &DesignAsset,
-    target: Option<&str>,
+    json: AssetJson<'_>,
     sketch: Option<&str>,
 ) -> Result<Option<String>, ArchonError> {
     conn.query_row(
         "SELECT id FROM design_assets
          WHERE item = ?1 AND sha256 = ?2 AND mime = ?3 AND bytes = ?4 AND width = ?5 AND height = ?6
            AND path = ?7 AND source = ?8 AND target_json IS ?9 AND note IS ?10 AND commit_sha IS ?11
-           AND sketch IS ?12
+           AND sketch IS ?12 AND capture_json IS ?13
          ORDER BY created_at, id LIMIT 1",
         params![
             asset.item.as_str(),
@@ -174,10 +190,11 @@ fn matching_capture(
             asset.height,
             asset.path,
             enc(&asset.source),
-            target,
+            json.target,
             asset.note,
             asset.commit,
             sketch,
+            json.capture,
         ],
         |row| row.get(0),
     )
@@ -188,14 +205,14 @@ fn matching_capture(
 fn insert_asset(
     conn: &Connection,
     asset: &DesignAsset,
-    target: Option<&str>,
+    json: AssetJson<'_>,
     sketch: Option<&str>,
 ) -> Result<(), ArchonError> {
     let inserted = conn
         .execute(
             "INSERT INTO design_assets (id, item, sha256, mime, bytes, width, height, path,
-             source, target_json, note, commit_sha, created_at, last_used_at, sketch)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?14)",
+             source, target_json, note, commit_sha, created_at, last_used_at, sketch, capture_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?14, ?15)",
             params![
                 asset.id.as_str(),
                 asset.item.as_str(),
@@ -206,11 +223,12 @@ fn insert_asset(
                 asset.height,
                 asset.path,
                 enc(&asset.source),
-                target,
+                json.target,
                 asset.note,
                 asset.commit,
                 ts(&asset.created_at),
                 sketch,
+                json.capture,
             ],
         )
         .ctx("insert design asset")?;
@@ -259,7 +277,7 @@ fn fits_asset_cap(
 }
 
 const ASSET_COLUMNS: &str = "id, item, sha256, mime, bytes, width, height, path, source,
-    target_json, note, commit_sha, created_at";
+    target_json, note, commit_sha, created_at, capture_json";
 
 fn read_assets(
     conn: &Connection,
@@ -277,6 +295,7 @@ fn read_assets(
             let source: String = row.get(8)?;
             let target: Option<String> = row.get(9)?;
             let created: String = row.get(12)?;
+            let capture: Option<String> = row.get(13)?;
             Ok((|| -> Result<DesignAsset, ArchonError> {
                 fn ctx<T>(r: rusqlite::Result<T>) -> Result<T, ArchonError> {
                     r.ctx("read design asset")
@@ -294,6 +313,9 @@ fn read_assets(
                     target: target.map(|t| from_json(&t, "asset target")).transpose()?,
                     note: ctx(row.get(10))?,
                     commit: ctx(row.get(11))?,
+                    capture: capture
+                        .map(|c| from_json(&c, "asset capture"))
+                        .transpose()?,
                     created_at: parse_ts(&created)?,
                 })
             })())

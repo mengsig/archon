@@ -283,6 +283,15 @@ in-between pictures are never part of it and never sent to a later model.
 Review and acceptance then check the shipped UI against these pictures and
 your words.
 
+Each picture in the ledger records how the preview browser took it: the
+viewport the page was laid out at, the area shown (the whole viewport or a
+region), and its size in pixels, which over that area gives the device scale
+factor (2 for the final pictures). Pictures never include the design overlay.
+The build is told to take its own picture the same way, and acceptance
+refuses a built picture of another pixel size before any judge compares the
+two, so an unchanged layout is never failed for having been captured at
+another viewport or scale.
+
 The page shown at the gate is a decision page. At the top are a summary (how
 many notes changed the app, the checks the agent reported, what approving
 does) and the answers. Each note then has a card: your words, what you

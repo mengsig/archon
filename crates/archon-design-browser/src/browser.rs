@@ -29,7 +29,7 @@ use crate::relay::{FrameRelay, RelayShared};
 use crate::sanitize::clean;
 use crate::{
     BrowserError, BrowserEvent, ClipRect, Input, KeyAction, LaunchSpec, MAX_IMAGE_BYTES,
-    MouseAction, MouseButton, Picture, TouchAction, Viewport, jpeg_dims,
+    MouseAction, MouseButton, Picture, PictureArea, TouchAction, Viewport, jpeg_dims,
 };
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -350,12 +350,12 @@ impl Shared {
         dpr: f64,
     ) -> Result<Picture, BrowserError> {
         let vp = self.viewport();
-        let clip = clip.unwrap_or(ClipRect {
+        let clip = whole_pixels(clip.unwrap_or(ClipRect {
             x: 0.0,
             y: 0.0,
             w: f64::from(vp.width),
             h: f64::from(vp.height),
-        });
+        }));
         if !(clip.w >= 1.0 && clip.h >= 1.0) {
             return Err(BrowserError::Protocol("empty capture area".into()));
         }
@@ -364,11 +364,21 @@ impl Shared {
             (clip.w * scale).round() as u32,
             (clip.h * scale).round() as u32,
         ));
+        let area = PictureArea {
+            viewport_w: vp.width,
+            viewport_h: vp.height,
+            x: clip.x as u32,
+            y: clip.y as u32,
+            w: clip.w as u32,
+            h: clip.h as u32,
+        };
+        assert!(area.w > 0 && area.h > 0, "a picture shows a nonempty area");
         Ok(Picture {
             mime: "image/jpeg",
             bytes,
             width,
             height,
+            area,
         })
     }
 
@@ -1287,9 +1297,49 @@ pub(crate) fn clamp_to_page(clip: ClipRect, width: f64, height: f64) -> ClipRect
     }
 }
 
+/// `clip` grown outward to whole CSS px, so the area a picture records is
+/// exactly the area it shows and a build can be cut to the same one.
+pub(crate) fn whole_pixels(clip: ClipRect) -> ClipRect {
+    let (x, y) = (clip.x.max(0.0).floor(), clip.y.max(0.0).floor());
+    let snapped = ClipRect {
+        x,
+        y,
+        w: ((clip.x + clip.w).ceil() - x).max(0.0),
+        h: ((clip.y + clip.h).ceil() - y).max(0.0),
+    };
+    debug_assert!(snapped.w.fract() == 0.0 && snapped.h.fract() == 0.0);
+    snapped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_crop_is_grown_to_whole_css_pixels() {
+        let crop = whole_pixels(ClipRect {
+            x: 10.4,
+            y: 0.6,
+            w: 100.2,
+            h: 20.0,
+        });
+        assert_eq!(
+            crop,
+            ClipRect {
+                x: 10.0,
+                y: 0.0,
+                w: 101.0,
+                h: 21.0
+            }
+        );
+        let whole = ClipRect {
+            x: 0.0,
+            y: 0.0,
+            w: 1440.0,
+            h: 900.0,
+        };
+        assert_eq!(whole_pixels(whole), whole);
+    }
 
     /// LOW-crop: a full-width header with a 24 px margin was 2928 px wide
     /// at 2x on a 1440 px page; cut to the page it is 2880.

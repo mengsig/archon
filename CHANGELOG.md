@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed
+
+- A live design whose layout did not change no longer fails intent
+  acceptance with a "layout gap". The ledger recorded only the CSS viewport
+  of a picture taken at device scale 2, so a 1440×900 reference was a
+  2880×1800 image; the build took its picture at 720×450 and scale 2 to make
+  1440×900 pixels, the narrower page reflowed, and the judge failed it. Each
+  ledger picture now records how the browser took it (viewport, area, pixel
+  size and so scale; never the overlay), the build is told to take its
+  picture the same way, and acceptance refuses a built picture of another
+  pixel size before judging. Store schema 32 adds the capture to design
+  pictures; pictures taken before it keep only their viewport.
+
 ## 1.6.5
 
 Released 2026-11-25.

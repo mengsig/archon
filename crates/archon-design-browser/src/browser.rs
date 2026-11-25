@@ -19,6 +19,7 @@ use tokio::time::Instant;
 
 use crate::cdp::{CLOSED_EVENT, Cdp, CdpEvent, MAX_FRAME};
 use crate::containment::Containment;
+use crate::keys::virtual_key_code;
 use crate::launch::{
     SHELL_SCRIPT, classify_stderr, kill_group, launch_args, launch_env, process_start_time,
     write_profile_preferences,
@@ -33,6 +34,19 @@ use crate::{
 };
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
+/// Stream frames: four a second at rest, ten (the relay's most) while the
+/// operator scrolls or types, so a scroll is followed and its end shown soon.
+const IDLE_FRAME_INTERVAL: Duration = Duration::from_millis(250);
+const ACTIVE_FRAME_INTERVAL: Duration = Duration::from_millis(100);
+const ACTIVE_AFTER_INPUT: Duration = Duration::from_millis(1500);
+
+/// How long the polling loop waits before its next frame.
+pub(crate) fn frame_interval(since_input: Option<Duration>) -> Duration {
+    match since_input {
+        Some(elapsed) if elapsed < ACTIVE_AFTER_INPUT => ACTIVE_FRAME_INTERVAL,
+        _ => IDLE_FRAME_INTERVAL,
+    }
+}
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct LaunchGuard {
@@ -71,6 +85,8 @@ struct State {
     blocked: HashSet<String>,
     viewport: Viewport,
     poll: Option<JoinHandle<()>>,
+    /// When input was last dispatched: frames come faster for a while after it.
+    last_input: Option<Instant>,
 }
 
 #[derive(Debug)]
@@ -319,43 +335,39 @@ impl Shared {
         // One screenshot at a time: the stream's polling loop (scale 1) must
         // not race a final picture (scale 2). See `Shared::shot`.
         let _one_at_a_time = self.shot.lock().await;
-        // Crops are in page CSS pixels: take them on the unzoomed page the
-        // operator saw, and leave it unzoomed for the stream. A full-view
-        // shot (each polled stream frame) zooms nothing and pays nothing.
-        if clip.is_none() {
-            return self.capture_at_scale_one(None, dpr).await;
+        // Crops are taken on the unzoomed page the operator saw, and leave it
+        // unzoomed for the stream. A full-view shot (each stream frame) zooms nothing.
+        if clip.is_some() {
+            self.reset_zoom().await;
         }
-        self.reset_zoom().await;
-        let clip = match (clip, self.page_size().await) {
-            (Some(clip), Some((w, h))) => Some(clamp_to_page(clip, w, h)),
-            (clip, _) => clip,
-        };
-        let picture = self.capture_at_scale_one(clip, dpr).await;
-        self.reset_zoom().await;
+        let layout = self.layout().await;
+        let picture = self.capture_area(clip, &layout, dpr).await;
+        if clip.is_some() {
+            self.reset_zoom().await;
+        }
         picture
     }
 
-    /// The page's full size in CSS px, for clamping crops; `None` when the
-    /// browser does not say.
-    async fn page_size(&self) -> Option<(f64, f64)> {
-        let m = self.call("Page.getLayoutMetrics", json!({})).await.ok()?;
-        let size = &m["cssContentSize"];
-        let (w, h) = (size["width"].as_f64()?, size["height"].as_f64()?);
-        (w >= 1.0 && h >= 1.0).then_some((w, h))
+    /// Where the visible part of the page is and how big the page is, in CSS
+    /// px; a browser that does not say counts as unscrolled and unbounded.
+    pub(crate) async fn layout(&self) -> PageLayout {
+        let Ok(m) = self.call("Page.getLayoutMetrics", json!({})).await else {
+            return PageLayout::default();
+        };
+        PageLayout::from_metrics(&m)
     }
 
-    async fn capture_at_scale_one(
+    async fn capture_area(
         &self,
         clip: Option<ClipRect>,
+        layout: &PageLayout,
         dpr: f64,
     ) -> Result<Picture, BrowserError> {
         let vp = self.viewport();
-        let clip = whole_pixels(clip.unwrap_or(ClipRect {
-            x: 0.0,
-            y: 0.0,
-            w: f64::from(vp.width),
-            h: f64::from(vp.height),
-        }));
+        let (clip, dpr) = match clip {
+            Some(seen) => (whole_pixels(layout.page_clip(seen)), dpr),
+            None => layout.view_clip(vp, dpr),
+        };
         if !(clip.w >= 1.0 && clip.h >= 1.0) {
             return Err(BrowserError::Protocol("empty capture area".into()));
         }
@@ -392,10 +404,9 @@ impl Shared {
     fn start_polling(self: &Arc<Self>) {
         let sh = self.clone();
         let h = tokio::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_millis(250));
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
-                tick.tick().await;
+                let since_input = sh.st.lock().unwrap().last_input.map(|at| at.elapsed());
+                tokio::time::sleep(frame_interval(since_input)).await;
                 match sh.poll_frame().await {
                     Ok(()) | Err(BrowserError::DisclosureUnavailable) => {}
                     Err(BrowserError::Closed | BrowserError::Containment(_)) => break,
@@ -942,6 +953,7 @@ impl Browser {
                 blocked: HashSet::new(),
                 viewport: vp,
                 poll: None,
+                last_input: None,
             }),
         });
         let event_task = tokio::spawn(handle_events(sh.clone(), rx, documents));
@@ -1034,6 +1046,7 @@ impl Browser {
 
     /// Dispatch input events in order.
     pub async fn input(&self, events: &[Input]) -> Result<(), BrowserError> {
+        self.sh.st.lock().unwrap().last_input = Some(Instant::now());
         for e in events {
             let (method, params) = match e {
                 Input::Mouse {
@@ -1074,6 +1087,11 @@ impl Browser {
                     };
                     let mut p =
                         json!({"type": ty, "key": key, "code": code, "modifiers": modifiers});
+                    // Chrome scrolls, deletes and tabs by the key code, not the key name.
+                    if let Some(vk) = virtual_key_code(key, code) {
+                        p["windowsVirtualKeyCode"] = json!(vk);
+                        p["nativeVirtualKeyCode"] = json!(vk);
+                    }
                     if let (KeyAction::Down, Some(t)) = (action, text) {
                         p["text"] = json!(t);
                     }
@@ -1108,6 +1126,23 @@ impl Browser {
             task.abort();
         }
         Ok(())
+    }
+
+    /// Chrome's own picture of what the page shows, with no clip, at the
+    /// stream's quality: what a stream frame must match once the page rests.
+    pub async fn viewport_screenshot(&self) -> Result<Vec<u8>, BrowserError> {
+        let sh = &self.sh;
+        let shot = async {
+            let _one_at_a_time = sh.shot.lock().await;
+            let r = sh
+                .call(
+                    "Page.captureScreenshot",
+                    json!({"format": "jpeg", "quality": 70, "captureBeyondViewport": false}),
+                )
+                .await?;
+            b64(r["data"].as_str().unwrap_or_default())
+        };
+        sh.disclose(shot).await
     }
 
     /// A picture of the viewport or `clip`, at most 560 KiB.
@@ -1291,6 +1326,108 @@ impl Browser {
     }
 }
 
+/// The page as `Page.getLayoutMetrics` describes it. Every clip Archon holds
+/// (the whole view, an element box, a drawn region) is relative to what is
+/// visible, but `Page.captureScreenshot` clips in page coordinates: a scrolled
+/// page shot at (0, 0) showed its top, so a sticky header was drawn far down.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PageLayout {
+    /// The visible area's top-left corner in page CSS px.
+    pub(crate) scroll: (f64, f64),
+    /// The page's full size, when the browser says.
+    pub(crate) size: Option<(f64, f64)>,
+    /// The page scale: below 1 where a phone shows a page wider than itself
+    /// zoomed out, above 1 after a pinch or double tap.
+    pub(crate) zoom: f64,
+}
+
+impl Default for PageLayout {
+    fn default() -> Self {
+        Self {
+            scroll: (0.0, 0.0),
+            size: None,
+            zoom: 1.0,
+        }
+    }
+}
+
+impl PageLayout {
+    pub(crate) fn from_metrics(m: &Value) -> Self {
+        let visual = &m["cssVisualViewport"];
+        let offset = |key: &str| {
+            visual[key]
+                .as_f64()
+                .filter(|v| v.is_finite() && *v >= 0.0)
+                .unwrap_or(0.0)
+        };
+        let size = &m["cssContentSize"];
+        let size = match (size["width"].as_f64(), size["height"].as_f64()) {
+            (Some(w), Some(h)) if w >= 1.0 && h >= 1.0 => Some((w, h)),
+            _ => None,
+        };
+        let zoom = visual["scale"]
+            .as_f64()
+            .filter(|z| z.is_finite() && *z > 0.0)
+            .unwrap_or(1.0);
+        Self {
+            scroll: (offset("pageX"), offset("pageY")),
+            size,
+            zoom,
+        }
+    }
+
+    /// The whole view as Chrome shows it, and the screenshot scale that draws
+    /// it at `vp`'s size times `dpr`: zoomed, it covers more or less of the page.
+    pub(crate) fn view_clip(&self, vp: Viewport, dpr: f64) -> (ClipRect, f64) {
+        assert!(vp.width > 0 && vp.height > 0, "a viewport has a size");
+        let view = self.on_page(ClipRect {
+            x: 0.0,
+            y: 0.0,
+            w: f64::from(vp.width) / self.zoom,
+            h: f64::from(vp.height) / self.zoom,
+        });
+        if self.zoom == 1.0 {
+            return (whole_pixels(view), dpr);
+        }
+        // Snapping a zoomed view to whole page pixels would change its size on screen.
+        (view, dpr * self.zoom)
+    }
+
+    /// `seen`, a rectangle of the visible area, in page coordinates.
+    pub(crate) fn on_page(&self, seen: ClipRect) -> ClipRect {
+        assert!(
+            seen.x.is_finite() && seen.y.is_finite() && seen.w >= 0.0 && seen.h >= 0.0,
+            "a capture area is a finite, nonnegative rectangle: {seen:?}"
+        );
+        let page = ClipRect {
+            x: seen.x + self.scroll.0,
+            y: seen.y + self.scroll.1,
+            ..seen
+        };
+        debug_assert!(page.x >= seen.x && page.y >= seen.y);
+        page
+    }
+
+    /// A point on the frame (what is visible, zoom included) on the page.
+    pub(crate) fn page_point(&self, x: f64, y: f64) -> (f64, f64) {
+        assert!(x.is_finite() && y.is_finite(), "a frame point is finite");
+        let point = (self.scroll.0 + x / self.zoom, self.scroll.1 + y / self.zoom);
+        debug_assert!(point.0.is_finite() && point.1.is_finite());
+        point
+    }
+
+    /// A crop of the visible area as a page clip, cut to the page's edges.
+    pub(crate) fn page_clip(&self, seen: ClipRect) -> ClipRect {
+        let page = self.on_page(seen);
+        let clipped = match self.size {
+            Some((w, h)) => clamp_to_page(page, w, h),
+            None => page,
+        };
+        debug_assert!(clipped.w <= seen.w && clipped.h <= seen.h);
+        clipped
+    }
+}
+
 /// `clip` cut to the page (`width` × `height` CSS px): a margin around an
 /// element at the page's edge must not add an empty strip beyond it.
 pub(crate) fn clamp_to_page(clip: ClipRect, width: f64, height: f64) -> ClipRect {
@@ -1470,6 +1607,128 @@ mod capture_tests {
         .await
         .unwrap();
         assert_eq!(methods(&log), ["Emulation.resetPageScaleFactor"]);
+    }
+
+    /// The operator's screenshot: a scrolled page's frame showed the top of
+    /// the document, its sticky header a third of the way down. Every shot is
+    /// clipped where the visible area is on the page.
+    #[tokio::test]
+    async fn a_scrolled_page_is_shot_where_it_is_scrolled_to() {
+        let (b, log) = fake_browser(|m, _| match m {
+            "Page.captureScreenshot" => Some(json!({"data": jpeg_of(64)})),
+            "Page.getLayoutMetrics" => Some(json!({
+                "cssVisualViewport": {"pageX": 30.0, "pageY": 450.0},
+                "cssContentSize": {"width": 1000.0, "height": 1000.0},
+            })),
+            _ => None,
+        })
+        .await;
+        let frame = b.capture(None, 1.0).await.unwrap();
+        let crop = ClipRect {
+            x: 10.0,
+            y: 500.0,
+            w: 100.0,
+            h: 100.0,
+        };
+        let cropped = b.capture(Some(crop), 2.0).await.unwrap();
+        let clips: Vec<Value> = log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, _)| m == "Page.captureScreenshot")
+            .map(|(_, p)| p["clip"].clone())
+            .collect();
+        assert_eq!(clips.len(), 2, "{clips:?}");
+        let vp = b.sh.viewport();
+        assert_eq!(
+            (clips[0]["x"].as_f64(), clips[0]["y"].as_f64()),
+            (Some(30.0), Some(450.0))
+        );
+        assert_eq!(clips[0]["width"].as_f64(), Some(f64::from(vp.width)));
+        assert_eq!((frame.capture.x, frame.capture.y), (30, 450));
+        // The crop starts 950 px down the 1000 px page: it is cut at the bottom.
+        assert_eq!(
+            (clips[1]["y"].as_f64(), clips[1]["height"].as_f64()),
+            (Some(950.0), Some(50.0))
+        );
+        assert_eq!((cropped.capture.x, cropped.capture.h), (40, 50));
+    }
+
+    /// Comment-mode picks hit nothing on a scrolled page: Chrome's hit test
+    /// takes page coordinates and was given the frame's.
+    #[tokio::test]
+    async fn a_pick_on_a_scrolled_page_asks_for_the_page_point() {
+        let (b, log) = fake_browser(|m, _| match m {
+            "Page.getLayoutMetrics" => Some(json!({
+                "cssVisualViewport": {"pageX": 0.0, "pageY": 450.0, "scale": 2.0},
+            })),
+            _ => None,
+        })
+        .await;
+        let refused = b.resolve(100.0, 300.0, 0).await;
+        assert!(refused.is_err(), "the fake has no node: {refused:?}");
+        let asked = log
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(m, _)| m == "DOM.getNodeForLocation")
+            .map(|(_, p)| p.clone())
+            .expect("a hit test");
+        assert_eq!(
+            (asked["x"].as_i64(), asked["y"].as_i64()),
+            (Some(50), Some(600))
+        );
+    }
+
+    #[test]
+    fn a_zoomed_view_is_shot_whole_at_its_page_scale() {
+        let layout = PageLayout {
+            scroll: (0.0, 100.0),
+            size: None,
+            zoom: 0.25,
+        };
+        let vp = Viewport {
+            width: 390,
+            height: 844,
+            touch: true,
+            dpr: 2.0,
+        };
+        let (clip, scale) = layout.view_clip(vp, 2.0);
+        assert_eq!(
+            (clip.x, clip.y, clip.w, clip.h),
+            (0.0, 100.0, 1560.0, 3376.0)
+        );
+        assert_eq!(scale, 0.5, "drawn at the viewport's size times its dpr");
+        let unzoomed = PageLayout::default().view_clip(vp, 2.0);
+        assert_eq!(
+            (unzoomed.0.w, unzoomed.0.h, unzoomed.1),
+            (390.0, 844.0, 2.0)
+        );
+    }
+
+    #[test]
+    fn a_browser_without_metrics_counts_as_unscrolled() {
+        let layout = PageLayout::from_metrics(&json!({}));
+        assert_eq!(layout, PageLayout::default());
+        let odd = PageLayout::from_metrics(&json!({
+            "cssVisualViewport": {"pageX": -4.0, "pageY": "x"},
+            "cssContentSize": {"width": 0.0, "height": 10.0},
+        }));
+        assert_eq!(odd, PageLayout::default());
+    }
+
+    #[test]
+    fn frames_come_faster_just_after_input() {
+        assert_eq!(frame_interval(None), IDLE_FRAME_INTERVAL);
+        assert_eq!(
+            frame_interval(Some(Duration::from_millis(10))),
+            ACTIVE_FRAME_INTERVAL
+        );
+        assert_eq!(
+            frame_interval(Some(ACTIVE_AFTER_INPUT)),
+            IDLE_FRAME_INTERVAL
+        );
+        assert!(ACTIVE_FRAME_INTERVAL < IDLE_FRAME_INTERVAL);
     }
 
     #[tokio::test]

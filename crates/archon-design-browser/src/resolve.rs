@@ -162,6 +162,8 @@ impl Browser {
 
     async fn read_element(&self, x: f64, y: f64, depth: i32) -> Result<Resolved, BrowserError> {
         let sh = &self.sh;
+        // Chrome hit-tests page coordinates; the point is on the frame, which scrolls.
+        let (x, y) = sh.layout().await.page_point(x, y);
         let n = sh
             .call(
                 "DOM.getNodeForLocation",

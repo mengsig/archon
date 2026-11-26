@@ -126,3 +126,13 @@ adds only this file.
 The artifact `release-1.6.6-evidence` of item `qi_01M8AT7F6XBDXKXXBR07C7JV6X`
 keeps the results, item histories, private daemon logs, checksums, wrapper
 and CI logs. Credentials and downloaded binaries are left out.
+
+## make ci on the final head
+
+`CARGO_BUILD_JOBS=2 nice -n 19 ionice -c3 make ci` passed on `3cb6b0ac`
+(tree `90d07649`) inside the host CI slot, started at load5 4.42 (the first
+attempt, at load5 4.42, was cut off by a harness time limit and rerun from
+scratch): 5,724 tests passed, 0 failed, 10 ignored across 130 summaries.
+Formatting, shell checks, clippy and rustdoc with warnings denied passed. No
+test needed a rerun and no flake was seen. The commit after it adds only this
+paragraph.

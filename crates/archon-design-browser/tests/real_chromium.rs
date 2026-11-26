@@ -646,7 +646,11 @@ async fn js_navigation_to_a_blob_stops_before_disclosure() {
 
 #[tokio::test]
 async fn js_popup_stops_before_disclosure() {
-    assert_disclosure_stops("window.open(fixture(), '_blank')", &["new window"]).await;
+    assert_disclosure_stops(
+        "window.open(fixture(), '_blank')",
+        &["new window", "main-frame document"],
+    )
+    .await;
 }
 
 #[tokio::test]

@@ -18,6 +18,7 @@ ever reaches your browser: only pictures and JSON.
 - [Configuration](#configuration)
 - [Starting a session](#starting-a-session)
 - [Using the design screen](#using-the-design-screen)
+- [Files, downloads and other browser features](#files-downloads-and-other-browser-features)
 - [Notes and their statuses](#notes-and-their-statuses)
 - [Compare, Undo and Revise](#compare-undo-and-revise)
 - [Follow-ups, references and the tree](#follow-ups-references-and-the-tree)
@@ -163,6 +164,49 @@ Closing the session closes its browser, which lets go of everything with it. A p
 spans requests that all succeed, such as a drag, stays held unless one of these
 lets go of it first: a failed, timed-out or refused request, or the end of a
 page's stream (including another page's, a reload or a reconnect).
+
+## Files, downloads and other browser features
+
+The preview is a headless Chromium, so the things a desktop browser would draw
+itself are handed to you instead:
+
+- **File pickers.** When the app opens a file chooser, your device's own
+  picker opens, with the input's `accept` and `multiple`. The files go to
+  archond in parts and are set on the input; **Cancel** leaves it empty.
+  Dropping files on the preview drops them on the page at that point.
+- **Downloads.** A file the app downloads is offered to your device with its
+  name and size; **Save** fetches it.
+- **Dialogs.** `alert`, `confirm` and `prompt` show their text and wait for
+  your answer. Nothing answers them for you.
+- **New tabs.** `target="_blank"` links, `window.open`, middle- or
+  modifier-clicked links and forms with a target open in the preview's one
+  tab. A note says so; **Back** next to **Reload** returns to the page before.
+- **Native controls.** A single `<select>` and `date`, `time`,
+  `datetime-local`, `month`, `week` and `color` inputs open a sheet on your
+  device; your choice is set on the control and fires its `input` and
+  `change` events.
+- **Clipboard.** Text the app copies (a copy or cut, or
+  `navigator.clipboard.writeText`) is shown on your device with a **Copy**
+  button; it reaches your clipboard only when you press it.
+  Pasting into the preview types the pasted text.
+- **Keys.** Ctrl and, on a Mac, Cmd shortcuts reach the app; Cmd+A, C, X, V,
+  Z and Shift+Z run the matching editing command. Use **Type text** for
+  input methods such as Chinese, Japanese or Korean.
+- Right-click, hover and text selection reach the page as in a tab: the
+  page's `contextmenu`, `mouseover` and selection events fire.
+
+Not possible in the preview:
+
+- A `<select>` or picker inside an iframe opens nothing; set it with the
+  keyboard (focus it, then the arrow keys).
+- `window.open()` with no address, used to write a pop-up's content, stays on
+  the page and says so.
+- Chromium's own right-click menu is not drawn.
+
+Only the operator's paired devices can send or fetch files; observers are
+refused. Each session keeps files in its own private directory in the
+browser profile, under names reduced to a safe last component (no path the
+device sends is used), and deletes it when the preview stops or restarts.
 
 ## Notes and their statuses
 
@@ -426,13 +470,23 @@ once only.
 | "The agent is wrapping up. Approve, Ask for changes and Reject appear here in a moment." | You confirmed; the approval question opens once the agent has stopped the app. |
 | "Reviewed in an earlier session; kept as it was" | A note from before an "Ask for changes". Its picture was confirmed then and goes into the approval as it is; it is not captured or confirmed again. |
 | "A design session is running. Only the operator's devices see the live preview." | You are on an observer device. |
-| "File pickers aren't available in the preview yet" | The app opened a file picker. Downloads are denied. Opening a new window ends the preview. |
+| "That file is too big for the preview (64 MiB at most)." / "Those files are too big for the preview (256 MiB total at most)." / "Choose at most 32 files for the preview." | The chosen files are over a limit; nothing was sent. See Limits. |
+| "this preview session already holds 240 MiB of files; it takes 256 MiB at most" | Files sent earlier in this session count too. They are freed when the preview restarts. |
+| "The app's download of report.csv was not kept: it is larger than 64 MiB." | Chromium stopped the download. Smaller downloads are offered. |
+| "The app opened a new tab. It is shown here; press Back to return." | A link or `window.open` meant for a new tab opened in the preview. |
+| "There is no earlier page in the preview." | **Back** has nowhere to go. |
 | "worktree moved after Finish: expected 3f9c2a1; restore it and complete again" | A commit was made after you confirmed. The agent must reset to the finish commit and complete again. |
 | "choose live when creating the item" | `proposal` cannot change to or from `live` later. |
 | "design sessions turned off" | `[design] enabled` is false; the stage fails. |
 
-`alert`, `confirm` and `prompt` dialogs show their type and action buttons in Archon. Their page-provided
-text and suggested answers stay inside Chromium.
+`alert`, `confirm` and `prompt` dialogs show their text with its line breaks,
+a prompt's suggested answer and their action buttons in Archon, and wait for
+your answer. A suggested answer longer than 16 KiB, the most an answer can
+be, shows only its start, and one with characters other than line breaks and
+tabs that cannot be shown (such as a carriage return) shows without them. In
+both cases the dialog says so; check the answer before pressing OK. A dialog
+from a page outside the preview's origin shows "The preview opened a dialog."
+without its text.
 
 ## Limits
 
@@ -457,13 +511,26 @@ text and suggested answers stay inside Chromium.
 - With 128 reference images allowed per item, the screen warns 8 before the
   cap on active visual notes.
 - At most 4 subscriptions per connection, shared with feeds.
+- Files for the page: at most 64 MiB each, 32 per chooser or drop, and
+  256 MiB per preview session in total, counted until the preview restarts
+  or the session ends.
+  A file name keeps at most 120 bytes.
+- Downloads: at most 64 MiB each and 8 under way at once; others are
+  cancelled. The last 16 are kept for your device and older ones deleted.
+  A page that sends download events faster than archond reads them ends the
+  preview, so none escapes these limits.
+- Dialogs: a message shows up to 8 KiB, a prompt's suggested answer and your
+  answer up to 16 KiB.
+- A native dropdown lists at most 500 options; copied text keeps its first
+  65,536 characters.
 
 ## Security
 
 Live design is opt-in. The preview runs the item’s own dev server in a fresh
 temporary Chromium profile with no saved credentials or extensions. The
-daemon clears the child environment, uses a private debugging pipe, denies
-downloads and sensitive permissions, and deletes the profile on close.
+daemon clears the child environment, uses a private debugging pipe, keeps
+downloads and the operator's files in private directories of the profile,
+denies sensitive permissions, and deletes the profile on close.
 Chromium’s platform sandbox is on by default. The daemon samples browser
 process-group resident memory about every three seconds. Usage can rise
 above either watchdog threshold between samples.

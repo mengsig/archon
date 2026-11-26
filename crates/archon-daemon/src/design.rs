@@ -7,6 +7,7 @@
 mod assets;
 mod browser;
 mod delivery;
+mod files;
 mod finish;
 mod iterations;
 mod notes;
@@ -16,6 +17,7 @@ mod reports;
 mod requests;
 mod server_origin;
 mod state;
+mod transfer;
 mod undo;
 
 use std::collections::HashMap;

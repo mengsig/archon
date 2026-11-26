@@ -27,13 +27,19 @@ use crate::launch::{
 use crate::origin::parse_url;
 use crate::proxy::{Policy, Proxy};
 use crate::relay::{FrameRelay, RelayShared};
-use crate::sanitize::clean;
+use crate::sanitize::{clean, page_text};
 use crate::{
     BrowserError, BrowserEvent, ClipRect, LaunchSpec, MAX_IMAGE_BYTES, Picture, PictureCapture,
     Viewport, jpeg_dims,
 };
 
-const CALL_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const CALL_TIMEOUT: Duration = Duration::from_secs(15);
+/// Longest dialog message shown.
+const MAX_DIALOG_MESSAGE_BYTES: usize = 8 * 1024;
+/// Longest prompt answer, suggested or sent: the daemon's answer cap.
+pub(crate) const MAX_DIALOG_ANSWER_BYTES: usize = 16 * 1024;
+/// Said under a prompt whose suggested answer had to be changed to be shown.
+const PROMPT_CUT_NOTE: &str = "(The app's suggested answer is longer than 16 KiB or holds characters the preview cannot show, so it is shown changed. Check it before pressing OK.)\n\n";
 /// Stream frames: four a second at rest, ten (the relay's most) while the
 /// operator scrolls or types, so a scroll is followed and its end shown soon.
 const IDLE_FRAME_INTERVAL: Duration = Duration::from_millis(250);
@@ -93,8 +99,11 @@ struct State {
 pub(crate) struct Shared {
     pub(crate) cdp: Cdp,
     pub(crate) session: String,
-    containment: Option<Arc<Containment>>,
+    pub(crate) containment: Option<Arc<Containment>>,
     events: broadcast::Sender<BrowserEvent>,
+    /// Chromium saves downloads here; `None` denies them.
+    pub(crate) downloads_dir: Option<PathBuf>,
+    pub(crate) downloads: Mutex<crate::features::Downloads>,
     pub(crate) relay: Arc<RelayShared>,
     st: Mutex<State>,
     /// Held for a whole `capture`: Chrome draws a screenshot whose clip scale
@@ -118,6 +127,7 @@ pub struct Browser {
     pid: Option<u32>,
     started_at: Option<u64>,
     event_task: JoinHandle<()>,
+    download_task: JoinHandle<()>,
     proxy: Option<Proxy>,
 }
 
@@ -125,6 +135,7 @@ impl Drop for Browser {
     fn drop(&mut self) {
         self.proxy.take();
         self.event_task.abort();
+        self.download_task.abort();
         self.sh.relay.close();
         self.sh.cdp.abort();
         if let (Some(pid), Some(_)) = (self.pid, self.child.as_ref()) {
@@ -222,6 +233,12 @@ impl Shared {
         reply
     }
 
+    pub(crate) fn allows_navigation(&self, url: &str) -> bool {
+        self.containment
+            .as_ref()
+            .is_none_or(|guard| guard.policy.origin.allows_navigation(url))
+    }
+
     fn check_containment(&self) -> Result<(), BrowserError> {
         if let Some(guard) = &self.containment {
             guard.epoch()?;
@@ -286,7 +303,7 @@ impl Shared {
         Ok(tree)
     }
 
-    fn emit(&self, e: BrowserEvent) {
+    pub(crate) fn emit(&self, e: BrowserEvent) {
         let _ = self.events.send(e);
     }
 
@@ -450,7 +467,8 @@ impl Shared {
         match ev.method.as_str() {
             "Inspector.targetCrashed" => self.emit(BrowserEvent::Crashed),
             "Page.javascriptDialogOpening" => self.emit_dialog(params),
-            "Page.fileChooserOpened" => self.emit(BrowserEvent::FileChooserRefused),
+            "Page.fileChooserOpened" => self.on_file_chooser(params),
+            "Runtime.bindingCalled" => self.on_bridge(params),
             "Page.frameNavigated" if params["frame"]["parentId"].is_null() => {
                 let frame = &params["frame"];
                 self.record_document(frame["id"].as_str(), frame["url"].as_str());
@@ -479,6 +497,8 @@ impl Shared {
         false
     }
 
+    /// The dialog's text is page content. A dialog blocks the page, so no
+    /// verified read can run: it is shown when its document is the preview's.
     fn emit_dialog(&self, params: &Value) {
         let kind = match params["type"].as_str() {
             Some("confirm") => "confirm",
@@ -487,15 +507,21 @@ impl Shared {
             _ => "alert",
         }
         .into();
-        let (message, default_prompt) = if self.containment.is_some() {
-            ("The preview opened a dialog.".into(), None)
+        let from_preview = params["url"]
+            .as_str()
+            .is_some_and(|url| self.allows_navigation(url))
+            && self.check_containment().is_ok();
+        let (message, default_prompt) = if from_preview {
+            let text = |key: &str, cap| page_text(params[key].as_str().unwrap_or_default(), cap);
+            let (mut message, _) = text("message", MAX_DIALOG_MESSAGE_BYTES);
+            let (prompt, prompt_cut) = text("defaultPrompt", MAX_DIALOG_ANSWER_BYTES);
+            // First, so a long page message cannot push it out of sight.
+            if prompt_cut {
+                message.insert_str(0, PROMPT_CUT_NOTE);
+            }
+            (message, (!prompt.is_empty()).then_some(prompt))
         } else {
-            let message = clean(params["message"].as_str().unwrap_or_default());
-            let prompt = params["defaultPrompt"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .map(clean);
-            (message, prompt)
+            ("The preview opened a dialog.".into(), None)
         };
         self.emit(BrowserEvent::Dialog {
             kind,
@@ -551,7 +577,7 @@ impl Shared {
         Ok(())
     }
 
-    fn stop_for_policy(&self, reason: &'static str) {
+    pub(crate) fn stop_for_policy(&self, reason: &'static str) {
         if let Some(guard) = &self.containment {
             guard.stop(reason);
         }
@@ -713,14 +739,12 @@ async fn attach_page(
     Ok((target_id, session))
 }
 
-async fn configure_page(cdp: &Cdp, session: &str, confined: bool) -> Result<(), BrowserError> {
-    cdp.call(
-        None,
-        "Browser.setDownloadBehavior",
-        json!({"behavior": "deny"}),
-        CALL_TIMEOUT,
-    )
-    .await?;
+async fn configure_page(
+    cdp: &Cdp,
+    session: &str,
+    confined: bool,
+    downloads: Option<&std::path::Path>,
+) -> Result<(), BrowserError> {
     for m in [
         "Page.enable",
         "DOM.enable",
@@ -730,6 +754,7 @@ async fn configure_page(cdp: &Cdp, session: &str, confined: bool) -> Result<(), 
     ] {
         cdp.call(Some(session), m, json!({}), CALL_TIMEOUT).await?;
     }
+    crate::features::configure(cdp, session, downloads).await?;
     cdp.call(
         Some(session),
         "Page.setInterceptFileChooserDialog",
@@ -763,6 +788,7 @@ async fn configure_target(
     owned: Option<OwnedSession>,
     events: &broadcast::Sender<BrowserEvent>,
     relay: &Arc<RelayShared>,
+    downloads: Option<&std::path::Path>,
 ) -> Result<Option<Arc<Containment>>, BrowserError> {
     let containment = owned.map(|owned| {
         Arc::new(Containment {
@@ -782,7 +808,7 @@ async fn configure_target(
             .await?;
         guard.verify_targets(&targets)?;
     }
-    configure_page(cdp, session, containment.is_some()).await?;
+    configure_page(cdp, session, containment.is_some(), downloads).await?;
     Ok(containment)
 }
 
@@ -859,8 +885,14 @@ impl Browser {
         tokio::io::AsyncWriteExt::write_all(stdin, b"START\n")
             .await
             .map_err(|e| BrowserError::Launch(format!("release recorded browser: {e}")))?;
-        let mut b =
-            Self::attach_child(&mut child, spec.viewport, OwnedSession { policy, process }).await?;
+        use std::os::unix::fs::DirBuilderExt;
+        let downloads = spec.profile_dir.join("archon-downloads");
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&downloads)
+            .map_err(|e| BrowserError::Launch(format!("create the downloads directory: {e}")))?;
+        let owned = OwnedSession { policy, process };
+        let mut b = Self::attach_child(&mut child, spec.viewport, owned, downloads).await?;
         b.proxy = Some(proxy);
         b.child = Some(child);
         b.profile = Some(spec.profile_dir.clone());
@@ -875,6 +907,7 @@ impl Browser {
         child: &mut Child,
         viewport: Viewport,
         owned: OwnedSession,
+        downloads: PathBuf,
     ) -> Result<Browser, BrowserError> {
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
@@ -886,7 +919,7 @@ impl Browser {
         let connected = tokio::select! {
             result = tokio::time::timeout(
                 LAUNCH_TIMEOUT,
-                Self::attach(stdout, stdin, Some(viewport), Some(owned)),
+                Self::attach(stdout, stdin, Some(viewport), Some(owned), Some(downloads)),
             ) => result,
             status = child.wait() => {
                 let _ = tokio::time::timeout(Duration::from_secs(1), stderr_task).await;
@@ -914,7 +947,7 @@ impl Browser {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
-        Self::attach(reader, writer, None, None).await
+        Self::attach(reader, writer, None, None, None).await
     }
 
     async fn attach<R, W>(
@@ -922,6 +955,7 @@ impl Browser {
         writer: W,
         viewport: Option<Viewport>,
         owned: Option<OwnedSession>,
+        downloads_dir: Option<PathBuf>,
     ) -> Result<Browser, BrowserError>
     where
         R: AsyncRead + Unpin + Send + 'static,
@@ -930,11 +964,20 @@ impl Browser {
         let cdp = Cdp::new(reader, writer, MAX_FRAME);
         let mut rx = cdp.subscribe();
         let documents = cdp.subscribe_documents();
+        let downloads = cdp.subscribe_downloads();
         let (target_id, session) = attach_page(&cdp, &mut rx).await?;
         let (events, _) = broadcast::channel(256);
         let relay = Arc::new(RelayShared::default());
-        let containment =
-            configure_target(&cdp, &target_id, &session, owned, &events, &relay).await?;
+        let containment = configure_target(
+            &cdp,
+            &target_id,
+            &session,
+            owned,
+            &events,
+            &relay,
+            downloads_dir.as_deref(),
+        )
+        .await?;
         let vp = viewport.unwrap_or(Viewport {
             width: 1280,
             height: 800,
@@ -946,6 +989,8 @@ impl Browser {
             session,
             containment,
             events,
+            downloads_dir,
+            downloads: Mutex::default(),
             relay,
             shot: tokio::sync::Mutex::new(()),
             input: tokio::sync::Mutex::new(Held::default()),
@@ -962,6 +1007,7 @@ impl Browser {
             }),
         });
         let event_task = tokio::spawn(handle_events(sh.clone(), rx, documents));
+        let download_task = tokio::spawn(crate::features::handle_downloads(sh.clone(), downloads));
         let b = Browser {
             sh,
             child: None,
@@ -969,6 +1015,7 @@ impl Browser {
             pid: None,
             started_at: None,
             event_task,
+            download_task,
             proxy: None,
         };
         if let Some(v) = viewport {
@@ -1237,6 +1284,7 @@ impl Browser {
             let _ = tokio::time::timeout(Duration::from_secs(5), c.wait()).await;
         }
         self.event_task.abort();
+        self.download_task.abort();
         self.sh.cdp.abort();
         if let Some(p) = self.profile.clone() {
             let mut last = None;
@@ -2044,5 +2092,51 @@ mod capture_tests {
         }
         assert!(b.pid().is_none() && b.started_at().is_none());
         let _ = b.events();
+    }
+}
+
+#[cfg(test)]
+mod dialog_tests {
+    use super::*;
+    use crate::testutil::fake_browser;
+
+    fn prompt(b: &Browser, default: &str) -> (String, Option<String>) {
+        let mut events = b.events();
+        b.sh.emit_dialog(&json!({
+            "type": "prompt",
+            "url": "http://127.0.0.1:1/",
+            "message": "Edit the plan:\nbay 01",
+            "defaultPrompt": default,
+        }));
+        match events.try_recv() {
+            Ok(BrowserEvent::Dialog {
+                message,
+                default_prompt,
+                ..
+            }) => (message, default_prompt),
+            other => panic!("a dialog event, got {other:?}"),
+        }
+    }
+
+    /// Accepting a prompt must not overwrite the app's value with an altered one.
+    #[tokio::test]
+    async fn a_prompt_keeps_its_suggested_answer_whole_or_says_it_was_cut() {
+        let (b, _log) = fake_browser(|_, _| None).await;
+        let value = format!("{}\n\tend", "x".repeat(500));
+        let (message, default) = prompt(&b, &value);
+        assert_eq!(message, "Edit the plan:\nbay 01");
+        assert_eq!(default.as_deref(), Some(value.as_str()));
+
+        let huge = "y".repeat(MAX_DIALOG_ANSWER_BYTES + 1);
+        let (message, default) = prompt(&b, &huge);
+        assert!(message.starts_with(PROMPT_CUT_NOTE), "{message}");
+        assert_eq!(default.map(|d| d.len()), Some(MAX_DIALOG_ANSWER_BYTES));
+
+        let (message, default) = prompt(&b, "first\r\nsecond");
+        assert!(
+            message.starts_with(PROMPT_CUT_NOTE),
+            "a changed answer is never silent"
+        );
+        assert_eq!(default.as_deref(), Some("first\nsecond"));
     }
 }

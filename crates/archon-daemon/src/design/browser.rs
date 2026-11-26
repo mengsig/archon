@@ -83,6 +83,39 @@ pub trait PreviewBrowser: Send + Sync {
         accept: bool,
         text: Option<String>,
     ) -> Result<(), adb::BrowserError>;
+    /// Set files on the file input whose chooser the page opened.
+    async fn set_files(&self, _node: i64, _files: &[PathBuf]) -> Result<(), adb::BrowserError> {
+        Err(adb::BrowserError::Protocol(
+            "this preview cannot take files".into(),
+        ))
+    }
+    /// Drop files on the page at a point, in CSS px.
+    async fn drop_files(
+        &self,
+        _x: f64,
+        _y: f64,
+        _files: &[PathBuf],
+    ) -> Result<(), adb::BrowserError> {
+        Err(adb::BrowserError::Protocol(
+            "this preview cannot take files".into(),
+        ))
+    }
+    /// Answer the page's native picker; true when the page took the answer.
+    async fn answer_picker(
+        &self,
+        _id: u64,
+        _value: Option<&str>,
+    ) -> Result<bool, adb::BrowserError> {
+        Err(adb::BrowserError::Protocol(
+            "this preview has no pickers".into(),
+        ))
+    }
+    /// Back one page; false when there is none.
+    async fn go_back(&self) -> Result<bool, adb::BrowserError> {
+        Err(adb::BrowserError::Protocol(
+            "this preview has no history".into(),
+        ))
+    }
     /// Reload, wait until the page has loaded, then until it has settled (no
     /// request in flight, no pixel still moving). `false` when `max` passed.
     async fn reload_settled(&self, max: Duration) -> Result<bool, adb::BrowserError> {
@@ -331,6 +364,18 @@ impl PreviewBrowser for Real {
     ) -> Result<(), adb::BrowserError> {
         self.get()?.answer_dialog(accept, text).await
     }
+    async fn set_files(&self, node: i64, files: &[PathBuf]) -> Result<(), adb::BrowserError> {
+        self.get()?.set_files(node, files).await
+    }
+    async fn drop_files(&self, x: f64, y: f64, files: &[PathBuf]) -> Result<(), adb::BrowserError> {
+        self.get()?.drop_files(x, y, files).await
+    }
+    async fn answer_picker(&self, id: u64, value: Option<&str>) -> Result<bool, adb::BrowserError> {
+        self.get()?.answer_picker(id, value).await
+    }
+    async fn go_back(&self) -> Result<bool, adb::BrowserError> {
+        self.get()?.go_back().await
+    }
     async fn reload_settled(&self, max: Duration) -> Result<bool, adb::BrowserError> {
         self.get()?.reload_settled(max).await
     }
@@ -406,6 +451,8 @@ pub(crate) struct Runtime {
     /// Serializes launch, relaunch and close.
     pub gate: tokio::sync::Mutex<()>,
     pub delivery: tokio::sync::Mutex<()>,
+    /// Uploads, the open file chooser and downloads of the running browser.
+    pub files: tokio::sync::Mutex<super::files::Transfers>,
 }
 
 /// A reserved slot; releasing it on drop covers every error path.
@@ -544,6 +591,7 @@ impl Runtime {
             state: std::sync::Mutex::new(RtState::default()),
             gate: tokio::sync::Mutex::new(()),
             delivery: tokio::sync::Mutex::new(()),
+            files: tokio::sync::Mutex::default(),
         }
     }
 
@@ -828,6 +876,8 @@ impl DesignService {
         let binary = factory.binary(self.cfg.browser.as_deref())?;
         let root = self.profile_dir(&row.id);
         let profile = root.join(ulid::Ulid::generate().to_string());
+        // The new browser starts with no uploads: removing the root deletes them.
+        *rt.files.lock().await = super::files::Transfers::default();
         match std::fs::remove_dir_all(&root) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
                 return Err(adb::BrowserError::Launch(format!(
@@ -1030,6 +1080,7 @@ impl DesignService {
             tracing::info!(%session, reason, "design: browser stopped");
         }
         self.remove_profile(session);
+        *rt.files.lock().await = super::files::Transfers::default();
         let mut lat = counters.latencies_ms.clone();
         lat.sort_unstable();
         let pct = |p: usize| {
@@ -1187,10 +1238,15 @@ async fn report_browser_event(
             let message = "A pop-up was closed.".to_owned();
             let _ = rt.events.send(DesignEvent::Toast { message });
         }
-        adb::BrowserEvent::FileChooserRefused => {
-            let _ = rt.events.send(DesignEvent::Toast {
-                message: "File pickers aren't available in the preview yet".into(),
-            });
+        adb::BrowserEvent::FileChooser { .. }
+        | adb::BrowserEvent::Downloaded { .. }
+        | adb::BrowserEvent::DownloadFailed { .. }
+        | adb::BrowserEvent::Picker(_)
+        | adb::BrowserEvent::Copied { .. }
+        | adb::BrowserEvent::NewTab { .. } => {
+            let event = super::transfer::report(rt, event).await;
+            let event = event.expect("every file, picker and tab event has a stream event");
+            let _ = rt.events.send(event);
         }
         adb::BrowserEvent::NavigationFailed { .. } => {
             ctx.design.record_health(ctx, session, true).await;

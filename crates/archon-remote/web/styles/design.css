@@ -292,3 +292,5 @@
 .design[data-viewing='true'] .design-stagecol > :not(.design-viewer) { display: none !important; }
 .design:not([data-viewing='true']) .design-viewer { display: none; }
 .viewer-compare-with { flex: none; width: auto; min-width: 200px; }
+
+.design-framebox.is-file-drop { outline: 3px solid var(--frame-accent); outline-offset: 3px; }

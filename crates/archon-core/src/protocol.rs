@@ -106,8 +106,8 @@ mod v26_tests;
 use crate::design::{DesignAssetId, DesignSessionId, Rect, SessionState, ViewportPreset};
 pub use design::{
     AgentNoteStatus, BrowserStatus, DesignAssetView, DesignEvent, DesignFinishView, DesignNoteView,
-    DesignResolvedView, DesignStateView, FinishCard, FinishHistoryEntry, InputEvent, KeyAction,
-    MouseAction, MouseButton, TouchAction, TouchPoint,
+    DesignPickerOption, DesignResolvedView, DesignStateView, FinishCard, FinishHistoryEntry,
+    InputEvent, KeyAction, MouseAction, MouseButton, TouchAction, TouchPoint,
 };
 
 pub use changes::{
@@ -916,6 +916,49 @@ pub enum Request {
         accept: bool,
         text: Option<String>,
     },
+    /// One part of a file the operator chose for the page: base64 `data`
+    /// of at most 512 KiB at `offset`, parts in order, `size` the whole file's.
+    DesignFilePart {
+        session: DesignSessionId,
+        /// The client's id for this set of files.
+        transfer: String,
+        /// The file's index in the transfer.
+        file: u32,
+        name: String,
+        size: u64,
+        offset: u64,
+        data: String,
+    },
+    /// Set a transfer's files on the page's open file chooser; no
+    /// `transfer` cancels the chooser.
+    DesignFileSet {
+        session: DesignSessionId,
+        chooser: u64,
+        transfer: Option<String>,
+    },
+    /// Drop a transfer's files on the page at a point, in CSS px.
+    DesignFileDrop {
+        session: DesignSessionId,
+        transfer: String,
+        x: f64,
+        y: f64,
+    },
+    /// Read part of a file the page downloaded, from `offset`.
+    DesignDownload {
+        session: DesignSessionId,
+        id: u64,
+        offset: u64,
+    },
+    /// Answer the page's native picker; no `value` cancels it.
+    DesignPickerAnswer {
+        session: DesignSessionId,
+        id: u64,
+        value: Option<String>,
+    },
+    /// Go back one page in the preview's history.
+    DesignGoBack {
+        session: DesignSessionId,
+    },
     /// Add a note to the session's queue.
     DesignNoteAdd {
         session: DesignSessionId,
@@ -1082,6 +1125,12 @@ impl Request {
             | Self::DesignReload { .. }
             | Self::DesignTellAgent { .. }
             | Self::DesignDialogAnswer { .. }
+            | Self::DesignFilePart { .. }
+            | Self::DesignFileSet { .. }
+            | Self::DesignFileDrop { .. }
+            | Self::DesignDownload { .. }
+            | Self::DesignPickerAnswer { .. }
+            | Self::DesignGoBack { .. }
             | Self::DesignNoteAdd { .. }
             | Self::DesignNoteEdit { .. }
             | Self::DesignNoteCancel { .. }
@@ -1197,6 +1246,12 @@ impl Request {
             | Self::DesignReload { .. }
             | Self::DesignTellAgent { .. }
             | Self::DesignDialogAnswer { .. }
+            | Self::DesignFilePart { .. }
+            | Self::DesignFileSet { .. }
+            | Self::DesignFileDrop { .. }
+            | Self::DesignDownload { .. }
+            | Self::DesignPickerAnswer { .. }
+            | Self::DesignGoBack { .. }
             | Self::DesignNoteAdd { .. }
             | Self::DesignNoteEdit { .. }
             | Self::DesignNoteCancel { .. }
@@ -1675,6 +1730,14 @@ pub enum Reply {
     DesignAsset(DesignAssetView),
     /// A design request that returns nothing.
     DesignDone,
+    /// Part of a file the page downloaded: base64 `data` from `offset`.
+    DesignDownload {
+        id: u64,
+        name: String,
+        size: u64,
+        offset: u64,
+        data: String,
+    },
     /// The text a stage agent's design tool shows.
     DesignAgent {
         message: String,

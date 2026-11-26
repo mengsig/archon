@@ -208,6 +208,10 @@ pub(crate) async fn handle(
         Request::DesignInput { session, .. }
         | Request::DesignReload { session }
         | Request::DesignDialogAnswer { session, .. }
+        | Request::DesignFileSet { session, .. }
+        | Request::DesignFileDrop { session, .. }
+        | Request::DesignPickerAnswer { session, .. }
+        | Request::DesignGoBack { session }
         | Request::DesignResolve { session, .. }
         | Request::DesignRegion { session, .. } => Some(session),
         _ => None,
@@ -281,6 +285,52 @@ pub(crate) async fn handle(
                 .map_err(unavailable)?;
             Ok(Reply::DesignDone)
         }
+        Request::DesignFilePart {
+            session,
+            transfer,
+            file,
+            name,
+            size,
+            offset,
+            data,
+        } => {
+            let data = super::files::decode_part(&data)?;
+            let part = super::files::Part {
+                transfer: &transfer,
+                file,
+                name: &name,
+                size,
+                offset,
+                data: &data,
+            };
+            service.file_part(ctx, &session, part).await
+        }
+        Request::DesignFileSet {
+            session,
+            chooser,
+            transfer,
+        } => {
+            service
+                .file_set(ctx, &session, chooser, transfer.as_deref())
+                .await
+        }
+        Request::DesignFileDrop {
+            session,
+            transfer,
+            x,
+            y,
+        } => service.file_drop(ctx, &session, &transfer, (x, y)).await,
+        Request::DesignDownload {
+            session,
+            id,
+            offset,
+        } => service.download_part(ctx, &session, id, offset).await,
+        Request::DesignPickerAnswer { session, id, value } => {
+            service
+                .picker_answer(ctx, &session, id, value.as_deref())
+                .await
+        }
+        Request::DesignGoBack { session } => service.go_back(ctx, &session).await,
         Request::DesignNoteAdd {
             session,
             client_key,

@@ -67,6 +67,9 @@ export function reduce(state, action) {
       return { ...state, preset: action.preset };
     case 'selection':
       return { ...state, selection: action.selection };
+    case 'preset_refused':
+      // Only the latest choice's refusal counts; the preview keeps the preset archond confirmed.
+      return action.latest ? { ...state, preset: state.session?.viewport_preset ?? state.preset } : state;
     case 'new_tab_dismissed':
       return { ...state, newTab: null };
     case 'toasts_taken':

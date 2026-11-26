@@ -18,6 +18,8 @@ use archon_design_browser::{
 };
 
 const CSV: &str = "bay,row,tier\n01,02,82\n";
+/// An accept longer than a display string, matched whole.
+const OFFICE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
 /// Each control at a fixed place; the page reports what happened in its query string.
 const PAGE: &str = "<!doctype html><body style='margin:0;font:14px sans-serif'>
@@ -29,7 +31,7 @@ const PAGE: &str = "<!doctype html><body style='margin:0;font:14px sans-serif'>
 <select id=s style='top:210px'><option value=a>Alpha</option><option value=b>Beta</option>
 <optgroup label=More><option value=c>Gamma</option></optgroup></select>
 <div id=drop style='top:260px;height:60px;background:#ddd'>Drop here</div>
-<div id=zone style='top:330px'><input type=file accept='image/*' hidden><span>Drop an image</span></div>
+<div id=zone style='top:330px'><input type=file accept='image/*,OFFICE' hidden><span>Drop an image</span></div>
 <label for=f style='top:380px'>Choose a stowage file</label>
 <button id=two style='top:10px;left:260px'>Two alerts</button>
 <script>
@@ -58,7 +60,7 @@ fn respond(path: &str) -> Response<Full<Bytes>> {
     let (kind, body, attachment) = match path {
         "/report" => ("text/csv", CSV.to_owned(), true),
         "/second" => ("text/html", "<body>Second page</body>".to_owned(), false),
-        _ => ("text/html", PAGE.to_owned(), false),
+        _ => ("text/html", PAGE.replace("OFFICE", OFFICE), false),
     };
     let mut response = Response::builder().header("content-type", kind);
     if attachment {
@@ -226,7 +228,11 @@ async fn a_file_chooser_takes_the_operators_files_and_a_drop_delivers_them() {
     assert_eq!(on_input.as_deref(), Some(".edi,.csv"));
     assert_eq!(browser.accept_at(60.0, 290.0).await.unwrap(), None);
     let zone = browser.accept_at(40.0, 345.0).await.unwrap();
-    assert_eq!(zone.as_deref(), Some("image/*"), "a zone holding an input");
+    assert_eq!(
+        zone.as_deref(),
+        Some(&*format!("image/*,{OFFICE}")),
+        "a zone holding an input, whole"
+    );
     let label = browser.accept_at(40.0, 395.0).await.unwrap();
     assert_eq!(label.as_deref(), Some(".edi,.csv"), "a label for an input");
     browser.drop_files(60.0, 290.0, &[file]).await.unwrap();

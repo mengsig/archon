@@ -47,6 +47,15 @@ test('toasts, dialogs, progress and blocked hosts are kept for the screen', () =
   assert.equal(reduce(s, { type: 'dialog_closed', dialog: s.dialog }).dialog, null);
 });
 
+test('only the latest refused preset rolls back, to the one archond confirmed', () => {
+  let s = { ...loaded(), session: session({ viewport_preset: 'desktop' }) };
+  s = reduce(reduce(s, { type: 'preset', preset: 'tablet' }), { type: 'preset', preset: 'phone' });
+  s = reduce(s, { type: 'preset_refused', latest: false });
+  assert.equal(s.preset, 'phone', 'an older refusal leaves the newer choice');
+  s = reduce(s, { type: 'preset_refused', latest: true });
+  assert.equal(s.preset, 'desktop', 'not tablet, which was refused too');
+});
+
 test('a dialog the app opens while the last one closes is kept', () => {
   const dialog = (message) => ({ type: 'event', event: { event: 'dialog', kind: 'alert', message, default_prompt: null } });
   const first = reduce(loaded(), dialog('first'));

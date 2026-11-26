@@ -18,6 +18,8 @@ pub const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
 /// Most downloads under way at once; another is cancelled.
 const MAX_DOWNLOADS: usize = 8;
 const DROP_GROUP: &str = "archon-drop";
+/// Longest `accept` matched whole; real ones are far shorter.
+const MAX_ACCEPT_BYTES: usize = 4096;
 /// The file input a drop goes to: the target itself, a label's control, or the
 /// one file input in the nearest container below `body` that holds one.
 const GOVERNING_INPUT_JS: &str = "function () {
@@ -264,7 +266,7 @@ impl Shared {
         let described = self
             .call("DOM.describeNode", json!({"backendNodeId": node}))
             .await?;
-        Ok(node_attribute(&described, "accept").unwrap_or_default())
+        Ok(node_attribute(&described, "accept").map_or_else(String::new, accept_value))
     }
 
     /// The `accept` of the file input a drop at frame point `(x, y)` goes to,
@@ -303,7 +305,7 @@ impl Shared {
                 json!({"objectGroup": DROP_GROUP}),
             )
             .await;
-        Ok(found?["result"]["value"].as_str().map(clean))
+        governing_accept(&found?)
     }
 
     /// The page bridge called its binding.
@@ -390,13 +392,56 @@ fn path_strings(files: &[PathBuf]) -> Result<Vec<String>, BrowserError> {
         .collect()
 }
 
-/// Attribute `name` of a `DOM.describeNode` reply, cleaned for display.
-fn node_attribute(described: &Value, name: &str) -> Option<String> {
+/// The answer of `GOVERNING_INPUT_JS`: a lookup that threw or answered
+/// anything but text or null withholds the drop rather than skip the check.
+fn governing_accept(found: &Value) -> Result<Option<String>, BrowserError> {
+    if let Some(details) = found.get("exceptionDetails") {
+        let text = clean(details["text"].as_str().unwrap_or("an exception"));
+        return Err(BrowserError::Protocol(format!(
+            "the file input under the drop could not be read: {text}"
+        )));
+    }
+    match &found["result"]["value"] {
+        Value::Null => Ok(None),
+        Value::String(accept) => Ok(Some(accept_value(accept))),
+        other => Err(BrowserError::Protocol(format!(
+            "the file input under the drop read as {other}"
+        ))),
+    }
+}
+
+/// Attribute `name` of a `DOM.describeNode` reply, as the page wrote it.
+fn node_attribute<'a>(described: &'a Value, name: &str) -> Option<&'a str> {
     let attributes = described["node"]["attributes"].as_array()?;
     attributes
         .chunks(2)
         .find(|pair| pair[0] == name)
-        .and_then(|pair| pair.get(1)?.as_str().map(clean))
+        .and_then(|pair| pair.get(1)?.as_str())
+}
+
+/// An input's `accept`, whole for matching: control characters dropped and,
+/// past `MAX_ACCEPT_BYTES`, only the whole types that fit, so the rest are refused.
+fn accept_value(raw: &str) -> String {
+    let value: String = raw.chars().filter(|c| !c.is_control()).collect();
+    if value.len() <= MAX_ACCEPT_BYTES {
+        return value;
+    }
+    tracing::warn!(
+        bytes = value.len(),
+        "a file input's accept was cut to the types that fit"
+    );
+    let mut end = MAX_ACCEPT_BYTES;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    // With no whole type in reach, a cut type still matches nothing.
+    let cut = value[..end].rfind(',').unwrap_or(end);
+    let kept = value[..cut].to_owned();
+    assert!(
+        !kept.is_empty() && kept.len() <= MAX_ACCEPT_BYTES,
+        "a cut accept still refuses"
+    );
+    kept
 }
 
 impl Browser {
@@ -502,6 +547,48 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         false
+    }
+
+    const OFFICE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
+    #[test]
+    fn an_accept_is_kept_whole_for_matching() {
+        assert!(OFFICE.len() > crate::sanitize::MAX_CHARS);
+        assert_eq!(accept_value(OFFICE), OFFICE);
+        assert_eq!(accept_value(".csv,\n.txt"), ".csv,.txt");
+        let long = vec![".csv"; 2000].join(",");
+        let cut = accept_value(&long);
+        assert!(cut.len() <= MAX_ACCEPT_BYTES && cut.split(',').all(|t| t == ".csv"));
+        let one = "x".repeat(MAX_ACCEPT_BYTES + 10);
+        assert_eq!(
+            accept_value(&one).len(),
+            MAX_ACCEPT_BYTES,
+            "a cut type is kept, not none"
+        );
+    }
+
+    /// A drop lookup the page made throw must not skip the accept check.
+    #[tokio::test]
+    async fn a_drop_lookup_that_throws_withholds_the_drop() {
+        let (b, _log) = fake_browser(|m, _| match m {
+            "DOM.getNodeForLocation" => Some(json!({"backendNodeId": 5})),
+            "DOM.resolveNode" => Some(json!({"object": {"objectId": "o1"}})),
+            "Runtime.callFunctionOn" => Some(json!({
+                "result": {"type": "object"},
+                "exceptionDetails": {"text": "Uncaught TypeError"},
+            })),
+            _ => None,
+        })
+        .await;
+        let refused = b.accept_at(10.0, 10.0).await.unwrap_err();
+        assert!(
+            refused.to_string().contains("could not be read"),
+            "{refused}"
+        );
+        let odd = json!({"result": {"type": "number", "value": 3}});
+        assert!(governing_accept(&odd).is_err());
+        let none = json!({"result": {"type": "object", "subtype": "null", "value": null}});
+        assert_eq!(governing_accept(&none).unwrap(), None);
     }
 
     /// Finished downloads stay bounded on disk even when nobody hears of them.

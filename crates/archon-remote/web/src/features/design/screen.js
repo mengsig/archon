@@ -264,14 +264,16 @@ export function mountDesign(view, ctx) {
     if (mode === 'region') stage.startKeyboardRegion();
     root.dataset.mode = mode;
   }
+  let presetAsks = 0; // numbers each preset request, so only the latest refusal rolls back
   async function setPreset(preset) {
-    const before = state.preset;
+    const ask = ++presetAsks;
     dispatch({ type: 'preset', preset });
     presetSent = `${session()}|${preset}`;
     try { await ctx.design.viewport(session(), preset); } catch (e) {
       // Refused (the app's dialog is open, say): back to the size the preview has.
-      if (state.preset === preset) dispatch({ type: 'preset', preset: before });
-      presetSent = null;
+      const latest = ask === presetAsks;
+      if (latest) presetSent = null;
+      dispatch({ type: 'preset_refused', latest });
       refuse(e);
     }
   }

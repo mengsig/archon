@@ -28,6 +28,8 @@ const MIB: u64 = 1024 * 1024;
 #[derive(Debug)]
 struct Staged {
     name: String,
+    /// Normalised by `accept::media_type`; empty when the client gave none.
+    media_type: String,
     path: PathBuf,
     size: u64,
     written: u64,
@@ -57,6 +59,8 @@ pub(crate) struct Part<'a> {
     pub file: u32,
     pub name: &'a str,
     pub size: u64,
+    /// The type the operator's browser gave; read from a file's first part.
+    pub media_type: &'a str,
     pub offset: u64,
     pub data: &'a [u8],
 }
@@ -226,6 +230,7 @@ impl Transfers {
             self.total += part.size;
             files.push(Staged {
                 name,
+                media_type: super::accept::media_type(part.media_type),
                 path,
                 size: part.size,
                 written: 0,
@@ -273,6 +278,22 @@ impl Transfers {
             return Err(invalid(format!("{} was not sent in full", partial.name)));
         }
         Ok(files.iter().map(|f| f.path.clone()).collect())
+    }
+
+    /// Refuse `transfer`'s files when the input's `accept` does not allow one.
+    pub(crate) fn check_accept(&self, transfer: &str, accept: &str) -> Result<(), ArchonError> {
+        let files = self
+            .staged
+            .get(transfer)
+            .ok_or_else(|| invalid("no files were sent for that transfer"))?;
+        let picked: Vec<_> = files
+            .iter()
+            .map(|f| super::accept::Picked {
+                name: &f.name,
+                media_type: &f.media_type,
+            })
+            .collect();
+        super::accept::check(accept, &picked)
     }
 
     /// Offer a finished download; the oldest is forgotten past the cap.
@@ -343,6 +364,7 @@ mod tests {
             file,
             name,
             size,
+            media_type: "",
             offset,
             data,
         }

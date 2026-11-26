@@ -29,11 +29,15 @@ const PAGE: &str = "<!doctype html><body style='margin:0;font:14px sans-serif'>
 <select id=s style='top:210px'><option value=a>Alpha</option><option value=b>Beta</option>
 <optgroup label=More><option value=c>Gamma</option></optgroup></select>
 <div id=drop style='top:260px;height:60px;background:#ddd'>Drop here</div>
+<div id=zone style='top:330px'><input type=file accept='image/*' hidden><span>Drop an image</span></div>
+<label for=f style='top:380px'>Choose a stowage file</label>
+<button id=two style='top:10px;left:260px'>Two alerts</button>
 <script>
 const report = (key, value) => history.replaceState({}, '', '?' + key + '=' + encodeURIComponent(value));
 const names = (files) => [...files].map((f) => f.name + ':' + f.size).join(',');
 f.onchange = () => report('files', names(f.files));
 c.onclick = () => report('confirm', confirm('Delete the lashing plan?'));
+two.onclick = () => { alert('first'); alert('second'); report('alerts', 'both'); };
 s.onchange = () => report('select', s.value);
 drop.ondragover = (e) => e.preventDefault();
 drop.ondrop = (e) => { e.preventDefault(); report('dropped', names(e.dataTransfer.files)); };
@@ -217,10 +221,14 @@ async fn a_file_chooser_takes_the_operators_files_and_a_drop_delivers_them() {
         .unwrap();
     wait_location(&browser, "/?files=BAPLIE.edi%3A11").await;
 
-    // A drop onto the file input is checked against its accept; elsewhere is not.
+    // A drop is checked against the accept of the input it goes to, if any.
     let on_input = browser.accept_at(60.0, 25.0).await.unwrap();
     assert_eq!(on_input.as_deref(), Some(".edi,.csv"));
     assert_eq!(browser.accept_at(60.0, 290.0).await.unwrap(), None);
+    let zone = browser.accept_at(40.0, 345.0).await.unwrap();
+    assert_eq!(zone.as_deref(), Some("image/*"), "a zone holding an input");
+    let label = browser.accept_at(40.0, 395.0).await.unwrap();
+    assert_eq!(label.as_deref(), Some(".edi,.csv"), "a label for an input");
     browser.drop_files(60.0, 290.0, &[file]).await.unwrap();
     wait_location(&browser, "/?dropped=BAPLIE.edi%3A11").await;
     assert_eq!(browser.containment_reason(), None);
@@ -295,6 +303,39 @@ async fn a_confirm_dialog_shows_its_text_and_takes_the_operators_answer() {
         browser.set_viewport(phone).await.unwrap();
     }
     wait_location(&browser, "/?confirm=false").await;
+    drop(events);
+    browser.close().await.unwrap();
+}
+
+/// An answer lets the app open its next dialog at once; that one is shown too.
+#[tokio::test]
+async fn back_to_back_dialogs_are_each_shown_and_answered() {
+    let Some(Fixture {
+        browser,
+        mut events,
+        ..
+    }) = open().await
+    else {
+        return;
+    };
+    {
+        let clicked = click(&browser, 300.0, 25.0);
+        tokio::pin!(clicked);
+        for want in ["first", "second"] {
+            let shown = next_event(&mut events, |event| match event {
+                BrowserEvent::Dialog { message, .. } => Some(message),
+                _ => None,
+            });
+            let message = tokio::select! {
+                () = &mut clicked => panic!("the click ended with a dialog unanswered"),
+                message = shown => message,
+            };
+            assert_eq!(message, want);
+            browser.answer_dialog(true, None).await.unwrap();
+        }
+        clicked.await;
+    }
+    wait_location(&browser, "/?alerts=both").await;
     drop(events);
     browser.close().await.unwrap();
 }

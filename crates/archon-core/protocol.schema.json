@@ -4187,6 +4187,13 @@
               "minimum": 0,
               "type": "integer"
             },
+            "media_type": {
+              "description": "The type the operator's browser gives the file, such as `text/csv`,\nmatched against a MIME `accept`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "name": {
               "type": "string"
             },
@@ -18911,6 +18918,13 @@
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "media_type": {
+              "description": "The type the operator's browser gives the file, such as `text/csv`,\nmatched against a MIME `accept`.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "name": {
               "type": "string"

@@ -303,6 +303,7 @@ pub(crate) async fn handle(
             file,
             name,
             size,
+            media_type,
             offset,
             data,
         } => {
@@ -312,6 +313,7 @@ pub(crate) async fn handle(
                 file,
                 name: &name,
                 size,
+                media_type: media_type.as_deref().unwrap_or_default(),
                 offset,
                 data: &data,
             };

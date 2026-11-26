@@ -74,7 +74,8 @@ export function reduce(state, action) {
     case 'browser_events_taken':
       return { ...state, browserEvents: [] };
     case 'dialog_closed':
-      return { ...state, dialog: null };
+      // Only the dialog that closed: the app may already have opened the next.
+      return state.dialog === action.dialog ? { ...state, dialog: null } : state;
     case 'event':
       return reduceEvent(state, action.event);
     default:

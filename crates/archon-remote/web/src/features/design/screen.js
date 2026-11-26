@@ -265,9 +265,15 @@ export function mountDesign(view, ctx) {
     root.dataset.mode = mode;
   }
   async function setPreset(preset) {
+    const before = state.preset;
     dispatch({ type: 'preset', preset });
     presetSent = `${session()}|${preset}`;
-    try { await ctx.design.viewport(session(), preset); } catch (e) { refuse(e); }
+    try { await ctx.design.viewport(session(), preset); } catch (e) {
+      // Refused (the app's dialog is open, say): back to the size the preview has.
+      if (state.preset === preset) dispatch({ type: 'preset', preset: before });
+      presetSent = null;
+      refuse(e);
+    }
   }
   function reload() { dispatch({ type: 'new_tab_dismissed' }); ctx.design.reload(session()).catch(refuse); }
 
@@ -492,7 +498,7 @@ export function mountDesign(view, ctx) {
     const sheet = openSheet({ title: `The app says (${d.kind})`, content, onClose: () => {
       dialogOpen = false;
       if (!accepted && session()) ctx.design.dialogAnswer(session(), false, null).catch(() => {});
-      dispatch({ type: 'dialog_closed' });
+      dispatch({ type: 'dialog_closed', dialog: d });
     } });
   }
 

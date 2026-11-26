@@ -926,6 +926,10 @@ pub enum Request {
         file: u32,
         name: String,
         size: u64,
+        /// The type the operator's browser gives the file, such as `text/csv`,
+        /// matched against a MIME `accept`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        media_type: Option<String>,
         offset: u64,
         data: String,
     },

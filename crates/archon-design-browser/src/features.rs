@@ -17,6 +17,21 @@ use crate::{Browser, BrowserError, BrowserEvent};
 pub const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
 /// Most downloads under way at once; another is cancelled.
 const MAX_DOWNLOADS: usize = 8;
+const DROP_GROUP: &str = "archon-drop";
+/// The file input a drop goes to: the target itself, a label's control, or the
+/// one file input in the nearest container below `body` that holds one.
+const GOVERNING_INPUT_JS: &str = "function () {
+  const isFile = (el) => el instanceof HTMLInputElement && el.type === 'file';
+  let el = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;
+  for (; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+    if (isFile(el)) return el.accept;
+    if (el instanceof HTMLLabelElement && el.control && isFile(el.control)) return el.control.accept;
+    const inside = el.querySelectorAll('input[type=file]');
+    if (inside.length === 1) return inside[0].accept;
+    if (inside.length > 1) return null;
+  }
+  return null;
+}";
 /// Finished downloads kept on disk; older ones are deleted.
 pub const KEPT_DOWNLOADS: usize = 16;
 
@@ -252,7 +267,8 @@ impl Shared {
         Ok(node_attribute(&described, "accept").unwrap_or_default())
     }
 
-    /// The `accept` of the file input under frame point `(x, y)`, if that is one.
+    /// The `accept` of the file input a drop at frame point `(x, y)` goes to,
+    /// if one does: see `GOVERNING_INPUT_JS`.
     async fn file_input_accept_at(&self, x: f64, y: f64) -> Result<Option<String>, BrowserError> {
         let (x, y) = self.layout().await?.hit_point(x, y);
         let hit = self
@@ -264,12 +280,30 @@ impl Shared {
         let Some(node) = hit["backendNodeId"].as_i64() else {
             return Ok(None);
         };
-        let described = self
-            .call("DOM.describeNode", json!({"backendNodeId": node}))
+        let resolved = self
+            .call(
+                "DOM.resolveNode",
+                json!({"backendNodeId": node, "objectGroup": DROP_GROUP}),
+            )
             .await?;
-        let is_file_input = described["node"]["nodeName"] == "INPUT"
-            && node_attribute(&described, "type").is_some_and(|t| t.eq_ignore_ascii_case("file"));
-        Ok(is_file_input.then(|| node_attribute(&described, "accept").unwrap_or_default()))
+        let object = resolved["object"]["objectId"]
+            .as_str()
+            .ok_or_else(|| BrowserError::Protocol("the drop target has no object".into()))?
+            .to_owned();
+        let found = self
+            .call(
+                "Runtime.callFunctionOn",
+                json!({"objectId": object, "functionDeclaration": GOVERNING_INPUT_JS, "returnByValue": true}),
+            )
+            .await;
+        // Only frees the page's handles; the answer stands either way.
+        let _ = self
+            .call(
+                "Runtime.releaseObjectGroup",
+                json!({"objectGroup": DROP_GROUP}),
+            )
+            .await;
+        Ok(found?["result"]["value"].as_str().map(clean))
     }
 
     /// The page bridge called its binding.

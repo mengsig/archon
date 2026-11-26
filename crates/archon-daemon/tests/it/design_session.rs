@@ -1502,6 +1502,7 @@ mod stream {
             file: 0,
             name: "../../C:\\stow\\BAPLIE.edi".into(),
             size: 4,
+            media_type: None,
             offset: 0,
             data: "VU5CKw==".into(),
         };
@@ -1573,12 +1574,17 @@ mod stream {
     }
 
     async fn stage_file(f: &Fixture, transfer: &str, name: &str) {
+        stage_typed(f, transfer, name, None).await;
+    }
+
+    async fn stage_typed(f: &Fixture, transfer: &str, name: &str, media_type: Option<&str>) {
         f.operator(Request::DesignFilePart {
             session: f.session.clone(),
             transfer: transfer.into(),
             file: 0,
             name: name.into(),
             size: 4,
+            media_type: media_type.map(str::to_owned),
             offset: 0,
             data: "VU5CKw==".into(),
         })
@@ -1654,8 +1660,13 @@ mod stream {
         f.operator(drop("good"))
             .await
             .expect("an allowed file drops");
+        f.factory.browser(0).drop_on_input_accepting("image/*");
+        stage_typed(&f, "typed", "scan.raw", Some("image/x-raw")).await;
+        f.operator(drop("typed"))
+            .await
+            .expect("the type the operator's browser gave is matched");
         let dropped = f.factory.browser(0).calls(|c| c.drops.len());
-        assert_eq!(dropped, 2, "the refused drop never reached the page");
+        assert_eq!(dropped, 3, "the refused drop never reached the page");
         task.abort();
     }
 
@@ -1681,6 +1692,7 @@ mod stream {
                 file,
                 name: format!("a{file}.edi"),
                 size: 4,
+                media_type: None,
                 offset: 0,
                 data: "VU5CKw==".into(),
             })

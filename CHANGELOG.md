@@ -79,19 +79,25 @@ and restart aetherd.
 - The sticky header no longer jumps down or vanishes in preview frames while
   a page scrolls, on desktop and phone. A clipped screenshot made Chromium
   redraw the page at the clip while the scroll ran on; stream frames are now
-  Chromium's own picture of the view.
+  Chromium's own picture of the view, at a lower quality when a view is too
+  detailed for the frame budget, never clipped.
 - A file of a type the page's file input does not accept is refused, picked
   or dropped, with "That file type is not one the app accepts here (.txt,
   .csv)." The prompt stays open for another pick, as it does for a file that
-  is too big or for a second file where the input takes one. `accept`
-  extensions match without regard to case, and MIME types and `image/*`
-  style wildcards match by extension.
+  is too big or for a second file where the input takes one. A drop is
+  held to the input it goes to: the one dropped on, a label's, or the one
+  file input in the drop zone holding it. `accept` extensions, compound ones
+  such as `.tar.gz` included, match without regard to case; MIME types and
+  `image/*` style wildcards match the type the operator's browser gives the
+  file, which `design_file_part` now carries as `media_type`.
 - Answering a confirm, prompt or alert in the preview takes effect at once.
   The answer waited behind the click that opened the dialog, which waits for
-  the answer, so it settled only at the 8-second input deadline. Switching
-  the preview's size while a dialog is open says to answer it first, instead
-  of a red "Browser call timed out: Emulation.setTouchEmulationEnabled" after
-  15 seconds with the preview half resized.
+  the answer, so it settled only at the 8-second input deadline. A dialog
+  the app opens right after another is shown too. Switching the preview's
+  size while a dialog is open says to answer it first and keeps the size it
+  has, instead of a red "Browser call timed out:
+  Emulation.setTouchEmulationEnabled" after 15 seconds with the preview half
+  resized.
 - When the app opens a new tab, the preview's status line says the preview
   followed it and that **Back** returns, until the operator goes back or
   reloads. The design subscription has a new `new_tab {message}` event.

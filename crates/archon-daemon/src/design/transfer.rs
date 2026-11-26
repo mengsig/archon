@@ -1,7 +1,6 @@
 //! The operator answers what the preview hands over: file choosers and drops,
 //! downloads, native pickers and going back. See `files.rs` for the limits.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use archon_core::ArchonError;
@@ -10,7 +9,6 @@ use archon_core::protocol::{DesignEvent, DesignPickerOption, Reply};
 use archon_design_browser as adb;
 
 use super::DesignService;
-use super::accept;
 use super::browser::{PreviewBrowser, Runtime};
 use super::files::Part;
 use crate::context::DaemonContext;
@@ -20,19 +18,6 @@ const MAX_PICKER_VALUE: usize = 64;
 
 fn unavailable(error: adb::BrowserError) -> ArchonError {
     ArchonError::Unavailable(format!("the preview browser: {error}"))
-}
-
-/// Every staged file's name, so none skips the accept check.
-fn file_names(paths: &[PathBuf]) -> Vec<String> {
-    paths
-        .iter()
-        .map(|path| {
-            path.file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect()
 }
 
 /// The operator-facing message for a pop-up opened in the preview instead.
@@ -172,7 +157,7 @@ impl DesignService {
             if !open.multiple && paths.len() > 1 {
                 return Err(ArchonError::Invalid("the app takes one file here".into()));
             }
-            accept::check(&open.accept, &file_names(&paths))?;
+            transfers.check_accept(transfer, &open.accept)?;
             (transfers.take_chooser(chooser)?, paths)
         };
         assert_eq!(open.id, chooser, "the chooser taken is the one answered");
@@ -201,7 +186,7 @@ impl DesignService {
         let (rt, browser) = self.live_runtime(ctx, session).await?;
         let paths = rt.files.lock().await.files(transfer)?;
         if let Some(accept) = browser.accept_at(x, y).await.map_err(unavailable)? {
-            accept::check(&accept, &file_names(&paths))?;
+            rt.files.lock().await.check_accept(transfer, &accept)?;
         }
         browser
             .drop_files(x, y, &paths)

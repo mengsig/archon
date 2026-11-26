@@ -56,7 +56,7 @@ export async function uploadFiles(design, session, files, progress = () => {}) {
   for (const [file, entry] of files.entries()) {
     for (const offset of chunkOffsets(entry.size)) {
       const bytes = new Uint8Array(await entry.slice(offset, offset + CHUNK_SIZE).arrayBuffer());
-      await design.filePart({ session, transfer, file, name: entry.name, size: entry.size, offset, data: encode(bytes) });
+      await design.filePart({ session, transfer, file, name: entry.name, size: entry.size, media_type: entry.type || undefined, offset, data: encode(bytes) });
       progress(entry.name, entry.size ? Math.round((offset + bytes.length) / entry.size * 100) : 100);
     }
   }

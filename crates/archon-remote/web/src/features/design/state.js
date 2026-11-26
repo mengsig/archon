@@ -1,12 +1,13 @@
 // The design screen's state as a pure reducer, and what the state means for
 // the screen: which of the sec 7.3 states shows, and how a note reads.
 import { DROP_OFFERED_AFTER_MINUTES } from '../../core/design.js';
+import { initialViewport, chosenPreset, choose, resend, sending, settled, fromView } from './viewport.js';
 
 export function initialState(item) {
   return {
     item, loaded: false, observer: null, view: null, session: null, notes: [], browser: { status: 'idle' },
     degraded: false, noteVersion: 0, frame: null, selection: null, blocked: [], progress: '',
-    dialog: null, browserEvents: [], toasts: [], newTab: null, ended: null, connection: 'open', mode: 'interact', preset: 'desktop', presetAsk: 0, applied: { preset: null, ask: 0 }, refresh: false, error: null,
+    dialog: null, browserEvents: [], toasts: [], newTab: null, ended: null, connection: 'open', mode: 'interact', preset: 'desktop', viewport: initialViewport(), refresh: false, error: null,
     previewCommit: null, path: null, finishBlocker: null, imagesUsed: 0, imagesMax: 0, deadline: null,
     itemState: null,
   };
@@ -30,9 +31,22 @@ export function upsertNote(notes, note) {
   return [...rest, note].sort(byNumber);
 }
 
-// The session's preset is what archond applied when it answered the view.
-function appliedFrom(applied, sessionPreset) {
-  return sessionPreset ? { ...applied, preset: sessionPreset } : applied;
+// `preset` is always the chosen one of `viewport`, for everything that shows it.
+function withViewport(state, viewport) {
+  return { ...state, viewport, preset: chosenPreset(viewport) };
+}
+
+// A first or new session starts from its own preset; otherwise the view's counts only if current.
+function viewportOfView(state, action, fresh) {
+  const preset = action.view.session?.viewport_preset;
+  if (!state.session || fresh) return initialViewport(preset ?? 'desktop', state.viewport.settles);
+  return fromView(state.viewport, preset, action.stamp);
+}
+
+// Frames prove a size other than the one archond confirmed, and nothing is on its way.
+export function needsResend(state) {
+  const vp = state.viewport;
+  return Boolean(state.frame) && !vp.pending && !vp.queued && confirmedPreset(state.frame) !== vp.confirmed;
 }
 
 export function reduce(state, action) {
@@ -46,10 +60,11 @@ export function reduce(state, action) {
       }
       // A different session id is a new session: nothing of the old picture or selection carries over.
       const fresh = Boolean(state.session && v.session && v.session.id !== state.session.id);
+      const viewport = viewportOfView(state, action, fresh);
       return {
         ...state, loaded: true, observer: null, view: v, session: v.session ?? null, notes: [...(v.notes ?? [])].sort(byNumber),
         browser: v.browser ?? state.browser, degraded: Boolean(v.session?.degraded), noteVersion: v.session?.note_version ?? 0, path: pathOf(v.session?.preview_url) ?? state.path,
-        preset: v.session?.viewport_preset ?? state.preset, applied: appliedFrom(state.applied, v.session?.viewport_preset), finishBlocker: v.finish_blocker ?? null,
+        viewport, preset: chosenPreset(viewport), finishBlocker: v.finish_blocker ?? null,
         imagesUsed: v.images_used ?? 0, imagesMax: v.images_max ?? 0, deadline: v.stage_deadline ?? null, refresh: false, error: null,
         ended: v.session && v.session.state === 'ended' ? (v.session.end_reason ?? 'ended') : null,
         ...(fresh ? { frame: null, selection: null, progress: '', previewCommit: null, blocked: [], mode: 'interact', newTab: null, toasts: [...state.toasts, 'A new design session started'] } : {}),
@@ -69,15 +84,15 @@ export function reduce(state, action) {
     case 'mode':
       return { ...state, mode: action.mode, selection: action.mode === 'comment' || action.mode === 'region' ? state.selection : null };
     case 'preset':
-      return { ...state, preset: action.preset, presetAsk: action.ask ?? state.presetAsk };
-    case 'preset_applied':
-      // Answers may come back out of order: a later ask's success stands.
-      return action.ask < state.applied.ask ? state : { ...state, applied: { preset: action.preset, ask: action.ask } };
+      return withViewport(state, choose(state.viewport, action.preset));
+    case 'preset_resend':
+      return needsResend(state) ? withViewport(state, resend(state.viewport, state.session?.id)) : state;
+    case 'preset_sending':
+      return withViewport(state, sending(state.viewport, action.session, action.preset));
+    case 'preset_settled':
+      return withViewport(state, settled(state.viewport, action));
     case 'selection':
       return { ...state, selection: action.selection };
-    case 'preset_refused':
-      // Only the latest choice's refusal counts; the preview goes back to the preset archond last applied.
-      return action.ask === state.presetAsk ? { ...state, preset: state.applied.preset ?? state.preset } : state;
     case 'new_tab_dismissed':
       return { ...state, newTab: null };
     case 'toasts_taken':

@@ -7,6 +7,7 @@ import { toast } from '../../ui/toast.js';
 import { designErrorText, isBackpressure, isLostInput } from '../../core/design.js';
 import { initialState, reduce, isLive, currentPath, followsNewSession, presetMismatch, pointerBlockedText, PRESET_SIZE } from './state.js';
 import { createDesignStream } from './stream.js';
+import { nextRequest } from './viewport.js';
 import { createStage } from './overlay.js';
 import { fileLimitMessage, uploadFiles } from './files.js';
 import { showFileChooser, showDownload, showPicker, showClipboard } from './browser-prompts.js';
@@ -51,7 +52,6 @@ export function mountDesign(view, ctx) {
   let tickets = 0;
   let viewCurrent = false;
   let autoPreset = false;
-  let presetSent = null; // `${session}|${preset}` of the last preset request, so a mismatch re-sends once
   let follower = null; // the poll that waits for the item's next session
   const outbox = createNoteOutbox({ item });
   let sendingNotes = 0;
@@ -264,21 +264,25 @@ export function mountDesign(view, ctx) {
     if (mode === 'region') stage.startKeyboardRegion();
     root.dataset.mode = mode;
   }
-  let presetAsks = 0; // numbers each preset request, so only the latest refusal rolls back
-  // A re-send after a stray frame stays sent when refused, so it goes once and never loops.
-  async function setPreset(preset, { resend = false } = {}) {
-    const ask = ++presetAsks;
-    dispatch({ type: 'preset', preset, ask });
-    presetSent = `${session()}|${preset}`;
-    try {
-      await ctx.design.viewport(session(), preset);
-      dispatch({ type: 'preset_applied', preset, ask });
-    } catch (e) {
-      // Refused (the app's dialog is open, say): back to the size archond last applied.
-      if (ask === presetAsks && !resend) presetSent = null;
-      dispatch({ type: 'preset_refused', ask });
-      refuse(e);
-    }
+  function setPreset(preset) { dispatch({ type: 'preset', preset }); }
+  // One preset request per session at a time; a newer choice waits for its answer.
+  // Neither step changes the chosen preset, so neither needs a render.
+  function syncViewport() {
+    const id = session();
+    if (!operator || !id) return;
+    if (state.session.state === 'live') state = reduce(state, { type: 'preset_resend' });
+    const preset = nextRequest(state.viewport);
+    if (!preset) return;
+    state = reduce(state, { type: 'preset_sending', session: id, preset });
+    sendViewport(id, preset);
+  }
+  async function sendViewport(id, preset) {
+    let ok = true;
+    let error = null;
+    try { await ctx.design.viewport(id, preset); } catch (err) { ok = false; error = err; }
+    // Refused (the app's dialog is open, say): the preview stays at the size archond confirmed.
+    dispatch({ type: 'preset_settled', session: id, preset, ok });
+    if (!ok && session() === id) refuse(error);
   }
   function reload() { dispatch({ type: 'new_tab_dismissed' }); ctx.design.reload(session()).catch(refuse); }
 
@@ -569,10 +573,8 @@ export function mountDesign(view, ctx) {
     root.dataset.mode = state.mode;
     const waiting = renderDrafts();
     if (operator) flushOutbox(waiting);
-    // The daemon may not have applied the preset the session says it has: a frame at another size re-sends it, once.
-    if (operator && state.session?.state === 'live' && presetMismatch(state) && presetSent !== `${session()}|${state.preset}`) {
-      setPreset(state.preset, { resend: true });
-    }
+    // Sends a chosen preset, or once re-sends the confirmed one a frame at another size contradicts.
+    syncViewport();
     syncFollower();
     // A phone starts on the Phone preset, once.
     if (!autoPreset && layout === 'phone' && operator && state.session?.state === 'live') {
@@ -619,10 +621,11 @@ export function mountDesign(view, ctx) {
 
   const stream = createDesignStream({
     ctx, item,
-    onView: (kind, data) => {
+    onView: (kind, data, stamp) => {
       viewCurrent = true;
-      dispatch(kind === 'design_state' ? { type: 'view', view: data } : { type: 'summary', summary: data });
+      dispatch(kind === 'design_state' ? { type: 'view', view: data, stamp } : { type: 'summary', summary: data });
     },
+    stamp: () => state.viewport.settles,
     onEvent: (e) => dispatch(e.type === 'connection' ? e : { type: 'event', event: e }),
     onFrame: (bitmap, meta) => stage.draw(bitmap, meta),
     onReset: () => {

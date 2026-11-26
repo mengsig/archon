@@ -68,7 +68,8 @@ const PRESETS = { desktop: { width: 1440, height: 900 }, tablet: { width: 834, h
 const json = (res, body) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(body));
 
 function createDaemon({ appPage, fixtureApp, role }) {
-  const state = { notes: [], seq: 0, ended: false, paused: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false, questions: [], summaries: [], sessionPatch: {}, sessionId: 'ds_FIXTURE', endReason: null };
+  const state = { notes: [], seq: 0, ended: false, paused: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false, questions: [], summaries: [], sessionPatch: {}, sessionId: 'ds_FIXTURE', endReason: null,
+    viewportOutcomes: [], viewHolds: [] };
   let stopping = false;
   const timers = new Set();
   const running = new Set();
@@ -159,11 +160,18 @@ function createDaemon({ appPage, fixtureApp, role }) {
     if (cmd === 'design_get') {
       if (state.designGetError) return refuse(ws, req, state.designGetError.code, state.designGetError.message);
       if (role !== 'operator') return reply(ws, req, 'design_summary', { state: 'live', note_count: state.notes.length });
-      return reply(ws, req, 'design_state', { item: ITEM, session: session(), notes: state.notes.map(view), browser: { status: 'running' }, finish_blocker: null, images_used: state.imagesUsed ?? 1, images_max: 128, stage_deadline: null });
+      const answer = { item: ITEM, session: session(), notes: state.notes.map(view), browser: { status: 'running' }, finish_blocker: null, images_used: state.imagesUsed ?? 1, images_max: 128, stage_deadline: null };
+      const hold = state.viewHolds.shift();
+      if (hold) await hold.released;
+      reply(ws, req, 'design_state', answer);
+      return hold?.sent();
     }
     if (state.ended) return refuse(ws, req, 'gone', 'This design session has ended.');
     switch (cmd) {
       case 'design_viewport': {
+        const outcome = state.viewportOutcomes.shift();
+        if (outcome?.hold) await outcome.hold;
+        if (outcome?.refuse) return refuse(ws, req, 'unavailable', outcome.refuse);
         const size = PRESETS[msg.preset];
         state.sessionPatch.viewport_preset = msg.preset;
         if (size) await appPage.setViewportSize(size);
@@ -275,9 +283,26 @@ function createDaemon({ appPage, fixtureApp, role }) {
       if ('degraded' in fields) state.sessionPatch.degraded = fields.degraded;
       broadcast({ event: 'session', state: state.sessionState, degraded: false, preview_path: '/', commit: null, browser: { status: 'running' }, note_version: state.version, ...fields });
     },
-    // The app stopped answering: no frames until resumed.
+    // The next design_viewport waits until the returned function is called.
+    holdViewport() {
+      let release;
+      state.viewportOutcomes.push({ hold: new Promise((done) => { release = done; }) });
+      return release;
+    },
+    // The next design_viewport is refused, as archond refuses one, with `message`.
+    refuseViewport(message) { state.viewportOutcomes.push({ refuse: message }); },
+    // The next design_get answers with the session as it is now, once `release()` is called;
+    // `delivered` settles when that late answer has gone out.
+    holdView() {
+      const hold = {};
+      hold.released = new Promise((done) => { hold.release = done; });
+      hold.delivered = new Promise((done) => { hold.sent = done; });
+      state.viewHolds.push(hold);
+      return hold;
+    },
     // Fields of the session as design_get reports it (degraded, preview_url, ...).
     patchSession(patch) { Object.assign(state.sessionPatch, patch); },
+    // The app stopped answering: no frames until resumed.
     pauseFrames() { state.paused = true; },
     resumeFrames() { state.paused = false; state.connections.forEach((c) => run(() => sendFrame(c))); },
     // The network dropped every open socket; the web app reconnects on its own.

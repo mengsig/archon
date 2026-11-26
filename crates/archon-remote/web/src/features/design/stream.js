@@ -10,7 +10,7 @@ export function decodeBase64(b64) {
 }
 
 export function createDesignStream({
-  ctx, item, onView, onEvent, onFrame, onError, onReset = () => {}, visible = () => document.visibilityState === 'visible',
+  ctx, item, onView, onEvent, onFrame, onError, onReset = () => {}, stamp = () => null, visible = () => document.visibilityState === 'visible',
   decode = (b64) => createImageBitmap(new Blob([decodeBase64(b64)], { type: 'image/jpeg' })),
   setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (timer) => clearTimeout(timer), now = () => performance.now(),
 }) {
@@ -52,13 +52,14 @@ export function createDesignStream({
     const mine = ++generation;
     if (fresh) { detach(true); onReset(); }
     try {
+      const asked = stamp(); // handed back with the view: what the screen knew when it asked
       const { kind, data } = await ctx.design.get(item);
       if (!alive || mine !== generation) return;
       const session = kind === 'design_state' ? data.session : null;
       const changed = (session?.id ?? null) !== sessionId;
       sessionId = session?.id ?? null;
       if (changed) { detach(true); if (!fresh) onReset(); }
-      onView(kind, data);
+      onView(kind, data, asked);
       if (!alive || mine !== generation) return;
       if (!session || session.state === 'ended' || session.state === 'confirmed' || !ctx.canOperate) return;
       if (active) return;

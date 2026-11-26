@@ -93,6 +93,8 @@ struct State {
     poll: Option<JoinHandle<()>>,
     /// When input was last dispatched: frames come faster for a while after it.
     last_input: Option<Instant>,
+    /// A JavaScript dialog is open on the page.
+    dialog_open: bool,
 }
 
 #[derive(Debug)]
@@ -498,7 +500,11 @@ impl Shared {
         let params = &ev.params;
         match ev.method.as_str() {
             "Inspector.targetCrashed" => self.emit(BrowserEvent::Crashed),
-            "Page.javascriptDialogOpening" => self.emit_dialog(params),
+            "Page.javascriptDialogOpening" => {
+                self.st.lock().unwrap().dialog_open = true;
+                self.emit_dialog(params);
+            }
+            "Page.javascriptDialogClosed" => self.st.lock().unwrap().dialog_open = false,
             "Page.fileChooserOpened" => self.on_file_chooser(params),
             "Runtime.bindingCalled" => self.on_bridge(params),
             "Page.frameNavigated" if params["frame"]["parentId"].is_null() => {
@@ -1036,6 +1042,7 @@ impl Browser {
                 viewport: vp,
                 poll: None,
                 last_input: None,
+                dialog_open: false,
             }),
         });
         let event_task = tokio::spawn(handle_events(sh.clone(), rx, documents));
@@ -1111,6 +1118,10 @@ impl Browser {
 
     /// Resize and set touch emulation.
     pub async fn set_viewport(&self, v: Viewport) -> Result<(), BrowserError> {
+        // Chrome would hold the touch call until the dialog closes, half resized.
+        if self.sh.st.lock().unwrap().dialog_open {
+            return Err(BrowserError::DialogOpen);
+        }
         self.sh
             .call(
                 "Emulation.setDeviceMetricsOverride",
@@ -1244,10 +1255,9 @@ impl Browser {
         if let Some(t) = text {
             p["promptText"] = json!(t);
         }
-        self.sh
-            .call("Page.handleJavaScriptDialog", p)
-            .await
-            .map(|_| ())
+        self.sh.call("Page.handleJavaScriptDialog", p).await?;
+        self.sh.st.lock().unwrap().dialog_open = false;
+        Ok(())
     }
 
     /// The first containment failure, if the browser was stopped for one.

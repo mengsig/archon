@@ -88,7 +88,10 @@ and restart aetherd.
   style wildcards match by extension.
 - Answering a confirm, prompt or alert in the preview takes effect at once.
   The answer waited behind the click that opened the dialog, which waits for
-  the answer, so it settled only at the 8-second input deadline.
+  the answer, so it settled only at the 8-second input deadline. Switching
+  the preview's size while a dialog is open says to answer it first, instead
+  of a red "Browser call timed out: Emulation.setTouchEmulationEnabled" after
+  15 seconds with the preview half resized.
 - When the app opens a new tab, the preview's status line says the preview
   followed it and that **Back** returns, until the operator goes back or
   reloads. The design subscription has a new `new_tab {message}` event.

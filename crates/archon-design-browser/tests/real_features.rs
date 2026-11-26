@@ -276,8 +276,23 @@ async fn a_confirm_dialog_shows_its_text_and_takes_the_operators_answer() {
             (kind.as_str(), message.as_str()),
             ("confirm", "Delete the lashing plan?")
         );
+        let phone = Viewport {
+            width: 390,
+            height: 844,
+            touch: true,
+            dpr: 3.0,
+        };
+        let resized = tokio::time::timeout(Duration::from_secs(2), browser.set_viewport(phone));
+        let refused = resized
+            .await
+            .expect("a resize under a dialog is refused at once");
+        assert!(
+            matches!(refused, Err(BrowserError::DialogOpen)),
+            "{refused:?}"
+        );
         browser.answer_dialog(false, None).await.unwrap();
         clicked.await;
+        browser.set_viewport(phone).await.unwrap();
     }
     wait_location(&browser, "/?confirm=false").await;
     drop(events);

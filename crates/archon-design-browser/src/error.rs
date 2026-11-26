@@ -30,6 +30,9 @@ pub enum BrowserError {
     /// The page could not be verified for this read.
     #[error("preview document changed or is not ready")]
     DisclosureUnavailable,
+    /// The page's dialog is open, and Chrome holds the call until it is answered.
+    #[error("the app has a dialog open; answer it first")]
+    DialogOpen,
     /// A call took too long.
     #[error("browser call timed out: {0}")]
     Timeout(String),

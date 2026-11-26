@@ -68,6 +68,30 @@ and restart aetherd.
   again after any input it had already sent runs), it lets go of everything
   held before the next request, or within about three seconds if none comes,
   each release with its own deadline (#504).
+- Swiping on the phone preview scrolls the app instead of raising red
+  "Must send a TouchStart first" errors. Chromium lifts the finger on a zoom
+  reset, and a lost input request let go of it too, so every later move of
+  that swipe was refused and counted as lost input, which cancelled the next
+  swipe as well. archond now drops a move or end for a finger no longer down,
+  treats an end Chromium already made as done, cancels a finger still held
+  before a new touch starts, and sends ends and cancels without points as
+  Chromium requires.
+- The sticky header no longer jumps down or vanishes in preview frames while
+  a page scrolls, on desktop and phone. A clipped screenshot made Chromium
+  redraw the page at the clip while the scroll ran on; stream frames are now
+  Chromium's own picture of the view.
+- A file of a type the page's file input does not accept is refused, picked
+  or dropped, with "That file type is not one the app accepts here (.txt,
+  .csv)." The prompt stays open for another pick, as it does for a file that
+  is too big or for a second file where the input takes one. `accept`
+  extensions match without regard to case, and MIME types and `image/*`
+  style wildcards match by extension.
+- Answering a confirm, prompt or alert in the preview takes effect at once.
+  The answer waited behind the click that opened the dialog, which waits for
+  the answer, so it settled only at the 8-second input deadline.
+- When the app opens a new tab, the preview's status line says the preview
+  followed it and that **Back** returns, until the operator goes back or
+  reloads. The design subscription has a new `new_tab {message}` event.
 - A live design whose layout did not change no longer fails intent
   acceptance with a "layout gap". The ledger recorded only the CSS viewport
   of a picture shot at clip scale 2, so a 1440×900 reference was a 2880×1800

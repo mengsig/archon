@@ -1546,6 +1546,32 @@ mod stream {
         task.abort();
     }
 
+    /// The click that opened a dialog holds the item until the dialog is
+    /// answered; the answer must not wait behind it (it settled only at the
+    /// input deadline, 10 s after OK).
+    #[tokio::test]
+    async fn a_dialog_answer_does_not_wait_for_the_click_that_opened_it() {
+        let f = Fixture::new().await;
+        let (_rx, task) = subscribe(&f, 1);
+        until("the preview browser", || {
+            f.factory.browser(0).calls(|c| c.screencasts_started == 1)
+        })
+        .await;
+        let lock = f.h.ctx.design.item_lock_for_tests(&f.item);
+        let click = lock.lock().await;
+        let answer = f.operator(Request::DesignDialogAnswer {
+            session: f.session.clone(),
+            accept: true,
+            text: Some("Bay 12".into()),
+        });
+        let answered = tokio::time::timeout(Duration::from_secs(2), answer)
+            .await
+            .expect("the answer came while the click still held the item");
+        assert!(matches!(answered, Ok(Reply::DesignDone)), "{answered:?}");
+        drop(click);
+        task.abort();
+    }
+
     #[tokio::test]
     async fn a_relaunched_browser_advances_the_open_stream_sequence() {
         let f = Fixture::new().await;

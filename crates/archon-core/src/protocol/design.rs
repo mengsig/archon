@@ -309,6 +309,21 @@ pub struct DesignAssetView {
     pub caption: Option<String>,
 }
 
+/// One option of a native dropdown the page opened.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DesignPickerOption {
+    /// The text shown.
+    pub label: String,
+    /// What the answer names.
+    pub value: String,
+    /// Selected now.
+    pub selected: bool,
+    /// Cannot be chosen.
+    pub disabled: bool,
+    /// Its group's label, or empty.
+    pub group: String,
+}
+
 /// One event of a `subscribe_design` stream.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -373,6 +388,47 @@ pub enum DesignEvent {
         message: String,
         /// A prompt's default text.
         default_prompt: Option<String>,
+    },
+    /// The page opened a file chooser: answered with `design_file_set`.
+    FileChooser {
+        /// The chooser's id.
+        id: u64,
+        /// More than one file may be chosen.
+        multiple: bool,
+        /// The input's `accept` attribute.
+        accept: String,
+    },
+    /// The page downloaded a file: read with `design_download`.
+    Download {
+        /// The download's id.
+        id: u64,
+        /// Its file name.
+        name: String,
+        /// Its size in bytes.
+        size: u64,
+    },
+    /// The page opened a native dropdown or date, time or colour picker:
+    /// answered with `design_picker_answer`.
+    Picker {
+        /// The picker's id.
+        id: u64,
+        /// `select`, `date`, `time`, `datetime-local`, `month`, `week` or `color`.
+        control: String,
+        /// The current value; a dropdown's selected option's `value`.
+        value: String,
+        /// The input's `min`.
+        min: Option<String>,
+        /// The input's `max`.
+        max: Option<String>,
+        /// The input's `step`.
+        step: Option<String>,
+        /// A dropdown's options.
+        options: Vec<DesignPickerOption>,
+    },
+    /// The page copied text.
+    Clipboard {
+        /// The text.
+        text: String,
     },
     /// A short message for the operator.
     Toast {

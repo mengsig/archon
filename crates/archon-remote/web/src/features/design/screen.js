@@ -8,6 +8,8 @@ import { designErrorText, isBackpressure, isLostInput } from '../../core/design.
 import { initialState, reduce, isLive, currentPath, followsNewSession, presetMismatch, pointerBlockedText, PRESET_SIZE } from './state.js';
 import { createDesignStream } from './stream.js';
 import { createStage } from './overlay.js';
+import { fileLimitMessage, uploadFiles } from './files.js';
+import { showFileChooser, showDownload, showPicker, showClipboard } from './browser-prompts.js';
 import { BEHIND, createBehindLine } from './behind.js';
 import { createComposer } from './composer.js';
 import { createNotesPanel, openUnsentDrafts } from './notes.js';
@@ -67,6 +69,11 @@ export function mountDesign(view, ctx) {
     if (state.toasts.length) { for (const t of state.toasts) toast(t); state = reduce(state, { type: 'toasts_taken' }); }
     if (state.refresh) { state = { ...state, refresh: false }; stream.refresh(); }
     if (state.dialog) showDialog();
+    if (state.browserEvents.length) {
+      const events = state.browserEvents;
+      state = reduce(state, { type: 'browser_events_taken' });
+      for (const event of events) showBrowserEvent(event);
+    }
     render();
   };
   const session = () => state.session?.id;
@@ -99,6 +106,7 @@ export function mountDesign(view, ctx) {
     title, onBack: back,
     onPreset: (preset) => setPreset(preset),
     onReload: () => reload(),
+    onPreviewBack: () => ctx.design.goBack(session()).catch(refuse),
     onFinish: () => reviewing((hooks) => startFinish(ctx, state, hooks)),
     onReview: () => reviewing((hooks) => resumeFinish(ctx, state, hooks)),
     onBackToEditing: async () => {
@@ -137,6 +145,7 @@ export function mountDesign(view, ctx) {
   const stage = createStage({
     getMode: () => state.mode,
     onInput: queueInput,
+    onDrop: dropFiles,
     onHover: hoverAt,
     onPick: pickAt,
     onRegion: regionAt,
@@ -439,6 +448,27 @@ export function mountDesign(view, ctx) {
       },
     }).then(renderDrafts);
   };
+
+  function showBrowserEvent(event) {
+    const id = session();
+    if (!id) return;
+    if (event.event === 'file_chooser') showFileChooser(ctx.design, id, event, refuse);
+    else if (event.event === 'download') showDownload(ctx.design, id, event, refuse);
+    else if (event.event === 'picker') showPicker(ctx.design, id, event, refuse);
+    else if (event.event === 'clipboard') showClipboard(event.text);
+  }
+
+  async function dropFiles(files, point) {
+    const problem = fileLimitMessage(files);
+    if (problem) { toast(problem, { tone: 'amber' }); return; }
+    if (!files.length) return;
+    const id = session();
+    if (!id || !isLive(state)) return;
+    try {
+      const transfer = await uploadFiles(ctx.design, id, files);
+      await ctx.design.fileDrop(id, transfer, point.x, point.y);
+    } catch (error) { refuse(error); }
+  }
 
   let dialogOpen = false;
   function showDialog() {

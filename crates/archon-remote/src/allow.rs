@@ -141,6 +141,12 @@ fn operator_changes(request: &Request) -> bool {
             | R::DesignReload { .. }
             | R::DesignTellAgent { .. }
             | R::DesignDialogAnswer { .. }
+            | R::DesignFilePart { .. }
+            | R::DesignFileSet { .. }
+            | R::DesignFileDrop { .. }
+            | R::DesignDownload { .. }
+            | R::DesignPickerAnswer { .. }
+            | R::DesignGoBack { .. }
             | R::DesignNoteAdd { .. }
             | R::DesignNoteEdit { .. }
             | R::DesignNoteCancel { .. }
@@ -239,6 +245,25 @@ mod tests {
         assert_eq!(changes.len(), 26, "every change parsed");
         for request in &changes {
             assert!(allowed(DeviceRole::Operator, request), "{request:?}");
+        }
+    }
+
+    #[test]
+    fn only_operators_move_files_in_and_out_of_the_preview() {
+        let session = "ds_01M621D9ZBJPTMDTV26KKQNBE1";
+        let requests = [
+            serde_json::json!({"cmd": "design_file_part", "session": session, "transfer": "t1",
+                "file": 0, "name": "BAPLIE.edi", "size": 1, "offset": 0, "data": "eA=="}),
+            serde_json::json!({"cmd": "design_file_set", "session": session, "chooser": 1, "transfer": "t1"}),
+            serde_json::json!({"cmd": "design_file_drop", "session": session, "transfer": "t1", "x": 1.0, "y": 2.0}),
+            serde_json::json!({"cmd": "design_download", "session": session, "id": 1, "offset": 0}),
+            serde_json::json!({"cmd": "design_picker_answer", "session": session, "id": 1, "value": "2"}),
+            serde_json::json!({"cmd": "design_go_back", "session": session}),
+        ];
+        for json in requests {
+            let request = parse(json.clone());
+            assert!(allowed(DeviceRole::Operator, &request), "{json}");
+            assert!(!allowed(DeviceRole::Observer, &request), "{json}");
         }
     }
 

@@ -89,7 +89,33 @@ fn key_params(
     if let (KeyAction::Down, Some(t)) = (action, text) {
         p["text"] = json!(t);
     }
+    if let (KeyAction::Down, Some(command)) = (action, mac_edit_command(key, modifiers)) {
+        p["commands"] = json!([command]);
+    }
     p
+}
+
+const ALT: u8 = 1;
+const CTRL: u8 = 2;
+const META: u8 = 4;
+const SHIFT: u8 = 8;
+
+/// A Mac operator's Cmd+A/C/X/V/Z: Chromium on Linux binds editing to Ctrl,
+/// so Cmd alone runs the editing command it means there.
+fn mac_edit_command(key: &str, modifiers: u8) -> Option<&'static str> {
+    if modifiers & META == 0 || modifiers & (CTRL | ALT) != 0 {
+        return None;
+    }
+    let shift = modifiers & SHIFT != 0;
+    match (key.to_ascii_lowercase().as_str(), shift) {
+        ("a", false) => Some("selectAll"),
+        ("c", false) => Some("copy"),
+        ("x", false) => Some("cut"),
+        ("v", false) => Some("paste"),
+        ("z", false) => Some("undo"),
+        ("z", true) | ("y", false) => Some("redo"),
+        _ => None,
+    }
 }
 
 pub(crate) fn button_name(b: MouseButton) -> &'static str {
@@ -352,6 +378,18 @@ mod tests {
             modifiers: 0,
         }
     }
+    #[test]
+    fn cmd_shortcuts_run_their_editing_command() {
+        let down = key_params(KeyAction::Down, "a", "KeyA", None, META);
+        assert_eq!(down["commands"], json!(["selectAll"]));
+        let redo = key_params(KeyAction::Down, "z", "KeyZ", None, META | SHIFT);
+        assert_eq!(redo["commands"], json!(["redo"]));
+        let ctrl = key_params(KeyAction::Down, "c", "KeyC", None, CTRL);
+        assert!(ctrl.get("commands").is_none(), "Linux binds Ctrl itself");
+        let up = key_params(KeyAction::Up, "v", "KeyV", None, META);
+        assert!(up.get("commands").is_none());
+    }
+
     fn key(action: KeyAction, code: &str) -> Input {
         Input::Key {
             action,

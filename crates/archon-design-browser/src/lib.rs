@@ -4,10 +4,12 @@
 //! `--remote-debugging-pipe` only. This crate launches it, speaks CDP, relays screencast frames
 //! with backpressure, captures size-budgeted pictures and describes the element under a point.
 
+mod bridge;
 mod browser;
 mod cdp;
 mod containment;
 mod error;
+mod features;
 mod input;
 mod keys;
 mod launch;
@@ -22,14 +24,17 @@ mod testutil;
 
 use std::collections::BTreeMap;
 
+pub use bridge::{PickerOption, PickerRequest};
 pub use browser::Browser;
 pub use error::BrowserError;
+pub use features::MAX_DOWNLOAD_BYTES;
 pub use launch::{
     LaunchSpec, doctor_line, find_browser, kill_if_matches, launch_env, process_start_time,
     sweep_profiles,
 };
 pub use proxy::UpstreamGuard;
 pub use relay::{FrameRelay, FrameSubscriber};
+pub use sanitize::{MAX_FILE_NAME_BYTES, file_name};
 
 /// Largest encoded picture or frame (a base64 JSON frame then stays under 768 KiB).
 pub const MAX_IMAGE_BYTES: usize = 560 * 1024;
@@ -283,8 +288,43 @@ pub enum BrowserEvent {
         /// Its URL.
         url: String,
     },
-    /// A file chooser was refused.
-    FileChooserRefused,
+    /// A file input opened its chooser and waits for `set_files`.
+    FileChooser {
+        /// The input's backend node.
+        node: i64,
+        /// More than one file may be chosen.
+        multiple: bool,
+        /// The input's `accept` attribute.
+        accept: String,
+    },
+    /// A download finished in the private downloads directory.
+    Downloaded {
+        /// Sanitised suggested file name.
+        name: String,
+        /// Where Chromium saved it.
+        path: std::path::PathBuf,
+        /// Its size.
+        bytes: u64,
+    },
+    /// A download was cancelled, failed or was too big.
+    DownloadFailed {
+        /// Sanitised suggested file name.
+        name: String,
+        /// Why, for the operator.
+        reason: String,
+    },
+    /// The page opened a native picker a headless browser cannot draw.
+    Picker(PickerRequest),
+    /// The page copied text.
+    Copied {
+        /// The text.
+        text: String,
+    },
+    /// A link or `window.open` meant for a new tab opened in the preview instead.
+    NewTab {
+        /// Its URL.
+        url: String,
+    },
     /// The main document failed to load.
     NavigationFailed {
         /// URL.

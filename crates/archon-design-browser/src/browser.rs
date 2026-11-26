@@ -33,7 +33,7 @@ use crate::{
     Viewport, jpeg_dims,
 };
 
-const CALL_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const CALL_TIMEOUT: Duration = Duration::from_secs(15);
 /// Stream frames: four a second at rest, ten (the relay's most) while the
 /// operator scrolls or types, so a scroll is followed and its end shown soon.
 const IDLE_FRAME_INTERVAL: Duration = Duration::from_millis(250);
@@ -93,8 +93,11 @@ struct State {
 pub(crate) struct Shared {
     pub(crate) cdp: Cdp,
     pub(crate) session: String,
-    containment: Option<Arc<Containment>>,
+    pub(crate) containment: Option<Arc<Containment>>,
     events: broadcast::Sender<BrowserEvent>,
+    /// Chromium saves downloads here; `None` denies them.
+    pub(crate) downloads_dir: Option<PathBuf>,
+    pub(crate) downloads: Mutex<crate::features::Downloads>,
     pub(crate) relay: Arc<RelayShared>,
     st: Mutex<State>,
     /// Held for a whole `capture`: Chrome draws a screenshot whose clip scale
@@ -222,6 +225,12 @@ impl Shared {
         reply
     }
 
+    pub(crate) fn allows_navigation(&self, url: &str) -> bool {
+        self.containment
+            .as_ref()
+            .is_none_or(|guard| guard.policy.origin.allows_navigation(url))
+    }
+
     fn check_containment(&self) -> Result<(), BrowserError> {
         if let Some(guard) = &self.containment {
             guard.epoch()?;
@@ -286,7 +295,7 @@ impl Shared {
         Ok(tree)
     }
 
-    fn emit(&self, e: BrowserEvent) {
+    pub(crate) fn emit(&self, e: BrowserEvent) {
         let _ = self.events.send(e);
     }
 
@@ -443,6 +452,10 @@ impl Shared {
             }
             return true;
         }
+        if ev.session_id.is_none() && ev.method.starts_with("Browser.download") {
+            self.on_download(&ev.method, &ev.params);
+            return false;
+        }
         if ev.session_id.as_deref() != Some(self.session.as_str()) {
             return false;
         }
@@ -450,7 +463,8 @@ impl Shared {
         match ev.method.as_str() {
             "Inspector.targetCrashed" => self.emit(BrowserEvent::Crashed),
             "Page.javascriptDialogOpening" => self.emit_dialog(params),
-            "Page.fileChooserOpened" => self.emit(BrowserEvent::FileChooserRefused),
+            "Page.fileChooserOpened" => self.on_file_chooser(params),
+            "Runtime.bindingCalled" => self.on_bridge(params),
             "Page.frameNavigated" if params["frame"]["parentId"].is_null() => {
                 let frame = &params["frame"];
                 self.record_document(frame["id"].as_str(), frame["url"].as_str());
@@ -479,6 +493,8 @@ impl Shared {
         false
     }
 
+    /// The dialog's text is page content. A dialog blocks the page, so no
+    /// verified read can run: it is shown when its document is the preview's.
     fn emit_dialog(&self, params: &Value) {
         let kind = match params["type"].as_str() {
             Some("confirm") => "confirm",
@@ -487,15 +503,19 @@ impl Shared {
             _ => "alert",
         }
         .into();
-        let (message, default_prompt) = if self.containment.is_some() {
-            ("The preview opened a dialog.".into(), None)
-        } else {
+        let from_preview = params["url"]
+            .as_str()
+            .is_some_and(|url| self.allows_navigation(url))
+            && self.check_containment().is_ok();
+        let (message, default_prompt) = if from_preview {
             let message = clean(params["message"].as_str().unwrap_or_default());
             let prompt = params["defaultPrompt"]
                 .as_str()
                 .filter(|s| !s.is_empty())
                 .map(clean);
             (message, prompt)
+        } else {
+            ("The preview opened a dialog.".into(), None)
         };
         self.emit(BrowserEvent::Dialog {
             kind,
@@ -713,14 +733,12 @@ async fn attach_page(
     Ok((target_id, session))
 }
 
-async fn configure_page(cdp: &Cdp, session: &str, confined: bool) -> Result<(), BrowserError> {
-    cdp.call(
-        None,
-        "Browser.setDownloadBehavior",
-        json!({"behavior": "deny"}),
-        CALL_TIMEOUT,
-    )
-    .await?;
+async fn configure_page(
+    cdp: &Cdp,
+    session: &str,
+    confined: bool,
+    downloads: Option<&std::path::Path>,
+) -> Result<(), BrowserError> {
     for m in [
         "Page.enable",
         "DOM.enable",
@@ -730,6 +748,7 @@ async fn configure_page(cdp: &Cdp, session: &str, confined: bool) -> Result<(), 
     ] {
         cdp.call(Some(session), m, json!({}), CALL_TIMEOUT).await?;
     }
+    crate::features::configure(cdp, session, downloads).await?;
     cdp.call(
         Some(session),
         "Page.setInterceptFileChooserDialog",
@@ -763,6 +782,7 @@ async fn configure_target(
     owned: Option<OwnedSession>,
     events: &broadcast::Sender<BrowserEvent>,
     relay: &Arc<RelayShared>,
+    downloads: Option<&std::path::Path>,
 ) -> Result<Option<Arc<Containment>>, BrowserError> {
     let containment = owned.map(|owned| {
         Arc::new(Containment {
@@ -782,7 +802,7 @@ async fn configure_target(
             .await?;
         guard.verify_targets(&targets)?;
     }
-    configure_page(cdp, session, containment.is_some()).await?;
+    configure_page(cdp, session, containment.is_some(), downloads).await?;
     Ok(containment)
 }
 
@@ -859,8 +879,14 @@ impl Browser {
         tokio::io::AsyncWriteExt::write_all(stdin, b"START\n")
             .await
             .map_err(|e| BrowserError::Launch(format!("release recorded browser: {e}")))?;
-        let mut b =
-            Self::attach_child(&mut child, spec.viewport, OwnedSession { policy, process }).await?;
+        use std::os::unix::fs::DirBuilderExt;
+        let downloads = spec.profile_dir.join("archon-downloads");
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&downloads)
+            .map_err(|e| BrowserError::Launch(format!("create the downloads directory: {e}")))?;
+        let owned = OwnedSession { policy, process };
+        let mut b = Self::attach_child(&mut child, spec.viewport, owned, downloads).await?;
         b.proxy = Some(proxy);
         b.child = Some(child);
         b.profile = Some(spec.profile_dir.clone());
@@ -875,6 +901,7 @@ impl Browser {
         child: &mut Child,
         viewport: Viewport,
         owned: OwnedSession,
+        downloads: PathBuf,
     ) -> Result<Browser, BrowserError> {
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
@@ -886,7 +913,7 @@ impl Browser {
         let connected = tokio::select! {
             result = tokio::time::timeout(
                 LAUNCH_TIMEOUT,
-                Self::attach(stdout, stdin, Some(viewport), Some(owned)),
+                Self::attach(stdout, stdin, Some(viewport), Some(owned), Some(downloads)),
             ) => result,
             status = child.wait() => {
                 let _ = tokio::time::timeout(Duration::from_secs(1), stderr_task).await;
@@ -914,7 +941,7 @@ impl Browser {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
-        Self::attach(reader, writer, None, None).await
+        Self::attach(reader, writer, None, None, None).await
     }
 
     async fn attach<R, W>(
@@ -922,6 +949,7 @@ impl Browser {
         writer: W,
         viewport: Option<Viewport>,
         owned: Option<OwnedSession>,
+        downloads_dir: Option<PathBuf>,
     ) -> Result<Browser, BrowserError>
     where
         R: AsyncRead + Unpin + Send + 'static,
@@ -933,8 +961,16 @@ impl Browser {
         let (target_id, session) = attach_page(&cdp, &mut rx).await?;
         let (events, _) = broadcast::channel(256);
         let relay = Arc::new(RelayShared::default());
-        let containment =
-            configure_target(&cdp, &target_id, &session, owned, &events, &relay).await?;
+        let containment = configure_target(
+            &cdp,
+            &target_id,
+            &session,
+            owned,
+            &events,
+            &relay,
+            downloads_dir.as_deref(),
+        )
+        .await?;
         let vp = viewport.unwrap_or(Viewport {
             width: 1280,
             height: 800,
@@ -946,6 +982,8 @@ impl Browser {
             session,
             containment,
             events,
+            downloads_dir,
+            downloads: Mutex::default(),
             relay,
             shot: tokio::sync::Mutex::new(()),
             input: tokio::sync::Mutex::new(Held::default()),

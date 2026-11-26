@@ -101,7 +101,7 @@ impl UpstreamGuard for Service {
                     std::thread::sleep(Duration::from_millis(10));
                 }
             }
-            Err(BrowserError::Protocol("the process serving this port must run inside the item's worktree under its declared service PID or process group".into()))
+            Err(BrowserError::Protocol("the process serving this port must run inside the item's worktree under its declared service PID or process group; a port a container publishes does not count, so serve the page from a host process".into()))
         }).await.map_err(|e| BrowserError::Protocol(format!("verify preview connection: {e}")))?
     }
 }

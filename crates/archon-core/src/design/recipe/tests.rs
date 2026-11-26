@@ -122,6 +122,15 @@ fn spelled_out_secrets_are_refused_and_never_echoed() {
         "psql postgres://app:s3cret@127.0.0.1:5432/app",
         "GH=ghp_0123456789abcdefABCDEF ./serve",
         "curl -H x sk-live0123456789abcdefgh",
+        "PGPASSWORD=hunter2 psql -h 127.0.0.1 app",
+        "export A=1;TOKEN=hunter2 && ./serve",
+        "API_TOKEN=/hunter2 ./serve",
+        "DATABASE_URL=postgres://app:/hunter2@127.0.0.1:5432/app ./serve",
+        "curl -u admin:hunter2 http://127.0.0.1:8000/health",
+        "curl --user=admin:hunter2 http://127.0.0.1:8000/health",
+        "mysql -uroot -phunter2 app",
+        "curl -H \"Authorization: Bearer hunter2hunter2\" http://127.0.0.1:8000/",
+        "git clone https://ghp_0123456789abcdefABCDEF@github.com/o/r",
     ] {
         let error = refused(&recipe(vec![step("web", command)]));
         assert!(error.contains("secret"), "{command}: {error}");
@@ -145,7 +154,15 @@ fn references_and_ordinary_words_are_not_secrets() {
         "KEYBOARD_LAYOUT=us MONKEY=1 ./serve",
         "./serve --auth-file .archon/auth.json --no-auth",
         "pip install scikit-learn sk-learn",
-        "GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/app.json ./serve",
+        "GOOGLE_APPLICATION_CREDENTIALS=$GOOGLE_APPLICATION_CREDENTIALS ./serve",
+        "PGPASSWORD=$PGPASSWORD psql -h 127.0.0.1 app",
+        "TOKENIZERS_PARALLELISM=false ./serve",
+        "docker run -u 1000:1000 app",
+        "curl -u \"$API_USER:$API_PASS\" http://127.0.0.1:8000/health",
+        "curl --user=admin http://127.0.0.1:8000/health",
+        "mysql -u root -p\"$DB_PASSWORD\" app",
+        "curl -H \"Authorization: Bearer $API_TOKEN\" http://127.0.0.1:8000/",
+        "make dev; npm run dev && ./serve",
     ] {
         recipe(vec![step("web", command)])
             .check()
@@ -161,6 +178,9 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "docker compose --project-name=${COMPOSE_PROJECT_NAME} up -d",
         "COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME scripts/dev-stack",
         "tar -p -cf out.tar web",
+        "docker compose -f compose.yml -p \"$COMPOSE_PROJECT_NAME\" up -d",
+        "docker compose -f compose.yml run -p 8080:80 web",
+        "docker compose -p$COMPOSE_PROJECT_NAME up -d",
     ] {
         recipe(vec![step("stack", command)])
             .check()
@@ -171,6 +191,11 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "docker-compose --project-name shop up",
         "docker compose --project-name=shop up",
         "COMPOSE_PROJECT_NAME=ccso-dev scripts/dev-stack",
+        "docker compose -pother up -d",
+        "docker compose -p=other up -d",
+        "docker compose -f compose.yml -p other up -d",
+        "docker compose -p",
+        "cd web;COMPOSE_PROJECT_NAME=ccso docker compose up",
     ] {
         let error = refused(&recipe(vec![step("stack", command)]));
         assert!(

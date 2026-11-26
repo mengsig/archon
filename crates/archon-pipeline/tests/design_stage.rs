@@ -100,6 +100,8 @@ fn design_rules_state_the_contract() {
         "one file per process",
         "COMPOSE_PROJECT_NAME=archon-<item>",
         "Never stop, restart or change any other Compose project",
+        "a port a container publishes does not count",
+        "run its dev server on the host instead",
         "loads without a server error",
         "preview none of it",
         "never values or secrets",
@@ -138,6 +140,7 @@ fn the_design_prompt_names_the_run_compose_project_and_the_recipe() {
         "`recipe`",
         ".archon/services/<name>.pid",
         "127.0.0.1",
+        "a port a container publishes does not",
     ] {
         assert!(
             prompt.contains(needle),

@@ -117,7 +117,7 @@ impl DesignService {
     }
 
     /// Point the preview at `url` once its server is the worktree's and the
-    /// stack answers; then save `recipe` for the repository.
+    /// stack answers. `recipe` is saved first, so a failed save exposes nothing.
     pub(crate) async fn design_preview(
         &self,
         ctx: &DaemonContext,
@@ -139,15 +139,15 @@ impl DesignService {
         if !matches!(current.state, SessionState::Starting | SessionState::Live) {
             return Err(super::finishing());
         }
-        let request = self.register_preview(ctx, &current, &url).await?;
-        self.update_preview_browser(&current, &url).await?;
-        drop(held);
         if let Some(recipe) = recipe {
             let repo = super::recipe::repo_of(ctx, &session.item).await?;
             let mut store = ctx.store.lock().await;
             super::recipe::save(&mut store, &repo, &session.item, recipe)?;
             tracing::info!(%repo, item = %session.item, "design: the preview recipe was saved");
         }
+        let request = self.register_preview(ctx, &current, &url).await?;
+        self.update_preview_browser(&current, &url).await?;
+        drop(held);
         self.emit_session(ctx, &session.id).await;
         if let Some(note) = request {
             self.emit_note(ctx, &session.item, &note.id).await;

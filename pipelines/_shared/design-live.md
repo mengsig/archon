@@ -47,6 +47,11 @@ sessions are already in the code.
    - Start each long-running process in its own process group with
      `setsid`, bound to `127.0.0.1`, and record its actual PID in
      `.archon/services/<name>.pid`, one file each. Do not commit them.
+   - Serve the page itself from such a host process: Archon checks the
+     process that owns its port, and a port a container publishes does not
+     count. Containers may run the backend, database and other services;
+     when the frontend runs only in a container, run its dev server on the
+     host instead.
    - For Compose, use the project `archon-{{item.id}}` in lowercase: export
      it as `COMPOSE_PROJECT_NAME` and pass `-p "$COMPOSE_PROJECT_NAME"`, and
      give the same name to any project name the repository's scripts set.

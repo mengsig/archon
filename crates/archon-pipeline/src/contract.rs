@@ -478,7 +478,11 @@ before you run it.\n\
 - Start the backends and dependencies the page calls, not only the frontend; a simple app \
 with one dev server needs only that server. From the run worktree, start each long-running \
 process in its own process group with `setsid`, bound to 127.0.0.1, and record its actual PID \
-in `.archon/services/<name>.pid`, one file per process: Archon stops them when the run ends.\n\
+in `.archon/services/<name>.pid`, one file per process: Archon stops them when the run ends. \
+The page `design_preview` opens must be served by such a host process, since Archon checks the \
+process that owns its port; a port a container publishes does not count. Containers may run \
+the backends, databases and other dependencies; when the frontend runs only in a container, \
+run its dev server on the host instead.\n\
 - Compose: export `COMPOSE_PROJECT_NAME=archon-<item>`, `<item>` being this item's id in \
 lowercase, and pass `-p \"$COMPOSE_PROJECT_NAME\"`. Never reuse a project name already running \
 (`docker compose ls`); where the repository's script or Compose file names its own project \

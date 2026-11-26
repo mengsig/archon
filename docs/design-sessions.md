@@ -112,7 +112,10 @@ starts the backends and databases the page calls, not only the frontend; an
 app with one dev server still needs only that server. Every long-running
 process runs from the item's worktree in its own process group, bound to
 `127.0.0.1`, with its PID in `.archon/services/<name>.pid`, so Archon stops it
-when the run ends.
+when the run ends. The page itself must come from such a host process, because
+archond checks the process that owns its port and a port a container publishes
+does not count; containers may run the backends, databases and other services,
+and a frontend that only runs in a container is started on the host instead.
 
 **Compose.** A Compose stack gets a project of its own, `archon-<item>` (the
 item id in lowercase), set as `COMPOSE_PROJECT_NAME` and passed with `-p`. A
@@ -142,9 +145,11 @@ directory, port and readiness URL of each, and the names of the environment
 variables they need. archond saves it for the repository only when all its
 checks pass, replacing the last one, in Archon's own state, never in the
 repository. It never holds a value: archond refuses a recipe that spells out
-a secret-named variable or flag (`DB_PASSWORD=…`, `--api-key …`), a password
-in a URL or a well-known token, and one that names a Compose project other
-than as `$COMPOSE_PROJECT_NAME`. The next session of the same repository tries
+a secret-named variable or flag (`DB_PASSWORD=…`, `PGPASSWORD=…`,
+`--api-key …`), a password in a URL or a `user:password` pair, an
+`Authorization` header, a well-known token, and one that names a Compose
+project other than as `$COMPOSE_PROJECT_NAME`. A secret, or a path to one, is
+written as a variable (`$DB_PASSWORD`), never spelled out. The next session of the same repository tries
 it first, and saves a corrected one when it had to find the route again.
 
 See it with `archon settings --repo NAME` (the line

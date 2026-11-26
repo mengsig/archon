@@ -266,7 +266,7 @@ impl Shared {
         let described = self
             .call("DOM.describeNode", json!({"backendNodeId": node}))
             .await?;
-        Ok(node_attribute(&described, "accept").map_or_else(String::new, accept_value))
+        node_attribute(&described, "accept").map_or_else(|| Ok(String::new()), accept_value)
     }
 
     /// The `accept` of the file input a drop at frame point `(x, y)` goes to,
@@ -392,8 +392,8 @@ fn path_strings(files: &[PathBuf]) -> Result<Vec<String>, BrowserError> {
         .collect()
 }
 
-/// The answer of `GOVERNING_INPUT_JS`: a lookup that threw or answered
-/// anything but text or null withholds the drop rather than skip the check.
+/// The answer of `GOVERNING_INPUT_JS`: only text or an explicit null counts;
+/// a lookup that threw or answered anything else withholds the drop.
 fn governing_accept(found: &Value) -> Result<Option<String>, BrowserError> {
     if let Some(details) = found.get("exceptionDetails") {
         let text = clean(details["text"].as_str().unwrap_or("an exception"));
@@ -401,11 +401,12 @@ fn governing_accept(found: &Value) -> Result<Option<String>, BrowserError> {
             "the file input under the drop could not be read: {text}"
         )));
     }
-    match &found["result"]["value"] {
-        Value::Null => Ok(None),
-        Value::String(accept) => Ok(Some(accept_value(accept))),
-        other => Err(BrowserError::Protocol(format!(
-            "the file input under the drop read as {other}"
+    let result = &found["result"];
+    match (result["type"].as_str(), result.get("value")) {
+        (Some("string"), Some(Value::String(accept))) => accept_value(accept).map(Some),
+        (Some("object"), Some(Value::Null)) if result["subtype"] == "null" => Ok(None),
+        _ => Err(BrowserError::Protocol(format!(
+            "the file input under the drop read as {result}"
         ))),
     }
 }
@@ -419,29 +420,49 @@ fn node_attribute<'a>(described: &'a Value, name: &str) -> Option<&'a str> {
         .and_then(|pair| pair.get(1)?.as_str())
 }
 
-/// An input's `accept`, whole for matching: control characters dropped and,
-/// past `MAX_ACCEPT_BYTES`, only the whole types that fit, so the rest are refused.
-fn accept_value(raw: &str) -> String {
-    let value: String = raw.chars().filter(|c| !c.is_control()).collect();
-    if value.len() <= MAX_ACCEPT_BYTES {
-        return value;
+/// An input's `accept` for matching: its types without control characters or
+/// blanks, and past `MAX_ACCEPT_BYTES` only the whole types that fit, so the rest are refused.
+fn accept_value(raw: &str) -> Result<String, BrowserError> {
+    let clean: String = raw.chars().filter(|c| !c.is_control()).collect();
+    let types: Vec<&str> = clean
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect();
+    let mut kept = String::new();
+    let mut count = 0;
+    for kind in &types {
+        let comma = usize::from(count > 0);
+        if kept.len() + comma + kind.len() > MAX_ACCEPT_BYTES {
+            break;
+        }
+        if comma == 1 {
+            kept.push(',');
+        }
+        kept.push_str(kind);
+        count += 1;
     }
-    tracing::warn!(
-        bytes = value.len(),
-        "a file input's accept was cut to the types that fit"
-    );
-    let mut end = MAX_ACCEPT_BYTES;
-    while !value.is_char_boundary(end) {
-        end -= 1;
+    if count < types.len() {
+        tracing::warn!(
+            bytes = clean.len(),
+            kept = count,
+            "a file input's accept was cut to the types that fit"
+        );
     }
-    // With no whole type in reach, a cut type still matches nothing.
-    let cut = value[..end].rfind(',').unwrap_or(end);
-    let kept = value[..cut].to_owned();
-    assert!(
-        !kept.is_empty() && kept.len() <= MAX_ACCEPT_BYTES,
-        "a cut accept still refuses"
+    // Keeping no type would accept every file, so a page whose first type is that long gets none.
+    if count == 0 && !types.is_empty() {
+        return Err(BrowserError::Protocol(format!(
+            "the file input's accept is too long to check ({} bytes)",
+            clean.len()
+        )));
+    }
+    assert!(kept.len() <= MAX_ACCEPT_BYTES, "a kept accept fits the cap");
+    assert_eq!(
+        kept.is_empty(),
+        types.is_empty(),
+        "a page's types are never all dropped"
     );
-    kept
+    Ok(kept)
 }
 
 impl Browser {
@@ -553,18 +574,26 @@ mod tests {
 
     #[test]
     fn an_accept_is_kept_whole_for_matching() {
+        let value = |raw: &str| accept_value(raw).unwrap();
         assert!(OFFICE.len() > crate::sanitize::MAX_CHARS);
-        assert_eq!(accept_value(OFFICE), OFFICE);
-        assert_eq!(accept_value(".csv,\n.txt"), ".csv,.txt");
+        assert_eq!(value(OFFICE), OFFICE);
+        assert_eq!(value(".csv,\n.txt"), ".csv,.txt");
+        assert_eq!(value(" , "), "", "no types is no filter, as in the browser");
         let long = vec![".csv"; 2000].join(",");
-        let cut = accept_value(&long);
+        let cut = value(&long);
         assert!(cut.len() <= MAX_ACCEPT_BYTES && cut.split(',').all(|t| t == ".csv"));
-        let one = "x".repeat(MAX_ACCEPT_BYTES + 10);
-        assert_eq!(
-            accept_value(&one).len(),
-            MAX_ACCEPT_BYTES,
-            "a cut type is kept, not none"
-        );
+    }
+
+    /// Blanks and over-long types past the cap never leave a filter that takes every file.
+    #[test]
+    fn an_oversized_accept_never_opens_the_filter() {
+        let padded = format!("{},.pdf", " ".repeat(MAX_ACCEPT_BYTES));
+        assert_eq!(accept_value(&padded).unwrap(), ".pdf");
+        let one = format!(",{}", "x".repeat(MAX_ACCEPT_BYTES + 10));
+        let refused = accept_value(&one).unwrap_err();
+        assert!(refused.to_string().contains("too long"), "{refused}");
+        let long = json!({"result": {"type": "string", "value": one}});
+        assert!(governing_accept(&long).is_err(), "the drop is withheld");
     }
 
     /// A drop lookup the page made throw must not skip the accept check.
@@ -589,6 +618,15 @@ mod tests {
         assert!(governing_accept(&odd).is_err());
         let none = json!({"result": {"type": "object", "subtype": "null", "value": null}});
         assert_eq!(governing_accept(&none).unwrap(), None);
+        let undefined = json!({"result": {"type": "undefined"}});
+        assert!(
+            governing_accept(&undefined).is_err(),
+            "undefined is not null"
+        );
+        assert!(
+            governing_accept(&json!({})).is_err(),
+            "no result is not null"
+        );
     }
 
     /// Finished downloads stay bounded on disk even when nobody hears of them.

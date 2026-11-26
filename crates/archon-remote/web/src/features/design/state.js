@@ -6,7 +6,7 @@ export function initialState(item) {
   return {
     item, loaded: false, observer: null, view: null, session: null, notes: [], browser: { status: 'idle' },
     degraded: false, noteVersion: 0, frame: null, selection: null, blocked: [], progress: '',
-    dialog: null, browserEvents: [], toasts: [], newTab: null, ended: null, connection: 'open', mode: 'interact', preset: 'desktop', refresh: false, error: null,
+    dialog: null, browserEvents: [], toasts: [], newTab: null, ended: null, connection: 'open', mode: 'interact', preset: 'desktop', presetAsk: 0, applied: { preset: null, ask: 0 }, refresh: false, error: null,
     previewCommit: null, path: null, finishBlocker: null, imagesUsed: 0, imagesMax: 0, deadline: null,
     itemState: null,
   };
@@ -30,6 +30,11 @@ export function upsertNote(notes, note) {
   return [...rest, note].sort(byNumber);
 }
 
+// The session's preset is what archond applied when it answered the view.
+function appliedFrom(applied, sessionPreset) {
+  return sessionPreset ? { ...applied, preset: sessionPreset } : applied;
+}
+
 export function reduce(state, action) {
   switch (action.type) {
     case 'view': {
@@ -44,7 +49,7 @@ export function reduce(state, action) {
       return {
         ...state, loaded: true, observer: null, view: v, session: v.session ?? null, notes: [...(v.notes ?? [])].sort(byNumber),
         browser: v.browser ?? state.browser, degraded: Boolean(v.session?.degraded), noteVersion: v.session?.note_version ?? 0, path: pathOf(v.session?.preview_url) ?? state.path,
-        preset: v.session?.viewport_preset ?? state.preset, finishBlocker: v.finish_blocker ?? null,
+        preset: v.session?.viewport_preset ?? state.preset, applied: appliedFrom(state.applied, v.session?.viewport_preset), finishBlocker: v.finish_blocker ?? null,
         imagesUsed: v.images_used ?? 0, imagesMax: v.images_max ?? 0, deadline: v.stage_deadline ?? null, refresh: false, error: null,
         ended: v.session && v.session.state === 'ended' ? (v.session.end_reason ?? 'ended') : null,
         ...(fresh ? { frame: null, selection: null, progress: '', previewCommit: null, blocked: [], mode: 'interact', newTab: null, toasts: [...state.toasts, 'A new design session started'] } : {}),
@@ -64,12 +69,15 @@ export function reduce(state, action) {
     case 'mode':
       return { ...state, mode: action.mode, selection: action.mode === 'comment' || action.mode === 'region' ? state.selection : null };
     case 'preset':
-      return { ...state, preset: action.preset };
+      return { ...state, preset: action.preset, presetAsk: action.ask ?? state.presetAsk };
+    case 'preset_applied':
+      // Answers may come back out of order: a later ask's success stands.
+      return action.ask < state.applied.ask ? state : { ...state, applied: { preset: action.preset, ask: action.ask } };
     case 'selection':
       return { ...state, selection: action.selection };
     case 'preset_refused':
-      // Only the latest choice's refusal counts; the preview keeps the preset archond confirmed.
-      return action.latest ? { ...state, preset: state.session?.viewport_preset ?? state.preset } : state;
+      // Only the latest choice's refusal counts; the preview goes back to the preset archond last applied.
+      return action.ask === state.presetAsk ? { ...state, preset: state.applied.preset ?? state.preset } : state;
     case 'new_tab_dismissed':
       return { ...state, newTab: null };
     case 'toasts_taken':

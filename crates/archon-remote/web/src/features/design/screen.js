@@ -265,15 +265,18 @@ export function mountDesign(view, ctx) {
     root.dataset.mode = mode;
   }
   let presetAsks = 0; // numbers each preset request, so only the latest refusal rolls back
-  async function setPreset(preset) {
+  // A re-send after a stray frame stays sent when refused, so it goes once and never loops.
+  async function setPreset(preset, { resend = false } = {}) {
     const ask = ++presetAsks;
-    dispatch({ type: 'preset', preset });
+    dispatch({ type: 'preset', preset, ask });
     presetSent = `${session()}|${preset}`;
-    try { await ctx.design.viewport(session(), preset); } catch (e) {
-      // Refused (the app's dialog is open, say): back to the size the preview has.
-      const latest = ask === presetAsks;
-      if (latest) presetSent = null;
-      dispatch({ type: 'preset_refused', latest });
+    try {
+      await ctx.design.viewport(session(), preset);
+      dispatch({ type: 'preset_applied', preset, ask });
+    } catch (e) {
+      // Refused (the app's dialog is open, say): back to the size archond last applied.
+      if (ask === presetAsks && !resend) presetSent = null;
+      dispatch({ type: 'preset_refused', ask });
       refuse(e);
     }
   }
@@ -568,8 +571,7 @@ export function mountDesign(view, ctx) {
     if (operator) flushOutbox(waiting);
     // The daemon may not have applied the preset the session says it has: a frame at another size re-sends it, once.
     if (operator && state.session?.state === 'live' && presetMismatch(state) && presetSent !== `${session()}|${state.preset}`) {
-      presetSent = `${session()}|${state.preset}`;
-      ctx.design.viewport(session(), state.preset).catch(refuse);
+      setPreset(state.preset, { resend: true });
     }
     syncFollower();
     // A phone starts on the Phone preset, once.

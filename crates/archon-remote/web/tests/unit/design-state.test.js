@@ -47,13 +47,21 @@ test('toasts, dialogs, progress and blocked hosts are kept for the screen', () =
   assert.equal(reduce(s, { type: 'dialog_closed', dialog: s.dialog }).dialog, null);
 });
 
-test('only the latest refused preset rolls back, to the one archond confirmed', () => {
-  let s = { ...loaded(), session: session({ viewport_preset: 'desktop' }) };
-  s = reduce(reduce(s, { type: 'preset', preset: 'tablet' }), { type: 'preset', preset: 'phone' });
-  s = reduce(s, { type: 'preset_refused', latest: false });
-  assert.equal(s.preset, 'phone', 'an older refusal leaves the newer choice');
-  s = reduce(s, { type: 'preset_refused', latest: true });
-  assert.equal(s.preset, 'desktop', 'not tablet, which was refused too');
+test('only the latest refused preset rolls back, to the one archond last applied', () => {
+  let s = reduce(loaded(), { type: 'preset', preset: 'tablet', ask: 1 });
+  s = reduce(s, { type: 'preset_applied', preset: 'tablet', ask: 1 });
+  s = reduce(reduce(s, { type: 'preset', preset: 'phone', ask: 2 }), { type: 'preset', preset: 'desktop', ask: 3 });
+  s = reduce(s, { type: 'preset_refused', ask: 2 });
+  assert.equal(s.preset, 'desktop', 'an older refusal leaves the newer choice');
+  s = reduce(s, { type: 'preset_refused', ask: 3 });
+  assert.equal(s.preset, 'tablet', 'the applied tablet, not the stale session desktop');
+});
+
+test('a late success of an older preset does not overwrite a newer one', () => {
+  let s = reduce(loaded(), { type: 'preset_applied', preset: 'phone', ask: 2 });
+  s = reduce(s, { type: 'preset_applied', preset: 'tablet', ask: 1 });
+  s = reduce(s, { type: 'preset', preset: 'desktop', ask: 3 });
+  assert.equal(reduce(s, { type: 'preset_refused', ask: 3 }).preset, 'phone');
 });
 
 test('a dialog the app opens while the last one closes is kept', () => {

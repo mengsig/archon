@@ -195,6 +195,9 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "docker compose -f 'compose dev.yml' -p \"$COMPOSE_PROJECT_NAME\" up -d",
         "docker compose up -d && psql -h 127.0.0.1 -p 5432 app",
         "docker compose exec db psql -p 5432 app",
+        "docker compose --dry-run up -d",
+        "docker compose --profile web --env-file .env.dev up -d",
+        "docker compose --profile=build run -p 8080:80 web",
     ] {
         recipe(vec![step("stack", command)])
             .check()
@@ -215,6 +218,10 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "docker compose -p\"other\" up -d",
         "docker compose -p\\ other up -d",
         "docker compose --project-name \"$COMPOSE_PROJECT_NAME\"x up -d",
+        "docker compose --profile build -p other up -d",
+        "docker compose --env-file up -p other up -d",
+        "docker compose --a-new-option run -p other up -d",
+        "docker compose --dry-run -p other up -d",
     ] {
         let error = refused(&recipe(vec![step("stack", command)]));
         assert!(

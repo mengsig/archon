@@ -44,12 +44,17 @@ const TOKEN_PREFIXES: [&str; 11] = [
 ];
 /// Characters that end a shell word and the command it belongs to.
 const OPERATORS: [char; 9] = [';', '&', '|', '(', ')', '`', '<', '>', '\n'];
-/// Compose's subcommands: its global options, `-p` among them, come before one.
-const COMPOSE_SUBCOMMANDS: [&str; 36] = [
-    "alpha", "attach", "bridge", "build", "commit", "config", "cp", "create", "down", "events",
-    "exec", "export", "images", "kill", "logs", "ls", "pause", "port", "ps", "publish", "pull",
-    "push", "restart", "rm", "run", "scale", "start", "stats", "stop", "top", "unpause", "up",
-    "version", "volumes", "wait", "watch",
+/// Compose's global options that take no value; any other option before
+/// the subcommand is read as taking one, so its value is never the subcommand.
+const COMPOSE_FLAGS: [&str; 8] = [
+    "--dry-run",
+    "--compatibility",
+    "--all-resources",
+    "--verbose",
+    "-h",
+    "--help",
+    "-v",
+    "--version",
 ];
 
 /// Check a step's command: it parses as shell words, spells out no secret
@@ -316,11 +321,12 @@ fn compose_project_by_variable(field: &str, commands: &[Vec<String>]) -> Result<
 
 /// The project names Compose's global options give, read up to the
 /// subcommand: `-p NAME`, `-pNAME`, `-p=NAME` and `--project-name[=]NAME`.
+/// Other options consume their value first, as in `--profile build -p NAME`.
 fn compose_project_options(options: &[String]) -> Vec<&str> {
     let mut names = Vec::new();
     let mut i = 0;
     while let Some(word) = options.get(i).map(String::as_str) {
-        if COMPOSE_SUBCOMMANDS.contains(&word) {
+        if !word.starts_with('-') {
             break;
         }
         if word == "-p" || word == "--project-name" {
@@ -332,6 +338,8 @@ fn compose_project_options(options: &[String]) -> Vec<&str> {
             && !word.starts_with("--")
         {
             names.push(value.strip_prefix('=').unwrap_or(value));
+        } else if !word.contains('=') && !COMPOSE_FLAGS.contains(&word) {
+            i += 1;
         }
         i += 1;
     }

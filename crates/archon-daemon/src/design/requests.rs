@@ -16,6 +16,40 @@ use crate::context::DaemonContext;
 /// Most hover and select resolves a second, and input requests a second.
 const RESOLVES_PER_SECOND: u32 = 10;
 const INPUTS_PER_SECOND: u32 = 60;
+/// Input requests run in separate tasks. Each is ready by this deadline and the
+/// browser bounds its turn (10 s with releases owed), so one ends within 20 s,
+/// well before the web app's 60 s wait sends the next.
+const READY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// `ready` bounded by [`READY_DEADLINE`]: past it nothing has been dispatched,
+/// and the caller hears that its input did not reach the app.
+async fn within_ready_deadline<T>(
+    ready: impl std::future::Future<Output = Result<T, ArchonError>>,
+) -> Result<T, ArchonError> {
+    match tokio::time::timeout(READY_DEADLINE, ready).await {
+        Ok(done) => done,
+        Err(_) => Err(ArchonError::Unavailable(format!(
+            "the preview was not ready for input within {} s; it did not reach the app",
+            READY_DEADLINE.as_secs()
+        ))),
+    }
+}
+
+/// Tells the session's browser its input was lost when dropped before `done`:
+/// on an error, and when the request is cancelled because its connection closed.
+struct InputOutcome<'a> {
+    service: &'a DesignService,
+    session: &'a archon_core::design::DesignSessionId,
+    done: bool,
+}
+
+impl Drop for InputOutcome<'_> {
+    fn drop(&mut self) {
+        if !self.done {
+            self.service.input_lost(self.session);
+        }
+    }
+}
 
 fn validate_input(event: &InputEvent, width: u32, height: u32) -> Result<(), ArchonError> {
     let point =
@@ -373,20 +407,58 @@ impl DesignService {
             .ok_or_else(|| ArchonError::Unavailable("there is no preview to use yet".into()))
     }
 
+    /// One input batch. Any that fails, times out, is refused or is cancelled
+    /// may have carried a release, so the session's browser lets go of what it holds.
     async fn input(
         &self,
         ctx: &DaemonContext,
         session: &archon_core::design::DesignSessionId,
         events: Vec<InputEvent>,
     ) -> Result<Reply, ArchonError> {
-        let row = self.current(ctx, session).await?;
+        let mut outcome = InputOutcome {
+            service: self,
+            session,
+            done: false,
+        };
+        let reply = self.dispatch_input(ctx, session, events).await?;
+        outcome.done = true;
+        Ok(reply)
+    }
+
+    /// An input batch for `session` failed or was refused before it ran.
+    pub(crate) fn input_lost(&self, session: &archon_core::design::DesignSessionId) {
+        if let Some(browser) = self.existing_runtime(session).and_then(|rt| rt.browser()) {
+            browser.input_lost();
+        }
+    }
+
+    async fn dispatch_input(
+        &self,
+        ctx: &DaemonContext,
+        session: &archon_core::design::DesignSessionId,
+        events: Vec<InputEvent>,
+    ) -> Result<Reply, ArchonError> {
         if events.len() > MAX_INPUT_EVENTS {
             return Err(ArchonError::Invalid(format!(
                 "at most {MAX_INPUT_EVENTS} input events a request"
             )));
         }
+        let browser = within_ready_deadline(self.ready_for_input(ctx, session, &events)).await?;
+        let mapped: Vec<adb::Input> = events.into_iter().map(input_of).collect();
+        browser.input(&mapped).await.map_err(unavailable)?;
+        Ok(Reply::DesignDone)
+    }
+
+    /// Checks `events` and the rate, then the browser to send them to.
+    async fn ready_for_input(
+        &self,
+        ctx: &DaemonContext,
+        session: &archon_core::design::DesignSessionId,
+        events: &[InputEvent],
+    ) -> Result<std::sync::Arc<dyn PreviewBrowser>, ArchonError> {
+        let row = self.current(ctx, session).await?;
         let (width, height) = row.viewport_preset.size();
-        for event in &events {
+        for event in events {
             validate_input(event, width, height)?;
         }
         let rt = self.runtime(&row.id);
@@ -400,10 +472,7 @@ impl DesignService {
             st.counters.inputs += events.len() as u64;
             st.pending_input = Some(std::time::Instant::now());
         }
-        let browser = self.browser_for_input(ctx, session).await?;
-        let mapped: Vec<adb::Input> = events.into_iter().map(input_of).collect();
-        browser.input(&mapped).await.map_err(unavailable)?;
-        Ok(Reply::DesignDone)
+        self.browser_for_input(ctx, session).await
     }
 
     async fn resolve(
@@ -574,6 +643,20 @@ mod input_tests {
         assert!(validate_input(&touch(vec![finger]), 40, 60).is_ok());
         assert!(validate_input(&touch(vec![finger, finger]), 40, 60).is_err());
         assert!(validate_input(&touch(vec![finger]), 1, 1).is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn input_whose_preview_is_not_ready_ends_by_its_deadline_and_says_so() {
+        let started = tokio::time::Instant::now();
+        let hung = within_ready_deadline::<()>(std::future::pending()).await;
+        assert!(
+            matches!(&hung, Err(ArchonError::Unavailable(m)) if m.contains("did not reach the app"))
+        );
+        assert_eq!(started.elapsed(), READY_DEADLINE);
+        assert_eq!(within_ready_deadline(async { Ok(7) }).await.ok(), Some(7));
+        let failed =
+            within_ready_deadline::<()>(async { Err(ArchonError::Invalid("x".into())) }).await;
+        assert!(matches!(failed, Err(ArchonError::Invalid(_))));
     }
 
     #[test]

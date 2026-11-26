@@ -1581,6 +1581,112 @@ mod stream {
         .await;
     }
 
+    /// A page that closes, resets or loses its connection drops the input it
+    /// still had queued, a release among it: its stream ending says so.
+    #[tokio::test]
+    async fn a_stream_that_ends_tells_the_browser_its_input_was_lost() {
+        let f = Fixture::new().await;
+        let service = f.h.ctx.design.clone();
+        let (_rx, task) = subscribe(&f, 1);
+        until("a counted subscriber", || {
+            service.subscriber_count(&f.session) == 1
+        })
+        .await;
+        let browser = f.factory.browser(0);
+        assert_eq!(
+            browser.calls(|c| c.inputs_lost),
+            0,
+            "a stream starting loses nothing"
+        );
+        task.abort();
+        let _ = task.await;
+        until("no subscribers", || {
+            service.subscriber_count(&f.session) == 0
+        })
+        .await;
+        assert_eq!(browser.calls(|c| c.inputs_lost), 1);
+    }
+
+    /// Input read off a connection before its stream ended can press after
+    /// the end let go; it lets go again as it ends, whatever runs after it.
+    #[tokio::test]
+    async fn input_read_before_a_stream_ended_lets_go_again_as_it_ends() {
+        use archon_core::protocol::MouseAction;
+        let f = Fixture::new().await;
+        let service = f.h.ctx.design.clone();
+        let (_rx, task) = subscribe(&f, 1);
+        until("a counted subscriber", || {
+            service.subscriber_count(&f.session) == 1
+        })
+        .await;
+        let browser = f.factory.browser(0);
+        let earlier = service.input_admitted(&f.session);
+        task.abort();
+        let _ = task.await;
+        until("no subscribers", || {
+            service.subscriber_count(&f.session) == 0
+        })
+        .await;
+        assert_eq!(
+            browser.calls(|c| c.inputs_lost),
+            1,
+            "the end lets go at once"
+        );
+        let later = service.input_admitted(&f.session);
+        let pressed = f
+            .operator(Request::DesignInput {
+                session: f.session.clone(),
+                events: vec![click(MouseAction::Down, 10.0)],
+            })
+            .await;
+        assert!(matches!(pressed, Ok(Reply::DesignDone)), "{pressed:?}");
+        drop(earlier);
+        assert_eq!(
+            browser.calls(|c| c.inputs_lost),
+            2,
+            "the earlier input lets go again, later input still running"
+        );
+        drop(later);
+        assert_eq!(
+            browser.calls(|c| c.inputs_lost),
+            2,
+            "input read after the end lets go of nothing"
+        );
+    }
+
+    /// Input read before the preview started can start it and press after a
+    /// stream that came and went; it lets go again as it ends.
+    #[tokio::test]
+    async fn input_read_before_the_preview_started_lets_go_after_a_stream_that_ended() {
+        let f = Fixture::with_preview(design_config()).await;
+        let service = f.h.ctx.design.clone();
+        let earlier = service.input_admitted(&f.session);
+        let (_rx, task) = subscribe(&f, 1);
+        until("the screencast", || {
+            f.factory.browsers.lock().unwrap().len() == 1
+                && f.factory.browser(0).calls(|c| c.screencasts_started) >= 1
+        })
+        .await;
+        let browser = f.factory.browser(0);
+        task.abort();
+        let _ = task.await;
+        until("no subscribers", || {
+            service.subscriber_count(&f.session) == 0
+        })
+        .await;
+        assert_eq!(
+            browser.calls(|c| c.inputs_lost),
+            1,
+            "the end lets go at once"
+        );
+        drop(earlier);
+        assert_eq!(
+            browser.calls(|c| c.inputs_lost),
+            2,
+            "input read before the runtime existed lets go again"
+        );
+    }
+
     #[tokio::test]
     async fn without_an_ack_the_latest_frame_wins_after_the_wait() {
         let f = Fixture::new().await;
@@ -2140,4 +2246,55 @@ async fn a_page_note_done_with_a_path_is_pictured_on_that_page() {
     );
     let last_capture = browser.calls(|c| c.captures.last().cloned()).unwrap();
     assert_eq!(last_capture.0, None, "the whole view, not a crop");
+}
+
+fn click(action: archon_core::protocol::MouseAction, x: f64) -> archon_core::protocol::InputEvent {
+    archon_core::protocol::InputEvent::Mouse {
+        action,
+        x,
+        y: 10.0,
+        button: archon_core::protocol::MouseButton::Left,
+        click_count: 1,
+        modifiers: 0,
+    }
+}
+
+/// A press reached the browser and its release was refused before it ran
+/// (unready, out of bounds, past the rate): the browser hears the batch was
+/// lost each time, so it lets go of the press before the next batch.
+#[tokio::test]
+async fn a_refused_release_after_an_accepted_press_tells_the_browser_input_was_lost() {
+    use archon_core::protocol::MouseAction;
+    let f = Fixture::new().await;
+    let input = |events| Request::DesignInput {
+        session: f.session.clone(),
+        events,
+    };
+    let pressed = f
+        .operator(input(vec![click(MouseAction::Down, 10.0)]))
+        .await;
+    assert!(matches!(pressed, Ok(Reply::DesignDone)), "{pressed:?}");
+    let browser = f.factory.browser(0);
+    assert_eq!(browser.calls.lock().unwrap().inputs_lost, 0);
+
+    let outside = f.operator(input(vec![click(MouseAction::Up, 1e9)])).await;
+    assert!(
+        matches!(outside, Err(ArchonError::Invalid(_))),
+        "{outside:?}"
+    );
+    assert_eq!(browser.calls.lock().unwrap().inputs_lost, 1);
+
+    let mut refused = 0;
+    for _ in 0..80 {
+        if f.operator(input(vec![click(MouseAction::Up, 10.0)]))
+            .await
+            .is_err()
+        {
+            refused += 1;
+        }
+    }
+    assert!(refused > 0, "past the rate, input is refused");
+    let calls = browser.calls.lock().unwrap();
+    assert_eq!(calls.inputs_lost, 1 + refused);
+    assert!(calls.inputs >= 1, "the press went to the browser");
 }

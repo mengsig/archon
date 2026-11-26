@@ -8,6 +8,8 @@ mod browser;
 mod cdp;
 mod containment;
 mod error;
+mod input;
+mod keys;
 mod launch;
 mod origin;
 mod proxy;

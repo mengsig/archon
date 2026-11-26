@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createInputBatcher, mouseEvent, wheelEvent, modifiersOf } from '../../src/features/design/input.js';
+import { createInputBatcher, mouseEvent, wheelEvent, modifiersOf, BUSY_AFTER_MS, RETRY_MS, MAX_RETRIES } from '../../src/features/design/input.js';
 
 function clock() {
   let t = 0;
@@ -115,4 +115,206 @@ test('saturation preserves releases for all admitted presses and reports skipped
   assert.deepEqual(sent.slice(0, 3), down);
   assert.deepEqual(sent.slice(-3), up);
   assert.equal(sent.filter((e) => e.code === 'KeyB').length, 0);
+});
+
+// A send whose replies the test answers, or refuses, by hand.
+function slowSend() {
+  const batches = [];
+  const replies = [];
+  const settle = async (how) => { replies.shift()[how](new Error('refused')); for (let i = 0; i < 3; i += 1) await Promise.resolve(); };
+  return {
+    batches, replies,
+    send: (events) => { batches.push(events); return new Promise((resolve, reject) => replies.push({ resolve, reject })); },
+    answer: () => settle('resolve'),
+    refuse: () => settle('reject'),
+  };
+}
+
+test('one input request awaits a reply at a time; meanwhile wheel ticks at a point add up', async () => {
+  const c = clock();
+  const s = slowSend();
+  const b = createInputBatcher({ send: s.send, ...c });
+  for (let i = 0; i < 300; i += 1) {
+    b.push(wheelEvent({ x: 5, y: 5 }, 1, 10));
+    c.advance(4); // a fast trackpad: 250 ticks a second for 1.2 s, the pointer still
+  }
+  assert.equal(s.batches.length, 1, 'no second request before the reply');
+  assert.equal(b.outstanding, 1);
+  await s.answer();
+  c.advance(20);
+  assert.equal(s.batches.length, 2);
+  assert.equal(s.batches[1].length, 1, 'the waiting ticks went as one summed wheel');
+  const wheels = s.batches.flat();
+  assert.equal(wheels.reduce((sum, e) => sum + e.dy, 0), 3000, 'no scroll distance is lost');
+  assert.equal(wheels.reduce((sum, e) => sum + e.dx, 0), 300);
+});
+
+test('only back-to-back events merge, so order and wheel targets stay as they were', async () => {
+  const c = clock();
+  const s = slowSend();
+  const b = createInputBatcher({ send: s.send, ...c });
+  b.push({ type: 'text', text: 'hold' }); c.advance(1);
+  const inside = { x: 100, y: 100 };
+  const outside = { x: 100, y: 99 }; // one pixel across a nested panel's edge
+  b.push(wheelEvent(inside, 0, 10));
+  b.push(wheelEvent(inside, 0, 10));
+  b.push(wheelEvent(outside, 0, 10));
+  b.push(mouseEvent('move', { x: 1, y: 1 }, { button: null }));
+  b.push(mouseEvent('move', { x: 2, y: 2 }, { button: null }));
+  b.push(wheelEvent(outside, 0, 10));
+  await s.answer();
+  c.advance(20);
+  assert.deepEqual(s.batches[1], [
+    wheelEvent(inside, 0, 20), wheelEvent(outside, 0, 10),
+    mouseEvent('move', { x: 2, y: 2 }, { button: null }), wheelEvent(outside, 0, 10),
+  ]);
+});
+
+test('wheel ticks that turn back are not summed away', async () => {
+  const c = clock();
+  const s = slowSend();
+  const b = createInputBatcher({ send: s.send, ...c });
+  b.push({ type: 'text', text: 'hold' }); c.advance(1);
+  const at = { x: 100, y: 100 };
+  b.push(wheelEvent(at, 0, 120));
+  b.push(wheelEvent(at, 0, 40));
+  b.push(wheelEvent(at, 0, -160));
+  b.push(wheelEvent(at, 30, -10));
+  b.push(wheelEvent(at, -30, 0));
+  await s.answer();
+  c.advance(20);
+  assert.deepEqual(s.batches[1], [
+    wheelEvent(at, 0, 160), wheelEvent(at, 30, -170), wheelEvent(at, -30, 0),
+  ], 'one way adds up; each turn starts a new tick');
+});
+
+test('a refused batch goes again first, in order, so a release is never lost', async () => {
+  const c = clock();
+  const s = slowSend();
+  const busy = [];
+  const b = createInputBatcher({ send: s.send, onBusy: (on) => busy.push(on), ...c });
+  const down = mouseEvent('down', { x: 1, y: 1 }, { button: 0, clickCount: 1 });
+  const up = mouseEvent('up', { x: 1, y: 1 }, { button: 0, clickCount: 1 });
+  b.push(down); c.advance(1);
+  b.push(up);
+  await s.refuse();
+  c.advance(RETRY_MS - 1);
+  assert.equal(s.batches.length, 1, 'a refusal waits before trying again');
+  assert.ok(busy.at(-1), 'a refusal says the preview is behind');
+  c.advance(1);
+  assert.deepEqual(s.batches[1], [down, up], 'the refused press goes before its release');
+  await s.answer();
+  assert.equal(b.pending, 0);
+  assert.deepEqual(busy, [true, false]);
+});
+
+test('a batch refused again and again is given up and reported once', async () => {
+  const c = clock();
+  const s = slowSend();
+  let overflows = 0;
+  const b = createInputBatcher({ send: s.send, onOverflow: () => { overflows += 1; }, ...c });
+  b.push({ type: 'text', text: 'a' }); c.advance(1);
+  for (let i = 0; i < MAX_RETRIES; i += 1) { await s.refuse(); c.advance(RETRY_MS); }
+  assert.equal(s.batches.length, MAX_RETRIES + 1);
+  await s.refuse();
+  c.advance(RETRY_MS * 4);
+  assert.equal(overflows, 1);
+  assert.equal(s.batches.length, MAX_RETRIES + 1, 'nothing is sent again after giving up');
+});
+
+test('waiting on a reply shows one quiet busy signal that clears when input flows again', async () => {
+  const c = clock();
+  const s = slowSend();
+  const busy = [];
+  const b = createInputBatcher({ send: s.send, onBusy: (on) => busy.push(on), ...c });
+  b.push({ type: 'text', text: 'a' });
+  c.advance(20);
+  b.push({ type: 'text', text: 'b' });
+  c.advance(BUSY_AFTER_MS - 50);
+  assert.deepEqual(busy, [], 'a short wait says nothing');
+  for (let i = 0; i < 10; i += 1) { b.push({ type: 'text', text: String(i) }); c.advance(10); }
+  c.advance(100);
+  assert.deepEqual(busy, [true], 'said once, however much input waits');
+  await s.answer();
+  c.advance(20);
+  assert.deepEqual(busy, [true], 'still behind while the rest is on its way');
+  assert.equal(s.batches.length, 2);
+  await s.answer();
+  assert.deepEqual(busy, [true, false], 'cleared once caught up');
+});
+
+test('a stop forgets an outstanding reply, so a late one cannot unbalance the count', async () => {
+  const c = clock();
+  const s = slowSend();
+  const b = createInputBatcher({ send: s.send, ...c });
+  b.push({ type: 'text', text: 'a' }); c.advance(20);
+  b.stop();
+  assert.equal(b.outstanding, 0);
+  await s.refuse();
+  assert.equal(b.pending, 0, 'a late refusal does not requeue what a stop dropped');
+  b.push({ type: 'text', text: 'c' }); c.advance(20);
+  assert.equal(b.outstanding, 1);
+  assert.equal(s.batches.length, 2);
+});
+
+test('a release still gets in after a refused press is put back into a full queue', async () => {
+  const c = clock();
+  const s = slowSend();
+  const b = createInputBatcher({ send: s.send, ...c });
+  const key = (action) => ({ type: 'key', action, key: 'a', code: 'KeyA', text: null, modifiers: 0 });
+  b.push(key('down')); c.advance(1);
+  let admitted = 0;
+  while (b.push({ type: 'text', text: 'x' })) admitted += 1;
+  assert.ok(admitted > 400, 'the queue filled up to its release reserve');
+  await s.refuse();
+  assert.equal(b.push(key('up')), true, 'the release of a press archond will get is never refused');
+  c.advance(RETRY_MS);
+  for (let i = 0; i < 20 && s.replies.length > 0; i += 1) { await s.answer(); c.advance(20); }
+  const keys = s.batches.slice(1).flat().filter((e) => e.type === 'key');
+  assert.deepEqual(keys.map((e) => e.action), ['down', 'up'], 'the press goes again, then its release');
+});
+
+// archond is told of every batch it refuses or loses, and lets go of whatever
+// is held itself; the batcher keeps no record of what reached the preview.
+test('a release refused past its retries is dropped whole, never retried without end', async () => {
+  const c = clock();
+  const s = slowSend();
+  let overflows = 0;
+  const busy = [];
+  const b = createInputBatcher({ send: s.send, onOverflow: () => { overflows += 1; }, onBusy: (on) => busy.push(on), ...c });
+  const key = (action, code) => ({ type: 'key', action, key: code, code, text: null, modifiers: 0 });
+  b.push(key('down', 'KeyA')); c.advance(1);
+  await s.answer();
+  b.push(key('up', 'KeyA'));
+  c.advance(20);
+  for (let i = 0; i <= MAX_RETRIES; i += 1) { await s.refuse(); c.advance(RETRY_MS); }
+  assert.equal(overflows, 1);
+  assert.equal(s.batches.length, MAX_RETRIES + 2, 'the press, then the release and its retries');
+  c.advance(RETRY_MS * 10);
+  assert.equal(s.batches.length, MAX_RETRIES + 2, 'nothing goes again after giving up');
+  assert.equal(b.pending, 0);
+  assert.equal(busy.at(-1), false, 'given up and caught up: no longer waiting');
+  b.push({ type: 'text', text: 'next' }); c.advance(20);
+  assert.deepEqual(s.batches.at(-1), [{ type: 'text', text: 'next' }], 'input flows again');
+});
+
+test('auto-repeat refused to exhaustion is dropped and its later release still goes', async () => {
+  const c = clock();
+  const s = slowSend();
+  let overflows = 0;
+  const b = createInputBatcher({ send: s.send, onOverflow: () => { overflows += 1; }, ...c });
+  const key = (action) => ({ type: 'key', action, key: 'ArrowDown', code: 'ArrowDown', text: null, modifiers: 0 });
+  b.push(key('down')); c.advance(1);
+  await s.answer();
+  for (let i = 0; i < 5; i += 1) b.push(key('down'));
+  c.advance(20);
+  assert.equal(s.batches.at(-1).length, 5, 'the repeats go as one batch');
+  for (let i = 0; i <= MAX_RETRIES; i += 1) { await s.refuse(); c.advance(RETRY_MS); }
+  assert.equal(overflows, 1);
+  assert.equal(b.pending, 0);
+  assert.equal(b.push(key('up')), true, 'the key is still down here, so its release is taken');
+  c.advance(20);
+  assert.deepEqual(s.batches.at(-1), [key('up')]);
+  await s.answer();
+  assert.equal(b.outstanding, 0);
 });

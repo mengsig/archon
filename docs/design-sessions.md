@@ -119,6 +119,51 @@ receive**. It shows exactly what will be sent and nothing else from the page:
 With both switches off the note is text only. Send with Enter, or Ctrl+Enter
 for a multi-line note.
 
+### Scrolling the preview
+
+In **Interact** mode the preview scrolls like a browser tab: the mouse wheel
+and trackpad (smooth, momentum and sideways), dragging a scrollbar, and on
+Tablet and Phone a one-finger swipe. The wheel scrolls whatever is under the
+pointer, so an inner panel with its own scrollbar scrolls and the page does
+not. Once you have clicked into the frame, PageUp, PageDown, Space, the arrows,
+Home and End scroll the page when nothing editable in the app has focus.
+
+Each frame is the part of the page that is on screen, as Chromium itself draws
+it: sticky and fixed headers stay where the app puts them, and a phone page
+wider than the screen is shown zoomed out, as a phone shows it. Comment picks,
+element boxes and regions you draw are all measured on that frame, zoom
+included, so a crop shows what you saw. Frames come ten a second while you
+scroll or type and four a second at rest, so the frame after a scroll stops
+is a fresh picture of where it stopped.
+
+Input goes to archond one request at a time, and archond ends each within
+about 20 seconds and runs one at a time per session, so input runs in the
+order you gave it. While a request is on its way, the next wheel ticks at the
+same point and in the same direction are added up and only the latest pointer
+position is kept; no scroll distance and no click or key is lost. Input archond turns away because
+it is busy is sent again, in order; if it cannot be sent for about two seconds
+it is dropped. When the preview falls behind, the status line under the frame
+says "Catching up with the preview…" until it catches up; nothing pops up. A
+web app connection keeps at most 16 requests in flight, archond's limit, and
+holds any more until a reply comes. Input is never held: it goes at once, for
+archond to run or turn away.
+
+archond alone keeps track of what is held down in the preview: a key, button
+or finger counts as down once it is sent, and as up only once Chromium answers
+its release. When an input request fails, times out or is turned away (not
+ready, past the rate or the in-flight limit), it may have carried a release, so
+archond lets go of everything held before the next request runs, or within
+about three seconds if none comes. It does the same when a page's stream
+ends: closing or reloading the page, a reconnect, or opening another session
+drops any input the page still had queued. Input it had already sent that
+runs after the end makes archond let go again once it has run. Each release
+has its own two-second deadline; one Chromium leaves unanswered is sent again
+later.
+Closing the session closes its browser, which lets go of everything with it. A press that
+spans requests that all succeed, such as a drag, stays held unless one of these
+lets go of it first: a failed, timed-out or refused request, or the end of a
+page's stream (including another page's, a reload or a reconnect).
+
 ## Notes and their statuses
 
 Each note gets an id, `D1`, `D2`, … that is never reused in the item, even
@@ -350,8 +395,8 @@ Use the web app through the same pairing as for the rest of Archon
 and notes live in a bottom sheet with three heights (peek, half, full). The bar
 at the bottom has Use, Comment, Region and Notes, each a 44 px tap target.
 There is no hover, so tap an element and use **Wider** and **Narrower**. Pinch
-zooms the picture locally and is not sent to the app; a two-finger drag scrolls
-the app. The composer opens above the keyboard. Tablets (640 to 1023 px) get
+zooms the picture locally and is not sent to the app; a one-finger swipe in
+**Use** mode or a two-finger drag scrolls the app. The composer opens above the keyboard. Tablets (640 to 1023 px) get
 the same layout with notes in a side drawer.
 
 Notes you type while disconnected are kept on the device and sent on reconnect,
@@ -365,6 +410,9 @@ once only.
 | "Chromium's sandbox is unavailable on this host" | Fix as `archon doctor` says, or set `browser_sandbox = "off"` knowingly. |
 | "Preview down" / "The app stopped responding. The agent has been told and is restarting it." | The dev server died or hangs: it did not answer an HTTP request within about two seconds (checked every few seconds). Wait, or use **Reload** and **Tell agent again**. The label clears when the app answers again. |
 | "Reconnecting…" | The connection dropped; notes are kept and sent on reconnect. |
+| "Catching up with the preview…" (status line under the frame) | You scroll or move faster than archond answers, or it turned input away for a moment. Input is merged and sent again as replies come; nothing is lost and the line clears by itself. |
+| "The preview stopped answering; some input may not have reached it." | Chromium took over 8 seconds to take a batch of input, or the preview was not ready within 10. archond dropped the rest of the batch and lets go of any key, button or finger left down before the next input, or within a few seconds. Check the frame and repeat what did not happen; **Reload** if it stays stuck. |
+| "The preview fell behind; some input was skipped." | archond stayed too busy for about two seconds, or so much input piled up that some of it was not sent. archond lets go of anything left down, as above. Check the frame and repeat what did not happen. |
 | "Queued for a preview slot" | `max_sessions` browsers are running. Your notes still reach the agent. |
 | "The code history changed in a way Archon can't track; its edits may still show; add a note if something should change" (note **Failed: history changed**) | The agent made two commits, a merge, a reset below the base, or reported the wrong commit. Archon leaves the worktree as it is and moves on. |
 | "Can't undo automatically, later changes touch the same code; …" | See Undo. |
@@ -389,9 +437,10 @@ text and suggested answers stay inside Chromium.
 ## Limits
 
 - At most `max_sessions` live browsers (default 2).
-- The live preview captures up to 4 verified frames per second. Each request
-  carries up to 64 input events. The daemon accepts 60 input requests and 10
-  resolves a second.
+- The live preview captures up to 4 verified frames per second at rest and up
+  to 10 for 1.5 seconds after input. Each request carries up to 64 input
+  events. The daemon accepts 60 input requests and 10 resolves a second, and
+  16 requests in flight on one connection; the web app stays within all three.
 - Notes up to 4,000 characters, replies up to 2,000; 200 notes per session, including follow-ups. Each
   item can keep up to 200 MiB of pictures and sketches. Equal encoded
   images count once. New sketches count separately for each capture.

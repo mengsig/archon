@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use crate::browser::Browser;
+use crate::browser::{Browser, PageLayout};
 use crate::sanitize::clean;
 use crate::{BrowserError, ClipRect, Resolved};
 
@@ -162,6 +162,10 @@ impl Browser {
 
     async fn read_element(&self, x: f64, y: f64, depth: i32) -> Result<Resolved, BrowserError> {
         let sh = &self.sh;
+        // Chrome hit-tests page coordinates; the point is on the frame, which
+        // scrolls and zooms. The box found is given back on the frame too.
+        let layout = sh.layout().await?;
+        let (x, y) = layout.hit_point(x, y);
         let n = sh
             .call(
                 "DOM.getNodeForLocation",
@@ -181,7 +185,7 @@ impl Browser {
             .as_str()
             .ok_or_else(|| BrowserError::Protocol("node has no object".into()))?
             .to_string();
-        let out = self.resolve_object(&obj, depth).await;
+        let out = self.resolve_object(&obj, depth, &layout).await;
         let _ = sh
             .call(
                 "Runtime.releaseObjectGroup",
@@ -191,7 +195,12 @@ impl Browser {
         out
     }
 
-    async fn resolve_object(&self, obj: &str, depth: i32) -> Result<Resolved, BrowserError> {
+    async fn resolve_object(
+        &self,
+        obj: &str,
+        depth: i32,
+        layout: &PageLayout,
+    ) -> Result<Resolved, BrowserError> {
         let sh = &self.sh;
         let w = sh
             .call(
@@ -205,6 +214,7 @@ impl Browser {
             .to_string();
         let bm = sh.call("DOM.getBoxModel", json!({"objectId": el})).await?;
         let rect = quad_rect(&bm["model"]["border"])
+            .map(|css| layout.on_frame(css))
             .ok_or_else(|| BrowserError::Protocol("no box model".into()))?;
         let _ = sh.call("DOM.describeNode", json!({"objectId": el})).await?;
         let info = sh
@@ -243,7 +253,7 @@ impl Browser {
         (!m.is_empty()).then_some(m)
     }
 
-    /// Box of the element `selector` matches, in CSS px; `None` when nothing
+    /// Box of the element `selector` matches, on the frame; `None` when nothing
     /// matches. A selector may match several elements (a nav's links share
     /// one); then the match nearest `near`, the box recorded with it, wins,
     /// and without `near` the first.
@@ -261,6 +271,7 @@ impl Browser {
         near: Option<ClipRect>,
     ) -> Result<Option<ClipRect>, BrowserError> {
         let sh = &self.sh;
+        let layout = sh.layout().await?;
         let doc = sh.call("DOM.getDocument", json!({"depth": 0})).await?;
         let root = doc["root"]["nodeId"].as_i64().unwrap_or(1);
         let q = match sh
@@ -287,7 +298,9 @@ impl Browser {
         let mut boxes = Vec::new();
         for nid in ids.into_iter().take(wanted) {
             match sh.call("DOM.getBoxModel", json!({"nodeId": nid})).await {
-                Ok(bm) => boxes.extend(quad_rect(&bm["model"]["border"])),
+                Ok(bm) => {
+                    boxes.extend(quad_rect(&bm["model"]["border"]).map(|b| layout.on_frame(b)))
+                }
                 // An element with no box (display: none) is not the one meant.
                 Err(BrowserError::Protocol(_)) => {}
                 Err(e) => return Err(e),

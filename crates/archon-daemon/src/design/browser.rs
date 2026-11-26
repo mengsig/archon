@@ -45,6 +45,12 @@ pub trait PreviewBrowser: Send + Sync {
     async fn reload(&self) -> Result<(), adb::BrowserError>;
     async fn set_viewport(&self, viewport: adb::Viewport) -> Result<(), adb::BrowserError>;
     async fn input(&self, events: &[adb::Input]) -> Result<(), adb::BrowserError>;
+    /// A batch failed or was refused before it ran: whatever it would have let
+    /// go is released before the next batch, or by [`Self::reconcile_input`].
+    fn input_lost(&self);
+    /// The idle cleanup after a lost batch: let go of everything still held.
+    /// True when nothing a lost batch may have left is held any more.
+    async fn reconcile_input(&self) -> bool;
     async fn start_screencast(&self) -> Result<Box<dyn FrameFeed>, adb::BrowserError>;
     async fn stop_screencast(&self) -> Result<(), adb::BrowserError>;
     async fn capture(
@@ -248,6 +254,18 @@ impl PreviewBrowser for Real {
     async fn input(&self, events: &[adb::Input]) -> Result<(), adb::BrowserError> {
         self.get()?.input(events).await
     }
+    fn input_lost(&self) {
+        // A closed browser took everything it held with it.
+        if let Ok(browser) = self.get() {
+            browser.input_lost();
+        }
+    }
+    async fn reconcile_input(&self) -> bool {
+        match self.get() {
+            Ok(browser) => browser.reconcile_input().await,
+            Err(_) => true,
+        }
+    }
     async fn start_screencast(&self) -> Result<Box<dyn FrameFeed>, adb::BrowserError> {
         let relay = self.get()?.start_screencast().await?;
         let feed = RealFeed(relay.subscribe());
@@ -444,6 +462,8 @@ pub(crate) struct RtState {
     pub launching: bool,
     /// Health probes missed in a row; one slow answer is not "down".
     pub probe_misses: u32,
+    /// Streams of this runtime that have ended: see [`AdmittedInput`].
+    streams_ended: u64,
 }
 
 impl Default for RtState {
@@ -468,6 +488,50 @@ impl Default for RtState {
             resolve_window: (now, 0),
             launching: false,
             probe_misses: 0,
+            streams_ended: 0,
+        }
+    }
+}
+
+/// An input request read off a connection, held until it ends. One read
+/// before a stream ended may press after that end let go, so it lets go again.
+pub struct AdmittedInput {
+    service: Arc<DesignService>,
+    session: DesignSessionId,
+    /// The session's runtime when it was read, and its streams ended by then.
+    seen: Option<(Arc<Runtime>, u64)>,
+}
+
+impl std::fmt::Debug for AdmittedInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdmittedInput")
+            .field("session", &self.session)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for AdmittedInput {
+    fn drop(&mut self) {
+        let Some(now) = self.service.existing_runtime(&self.session) else {
+            return;
+        };
+        let browser = {
+            let st = now.st();
+            let ended_since = match &self.seen {
+                Some((then, ended)) if Arc::ptr_eq(then, &now) => {
+                    debug_assert!(st.streams_ended >= *ended, "stream ends only add up");
+                    st.streams_ended > *ended
+                }
+                // Made after this was read: each stream it ended came later.
+                _ => st.streams_ended > 0,
+            };
+            if !ended_since {
+                return;
+            }
+            st.browser.clone()
+        };
+        if let Some(browser) = browser {
+            browser.input_lost();
         }
     }
 }
@@ -901,13 +965,37 @@ impl DesignService {
             .map_or(0, |rt| rt.st().subscribers)
     }
 
+    /// Note an input request for `session` as read, before the connection
+    /// reads on; dropped once it ends, after any press it made.
+    pub fn input_admitted(self: &Arc<Self>, session: &DesignSessionId) -> AdmittedInput {
+        let seen = self.existing_runtime(session).map(|rt| {
+            let ended = rt.st().streams_ended;
+            (rt, ended)
+        });
+        AdmittedInput {
+            service: Arc::clone(self),
+            session: session.clone(),
+            seen,
+        }
+    }
+
+    /// A stream ended: its page closed, reset or lost its connection, and any
+    /// input it still had queued, a release among it, will not come.
     pub(crate) fn subscriber_left(&self, session: &DesignSessionId) {
-        if let Some(rt) = self.existing_runtime(session) {
+        let Some(rt) = self.existing_runtime(session) else {
+            return;
+        };
+        let browser = {
             let mut st = rt.st();
             st.subscribers = st.subscribers.saturating_sub(1);
             if st.subscribers == 0 {
                 st.last_sub_gone = Some(Instant::now());
             }
+            st.streams_ended = st.streams_ended.saturating_add(1);
+            st.browser.clone()
+        };
+        if let Some(browser) = browser {
+            browser.input_lost();
         }
     }
 
@@ -1206,6 +1294,10 @@ impl DesignService {
                     feeder.abort();
                 }
             }
+        }
+        // A lost batch's held input is let go within a tick, even if no batch follows.
+        if !browser.reconcile_input().await {
+            tracing::debug!(%session, "held preview input is still owed a release");
         }
         let rss = browser.rss_bytes();
         if memory_limit_reached(rss, &mut rt.st().rss_over_since, Instant::now()) {

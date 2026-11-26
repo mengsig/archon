@@ -1,6 +1,7 @@
 //! `subscribe_design` over the remote listener: it reaches `Backend::design`
 //! with the session and the device, under the subscription cap.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -24,13 +25,40 @@ type Socket = tokio_tungstenite::WebSocketStream<TcpStream>;
 struct Fake {
     subscribed: Mutex<Vec<(DesignSubscription, watch::Receiver<u64>)>>,
     handled: Mutex<Vec<Request>>,
+    /// Requests refused unrun past the in-flight cap.
+    refused: Mutex<Vec<Request>>,
+    /// Admitted requests that have not ended yet.
+    admitted: Arc<AtomicUsize>,
+}
+
+/// Counts an admitted request until it ends.
+struct Admission(Arc<AtomicUsize>);
+
+impl Drop for Admission {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 #[async_trait::async_trait]
 impl Backend for Fake {
     async fn handle(&self, _: &WelcomeDevice, request: Request) -> Result<Reply, ArchonError> {
+        let stalls = matches!(request, Request::DesignInput { .. });
         self.handled.lock().unwrap().push(request);
+        if stalls {
+            // A preview that never answers: each input holds its slot.
+            std::future::pending::<()>().await;
+        }
         Ok(Reply::Ok)
+    }
+
+    fn refused(&self, request: &Request) {
+        self.refused.lock().unwrap().push(request.clone());
+    }
+
+    fn admitted(&self, _request: &Request) -> Option<Box<dyn Send>> {
+        self.admitted.fetch_add(1, Ordering::SeqCst);
+        Some(Box::new(Admission(Arc::clone(&self.admitted))))
     }
 
     async fn feed(&self, sub: FeedSubscription, frames: mpsc::Sender<ServerFrame>) {
@@ -363,5 +391,64 @@ async fn leaving_the_view_frees_its_slot_with_feed_and_changes_still_live() {
         )
         .await;
         assert_eq!(done["result"]["Ok"]["reply"], "design_done");
+    }
+}
+
+/// Input refused past the in-flight cap never ran, so whatever release it
+/// carried is lost: the backend hears of it to let go of held input.
+#[tokio::test]
+async fn input_refused_past_the_in_flight_cap_is_reported_to_the_backend() {
+    let harness = Harness::start().await;
+    let mut socket = harness.socket(DeviceRole::Operator).await;
+    let session = DesignSessionId::new();
+    for n in 0..16 {
+        let request = serde_json::json!({
+            "req": 10 + n, "cmd": "design_input", "session": session, "events": [],
+        });
+        socket
+            .send(Message::text(request.to_string()))
+            .await
+            .unwrap();
+    }
+    let over = serde_json::json!({
+        "req": 40, "cmd": "design_input", "session": session, "events": [],
+    });
+    let refused = exchange(&mut socket, over).await;
+    assert_eq!(refused["result"]["Err"]["code"], "unavailable", "{refused}");
+    let told = harness.backend.refused.lock().unwrap().clone();
+    assert!(
+        matches!(told.as_slice(), [Request::DesignInput { session: s, .. }] if *s == session),
+        "{told:?}"
+    );
+}
+
+/// An admitted request is counted before the next frame is read, so a stream
+/// ended by a later frame can wait for it, and it ends when its connection does.
+#[tokio::test]
+async fn an_admitted_request_is_held_until_it_ends_with_its_connection() {
+    let harness = Harness::start().await;
+    let mut socket = harness.socket(DeviceRole::Operator).await;
+    let session = DesignSessionId::new();
+    let input = serde_json::json!({
+        "req": 10, "cmd": "design_input", "session": session, "events": [],
+    });
+    socket.send(Message::text(input.to_string())).await.unwrap();
+    let unsubscribe = serde_json::json!({"req": 11, "cmd": "design_unsubscribe", "sub": 99});
+    let done = exchange(&mut socket, unsubscribe).await;
+    assert_eq!(done["id"], 11, "{done}");
+    assert_eq!(done["result"]["Ok"]["reply"], "design_done", "{done}");
+    assert_eq!(
+        harness.backend.admitted.load(Ordering::SeqCst),
+        1,
+        "the stalled input was admitted before the later frame was answered"
+    );
+    socket.close(None).await.unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while harness.backend.admitted.load(Ordering::SeqCst) != 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the input never ended"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 }

@@ -4,10 +4,11 @@ import { h } from '../../ui/dom.js';
 import { emptyState } from '../../ui/components.js';
 import { confirmSheet, openSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
-import { designErrorText } from '../../core/design.js';
+import { designErrorText, isBackpressure, isLostInput } from '../../core/design.js';
 import { initialState, reduce, isLive, currentPath, followsNewSession, presetMismatch, pointerBlockedText, PRESET_SIZE } from './state.js';
 import { createDesignStream } from './stream.js';
 import { createStage } from './overlay.js';
+import { BEHIND, createBehindLine } from './behind.js';
 import { createComposer } from './composer.js';
 import { createNotesPanel, openUnsentDrafts } from './notes.js';
 import { createInputBatcher, textEvent } from './input.js';
@@ -87,7 +88,8 @@ export function mountDesign(view, ctx) {
     }
   }
   const refuse = (err) => {
-    if (err?.code === 'gone') dispatch({ type: 'event', event: { event: 'ended', reason: 'ended' } });
+    if (isBackpressure(err)) behind.notice(BEHIND.busy);
+    else if (err?.code === 'gone') dispatch({ type: 'event', event: { event: 'ended', reason: 'ended' } });
     else if (err?.code === 'conflict') { toast(designErrorText(err), { tone: 'red' }); stream.refresh(); }
     else if (err?.code !== 'disconnected' && err?.code !== 'timeout') toast(designErrorText(err), { tone: 'red' });
   };
@@ -116,13 +118,20 @@ export function mountDesign(view, ctx) {
     continueWithout: () => { continued = true; render(); },
   });
   const status = buildStatusBar();
+  const behind = createBehindLine({ show: (line) => status.setBusy(line) });
   const batcher = createInputBatcher({
     send: (events) => {
       const id = session();
-      if (!id || !state.frame || !isLive(state) || state.connection !== 'open') return;
-      ctx.design.input(id, events).catch((err) => { if (session() === id) refuse(err); });
+      if (!id || !state.frame || !isLive(state) || state.connection !== 'open') return undefined;
+      return ctx.design.input(id, events).catch((err) => {
+        if (session() !== id) return;
+        if (isBackpressure(err)) throw err; // archond ran none of it: the batcher retries
+        if (isLostInput(err)) behind.notice(BEHIND.lost);
+        else refuse(err);
+      });
     },
-    onOverflow: () => toast('The preview could not keep up. Some input was skipped.', { tone: 'amber' }),
+    onOverflow: () => behind.notice(BEHIND.skipped),
+    onBusy: (on) => behind.waiting(on),
   });
   const queueInput = (event) => state.frame && state.connection === 'open' && isLive(state) && batcher.push(event);
   const stage = createStage({
@@ -259,13 +268,23 @@ export function mountDesign(view, ctx) {
     if (text) toast(text);
     return Boolean(text);
   }
+  // One hover read at a time; a pointer that moved meanwhile reads its latest place next.
+  let hovering = false;
+  let hoverNext = null;
   async function hoverAt(p) {
     if (pointerBlockedText(state)) return;
+    if (hovering) { hoverNext = p; return; }
+    hovering = true;
     const ticket = ++tickets;
     try {
       const r = await ctx.design.resolve(session(), p.x, p.y, 0, false);
       if (ticket === tickets && state.mode === 'comment') stage.setHover(r.target.box, r.label);
-    } catch (e) { if (e.code === 'gone') refuse(e); }
+    } catch (e) { if (e.code === 'gone') refuse(e); } finally {
+      hovering = false;
+      const next = hoverNext;
+      hoverNext = null;
+      if (next && state.mode === 'comment') hoverAt(next);
+    }
   }
   async function pickAt(p) {
     if (waitingForSize()) return;
@@ -602,7 +621,7 @@ export function mountDesign(view, ctx) {
   render();
 
   return () => {
-    stream.stop(); batcher.stop(); stage.destroy(); ledger.destroy();
+    stream.stop(); batcher.stop(); behind.stop(); stage.destroy(); ledger.destroy();
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', fit);
     vv?.removeEventListener('resize', onViewport);

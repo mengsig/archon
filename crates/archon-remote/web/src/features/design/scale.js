@@ -51,6 +51,20 @@ export function classifyTwoFinger(prev, next, threshold = 4) {
   return { kind: 'pan', dx, dy };
 }
 
+// Chrome's line step; Firefox reports wheel notches in lines.
+export const WHEEL_LINE_PX = 40;
+
+// A wheel event's deltas in the app's CSS px. Pixel deltas are screen px on the
+// scaled canvas (so content follows the fingers); lines and pages are the app's.
+export function wheelDeltas(event, scale, frameHeight) {
+  if (!(scale > 0) || !(frameHeight > 0)) throw new RangeError(`a wheel needs a positive scale and frame, got ${scale}, ${frameHeight}`);
+  const unit = event.deltaMode === 1 ? WHEEL_LINE_PX : event.deltaMode === 2 ? frameHeight : 1 / scale;
+  const dx = round((Number(event.deltaX) || 0) * unit);
+  const dy = round((Number(event.deltaY) || 0) * unit);
+  console.assert(Number.isFinite(dx) && Number.isFinite(dy), 'Wheel deltas are finite');
+  return { dx, dy };
+}
+
 export function clampZoom(zoom) {
   return clamp(zoom, MIN_ZOOM, MAX_ZOOM);
 }

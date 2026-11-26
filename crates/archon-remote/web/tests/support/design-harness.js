@@ -172,6 +172,20 @@ function createDaemon({ appPage, fixtureApp, role }) {
       case 'subscribe_design': conn.subscribed = true; reply(ws, req, 'subscribed', { id: 1, last_seq: 0 }); return later(() => sendFrame(conn), 50);
       case 'design_unsubscribe': conn.subscribed = false; return reply(ws, req, 'design_done', null);
       case 'design_frame_ack': reply(ws, req, 'design_done', null); return later(() => sendFrame(conn), 120);
+      case 'design_input': {
+        // As archond under load: slow replies, and its in-flight refusal when asked for.
+        state.inputsInFlight = (state.inputsInFlight ?? 0) + 1;
+        state.maxInputsInFlight = Math.max(state.maxInputsInFlight ?? 0, state.inputsInFlight);
+        if (state.refuseInputs > 0) {
+          state.refuseInputs -= 1;
+          state.inputsInFlight -= 1;
+          msg.refused = true;
+          return refuse(ws, req, 'unavailable', 'at most 16 requests may be in flight; wait for a reply');
+        }
+        await new Promise((resolve) => setTimeout(resolve, state.inputDelayMs ?? 0)); // short; stop() waits it out
+        state.inputsInFlight -= 1;
+        return reply(ws, req, 'design_done', null);
+      }
       case 'design_resolve': return reply(ws, req, 'design_resolved', { target: await target(), label: 'button "Buy now"', asset: 'da_pending', data_url: PIXEL });
       case 'design_region': return reply(ws, req, 'design_resolved', { target: { ...(await target()), selector: null, role_name: null, box: msg.box, region: true }, label: 'Region', asset: 'da_region', data_url: PIXEL });
       case 'design_note_add': {

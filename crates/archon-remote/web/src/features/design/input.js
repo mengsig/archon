@@ -1,53 +1,134 @@
-// Batches input events for design_input: at most 64 events per request and 60
-// requests per second. Consecutive moves and wheel ticks are merged.
+// Batches input events for design_input: at most 64 events per request, 60
+// requests per second and one awaiting a reply, so archond runs them in order.
+// While it waits, consecutive moves keep the latest and wheel ticks add up.
 import { MAX_INPUT_EVENTS } from '../../core/design.js';
 
 export const MAX_REQUESTS_PER_SECOND = 60;
+export const MAX_OUTSTANDING = 1;
+// Waiting this long on replies is shown, quietly: the preview is behind.
+export const BUSY_AFTER_MS = 500;
 const MAX_QUEUED = 512;
+// A refused batch is tried again this often, in order, before it is given up.
+export const RETRY_MS = 250;
+export const MAX_RETRIES = 8;
 
+const round = (v) => Math.round(v * 10) / 10;
+// What a press holds down until its release, or null for events that hold
+// nothing: a move or release is sent only after the press it belongs to.
+const heldKey = (e) => (e.type === 'key' ? `key:${e.code || e.key}`
+  : e.type === 'mouse' && e.button !== 'none' ? `mouse:${e.button}`
+    : e.type === 'touch' ? 'touch' : null);
+const isPress = (e) => e.action === 'down' || e.action === 'start';
+const isRelease = (e) => e.action === 'up' || e.action === 'end' || e.action === 'cancel';
+// Ticks that turn back stay apart: summed, a scroll down and back up again
+// could cancel to nothing.
+const sameWay = (a, b) => a * b >= 0;
+
+// `send(events)` may return a promise: the batch counts as outstanding until it
+// settles. A rejection means archond refused it unrun; it goes again first, a
+// few times. archond owns what is held in the preview and lets go of it after
+// any batch it refused or lost, so nothing here tracks presses across batches.
 export function createInputBatcher({
   send, now = () => performance.now(), setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t),
-  perSecond = MAX_REQUESTS_PER_SECOND, maxEvents = MAX_INPUT_EVENTS, onOverflow = () => {},
+  perSecond = MAX_REQUESTS_PER_SECOND, maxEvents = MAX_INPUT_EVENTS, maxOutstanding = MAX_OUTSTANDING,
+  onOverflow = () => {}, onBusy = () => {},
 }) {
   if (typeof send !== 'function') throw new TypeError('the input batcher needs a send function');
+  if (!(Number.isInteger(maxOutstanding) && maxOutstanding >= 1)) throw new RangeError(`at least one request may be outstanding, got ${maxOutstanding}`);
   const gap = 1000 / perSecond;
   let queue = [];
   let lastSent = -Infinity;
   let timer = null;
   const pressed = new Set();
   let overflowReported = false;
+  let outstanding = 0;
+  let epoch = 0; // a stop forgets replies still on their way
+  let busy = false;
+  let busyTimer = null;
+  let retries = 0;
 
+  function setBusy(next) {
+    if (busyTimer !== null && !next) { clearTimer(busyTimer); busyTimer = null; }
+    if (busy === next) return;
+    busy = next;
+    onBusy(next);
+  }
+
+  // Blocked on replies: say so only if it lasts.
+  function watchBusy() {
+    if (busy || busyTimer !== null) return;
+    busyTimer = setTimer(() => {
+      busyTimer = null;
+      if (queue.length > 0 && outstanding >= maxOutstanding) setBusy(true);
+    }, BUSY_AFTER_MS);
+  }
+
+  function track(reply, events) {
+    if (!reply || typeof reply.then !== 'function') return;
+    const mine = epoch;
+    outstanding += 1;
+    const settled = (refused) => {
+      if (mine !== epoch) return;
+      outstanding -= 1;
+      console.assert(outstanding >= 0 && outstanding < maxOutstanding, 'Input replies outnumber their requests');
+      if (refused) return retry(events);
+      retries = 0;
+      if (queue.length === 0) setBusy(false); // caught up
+      else if (timer === null) timer = setTimer(flush, 0);
+    };
+    reply.then(() => settled(false), () => settled(true));
+  }
+
+  // A refused batch goes first again, a few times, then is dropped whole.
+  function retry(events) {
+    console.assert(events.length > 0 && events.length <= maxEvents, 'Only a sent batch is retried');
+    if (retries >= MAX_RETRIES) {
+      retries = 0;
+      onOverflow();
+      if (queue.length === 0) setBusy(false);
+    } else {
+      retries += 1;
+      queue = events.concat(queue);
+      setBusy(true);
+    }
+    if (timer !== null) clearTimer(timer);
+    timer = queue.length > 0 ? setTimer(flush, RETRY_MS) : null;
+  }
+
+  // Only back-to-back events merge, so order and targets stay as they were:
+  // a move keeps the latest, wheel ticks at the same point and way add up.
   function merge(event) {
     const last = queue[queue.length - 1];
-    if (last && event.type === 'mouse' && last.type === 'mouse' && event.action === 'move' && last.action === 'move' && last.button === event.button) {
+    if (!last || last.type !== event.type) return false;
+    const moves = event.action === 'move' && last.action === 'move';
+    if (event.type === 'touch' && moves) {
       queue[queue.length - 1] = event;
       return true;
     }
-    if (last && event.type === 'wheel' && last.type === 'wheel' && last.x === event.x && last.y === event.y && last.modifiers === event.modifiers) {
-      queue[queue.length - 1] = { ...last, dx: last.dx + event.dx, dy: last.dy + event.dy };
+    if (event.type === 'mouse' && moves && last.button === event.button && last.modifiers === event.modifiers) {
+      queue[queue.length - 1] = event;
       return true;
     }
-    if (last && event.type === 'touch' && last.type === 'touch' && event.action === 'move' && last.action === 'move') {
-      queue[queue.length - 1] = event;
+    const atPoint = last.modifiers === event.modifiers && last.x === event.x && last.y === event.y;
+    if (event.type === 'wheel' && atPoint && sameWay(last.dx, event.dx) && sameWay(last.dy, event.dy)) {
+      queue[queue.length - 1] = { ...event, dx: round(last.dx + event.dx), dy: round(last.dy + event.dy) };
       return true;
     }
     return false;
   }
 
   function admit(event) {
-    const { type, action } = event;
-    const key = type === 'key' ? `key:${event.code || event.key}`
-      : type === 'mouse' && event.button !== 'none' ? `mouse:${event.button}`
-      : type === 'touch' ? 'touch' : null;
-    const down = key !== null && (action === 'down' || action === 'start');
-    const up = key !== null && (action === 'up' || action === 'end' || action === 'cancel');
+    const key = heldKey(event);
+    const down = key !== null && isPress(event);
+    const up = key !== null && isRelease(event);
     const held = pressed.has(key);
-    if (key !== null && (up || action === 'move') && !held) return false;
+    if (key !== null && (up || event.action === 'move') && !held) return false;
     if (merge(event)) return true;
 
-    // Each admitted press reserves space for its release, even after it is sent.
+    // Each admitted press reserves space for its release, even after it is sent;
+    // a refused batch put back may overrun it, so a release always gets in.
     const reserve = down && !held ? 1 : up ? -1 : 0;
-    while (queue.length + pressed.size + 1 + reserve > MAX_QUEUED) {
+    while (!up && queue.length + pressed.size + 1 + reserve > MAX_QUEUED) {
       const at = queue.findIndex((e) => e.type === 'wheel' || e.action === 'move');
       if (at !== -1) { queue.splice(at, 1); continue; }
       if (!overflowReported) { overflowReported = true; onOverflow(); }
@@ -56,7 +137,7 @@ export function createInputBatcher({
     if (down) pressed.add(key);
     if (up) pressed.delete(key);
     queue.push(event);
-    console.assert(queue.length + pressed.size <= MAX_QUEUED, 'Input queue exceeded its release reserve');
+    console.assert(queue.length + pressed.size <= MAX_QUEUED + maxEvents, 'Input queue exceeded its release reserve');
     console.assert(!up || !pressed.has(key), 'Input release did not clear its press');
     return true;
   }
@@ -65,6 +146,10 @@ export function createInputBatcher({
     if (timer !== null) clearTimer(timer);
     timer = null;
     if (queue.length === 0) return 0;
+    if (outstanding >= maxOutstanding) {
+      watchBusy(); // the next reply flushes again
+      return 0;
+    }
     const wait = lastSent + gap - now();
     if (wait > 0) {
       timer = setTimer(flush, Math.ceil(wait));
@@ -74,8 +159,8 @@ export function createInputBatcher({
     queue = queue.slice(maxEvents);
     if (queue.length === 0) overflowReported = false;
     lastSent = now();
-    send(events);
-    if (queue.length > 0 && timer === null) timer = setTimer(flush, Math.ceil(gap));
+    track(send(events), events);
+    if (queue.length > 0 && timer === null && outstanding < maxOutstanding) timer = setTimer(flush, Math.ceil(gap));
     return events.length;
   }
 
@@ -87,12 +172,19 @@ export function createInputBatcher({
     },
     flush,
     get pending() { return queue.length; },
+    get outstanding() { return outstanding; },
+    // Only as the page's stream ends: archond then lets go of what the
+    // dropped queue would have released.
     stop() {
       if (timer !== null) clearTimer(timer);
       timer = null;
       queue = [];
       pressed.clear();
       overflowReported = false;
+      epoch += 1;
+      outstanding = 0;
+      retries = 0;
+      setBusy(false);
     },
   };
 }

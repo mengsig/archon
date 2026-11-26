@@ -24,6 +24,8 @@ pub struct Calls {
     pub reloads: u32,
     pub viewports: Vec<adb::Viewport>,
     pub inputs: usize,
+    /// Input batches the daemon reported lost: failed or refused before running.
+    pub inputs_lost: u32,
     pub captures: Vec<(Option<adb::ClipRect>, f64)>,
     /// Navigations, reloads, settles, inputs and captures, in the order asked.
     pub ops: Vec<String>,
@@ -171,6 +173,12 @@ impl PreviewBrowser for FakeBrowser {
         self.calls.lock().unwrap().inputs += events.len();
         self.op(format!("input {}", events.len()));
         Ok(())
+    }
+    fn input_lost(&self) {
+        self.calls.lock().unwrap().inputs_lost += 1;
+    }
+    async fn reconcile_input(&self) -> bool {
+        true
     }
     async fn start_screencast(&self) -> Result<Box<dyn FrameFeed>, adb::BrowserError> {
         let (tx, rx) = mpsc::unbounded_channel();

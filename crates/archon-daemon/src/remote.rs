@@ -42,6 +42,24 @@ impl Backend for DaemonBackend {
         result
     }
 
+    fn refused(&self, request: &Request) {
+        // A refused input batch may have carried a release: it must not stay held.
+        if let Request::DesignInput { session, .. } = request
+            && let Ok(ctx) = self.context()
+        {
+            ctx.design.input_lost(session);
+        }
+    }
+
+    fn admitted(&self, request: &Request) -> Option<Box<dyn Send>> {
+        // Input read before a stream ends may press after it let go: it lets go again.
+        let Request::DesignInput { session, .. } = request else {
+            return None;
+        };
+        let admitted = self.context().ok()?.design.input_admitted(session);
+        Some(Box::new(admitted))
+    }
+
     fn features(&self) -> Vec<&'static str> {
         let mut features = crate::handlers::features();
         // Advertised only once every request it covers is served.

@@ -9,6 +9,33 @@
 
 ### Fixed
 
+- Scrolling in the live design preview works like a browser tab. A scrolled
+  page's frame showed the top of the document instead: Chromium's screenshot
+  clip is in page coordinates and Archon gave it the visible area's, so a
+  sticky header was drawn a third of the way down under an empty band. Frames
+  and crops are now taken where the page is scrolled to, a phone page wider
+  than the screen is shown zoomed out as Chromium shows it, element boxes and
+  crops on that zoomed-out page match the frame instead of its top-left
+  corner, and comment-mode picks on a scrolled page find the element under the
+  pointer, right-to-left pages scrolled sideways included. PageUp, PageDown, Space, the arrows, Home and End now scroll the app, wheel line and
+  page steps and trackpad fractions are converted to the app's pixels, and
+  frames come ten a second while you scroll.
+- Fast scrolling no longer floods archond with input or shows a red "at most
+  16 requests may be in flight" error. Input goes one request at a time, and
+  archond ends each within about 20 seconds, so it runs in order; meanwhile
+  wheel ticks at a point in one direction add up and pointer moves keep the
+  latest, and input archond turns away while busy is sent again a few times.
+  The web app holds any request but input past archond's in-flight limit
+  until a reply comes, and a request that never gets a reply frees its place
+  after 30 seconds. A preview that falls behind shows one quiet status line
+  instead of toasts.
+- A key, mouse button or finger can no longer stay stuck down in the design
+  preview. archond alone tracks what is held (a press once sent, a release
+  once Chromium answers it); after any input request that fails, times out or
+  is turned away, or once a page's stream ends with input still queued (and
+  again after any input it had already sent runs), it lets go of everything
+  held before the next request, or within about three seconds if none comes,
+  each release with its own deadline.
 - A live design whose layout did not change no longer fails intent
   acceptance with a "layout gap". The ledger recorded only the CSS viewport
   of a picture shot at clip scale 2, so a 1440×900 reference was a 2880×1800

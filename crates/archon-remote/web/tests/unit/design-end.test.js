@@ -4,7 +4,7 @@ import {
   initialState, reduce, stagePhase, dotLook, endInfo, followsNewSession, noteActions, sessionLabel, earlierText,
   confirmedPreset, presetMismatch, pointerBlockedText, notesHeading, PRESET_SIZE, ledgerLede,
 } from '../../src/features/design/state.js';
-import { designErrorText } from '../../src/core/design.js';
+import { designErrorText, isBackpressure, isLostInput } from '../../src/core/design.js';
 import { gateChoices, gateQuestionFor } from '../../src/features/design/finish.js';
 
 test('approval uses only the open proposal gate for the exact design attempt', () => {
@@ -193,4 +193,17 @@ test('each proposal option sends its declared value with revision text only when
   assert.equal(revise.send('More contrast'), 'revise: More contrast');
   assert.equal(reject.send('ignored'), 'reject');
   assert.deepEqual([approve, revise, reject].map((choice) => Boolean(choice.needsText)), [false, true, false]);
+});
+
+test('backpressure, lost input and real failures are told apart', () => {
+  const err = (code, message) => ({ code, message });
+  const busy = err('unavailable', 'at most 16 requests may be in flight; wait for a reply');
+  const lost = err('unavailable', 'the preview took over 10 s to take input; some of it may not have reached the app');
+  const down = err('unavailable', 'the preview browser closed');
+  assert.deepEqual([busy, lost, down].map(isBackpressure), [true, false, false]);
+  assert.deepEqual([busy, lost, down].map(isLostInput), [false, true, false]);
+  assert.equal(isBackpressure(err('policy', 'too many input requests; slow down')), true);
+  assert.equal(isLostInput(err('timeout', 'design_input got no answer in 60 s')), true);
+  assert.equal(isLostInput(null), false);
+  assert.equal(isLostInput(err('unavailable', 'the preview was not ready for input within 10 s; it did not reach the app')), true);
 });

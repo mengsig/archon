@@ -160,7 +160,9 @@ runs after the end makes archond let go again once it has run. Each release
 has its own two-second deadline; one Chromium leaves unanswered is sent again
 later.
 Closing the session closes its browser, which lets go of everything with it. A press that
-spans requests that all succeed, such as a drag, is never cut short.
+spans requests that all succeed, such as a drag, stays held unless one of these
+lets go of it first: a failed, timed-out or refused request, or the end of a
+page's stream (including another page's, a reload or a reconnect).
 
 ## Notes and their statuses
 

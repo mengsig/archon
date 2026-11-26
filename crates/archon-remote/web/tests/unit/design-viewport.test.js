@@ -143,6 +143,28 @@ test('a new choice after a given-up switch gets its own retry', () => {
   assert.equal(retried.s.toasts.length, 0);
 });
 
+test('a given-up switch whose fallback is refused still ends, and does not start again', () => {
+  let { s } = send(reduce(live(), { type: 'preset', preset: 'phone' }));
+  s = answer(s, 'phone', true);
+  ({ s } = send(reduce(s, { type: 'preset_stalled' })));
+  s = answer(s, 'phone', true);
+  let sent;
+  ({ s, sent } = send(reduce(s, { type: 'preset_stalled' })));
+  assert.equal(sent, 'desktop');
+  assert.equal(s.toasts.length, 1);
+  // Refused: the app opened a dialog meanwhile. The frames still show Desktop.
+  s = reduce(answer(s, 'desktop', false), { type: 'toasts_taken' });
+  assert.equal(presetMismatch(s), false, 'the preview shows the size it is at, not "Switching…"');
+  assert.equal(reduce(s, { type: 'preset_stalled' }), s, 'nothing is left to retry');
+  // archond's view still says Phone: the frames' size is kept without asking or telling again.
+  s = reduce(s, { type: 'view', view: view({ session: session({ viewport_preset: 'phone' }) }), stamp: s.viewport.settles });
+  assert.ok(presetMismatch(s));
+  ({ s, sent } = send(reduce(s, { type: 'preset_stalled' })));
+  assert.equal(sent, null, 'no request loop');
+  assert.equal(s.toasts.length, 0, 'no toast loop');
+  assert.equal(presetMismatch(s), false);
+});
+
 test('a dialog archond shows again to a rejoining stream is one dialog', () => {
   const alert = { type: 'event', event: { event: 'dialog', kind: 'alert', message: 'Unsaved changes', default_prompt: null } };
   const once = reduce(live(), alert);

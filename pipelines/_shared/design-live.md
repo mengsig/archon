@@ -55,15 +55,18 @@ sessions are already in the code.
    - For Compose, use the project `archon-{{item.id}}` in lowercase: export
      it as `COMPOSE_PROJECT_NAME` and pass `-p "$COMPOSE_PROJECT_NAME"`, and
      give the same name to any project name the repository's scripts set.
-     Never touch another Compose project on the host.
+     Never reuse an existing project: `docker compose ls -a` lists stopped
+     ones too, and if the name is taken, report it by name with
+     `message_orchestrator` kind `escalation` instead of starting. Never
+     touch another Compose project on the host.
    - Check that the page loads from this worktree without a server error
      and that each backend it calls answers. If part of the stack will not
      come up, preview none of it: report the step, its command and the
      error with `message_orchestrator` kind `escalation`.
 2. **Show it.** Call `design_preview` with the page's URL, for example
    `http://127.0.0.1:5173/`, and `recipe`: the steps in start order, each
-   service's `port` and `ready` URL, and the names of the env vars they
-   need, never values. Only `127.0.0.1`, `localhost` and `[::1]` are
+   service's `port` or `ready` URL (required for every service when there
+   is more than one), and the names of the env vars they need, never values. Only `127.0.0.1`, `localhost` and `[::1]` are
    accepted. Archon checks the page and every `ready` URL or `port`, names
    what does not answer, and saves the recipe for the next session only
    when everything does. If you restart the server, update the PID file

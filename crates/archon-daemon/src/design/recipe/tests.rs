@@ -37,7 +37,10 @@ fn a_recipe_is_saved_read_replaced_and_cleared_per_repository() {
     .unwrap();
     assert_eq!(load(&store, &repo).unwrap(), Some(first.clone()));
     assert_eq!(load(&store, &other).unwrap(), None, "kept per repository");
-    let updated = recipe(vec![step("db", Some(5432), None), step("web", None, None)]);
+    let updated = recipe(vec![
+        step("db", Some(5432), None),
+        step("web", Some(5173), None),
+    ]);
     let second = save(&mut store, &repo, &item, updated.clone()).unwrap();
     assert_eq!(load(&store, &repo).unwrap().unwrap().recipe, updated);
     assert_ne!(first.recipe, second.recipe);
@@ -96,6 +99,72 @@ async fn serving(status: u16) -> u16 {
         }
     });
     port
+}
+
+/// Answers every connection with `302 Found` to `location`.
+async fn redirecting(location: String) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).await;
+            let answer =
+                format!("HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\n\r\n");
+            let _ = socket.write_all(answer.as_bytes()).await;
+        }
+    });
+    port
+}
+
+#[tokio::test]
+async fn a_redirect_is_followed_on_loopback_to_its_final_status() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let broken = serving(500).await;
+        let fine = serving(200).await;
+        let to_broken = redirecting(format!("http://127.0.0.1:{broken}/app/")).await;
+        let error = check_stack(&format!("http://127.0.0.1:{to_broken}/"), None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("answered HTTP 500"), "{error}");
+        let to_fine = redirecting(format!("//127.0.0.1:{fine}/login")).await;
+        check_stack(&format!("http://127.0.0.1:{to_fine}/"), None)
+            .await
+            .unwrap();
+        let away = redirecting("https://example.com/".into()).await;
+        let error = check_stack(&format!("http://127.0.0.1:{away}/"), None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("off loopback"), "{error}");
+        let itself = redirecting("next".into()).await;
+        let error = check_stack(&format!("http://127.0.0.1:{itself}/a/b"), None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("redirects more than 5 times"), "{error}");
+    })
+    .await
+    .expect("bounded stack check");
+}
+
+#[test]
+fn a_relative_location_resolves_against_the_page() {
+    let base = "http://127.0.0.1:5173/app/page?x=1";
+    assert_eq!(
+        redirect_target(base, "/login"),
+        "http://127.0.0.1:5173/login"
+    );
+    assert_eq!(
+        redirect_target(base, "next"),
+        "http://127.0.0.1:5173/app/next"
+    );
+    assert_eq!(redirect_target(base, "//[::1]:80/"), "http://[::1]:80/");
+    assert_eq!(
+        redirect_target(base, "http://localhost:1/"),
+        "http://localhost:1/"
+    );
 }
 
 /// A loopback port nothing listens on.

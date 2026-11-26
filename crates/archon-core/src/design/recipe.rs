@@ -97,12 +97,36 @@ impl PreviewRecipe {
             }
         }
         debug_assert_eq!(names.len(), self.steps.len(), "step names are unique");
+        self.check_services_checkable()?;
         self.check_env()?;
         if let Some(notes) = &self.notes {
             bounded("notes", notes, MAX_NOTES)?;
             no_secret("notes", notes)?;
         }
         no_secret("source", &self.source)
+    }
+
+    /// With more than one service, each names a port or a readiness URL, so
+    /// Archon can tell a backend that never came up; a lone service is the page.
+    fn check_services_checkable(&self) -> Result<(), String> {
+        let services: Vec<&RecipeStep> = self
+            .steps
+            .iter()
+            .filter(|step| step.run == StepRun::Service)
+            .collect();
+        if services.len() < 2 {
+            return Ok(());
+        }
+        match services
+            .iter()
+            .find(|s| s.port.is_none() && s.ready.is_none())
+        {
+            Some(unchecked) => Err(format!(
+                "step {} is one of several services, so it needs a port or a ready URL Archon can check",
+                unchecked.name
+            )),
+            None => Ok(()),
+        }
     }
 
     fn check_env(&self) -> Result<(), String> {

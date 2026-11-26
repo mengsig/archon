@@ -62,6 +62,26 @@ fn a_single_server_recipe_needs_only_a_name_and_command() {
 }
 
 #[test]
+fn every_service_of_a_multi_service_recipe_names_a_check() {
+    let mut api = step("api", "scripts/start-api");
+    let web = step("web", "npm run dev");
+    let error = refused(&recipe(vec![api.clone(), web.clone()]));
+    assert!(
+        error.contains("step api is one of several services"),
+        "{error}"
+    );
+    api.port = Some(8000);
+    let error = refused(&recipe(vec![api.clone(), web.clone()]));
+    assert!(error.contains("step web"), "{error}");
+    let mut install = step("install", "npm ci");
+    install.run = StepRun::Once;
+    recipe(vec![install, web.clone()]).check().unwrap();
+    let mut web = web;
+    web.ready = Some("http://127.0.0.1:5173/".into());
+    recipe(vec![api, web]).check().unwrap();
+}
+
+#[test]
 fn malformed_recipes_are_refused_with_the_field() {
     assert!(refused(&recipe(vec![])).contains("1 to 12 steps"));
     let many = (0..13).map(|i| step(&format!("s{i}"), "true")).collect();
@@ -138,6 +158,8 @@ fn spelled_out_secrets_are_refused_and_never_echoed() {
         "PASSWORD=$(echo hunter2) ./serve",
         "DATABASE_URL=postgres://app:hu/nter2@127.0.0.1:5432/app ./serve",
         "./serve \"--api-key=hunter2\"",
+        "DB_PASSWORD=${DB_PASSWORD:-hunter2} ./serve",
+        "DB_PASSWORD=/hunter2 ./serve",
         "curl -uadmin:hunter2 http://127.0.0.1:8000/",
         "curl -suadmin:hunter2 http://127.0.0.1:8000/",
         "curl -su admin:hunter2 http://127.0.0.1:8000/",

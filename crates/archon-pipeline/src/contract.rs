@@ -484,8 +484,9 @@ process that owns its port; a port a container publishes does not count. Contain
 the backends, databases and other dependencies; when the frontend runs only in a container, \
 run its dev server on the host instead.\n\
 - Compose: export `COMPOSE_PROJECT_NAME=archon-<item>`, `<item>` being this item's id in \
-lowercase, and pass `-p \"$COMPOSE_PROJECT_NAME\"`. Never reuse a project name already running \
-(`docker compose ls`); where the repository's script or Compose file names its own project \
+lowercase, and pass `-p \"$COMPOSE_PROJECT_NAME\"`. Never reuse an existing project name: \
+`docker compose ls -a` lists stopped projects too, and if the name is already there, report it \
+by name with `message_orchestrator` kind `escalation` instead of starting; where the repository's script or Compose file names its own project \
 (a top-level `name:`, `-p`, a variable such as `*_PROJECT`), set it to the same name or start \
 the services another way. Never stop, restart or change any other Compose project or container \
 on the host. Archon tears this run's project down when the run ends.\n\
@@ -494,7 +495,8 @@ worktree, loads without a server error, and that each backend it calls answers. 
 stack will not come up, preview none of it: send `message_orchestrator` kind `escalation` \
 naming the step, its command and the error.\n\
 - Then call `design_preview` with the page's loopback URL (`http://127.0.0.1:<port>/`) and \
-`recipe`: the commands in start order, each service's port and readiness URL, and the names of \
+`recipe`: the commands in start order, each service's port or readiness URL (every service of \
+a stack with more than one needs one), and the names of \
 the env vars they need, never values or secrets, with a Compose project written as \
 `$COMPOSE_PROJECT_NAME`. Archon checks the page and each readiness URL or port, names what does \
 not answer, and saves the recipe for the repository only when all do. After a restart, update \

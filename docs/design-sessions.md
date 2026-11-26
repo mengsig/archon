@@ -120,7 +120,8 @@ and a frontend that only runs in a container is started on the host instead.
 **Compose.** A Compose stack gets a project of its own, `archon-<item>` (the
 item id in lowercase), set as `COMPOSE_PROJECT_NAME` and passed with `-p`. A
 project name a repository's script sets itself gets the same name. The agent
-never reuses a running project's name and never touches another Compose
+never reuses an existing project's name, stopped ones included (`docker
+compose ls -a`), reports a clash by name instead of starting, and never touches another Compose
 project or container on the host, such as your own. When the run ends,
 archond tears down the projects whose containers all run from the item's
 worktree; one with any container from elsewhere is left alone, and volumes are
@@ -132,8 +133,10 @@ answers. If part of the stack does not come up it previews none of it and
 tells the orchestrator which step failed, with its command and error. archond
 checks again before it shows anything: the process serving the port must run
 in the item's worktree under a recorded PID or its process group, the page
-must answer below HTTP 500, and every step of the recipe must answer at its
-`ready` URL, or accept connections on its `port`. Otherwise `design_preview`
+must answer below HTTP 500 after following at most five loopback redirects,
+and every service step of the recipe must answer at its `ready` URL, or
+accept connections on its `port`. When a recipe has more than one service,
+each must name one of them; a single dev server is checked through the page. Otherwise `design_preview`
 is refused with every failure named, for example "the preview stack is not
 up, so nothing was previewed or saved: step api: http://127.0.0.1:8000/health
 does not answer".

@@ -16,12 +16,14 @@ use tokio::net::TcpStream;
 use super::DesignService;
 use crate::context::DaemonContext;
 
-/// One check's connect, request and status line together. All run at once,
+/// One check's connects, requests and response heads, redirects included. All run at once,
 /// inside archon-mcp's 15 s `CALL_BUDGET` with the socket check; the agent's
 /// own check warms a dev server that compiles the page on its first request.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(8);
-/// A status line is far shorter; more is not an HTTP answer.
-const MAX_STATUS_LINE: usize = 1024;
+/// The most of a response head read for its status and `Location`.
+const MAX_HEAD: usize = 16 * 1024;
+/// Redirects followed before a check gives up.
+const MAX_REDIRECTS: usize = 5;
 
 /// The recipe saved for `repo`; a row that no longer parses is an error,
 /// so a broken record is seen rather than silently rediscovered over.
@@ -115,9 +117,10 @@ pub(crate) async fn check_stack(
     )))
 }
 
-/// An HTTP answer below 500 at the loopback `url`, or why there is none.
+/// An HTTP answer below 500 at the loopback `url`, after its loopback
+/// redirects, or why there is none.
 async fn answers(url: &str) -> Result<(), String> {
-    match tokio::time::timeout(CHECK_TIMEOUT, status_of(url)).await {
+    match tokio::time::timeout(CHECK_TIMEOUT, final_status(url)).await {
         Err(_) => Err(format!(
             "gave no answer within {}s (load it once yourself first if it compiles on demand)",
             CHECK_TIMEOUT.as_secs()
@@ -128,9 +131,45 @@ async fn answers(url: &str) -> Result<(), String> {
     }
 }
 
-async fn status_of(url: &str) -> Result<u16, String> {
-    let url = archon_core::design::validate_preview_url(url).map_err(|e| e.to_string())?;
-    let addresses = super::server_origin::endpoints(&url).map_err(|e| e.to_string())?;
+/// The status at the end of at most [`MAX_REDIRECTS`] redirects, each of
+/// which must stay on a loopback `http://` URL, so a 302 to a 500 is a 500.
+async fn final_status(url: &str) -> Result<u16, String> {
+    let mut url = archon_core::design::validate_preview_url(url).map_err(|e| e.to_string())?;
+    for _ in 0..=MAX_REDIRECTS {
+        let (status, location) = response_head(&url).await?;
+        let Some(location) = location.filter(|_| (300..400).contains(&status)) else {
+            return Ok(status);
+        };
+        let next = redirect_target(&url, &location);
+        url = archon_core::design::validate_preview_url(&next)
+            .map_err(|_| format!("redirects (HTTP {status}) off loopback http://"))?;
+    }
+    Err(format!("redirects more than {MAX_REDIRECTS} times"))
+}
+
+/// `location` resolved against the loopback `base`: absolute, scheme-relative,
+/// absolute-path or relative to the base's directory.
+fn redirect_target(base: &str, location: &str) -> String {
+    assert!(base.starts_with("http://"), "a checked loopback URL");
+    if location.contains("://") {
+        return location.to_owned();
+    }
+    if let Some(rest) = location.strip_prefix("//") {
+        return format!("http://{rest}");
+    }
+    let (authority, target) = split_target(base);
+    let origin = format!("http://{authority}");
+    if location.starts_with('/') {
+        return format!("{origin}{location}");
+    }
+    let path = target.split(['?', '#']).next().unwrap_or("/");
+    let directory = &path[..=path.rfind('/').unwrap_or(0)];
+    debug_assert!(directory.starts_with('/'), "an absolute directory");
+    format!("{origin}{directory}{location}")
+}
+
+/// The URL's authority and its origin-form request target.
+fn split_target(url: &str) -> (&str, String) {
     let rest = &url["http://".len()..];
     let split = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let (authority, target) = rest.split_at(split);
@@ -141,6 +180,13 @@ async fn status_of(url: &str) -> Result<u16, String> {
         t => t.to_owned(),
     };
     assert!(target.starts_with('/'), "an origin-form request target");
+    (authority, target)
+}
+
+/// One GET of the checked loopback `url`: its status and any `Location`.
+async fn response_head(url: &str) -> Result<(u16, Option<String>), String> {
+    let addresses = super::server_origin::endpoints(url).map_err(|e| e.to_string())?;
+    let (authority, target) = split_target(url);
     let mut stream = TcpStream::connect(addresses.as_slice())
         .await
         .map_err(|e| format!("does not answer ({e})"))?;
@@ -151,14 +197,23 @@ async fn status_of(url: &str) -> Result<u16, String> {
         .write_all(request.as_bytes())
         .await
         .map_err(|e| format!("closed the connection ({e})"))?;
-    status_line(&mut stream).await
+    let head = read_head(&mut stream).await?;
+    let mut lines = head.lines();
+    let status = status_code(lines.next().unwrap_or_default())?;
+    let location = lines
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.trim().eq_ignore_ascii_case("location"))
+        .map(|(_, value)| value.trim().to_owned());
+    Ok((status, location))
 }
 
-/// The status code of the response's first line.
-async fn status_line(stream: &mut TcpStream) -> Result<u16, String> {
-    let mut head = Vec::with_capacity(128);
-    let mut buf = [0u8; 256];
-    while !head.contains(&b'\n') {
+/// The response up to its blank line, or as much as [`MAX_HEAD`] allows.
+async fn read_head(stream: &mut TcpStream) -> Result<String, String> {
+    let mut head = Vec::with_capacity(512);
+    let mut buf = [0u8; 1024];
+    let not_http = |head: &[u8]| head.contains(&b'\n') && !head.starts_with(b"HTTP/");
+    while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.len() <= MAX_HEAD && !not_http(&head) {
         let read = stream
             .read(&mut buf)
             .await
@@ -167,12 +222,16 @@ async fn status_line(stream: &mut TcpStream) -> Result<u16, String> {
             break;
         }
         head.extend_from_slice(&buf[..read]);
-        if head.len() > MAX_STATUS_LINE {
-            break;
-        }
     }
-    let line = String::from_utf8_lossy(&head);
-    let line = line.lines().next().unwrap_or_default();
+    debug_assert!(
+        head.len() <= MAX_HEAD + buf.len(),
+        "reading stops past the limit"
+    );
+    Ok(String::from_utf8_lossy(&head).into_owned())
+}
+
+/// The status code of a response's first line.
+fn status_code(line: &str) -> Result<u16, String> {
     let mut words = line.split_whitespace();
     let version = words.next().unwrap_or_default();
     let code = words.next().and_then(|c| c.parse::<u16>().ok());

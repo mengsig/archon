@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (1.6.7)
+## Unreleased
 
 ### Added
 
@@ -16,8 +16,6 @@
   tool reads it; `archon settings --repo NAME` shows it and
   `--clear-design-recipe` forgets it. New requests: `design_recipe` and
   `clear_design_recipe`.
-
-## Unreleased
 
 ## 1.6.6
 

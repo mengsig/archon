@@ -21,6 +21,11 @@ const CSV: &str = "bay,row,tier\n01,02,82\n";
 /// An accept longer than a display string, matched whole.
 const OFFICE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
+/// An accept longer than the preview checks (4 KiB).
+fn huge_accept() -> String {
+    vec![".csv"; 1100].join(",")
+}
+
 /// Each control at a fixed place; the page reports what happened in its query string.
 const PAGE: &str = "<!doctype html><body style='margin:0;font:14px sans-serif'>
 <style>body>*{position:absolute;left:10px;width:200px;height:30px;margin:0}</style>
@@ -34,10 +39,13 @@ const PAGE: &str = "<!doctype html><body style='margin:0;font:14px sans-serif'>
 <div id=zone style='top:330px'><input type=file accept='image/*,OFFICE' hidden><span>Drop an image</span></div>
 <label for=f style='top:380px'>Choose a stowage file</label>
 <button id=two style='top:10px;left:260px'>Two alerts</button>
+<input id=deck type=file accept='image/*,OFFICE,application/vnd.oasis.opendocument.text' style='top:60px;left:260px'>
+<input id=huge type=file accept='HUGE' style='top:110px;left:260px'>
 <script>
 const report = (key, value) => history.replaceState({}, '', '?' + key + '=' + encodeURIComponent(value));
 const names = (files) => [...files].map((f) => f.name + ':' + f.size).join(',');
 f.onchange = () => report('files', names(f.files));
+deck.onchange = () => report('deck', names(deck.files));
 c.onclick = () => report('confirm', confirm('Delete the lashing plan?'));
 two.onclick = () => { alert('first'); alert('second'); report('alerts', 'both'); };
 s.onchange = () => report('select', s.value);
@@ -60,7 +68,12 @@ fn respond(path: &str) -> Response<Full<Bytes>> {
     let (kind, body, attachment) = match path {
         "/report" => ("text/csv", CSV.to_owned(), true),
         "/second" => ("text/html", "<body>Second page</body>".to_owned(), false),
-        _ => ("text/html", PAGE.replace("OFFICE", OFFICE), false),
+        _ => {
+            let page = PAGE
+                .replace("OFFICE", OFFICE)
+                .replace("HUGE", &huge_accept());
+            ("text/html", page, false)
+        }
     };
     let mut response = Response::builder().header("content-type", kind);
     if attachment {
@@ -238,6 +251,53 @@ async fn a_file_chooser_takes_the_operators_files_and_a_drop_delivers_them() {
     browser.drop_files(60.0, 290.0, &[file]).await.unwrap();
     wait_location(&browser, "/?dropped=BAPLIE.edi%3A11").await;
     assert_eq!(browser.containment_reason(), None);
+    browser.close().await.unwrap();
+}
+
+/// A long accept reaches the chooser and a drop whole, past the 200 characters
+/// page strings are cut to; one too long to check is refused, never cut.
+#[tokio::test]
+async fn a_long_accept_reaches_the_chooser_whole_and_an_oversized_one_is_refused() {
+    let Some(Fixture {
+        browser,
+        mut events,
+        root,
+    }) = open().await
+    else {
+        return;
+    };
+    let deck = root.path().join("plan.odt");
+    std::fs::write(&deck, "PK..").unwrap();
+    click(&browser, 300.0, 75.0).await;
+    let (node, accept) = next_event(&mut events, |event| match event {
+        BrowserEvent::FileChooser { node, accept, .. } => Some((node, accept)),
+        _ => None,
+    })
+    .await;
+    assert_eq!(
+        accept,
+        format!("image/*,{OFFICE},application/vnd.oasis.opendocument.text")
+    );
+    assert!(accept.find("opendocument").unwrap() > 200, "{accept}");
+    let on_input = browser.accept_at(300.0, 75.0).await.unwrap();
+    assert_eq!(on_input.as_deref(), Some(&*accept), "a drop reads the same");
+    browser.set_files(node, &[deck]).await.unwrap();
+    wait_location(&browser, "/?deck=plan.odt%3A4").await;
+
+    click(&browser, 300.0, 125.0).await;
+    let reason = next_event(&mut events, |event| match event {
+        BrowserEvent::FileChooserFailed { reason } => Some(reason),
+        BrowserEvent::FileChooser { accept, .. } => panic!("offered with {} bytes", accept.len()),
+        _ => None,
+    })
+    .await;
+    assert!(reason.contains("too many types"), "{reason}");
+    let refused = browser.accept_at(300.0, 125.0).await.unwrap_err();
+    assert!(
+        matches!(refused, BrowserError::AcceptTooLong { bytes: 5499, .. }),
+        "{refused:?}"
+    );
+    drop(events);
     browser.close().await.unwrap();
 }
 

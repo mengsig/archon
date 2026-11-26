@@ -89,7 +89,9 @@ and restart aetherd.
   file input in the drop zone holding it. `accept` extensions, compound ones
   such as `.tar.gz` included, match without regard to case; MIME types and
   `image/*` style wildcards match the type the operator's browser gives the
-  file, which `design_file_part` now carries as `media_type`.
+  file, which `design_file_part` now carries as `media_type`. An `accept` is
+  matched whole, past the 200 characters other page text is cut to; one over
+  4 KiB is refused rather than cut, and the chooser says why.
 - Answering a confirm, prompt or alert in the preview takes effect at once.
   The answer waited behind the click that opened the dialog, which waits for
   the answer, so it settled only at the 8-second input deadline. A dialog
@@ -98,6 +100,11 @@ and restart aetherd.
   has, instead of a red "Browser call timed out:
   Emulation.setTouchEmulationEnabled" after 15 seconds with the preview half
   resized.
+- The web app sends one preview size change per session at a time: a newer
+  choice waits for the answer and replaces any older one still waiting. A
+  refused change goes back to the size archond last confirmed and ends the
+  switching state, and a view asked for before a change was answered no
+  longer undoes it.
 - When the app opens a new tab, the preview's status line says the preview
   followed it and that **Back** returns, until the operator goes back or
   reloads. The design subscription has a new `new_tab {message}` event.

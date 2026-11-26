@@ -1670,6 +1670,85 @@ mod stream {
         task.abort();
     }
 
+    /// An accept as long as real document pickers write it, matched whole: the
+    /// type that starts past the 200 characters page strings are cut to still counts.
+    const LONG_ACCEPT: &str = "image/*,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.oasis.opendocument.text";
+
+    #[tokio::test]
+    async fn a_long_accept_is_matched_whole_for_the_chooser_and_a_drop() {
+        assert!(LONG_ACCEPT.find("opendocument").unwrap() > 200);
+        let f = Fixture::new().await;
+        let (mut rx, task) = subscribe(&f, 1);
+        until("initial feed", || {
+            f.factory.browser(0).calls(|c| c.screencasts_started == 1)
+        })
+        .await;
+        f.factory
+            .browser(0)
+            .open_file_chooser_accepting(7, false, LONG_ACCEPT);
+        let (chooser, offered) = loop {
+            if let DesignEvent::FileChooser { id, accept, .. } = event(&mut rx).await {
+                break (id, accept);
+            }
+        };
+        assert_eq!(offered, LONG_ACCEPT, "the operator's picker gets it whole");
+        let set = |transfer: &str| Request::DesignFileSet {
+            session: f.session.clone(),
+            chooser,
+            transfer: Some(transfer.into()),
+        };
+        stage_file(&f, "bad", "evil.exe").await;
+        let refused = f.operator(set("bad")).await.unwrap_err().to_string();
+        assert!(refused.contains("opendocument.text)."), "{refused}");
+        stage_file(&f, "deck", "plan.odt").await;
+        f.operator(set("deck"))
+            .await
+            .expect("a type past character 200 is accepted");
+
+        f.factory.browser(0).drop_on_input_accepting(LONG_ACCEPT);
+        let drop = |transfer: &str| Request::DesignFileDrop {
+            session: f.session.clone(),
+            transfer: transfer.into(),
+            x: 20.0,
+            y: 30.0,
+        };
+        stage_file(&f, "bad-drop", "evil.exe").await;
+        f.operator(drop("bad-drop"))
+            .await
+            .expect_err("the drop is held to the whole accept");
+        stage_file(&f, "deck-drop", "plan.odt").await;
+        f.operator(drop("deck-drop"))
+            .await
+            .expect("and the deck drops");
+        assert_eq!(f.factory.browser(0).calls(|c| c.drops.len()), 1);
+        task.abort();
+    }
+
+    /// A chooser the browser could not offer (its accept too long to check) is
+    /// reported to the operator, not dropped in silence.
+    #[tokio::test]
+    async fn a_chooser_that_could_not_be_offered_is_reported() {
+        let f = Fixture::new().await;
+        let (mut rx, task) = subscribe(&f, 1);
+        until("initial feed", || {
+            f.factory.browser(0).calls(|c| c.screencasts_started == 1)
+        })
+        .await;
+        f.factory.browser(0).fail_file_chooser(
+            "the file input accepts too many types to check (5499 bytes; at most 4096)",
+        );
+        let message = loop {
+            if let DesignEvent::Toast { message } = event(&mut rx).await {
+                break message;
+            }
+        };
+        assert_eq!(
+            message,
+            "The app's file chooser could not be offered: the file input accepts too many types to check (5499 bytes; at most 4096)."
+        );
+        task.abort();
+    }
+
     /// Asking for one file with two staged keeps the chooser open too.
     #[tokio::test]
     async fn too_many_files_for_the_chooser_keep_it_open() {

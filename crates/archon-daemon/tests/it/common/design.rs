@@ -101,6 +101,13 @@ impl FakeBrowser {
         });
     }
 
+    /// The page opened a file chooser the browser could not offer.
+    pub fn fail_file_chooser(&self, reason: &str) {
+        let _ = self.events.send(adb::BrowserEvent::FileChooserFailed {
+            reason: reason.into(),
+        });
+    }
+
     /// The page opened a new tab for `url`.
     pub fn open_new_tab(&self, url: &str) {
         let _ = self

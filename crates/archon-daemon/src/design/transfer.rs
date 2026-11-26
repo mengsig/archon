@@ -60,6 +60,9 @@ pub(crate) async fn report(rt: &Runtime, event: adb::BrowserEvent) -> Option<Des
                 size: bytes,
             }
         }
+        adb::BrowserEvent::FileChooserFailed { reason } => DesignEvent::Toast {
+            message: format!("The app's file chooser could not be offered: {reason}."),
+        },
         adb::BrowserEvent::DownloadFailed { name, reason } => DesignEvent::Toast {
             message: format!("The app's download of {name} was not kept: {reason}."),
         },

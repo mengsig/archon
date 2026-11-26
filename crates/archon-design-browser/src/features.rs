@@ -18,7 +18,7 @@ pub const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
 /// Most downloads under way at once; another is cancelled.
 const MAX_DOWNLOADS: usize = 8;
 const DROP_GROUP: &str = "archon-drop";
-/// Longest `accept` matched whole; real ones are far shorter.
+/// Longest `accept` checked; a longer one is refused. Real ones are far shorter.
 const MAX_ACCEPT_BYTES: usize = 4096;
 /// The file input a drop goes to: the target itself, a label's control, or the
 /// one file input in the nearest container below `body` that holds one.
@@ -257,7 +257,12 @@ impl Shared {
                     multiple,
                     accept,
                 }),
-                Err(error) => tracing::debug!(%error, "a file chooser was not offered"),
+                Err(error) => {
+                    tracing::warn!(%error, "a file chooser was not offered");
+                    sh.emit(BrowserEvent::FileChooserFailed {
+                        reason: error.to_string(),
+                    });
+                }
             }
         });
     }
@@ -421,7 +426,8 @@ fn node_attribute<'a>(described: &'a Value, name: &str) -> Option<&'a str> {
 }
 
 /// An input's `accept` for matching: its types without control characters or
-/// blanks, and past `MAX_ACCEPT_BYTES` only the whole types that fit, so the rest are refused.
+/// blanks. One longer than `MAX_ACCEPT_BYTES` is refused whole: a cut list would refuse
+/// the types it lost, and no list would take every file.
 fn accept_value(raw: &str) -> Result<String, BrowserError> {
     let clean: String = raw.chars().filter(|c| !c.is_control()).collect();
     let types: Vec<&str> = clean
@@ -429,38 +435,21 @@ fn accept_value(raw: &str) -> Result<String, BrowserError> {
         .map(str::trim)
         .filter(|t| !t.is_empty())
         .collect();
-    let mut kept = String::new();
-    let mut count = 0;
-    for kind in &types {
-        let comma = usize::from(count > 0);
-        if kept.len() + comma + kind.len() > MAX_ACCEPT_BYTES {
-            break;
-        }
-        if comma == 1 {
-            kept.push(',');
-        }
-        kept.push_str(kind);
-        count += 1;
+    let kept = types.join(",");
+    if kept.len() > MAX_ACCEPT_BYTES {
+        return Err(BrowserError::AcceptTooLong {
+            bytes: kept.len(),
+            max: MAX_ACCEPT_BYTES,
+        });
     }
-    if count < types.len() {
-        tracing::warn!(
-            bytes = clean.len(),
-            kept = count,
-            "a file input's accept was cut to the types that fit"
-        );
-    }
-    // Keeping no type would accept every file, so a page whose first type is that long gets none.
-    if count == 0 && !types.is_empty() {
-        return Err(BrowserError::Protocol(format!(
-            "the file input's accept is too long to check ({} bytes)",
-            clean.len()
-        )));
-    }
-    assert!(kept.len() <= MAX_ACCEPT_BYTES, "a kept accept fits the cap");
     assert_eq!(
         kept.is_empty(),
         types.is_empty(),
         "a page's types are never all dropped"
+    );
+    assert!(
+        !kept.starts_with(',') && !kept.ends_with(','),
+        "no blank type is kept"
     );
     Ok(kept)
 }
@@ -579,21 +568,36 @@ mod tests {
         assert_eq!(value(OFFICE), OFFICE);
         assert_eq!(value(".csv,\n.txt"), ".csv,.txt");
         assert_eq!(value(" , "), "", "no types is no filter, as in the browser");
-        let long = vec![".csv"; 2000].join(",");
-        let cut = value(&long);
-        assert!(cut.len() <= MAX_ACCEPT_BYTES && cut.split(',').all(|t| t == ".csv"));
+        let padded = format!("{},.pdf, ", " ".repeat(MAX_ACCEPT_BYTES));
+        assert_eq!(value(&padded), ".pdf", "blanks are not types");
+        let full = format!(".{}", "x".repeat(MAX_ACCEPT_BYTES - 1));
+        assert_eq!(
+            value(&full).len(),
+            MAX_ACCEPT_BYTES,
+            "the cap itself is kept"
+        );
     }
 
-    /// Blanks and over-long types past the cap never leave a filter that takes every file.
+    /// Past the cap nothing is cut or opened: the accept is refused, for the chooser and a drop.
     #[test]
-    fn an_oversized_accept_never_opens_the_filter() {
-        let padded = format!("{},.pdf", " ".repeat(MAX_ACCEPT_BYTES));
-        assert_eq!(accept_value(&padded).unwrap(), ".pdf");
-        let one = format!(",{}", "x".repeat(MAX_ACCEPT_BYTES + 10));
-        let refused = accept_value(&one).unwrap_err();
-        assert!(refused.to_string().contains("too long"), "{refused}");
-        let long = json!({"result": {"type": "string", "value": one}});
-        assert!(governing_accept(&long).is_err(), "the drop is withheld");
+    fn an_oversized_accept_is_refused_not_cut() {
+        let long = vec![".csv"; 2000].join(",");
+        let refused = accept_value(&long).unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                BrowserError::AcceptTooLong {
+                    bytes: 9999,
+                    max: MAX_ACCEPT_BYTES
+                }
+            ),
+            "{refused:?}"
+        );
+        assert!(refused.to_string().contains("too many types"), "{refused}");
+        let one = format!(",{}", "x".repeat(MAX_ACCEPT_BYTES + 1));
+        assert!(accept_value(&one).is_err(), "one type over the cap");
+        let drop = json!({"result": {"type": "string", "value": long}});
+        assert!(governing_accept(&drop).is_err(), "the drop is withheld");
     }
 
     /// A drop lookup the page made throw must not skip the accept check.

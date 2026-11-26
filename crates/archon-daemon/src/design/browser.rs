@@ -1247,6 +1247,7 @@ async fn report_browser_event(
             let _ = rt.events.send(DesignEvent::Toast { message });
         }
         adb::BrowserEvent::FileChooser { .. }
+        | adb::BrowserEvent::FileChooserFailed { .. }
         | adb::BrowserEvent::Downloaded { .. }
         | adb::BrowserEvent::DownloadFailed { .. }
         | adb::BrowserEvent::Picker(_)

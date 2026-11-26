@@ -19,7 +19,7 @@ a step stops. The reference, with the threat model, is
 ## Before you start
 
 - archon set up (`archon setup`); the wizard runs it for you if it was not.
-- Aether 1.4.3 or later, the release Archon requires: the Aether that
+- Aether 1.4.4 or later, the release Archon requires: the Aether that
   Archon uses (your own in shared mode, Archon's in dedicated mode) mounts
   archond. Setup checks that this Aether can mount it; one that cannot is
   refused with the version it needs. Nothing falls back to a separate Archon
@@ -140,7 +140,7 @@ works through the mount alone.
 
 | What it says | Do |
 | --- | --- |
-| needs Aether 1.4.3 or later | Upgrade Aether (and restart aetherd), then run it again. |
+| needs Aether 1.4.4 or later | Upgrade Aether (and restart aetherd), then run it again. |
 | Is aetherd running? | Start Aether's daemon, then run it again. |
 | … through Tailscale Funnel … Aether refuses | `tailscale funnel reset` (or turn off that port's Funnel), then run it again. |
 | Tailscale is not installed | Install it from https://tailscale.com/download. |

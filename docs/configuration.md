@@ -947,6 +947,38 @@ to interrupt your work. `archon queue caps` changes saved operator caps without 
 restart; these overrides survive daemon restarts until changed or reset.
 
 
+### Antigravity (Google models)
+
+With Aether 1.4.4 or later and a signed-in `agy` CLI, Aether lists the
+`antigravity` provider: `antigravity/gemini-4-hydrogen`, `gemini-4-neon`,
+`gemini-4-carbon`, `gemini-4-argon` and `gemini-3.8-flash`. Aether reports no
+tier or dollar cost for them, so Archon places them itself: `gemini-3.8-flash`
+is `fast`, Carbon and Argon are `balanced`, Neon and Hydrogen are `strong`.
+Effort picks agy's `-low` to `-xhigh` variant, clamped by Aether to what
+`agy models` lists.
+
+Antigravity is opt-in, because its subscription is small. Archon never picks
+one of its models on its own: not for a tier-only choice, a default plan, a
+reviewer or worker default, a fallback, or learned routing, even after an item
+ran there. It runs one only when:
+
+- a `model_plan` entry names the model; or
+- `[models] allow` names the model, which lets tier choices use it, a tier
+  entry naming `provider = "antigravity"` included. Among
+  equal providers it still comes last, and `provider_weights` gives it at most
+  weight 1 unless the table names it.
+
+`[models] deny` refuses it as any other model. Aether reports no quota
+headroom for it, so routing keeps its plain weight.
+
+agy also serves other vendors' models, such as `antigravity/claude-opus-5-5`
+(`frontier`), `antigravity/claude-sonnet-5-5` (`strong`) and
+`antigravity/gpt-oss-120b` (`balanced`). Archon's own picks use these secondary
+routes only while Aether lists no tiered model on the vendor's own provider
+(`claude-code` or `anthropic` for Claude, `codex` or `openai` for GPT), as on a
+machine signed in to Antigravity alone; otherwise the original provider serves
+them.
+
 ## Saved operator settings
 
 `archon settings [--repo NAME]` shows the stored overlay and each effective

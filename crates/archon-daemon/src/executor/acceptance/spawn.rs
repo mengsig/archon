@@ -180,7 +180,10 @@ pub(in crate::executor) fn select_model(
     let policy = RepoEnv::new(repo)?.resolved_policy(ctx);
     let vision = vision_models(store)?;
     let catalog = store.model_catalog();
-    let judges = |m: &ModelRef| policy.permits_model(m) && (!visual || vision.contains(m));
+    let pin_id = pin.as_ref().and_then(|m| catalog.check(m).ok());
+    let judges = |m: &ModelRef| {
+        may_judge(&catalog, &policy, pin_id.as_ref(), m) && (!visual || vision.contains(m))
+    };
     let permitted = judge_pool(&catalog, judges, &builders);
     let strict = ctx.config.review.independent_acceptance;
     let model = if live {
@@ -205,6 +208,18 @@ pub(in crate::executor) fn select_model(
     assert!(policy.permits_model(&model));
     set_judge(plans, &model, policy.max_effort);
     Ok(())
+}
+
+/// Whether `model` may judge under `policy`: an opt-in provider's model
+/// only when the policy names it or the item's plan pins it (`pin`).
+fn may_judge(
+    catalog: &archon_core::model_tier::ModelCatalog,
+    policy: &archon_core::policy::ModelPolicy,
+    pin: Option<&ModelRef>,
+    model: &ModelRef,
+) -> bool {
+    debug_assert!(pin.is_none_or(|p| catalog.check(p).is_ok_and(|id| id == *p)));
+    policy.permits_model(model) && (pin == Some(model) || catalog.picks_unasked(model, policy))
 }
 
 fn set_judge(plans: &mut [SpawnPlan], model: &ModelRef, cap: Option<archon_core::model::Effort>) {
@@ -793,6 +808,32 @@ mod tests {
         let owed = results_owed(&[&requirement], Some(&[unrecorded])).unwrap();
         assert!(!owed.contains("deviceScaleFactor"), "{owed}");
         assert!(!owed.contains("\"capture\""), "{owed}");
+    }
+
+    #[test]
+    fn an_antigravity_judge_needs_a_pin_or_the_allowlist() {
+        let catalog = listed(&["codex/build", "antigravity/gemini-4-neon"]);
+        let neon: ModelRef = "antigravity/gemini-4-neon".parse().unwrap();
+        let open = archon_core::policy::ModelPolicy::default();
+        assert!(!may_judge(&catalog, &open, None, &neon), "never unasked");
+        assert!(
+            may_judge(&catalog, &open, Some(&neon), &neon),
+            "the plan pins it"
+        );
+        let codex: ModelRef = "codex/build".parse().unwrap();
+        assert!(may_judge(&catalog, &open, Some(&neon), &codex));
+        let named =
+            archon_core::policy::ModelPolicy::from_lists(std::slice::from_ref(&neon), &[], None);
+        assert!(
+            may_judge(&catalog, &named, None, &neon),
+            "the allowlist opts it in"
+        );
+        let denied =
+            archon_core::policy::ModelPolicy::from_lists(&[], std::slice::from_ref(&neon), None);
+        assert!(
+            !may_judge(&catalog, &denied, Some(&neon), &neon),
+            "deny wins over a pin"
+        );
     }
 
     #[test]

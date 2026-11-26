@@ -21,7 +21,7 @@ pub(crate) const MAX_PART_BYTES: usize = 512 * 1024;
 /// Most transfers one session stages.
 const MAX_TRANSFERS: usize = 64;
 /// Downloads offered at once; older ones are forgotten.
-const MAX_DOWNLOADS: usize = 16;
+const MAX_DOWNLOADS: usize = adb::KEPT_DOWNLOADS;
 
 const MIB: u64 = 1024 * 1024;
 

@@ -11,6 +11,27 @@ pub fn clean(s: &str) -> String {
         .collect()
 }
 
+/// Page text meant to be read whole, such as a dialog's: line breaks and tabs
+/// stay, other control characters go, and at most `max_bytes` are kept.
+/// Returns the text and whether any of it was cut.
+pub fn page_text(s: &str, max_bytes: usize) -> (String, bool) {
+    assert!(max_bytes >= 4, "a cap holds at least one character");
+    let mut text = String::new();
+    let mut cut = false;
+    for c in s
+        .chars()
+        .filter(|c| matches!(c, '\n' | '\t') || !c.is_control())
+    {
+        if text.len() + c.len_utf8() > max_bytes {
+            cut = true;
+            break;
+        }
+        text.push(c);
+    }
+    assert!(text.len() <= max_bytes, "the text fits its cap");
+    (text, cut)
+}
+
 /// Longest file name kept, in bytes.
 pub const MAX_FILE_NAME_BYTES: usize = 120;
 
@@ -64,5 +85,14 @@ mod tests {
         let long = "é".repeat(500);
         assert_eq!(clean(&long).chars().count(), 200);
         assert_eq!(clean("plain text"), "plain text");
+    }
+
+    #[test]
+    fn page_text_keeps_lines_and_says_when_it_cuts() {
+        assert_eq!(page_text("a\nb\tc\u{7}", 64), ("a\nb\tc".into(), false));
+        let long = "é".repeat(300);
+        let (kept, cut) = page_text(&long, 401);
+        assert!(cut);
+        assert_eq!(kept.len(), 400, "cut on a character boundary");
     }
 }

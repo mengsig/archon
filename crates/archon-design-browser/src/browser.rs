@@ -27,13 +27,19 @@ use crate::launch::{
 use crate::origin::parse_url;
 use crate::proxy::{Policy, Proxy};
 use crate::relay::{FrameRelay, RelayShared};
-use crate::sanitize::clean;
+use crate::sanitize::{clean, page_text};
 use crate::{
     BrowserError, BrowserEvent, ClipRect, LaunchSpec, MAX_IMAGE_BYTES, Picture, PictureCapture,
     Viewport, jpeg_dims,
 };
 
 pub(crate) const CALL_TIMEOUT: Duration = Duration::from_secs(15);
+/// Longest dialog message shown.
+const MAX_DIALOG_MESSAGE_BYTES: usize = 8 * 1024;
+/// Longest prompt answer, suggested or sent: the daemon's answer cap.
+pub(crate) const MAX_DIALOG_ANSWER_BYTES: usize = 16 * 1024;
+/// Said under a prompt whose suggested answer was cut to fit.
+const PROMPT_CUT_NOTE: &str = "\n\n(The app's suggested answer is longer than 16 KiB; only its start is shown, so check it before pressing OK.)";
 /// Stream frames: four a second at rest, ten (the relay's most) while the
 /// operator scrolls or types, so a scroll is followed and its end shown soon.
 const IDLE_FRAME_INTERVAL: Duration = Duration::from_millis(250);
@@ -121,6 +127,7 @@ pub struct Browser {
     pid: Option<u32>,
     started_at: Option<u64>,
     event_task: JoinHandle<()>,
+    download_task: JoinHandle<()>,
     proxy: Option<Proxy>,
 }
 
@@ -128,6 +135,7 @@ impl Drop for Browser {
     fn drop(&mut self) {
         self.proxy.take();
         self.event_task.abort();
+        self.download_task.abort();
         self.sh.relay.close();
         self.sh.cdp.abort();
         if let (Some(pid), Some(_)) = (self.pid, self.child.as_ref()) {
@@ -452,10 +460,6 @@ impl Shared {
             }
             return true;
         }
-        if ev.session_id.is_none() && ev.method.starts_with("Browser.download") {
-            self.on_download(&ev.method, &ev.params);
-            return false;
-        }
         if ev.session_id.as_deref() != Some(self.session.as_str()) {
             return false;
         }
@@ -508,12 +512,13 @@ impl Shared {
             .is_some_and(|url| self.allows_navigation(url))
             && self.check_containment().is_ok();
         let (message, default_prompt) = if from_preview {
-            let message = clean(params["message"].as_str().unwrap_or_default());
-            let prompt = params["defaultPrompt"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .map(clean);
-            (message, prompt)
+            let text = |key: &str, cap| page_text(params[key].as_str().unwrap_or_default(), cap);
+            let (mut message, _) = text("message", MAX_DIALOG_MESSAGE_BYTES);
+            let (prompt, prompt_cut) = text("defaultPrompt", MAX_DIALOG_ANSWER_BYTES);
+            if prompt_cut {
+                message.push_str(PROMPT_CUT_NOTE);
+            }
+            (message, (!prompt.is_empty()).then_some(prompt))
         } else {
             ("The preview opened a dialog.".into(), None)
         };
@@ -571,7 +576,7 @@ impl Shared {
         Ok(())
     }
 
-    fn stop_for_policy(&self, reason: &'static str) {
+    pub(crate) fn stop_for_policy(&self, reason: &'static str) {
         if let Some(guard) = &self.containment {
             guard.stop(reason);
         }
@@ -958,6 +963,7 @@ impl Browser {
         let cdp = Cdp::new(reader, writer, MAX_FRAME);
         let mut rx = cdp.subscribe();
         let documents = cdp.subscribe_documents();
+        let downloads = cdp.subscribe_downloads();
         let (target_id, session) = attach_page(&cdp, &mut rx).await?;
         let (events, _) = broadcast::channel(256);
         let relay = Arc::new(RelayShared::default());
@@ -1000,6 +1006,7 @@ impl Browser {
             }),
         });
         let event_task = tokio::spawn(handle_events(sh.clone(), rx, documents));
+        let download_task = tokio::spawn(crate::features::handle_downloads(sh.clone(), downloads));
         let b = Browser {
             sh,
             child: None,
@@ -1007,6 +1014,7 @@ impl Browser {
             pid: None,
             started_at: None,
             event_task,
+            download_task,
             proxy: None,
         };
         if let Some(v) = viewport {
@@ -1275,6 +1283,7 @@ impl Browser {
             let _ = tokio::time::timeout(Duration::from_secs(5), c.wait()).await;
         }
         self.event_task.abort();
+        self.download_task.abort();
         self.sh.cdp.abort();
         if let Some(p) = self.profile.clone() {
             let mut last = None;
@@ -2082,5 +2091,44 @@ mod capture_tests {
         }
         assert!(b.pid().is_none() && b.started_at().is_none());
         let _ = b.events();
+    }
+}
+
+#[cfg(test)]
+mod dialog_tests {
+    use super::*;
+    use crate::testutil::fake_browser;
+
+    fn prompt(b: &Browser, default: &str) -> (String, Option<String>) {
+        let mut events = b.events();
+        b.sh.emit_dialog(&json!({
+            "type": "prompt",
+            "url": "http://127.0.0.1:1/",
+            "message": "Edit the plan:\nbay 01",
+            "defaultPrompt": default,
+        }));
+        match events.try_recv() {
+            Ok(BrowserEvent::Dialog {
+                message,
+                default_prompt,
+                ..
+            }) => (message, default_prompt),
+            other => panic!("a dialog event, got {other:?}"),
+        }
+    }
+
+    /// Accepting a prompt must not overwrite the app's value with an altered one.
+    #[tokio::test]
+    async fn a_prompt_keeps_its_suggested_answer_whole_or_says_it_was_cut() {
+        let (b, _log) = fake_browser(|_, _| None).await;
+        let value = format!("{}\n\tend", "x".repeat(500));
+        let (message, default) = prompt(&b, &value);
+        assert_eq!(message, "Edit the plan:\nbay 01");
+        assert_eq!(default.as_deref(), Some(value.as_str()));
+
+        let huge = "y".repeat(MAX_DIALOG_ANSWER_BYTES + 1);
+        let (message, default) = prompt(&b, &huge);
+        assert!(message.ends_with(PROMPT_CUT_NOTE), "{message}");
+        assert_eq!(default.map(|d| d.len()), Some(MAX_DIALOG_ANSWER_BYTES));
     }
 }

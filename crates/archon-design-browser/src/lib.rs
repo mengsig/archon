@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 pub use bridge::{PickerOption, PickerRequest};
 pub use browser::Browser;
 pub use error::BrowserError;
-pub use features::MAX_DOWNLOAD_BYTES;
+pub use features::{KEPT_DOWNLOADS, MAX_DOWNLOAD_BYTES};
 pub use launch::{
     LaunchSpec, doctor_line, find_browser, kill_if_matches, launch_env, process_start_time,
     sweep_profiles,

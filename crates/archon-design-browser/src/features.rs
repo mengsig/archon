@@ -2,7 +2,7 @@
 //! operator instead: file choosers and drops, downloads, native pickers,
 //! copied text, new tabs, dialogs and going back.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -17,11 +17,37 @@ use crate::{Browser, BrowserError, BrowserEvent};
 pub const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
 /// Most downloads under way at once; another is cancelled.
 const MAX_DOWNLOADS: usize = 8;
+/// Finished downloads kept on disk; older ones are deleted.
+pub const KEPT_DOWNLOADS: usize = 16;
 
-/// Downloads Chromium is writing, by its GUID.
+/// Downloads Chromium is writing, by its GUID, and the finished ones kept.
 #[derive(Debug, Default)]
 pub(crate) struct Downloads {
     names: HashMap<String, String>,
+    kept: VecDeque<PathBuf>,
+}
+
+/// Download events in order. A lost one could let a download escape its
+/// limits, so losing any stops the preview.
+pub(crate) async fn handle_downloads(
+    sh: Arc<Shared>,
+    mut events: tokio::sync::broadcast::Receiver<crate::cdp::CdpEvent>,
+) {
+    use tokio::sync::broadcast::error::RecvError;
+    loop {
+        match events.recv().await {
+            Ok(event) => sh.on_download(&event.method, &event.params),
+            Err(RecvError::Lagged(lost)) => {
+                tracing::warn!(
+                    lost,
+                    "the preview sent download events faster than they were read"
+                );
+                sh.stop_for_policy("lost download events");
+                return;
+            }
+            Err(RecvError::Closed) => return,
+        }
+    }
 }
 
 fn valid_guid(guid: &str) -> bool {
@@ -104,6 +130,7 @@ impl Shared {
         assert!(path.starts_with(dir), "a download stays in its directory");
         match std::fs::metadata(&path) {
             Ok(meta) if meta.is_file() && meta.len() <= MAX_DOWNLOAD_BYTES => {
+                self.keep_download(path.clone());
                 BrowserEvent::Downloaded {
                     name,
                     path,
@@ -118,6 +145,32 @@ impl Shared {
                 name,
                 reason: format!("it could not be read ({})", error.kind()),
             },
+        }
+    }
+
+    /// Keep a finished download on disk, deleting the oldest past the cap, so
+    /// the bound holds whether or not anyone hears of the download.
+    fn keep_download(&self, path: PathBuf) {
+        let oldest = {
+            let mut downloads = self.downloads.lock().unwrap();
+            downloads.kept.push_back(path);
+            let oldest = (downloads.kept.len() > KEPT_DOWNLOADS)
+                .then(|| downloads.kept.pop_front())
+                .flatten();
+            assert!(
+                downloads.kept.len() <= KEPT_DOWNLOADS,
+                "kept downloads stay bounded"
+            );
+            oldest
+        };
+        let Some(oldest) = oldest else {
+            return;
+        };
+        match std::fs::remove_file(&oldest) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            // The profile, and the file with it, is still removed when the preview stops.
+            Err(error) => tracing::warn!(%error, "an old download was not deleted"),
         }
     }
 
@@ -357,6 +410,22 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         false
+    }
+
+    /// Finished downloads stay bounded on disk even when nobody hears of them.
+    #[tokio::test]
+    async fn only_the_latest_finished_downloads_stay_on_disk() {
+        let (b, _log) = fake_browser(|_, _| None).await;
+        let dir = tempfile::tempdir().unwrap();
+        let paths: Vec<_> = (0..=KEPT_DOWNLOADS)
+            .map(|i| dir.path().join(format!("g{i}")))
+            .collect();
+        for path in &paths {
+            std::fs::write(path, b"x").unwrap();
+            b.sh.keep_download(path.clone());
+        }
+        assert!(!paths[0].exists(), "the oldest is deleted");
+        assert!(paths[1..].iter().all(|p| p.exists()), "the rest are kept");
     }
 
     /// A page starting more downloads than are tracked cannot slip one past

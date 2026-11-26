@@ -472,15 +472,18 @@ once only.
 | "A design session is running. Only the operator's devices see the live preview." | You are on an observer device. |
 | "That file is too big for the preview (64 MiB at most)." / "Those files are too big for the preview (256 MiB total at most)." / "Choose at most 32 files for the preview." | The chosen files are over a limit; nothing was sent. See Limits. |
 | "this preview session already holds 240 MiB of files; it takes 256 MiB at most" | Files sent earlier in this session count too. They are freed when the preview restarts. |
-| "The app's download of report.csv was not kept: it is larger than 64 MiB" | Chromium stopped the download. Smaller downloads are offered. |
+| "The app's download of report.csv was not kept: it is larger than 64 MiB." | Chromium stopped the download. Smaller downloads are offered. |
 | "The app opened a new tab. It is shown here; press Back to return." | A link or `window.open` meant for a new tab opened in the preview. |
 | "There is no earlier page in the preview." | **Back** has nowhere to go. |
 | "worktree moved after Finish: expected 3f9c2a1; restore it and complete again" | A commit was made after you confirmed. The agent must reset to the finish commit and complete again. |
 | "choose live when creating the item" | `proposal` cannot change to or from `live` later. |
 | "design sessions turned off" | `[design] enabled` is false; the stage fails. |
 
-`alert`, `confirm` and `prompt` dialogs show their text, a prompt's suggested
-answer and their action buttons in Archon, and wait for your answer. A dialog
+`alert`, `confirm` and `prompt` dialogs show their text with its line breaks,
+a prompt's suggested answer and their action buttons in Archon, and wait for
+your answer. A suggested answer longer than 16 KiB, the most an answer can
+be, shows only its start, and the dialog says so; check it before pressing
+OK. A dialog
 from a page outside the preview's origin shows "The preview opened a dialog."
 without its text.
 
@@ -512,7 +515,11 @@ without its text.
   or the session ends.
   A file name keeps at most 120 bytes.
 - Downloads: at most 64 MiB each and 8 under way at once; others are
-  cancelled. archond keeps the last 16 for your device and deletes older ones.
+  cancelled. The last 16 are kept for your device and older ones deleted.
+  A page that sends download events faster than archond reads them ends the
+  preview, so none escapes these limits.
+- Dialogs: a message shows up to 8 KiB, a prompt's suggested answer and your
+  answer up to 16 KiB.
 - A native dropdown lists at most 500 options; copied text keeps its first
   65,536 characters.
 

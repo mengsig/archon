@@ -470,12 +470,20 @@ export function mountDesign(view, ctx) {
     } catch (error) { refuse(error); }
   }
 
+  // A text input drops line breaks, so a multi-line suggested answer gets a text area.
+  function promptInput(value) {
+    const multiline = value.includes('\n');
+    const input = h(multiline ? 'textarea' : 'input', { class: 'input', 'aria-label': 'Answer', ...(multiline ? { rows: 4 } : { type: 'text' }) });
+    input.value = value;
+    return input;
+  }
+
   let dialogOpen = false;
   function showDialog() {
     if (dialogOpen || !state.dialog) return;
     dialogOpen = true;
     const d = state.dialog;
-    const input = d.kind === 'prompt' ? h('input', { class: 'input', type: 'text', value: d.defaultPrompt ?? '', 'aria-label': 'Answer' }) : null;
+    const input = d.kind === 'prompt' ? promptInput(d.defaultPrompt ?? '') : null;
     let accepted = false;
     const answer = (accept) => { accepted = true; ctx.design.dialogAnswer(session(), accept, accept && input ? input.value : null).catch(refuse); sheet.close(); };
     const content = h('div', { class: 'confirm' }, h('p', { class: 'confirm-message', text: d.message }), input,

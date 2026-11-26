@@ -11,6 +11,7 @@ mod files;
 mod finish;
 mod iterations;
 mod notes;
+mod recipe;
 mod recovery;
 mod relay;
 mod reports;
@@ -45,6 +46,7 @@ pub(crate) use self::delivery::sweep;
 pub use self::recovery::recover;
 pub use self::relay::stream;
 pub(crate) use self::requests::handle;
+pub(crate) use self::recipe::{clear_for as clear_recipe, load as load_recipe};
 
 use crate::context::DaemonContext;
 use crate::worktree::design_git::{self, NoteGit};

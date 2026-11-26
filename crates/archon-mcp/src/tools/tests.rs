@@ -1751,6 +1751,7 @@ fn design_preview_maps_to_its_request() {
         request,
         Request::DesignPreview {
             url: "http://localhost:3000/x".into(),
+            recipe: None,
             caller: None
         }
     );

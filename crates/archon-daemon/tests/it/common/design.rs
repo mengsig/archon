@@ -354,6 +354,10 @@ pub struct FakeFactory {
     pub fail_initial_navigation: Mutex<bool>,
     /// Every launch takes this long.
     pub delay: Mutex<std::time::Duration>,
+    /// The stack check refuses every preview with this reason.
+    pub stack_down: Mutex<Option<String>>,
+    /// The recipe each stack check was given, in order.
+    pub checked_recipes: Mutex<Vec<Option<archon_core::design::recipe::PreviewRecipe>>>,
 }
 
 impl FakeFactory {
@@ -398,6 +402,18 @@ impl BrowserFactory for FakeFactory {
         _url: &str,
     ) -> Result<Arc<dyn adb::UpstreamGuard>, archon_core::error::ArchonError> {
         Ok(Arc::new(FixtureServer))
+    }
+
+    async fn check_stack(
+        &self,
+        _url: &str,
+        recipe: Option<&archon_core::design::recipe::PreviewRecipe>,
+    ) -> Result<(), archon_core::error::ArchonError> {
+        self.checked_recipes.lock().unwrap().push(recipe.cloned());
+        match self.stack_down.lock().unwrap().clone() {
+            Some(reason) => Err(archon_core::error::ArchonError::Invalid(reason)),
+            None => Ok(()),
+        }
     }
 
     fn binary(&self, _configured: Option<&Path>) -> Result<PathBuf, adb::BrowserError> {
@@ -544,6 +560,7 @@ impl Fixture {
         fixture
             .as_agent(Request::DesignPreview {
                 url: PREVIEW.into(),
+                recipe: None,
                 caller: Some(fixture.agent.clone()),
             })
             .await

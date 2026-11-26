@@ -6,22 +6,41 @@ use archon_core::protocol::{Reply, RepoRef, Request};
 use archon_core::settings::{OperatorSettings, SettingsView};
 use std::process::ExitCode;
 
-pub async fn run(
-    repo: Option<String>,
-    set: Option<String>,
-    reset: bool,
-    json: bool,
-) -> anyhow::Result<ExitCode> {
+/// What `archon settings` changes, if anything; clap lets only one through.
+pub enum Change {
+    Show,
+    Set(String),
+    Reset,
+    ClearDesignRecipe,
+}
+
+impl Change {
+    pub fn of(set: Option<String>, reset: bool, clear_design_recipe: bool) -> Self {
+        match (set, reset, clear_design_recipe) {
+            (Some(raw), false, false) => Self::Set(raw),
+            (None, true, false) => Self::Reset,
+            (None, false, true) => Self::ClearDesignRecipe,
+            (None, false, false) => Self::Show,
+            _ => unreachable!("clap allows one settings change at a time"),
+        }
+    }
+}
+
+pub async fn run(repo: Option<String>, change: Change, json: bool) -> anyhow::Result<ExitCode> {
     let repo = repo.map(RepoRef);
-    let request = match (set, reset) {
-        (Some(raw), false) => Request::SetSettings {
+    let reset = matches!(change, Change::Reset);
+    let cleared = matches!(change, Change::ClearDesignRecipe);
+    let request = match change {
+        Change::Set(raw) => Request::SetSettings {
             legacy_proposals: false,
             repo,
             settings: parse_settings(&raw)?,
         },
-        (None, true) => Request::ResetSettings { repo },
-        (None, false) => Request::Settings { repo },
-        (Some(_), true) => unreachable!("clap excludes set with reset"),
+        Change::Reset => Request::ResetSettings { repo },
+        Change::ClearDesignRecipe => Request::ClearDesignRecipe {
+            repo: repo.context("--clear-design-recipe names a repository with --repo")?,
+        },
+        Change::Show => Request::Settings { repo },
     };
     // Like every write, a change starts archond; reading the settings never does.
     let client = match request {
@@ -32,7 +51,12 @@ pub async fn run(
         Reply::Settings(view) => view,
         other => return Err(unexpected(&other, "settings")),
     };
-    emit(json, || to_json(&view), &describe(&view, reset))?;
+    let mut text = describe(&view, reset);
+    if cleared {
+        let scope = view.repo.as_deref().unwrap_or_default();
+        text = format!("Cleared the saved design preview recipe of {scope}; the next live session discovers the stack again.\n{text}");
+    }
+    emit(json, || to_json(&view), &text)?;
     Ok(ExitCode::SUCCESS)
 }
 

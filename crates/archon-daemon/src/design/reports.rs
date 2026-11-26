@@ -116,16 +116,23 @@ impl DesignService {
         bound_agent_session(ctx, &session, Some(caller)).await
     }
 
+    /// Point the preview at `url` once its server is the worktree's and the
+    /// stack answers; then save `recipe` for the repository.
     pub(crate) async fn design_preview(
         &self,
         ctx: &DaemonContext,
         url: &str,
+        recipe: Option<archon_core::design::recipe::PreviewRecipe>,
         caller: Option<&AetherAgentId>,
     ) -> Result<Reply, ArchonError> {
         let url = validate_preview_url(url)?;
+        if let Some(recipe) = &recipe {
+            recipe.check().map_err(ArchonError::Invalid)?;
+        }
         let session = self.agent_session(ctx, caller).await?;
         let wt = self.worktree_of(ctx, &session).await?;
         self.factory().verify_server(&wt.worktree, &url).await?;
+        self.factory().check_stack(&url, recipe.as_ref()).await?;
         let lock = self.item_lock(&session.item);
         let held = lock.lock().await;
         let current = bound_agent_session(ctx, &session, caller).await?;
@@ -135,6 +142,12 @@ impl DesignService {
         let request = self.register_preview(ctx, &current, &url).await?;
         self.update_preview_browser(&current, &url).await?;
         drop(held);
+        if let Some(recipe) = recipe {
+            let repo = super::recipe::repo_of(ctx, &session.item).await?;
+            let mut store = ctx.store.lock().await;
+            super::recipe::save(&mut store, &repo, &session.item, recipe)?;
+            tracing::info!(%repo, item = %session.item, "design: the preview recipe was saved");
+        }
         self.emit_session(ctx, &session.id).await;
         if let Some(note) = request {
             self.emit_note(ctx, &session.item, &note.id).await;

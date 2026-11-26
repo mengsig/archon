@@ -17,6 +17,10 @@ pub(super) async fn view(
     let id = env.repo.as_ref().map(|r| r.id.clone());
     let scoped = crate::settings::read(ctx, id.as_ref()).await?;
     let global = crate::settings::read(ctx, None).await?;
+    let design_recipe = match &id {
+        Some(repo) => crate::design::load_recipe(&*ctx.store.lock().await, repo)?,
+        None => None,
+    };
     let effective = env.effective(ctx);
     assert!(
         effective
@@ -30,6 +34,7 @@ pub(super) async fn view(
         scoped,
         global,
         effective,
+        design_recipe,
     })))
 }
 
@@ -64,6 +69,20 @@ pub(super) async fn reset(
     let id = env(ctx, repo).await?.repo.map(|r| r.id);
     crate::settings::reset(ctx, id.as_ref()).await?;
     view(ctx, repo).await
+}
+
+/// Forget a repository's saved design preview recipe and show its settings.
+pub(super) async fn clear_design_recipe(
+    ctx: &DaemonContext,
+    repo: &RepoRef,
+) -> Result<Reply, ArchonError> {
+    crate::design::clear_recipe(ctx, repo).await?;
+    let view = view(ctx, Some(repo)).await?;
+    debug_assert!(
+        matches!(&view, Reply::Settings(v) if v.design_recipe.is_none()),
+        "the cleared recipe is not shown"
+    );
+    Ok(view)
 }
 
 /// The repository named, read with its file; a broken file is refused so a

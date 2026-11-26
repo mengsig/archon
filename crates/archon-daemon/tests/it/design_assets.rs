@@ -50,6 +50,7 @@ async fn new_session(f: &Fixture, name: &str) -> archon_core::design::DesignSess
             .expect("session starts");
     f.as_agent(Request::DesignPreview {
         url: crate::common::design::PREVIEW.into(),
+        recipe: None,
         caller: Some(agent),
     })
     .await

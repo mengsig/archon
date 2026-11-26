@@ -748,6 +748,7 @@ async fn only_the_stage_agent_may_report() {
     let operator = f
         .operator(Request::DesignPreview {
             url: "http://127.0.0.1:1/".into(),
+            recipe: None,
             caller: None,
         })
         .await;
@@ -1186,6 +1187,7 @@ async fn next_session(f: &mut Fixture) {
     f.attempt += 1;
     f.as_agent(Request::DesignPreview {
         url: crate::common::design::PREVIEW.into(),
+        recipe: None,
         caller: Some(f.agent.clone()),
     })
     .await
@@ -1598,6 +1600,7 @@ mod stream {
         let retry = f
             .as_agent(Request::DesignPreview {
                 url: crate::common::design::PREVIEW.into(),
+                recipe: None,
                 caller: Some(f.agent.clone()),
             })
             .await
@@ -1834,6 +1837,7 @@ mod stream {
                 .expect("second session starts");
         f.as_agent(Request::DesignPreview {
             url: crate::common::design::PREVIEW.into(),
+            recipe: None,
             caller: Some(agent.clone()),
         })
         .await
@@ -1931,6 +1935,7 @@ mod stream {
         );
         f.as_agent(Request::DesignPreview {
             url: crate::common::design::PREVIEW.into(),
+            recipe: None,
             caller: Some(agent.clone()),
         })
         .await
@@ -1990,6 +1995,7 @@ mod stream {
                 .expect("second session starts");
         f.as_agent(Request::DesignPreview {
             url: crate::common::design::PREVIEW.into(),
+            recipe: None,
             caller: Some(agent.clone()),
         })
         .await
@@ -2093,6 +2099,7 @@ async fn the_first_preview_report_posts_a_ready_notice_once() {
     let f = Fixture::new().await;
     f.as_agent(Request::DesignPreview {
         url: crate::common::design::PREVIEW.into(),
+        recipe: None,
         caller: Some(f.agent.clone()),
     })
     .await

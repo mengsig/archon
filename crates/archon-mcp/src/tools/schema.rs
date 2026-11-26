@@ -67,6 +67,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         design_preview(),
         design_note(),
         design_history(),
+        design_recipe(),
     ]
 }
 
@@ -76,11 +77,43 @@ fn design_preview() -> ToolDefinition {
         "Design preview",
         "Stage agent of a live design stage: point the operator's preview at your dev server. \
          `url` is an http:// URL whose host is 127.0.0.1, localhost or [::1], with any port; \
-         anything else is refused. Call it again after a server restart.",
+         anything else is refused. Archon checks that a process of this worktree serves it and \
+         that the page, and each recipe step's `ready` URL or `port`, answers without a server \
+         error, and names whatever does not. Pass `recipe` once the whole stack is up: it is \
+         saved for the repository, replacing the last one, and holds env var names, never \
+         values. Call it again after a server restart.",
         object(
-            json!({"url": {"type": "string", "minLength": 1, "description": "For example http://127.0.0.1:5173/."}}),
+            json!({
+                "url": {"type": "string", "minLength": 1, "description": "For example http://127.0.0.1:5173/."},
+                "recipe": {"type": "object", "description": "How the preview stack came up, in start order.",
+                    "properties": {
+                        "source": {"type": "string", "description": "Where the route came from, e.g. docs/dev-preview.md or package.json scripts.dev."},
+                        "steps": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "object", "properties": {
+                            "name": {"type": "string", "description": "a-z, 0-9, - and _; a service's PID goes in .archon/services/<name>.pid."},
+                            "command": {"type": "string", "description": "The shell command; secrets as $NAME, a Compose project as $COMPOSE_PROJECT_NAME."},
+                            "dir": {"type": "string", "description": "Relative to the worktree; its root when omitted."},
+                            "run": {"enum": ["service", "once"], "description": "service (default) keeps running; once runs to completion first."},
+                            "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+                            "ready": {"type": "string", "description": "A loopback http:// URL that answers once the step is up."}
+                        }, "required": ["name", "command"]}},
+                        "env": {"type": "array", "items": {"type": "string"}, "description": "Names of the env vars the steps need; never values."},
+                        "notes": {"type": "string", "description": "What the next session should know, e.g. the page to open."}
+                    }, "required": ["source", "steps"]}
+            }),
             &["url"],
         ),
+        false,
+    )
+}
+
+fn design_recipe() -> ToolDefinition {
+    define(
+        "design_recipe",
+        "Design recipe",
+        "Stage agent of a live design stage: read the preview recipe saved for this \
+         repository by an earlier session (its commands in order, ports, readiness checks and \
+         env var names), or learn that there is none. Try it before discovering the stack.",
+        object(json!({}), &[]),
         false,
     )
 }

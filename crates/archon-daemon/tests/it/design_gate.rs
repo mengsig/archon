@@ -1043,6 +1043,7 @@ async fn revise_resumes_the_design_agent_in_a_new_session_with_its_notes() {
             archon_core::protocol::ClientKind::ArchonMcp,
             Request::DesignPreview {
                 url: "http://127.0.0.1:5173/".into(),
+                recipe: None,
                 caller: agent.clone(),
             },
         ))
@@ -1285,6 +1286,7 @@ async fn a_revised_design_retried_after_a_refusal_still_gets_its_preview() {
         archon_core::protocol::ClientKind::ArchonMcp,
         Request::DesignPreview {
             url: "http://127.0.0.1:5173/".into(),
+            recipe: None,
             caller: Some(agent.clone()),
         },
     ))
@@ -1325,6 +1327,7 @@ async fn a_refused_first_attempt_hands_its_session_to_the_new_agent() {
         archon_core::protocol::ClientKind::ArchonMcp,
         Request::DesignPreview {
             url: "http://127.0.0.1:5173/".into(),
+            recipe: None,
             caller: Some(agent.clone()),
         },
     ))

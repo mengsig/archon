@@ -831,5 +831,6 @@ pub fn ancestors<'a>(notes: &'a [DesignNote], id: &str) -> Vec<&'a DesignNote> {
     line
 }
 
+pub mod recipe;
 #[cfg(test)]
 mod tests;

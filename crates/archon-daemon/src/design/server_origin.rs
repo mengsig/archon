@@ -50,7 +50,7 @@ pub(super) async fn verify(
     Ok(Arc::new(service))
 }
 
-fn endpoints(url: &str) -> Result<Vec<SocketAddr>, ArchonError> {
+pub(super) fn endpoints(url: &str) -> Result<Vec<SocketAddr>, ArchonError> {
     archon_core::design::validate_preview_url(url)?;
     let authority = url["http://".len()..]
         .split(['/', '?', '#'])

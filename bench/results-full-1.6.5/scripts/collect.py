@@ -1,8 +1,6 @@
 """Copy the trial evidence needed to reproduce the report."""
 import json
-import shutil
 import sqlite3
-import subprocess
 import sys
 from pathlib import Path
 
@@ -21,7 +19,8 @@ def collect_run(source, destination):
     assert len(stamps) == 1, f'expected one result stamp in {source}'
     stamp = stamps[0]
     if destination.exists():
-        assert (destination / 'start.json').read_bytes() == (source / 'start.json').read_bytes(), 'existing run differs'
+        expected = redact.redact_bytes((source / 'start.json').read_bytes())
+        assert (destination / 'start.json').read_bytes() == expected, 'existing run differs'
     destination.mkdir(parents=True, exist_ok=True)
     copy_sanitized(source / 'start.json', destination / 'start.json')
     for name in ('run.json', 'results.jsonl', 'summary.md'):
@@ -72,7 +71,7 @@ def main():
     for model in ('luna', 'haiku', 'haiku-serial'):
         guard = source / f'{model}-guard.log'
         assert guard.is_file(), f'missing {model} guard log'
-        shutil.copy2(guard, destination / guard.name)
+        copy_sanitized(guard, destination / guard.name)
 
 
 if __name__ == '__main__':

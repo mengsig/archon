@@ -20,6 +20,10 @@ class RedactTests(unittest.TestCase):
         kept = b'noreply@anthropic.com 1+a@users.noreply.github.com x@example.com archon@openai.com'
         self.assertEqual(redact.redact_bytes(kept), kept)
 
+    def test_leading_punctuation_and_trailing_digits_are_redacted(self):
+        self.assertEqual(redact.redact_bytes(b'_' + PERSONAL), b'[redacted-email]')
+        self.assertEqual(redact.redact_bytes(b'+' + PERSONAL + b'1'), b'[redacted-email]1')
+
     def test_text_without_address_is_unchanged(self):
         self.assertEqual(redact.redact_bytes(b'user@ and @handle'), b'user@ and @handle')
 
@@ -33,6 +37,21 @@ class RedactTests(unittest.TestCase):
                 source.write_bytes(b'reply to ' + PERSONAL)
                 collect.copy_sanitized(source, target)
                 self.assertEqual(target.read_bytes(), b'reply to [redacted-email]')
+
+
+    def test_repeat_collection_accepts_redacted_start_record(self):
+        import sys
+        sys.path.insert(0, str(BENCH / 'results-full-1.6.5/scripts'))
+        import collect
+        with tempfile.TemporaryDirectory() as directory:
+            source, destination = Path(directory) / 'src', Path(directory) / 'dst'
+            (source / 'results/stamp').mkdir(parents=True)
+            (source / 'start.json').write_bytes(b'{"who": "' + PERSONAL + b'"}')
+            (source / 'results/stamp/run.json').write_text('{}')
+            (source / 'results/stamp/results.jsonl').write_text('{}\n')
+            collect.collect_run(source, destination)
+            collect.collect_run(source, destination)
+            self.assertNotIn(PERSONAL, (destination / 'start.json').read_bytes())
 
 
 if __name__ == '__main__':

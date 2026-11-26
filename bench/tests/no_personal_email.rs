@@ -34,6 +34,16 @@ fn is_kept(address: &str) -> bool {
             .any(|kept| domain == *kept || domain.ends_with(&format!(".{kept}")))
 }
 
+fn has_tld_label(domain: &[u8]) -> bool {
+    let starts_well = domain
+        .first()
+        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'-');
+    starts_well
+        && domain
+            .windows(3)
+            .any(|w| w[0] == b'.' && w[1].is_ascii_alphabetic() && w[2].is_ascii_alphabetic())
+}
+
 fn addresses_in(data: &[u8]) -> Vec<String> {
     let mut found = Vec::new();
     for (at, _) in data.iter().enumerate().filter(|(_, byte)| **byte == b'@') {
@@ -41,24 +51,12 @@ fn addresses_in(data: &[u8]) -> Vec<String> {
         while start > 0 && is_local(data[start - 1]) {
             start -= 1;
         }
-        while start < at && !data[start].is_ascii_alphanumeric() {
-            start += 1;
-        }
         let mut end = at + 1;
         while end < data.len() && is_domain(data[end]) {
             end += 1;
         }
-        while end > at + 1 && data[end - 1] == b'.' {
-            end -= 1;
-        }
-        let domain = &data[at + 1..end];
-        let tld = domain
-            .rsplit(|byte| *byte == b'.')
-            .next()
-            .unwrap_or_default();
-        let has_tld =
-            domain.contains(&b'.') && tld.len() >= 2 && tld.iter().all(u8::is_ascii_alphabetic);
-        if start < at && has_tld {
+        let has_name = data[start..at].iter().any(u8::is_ascii_alphanumeric);
+        if has_name && has_tld_label(&data[at + 1..end]) {
             found.push(String::from_utf8_lossy(&data[start..end]).into_owned());
         }
     }
@@ -118,4 +116,14 @@ fn committed_bench_files_contain_no_personal_email_address() {
         "personal email addresses in bench files; redact them with bench/redact.py:\n{}",
         leaks.join("\n")
     );
+}
+
+#[test]
+fn scanner_covers_leading_punctuation_and_trailing_digits() {
+    let leading = format!("_{}@{}", "someone", "example-mail.test");
+    let digits = format!("{}@{}1", "someone", "example-mail.test");
+    for text in [leading, digits] {
+        let flagged = addresses_in(text.as_bytes());
+        assert!(flagged.iter().any(|a| !is_kept(a)), "missed {text}");
+    }
 }

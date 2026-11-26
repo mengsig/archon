@@ -24,6 +24,7 @@ BUDGET_USD = 25.0
 TARGETED = ['multi-repo-pagination', 'quality-safe-extract', 'quality-retry-budget']
 BROAD = ['ask-cache-invalidation', 'review-seeded-bug', 'fix-off-by-one',
          'feature-token-bucket', 'refactor-order-status', 'long-backlog']
+TEXT_SUFFIXES = {'.log', '.jsonl', '.json', '.txt', '.md', '.stdout', '.stderr', '.patch'}
 VERSION = {'old': '1.6.4', 'new': '1.6.5'}
 BUSY = (b'cargo', b'rustc', b'playwright')
 LOAD5_LIMIT = 8
@@ -187,23 +188,29 @@ def run_trial(task, trial, arm, destination, load1, load5):
             stop_daemon(proc, root, env)
             shutil.copytree(root / 'a-data', destination / 'aether-data',
                             ignore=shutil.ignore_patterns('t', 'bin', 'aether.build-cache'))
-        redact(destination)
         (destination / 'start.json').write_text(json.dumps(record, indent=2))
         return record
     finally:
         if proc is not None:
             stop_daemon(proc, root, env)
+        redact(destination)
         shutil.rmtree(base, ignore_errors=True)
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
 def redact(directory):
+    if not directory.exists():
+        return
     for path in directory.rglob('*'):
-        if path.is_file() and path.suffix in {'.log', '.jsonl', '.json', '.txt', '.md', '.stdout', '.stderr', '.patch'}:
-            data = path.read_bytes()
+        if not path.is_file():
+            continue
+        data = path.read_bytes()
+        if path.suffix in TEXT_SUFFIXES:
             redacted = email_redaction.redact_bytes(data)
             if redacted != data:
                 path.write_bytes(redacted)
+        elif email_redaction.personal_addresses(data):
+            raise RuntimeError(f'personal email address in non-text output: {path}')
 
 
 def trial_cost(destination):

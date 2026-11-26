@@ -187,6 +187,7 @@ impl WorkerPolicy {
             .iter()
             .filter(|m| !catalog.is_retired(&m.model) && m.tier.is_some())
             .filter(|m| policy.permits_model(&m.model) && Some(&m.model) != lead)
+            .filter(|m| catalog.picks_unasked(&m.model, policy))
             .min_by_key(|m| m.tier)
             .map(|m| m.model.clone());
         let (workers, default_tier, rest) = match cheapest {
@@ -347,6 +348,35 @@ mod tests {
             policy.describe(),
             "each worker on codex/terra at effort low or the balanced tier at effort medium, \
              at most 2 at once"
+        );
+    }
+
+    #[test]
+    fn a_fallback_worker_never_lands_on_an_unnamed_opt_in_model() {
+        let entry = |model: &str, tier| crate::model_tier::CatalogModel {
+            model: model.parse().unwrap(),
+            tier: Some(tier),
+            is_default: false,
+        };
+        let catalog = ModelCatalog::new(vec![
+            entry("antigravity/gemini-3.8-flash", Tier::Fast),
+            entry("p/strong", Tier::Strong),
+        ]);
+        let workers = vec![WorkerChoice::of_tier(Tier::Balanced, Effort::Medium)];
+        let base = WorkerPolicy::new(workers, Some(Tier::Balanced), Some(2)).unwrap();
+        let open = ModelPolicy::default();
+        let narrowed = base.fallback(&open, (&catalog, None), "no balanced model");
+        assert_eq!(
+            narrowed.policy.workers,
+            [pinned_at("p/strong", Effort::Low)]
+        );
+        let flash: ModelRef = "antigravity/gemini-3.8-flash".parse().unwrap();
+        let named = ModelPolicy::from_lists(&[flash, "p/strong".parse().unwrap()], &[], None);
+        let narrowed = base.fallback(&named, (&catalog, None), "no balanced model");
+        assert_eq!(
+            narrowed.policy.workers,
+            [pinned_at("antigravity/gemini-3.8-flash", Effort::Low)],
+            "the allowlist opts it in"
         );
     }
 

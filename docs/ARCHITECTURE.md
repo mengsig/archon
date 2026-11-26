@@ -2324,8 +2324,9 @@ providers are never rerouted.
 
 **Opt-in providers.** `archon_core::opt_in` marks `antigravity` opt-in: its
 models are tier candidates (`ModelCatalog::tier_candidates`), learned-routing
-evidence and secondary routes only when `[models] allow` names the model or the
-entry names the provider; a secondary route (agy's Claude or GPT models) also
+evidence, worker, reviewer, judge and distillation picks only when `[models]
+allow` names the model (a named provider alone is not enough, since internal
+callers name providers); a secondary route (agy's Claude or GPT models) also
 when the vendor's own provider lists no tiered model. Aether leaves them
 untiered, so `ModelCatalog::new` places them (`opt_in::placed_tier`). An
 unnamed opt-in provider weighs at most 1, and resolution without a preferred

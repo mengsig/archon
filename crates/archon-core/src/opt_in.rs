@@ -177,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn an_explicit_plan_or_provider_runs_antigravity() {
+    fn an_explicit_plan_runs_antigravity_and_a_named_provider_needs_the_allowlist() {
         let catalog = mixed();
         let open = ModelPolicy::default();
         let flash = id("antigravity/gemini-3.8-flash");
@@ -191,10 +191,18 @@ mod tests {
         }))
         .unwrap();
         open.check_plan(&plan).unwrap();
+        assert!(
+            catalog
+                .resolve(Tier::Strong, Some(ANTIGRAVITY), None, &open)
+                .is_err(),
+            "reviewer defaults name providers too, so a provider alone opts nothing in"
+        );
+        let neon = id("antigravity/gemini-4-neon");
+        let named = ModelPolicy::from_lists(std::slice::from_ref(&neon), &[], None);
         let (model, choice) = catalog
-            .resolve(Tier::Strong, Some(ANTIGRAVITY), None, &open)
+            .resolve(Tier::Strong, Some(ANTIGRAVITY), None, &named)
             .unwrap();
-        assert_eq!(model, id("antigravity/gemini-4-neon"));
+        assert_eq!(model, neon);
         assert_eq!(choice.resolved, Tier::Strong);
     }
 
@@ -221,7 +229,7 @@ mod tests {
             catalog
                 .resolve(Tier::Fast, Some(ANTIGRAVITY), None, &denied)
                 .is_err(),
-            "deny wins over a named provider"
+            "deny refuses it"
         );
         let outside = ModelPolicy::from_lists(&[id("claude-code/sonnet")], &[], None);
         assert!(

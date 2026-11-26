@@ -315,8 +315,8 @@ impl ModelCatalog {
     }
 
     /// Models that can serve a pick between `floor` and `requested` on
-    /// `provider` under `policy`; an opt-in provider's only when `provider`
-    /// or the policy names it. A superseded one stays unless a successor
+    /// `provider` under `policy`; an opt-in provider's only when the policy
+    /// names the model, since internal callers name providers too. A superseded one stays unless a successor
     /// on its own provider serves the same pick, at the floor where it did.
     pub fn tier_candidates<'a, 'p>(
         &'a self,
@@ -333,7 +333,7 @@ impl ModelCatalog {
                 && m.tier.is_some_and(|t| t <= requested)
                 && provider.is_none_or(|p| m.model.provider == p)
                 && policy.permits_model(&m.model)
-                && (provider.is_some() || self.picks_unasked(&m.model, policy))
+                && self.picks_unasked(&m.model, policy)
         };
         self.models.iter().filter(move |entry| {
             let meets_floor = entry.tier >= Some(floor);

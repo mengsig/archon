@@ -180,7 +180,11 @@ pub(in crate::executor) fn select_model(
     let policy = RepoEnv::new(repo)?.resolved_policy(ctx);
     let vision = vision_models(store)?;
     let catalog = store.model_catalog();
-    let judges = |m: &ModelRef| policy.permits_model(m) && (!visual || vision.contains(m));
+    let judges = |m: &ModelRef| {
+        policy.permits_model(m)
+            && catalog.picks_unasked(m, &policy)
+            && (!visual || vision.contains(m))
+    };
     let permitted = judge_pool(&catalog, judges, &builders);
     let strict = ctx.config.review.independent_acceptance;
     let model = if live {

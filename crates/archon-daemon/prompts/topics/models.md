@@ -12,8 +12,8 @@ provider runs out (`get_item` says why), and it waits for a reset only when
 every provider is out (`queue_status` shows headroom, reserve and next reset).
 Defaults stop at `strong`; ask for `frontier` only when the operator does.
 An opt-in provider (Antigravity, on a small subscription) never serves a
-tier-only choice unless model_policy allows its model by name: pin its model
-or name its provider only when the operator asks for it.
+tier choice unless model_policy allows its model by name, even on its named
+provider: pin its model only when the operator asks for it.
 
 - A stronger tier at lower effort often beats a weaker one at max effort.
   Effort buys deliberation, not capability: raise it on a weaker tier only for

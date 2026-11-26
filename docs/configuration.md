@@ -962,9 +962,9 @@ one of its models on its own: not for a tier-only choice, a default plan, a
 reviewer or worker default, a fallback, or learned routing, even after an item
 ran there. It runs one only when:
 
-- a `model_plan` entry names the model, or a tier entry names
-  `provider = "antigravity"`; or
-- `[models] allow` names the model, which lets tier-only choices use it. Among
+- a `model_plan` entry names the model; or
+- `[models] allow` names the model, which lets tier choices use it, a tier
+  entry naming `provider = "antigravity"` included. Among
   equal providers it still comes last, and `provider_weights` gives it at most
   weight 1 unless the table names it.
 

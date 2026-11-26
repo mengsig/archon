@@ -515,6 +515,7 @@ pub(crate) fn default_choice(
             }
         };
         let eligible = policy.permits_model(&canonical)
+            && catalog.picks_unasked(&canonical, policy)
             && catalog
                 .tier_of(&canonical)
                 .is_none_or(|tier| tier <= max_tier);
@@ -1047,6 +1048,34 @@ mod tests {
             entry("claude-code/one-frontier", Tier::Frontier),
             entry("codex/two-strong", Tier::Strong),
         ])
+    }
+
+    #[test]
+    fn a_default_never_pins_an_unnamed_antigravity_model() {
+        use archon_core::model_tier::CatalogModel;
+        let entry = |model: &str| CatalogModel {
+            model: model.parse().unwrap(),
+            tier: None,
+            is_default: false,
+        };
+        let catalog = ModelCatalog::new(vec![
+            entry("antigravity/gemini-3.8-flash"),
+            entry("antigravity/gemini-4-neon"),
+        ]);
+        let spec = builtin("performance");
+        let open = ModelPolicy::default();
+        let mut config = Config::default();
+        for orchestrator in ["claude-code/unlisted", "antigravity/gemini-4-neon"] {
+            config.orchestrator.model = orchestrator.parse().unwrap();
+            let tiers = TierScope::new(&config, &open, &catalog);
+            let choice = default_choice(&config, tiers, Tier::Strong, &spec);
+            assert_eq!(choice, None, "{orchestrator}: nothing opted in");
+        }
+        let flash: ModelRef = "antigravity/gemini-3.8-flash".parse().unwrap();
+        let named = ModelPolicy::from_lists(std::slice::from_ref(&flash), &[], None);
+        let tiers = TierScope::new(&config, &named, &catalog);
+        let choice = default_choice(&config, tiers, Tier::Strong, &spec).unwrap();
+        assert_eq!(choice.model, flash, "the allowlist opts it in");
     }
 
     /// The pipeline's tier picks a model of that tier, never above the

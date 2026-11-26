@@ -144,3 +144,11 @@ paragraph.
 passed, 0 failed, 10 ignored across 130 summaries. Formatting, shell checks,
 clippy and rustdoc with warnings denied passed. No test needed a rerun. The
 commit after it adds only this paragraph.
+
+## make ci after the client accept-name and trim fix
+
+`CARGO_BUILD_JOBS=2 nice -n 19 ionice -c3 make ci` passed on `e9af8fb8`
+(tree `f4e1201e`) inside the host CI slot, started at load5 5.53: 5,724 tests
+passed, 0 failed, 10 ignored across 130 summaries. Formatting, shell checks,
+clippy and rustdoc with warnings denied passed. No test needed a rerun. The
+commit after it adds only this paragraph.

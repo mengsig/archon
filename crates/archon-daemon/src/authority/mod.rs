@@ -315,6 +315,7 @@ mod tests {
             "Effort buys deliberation, not capability",
             "one stronger-tier judge at low effort",
             "another provider at the same tier",
+            "An opt-in provider (Antigravity, on a small subscription) never serves",
         ] {
             assert!(text.contains(said), "{said:?}");
         }

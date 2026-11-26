@@ -27,12 +27,12 @@ iteration history. The web handshake still negotiates back to 23.
 
 ## From 1.5.x to 1.6.x
 
-Archon 1.6.6 requires Aether 1.4.3 or later. Upgrade an older Aether with
-`aether update --version v1.4.3` and restart aetherd, then run
-`archon update --yes --version v1.6.6`. Upgrade Aether first: an update
+Archon 1.6.7 requires Aether 1.4.4 or later (1.6.6 required 1.4.3).
+Upgrade an older Aether with `aether update --version v1.4.4` and restart
+aetherd, then run `archon update --yes --version v1.6.7`. Upgrade Aether first: an update
 from 1.6.4 or earlier runs that release's own Aether step, which does not
-pin 1.4.3. Confirmed updates run by 1.6.5 or later select Aether 1.4.3 only for an older
-installation; at 1.4.3 or later they use
+pin 1.4.4. Confirmed updates run by 1.6.5 or later select the required Aether only for an older
+installation; at that release or later they use
 Aether's normal update, without pinning it to an older release. Keep a backup before the first daemon start: approved intent
 adds persistent requirement and clarification records. Existing queue items
 without intent keep their previous behavior.

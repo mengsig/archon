@@ -2322,6 +2322,15 @@ choice is refused rather than sent below the floor or to a provider weighted 0;
 a stage default then falls back as it does for any unresolved tier. Exact pins and named
 providers are never rerouted.
 
+**Opt-in providers.** `archon_core::opt_in` marks `antigravity` opt-in: its
+models are tier candidates (`ModelCatalog::tier_candidates`), learned-routing
+evidence and secondary routes only when `[models] allow` names the model or the
+entry names the provider; a secondary route (agy's Claude or GPT models) also
+when the vendor's own provider lists no tiered model. Aether leaves them
+untiered, so `ModelCatalog::new` places them (`opt_in::placed_tier`). An
+unnamed opt-in provider weighs at most 1, and resolution without a preferred
+provider tries it last.
+
 **Quota headroom.** With weights set, the daemon reads `headroom` from Aether's
 `providers` reply at most every 30 seconds (`quota::QuotaCache`; trusted for 10
 minutes) and scores each provider weight × headroom (`archon_core::quota`). A

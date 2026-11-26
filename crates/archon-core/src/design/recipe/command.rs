@@ -47,6 +47,8 @@ const OPERATORS: [char; 9] = [';', '&', '|', '(', ')', '`', '<', '>', '\n'];
 /// Characters that end a command in the raw reading; `(` and backticks stay
 /// inside it so an expansion after `compose` is seen there.
 const SEPARATORS: [char; 4] = [';', '&', '|', '\n'];
+/// How deep scripts nested in words, as in `sh -c "sh -c '…'"`, are read.
+const MAX_NESTING: usize = 8;
 /// Check a step's command: it parses as shell words, spells out no secret
 /// and names a Compose project only through [`COMPOSE_VARIABLE`].
 pub(super) fn check_command(field: &str, command: &str) -> Result<(), String> {
@@ -60,10 +62,51 @@ pub(super) fn check_command(field: &str, command: &str) -> Result<(), String> {
     if let Some(what) = secret_form(&parsed) {
         return Err(refusal(field, &what));
     }
-    compose_project_by_variable(field, &commands)?;
-    let raw = raw_commands(command);
-    compose_project_by_variable(field, &raw)?;
-    compose_expands_only_the_project(field, &raw)
+    let mut readings = nested_commands(field, &commands)?;
+    readings.extend(commands);
+    readings.extend(raw_commands(command));
+    compose_project_by_variable(field, &readings)?;
+    compose_expands_only_the_project(field, &readings)
+}
+
+/// The commands of scripts nested in words, as in `sh -c '…'`, read with the
+/// shell's quoting; a nested script naming Compose that cannot be read is refused.
+fn nested_commands(field: &str, commands: &[Vec<String>]) -> Result<Vec<Vec<String>>, String> {
+    let unreadable = || {
+        format!(
+            "{field} runs Compose in a nested script whose quoting cannot be read; make it parse and name the project only as ${COMPOSE_VARIABLE}"
+        )
+    };
+    let mut nested = Vec::new();
+    let mut level: Vec<String> = commands.iter().flatten().cloned().collect();
+    for _ in 0..MAX_NESTING {
+        let mut next = Vec::new();
+        for word in level.iter().filter(|word| may_be_script(word)) {
+            match shell_commands(word) {
+                Ok(inner) => {
+                    next.extend(inner.iter().flatten().cloned());
+                    nested.extend(inner);
+                }
+                Err(_) if word.contains("compose") => return Err(unreadable()),
+                Err(_) => {}
+            }
+        }
+        level = next;
+    }
+    if level
+        .iter()
+        .any(|word| may_be_script(word) && word.contains("compose"))
+    {
+        return Err(unreadable());
+    }
+    Ok(nested)
+}
+
+/// A word the shell would read differently were it run as a script; reading
+/// one strips at least one of these characters, so the nesting ends.
+fn may_be_script(word: &str) -> bool {
+    word.chars()
+        .any(|c| c.is_whitespace() || OPERATORS.contains(&c) || matches!(c, '"' | '\'' | '\\'))
 }
 
 /// Refuse a value spelled out in free text, read as raw words.
@@ -113,8 +156,9 @@ fn shell_commands(text: &str) -> Result<Vec<Vec<String>>, String> {
         match (quote, c) {
             (Quote::Single, '\'') | (Quote::Double, '"') => quote = Quote::None,
             (Quote::Single, c) => word.get_or_insert_default().push(c),
+            (Quote::Double | Quote::None, '\\') if chars.next_if_eq(&'\n').is_some() => {}
             (Quote::Double, '\\') => {
-                let escaped = chars.next_if(|n| matches!(n, '"' | '\\' | '$' | '`' | '\n'));
+                let escaped = chars.next_if(|n| matches!(n, '"' | '\\' | '$' | '`'));
                 word.get_or_insert_default().push(escaped.unwrap_or('\\'));
             }
             (Quote::Double, c) => word.get_or_insert_default().push(c),
@@ -292,7 +336,8 @@ fn is_token(word: &str) -> bool {
 /// The command's simple commands as raw words with every quote and backslash
 /// dropped, so a Compose call inside a nested `sh -c '…'` script is read too.
 fn raw_commands(text: &str) -> Vec<Vec<String>> {
-    text.split(SEPARATORS)
+    joined_lines(text)
+        .split(SEPARATORS)
         .map(|segment| {
             segment
                 .split_whitespace()
@@ -301,6 +346,26 @@ fn raw_commands(text: &str) -> Vec<Vec<String>> {
                 .collect()
         })
         .collect()
+}
+
+/// The text with every line continuation joined, at any nesting: a newline
+/// after one or more backslashes is dropped with them.
+fn joined_lines(text: &str) -> String {
+    let mut joined = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c != '\n' || !joined.ends_with('\\') {
+            joined.push(c);
+            continue;
+        }
+        while joined.ends_with('\\') {
+            joined.pop();
+        }
+    }
+    debug_assert!(
+        joined.len() <= text.len(),
+        "joining only removes characters"
+    );
+    joined
 }
 
 /// The index of the word that runs Compose (`compose`, `docker-compose`,

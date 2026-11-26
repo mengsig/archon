@@ -200,6 +200,10 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "sh -c 'docker compose -p \"$COMPOSE_PROJECT_NAME\" up -d'",
         "sh -c \"docker compose -p \\\"\\$COMPOSE_PROJECT_NAME\\\" up -d\"",
         "docker compose up -d 2>&1 | tee compose.log",
+        "docker compose \\\n  -p \"$COMPOSE_PROJECT_NAME\" up -d",
+        "docker compose build web \\\n  && docker compose up -d",
+        "sh -c 'docker compose \\\n -p \"$COMPOSE_PROJECT_NAME\" up -d'",
+        "docker compose -f 'compose dev.yml' up -d",
     ] {
         recipe(vec![step("stack", command)])
             .check()
@@ -236,6 +240,13 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "docker compose `echo -p` other up -d",
         "docker compose $'-p' other up -d",
         "podman-compose -p other up -d",
+        "docker compose \\\n -p other up -d",
+        "sh -c 'docker compose\\\n -p other up -d'",
+        "sh -c \"docker compose \\\\\n-p other up -d\"",
+        "sh -c 'docker compose up \";\" -p other'",
+        "sh -c 'docker compose up \\; -p other'",
+        "sh -c \"sh -c 'docker compose up \\\";\\\" -p other'\"",
+        "sh -c 'docker compose -f \"x.yml -p other up'",
     ] {
         let error = refused(&recipe(vec![step("stack", command)]));
         assert!(

@@ -39,7 +39,7 @@ const MAX_DIALOG_MESSAGE_BYTES: usize = 8 * 1024;
 /// Longest prompt answer, suggested or sent: the daemon's answer cap.
 pub(crate) const MAX_DIALOG_ANSWER_BYTES: usize = 16 * 1024;
 /// Said under a prompt whose suggested answer had to be changed to be shown.
-const PROMPT_CUT_NOTE: &str = "\n\n(The app's suggested answer is longer than 16 KiB or holds characters the preview cannot show, so it is shown changed. Check it before pressing OK.)";
+const PROMPT_CUT_NOTE: &str = "(The app's suggested answer is longer than 16 KiB or holds characters the preview cannot show, so it is shown changed. Check it before pressing OK.)\n\n";
 /// Stream frames: four a second at rest, ten (the relay's most) while the
 /// operator scrolls or types, so a scroll is followed and its end shown soon.
 const IDLE_FRAME_INTERVAL: Duration = Duration::from_millis(250);
@@ -515,8 +515,9 @@ impl Shared {
             let text = |key: &str, cap| page_text(params[key].as_str().unwrap_or_default(), cap);
             let (mut message, _) = text("message", MAX_DIALOG_MESSAGE_BYTES);
             let (prompt, prompt_cut) = text("defaultPrompt", MAX_DIALOG_ANSWER_BYTES);
+            // First, so a long page message cannot push it out of sight.
             if prompt_cut {
-                message.push_str(PROMPT_CUT_NOTE);
+                message.insert_str(0, PROMPT_CUT_NOTE);
             }
             (message, (!prompt.is_empty()).then_some(prompt))
         } else {
@@ -2128,12 +2129,12 @@ mod dialog_tests {
 
         let huge = "y".repeat(MAX_DIALOG_ANSWER_BYTES + 1);
         let (message, default) = prompt(&b, &huge);
-        assert!(message.ends_with(PROMPT_CUT_NOTE), "{message}");
+        assert!(message.starts_with(PROMPT_CUT_NOTE), "{message}");
         assert_eq!(default.map(|d| d.len()), Some(MAX_DIALOG_ANSWER_BYTES));
 
         let (message, default) = prompt(&b, "first\r\nsecond");
         assert!(
-            message.ends_with(PROMPT_CUT_NOTE),
+            message.starts_with(PROMPT_CUT_NOTE),
             "a changed answer is never silent"
         );
         assert_eq!(default.as_deref(), Some("first\nsecond"));

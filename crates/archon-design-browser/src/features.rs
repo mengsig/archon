@@ -104,6 +104,8 @@ impl Shared {
             ("completed", false) => self.finished_download(guid, name),
             (_, true) => {
                 self.cancel_download(guid);
+                // It may have finished before the cancel: its file is not kept either way.
+                self.delete_untracked(guid);
                 BrowserEvent::DownloadFailed {
                     name,
                     reason: format!("it is larger than {} MiB", MAX_DOWNLOAD_BYTES >> 20),
@@ -157,10 +159,13 @@ impl Shared {
                     bytes: meta.len(),
                 }
             }
-            Ok(_) => BrowserEvent::DownloadFailed {
-                name,
-                reason: format!("it is larger than {} MiB", MAX_DOWNLOAD_BYTES >> 20),
-            },
+            Ok(_) => {
+                delete_download(dir, guid);
+                BrowserEvent::DownloadFailed {
+                    name,
+                    reason: format!("it is larger than {} MiB", MAX_DOWNLOAD_BYTES >> 20),
+                }
+            }
             Err(error) => BrowserEvent::DownloadFailed {
                 name,
                 reason: format!("it could not be read ({})", error.kind()),

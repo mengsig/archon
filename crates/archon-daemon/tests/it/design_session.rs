@@ -1581,6 +1581,32 @@ mod stream {
         .await;
     }
 
+    /// A page that closes, resets or loses its connection drops the input it
+    /// still had queued, a release among it: its stream ending says so.
+    #[tokio::test]
+    async fn a_stream_that_ends_tells_the_browser_its_input_was_lost() {
+        let f = Fixture::new().await;
+        let service = f.h.ctx.design.clone();
+        let (_rx, task) = subscribe(&f, 1);
+        until("a counted subscriber", || {
+            service.subscriber_count(&f.session) == 1
+        })
+        .await;
+        let browser = f.factory.browser(0);
+        assert_eq!(
+            browser.calls(|c| c.inputs_lost),
+            0,
+            "a stream starting loses nothing"
+        );
+        task.abort();
+        let _ = task.await;
+        until("no subscribers", || {
+            service.subscriber_count(&f.session) == 0
+        })
+        .await;
+        assert_eq!(browser.calls(|c| c.inputs_lost), 1);
+    }
+
     #[tokio::test]
     async fn without_an_ack_the_latest_frame_wins_after_the_wait() {
         let f = Fixture::new().await;

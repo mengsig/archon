@@ -919,13 +919,22 @@ impl DesignService {
             .map_or(0, |rt| rt.st().subscribers)
     }
 
+    /// A stream ended: its page closed, reset or lost its connection, and any
+    /// input it still had queued, a release among it, will not come.
     pub(crate) fn subscriber_left(&self, session: &DesignSessionId) {
-        if let Some(rt) = self.existing_runtime(session) {
+        let Some(rt) = self.existing_runtime(session) else {
+            return;
+        };
+        let browser = {
             let mut st = rt.st();
             st.subscribers = st.subscribers.saturating_sub(1);
             if st.subscribers == 0 {
                 st.last_sub_gone = Some(Instant::now());
             }
+            st.browser.clone()
+        };
+        if let Some(browser) = browser {
+            browser.input_lost();
         }
     }
 

@@ -17,6 +17,9 @@ export const MAX_IN_FLIGHT = 16;
 // frees it, so hung daemon tasks cannot starve the app; archond refuses visibly.
 export const LATE_REPLY_MS = 30_000;
 const UNCOUNTED = new Set(['design_frame_ack', 'design_unsubscribe', 'subscribe_design', 'subscribe_feed', 'subscribe_changes']);
+// Counted, but sent at once: archond refuses input past its limit and lets go
+// of what it held, where a release waiting here could expire unsent unseen.
+const NEVER_HELD = new Set(['design_input']);
 
 export class DaemonError extends Error {
   constructor(code, message) {
@@ -267,7 +270,8 @@ class Transport {
   dispatch(entry) {
     if (!this.ws || this.current !== 'open') throw new Error('dispatch needs an open connection');
     const counted = !UNCOUNTED.has(entry.cmd);
-    if (counted && (this.inFlight.size >= MAX_IN_FLIGHT || this.held.length > 0)) this.held.push(entry);
+    const full = this.inFlight.size >= MAX_IN_FLIGHT || this.held.length > 0;
+    if (counted && full && !NEVER_HELD.has(entry.cmd)) this.held.push(entry);
     else this.send(entry, counted);
   }
 
@@ -282,7 +286,7 @@ class Transport {
     const req = this.nextReq++;
     this.pending.set(req, entry);
     if (counted) this.inFlight.add(req);
-    console.assert(this.inFlight.size <= MAX_IN_FLIGHT, 'More requests in flight than archond answers');
+    console.assert(this.inFlight.size <= MAX_IN_FLIGHT || NEVER_HELD.has(entry.cmd), 'More requests in flight than archond answers');
     this.ws.send(JSON.stringify({ ...entry.fields, req, cmd: entry.cmd }));
   }
 

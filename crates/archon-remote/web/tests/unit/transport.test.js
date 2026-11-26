@@ -258,21 +258,40 @@ test('a timed-out request keeps its slot until its late reply, and a drop fails 
   h.transport.start(); h.last().open(); h.last().welcome();
   const outcomes = [];
   for (let i = 0; i < MAX_IN_FLIGHT + 1; i += 1) {
-    h.transport.request('design_input', { i }).then(() => outcomes.push('ok'), (e) => outcomes.push(e.code));
+    h.transport.request('design_resolve', { i }).then(() => outcomes.push('ok'), (e) => outcomes.push(e.code));
   }
   h.fire(1000);
   await Promise.resolve();
   assert.equal(outcomes.filter((o) => o === 'timeout').length, MAX_IN_FLIGHT + 1);
   assert.equal(h.transport.waiting, 0, 'an expired request no longer waits');
-  h.transport.request('design_input', { i: 'late' }).catch((e) => outcomes.push(e.code));
+  h.transport.request('design_resolve', { i: 'late' }).catch((e) => outcomes.push(e.code));
   assert.equal(h.transport.waiting, 1, 'archond still holds the expired requests\' slots');
-  h.last().reply(h.last().sent[1].req, { Ok: { reply: 'design_done', data: null } });
+  h.last().reply(h.last().sent[1].req, { Ok: { reply: 'design_resolved', data: null } });
   assert.equal(h.last().sent.at(-1).i, 'late');
-  h.transport.request('design_input', { i: 'held' }).catch((e) => outcomes.push(e.code));
+  h.transport.request('design_resolve', { i: 'held' }).catch((e) => outcomes.push(e.code));
   h.last().drop();
   await Promise.resolve();
   assert.deepEqual(outcomes.slice(-2), ['disconnected', 'disconnected']);
   assert.equal(h.transport.waiting, 0);
+});
+
+test('input past the in-flight cap goes at once, for archond to run or refuse, and never expires unsent', async () => {
+  const h = harness({ requestTimeoutMs: 1000 });
+  h.transport.start(); h.last().open(); h.last().welcome();
+  for (let i = 0; i < MAX_IN_FLIGHT; i += 1) h.transport.request('design_resolve', { i }).catch(() => {});
+  h.transport.request('design_resolve', { i: 'waits' }).catch(() => {});
+  assert.equal(h.transport.waiting, 1);
+  let refused = null;
+  h.transport.request('design_input', { events: [] }).catch((e) => { refused = e; });
+  const input = h.last().sent.at(-1);
+  assert.equal(input.cmd, 'design_input', 'input does not wait behind the cap');
+  assert.equal(h.transport.waiting, 1, 'nor does it count as waiting');
+  h.last().reply(input.req, { Err: { code: 'unavailable', message: 'at most 16 requests may be in flight' } });
+  await Promise.resolve();
+  assert.equal(refused?.code, 'unavailable', 'archond\'s refusal reaches the batcher');
+  assert.equal(h.last().sent.at(-1).cmd, 'design_input', 'its slot was never archond\'s to give the waiting request');
+  h.last().reply(h.last().sent[1].req, { Ok: { reply: 'design_resolved', data: null } });
+  assert.equal(h.last().sent.at(-1).i, 'waits', 'an answered request frees the slot for the one waiting');
 });
 
 test('slots of requests that never get a reply come free after the grace period', async () => {

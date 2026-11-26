@@ -139,22 +139,25 @@ is a fresh picture of where it stopped.
 Input goes to archond one request at a time, and archond ends each within
 about 20 seconds and runs one at a time per session, so input runs in the
 order you gave it. While a request is on its way, the next wheel ticks at the
-same point are added up and only the latest pointer position is kept; no
-scroll distance and no click or key is lost. Input archond turns away because
+same point and in the same direction are added up and only the latest pointer
+position is kept; no scroll distance and no click or key is lost. Input archond turns away because
 it is busy is sent again, in order; if it cannot be sent for about two seconds
 it is dropped. When the preview falls behind, the status line under the frame
 says "Catching up with the preview…" until it catches up; nothing pops up. A
 web app connection keeps at most 16 requests in flight, archond's limit, and
-holds any more until a reply comes.
+holds any more until a reply comes. Input is never held: it goes at once, for
+archond to run or turn away.
 
 archond alone keeps track of what is held down in the preview: a key, button
 or finger counts as down once it is sent, and as up only once Chromium answers
 its release. When an input request fails, times out or is turned away (not
 ready, past the rate or the in-flight limit), it may have carried a release, so
 archond lets go of everything held before the next request runs, or within
-about three seconds if none comes. Each release has its own two-second
-deadline; one Chromium leaves unanswered is sent again later. Closing the
-session closes its browser, which lets go of everything with it. A press that
+about three seconds if none comes. It does the same when a page's stream
+ends: closing or reloading the page, a reconnect, or opening another session
+drops any input the page still had queued. Each release has its own
+two-second deadline; one Chromium leaves unanswered is sent again later.
+Closing the session closes its browser, which lets go of everything with it. A press that
 spans requests that all succeed, such as a drag, is never cut short.
 
 ## Notes and their statuses

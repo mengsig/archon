@@ -1,0 +1,3 @@
+Implemented and committed as `e9417b4` (`Refactor order status to enum`).
+
+`Order` now uses `OrderStatus`; parsing, display, lifecycle transitions, and existing report and error behavior are preserved. `cargo test` passed, and the working tree is clean.

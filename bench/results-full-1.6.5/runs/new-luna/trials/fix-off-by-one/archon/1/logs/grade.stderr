@@ -1,0 +1,64 @@
+======================================================================
+FAIL: test_includes_the_last_window (test_window.SlidingWindowTest.test_includes_the_last_window)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/b88779ac14719cadba8c686f/fix-off-by-one/test_window.py", line 8, in test_includes_the_last_window
+    self.assertEqual(sliding_windows([1, 2, 3], 2), [[1, 2], [2, 3]])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [[1, 2]] != [[1, 2], [2, 3]]
+
+Second list contains 1 additional elements.
+First extra element 1:
+[2, 3]
+
+- [[1, 2]]
++ [[1, 2], [2, 3]]
+
+======================================================================
+FAIL: test_whole_list_is_one_window (test_window.SlidingWindowTest.test_whole_list_is_one_window)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/b88779ac14719cadba8c686f/fix-off-by-one/test_window.py", line 11, in test_whole_list_is_one_window
+    self.assertEqual(sliding_windows([1, 2], 2), [[1, 2]])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != [[1, 2]]
+
+Second list contains 1 additional elements.
+First extra element 0:
+[1, 2]
+
+- []
++ [[1, 2]]
+
+======================================================================
+FAIL: test_every_window_counted (test_window_hidden.SlidingWindowEdgeCases.test_every_window_counted)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/b88779ac14719cadba8c686f/fix-off-by-one/test_window_hidden.py", line 19, in test_every_window_counted
+    self.assertEqual(len(windows), 7)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 6 != 7
+
+======================================================================
+FAIL: test_size_one (test_window_hidden.SlidingWindowEdgeCases.test_size_one)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/b88779ac14719cadba8c686f/fix-off-by-one/test_window_hidden.py", line 14, in test_size_one
+    self.assertEqual(sliding_windows([4, 5, 6], 1), [[4], [5], [6]])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [[4], [5]] != [[4], [5], [6]]
+
+Second list contains 1 additional elements.
+First extra element 2:
+[6]
+
+- [[4], [5]]
++ [[4], [5], [6]]
+?          ++++ +
+
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.001s
+
+FAILED (failures=4)
+expect_tests: python3 exited 1

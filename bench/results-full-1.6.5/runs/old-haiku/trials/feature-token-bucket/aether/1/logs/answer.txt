@@ -1,0 +1,18 @@
+Implemented the rate limiter in ratelimit.py per SPEC.md and committed it as 74ffc01 on main ("Implement token bucket and keyed rate limiter"). Standard library only (time, collections.OrderedDict).
+
+- TokenBucket: validates capacity and refill_per_sec > 0 (ValueError); starts full; continuous fractional refill capped at capacity; try_acquire/wait_time validate 0 < n <= capacity (ValueError) and consume nothing on failure; available() refills first; a clock that goes backwards adds nothing until it passes the last seen time.
+- KeyedLimiter: validates capacity, refill_per_sec and max_keys >= 1 (ValueError). One TokenBucket per key, created on first use. try_acquire and wait_time both count as a use (move to most-recent). When a new key would exceed max_keys, the LRU key is evicted first; an evicted key returns full. n is validated before any key is created, so a bad call leaves len() unchanged. __len__ returns the number of tracked keys.
+
+I also added 9 edge-case tests to test_ratelimit.py (invalid parameters, invalid n, cap, fractional refill, wait_time, backwards clock, LRU eviction, max_keys validation, no key created on invalid n). `python3 -m unittest -v test_ratelimit` runs 12 tests, all passing.
+
+Assumptions: wait_time on a brand-new key creates that key (the spec says it counts as a use). The implementation does not type-check n, capacity, or refill beyond the > 0 comparisons. Untracked __pycache__ was removed; the working tree is clean.
+
+The rate limiter is implemented in `ratelimit.py` and committed as `74ffc01` on `main`. All 12 tests pass.
+
+- **`TokenBucket`**: rejects a capacity or refill rate that is not greater than 0. It starts full and refills continuously, capped at capacity. `try_acquire` and `wait_time` raise `ValueError` unless `0 < n <= capacity`, and a failed `try_acquire` consumes nothing. If the clock goes backwards, nothing is added until it passes the latest time seen.
+- **`KeyedLimiter`**: rejects `max_keys < 1` as well as bad capacity or rate. It keeps one bucket per key in an `OrderedDict`. Both `try_acquire` and `wait_time` count as a use. When a new key would exceed `max_keys`, the least recently used key is evicted, and an evicted key that returns starts full. An invalid `n` raises before any key is created.
+- **Tests**: I added 9 edge-case tests to `test_ratelimit.py` covering the spec's error and eviction cases. The file's original 3 tests are unchanged.
+
+Assumptions:
+- `wait_time` on a brand-new key creates that key, since the spec says it counts as a use.
+- `n`, `capacity` and `refill_per_sec` are checked only with comparisons. I did not add type checks.

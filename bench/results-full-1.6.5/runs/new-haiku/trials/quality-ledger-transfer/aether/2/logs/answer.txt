@@ -1,0 +1,22 @@
+Implemented ledger.py per SPEC.md and extended test_ledger.py; committed as 4981e32 on main (author mengsig). All 23 tests pass via `python3 -m unittest test_ledger`, stable across 4 runs.
+
+Implementation: Ledger(balances) validates a dict of nonempty str names to built-in ints in [0, MAX_BALANCE] (bools rejected) and copies it. transfer() validates the amount first, then looks up accounts (KeyError for unknown or non-str names), then under a single threading.Lock checks funds and destination overflow before writing both sides; same-account transfers return whether funds suffice and never change balances. snapshot() returns a copy taken under the lock. A single lock gives linearizable operations and rules out deadlock for opposite transfers.
+
+Assumptions I chose: non-string account names passed to transfer raise KeyError (treated as unknown accounts), since the spec only says unknown accounts raise KeyError.
+
+Tests cover: construction validation and aliasing, amount validation ordering, unknown accounts, no account creation, same-account cases including MAX_BALANCE, overflow and exact-to-max boundaries, total conservation, and two threaded tests (opposite transfers without deadlock; snapshots never see a partial transfer). Threaded tests use fixed round counts with join timeouts, no randomness or wall-clock logic.
+
+Not committed: no Claude co-author line, because CLAUDE.md says not to add attribution and it takes precedence over the reminder. Workspace is clean; __pycache__ removed.
+
+I implemented `ledger.py` to the spec and extended `test_ledger.py`. The work is committed as `4981e32` on `main`, author `mengsig`. All 23 tests pass with `python3 -m unittest test_ledger`, and the result held across four runs.
+
+- **Construction:** `Ledger(balances)` accepts a dict of non-empty string names to built-in ints in `[0, MAX_BALANCE]`. It rejects bools, floats, and non-dict input with `ValueError`, and it copies the input.
+- **Transfer:** `transfer()` validates the amount before looking up accounts. Unknown accounts raise `KeyError`. Under one lock it checks source funds and destination overflow before writing both sides, so failures change nothing. Same-account transfers return whether the funds suffice and never change the balance.
+- **Snapshot:** `snapshot()` returns a copy taken under the lock.
+- **Concurrency:** a single `threading.Lock` makes every call linearizable and rules out deadlock between opposite transfers.
+
+One assumption: non-string names passed to `transfer` raise `KeyError`, since the spec only says unknown accounts raise it.
+
+The tests cover validation, ordering of checks, boundaries at `MAX_BALANCE`, conservation of the total, and two threaded checks (no deadlock, and snapshots never see a partial transfer).
+
+I did not add the Claude co-author line the attribution reminder asked for. CLAUDE.md says not to add Claude attribution, and it takes precedence. The workspace is clean, and I removed the generated `__pycache__`.

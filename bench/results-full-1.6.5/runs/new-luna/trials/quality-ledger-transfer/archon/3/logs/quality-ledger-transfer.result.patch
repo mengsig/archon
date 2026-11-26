@@ -1,0 +1,162 @@
+diff --git a/ledger.py b/ledger.py
+index 42f2e88..309838a 100644
+--- a/ledger.py
++++ b/ledger.py
+@@ -1,14 +1,45 @@
+ """Bounded, thread-safe ledger. See SPEC.md."""
+ 
++from threading import Lock
++
+ MAX_BALANCE = 2**63 - 1
+ 
+ 
+ class Ledger:
+     def __init__(self, balances):
+-        raise NotImplementedError
++        if not isinstance(balances, dict):
++            raise ValueError("balances must be a dict")
++
++        copied = {}
++        for name, balance in balances.items():
++            if not isinstance(name, str) or not name:
++                raise ValueError("account names must be nonempty strings")
++            if type(balance) is not int or not 0 <= balance <= MAX_BALANCE:
++                raise ValueError("balances must be integers in range")
++            copied[name] = balance
++
++        self._balances = copied
++        self._lock = Lock()
+ 
+     def transfer(self, source, destination, amount):
+-        raise NotImplementedError
++        if type(amount) is not int or not 1 <= amount <= MAX_BALANCE:
++            raise ValueError("amount must be an integer in range")
++
++        with self._lock:
++            source_balance = self._balances[source]
++            destination_balance = self._balances[destination]
++
++            if source == destination:
++                return source_balance >= amount
++            if source_balance < amount:
++                return False
++            if destination_balance > MAX_BALANCE - amount:
++                return False
++
++            self._balances[source] = source_balance - amount
++            self._balances[destination] = destination_balance + amount
++            return True
+ 
+     def snapshot(self):
+-        raise NotImplementedError
++        with self._lock:
++            return self._balances.copy()
+diff --git a/test_ledger.py b/test_ledger.py
+index b8089e7..f34e8b0 100644
+--- a/test_ledger.py
++++ b/test_ledger.py
+@@ -1,6 +1,7 @@
++import threading
+ import unittest
+ 
+-from ledger import Ledger
++from ledger import Ledger, MAX_BALANCE
+ 
+ 
+ class LedgerBasics(unittest.TestCase):
+@@ -13,3 +14,95 @@ class LedgerBasics(unittest.TestCase):
+         ledger = Ledger({"a": 2, "b": 0})
+         self.assertIs(ledger.transfer("a", "b", 3), False)
+         self.assertEqual(ledger.snapshot(), {"a": 2, "b": 0})
++
++
++class LedgerContract(unittest.TestCase):
++    def test_constructor_validation(self):
++        for balances in (None, [], (), "x", {"": 1}, {1: 1}, {"a": True}, {"a": 1.0}, {"a": -1}, {"a": MAX_BALANCE + 1}):
++            with self.subTest(balances=balances), self.assertRaises(ValueError):
++                Ledger(balances)
++        self.assertEqual(Ledger({}).snapshot(), {})
++
++    def test_constructor_and_snapshot_are_copies(self):
++        initial = {"a": 2, "b": 3}
++        ledger = Ledger(initial)
++        initial["a"] = 99
++        initial["c"] = 7
++        snap = ledger.snapshot()
++        snap["a"] = 0
++        snap["c"] = 1
++        self.assertEqual(ledger.snapshot(), {"a": 2, "b": 3})
++
++    def test_amount_validation_precedes_account_lookup(self):
++        ledger = Ledger({})
++        for amount in (0, -1, MAX_BALANCE + 1, True, 1.0, "1"):
++            with self.subTest(amount=amount), self.assertRaises(ValueError):
++                ledger.transfer("missing", "also-missing", amount)
++        with self.assertRaises(KeyError):
++            ledger.transfer("missing", "also-missing", 1)
++
++    def test_overflow_is_atomic_and_can_fill_to_ceiling(self):
++        ledger = Ledger({"a": 2, "b": MAX_BALANCE - 1})
++        self.assertFalse(ledger.transfer("a", "b", 2))
++        self.assertEqual(ledger.snapshot(), {"a": 2, "b": MAX_BALANCE - 1})
++        self.assertTrue(ledger.transfer("a", "b", 1))
++        self.assertEqual(ledger.snapshot(), {"a": 1, "b": MAX_BALANCE})
++
++    def test_same_account(self):
++        ledger = Ledger({"a": MAX_BALANCE, "small": 7})
++        self.assertTrue(ledger.transfer("a", "a", MAX_BALANCE))
++        self.assertEqual(ledger.snapshot(), {"a": MAX_BALANCE, "small": 7})
++        self.assertFalse(ledger.transfer("small", "small", 8))
++        with self.assertRaises(KeyError):
++            ledger.transfer("missing", "missing", 1)
++
++    def test_opposite_transfers_complete_without_deadlock(self):
++        ledger = Ledger({"a": 1000, "b": 1000})
++        gate = threading.Barrier(3)
++        errors = []
++
++        def move(source, destination):
++            try:
++                gate.wait(timeout=2)
++                for _ in range(500):
++                    self.assertTrue(ledger.transfer(source, destination, 1))
++            except BaseException as error:
++                errors.append(error)
++
++        threads = [threading.Thread(target=move, args=pair) for pair in (("a", "b"), ("b", "a"))]
++        for thread in threads:
++            thread.start()
++        gate.wait(timeout=2)
++        for thread in threads:
++            thread.join(timeout=3)
++        self.assertTrue(all(not thread.is_alive() for thread in threads), "opposite transfers deadlocked")
++        self.assertEqual(errors, [])
++        self.assertEqual(ledger.snapshot(), {"a": 1000, "b": 1000})
++
++    def test_concurrent_snapshots_never_observe_partial_transfer(self):
++        ledger = Ledger({"a": 1000, "b": 0})
++        start = threading.Barrier(2)
++        done = threading.Event()
++        observer_recorded = threading.Event()
++        observed = []
++
++        def writer():
++            start.wait(timeout=2)
++            ledger.transfer("a", "b", 1)
++            if not observer_recorded.wait(timeout=2):
++                raise AssertionError("observer did not record a snapshot")
++            for _ in range(499):
++                ledger.transfer("a", "b", 1)
++            done.set()
++
++        thread = threading.Thread(target=writer)
++        thread.start()
++        start.wait(timeout=2)
++        while not done.is_set():
++            snapshot = ledger.snapshot()
++            observed.append(sum(snapshot.values()))
++            observer_recorded.set()
++        thread.join(timeout=3)
++        self.assertFalse(thread.is_alive())
++        self.assertEqual(set(observed), {1000})
++        self.assertEqual(ledger.snapshot(), {"a": 500, "b": 500})

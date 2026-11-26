@@ -1,0 +1,16 @@
+{
+  "candidate_commit": "c4bcaa9f8eff80ca81917f9ddaf65a866abb3690",
+  "head": "3411735fba3f221e837213ef0259d82d89dfe6bd",
+  "arm": "old",
+  "model": "haiku",
+  "parallel": "1",
+  "load5": 2.5263671875,
+  "hashes": {
+    "archon": "c82005af40e2aed8fe2dae7d10d96d29b38228d5af2268c5f671ef965cf65f5c",
+    "aether": "3a795ff2a718e8c227ac66ad6bbefd2cfe1838bfcbf77b37eac10e56ca3cc923",
+    "archon-bench": "ef5186389d442b5e913b056a31e285d79c9321b25d5b54325caecc507b596632"
+  },
+  "start": "2026-11-25T06:22:10.136331+00:00",
+  "exit": -2,
+  "end": "2026-11-25T06:51:10.589790+00:00"
+}

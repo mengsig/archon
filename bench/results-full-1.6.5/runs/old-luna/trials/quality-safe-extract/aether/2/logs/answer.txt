@@ -1,0 +1,3 @@
+Implemented and committed `extract()` with full batch validation, path and symlink conflict checks, and exclusive file creation. Added focused tests for malformed input, collisions, invalid roots and existing paths, plus literal percent names.
+
+All 7 tests pass; the working tree is clean. Commit: `edc06b5` (`Implement safe batch extraction`).

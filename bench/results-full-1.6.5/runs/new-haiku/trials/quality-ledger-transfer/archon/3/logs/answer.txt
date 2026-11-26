@@ -1,0 +1,49 @@
+I queued the work as item `qi_01M88YNM8J03WGKVAFF7JSYGEG` on `quality-ledger-transfer`. I haven't read or changed the code myself; the item is the only change.
+
+- **Pipeline:** `direct`, one agent that implements, tests and commits. Archon ships it, so the commit lands on the item's branch.
+- **Brief:** implement `ledger.py` per `SPEC.md`, keep the documented API, handle every specified error and boundary case, extend the existing tests without deleting them, use the standard library only, and run the suite before finishing.
+- **Review:** `standard`, because the ledger is shared data logic and a slip could hide.
+- **Model:** balanced tier at medium effort. My first try at high effort was refused because the configured maximum for this repository is medium.
+
+I'll be notified when the item finishes, and I'll report the outcome then.
+
+Done: Implement ledger.py per SPEC.md with tests. Implemented ledger.py per SPEC.md (one threading.Lock per ledger; validation of names, balances, amounts; KeyError for unknown accounts; False for insufficient funds or destination overflow; same-account rule) and extended test_ledger.py to 22 tests, keeping the original two. Commit 7d242d2 on archon/f7jsygeg-implement-ledger-py-per-spec-md-with-tes, tree c9c7f189bfaa5d1258ee2f982862585aafd81867, no attribution lines. Checks: python3 -m unittest 22 OK (5 repeats OK); before: 2 errors from NotImplementedError. Reviewer agt_01M88YQGD83GV0X5FMKMHSEJD7 passed the head with no blocking findings. Open non-blocking follow-ups: test_snapshots_never_see_a_half_transfer does not fail if the writer thread raises; concurrency tests could hang rather than fail on a deadlock regression; validation via items() could be bypassed by a dict subclass that overrides items(). Risk: reviewer rated low; the author rated high because the rubric lists concurrency as high. The reviewer's call stands per contract, so the orchestrator should decide. Reviewer process pid 2625764 was left running by Aether and stops when this task ends. Nothing else was started. REVIEW: pass by agt_01M88YQGD83GV0X5FMKMHSEJD7.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88YQGD83GV0X5FMKMHSEJD7)
+
+SHIPPED: commit 7d242d25d948fc73c496a441775efe4f3f238759 on the run branch
+Branch `archon/f7jsygeg-implement-ledger-py-per-spec-md-with-tes` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/3e5ff7ee6ed0b9d32d95fe90/quality-ledger-transfer holds it (2 files changed, 211 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M88YNM8J03WGKVAFF7JSYGEG`; land it in `main`: `archon merge qi_01M88YNM8J03WGKVAFF7JSYGEG`.
+
+Done: Harden ledger concurrency tests and validation bypass. Hardened ledger validation and concurrency tests on archon/f7jsygeg-implement-ledger-py-per-spec-md-with-tes. Head 94e4756 (tree a8d08028de47d5dd0e905d321c545e992997b827), one commit on top of 7d242d2: 4c61721 plus the review fix 94e4756. Not pushed.
+
+What changed: ledger.py __init__ validates and copies entries read via dict.items, so a dict subclass overriding items() can no longer store invalid balances (before: accepted {'bad': -5}; now: ValueError). test_ledger.py: every thread join is bounded (2s) and asserts the thread finished; worker threads are daemon; the snapshot reader runs in a joined thread; writer exceptions are re-raised. No lock or transfer logic changed. Standard library only.
+
+Checks on 94e4756: python3 -B -m unittest, 23 tests OK. Mutant probes in temp copies: a deadlocked writer fails the snapshot test in about 2s; the old ledger.py fails the new bypass test; a raising writer surfaces its error.
+
+Review: agt_01M88YW5PSWN6GMBXXN9PKC9M2 failed 4c61721 with one blocking finding (snapshot loop could hang). Fixed in 94e4756 (Review-Fix trailer). agt_01M88YY2C0VTGTABQPA333YPZG passed the delta; agt_01M88Z040Y6G42BVKXMBZ4S69A confirmed agt_01M88YW5PSWN6GMBXXN9PKC9M2:1 resolved and passed the head. Open non-blocking follow-ups, deferred: :2 bare asserts in _transfer_locked are stripped under python -O (pre-existing from 7d242d2, not changed); :3 half-transfer detection is probabilistic (a deterministic barrier-based check would be a separate change).
+
+Risk: medium (validation behaviour change in shipped code; reviewers rated low as test-only). Nothing left running: the reviewer-left processes were stopped by PID. No servers were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88YW5PSWN6GMBXXN9PKC9M2), claude-code/claude-haiku-5-5 (agent agt_01M88YY2C0VTGTABQPA333YPZG), claude-code/claude-haiku-5-5 (agent agt_01M88Z040Y6G42BVKXMBZ4S69A)
+
+SHIPPED: commit 94e4756c739479835…
+
+Hardened ledger validation and concurrency tests on archon/f7jsygeg-implement-ledger-py-per-spec-md-with-tes. Head 94e4756 (tree a8d08028de47d5dd0e905d321c545e992997b827), one commit on top of 7d242d2: 4c61721 plus the review fix 94e4756. Not pushed.
+
+What changed: ledger.py __init__ validates and copies entries read via dict.items, so a dict subclass overriding items() can no longer store invalid balances (before: accepted {'bad': -5}; now: ValueError). test_ledger.py: every thread join is bounded (2s) and asserts the thread finished; worker threads are daemon; the snapshot reader runs in a joined thread; writer exceptions are re-raised. No lock or transfer logic changed. Standard library only.
+
+Checks on 94e4756: python3 -B -m unittest, 23 tests OK. Mutant probes in temp copies: a deadlocked writer fails the snapshot test in about 2s; the old ledger.py fails the new bypass test; a raising writer surfaces its error.
+
+Review: agt_01M88YW5PSWN6GMBXXN9PKC9M2 failed 4c61721 with one blocking finding (snapshot loop could hang). Fixed in 94e4756 (Review-Fix trailer). agt_01M88YY2C0VTGTABQPA333YPZG passed the delta; agt_01M88Z040Y6G42BVKXMBZ4S69A confirmed agt_01M88YW5PSWN6GMBXXN9PKC9M2:1 resolved and passed the head. Open non-blocking follow-ups, deferred: :2 bare asserts in _transfer_locked are stripped under python -O (pre-existing from 7d242d2, not changed); :3 half-transfer detection is probabilistic (a deterministic barrier-based check would be a separate change).
+
+Risk: medium (validation behaviour change in shipped code; reviewers rated low as test-only). Nothing left running: the reviewer-left processes were stopped by PID. No servers were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88YW5PSWN6GMBXXN9PKC9M2), claude-code/claude-haiku-5-5 (agent agt_01M88YY2C0VTGTABQPA333YPZG), claude-code/claude-haiku-5-5 (agent agt_01M88Z040Y6G42BVKXMBZ4S69A)
+
+SHIPPED: commit 94e4756c739479835d54e1d8c60ed3e45f3f2138 on the run branch
+
+Implemented ledger.py per SPEC.md (one threading.Lock per ledger; validation of names, balances, amounts; KeyError for unknown accounts; False for insufficient funds or destination overflow; same-account rule) and extended test_ledger.py to 22 tests, keeping the original two. Commit 7d242d2 on archon/f7jsygeg-implement-ledger-py-per-spec-md-with-tes, tree c9c7f189bfaa5d1258ee2f982862585aafd81867, no attribution lines. Checks: python3 -m unittest 22 OK (5 repeats OK); before: 2 errors from NotImplementedError. Reviewer agt_01M88YQGD83GV0X5FMKMHSEJD7 passed the head with no blocking findings. Open non-blocking follow-ups: test_snapshots_never_see_a_half_transfer does not fail if the writer thread raises; concurrency tests could hang rather than fail on a deadlock regression; validation via items() could be bypassed by a dict subclass that overrides items(). Risk: reviewer rated low; the author rated high because the rubric lists concurrency as high. The reviewer's call stands per contract, so the orchestrator should decide. Reviewer process pid 2625764 was left running by Aether and stops when this task ends. Nothing else was started. REVIEW: pass by agt_01M88YQGD83GV0X5FMKMHSEJD7.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88YQGD83GV0X5FMKMHSEJD7)
+
+SHIPPED: commit 7d242d25d948fc73c496a441775efe4f3f238759 on the run branch

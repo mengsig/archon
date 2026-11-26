@@ -1,0 +1,33 @@
+The coordinated initiative is queued as **ini_01M88B9D1N49B6BS4GJ16Z8CSY**. Its `ledger` and `reports` items will implement the shared currency format, legacy USD compatibility, requested error statuses, tests, README updates, and local commits.
+
+Quota note: Codex’s primary window has 31% remaining and is projected to run out before its reset. The initiative is queued on the configured pipelines; I haven’t changed provider or effort settings.
+
+Done: Support currency in ledger TSV to CSV. Added optional TSV currency with USD default, currency-aware CSV output, strict uppercase ASCII validation, and currency errors that report the line and exit 2. Updated tests and README; cargo fmt check and cargo test pass. Committed locally as f1285a39e3e15adb95e425f2885d7af0a6a0aaaf; worktree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit f1285a39e3e15adb95e425f2885d7af0a6a0aaaf on the run branch
+Branch `archon/0jxbrs4p-support-currency-in-ledger-tsv-to-csv` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/e012da46546b73fcf79f648b/ledger holds it (4 files changed, 92 insertions(+), 18 deletions(-)). Review: `archon diff qi_01M88B9D1P2PY1C5V80JXBRS4P`; land it in `main`: `archon merge qi_01M88B9D1P2PY1C5V80JXBRS4P`.
+
+Freed 0.0 GiB of build output: item qi_01M88B9D1P2PY1C5V80JXBRS4P ended and its cargo target directory went.
+
+Done: Aggregate reports by account and currency. Added currency-aware aggregation to reports, retaining legacy CSV support with USD as the default. Updated README and tests. `python3 -m unittest` passes (3 tests); committed locally as 4b55f12d3468b10b07008bf265ae029f3d4eacf7. The worktree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 4b55f12d3468b10b07008bf265ae029f3d4eacf7 on the run branch
+Branch `archon/ajkbsjp9-aggregate-reports-by-account-and-currenc` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/e012da46546b73fcf79f648b/reports holds it (3 files changed, 59 insertions(+), 13 deletions(-)). Review: `archon diff qi_01M88B9D29KB2MB99WAJKBSJP9`; land it in `main`: `archon merge qi_01M88B9D29KB2MB99WAJKBSJP9`.
+
+Initiative finished; coordinated result queued.
+
+Added currency-aware aggregation to reports, retaining legacy CSV support with USD as the default. Updated README and tests. `python3 -m unittest` passes (3 tests); committed locally as 4b55f12d3468b10b07008bf265ae029f3d4eacf7. The worktree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 4b55f12d3468b10b07008bf265ae029f3d4eacf7 on the run branch
+
+Added optional TSV currency with USD default, currency-aware CSV output, strict uppercase ASCII validation, and currency errors that report the line and exit 2. Updated tests and README; cargo fmt check and cargo test pass. Committed locally as f1285a39e3e15adb95e425f2885d7af0a6a0aaaf; worktree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit f1285a39e3e15adb95e425f2885d7af0a6a0aaaf on the run branch

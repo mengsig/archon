@@ -1,0 +1,20 @@
+I queued the fix as item `qi_01M88QYJN9S36GYTSY2J96R5C2`. I did not edit the repository myself, since changes go through the queue.
+
+- **Repository:** `fix-off-by-one`, base `main`, ship mode `local`. The agent commits on a local branch and does not push.
+- **Pipeline:** `direct`, one agent that makes and checks the change, with standard review.
+- **Brief:** find the bug in `window.py`, make `python3 -m unittest` pass without changing the tests, and make the function correct for all inputs, including empty input, a single element, window size at or above the input length, and both ends of the indexing. Commit on the local branch with no push.
+
+I'll post the outcome when it finishes. Any failure or blocker will come to you with it.
+
+Done: Fix window.py bug so python3 -m unittest passes for all inputs. Fixed the off-by-one in window.py: sliding_windows used range(len(items) - size), which dropped the final window, so [1,2] with size 2 returned [] instead of [[1,2]]. The range is now range(len(items) - size + 1). Inputs shorter than size still return []. Committed as 822acab on archon/2j96r5c2-fix-window-py-bug-so-python3-m-unittest under the configured identity mengsig; nothing pushed. Tests were not changed. Before: `python3 -m unittest` ran 3 tests, 2 failing. After: 3 tests OK. Boundary probe: s([],1)=[], s([1],1)=[[1]], s([1],2)=[], s([1,2],2)=[[1,2]], s([1,2,3],1)=[[1],[2],[3]], s([1,2,3],3)=[[1,2,3]], s([1,2,3],2)=[[1,2],[2,3]]. The repo has no linter or build step. No services were started. Open: none. Review: one low-effort reviewer (agt_01M88QZEXWPB6BMSVNQYW9E6QV) read the whole one-line change and passed it with no findings. Risk low: one-line off-by-one fix, covered by tests. Assertions were considered and not added: a length assert would be decorative. Review: pass by agt_01M88QZEXWPB6BMSVNQYW9E6QV
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88QZEXWPB6BMSVNQYW9E6QV)
+
+SHIPPED: commit 822acabe1a2fa60c192ebc21fd9262d2edb7414c on the run branch
+Branch `archon/2j96r5c2-fix-window-py-bug-so-python3-m-unittest` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/8be332db7b70e667a365d6e3/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M88QYJN9S36GYTSY2J96R5C2`; land it in `main`: `archon merge qi_01M88QYJN9S36GYTSY2J96R5C2`.
+
+Fixed the off-by-one in window.py: sliding_windows used range(len(items) - size), which dropped the final window, so [1,2] with size 2 returned [] instead of [[1,2]]. The range is now range(len(items) - size + 1). Inputs shorter than size still return []. Committed as 822acab on archon/2j96r5c2-fix-window-py-bug-so-python3-m-unittest under the configured identity mengsig; nothing pushed. Tests were not changed. Before: `python3 -m unittest` ran 3 tests, 2 failing. After: 3 tests OK. Boundary probe: s([],1)=[], s([1],1)=[[1]], s([1],2)=[], s([1,2],2)=[[1,2]], s([1,2,3],1)=[[1],[2],[3]], s([1,2,3],3)=[[1,2,3]], s([1,2,3],2)=[[1,2],[2,3]]. The repo has no linter or build step. No services were started. Open: none. Review: one low-effort reviewer (agt_01M88QZEXWPB6BMSVNQYW9E6QV) read the whole one-line change and passed it with no findings. Risk low: one-line off-by-one fix, covered by tests. Assertions were considered and not added: a length assert would be decorative. Review: pass by agt_01M88QZEXWPB6BMSVNQYW9E6QV
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88QZEXWPB6BMSVNQYW9E6QV)
+
+SHIPPED: commit 822acabe1a2fa60c192ebc21fd9262d2edb7414c on the run branch

@@ -1,0 +1,196 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88781CK7EDX5WG2MXXA1KXF",
+      "repo": "repo_01M88774W3MFSGVDKDNXK24CJ9",
+      "pipeline": "direct",
+      "title": "Refactor orders status to OrderStatus",
+      "brief": "Refactor the orders crate to use a proper OrderStatus enum.\n\nRequirements:\n- Add src/status.rs with `pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }`, deriving at least Debug, Clone, Copy, PartialEq, Eq, Hash.\n- `OrderStatus::as_str(self) -> &'static str` returns lowercase names pending, paid, shipped, cancelled; Display prints the same.\n- Implement FromStr with `type Err = ParseStatusError`. ParseStatusError must be public, implement std::error::Error, and its message must name the rejected input.\n- Implement `OrderStatus::can_transition_to(self, next: OrderStatus) -> bool`: allow pending->paid, pending->cancelled, paid->shipped, paid->cancelled only.\n- Change Order::status to OrderStatus, re-export OrderStatus and ParseStatusError from the crate root, and use the enum everywhere so status string literals occur only in src/status.rs.\n- Preserve observable behavior exactly, including errors, report output and ordering, and parsing.\n\nAcceptance: cargo test passes; commit the changes on the item branch. Do not push or override git identity.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88781CK7EDX5WG2MXXA1KXF",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T02:06:08.788818379Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T02:06:08.788818379Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T02:06:08.788818379Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Lower effort for this bounded enum refactor to conserve the constrained Codex quota; implementation and cargo test are explicitly required."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88781CXXTQTZQGJPRMZEX31",
+        "summary": "Introduced the OrderStatus enum, parsing/error type, transition graph, crate-root exports, and replaced raw status strings throughout order operations and reporting. Verified with cargo fmt --check, cargo test (4 integration tests), git diff --check, and a status-literal scan. Committed as 3ecef49936172ed9b60e09843321da5918e40493; tree e7791aa0239dd8d8ebfa808d9c88da83a5027f9c. Nothing remains open.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 3ecef49936172ed9b60e09843321da5918e40493 on the run branch"
+      },
+      "created_at": "2026-11-25T02:06:08.787126485Z",
+      "updated_at": "2026-11-25T02:08:06.926683102Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88781CXXTQTZQGJPRMZEX31",
+        "item": "qi_01M88781CK7EDX5WG2MXXA1KXF",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88781HC02AESYY3WRWT3PVA",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/919503f15cd445bd7850ed62/.archon/data/worktrees/refactor-order-status/qi_01M88781CK7EDX5WG2MXXA1KXF",
+        "branch": "archon/mxxa1kxf-refactor-orders-status-to-orderstatus",
+        "state": {
+          "state": "succeeded",
+          "summary": "Introduced the OrderStatus enum, parsing/error type, transition graph, crate-root exports, and replaced raw status strings throughout order operations and reporting. Verified with cargo fmt --check, cargo test (4 integration tests), git diff --check, and a status-literal scan. Committed as 3ecef49936172ed9b60e09843321da5918e40493; tree e7791aa0239dd8d8ebfa808d9c88da83a5027f9c. Nothing remains open.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 3ecef49936172ed9b60e09843321da5918e40493 on the run branch"
+        },
+        "cost_usd": 0.011032260000000002,
+        "started_at": "2026-11-25T02:06:08.928598704Z",
+        "finished_at": "2026-11-25T02:08:06.926683102Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88781H6R6D8805040TSCPG6",
+        "run": "prun_01M88781CXXTQTZQGJPRMZEX31",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "low",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88781HK9RW52W5SBTP4Q114",
+        "aether_task": "tsk_01M88781HKJ7CZ2D71TPQYKF70",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins low",
+        "summary": "Introduced the OrderStatus enum, parsing/error type, transition graph, crate-root exports, and replaced raw status strings throughout order operations and reporting. Verified with cargo fmt --check, cargo test (4 integration tests), git diff --check, and a status-literal scan. Committed as 3ecef49936172ed9b60e09843321da5918e40493; tree e7791aa0239dd8d8ebfa808d9c88da83a5027f9c. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "cargo fmt --check (passed)",
+            "cargo test (passed: 4 integration tests)",
+            "git diff --check (passed)",
+            "rg -n '\"(pending|paid|shipped|cancelled)\"' src --glob '*.rs' (all matches in src/status.rs)"
+          ],
+          "commit": "3ecef49936172ed9b60e09843321da5918e40493",
+          "evidence": {
+            "none": "Pure refactor with textual output preserved; automated tests and status-literal scan provide evidence."
+          },
+          "local_commit": "3ecef49936172ed9b60e09843321da5918e40493",
+          "pr": {
+            "body": "Added OrderStatus with Display, FromStr, public ParseStatusError and the specified transition graph. Updated Order, billing, shipping, and report parsing/counting/serialization; report status order remains lexical and existing error/output text is preserved. Added integration coverage for parsing, formatting, rejected input and transitions. Checks: cargo fmt --check and cargo test passed; git diff --check passed; status literal scan confirmed literals are confined to src/status.rs. No migration or concurrency changes.",
+            "summary": "Added a typed OrderStatus lifecycle and parsing API. Reports and lifecycle operations now use the enum while preserving output and errors. Before: statuses were raw strings; now they are validated enum values.",
+            "title": "Refactor order status to enum"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained public API behavior/type change in Order.status with transition behavior wired through order, billing, shipping, and reporting. All four integration tests pass, including preservation of observable formatting/errors. Public type change warrants medium."
+          },
+          "tree": "e7791aa0239dd8d8ebfa808d9c88da83a5027f9c"
+        },
+        "cost_usd": 0.011032260000000002,
+        "started_at": "2026-11-25T02:06:08.933989367Z",
+        "finished_at": "2026-11-25T02:08:06.685362415Z"
+      }
+    ],
+    "spent_usd": 0.011032260000000002,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T02:06:08.788818379Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T02:06:08.788818379Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T02:06:08.788818379Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

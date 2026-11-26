@@ -1,0 +1,49 @@
+I found two forgery bugs in `src/tokens.js` that should block tomorrow's release, plus several lesser issues. I did not change any code. Your message names the repo `session-lib`, but the only registered repository is `review-seeded-bug` (mirror at `.archon/data/orchestrator/repos/review-seeded-bug`, HEAD `629c3c9`). `src/tokens.js` exists there, so I reviewed that copy.
+
+I ran the checks below against the mirror's file from a scratch directory, not in the repo.
+
+## Problems
+
+**1. `verify` accepts an empty signature. Critical.**
+- **Function:** `verify` (line 24–27)
+- **What goes wrong:** `token.split('.')` gives `signature === ""` for `"<body>."`. The check `expected.startsWith("")` is always true, so any unsigned body passes.
+- **Concrete input:** `body = base64url(JSON.stringify({sub:"admin", exp: <far future>}))`, token = `body + "."`. `verify(token, anySecret)` returns `{sub:"admin", ...}`. I confirmed this.
+- **Severity:** Critical. Anyone can mint an admin token without the secret.
+
+**2. The signature check is a prefix match, not a full comparison. Critical.**
+- **Function:** `verify` (line 27)
+- **What goes wrong:** `expected.startsWith(signature)` accepts any prefix of the real MAC. A one-character signature matches with probability 1/64, and an attacker can try again and again. Longer prefixes need proportionally fewer tries to guess by brute force.
+- **Concrete input:** take a valid token for `{sub:"u"}`, keep its body, and replace the signature with its first character. `verify` returns the payload. I confirmed this.
+- **Fix direction:** compare the full MAC with `crypto.timingSafeEqual` on equal-length buffers, after checking the signature is present.
+
+**3. `verify` does not check the secret, so an empty secret makes every token forgeable. High.**
+- **Function:** `verify` (line 22, 26)
+- **What goes wrong:** `sign` rejects secrets under 32 characters, but `verify` does not. If the verifying side's secret is `""` (for example, a missing or blank environment variable), `createHmac` still works, and anyone can compute the same MAC.
+- **Concrete input:** `verify(token_signed_with_key_"", "")` accepts it. I confirmed this with an HMAC computed over the body using an empty key.
+- **Fix direction:** apply the same secret validation in `verify` as in `sign`.
+
+**4. Non-constant-time comparison. Medium.**
+- **Function:** `verify` (line 27)
+- **What goes wrong:** `startsWith` returns early on the first mismatch, so response timing leaks how many leading characters of the MAC are correct. This is the usual timing side channel, and it becomes relevant once problem 2 is fixed. Fix together with problem 2.
+
+**5. `sign` does not validate `ttlSeconds`. Medium.**
+- **Function:** `sign` (line 14–16)
+- **What goes wrong:** `NaN`, a negative value, or an enormous value is accepted silently. `ttlSeconds: NaN` produces `"exp": null` in the payload. That token is rejected by `verify` (since `typeof null !== "number"`), so the failure only shows up later, far from the cause.
+- **Fix direction:** validate that `ttlSeconds` is a finite positive number, as `secret` is validated.
+
+**6. `verify` can throw instead of returning `null`. Low.**
+- **Function:** `verify` (line 28–29)
+- **What goes wrong:** `JSON.parse` throws on non-JSON, and `payload.exp` throws if the payload is `null` or a number. Only a holder of the secret can reach this once problems 1–2 are fixed, so the exposure is small. The function still breaks its own "returns null otherwise" contract, which matters for callers that don't catch exceptions.
+
+**7. Extra segments are ignored. Low.**
+- **Function:** `verify` (line 24)
+- **What goes wrong:** `"body.sig.junk"` verifies, because only the first two `split` parts are used. Malformed tokens should be rejected outright.
+
+## What looks fine
+- `sign` builds `{...claims, iat, exp}`, so callers cannot override `exp` or `iat`.
+- HMAC is fixed to SHA-256, so there is no algorithm-confusion issue.
+- Base64url never contains `.`, so splitting on `.` is safe.
+
+## Not covered
+- The `test/` directory exists but I did not review it. The fact that none of the tests caught problems 1–2 suggests they do not test forged or truncated signatures.
+- Problems 1–3 are each small and reproducible, so the fix should be made and re-verified before release, not just noted.

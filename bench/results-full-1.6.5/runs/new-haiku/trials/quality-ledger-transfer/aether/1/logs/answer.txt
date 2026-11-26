@@ -1,0 +1,20 @@
+`ledger.py` is implemented per `SPEC.md` and committed as `0057bc2` on `main`. All 27 tests pass (`python3 -m unittest -v test_ledger`).
+
+**Implementation (`ledger.py`)**
+- `Ledger(balances)` copies the input and validates it. It rejects non-dict input, invalid names (must be a nonempty `str`), and invalid balances (must be a built-in `int` in `[0, MAX_BALANCE]`, so `bool` is rejected).
+- `transfer` validates the amount before any account lookup. Unknown accounts raise `KeyError`. Insufficient funds or destination overflow return `False` before any write.
+- Self-transfers return `balance >= amount` and never write.
+- Every operation holds one `threading.Lock`, so transfers and snapshots are linearizable. A single lock also means opposite transfers cannot deadlock.
+- `snapshot()` returns a copy.
+
+**Choices I made**
+- A single per-ledger lock rather than per-account locks. It is simpler and clearly correct; it serializes all operations on one ledger, which the spec's linearizability requirement already implies.
+- Validation uses `type(x) is int` (strict), so `int` subclasses are rejected too.
+
+**Tests (`test_ledger.py`)**
+- Kept the two existing tests and added focused cases for construction, validation order, unknown accounts, overflow boundaries, self-transfers, and copy semantics.
+- Three thread tests check that opposite transfers finish without deadlock, that concurrent snapshots always see the full total, and that a shared sink stops exactly at `MAX_BALANCE`. They use fixed iteration counts and no randomness or timing assertions.
+
+**Notes**
+- Commit has no Co-Authored-By line; I followed CLAUDE.md's no-attribution rule over the reminder's.
+- The `-I` flag from the environment guidance breaks the test import because it drops the working directory from `sys.path`. I ran the tests without it, since these are the project's own files.

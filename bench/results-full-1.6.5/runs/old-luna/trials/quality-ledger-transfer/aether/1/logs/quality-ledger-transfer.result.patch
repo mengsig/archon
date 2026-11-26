@@ -1,0 +1,147 @@
+diff --git a/ledger.py b/ledger.py
+index 42f2e88..5c5f86d 100644
+--- a/ledger.py
++++ b/ledger.py
+@@ -1,14 +1,46 @@
+ """Bounded, thread-safe ledger. See SPEC.md."""
+ 
++from threading import Lock
++
+ MAX_BALANCE = 2**63 - 1
+ 
+ 
+ class Ledger:
+     def __init__(self, balances):
+-        raise NotImplementedError
++        if not isinstance(balances, dict):
++            raise ValueError("balances must be a dict")
++
++        copied = {}
++        for name, balance in balances.items():
++            if not isinstance(name, str) or not name:
++                raise ValueError("account names must be nonempty strings")
++            if type(balance) is not int or not 0 <= balance <= MAX_BALANCE:
++                raise ValueError("balances must be integers in the supported range")
++            copied[name] = balance
++
++        self._balances = copied
++        self._lock = Lock()
+ 
+     def transfer(self, source, destination, amount):
+-        raise NotImplementedError
++        if type(amount) is not int or not 1 <= amount <= MAX_BALANCE:
++            raise ValueError("amount must be an integer in the supported range")
++
++        with self._lock:
++            source_balance = self._balances[source]
++            # Resolve both accounts before handling the same-account case.
++            destination_balance = self._balances[destination]
++
++            if source == destination:
++                return source_balance >= amount
++            if source_balance < amount:
++                return False
++            if destination_balance > MAX_BALANCE - amount:
++                return False
++
++            self._balances[source] = source_balance - amount
++            self._balances[destination] = destination_balance + amount
++            return True
+ 
+     def snapshot(self):
+-        raise NotImplementedError
++        with self._lock:
++            return self._balances.copy()
+diff --git a/test_ledger.py b/test_ledger.py
+index b8089e7..04d3a4e 100644
+--- a/test_ledger.py
++++ b/test_ledger.py
+@@ -1,6 +1,7 @@
+ import unittest
++from threading import Barrier, Thread
+ 
+-from ledger import Ledger
++from ledger import Ledger, MAX_BALANCE
+ 
+ 
+ class LedgerBasics(unittest.TestCase):
+@@ -13,3 +14,79 @@ class LedgerBasics(unittest.TestCase):
+         ledger = Ledger({"a": 2, "b": 0})
+         self.assertIs(ledger.transfer("a", "b", 3), False)
+         self.assertEqual(ledger.snapshot(), {"a": 2, "b": 0})
++
++
++class LedgerValidation(unittest.TestCase):
++    def test_construction_rejects_invalid_inputs(self):
++        for balances in (None, [], {"": 1}, {1: 1}, {"a": -1},
++                         {"a": MAX_BALANCE + 1}, {"a": True}, {"a": 1.0}):
++            with self.subTest(balances=balances):
++                with self.assertRaises(ValueError):
++                    Ledger(balances)
++
++    def test_empty_ledger_and_input_snapshot_copying(self):
++        self.assertEqual(Ledger({}).snapshot(), {})
++        original = {"a": 4}
++        ledger = Ledger(original)
++        original["a"] = 9
++        snapshot = ledger.snapshot()
++        snapshot["a"] = 12
++        self.assertEqual(ledger.snapshot(), {"a": 4})
++
++    def test_amount_validation_precedes_account_lookup(self):
++        ledger = Ledger({})
++        for amount in (0, -1, MAX_BALANCE + 1, True, 1.0):
++            with self.subTest(amount=amount):
++                with self.assertRaises(ValueError):
++                    ledger.transfer("missing", "also-missing", amount)
++
++    def test_unknown_accounts_raise_key_error_after_amount_validation(self):
++        ledger = Ledger({"a": 1})
++        with self.assertRaises(KeyError):
++            ledger.transfer("missing", "a", 1)
++        with self.assertRaises(KeyError):
++            ledger.transfer("a", "missing", 1)
++
++
++class LedgerBoundaries(unittest.TestCase):
++    def test_destination_overflow_is_atomic(self):
++        ledger = Ledger({"a": 5, "b": MAX_BALANCE - 2})
++        self.assertIs(ledger.transfer("a", "b", 3), False)
++        self.assertEqual(ledger.snapshot(), {"a": 5, "b": MAX_BALANCE - 2})
++
++    def test_same_account_checks_funds_without_overflow(self):
++        ledger = Ledger({"a": MAX_BALANCE})
++        self.assertIs(ledger.transfer("a", "a", MAX_BALANCE), True)
++        self.assertIs(ledger.transfer("a", "a", MAX_BALANCE), True)
++        self.assertEqual(ledger.snapshot(), {"a": MAX_BALANCE})
++        poor = Ledger({"a": 0})
++        self.assertIs(poor.transfer("a", "a", 1), False)
++        self.assertEqual(poor.snapshot(), {"a": 0})
++
++    def test_success_preserves_total_at_balance_limit(self):
++        ledger = Ledger({"a": MAX_BALANCE, "b": 0})
++        self.assertIs(ledger.transfer("a", "b", MAX_BALANCE), True)
++        self.assertEqual(ledger.snapshot(), {"a": 0, "b": MAX_BALANCE})
++
++
++class LedgerConcurrency(unittest.TestCase):
++    def test_opposite_transfers_preserve_total(self):
++        ledger = Ledger({"a": 100, "b": 100})
++        start = Barrier(3)
++
++        def move(source, destination):
++            start.wait()
++            for _ in range(1000):
++                ledger.transfer(source, destination, 1)
++
++        threads = [Thread(target=move, args=("a", "b")),
++                   Thread(target=move, args=("b", "a"))]
++        for thread in threads:
++            thread.start()
++        start.wait()
++        for thread in threads:
++            thread.join()
++        snapshot = ledger.snapshot()
++        self.assertEqual(sum(snapshot.values()), 200)
++        self.assertGreaterEqual(snapshot["a"], 0)
++        self.assertGreaterEqual(snapshot["b"], 0)

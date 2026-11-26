@@ -1,0 +1,22 @@
+Both repositories now handle currency, with tests passing and a commit in each.
+
+**ledger (Rust), commit `a699a77`**
+- Lines take an optional fourth column. A missing column means `USD`.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed code (anything other than three uppercase ASCII letters, such as `eur`, `EURO` or an empty field) prints `line N: bad currency ...` to stderr and exits with status 2. Other input errors still exit 1.
+- `cargo test`: 5 passed. Clippy is clean.
+
+**reports (Python), commit `235cfef`**
+- Totals are keyed by (account, currency). Output is `account,currency,total_cents`, sorted by account then currency.
+- CSV without a `currency` column is counted as USD.
+- A malformed code prints the line number to stderr and exits with status 2.
+- `python3 -m unittest`: 4 passed.
+
+I also checked the pipeline end to end: ledger output piped into reports gave correct per-currency totals, and a bad code exited 2.
+
+**Choices I made that you may want to change**
+- Currency codes are trimmed of surrounding whitespace, like the other TSV fields. An empty fourth column is an error, not a silent `USD`.
+- The reports error is raised from a small `BadCurrency` exception, so the exit-2 path is explicit rather than a generic traceback.
+- Commits use the repos' configured identity (mengsig), with the `Co-Authored-By: Claude Haiku 5.5` trailer from your attribution reminder.
+
+Both READMEs are updated to describe the new formats, exit codes and the `USD` default.

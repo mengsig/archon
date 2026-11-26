@@ -1,0 +1,24 @@
+**Root cause: `updatePrice` invalidates only the product cache entry, but category listings keep their own copy of `priceCents` for 10 minutes.**
+
+The code is in `repos/ask-cache-invalidation` (mirror HEAD `fd84168`, equal to the base commit). I changed nothing.
+
+**The two paths**
+
+- **Product page:** `Catalog.product(sku)` (`src/catalog.js:12-20`) caches the product under `product:<sku>` with `PRODUCT_TTL_SECONDS` (3600 s). `updatePrice` (`src/pricing.js:6-13`) writes to the store and then calls `catalog.cache.delete(productKey(sku))`. The next read misses and fetches the new price, so the product page updates immediately.
+- **Category pages:** `Catalog.listing(category, page)` (`src/catalog.js:22-33`) caches the whole page under `listing:<category>:<page>` as copied rows of `{ sku, name, priceCents }`, with `LISTING_TTL_SECONDS` = 600 s (`src/config.js:7`). Nothing in `updatePrice` touches those keys, so the page keeps serving the old `priceCents` until the entry expires.
+
+The 10-minute window is therefore the listing TTL. The product page is not affected because its cache entry is explicitly deleted, and the listing entries are never touched.
+
+**Why the delay is what it is**
+
+`config.js` gives the reason for caching listings separately: they are expensive to build (filter, sort, slice). The price was denormalized into the listing rows to avoid a per-row product lookup. Invalidation was written only for the product key, so every listing entry expires on its own timer. Nothing ever ties a listing to the SKUs it shows.
+
+**Caveat:** `TtlCache` is per process. If the storefront runs several instances, `catalog.cache.delete` clears only the instance that handled the merchant's change. Other instances can keep the old product value for up to an hour, and their listings for up to 10 minutes. Confirm whether there is more than one instance before choosing a fix.
+
+**Fix options**
+
+1. **Recommended: stop caching price in listings.** Cache only the SKU list per page and hydrate prices through `product(sku)`. Those lookups hit the product cache, which `updatePrice` already clears, so prices update immediately. The cost is up to 24 cache lookups per listing render, which is cheap.
+2. **Invalidate listings on price change.** Have `updatePrice` clear every `listing:<category>:*` entry for the product's category. `TtlCache` has no prefix delete, so this needs either a per-category key index or a category generation number included in the key. It is more code than option 1 and still depends on the process-local cache.
+3. **Shorten `LISTING_TTL_SECONDS`.** This narrows the window but does not remove it, and it costs more rebuilds. I would not use it as the fix.
+
+Whichever option is chosen, add a test that changes a price and then reads the category listing. The existing `test/catalog.test.js` should be checked for coverage of this path. I can queue the change as an item if you want it done.

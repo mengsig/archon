@@ -1,0 +1,21 @@
+I queued the work as item `qi_01M88WBTN60DVQX2E6S5DRKRKA`, not done it myself. I don't edit repositories as orchestrator.
+
+- **Repo:** `quality-retry-budget`, which ships local and commits to a local branch, so no push or PR.
+- **Pipeline:** `direct`, one agent that implements, tests and commits.
+- **Review:** `standard`. The change is small and self-contained, but a retry-budget bug could hide in its boundary handling, so I chose one reviewer over none.
+- **Brief:** the spec-driven implementation, preserved API, every specified error and boundary case, focused tests extending the existing basic ones, standard library only, and commit without attribution lines.
+
+The item will report when it finishes. If it fails, I'll read the stage output and decide whether to retry or split it.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py to 29 tests. Committed as 9f86e57 on archon/s5drkrka-implement-retry-budget-py-per-spec-md-wi (tree d435781654927d0874bae415f925e764bac9838f); not pushed. Before: the 3 existing tests errored with NotImplementedError. After: `python3 -W error -m unittest -v test_retry_budget` gives 29 OK; py_compile OK. Validation runs before the attempt and budget early returns; backoff saturates without huge powers; Retry-After floor is not capped; budget check is strict. Reviewer agt_01M88WDJ3CSZ4PTVPD9SYAFDZ1 passed the head with no findings. Nothing left open. The reviewer's process (pid 2442983) is still alive after completion; the runtime stops it when this run ends. No server or stack was started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88WDJ3CSZ4PTVPD9SYAFDZ1)
+
+SHIPPED: commit 9f86e57f6a7c82cbfaa1b08d073bf3a394bcc18e on the run branch
+Branch `archon/s5drkrka-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/bf8ef48ff14e389eedd5eac9/quality-retry-budget holds it (2 files changed, 172 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M88WBTN60DVQX2E6S5DRKRKA`; land it in `main`: `archon merge qi_01M88WBTN60DVQX2E6S5DRKRKA`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py to 29 tests. Committed as 9f86e57 on archon/s5drkrka-implement-retry-budget-py-per-spec-md-wi (tree d435781654927d0874bae415f925e764bac9838f); not pushed. Before: the 3 existing tests errored with NotImplementedError. After: `python3 -W error -m unittest -v test_retry_budget` gives 29 OK; py_compile OK. Validation runs before the attempt and budget early returns; backoff saturates without huge powers; Retry-After floor is not capped; budget check is strict. Reviewer agt_01M88WDJ3CSZ4PTVPD9SYAFDZ1 passed the head with no findings. Nothing left open. The reviewer's process (pid 2442983) is still alive after completion; the runtime stops it when this run ends. No server or stack was started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88WDJ3CSZ4PTVPD9SYAFDZ1)
+
+SHIPPED: commit 9f86e57f6a7c82cbfaa1b08d073bf3a394bcc18e on the run branch

@@ -1,0 +1,21 @@
+I queued the fix as item `qi_01M88R6F81FVG4N5J1V1HQGEVE` in the `fix-off-by-one` repository. I did not run the tests or edit `window.py` myself, because orchestrator policy routes repository changes through the queue.
+
+- **Pipeline:** `direct`, one agent that makes the change, checks it, and commits it. The repo ships locally, so the commit stays on a local branch and nothing is pushed.
+- **Brief:** reproduce with `python3 -m unittest`, fix only `window.py`, leave the tests untouched, and harden the function for edge cases beyond the tested inputs. It must re-run the suite and report the root cause and the final output.
+- **Review:** `standard`, because the function is shared code and a wrong fix could hide there.
+- **Model:** balanced tier at medium effort, since this is a single-file fix with tests to check it.
+
+I'll report the outcome when the item finishes. If it fails, I'll read the stage output and tell you what blocked it.
+
+Done: Fix window.py so python3 -m unittest passes. Fixed the off-by-one in window.py sliding_windows. Root cause: range(len(items) - size) stopped one window short, so the final window (e.g. [2, 3] for [1, 2, 3], size 2) was never produced. Changed to range(len(items) - size + 1) and added a TypeError for non-int or bool size. Committed c58dea1 on archon/v1hqgeve-fix-window-py-so-python3-m-unittest-pass (tree 193bcaa9854f21544a02418e0ae25a50e64e842e); not pushed. Checks: python3 -m unittest before: FAILED (failures=2); after: Ran 3 tests, OK. Edge cases checked by hand: [] size 1 -> []; [1] size 1 -> [[1]]; [1,2] size 3 -> []; [1,2,3] size 3 -> [[1,2,3]]; [1,2,3,4] size 1 -> four singletons. Review: one reviewer (agt_01M88R73WVWE8R332VY32HTDKD, low effort) passed head c58dea1 with no findings. Its self-reported risk.reviewer id did not match the delegated id; the delegated id is the one recorded. Nothing left open; no servers started; the test files were not modified.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88R73WVWE8R332VY32HTDKD)
+
+SHIPPED: commit c58dea1a155aeb68d4f7d490b14276060a4153fa on the run branch
+Branch `archon/v1hqgeve-fix-window-py-so-python3-m-unittest-pass` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/313f0bd2a23e72fa52682e61/fix-off-by-one holds it (1 file changed, 3 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M88R6F81FVG4N5J1V1HQGEVE`; land it in `main`: `archon merge qi_01M88R6F81FVG4N5J1V1HQGEVE`.
+
+Fixed the off-by-one in window.py sliding_windows. Root cause: range(len(items) - size) stopped one window short, so the final window (e.g. [2, 3] for [1, 2, 3], size 2) was never produced. Changed to range(len(items) - size + 1) and added a TypeError for non-int or bool size. Committed c58dea1 on archon/v1hqgeve-fix-window-py-so-python3-m-unittest-pass (tree 193bcaa9854f21544a02418e0ae25a50e64e842e); not pushed. Checks: python3 -m unittest before: FAILED (failures=2); after: Ran 3 tests, OK. Edge cases checked by hand: [] size 1 -> []; [1] size 1 -> [[1]]; [1,2] size 3 -> []; [1,2,3] size 3 -> [[1,2,3]]; [1,2,3,4] size 1 -> four singletons. Review: one reviewer (agt_01M88R73WVWE8R332VY32HTDKD, low effort) passed head c58dea1 with no findings. Its self-reported risk.reviewer id did not match the delegated id; the delegated id is the one recorded. Nothing left open; no servers started; the test files were not modified.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88R73WVWE8R332VY32HTDKD)
+
+SHIPPED: commit c58dea1a155aeb68d4f7d490b14276060a4153fa on the run branch

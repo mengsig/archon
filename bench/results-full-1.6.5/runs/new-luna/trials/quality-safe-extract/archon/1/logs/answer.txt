@@ -1,0 +1,16 @@
+Quota pace is projected to exhaust Codex's primary window before reset. This item will use normal provider routing, which weights live quota headroom, so it can move to another available provider.
+
+Queued as [qi_01M886WCVT18C79Y8FAAT9XZ38] for implementation, focused boundary tests, and a commit. It’s using the adaptive pipeline with strict review because symlink handling and path validation are security-sensitive. The first model plan exceeded the configured effort ceiling, so I retried at the allowed default effort. Normal provider routing will account for the Codex quota pace.
+
+Done: Implement safe_extract.py from SPEC with boundary tests. Implemented safe batch extraction and comprehensive boundary tests in safe_extract.py and test_safe_extract.py. Before: extract was unimplemented with only basic tests; now it validates complete batches and filesystem boundaries before writing. python3 -m unittest -v (9 passed); git diff --check passed. Three whole-change reviewers passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8870FKFVYB2XGM9A4T7FK24), codex/gpt-6-luna (agent agt_01M8870FM7CZ383NKWKE8YCWHA), codex/gpt-6-luna (agent agt_01M8870FJVFPD6329ZW1TBYMDZ)
+
+SHIPPED: commit d3eaae9672dd068b52acb20bfd36b03e7031854b on the run branch
+Branch `archon/aat9xz38-implement-safe-extract-py-from-spec-with` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/8d382074bc9454d3d81ff366/quality-safe-extract holds it (2 files changed, 193 insertions(+), 13 deletions(-)). Review: `archon diff qi_01M886WCVT18C79Y8FAAT9XZ38`; land it in `main`: `archon merge qi_01M886WCVT18C79Y8FAAT9XZ38`.
+
+Implemented safe batch extraction and comprehensive boundary tests in safe_extract.py and test_safe_extract.py. Before: extract was unimplemented with only basic tests; now it validates complete batches and filesystem boundaries before writing. python3 -m unittest -v (9 passed); git diff --check passed. Three whole-change reviewers passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8870FKFVYB2XGM9A4T7FK24), codex/gpt-6-luna (agent agt_01M8870FM7CZ383NKWKE8YCWHA), codex/gpt-6-luna (agent agt_01M8870FJVFPD6329ZW1TBYMDZ)
+
+SHIPPED: commit d3eaae9672dd068b52acb20bfd36b03e7031854b on the run branch

@@ -1,0 +1,23 @@
+I found one critical forgery bug in `verify`, plus several smaller problems. I reproduced the main ones against the mirror's code. I changed nothing.
+
+**Scope caveat:** No repository named `session-lib` is registered. The only one is `review-seeded-bug`, and its mirror at `repos/review-seeded-bug` (base commit `2f36a28`) contains `src/tokens.js`. I reviewed that file. The mirror holds only committed base code, so if the HMAC rewrite is uncommitted or on another branch, this review may not cover the version that ships. Confirm which commit or branch is the release candidate.
+
+**Findings, most severe first**
+
+1. **Critical. `src/tokens.js`, `verify()`: any unsigned payload is accepted.** The signature is checked with `expected.startsWith(signature)`. An empty signature is a prefix of every string, and the code only rejects `undefined`, so `''` passes. Input: `base64url('{"user":"root","exp":9000000000000000}') + "."`. Reproduced: `verify` returns `{ user: 'root', exp: 9000000000000000 }`. Anyone can mint an admin token without the secret. The existing "tampered payloads" test reuses a genuine signature, so it does not catch this.
+
+2. **High. `verify()`: the signature is compared by prefix, not by full equality.** Truncated signatures are accepted, and the comparison is not constant-time. This is the same root cause as #1, and it weakens the MAC even with an empty signature blocked: a one-character signature needs only a 1-in-64 guess, and a timing side channel is possible. Fix: compare the full value with `crypto.timingSafeEqual` on equal-length buffers.
+
+3. **Medium. `verify()`: it throws instead of returning `null` for some inputs.** `JSON.parse` is not wrapped, and a non-object payload is not handled. Reproduced: `verify("!!notjson!!.", S)` throws `SyntaxError`, and `verify(base64url("null") + ".", S)` throws `TypeError` on `payload.exp`. Before #1 is fixed, an unauthenticated caller can make the verifier crash. Once the MAC check is fixed, these inputs are only reachable by someone holding the secret, but the contract "returns null otherwise" is still broken.
+
+4. **Medium. `verify()` does not validate the secret, unlike `sign()`.** `sign` refuses secrets shorter than 32 characters, but `verify(token, '')` works. If a verifier is misconfigured with an empty or short secret, anyone can forge tokens with the same key they use to check them.
+
+5. **Low. `verify()`: extra dot-separated segments are ignored.** `token.split('.')` takes the first two parts. `validToken + ".zzz"` verifies as the same user. This is not a forgery, but one token has many accepted string forms. That matters if tokens are used as cache keys, revocation IDs, or for deduplication.
+
+6. **Low. `verify()` does not check `iat`.** A token with a future `iat` is accepted. Tokens also carry no audience, issuer or purpose claim, so a token signed with the same secret for another purpose would be accepted.
+
+7. **Nit. `sign()`: the secret check is weak.** `secret.length` counts UTF-16 code units, not bytes. A non-string value with no `length` (for example a number) passes the check and fails later with a less clear error from `createHmac`.
+
+**Test gaps:** `node --test test/tokens.test.js` passes 4 of 4, but the suite has no test for an empty or truncated signature, malformed base64 or JSON, a non-object payload, an empty verifier secret, or a token with extra segments. Adding those tests would have caught #1 to #4.
+
+**Recommendation:** Do not ship until #1 to #4 are fixed. The fixes are: reject an empty or wrong-length signature, compare with `timingSafeEqual`, wrap parsing and return `null` on any failure after checking the payload is a plain object, and apply the same secret-length check in `verify`. I did not make these changes because you asked for a review only.

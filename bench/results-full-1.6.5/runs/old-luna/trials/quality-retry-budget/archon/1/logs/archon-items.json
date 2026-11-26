@@ -1,0 +1,197 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M885P87PFHS3XJ89S3F1Y61Q",
+      "repo": "repo_01M885NFVT06T124624PHVJSCT",
+      "pipeline": "direct",
+      "title": "Implement retry_budget.py per specification",
+      "brief": "Implement retry_budget.py according to SPEC.md. Preserve the documented API, handle every specified error and boundary case, and add focused tests beyond the existing basics. Use only the Python standard library. Run the focused and existing tests, then commit the completed changes on this item branch. Acceptance criteria: behavior conforms to every requirement and error/boundary case in SPEC.md; documented API remains compatible; focused tests exercise the specified errors and boundaries; existing tests pass; commit is created. If the specification or current tests reveal an ambiguous product choice not settled by the repo or spec, ask before choosing.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M885P87PFHS3XJ89S3F1Y61Q",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T01:38:57.402745441Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T01:38:57.402745441Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T01:38:57.402745441Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M885P883CC0M3QSM53YKK7P5",
+        "summary": "Implemented retry_delay per SPEC.md, including strict built-in integer validation before early returns, capped exponential backoff that avoids huge powers, uncapped Retry-After floors, and the strict budget cutoff. Added focused validation and boundary tests. Focused and discovery unittest runs pass (8 tests each); git diff --check passes. Committed as ce26c0f42a8d65dc7fb7051a7fa2efe30902357e; no known gaps.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit ce26c0f42a8d65dc7fb7051a7fa2efe30902357e on the run branch"
+      },
+      "created_at": "2026-11-25T01:38:57.398019875Z",
+      "updated_at": "2026-11-25T01:40:07.309427373Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M885P883CC0M3QSM53YKK7P5",
+        "item": "qi_01M885P87PFHS3XJ89S3F1Y61Q",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M885P8CZ8SJTY887NS9222AY",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/4fe9e9c794b47f6fe2fa1985/.archon/data/worktrees/quality-retry-budget/qi_01M885P87PFHS3XJ89S3F1Y61Q",
+        "branch": "archon/s3f1y61q-implement-retry-budget-py-per-specificat",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented retry_delay per SPEC.md, including strict built-in integer validation before early returns, capped exponential backoff that avoids huge powers, uncapped Retry-After floors, and the strict budget cutoff. Added focused validation and boundary tests. Focused and discovery unittest runs pass (8 tests each); git diff --check passes. Committed as ce26c0f42a8d65dc7fb7051a7fa2efe30902357e; no known gaps.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit ce26c0f42a8d65dc7fb7051a7fa2efe30902357e on the run branch"
+        },
+        "cost_usd": 0.005970080000000001,
+        "started_at": "2026-11-25T01:38:57.549195213Z",
+        "finished_at": "2026-11-25T01:40:07.309427373Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M885P8CPBKHERG14FMSEMDE9",
+        "run": "prun_01M885P883CC0M3QSM53YKK7P5",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M885P8D6C17QW1TBMQ2SBG6D",
+        "aether_task": "tsk_01M885P8D6C17QW1TBMQ2SBG6E",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "Implemented retry_delay per SPEC.md, including strict built-in integer validation before early returns, capped exponential backoff that avoids huge powers, uncapped Retry-After floors, and the strict budget cutoff. Added focused validation and boundary tests. Focused and discovery unittest runs pass (8 tests each); git diff --check passes. Committed as ce26c0f42a8d65dc7fb7051a7fa2efe30902357e; no known gaps.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v test_retry_budget.py — 8 tests passed",
+            "python -m unittest discover -v — 8 tests passed",
+            "git diff --check — passed"
+          ],
+          "commit": "ce26c0f42a8d65dc7fb7051a7fa2efe30902357e",
+          "evidence": [
+            {
+              "caption": "Focused and full unittest discovery verification on the committed implementation.",
+              "kind": "output",
+              "text": "python -m unittest -v test_retry_budget.py — Ran 8 tests, OK\npython -m unittest discover -v — Ran 8 tests, OK\ngit diff --check — passed"
+            }
+          ],
+          "local_commit": "ce26c0f42a8d65dc7fb7051a7fa2efe30902357e",
+          "pr": {
+            "body": "Added implementation in retry_budget.py and focused boundary/error coverage in test_retry_budget.py. Validation rejects bool, float, integer subclasses and out-of-range values before exhausted-attempt returns. Backoff saturates without constructing enormous powers; Retry-After remains an uncapped minimum; retries at or beyond the budget are rejected. Checks: focused and discovery unittest runs passed (8 each), git diff --check passed. Assumption: the spec fully determines behavior; no unresolved product choices.",
+            "summary": "Implemented bounded retry delay calculation. Callers can safely obtain capped backoff and Retry-After delays within a strict time budget. Before: retry_delay was unimplemented; now: validated scheduling behavior follows the spec.",
+            "title": "Implement bounded retry delay calculation"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained behavior change in retry_budget.py with tests in test_retry_budget.py; no concurrency, persistence, security or caller API changes. Focused and full discovery unittest checks pass."
+          },
+          "tree": "05a1e80bce8c594abfb5c18cd38770c108c5fb5a"
+        },
+        "cost_usd": 0.005970080000000001,
+        "started_at": "2026-11-25T01:38:57.558378694Z",
+        "finished_at": "2026-11-25T01:40:07.076756449Z"
+      }
+    ],
+    "spent_usd": 0.005970080000000001,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T01:38:57.402745441Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T01:38:57.402745441Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T01:38:57.402745441Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

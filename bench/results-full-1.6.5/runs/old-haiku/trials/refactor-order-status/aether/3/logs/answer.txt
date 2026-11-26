@@ -1,0 +1,28 @@
+Refactored the `orders` crate's order status from `String` to a typed `OrderStatus` enum. Committed as 2785b2c on main in the refactor-order-status workspace; `cargo test` passes (3 unit, 3 integration) and `cargo clippy --all-targets` is clean.
+
+What changed:
+- `src/status.rs` (new): `OrderStatus { Pending, Paid, Shipped, Cancelled }` deriving Debug, Clone, Copy, PartialEq, Eq, Hash. Provides `as_str`, `Display`, `FromStr` with `type Err = ParseStatusError`, and `can_transition_to` (pending→paid, pending→cancelled, paid→shipped, paid→cancelled only). `ParseStatusError` implements `std::error::Error`, with message `unknown status "<input>"`.
+- `Order::status` is now `OrderStatus`. `pay`, `ship`, `cancel` and `is_open` use the enum and `can_transition_to`. Error messages are unchanged because they use `Display`.
+- `report::from_line` parses via `FromStr` and maps the error to the original `unknown status "..."` text. Field validation order is unchanged.
+- `lib.rs` re-exports `OrderStatus` and `ParseStatusError`.
+- Status name literals appear only in `src/status.rs`.
+
+Choices and deviations to review:
+- `report::status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. This is a public signature change. Ordering is still by status name (`cancelled, paid, pending, shipped`), not enum declaration order, so report ordering is preserved.
+- In `tests/orders.rs` I switched comparisons to enum values. The CSV fixture `"1,ada,100,paid"` and the expected error strings stay as literals, since they pin observable output.
+- Commit message has no Co-Authored-By trailer, because the CLAUDE.md rule against tool attribution takes precedence over the attribution reminder.
+
+The order status is now an `OrderStatus` enum, committed as `2785b2c` on `main`. `cargo test` passes (3 unit tests, 3 integration tests) and `cargo clippy --all-targets` is clean.
+
+- **New `src/status.rs`:** the enum, `as_str`, `Display`, `FromStr` with `ParseStatusError` (message `unknown status "<input>"`), and `can_transition_to` encoding the four allowed transitions. It also has unit tests for the transition table, parse round-trip and rejected input.
+- **`Order::status`** is now `OrderStatus`. `pay`, `ship`, `cancel` and `is_open` use the enum, and their error messages are unchanged because they go through `Display`.
+- **`report::from_line`** parses via `FromStr` and maps the error back to the original `unknown status "..."` text.
+- **Crate root** re-exports `OrderStatus` and `ParseStatusError`.
+- **Status literals** now appear only in `src/status.rs`.
+
+Two things to review:
+
+- **Public signature change:** `report::status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. Ordering is still by status name (`cancelled, paid, pending, shipped`), not by enum declaration order, so report output is unchanged.
+- **Test literals:** `tests/orders.rs` compares against enum values, but it keeps the CSV fixture `"1,ada,100,paid"` and the expected error strings as literals, since they pin observable output. Say if you want those built from the enum too.
+
+The commit has no Co-Authored-By trailer, because the CLAUDE.md rule against tool attribution takes precedence over the attribution reminder.

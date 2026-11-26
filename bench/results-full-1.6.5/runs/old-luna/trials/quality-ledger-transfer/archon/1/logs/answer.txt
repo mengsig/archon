@@ -1,0 +1,14 @@
+Queued as `qi_01M885C39G44FHRSZZ8KQDS81Y` on the `quality-ledger-transfer` repository. Its brief covers the full SPEC.md contract, focused boundary and concurrency tests, and a commit. Strict review is enabled.
+
+Done: Implement atomic ledger and focused edge case tests. Implemented the SPEC.md ledger with input validation, defensive copies, and a per-ledger lock that makes transfers and snapshots linearizable without opposing-transfer deadlocks. Added focused construction, validation, boundary, atomicity, alias-safety, and bounded concurrency tests. Final checks on commit 9114f1e0ad38f26dc242e02e11f90c0f1eadbfa4 passed: 11 unittest cases, py_compile, and git diff --check; worktree is clean. Three independent whole-change reviews passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M885FSM2YN95S1YAJQGSQ11Z), codex/gpt-6-luna (agent agt_01M885FSJH33X5Q2KD2WEZF3D7), codex/gpt-6-luna (agent agt_01M885FSK9Z6KMRQ34EN1EMY8Y)
+
+SHIPPED: commit 9114f1e0ad38f26dc242e02e11f90c0f1eadbfa4 on the run branch
+Branch `archon/8kqds81y-implement-atomic-ledger-and-focused-edge` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/37a572b03a14b17fd144b65b/quality-ledger-transfer holds it (2 files changed, 142 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M885C39G44FHRSZZ8KQDS81Y`; land it in `main`: `archon merge qi_01M885C39G44FHRSZZ8KQDS81Y`.
+
+Implemented the SPEC.md ledger with input validation, defensive copies, and a per-ledger lock that makes transfers and snapshots linearizable without opposing-transfer deadlocks. Added focused construction, validation, boundary, atomicity, alias-safety, and bounded concurrency tests. Final checks on commit 9114f1e0ad38f26dc242e02e11f90c0f1eadbfa4 passed: 11 unittest cases, py_compile, and git diff --check; worktree is clean. Three independent whole-change reviews passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M885FSM2YN95S1YAJQGSQ11Z), codex/gpt-6-luna (agent agt_01M885FSJH33X5Q2KD2WEZF3D7), codex/gpt-6-luna (agent agt_01M885FSK9Z6KMRQ34EN1EMY8Y)
+
+SHIPPED: commit 9114f1e0ad38f26dc242e02e11f90c0f1eadbfa4 on the run branch

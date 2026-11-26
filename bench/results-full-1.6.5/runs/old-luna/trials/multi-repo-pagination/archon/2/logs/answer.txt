@@ -1,0 +1,33 @@
+Quota pacing: Codex is at 68% used with 46% of the window elapsed and is projected to run out before reset. Only codex/gpt-6-luna is currently allowed, so I’m keeping the work serial (client after API) and using low effort for these tightly specified implementations.
+
+Queued initiative `ini_01M8887QBASQG4PYXTZADXPZQ2`. The API change will run first; the client change depends on it. Each member is set to update its README, run the repository’s requested tests, and commit.
+
+Codex quota is projected to run out before its reset. Since only Codex is currently allowed, I set the work to run serially and chose low effort for both tightly specified changes.
+
+Done: Implement GET /items cursor pagination. Added cursor pagination to GET /items with a default page size of 20, strict 1–100 limit validation, opaque cursors, stable ID ordering, and 400 error bodies for invalid inputs. Updated README and expanded tests. `python3 -m unittest` passed (6 tests); independent review passed with no findings. Commit: d252eef70ed13473003b2a25c7cce5185d2dba15; tree: 36c5d6b07fd0bc947591d5d48afc48e79bce841c. No open items.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888AVSQJJ7H5TFWXW7MCJG9)
+
+SHIPPED: commit d252eef70ed13473003b2a25c7cce5185d2dba15 on the run branch
+Branch `archon/676a0p97-implement-get-items-cursor-pagination` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/0f705c33eab2b3991a6674a2/inventory-api holds it (3 files changed, 76 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M8887QBBTVKX94ZB676A0P97`; land it in `main`: `archon merge qi_01M8887QBBTVKX94ZB676A0P97`.
+
+Done: Follow inventory API pagination in listItems. Updated listItems to collect pages sequentially, starting with no cursor and passing each next_cursor unchanged until it is null or absent. README and tests now document and cover initial request shape, multi-page order, opaque cursor round-tripping, and both termination cases. `npm test` passed (5/5); `git diff --check` passed. Committed as 73fab91325cde5f4447666aa535bc37aea3949d1; review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888EW62K9EAXP9KYBT412NH)
+
+SHIPPED: commit 73fab91325cde5f4447666aa535bc37aea3949d1 on the run branch
+Branch `archon/1s6dar6n-follow-inventory-api-pagination-in-listi` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/0f705c33eab2b3991a6674a2/inventory-client holds it (3 files changed, 49 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M8887QBGBBWNEV461S6DAR6N`; land it in `main`: `archon merge qi_01M8887QBGBBWNEV461S6DAR6N`.
+
+Initiative finished; coordinated result queued.
+
+Updated listItems to collect pages sequentially, starting with no cursor and passing each next_cursor unchanged until it is null or absent. README and tests now document and cover initial request shape, multi-page order, opaque cursor round-tripping, and both termination cases. `npm test` passed (5/5); `git diff --check` passed. Committed as 73fab91325cde5f4447666aa535bc37aea3949d1; review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888EW62K9EAXP9KYBT412NH)
+
+SHIPPED: commit 73fab91325cde5f4447666aa535bc37aea3949d1 on the run branch
+
+Added cursor pagination to GET /items with a default page size of 20, strict 1–100 limit validation, opaque cursors, stable ID ordering, and 400 error bodies for invalid inputs. Updated README and expanded tests. `python3 -m unittest` passed (6 tests); independent review passed with no findings. Commit: d252eef70ed13473003b2a25c7cce5185d2dba15; tree: 36c5d6b07fd0bc947591d5d48afc48e79bce841c. No open items.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888AVSQJJ7H5TFWXW7MCJG9)
+
+SHIPPED: commit d252eef70ed13473003b2a25c7cce5185d2dba15 on the run branch

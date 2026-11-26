@@ -1,0 +1,3 @@
+ok   the price-update path never invalidates the category listing cache
+ok   the ten-minute delay is the listing TTL
+ok   a fix that invalidates or versions the listing entries

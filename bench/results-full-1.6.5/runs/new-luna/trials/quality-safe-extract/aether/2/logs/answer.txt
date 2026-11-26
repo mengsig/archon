@@ -1,0 +1,3 @@
+Implemented `extract` with full batch validation, path and collision checks, `lstat`-based symlink and destination checks, and exclusive file creation. Added focused tests for malformed batches, invalid names and data, collisions, existing targets, symlinks, and invalid roots.
+
+`git diff --check` passed. Tests were not run. Commit: `a2d6e03` (`Implement safe batch extraction validation`).

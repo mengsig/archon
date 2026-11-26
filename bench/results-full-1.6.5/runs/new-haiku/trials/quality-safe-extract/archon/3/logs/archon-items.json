@@ -1,0 +1,541 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88ZSVZH01FP0DC9XAYXGF25",
+      "repo": "repo_01M88ZSKX9BNCTHB1C3MCKGR1Y",
+      "pipeline": "direct",
+      "title": "Implement safe_extract.py per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated, verbatim): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nAcceptance criteria:\n- Read SPEC.md in the repository root first. Implement safe_extract.py exactly to its documented API, including every specified error type and boundary case.\n- Keep the existing public API unchanged. Keep functions under 60 lines and follow the repository's existing style.\n- Add focused tests covering each specified error and boundary case (for example path traversal, absolute paths, symlinks, size or count limits, and empty or malformed input, as the spec defines them). Existing tests must still pass.\n- Use only the Python standard library.\n- Run the test suite and report the result.\n- Commit the work with a clear message on the working branch. Do not add any attribution lines.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "safe-extract",
+        "spec-implementation"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88ZSVZH01FP0DC9XAYXGF25",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-25T09:15:18.903375123Z"
+              },
+              "effort": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-25T09:15:18.903375123Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:security",
+          "review:strict"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged: the learned route's effort"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88ZSW0F9RN0N4Z87CZ59X9J",
+        "summary": "Implemented safe_extract.extract per SPEC.md with 35 unit tests (2 original, 33 new), all passing. Head 83b19ec, tree d7d8afc7269e129262a99bffcc79da96c9a35e9a, on archon/xayxgf25-implement-safe-extract-py-per-spec-md-wi, not pushed. Three whole-change reviewers found blocking issues (a root below a regular file raised NotADirectoryError; a missing existing-ancestor test; subclass inputs could change between validation and write). All fixed in 83b19ec, with Review-Fix trailers. A delta reviewer verified the fixes and passed the head. Open non-blocking follow-ups: case-fold intra-batch collisions on case-insensitive filesystems (not testable here, SPEC silent); ENAMETOOLONG raises OSError rather than ValueError; assertion density in validation helpers; ExtractBasics still writes temp dirs into cwd; Path('') is accepted as '.' (a deliberate call, not a spec-defined rule). Nothing left running. Review: pass.\nREVIEW: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88ZX0ZDA0J3YPN5Y192QRWK), claude-code/claude-haiku-5-5 (agent agt_01M88ZX5YJC98HESRN7254VSXX), claude-code/claude-haiku-5-5 (agent agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH), claude-code/claude-haiku-5-5 (agent agt_01M89018G1QNZK2T9GZ4T98TVP)\n\nSHIPPED: commit 83b19ec8ba2edf439a7f3cae3b425fbf4225774e on the run branch"
+      },
+      "created_at": "2026-11-25T09:15:18.897913512Z",
+      "updated_at": "2026-11-25T09:20:36.707594085Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88ZSW0F9RN0N4Z87CZ59X9J",
+        "item": "qi_01M88ZSVZH01FP0DC9XAYXGF25",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88ZSW6BQGEDH53WGWS0BSP8",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/5b51ccafd1ec06740a22bcef/.archon/data/worktrees/quality-safe-extract/qi_01M88ZSVZH01FP0DC9XAYXGF25",
+        "branch": "archon/xayxgf25-implement-safe-extract-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract per SPEC.md with 35 unit tests (2 original, 33 new), all passing. Head 83b19ec, tree d7d8afc7269e129262a99bffcc79da96c9a35e9a, on archon/xayxgf25-implement-safe-extract-py-per-spec-md-wi, not pushed. Three whole-change reviewers found blocking issues (a root below a regular file raised NotADirectoryError; a missing existing-ancestor test; subclass inputs could change between validation and write). All fixed in 83b19ec, with Review-Fix trailers. A delta reviewer verified the fixes and passed the head. Open non-blocking follow-ups: case-fold intra-batch collisions on case-insensitive filesystems (not testable here, SPEC silent); ENAMETOOLONG raises OSError rather than ValueError; assertion density in validation helpers; ExtractBasics still writes temp dirs into cwd; Path('') is accepted as '.' (a deliberate call, not a spec-defined rule). Nothing left running. Review: pass.\nREVIEW: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88ZX0ZDA0J3YPN5Y192QRWK), claude-code/claude-haiku-5-5 (agent agt_01M88ZX5YJC98HESRN7254VSXX), claude-code/claude-haiku-5-5 (agent agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH), claude-code/claude-haiku-5-5 (agent agt_01M89018G1QNZK2T9GZ4T98TVP)\n\nSHIPPED: commit 83b19ec8ba2edf439a7f3cae3b425fbf4225774e on the run branch"
+        },
+        "cost_usd": 0.13928984,
+        "started_at": "2026-11-25T09:15:19.068398159Z",
+        "finished_at": "2026-11-25T09:20:36.707594085Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88ZSW5RRNDCV3B2621AZCK1",
+        "run": "prun_01M88ZSW0F9RN0N4Z87CZ59X9J",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88ZSW6ZZ3YKC7TNFH9ATYJM",
+        "aether_task": "tsk_01M88ZSW6ZZ3YKC7TNFH9ATYJN",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "critical",
+        "effort_source": "learned",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged: the learned route's effort",
+        "summary": "Implemented safe_extract.extract per SPEC.md with 35 unit tests (2 original, 33 new), all passing. Head 83b19ec, tree d7d8afc7269e129262a99bffcc79da96c9a35e9a, on archon/xayxgf25-implement-safe-extract-py-per-spec-md-wi, not pushed. Three whole-change reviewers found blocking issues (a root below a regular file raised NotADirectoryError; a missing existing-ancestor test; subclass inputs could change between validation and write). All fixed in 83b19ec, with Review-Fix trailers. A delta reviewer verified the fixes and passed the head. Open non-blocking follow-ups: case-fold intra-batch collisions on case-insensitive filesystems (not testable here, SPEC silent); ENAMETOOLONG raises OSError rather than ValueError; assertion density in validation helpers; ExtractBasics still writes temp dirs into cwd; Path('') is accepted as '.' (a deliberate call, not a spec-defined rule). Nothing left running. Review: pass.\nREVIEW: pass",
+        "structured": {
+          "checks": [
+            "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_safe_extract (35 tests, OK)"
+          ],
+          "commit": "83b19ec8ba2edf439a7f3cae3b425fbf4225774e",
+          "evidence": [
+            {
+              "caption": "Final unit test run on head 83b19ec",
+              "kind": "output",
+              "text": "Ran 35 tests in 0.009s\n\nOK"
+            }
+          ],
+          "local_commit": "83b19ec8ba2edf439a7f3cae3b425fbf4225774e",
+          "pr": {
+            "body": "Approach: snapshot the batch once (exact types: list, tuple, str, bytes), validate names and batch collisions, check each target with lstat for symlinks, non-directory ancestors and existing targets, then write with exclusive open. Key files: safe_extract.py, test_safe_extract.py. Checks: unittest, 35 tests OK. Reviews: three whole-change reviewers found blockers (existing-ancestor test, subclass inputs, root below a file); all fixed in 83b19ec; delta reviewer passed head. Open follow-ups (non-blocking): case-fold intra-batch collisions on case-insensitive filesystems; ENAMETOOLONG raises OSError; assertion density in validation helpers; ExtractBasics writes temp dirs into cwd; Path('') accepted as '.'.",
+            "summary": "Made safe batch extraction of regular files work per SPEC.md. Now validates the whole batch before any write: names, duplicates, file/dir collisions, symlinks, existing targets, root checks. Before: NotImplementedError stub. Now: 35 tests pass.",
+            "title": "Implement safe_extract.extract per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "83b19ec8ba2edf439a7f3cae3b425fbf4225774e",
+            "reviewer_agents": [
+              "agt_01M88ZX0ZDA0J3YPN5Y192QRWK",
+              "agt_01M88ZX5YJC98HESRN7254VSXX",
+              "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH",
+              "agt_01M89018G1QNZK2T9GZ4T98TVP"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88ZX0ZDA0J3YPN5Y192QRWK",
+                "base": "db0b6f954aa70c8c7d3292787a504f2bcd277281",
+                "findings": 5,
+                "head": "1502138902e122c615ac1bd81f14310dc18f89e2",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M88ZX5YJC98HESRN7254VSXX",
+                "base": "db0b6f954aa70c8c7d3292787a504f2bcd277281",
+                "findings": 6,
+                "head": "1502138902e122c615ac1bd81f14310dc18f89e2",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH",
+                "base": "db0b6f954aa70c8c7d3292787a504f2bcd277281",
+                "findings": 5,
+                "head": "1502138902e122c615ac1bd81f14310dc18f89e2",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M89018G1QNZK2T9GZ4T98TVP",
+                "base": "1502138902e122c615ac1bd81f14310dc18f89e2",
+                "findings": 0,
+                "head": "83b19ec8ba2edf439a7f3cae3b425fbf4225774e",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88ZX0ZDA0J3YPN5Y192QRWK",
+              "agt_01M88ZX5YJC98HESRN7254VSXX",
+              "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH",
+              "agt_01M89018G1QNZK2T9GZ4T98TVP"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:1": {
+                "blocking": true,
+                "description": "Missing test: no case writes a valid batch into a pre-existing real directory ancestor (e.g. root/docs exists, entry docs/x). SPEC allows existing directory ancestors; only freshly created directories are tested. Manual run returned ['docs/x'], so the code is correct but the boundary is untested. at test_safe_extract.py:36",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                }
+              },
+              "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:2": {
+                "blocking": false,
+                "description": "CLAUDE.md asks for at least 2 meaningful assertions per non-trivial function. extract() and _check_target have none; _write_entry has two plain asserts that vanish under python -O. at safe_extract.py:10",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:2",
+                "resolved_in": null
+              },
+              "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:3": {
+                "blocking": false,
+                "description": "Case-insensitive filesystems (default macOS/Windows): entries 'a' and 'A' pass batch validation, then the second O_EXCL write fails with FileExistsError after 'a' was already created, so the batch is partially applied. Not run here (Linux). SPEC does not define case-folding collisions; either clarify SPEC or add a folded-collision check. at safe_extract.py:73",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:3",
+                "resolved_in": null
+              },
+              "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:4": {
+                "blocking": false,
+                "description": "ExtractBasics uses tempfile.TemporaryDirectory(dir='.'), which creates directories in the current working directory. This is inconsistent with ExtractCase, which uses a setUp temp base, and can leave clutter if a run is interrupted. at test_safe_extract.py:37",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:4",
+                "resolved_in": null
+              },
+              "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:5": {
+                "blocking": false,
+                "description": "Validation I/O on over-long components raises OSError (ENAMETOOLONG) instead of ValueError; lone-surrogate names raise UnicodeEncodeError, which is a ValueError subclass. Both happen before any write, so the filesystem is unchanged and the error is visible. SPEC does not list length limits, so this is a nit. at safe_extract.py:73",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:5",
+                "resolved_in": null
+              },
+              "agt_01M88ZX5YJC98HESRN7254VSXX:1": {
+                "blocking": true,
+                "description": "str subclass name with overridden split() passes validation then writes outside root. Validation and write each call name.split('/'), so a stateful split returns safe parts first and '../escaped' later. Reproduced: file written to base/escaped, outside root. at safe_extract.py:52",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZX5YJC98HESRN7254VSXX:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                }
+              },
+              "agt_01M88ZX5YJC98HESRN7254VSXX:2": {
+                "blocking": true,
+                "description": "tuple subclass entry with overridden __iter__ is unpacked twice (lines 38 and 18). First pass validates ('safe', b''), second writes ('../escaped', b'PWN'). Reproduced: escaped file created outside root. at safe_extract.py:38",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZX5YJC98HESRN7254VSXX:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                }
+              },
+              "agt_01M88ZX5YJC98HESRN7254VSXX:3": {
+                "blocking": true,
+                "description": "list subclass batch with overridden __iter__ is iterated twice (lines 14 and 18), so the written entries differ from the validated ones. Reproduced: 'safe' validated, '../esc2' written outside root. at safe_extract.py:11",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZX5YJC98HESRN7254VSXX:3",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                }
+              },
+              "agt_01M88ZX5YJC98HESRN7254VSXX:4": {
+                "blocking": true,
+                "description": "Duplicate and clash detection use the name's own __eq__/__hash__. A str subclass with __eq__ returning False defeats _check_batch_names, so the first file is created before the write-time assertion fires. Violates 'validate the ENTIRE batch before creating ANY file'. Reproduced: root/a created, then AssertionError. at safe_extract.py:58",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZX5YJC98HESRN7254VSXX:4",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                }
+              },
+              "agt_01M88ZX5YJC98HESRN7254VSXX:5": {
+                "blocking": true,
+                "description": "Empty-root check only covers str. Path('') is accepted and becomes '.', so extract([...], Path('')) writes into the current directory, while the same value as str is rejected. Reproduced: file written to cwd. at safe_extract.py:24",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZX5YJC98HESRN7254VSXX:5",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                }
+              },
+              "agt_01M88ZX5YJC98HESRN7254VSXX:6": {
+                "blocking": false,
+                "description": "extract returns the caller's str-subclass name objects instead of plain str. Minor type leak; fixed by exact-type checks or by returning str(name). at safe_extract.py:20",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZX5YJC98HESRN7254VSXX:6",
+                "resolved_in": null
+              },
+              "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:1": {
+                "blocking": true,
+                "description": "Root below a regular file raises NotADirectoryError (OSError), not ValueError as SPEC.md requires for invalid roots; no test covers it. at safe_extract.py:27",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                }
+              },
+              "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:2": {
+                "blocking": false,
+                "description": "Validation functions (extract, _validate_root, _check_batch_names, _check_target) contain no assertions, against the assertion-density rule; _write_entry's asserts vanish under python -O. at safe_extract.py:10",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:2",
+                "resolved_in": null
+              },
+              "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:3": {
+                "blocking": false,
+                "description": "ExtractBasics tests create temp directories with dir='.', writing into the current working directory, and do not inherit ExtractCase's isolated setup. at test_safe_extract.py:37",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:3",
+                "resolved_in": null
+              },
+              "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:4": {
+                "blocking": false,
+                "description": "test_unexpected_io_error_propagates patches os.lstat, which fails in _validate_root first, so the target-check and write paths' I/O error propagation is untested. at test_safe_extract.py:203",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:4",
+                "resolved_in": null
+              },
+              "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:5": {
+                "blocking": false,
+                "description": "Case-variant names such as 'a' and 'A' in one batch pass validation on case-insensitive filesystems, so the write phase fails partway with FileExistsError after earlier files were created. Plausible, not reproduced on Linux. at safe_extract.py:57",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88ZSW5RRNDCV3B2621AZCK1"
+                },
+                "id": "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:5",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "1502138902e122c615ac1bd81f14310dc18f89e2",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88ZX0ZDA0J3YPN5Y192QRWK",
+                    "base": "db0b6f954aa70c8c7d3292787a504f2bcd277281",
+                    "finding_count": 5,
+                    "finding_ids": [
+                      "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:1",
+                      "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:2",
+                      "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:3",
+                      "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:4",
+                      "agt_01M88ZX0ZDA0J3YPN5Y192QRWK:5"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  },
+                  {
+                    "agent": "agt_01M88ZX5YJC98HESRN7254VSXX",
+                    "base": "db0b6f954aa70c8c7d3292787a504f2bcd277281",
+                    "finding_count": 6,
+                    "finding_ids": [
+                      "agt_01M88ZX5YJC98HESRN7254VSXX:1",
+                      "agt_01M88ZX5YJC98HESRN7254VSXX:2",
+                      "agt_01M88ZX5YJC98HESRN7254VSXX:3",
+                      "agt_01M88ZX5YJC98HESRN7254VSXX:4",
+                      "agt_01M88ZX5YJC98HESRN7254VSXX:5",
+                      "agt_01M88ZX5YJC98HESRN7254VSXX:6"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  },
+                  {
+                    "agent": "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH",
+                    "base": "db0b6f954aa70c8c7d3292787a504f2bcd277281",
+                    "finding_count": 5,
+                    "finding_ids": [
+                      "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:1",
+                      "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:2",
+                      "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:3",
+                      "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:4",
+                      "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH:5"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "83b19ec8ba2edf439a7f3cae3b425fbf4225774e",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M89018G1QNZK2T9GZ4T98TVP",
+                    "base": "1502138902e122c615ac1bd81f14310dc18f89e2",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Security-sensitive filesystem writes: symlink, overwrite and batch-atomicity guarantees. Only test-level checks on one Linux host. Reviewers rated high."
+          },
+          "tree": "d7d8afc7269e129262a99bffcc79da96c9a35e9a"
+        },
+        "cost_usd": 0.13928984,
+        "started_at": "2026-11-25T09:15:19.095957600Z",
+        "finished_at": "2026-11-25T09:20:32.562649441Z"
+      }
+    ],
+    "spent_usd": 0.13928984,
+    "gates": [],
+    "delegations": {
+      "stg_01M88ZSW5RRNDCV3B2621AZCK1": {
+        "direct_usd": 0.08547014,
+        "delegated_usd": 0.0538197,
+        "agents": [
+          {
+            "agent": "agt_01M88ZX0ZDA0J3YPN5Y192QRWK",
+            "parent": "agt_01M88ZSW6ZZ3YKC7TNFH9ATYJM",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0146282
+          },
+          {
+            "agent": "agt_01M88ZX5YJC98HESRN7254VSXX",
+            "parent": "agt_01M88ZSW6ZZ3YKC7TNFH9ATYJM",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01498308
+          },
+          {
+            "agent": "agt_01M88ZXAXTZ6N8HSZJ7C0MM4YH",
+            "parent": "agt_01M88ZSW6ZZ3YKC7TNFH9ATYJM",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.013427990000000002
+          },
+          {
+            "agent": "agt_01M89018G1QNZK2T9GZ4T98TVP",
+            "parent": "agt_01M88ZSW6ZZ3YKC7TNFH9ATYJM",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01078043
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-25T09:15:18.903375123Z"
+          },
+          "effort": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-25T09:15:18.903375123Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

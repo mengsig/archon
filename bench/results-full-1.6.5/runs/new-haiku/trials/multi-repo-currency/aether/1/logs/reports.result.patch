@@ -1,0 +1,176 @@
+diff --git a/README.md b/README.md
+index 25e668a..cb0ba42 100644
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,11 @@
+ # reports
+ 
+-`python3 reports.py < ledger.csv` prints `account,total_cents`, one row per
+-account in alphabetical order, from the CSV that `ledger` exports.
++`python3 reports.py < ledger.csv` prints `account,currency,total_cents`, one
++row per account and currency, sorted by account and then currency, from the
++CSV that `ledger` exports.
++
++Input: the `date,account,amount_cents,currency` CSV from `ledger`. A CSV
++without a `currency` column (older exports) is read as `USD`.
++
++A malformed currency code (anything other than three uppercase ASCII
++letters) prints `error: line N: ...` to stderr and exits with status 2.
+diff --git a/reports.py b/reports.py
+index 8061226..c96768b 100644
+--- a/reports.py
++++ b/reports.py
+@@ -1,32 +1,60 @@
+-"""Per-account totals from the ledger's CSV export.
++"""Per-account, per-currency totals from the ledger's CSV export.
+ 
+ Usage: python3 reports.py < ledger.csv
++A CSV without a currency column (older exports) counts as USD.
+ """
+ 
+ import csv
++import re
+ import sys
+ 
++DEFAULT_CURRENCY = "USD"
++CURRENCY_PATTERN = re.compile(r"[A-Z]{3}")
+ 
+-def totals(rows):
+-    """{account: total_cents} from CSV dict rows."""
++
++class BadCurrency(ValueError):
++    pass
++
++
++def currency_of(row):
++    """Currency of a CSV dict row; rows without a currency column are USD."""
++    if "currency" not in row:
++        return DEFAULT_CURRENCY
++    currency = row["currency"]
++    if currency is None or not CURRENCY_PATTERN.fullmatch(currency):
++        raise BadCurrency(f"bad currency {currency!r}")
++    return currency
++
++
++def totals(reader):
++    """{(account, currency): total_cents} from a csv.DictReader."""
+     result = {}
+-    for row in rows:
+-        account = row["account"]
+-        result[account] = result.get(account, 0) + int(row["amount_cents"])
++    for row in reader:
++        try:
++            key = (row["account"], currency_of(row))
++        except BadCurrency as e:
++            raise BadCurrency(f"line {reader.line_num}: {e}") from e
++        result[key] = result.get(key, 0) + int(row["amount_cents"])
+     return result
+ 
+ 
+ def render(result):
+-    lines = ["account,total_cents"]
+-    for account in sorted(result):
+-        lines.append(f"{account},{result[account]}")
++    lines = ["account,currency,total_cents"]
++    for key in sorted(result):
++        account, currency = key
++        lines.append(f"{account},{currency},{result[key]}")
+     return "\n".join(lines) + "\n"
+ 
+ 
+ def main():
+-    rows = csv.DictReader(sys.stdin)
+-    sys.stdout.write(render(totals(rows)))
++    try:
++        result = totals(csv.DictReader(sys.stdin))
++    except BadCurrency as e:
++        print(f"error: {e}", file=sys.stderr)
++        return 2
++    sys.stdout.write(render(result))
++    return 0
+ 
+ 
+ if __name__ == "__main__":
+-    main()
++    sys.exit(main())
+diff --git a/test_reports.py b/test_reports.py
+index f2f2322..f332aad 100644
+--- a/test_reports.py
++++ b/test_reports.py
+@@ -14,7 +14,7 @@ def run(stdin):
+ 
+ 
+ class ReportsTest(unittest.TestCase):
+-    def test_totals_per_account_sorted(self):
++    def test_legacy_csv_without_currency_counts_as_usd(self):
+         csv_text = (
+             "date,account,amount_cents\n"
+             "2026-03-01,rent,-120000\n"
+@@ -23,11 +23,62 @@ class ReportsTest(unittest.TestCase):
+         )
+         out = run(csv_text)
+         self.assertEqual(out.returncode, 0, out.stderr)
+-        lines = out.stdout.splitlines()
+-        self.assertEqual(lines[1:], [line for line in sorted(lines[1:])])
+-        self.assertIn("groceries", lines[1])
+-        self.assertIn("-5500", lines[1])
+-        self.assertIn("rent", lines[2])
++        self.assertEqual(
++            out.stdout,
++            "account,currency,total_cents\n"
++            "groceries,USD,-5500\n"
++            "rent,USD,-120000\n",
++        )
++
++    def test_totals_per_account_and_currency_sorted(self):
++        csv_text = (
++            "date,account,amount_cents,currency\n"
++            "2026-03-01,rent,-120000,USD\n"
++            "2026-03-02,rent,-90000,EUR\n"
++            "2026-03-03,groceries,-4510,USD\n"
++            "2026-03-04,groceries,-1000,EUR\n"
++            "2026-03-05,groceries,-990,USD\n"
++        )
++        out = run(csv_text)
++        self.assertEqual(out.returncode, 0, out.stderr)
++        self.assertEqual(
++            out.stdout,
++            "account,currency,total_cents\n"
++            "groceries,EUR,-1000\n"
++            "groceries,USD,-5500\n"
++            "rent,EUR,-90000\n"
++            "rent,USD,-120000\n",
++        )
++
++    def test_malformed_currency_exits_2_with_error(self):
++        csv_text = (
++            "date,account,amount_cents,currency\n"
++            "2026-03-01,rent,-120000,USD\n"
++            "2026-03-02,rent,-90000,eur\n"
++        )
++        out = run(csv_text)
++        self.assertEqual(out.returncode, 2)
++        self.assertEqual(out.stdout, "")
++        self.assertIn("line 3", out.stderr)
++        self.assertIn("bad currency", out.stderr)
++
++    def test_empty_currency_exits_2(self):
++        csv_text = (
++            "date,account,amount_cents,currency\n"
++            "2026-03-01,rent,-120000,\n"
++        )
++        out = run(csv_text)
++        self.assertEqual(out.returncode, 2)
++        self.assertIn("bad currency", out.stderr)
++
++    def test_short_row_missing_currency_exits_2(self):
++        csv_text = (
++            "date,account,amount_cents,currency\n"
++            "2026-03-01,rent,-120000\n"
++        )
++        out = run(csv_text)
++        self.assertEqual(out.returncode, 2)
++        self.assertIn("bad currency", out.stderr)
+ 
+ 
+ if __name__ == "__main__":

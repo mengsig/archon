@@ -1,0 +1,7 @@
+## Findings
+
+- **Critical — `src/tokens.js`, `verify()`**: The signature check accepts any prefix of the expected HMAC, including an empty string: `expected.startsWith(signature)`. For example, an attacker can base64url-encode `{"user":"root","exp":9999999999999}` and submit `<encoded-payload>.` with the configured secret; `verify()` accepts it without a valid signature. Require an exact, full-length signature match.
+
+- **Low — `src/tokens.js`, `verify()`**: Malformed payload JSON throws instead of returning `null`. For example, `verify("e30.", secret)` passes the empty-signature check, then `JSON.parse` throws on `{}` only if it lacks valid JSON? Actually `e30` decodes to `{}` and parses; use `bm90LWpzb24.` (decodes to `not-json`) to trigger the exception. If callers don’t catch it, a malformed token can disrupt request handling. Catch decoding/parsing errors and treat the token as invalid. This is amplified by the signature-prefix flaw above.
+
+I made no code changes.

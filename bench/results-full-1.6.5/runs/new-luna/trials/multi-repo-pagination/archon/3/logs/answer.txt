@@ -1,0 +1,31 @@
+Queued initiative `ini_01M88DHX5J5Q4AT4Y92XYNSG24`: the API change runs first, then the client change builds against it. Each item includes README updates, the requested test command, and a commit in its repository.
+
+The quota report predicts Codex’s primary window may run out around Nov 26, before resetting Nov 28.
+
+Done: Implement cursor pagination in inventory API. Implemented and documented cursor pagination for GET /items, with limit/cursor validation and tests covering ordered traversal and invalid inputs. Final `python3 -m unittest` passed (5 tests), and `git diff --check` passed. Committed as 36a666c5ab5eef066af7ef5e423151bc36a5da3e; the worktree is clean. Medium risk because the endpoint response behavior changed.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 36a666c5ab5eef066af7ef5e423151bc36a5da3e on the run branch
+Branch `archon/2xynsg25-implement-cursor-pagination-in-inventory` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/117a6ea4515b3e8a292bd955/inventory-api holds it (3 files changed, 57 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M88DHX5J5Q4AT4Y92XYNSG25`; land it in `main`: `archon merge qi_01M88DHX5J5Q4AT4Y92XYNSG25`.
+
+Done: Follow inventory API cursors in client. Updated listItems to follow every next_cursor and return items in order, with README and pagination tests updated. Baseline tests passed (3/3); final npm test and git diff --check passed (5/5). Committed as 4cd1339c0aa7219c5a1f31a619641307402f5ac1; working tree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 4cd1339c0aa7219c5a1f31a619641307402f5ac1 on the run branch
+Branch `archon/sntrxyrd-follow-inventory-api-cursors-in-client` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/117a6ea4515b3e8a292bd955/inventory-client holds it (3 files changed, 35 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M88DHX66XR9BBJ2BSNTRXYRD`; land it in `main`: `archon merge qi_01M88DHX66XR9BBJ2BSNTRXYRD`.
+
+Initiative finished; coordinated result queued.
+
+Updated listItems to follow every next_cursor and return items in order, with README and pagination tests updated. Baseline tests passed (3/3); final npm test and git diff --check passed (5/5). Committed as 4cd1339c0aa7219c5a1f31a619641307402f5ac1; working tree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 4cd1339c0aa7219c5a1f31a619641307402f5ac1 on the run branch
+
+Implemented and documented cursor pagination for GET /items, with limit/cursor validation and tests covering ordered traversal and invalid inputs. Final `python3 -m unittest` passed (5 tests), and `git diff --check` passed. Committed as 36a666c5ab5eef066af7ef5e423151bc36a5da3e; the worktree is clean. Medium risk because the endpoint response behavior changed.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 36a666c5ab5eef066af7ef5e423151bc36a5da3e on the run branch

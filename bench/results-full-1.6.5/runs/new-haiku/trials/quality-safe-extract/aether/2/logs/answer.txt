@@ -1,0 +1,24 @@
+`safe_extract.py` is implemented per `SPEC.md`, with focused tests, and committed as `ddeae7e` on `main`. All 17 tests pass under `python3 -m unittest` (Python 3.14), including the two original ones.
+
+**How it works**
+
+`extract(entries, root)` validates everything before touching the filesystem:
+- **Batch:** must be a `list`. Tuples, iterators, generators and other types raise `ValueError` without being consumed.
+- **Root:** must be a non-empty `str` or `Path` naming an existing real directory. A missing root, a file, or a symlink raises `ValueError`. The root is checked even for empty batches.
+- **Entries:** each must be a 2-tuple with a `str` name and `bytes` data.
+- **Names:** must be nonempty relative paths with no leading `/`, backslash, colon, NUL, or empty/`.`/`..` component. Names are not normalized or decoded. Names that are not valid UTF-8 are rejected up front, so they cannot fail mid-write.
+- **Batch conflicts:** duplicate names and file/directory collisions are rejected in either order.
+- **Filesystem:** every existing component below root is `lstat`-checked. Symlinks (including dangling ones), non-directory ancestors, and existing targets raise `ValueError`.
+
+Only after all checks pass does it create parent directories and write each file with exclusive `open(..., "xb")`, so an existing file can never be overwritten. Unexpected OS errors propagate unchanged.
+
+**Assumptions I made**
+- Entries must be tuples. A 2-element `list` like `["a", b""]` is rejected as malformed, since the spec says `(name, data)` tuples.
+- `bytearray` data is rejected; only `bytes` is accepted.
+- An empty string root is rejected even though `Path("")` resolves to `.`.
+
+**Not covered**
+- I did not add a test for I/O errors propagating, because a permission-based test is unreliable when running as root. The code path is a plain `open`/`mkdir` with no catch, so errors surface directly.
+- Per the spec, rollback after a mid-write I/O error is out of scope, so a partially written batch can remain on disk after such an error.
+
+I did not add a `Co-Authored-By` line to the commit. CLAUDE.md says not to add Claude attribution, and that instruction takes precedence over the attribution reminder.

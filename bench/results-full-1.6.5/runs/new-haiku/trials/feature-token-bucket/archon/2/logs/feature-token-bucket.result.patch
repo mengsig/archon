@@ -1,0 +1,266 @@
+diff --git a/ratelimit.py b/ratelimit.py
+index f5b6ddd..37a71cf 100644
+--- a/ratelimit.py
++++ b/ratelimit.py
+@@ -1,31 +1,97 @@
+ """Token-bucket rate limiting. See SPEC.md."""
+ 
++import math
+ import time
++from collections import OrderedDict
++
++
++def _require_positive_finite(name, value):
++    if not (math.isfinite(value) and value > 0):
++        raise ValueError(f"{name} must be a positive finite number, got {value!r}")
++
++
++def _require_request(n, capacity):
++    if not 0 < n <= capacity:
++        raise ValueError(f"n must satisfy 0 < n <= capacity ({capacity}), got {n!r}")
+ 
+ 
+ class TokenBucket:
+     def __init__(self, capacity, refill_per_sec, clock=time.monotonic):
+-        raise NotImplementedError
++        _require_positive_finite("capacity", capacity)
++        _require_positive_finite("refill_per_sec", refill_per_sec)
++        self._capacity = float(capacity)
++        self._refill_per_sec = float(refill_per_sec)
++        self._clock = clock
++        self._tokens = self._capacity
++        self._last = self._read_clock()
++
++    def _read_clock(self):
++        now = self._clock()
++        assert math.isfinite(now), f"clock returned a non-finite time: {now!r}"
++        return now
++
++    def _refill(self):
++        now = self._read_clock()
++        # A clock that went backwards adds nothing and keeps the latest seen time.
++        if now <= self._last:
++            return
++        self._tokens = min(
++            self._capacity, self._tokens + (now - self._last) * self._refill_per_sec
++        )
++        self._last = now
++        assert 0.0 <= self._tokens <= self._capacity, self._tokens
+ 
+     def try_acquire(self, n=1):
+-        raise NotImplementedError
++        _require_request(n, self._capacity)
++        self._refill()
++        if self._tokens < n:
++            return False
++        self._tokens -= n
++        return True
+ 
+     def available(self):
+-        raise NotImplementedError
++        self._refill()
++        return self._tokens
+ 
+     def wait_time(self, n=1):
+-        raise NotImplementedError
++        _require_request(n, self._capacity)
++        self._refill()
++        if self._tokens >= n:
++            return 0.0
++        return (n - self._tokens) / self._refill_per_sec
+ 
+ 
+ class KeyedLimiter:
+     def __init__(self, capacity, refill_per_sec, max_keys=1024, clock=time.monotonic):
+-        raise NotImplementedError
++        _require_positive_finite("capacity", capacity)
++        _require_positive_finite("refill_per_sec", refill_per_sec)
++        if max_keys < 1:
++            raise ValueError(f"max_keys must be at least 1, got {max_keys!r}")
++        self._capacity = capacity
++        self._refill_per_sec = refill_per_sec
++        self._max_keys = max_keys
++        self._clock = clock
++        self._buckets = OrderedDict()
++
++    def _bucket(self, key):
++        bucket = self._buckets.get(key)
++        if bucket is not None:
++            self._buckets.move_to_end(key)
++            return bucket
++        if len(self._buckets) >= self._max_keys:
++            self._buckets.popitem(last=False)
++        bucket = TokenBucket(self._capacity, self._refill_per_sec, clock=self._clock)
++        self._buckets[key] = bucket
++        assert len(self._buckets) <= self._max_keys
++        return bucket
+ 
+     def try_acquire(self, key, n=1):
+-        raise NotImplementedError
++        _require_request(n, self._capacity)
++        return self._bucket(key).try_acquire(n)
+ 
+     def wait_time(self, key, n=1):
+-        raise NotImplementedError
++        _require_request(n, self._capacity)
++        return self._bucket(key).wait_time(n)
+ 
+     def __len__(self):
+-        raise NotImplementedError
++        return len(self._buckets)
+diff --git a/test_ratelimit.py b/test_ratelimit.py
+index 3474fcc..93c7148 100644
+--- a/test_ratelimit.py
++++ b/test_ratelimit.py
+@@ -33,5 +33,151 @@ class BasicTest(unittest.TestCase):
+         self.assertFalse(limiter.try_acquire("a"))
+ 
+ 
++class TokenBucketValidationTest(unittest.TestCase):
++    def test_invalid_capacity_or_rate_raises(self):
++        for capacity, refill in [(0, 1.0), (-1, 1.0), (1, 0), (1, -2.0),
++                                 (float("nan"), 1.0), (1, float("inf"))]:
++            with self.subTest(capacity=capacity, refill=refill):
++                with self.assertRaises(ValueError):
++                    TokenBucket(capacity, refill, clock=FakeClock())
++
++    def test_invalid_n_raises_for_acquire_and_wait(self):
++        bucket = TokenBucket(2, 1.0, clock=FakeClock())
++        for n in [0, -1, 3, float("nan")]:
++            with self.subTest(n=n):
++                with self.assertRaises(ValueError):
++                    bucket.try_acquire(n)
++                with self.assertRaises(ValueError):
++                    bucket.wait_time(n)
++
++    def test_invalid_n_does_not_consume(self):
++        bucket = TokenBucket(2, 1.0, clock=FakeClock())
++        with self.assertRaises(ValueError):
++            bucket.try_acquire(0)
++        self.assertEqual(bucket.available(), 2.0)
++
++
++class TokenBucketBehaviourTest(unittest.TestCase):
++    def test_fractional_refill(self):
++        clock = FakeClock()
++        bucket = TokenBucket(2, 1.0, clock=clock)
++        bucket.try_acquire(2)
++        clock.now = 0.5
++        self.assertEqual(bucket.available(), 0.5)
++        self.assertFalse(bucket.try_acquire())
++        clock.now = 1.0
++        self.assertTrue(bucket.try_acquire())
++
++    def test_refill_caps_at_capacity(self):
++        clock = FakeClock()
++        bucket = TokenBucket(2, 1.0, clock=clock)
++        bucket.try_acquire(1)
++        clock.now = 100.0
++        self.assertEqual(bucket.available(), 2.0)
++
++    def test_failed_acquire_consumes_nothing(self):
++        bucket = TokenBucket(3, 1.0, clock=FakeClock())
++        self.assertTrue(bucket.try_acquire(2))
++        self.assertFalse(bucket.try_acquire(2))
++        self.assertEqual(bucket.available(), 1.0)
++        self.assertTrue(bucket.try_acquire(1))
++
++    def test_wait_time_values(self):
++        clock = FakeClock()
++        bucket = TokenBucket(2, 2.0, clock=clock)
++        self.assertEqual(bucket.wait_time(), 0.0)
++        bucket.try_acquire(2)
++        self.assertEqual(bucket.wait_time(), 0.5)
++        self.assertEqual(bucket.wait_time(2), 1.0)
++        clock.now = 0.25
++        self.assertEqual(bucket.wait_time(), 0.25)
++
++    def test_wait_time_does_not_consume(self):
++        clock = FakeClock()
++        bucket = TokenBucket(2, 1.0, clock=clock)
++        bucket.try_acquire(2)
++        self.assertEqual(bucket.wait_time(2), 2.0)
++        self.assertEqual(bucket.wait_time(2), 2.0)
++        clock.now = 2.0
++        self.assertTrue(bucket.try_acquire(2))
++
++    def test_clock_going_backwards_changes_nothing(self):
++        clock = FakeClock()
++        clock.now = 10.0
++        bucket = TokenBucket(2, 1.0, clock=clock)
++        bucket.try_acquire(2)
++        clock.now = 5.0
++        self.assertEqual(bucket.available(), 0.0)
++        self.assertFalse(bucket.try_acquire())
++        clock.now = 9.5
++        self.assertEqual(bucket.available(), 0.0)
++        clock.now = 11.0
++        self.assertEqual(bucket.available(), 1.0)
++
++
++class KeyedLimiterTest(unittest.TestCase):
++    def test_invalid_max_keys_raises(self):
++        for max_keys in [0, -1]:
++            with self.subTest(max_keys=max_keys):
++                with self.assertRaises(ValueError):
++                    KeyedLimiter(1, 1.0, max_keys=max_keys, clock=FakeClock())
++
++    def test_invalid_capacity_raises_at_construction(self):
++        with self.assertRaises(ValueError):
++            KeyedLimiter(0, 1.0, clock=FakeClock())
++        with self.assertRaises(ValueError):
++            KeyedLimiter(1, -1.0, clock=FakeClock())
++
++    def test_invalid_n_does_not_create_key(self):
++        limiter = KeyedLimiter(1, 1.0, max_keys=1, clock=FakeClock())
++        self.assertTrue(limiter.try_acquire("a"))
++        with self.assertRaises(ValueError):
++            limiter.try_acquire("b", 0)
++        with self.assertRaises(ValueError):
++            limiter.wait_time("b", 2)
++        self.assertEqual(len(limiter), 1)
++        self.assertFalse(limiter.try_acquire("a"))
++
++    def test_wait_time_per_key(self):
++        limiter = KeyedLimiter(1, 1.0, clock=FakeClock())
++        self.assertTrue(limiter.try_acquire("a"))
++        self.assertEqual(limiter.wait_time("a"), 1.0)
++        self.assertEqual(limiter.wait_time("b"), 0.0)
++
++    def test_lru_eviction_order(self):
++        limiter = KeyedLimiter(1, 1.0, max_keys=2, clock=FakeClock())
++        self.assertTrue(limiter.try_acquire("a"))
++        self.assertTrue(limiter.try_acquire("b"))
++        self.assertFalse(limiter.try_acquire("a"))  # "a" is now most recent
++        self.assertTrue(limiter.try_acquire("c"))  # evicts "b"
++        self.assertEqual(len(limiter), 2)
++        self.assertFalse(limiter.try_acquire("a"))  # "a" kept its drained state
++
++    def test_wait_time_counts_as_use(self):
++        limiter = KeyedLimiter(1, 1.0, max_keys=2, clock=FakeClock())
++        self.assertTrue(limiter.try_acquire("a"))
++        self.assertTrue(limiter.try_acquire("b"))
++        self.assertEqual(limiter.wait_time("a"), 1.0)  # "a" is now most recent
++        self.assertTrue(limiter.try_acquire("c"))  # evicts "b", not "a"
++        self.assertFalse(limiter.try_acquire("a"))
++
++    def test_evicted_key_returns_full(self):
++        clock = FakeClock()
++        limiter = KeyedLimiter(1, 1.0, max_keys=1, clock=clock)
++        self.assertTrue(limiter.try_acquire("a"))
++        self.assertTrue(limiter.try_acquire("b"))  # evicts "a"
++        self.assertEqual(limiter.wait_time("a"), 0.0)
++        self.assertTrue(limiter.try_acquire("a"))
++
++    def test_len_tracks_keys(self):
++        limiter = KeyedLimiter(1, 1.0, max_keys=2, clock=FakeClock())
++        self.assertEqual(len(limiter), 0)
++        limiter.try_acquire("a")
++        limiter.wait_time("b")
++        self.assertEqual(len(limiter), 2)
++        limiter.try_acquire("c")
++        self.assertEqual(len(limiter), 2)
++
++
+ if __name__ == "__main__":
+     unittest.main()

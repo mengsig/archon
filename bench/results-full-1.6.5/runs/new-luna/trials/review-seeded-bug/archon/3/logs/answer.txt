@@ -1,0 +1,7 @@
+I found three issues in the registered `review-seeded-bug` mirror’s `session-lib` package. The review is based on the mirror’s `HEAD` (`50f0fb5`, `bench fixture`).
+
+- **Critical — `src/tokens.js`, `verify`:** `expected.startsWith(signature)` accepts partial signatures, including an empty one. An attacker can submit `<base64url({"user":"root","exp":9999999999999})>.` with an empty signature; `verify` accepts the forged payload. Require an exact-length signature comparison using a constant-time comparison.
+- **Medium — `src/tokens.js`, `verify`:** `token.split('.')` uses only the first two parts, so extra suffixes are ignored. A valid token with `.attacker-controlled-suffix` appended still verifies. Reject tokens that do not have exactly two segments.
+- **Medium — `src/tokens.js`, `verify`:** `JSON.parse` errors are uncaught. Because the empty signature is accepted, a token with an empty signature and a body that decodes to invalid JSON makes `verify` throw instead of returning `null`; callers may turn this into an error or denial of service. Catch parse and decoding errors and return `null`.
+
+The first issue is a production-blocking authentication bypass. No code was changed.

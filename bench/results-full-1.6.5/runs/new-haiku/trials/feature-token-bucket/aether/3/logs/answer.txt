@@ -1,0 +1,18 @@
+The rate limiter is implemented in `ratelimit.py` per `SPEC.md`, using only the standard library, and committed as `c4fdb5d` on `main` under your git user. All 15 tests pass (`python3 -m unittest -v test_ratelimit`).
+
+**What's implemented**
+- **`TokenBucket`**: starts full, refills continuously and is capped at `capacity`. `try_acquire`, `available` and `wait_time` follow the spec. Invalid `capacity`, `refill_per_sec` or `n` raise `ValueError`, and NaN is rejected too.
+- **Clock regression**: the bucket tracks the latest time it has seen, so a clock that goes backwards changes nothing until it passes that point again.
+- **`KeyedLimiter`**: one bucket per key, kept in an `OrderedDict` for LRU order. Both `try_acquire` and `wait_time` count as a use. When a new key would exceed `max_keys`, the least recently used key is evicted first, and an evicted key that returns starts full. `len()` reports the tracked key count.
+
+**Choices I made beyond the spec's wording**
+- `max_keys` must be an `int`. A float such as `2.5` would let the limit be exceeded, so I raise `ValueError` for non-integers as well as values below 1.
+- `n` is validated before the key map is touched, so a rejected request does not evict another key.
+- Infinite capacity or rate is not rejected, since the spec only says `> 0`.
+- I added a few `assert` invariants (token count bounds, key limit), as your CLAUDE.md asks for.
+
+**Tests**
+I added 12 tests to `test_ratelimit.py` covering the spec's error cases, fractional refill, the capacity cap, `wait_time`, clock regression, and LRU eviction. The existing three basic tests are unchanged.
+
+**Attribution**
+The system reminder asked for a `Co-Authored-By: Claude Haiku 5.5` trailer on the commit. Your CLAUDE.md says not to add anything like a Claude Code attribution, so I left the trailer off. Say if you want it added.

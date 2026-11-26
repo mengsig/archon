@@ -1,0 +1,14 @@
+Queued as `qi_01M88BJZBB45PFVZX1ZVCF2PXZ` in `feature-token-bucket`. It will implement `SPEC.md`, cover relevant edge cases, use only the standard library, run tests, and commit the work.
+
+Done: Implement the specified rate limiter. Implemented TokenBucket and KeyedLimiter per SPEC.md, with continuous refill, safe backwards clock handling, validated requests, wait estimates, and bounded LRU eviction. Added focused edge case tests. All 7 tests, compilation, and diff checks passed; committed as 636bef73. Independent review passed with no findings. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88BPF5W3EQXS1BQAYBTWFXF)
+
+SHIPPED: commit 636bef73e3438f4be0cf2c9d4b779b9b75fd1a05 on the run branch
+Branch `archon/zvcf2pxz-implement-the-specified-rate-limiter` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/c4ed1a478618426bbfde9201/feature-token-bucket holds it (2 files changed, 114 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M88BJZBB45PFVZX1ZVCF2PXZ`; land it in `main`: `archon merge qi_01M88BJZBB45PFVZX1ZVCF2PXZ`.
+
+Implemented TokenBucket and KeyedLimiter per SPEC.md, with continuous refill, safe backwards clock handling, validated requests, wait estimates, and bounded LRU eviction. Added focused edge case tests. All 7 tests, compilation, and diff checks passed; committed as 636bef73. Independent review passed with no findings. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88BPF5W3EQXS1BQAYBTWFXF)
+
+SHIPPED: commit 636bef73e3438f4be0cf2c9d4b779b9b75fd1a05 on the run branch

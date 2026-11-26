@@ -1,0 +1,15 @@
+All four tickets (TT-101 to TT-104) are implemented, each in its own commit on `main`. The suite runs 39 tests, all passing with `python3 -m unittest discover -s tests -t .`, using only the standard library.
+
+Commits:
+- `e335c77` TT-101: `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible dates, unrecognised text, and offsets that overflow. Only `+Nd`, `today` and `tomorrow` are accepted.
+- `6744b58` TT-102: `to_csv` uses the `csv` module with CRLF line endings, which gives RFC 4180 quoting.
+- `72d47e0` TT-103: `search` parses quoted phrases, ANDed terms, `tag:` and `status:`. Other fields and unterminated quotes raise `QueryError`.
+- `38fd827` TT-104: `TaskStore.undo()` keeps a LIFO history of add, complete and delete. Empty history raises `NothingToUndo`.
+
+Choices I made where the backlog was silent:
+- **Commit trailers:** I left out the `Co-Authored-By` line from the attribution reminder. Your CLAUDE.md says not to put Claude attribution in commits, and that rule takes precedence.
+- **TT-101:** The `InvalidDate` message includes the original, unstripped text.
+- **TT-103:** Field names and status values are case-insensitive. A quoted term is always a phrase, so `"tag:x"` matches a title and is not a field. An empty phrase `""` matches everything. An empty tag name (`tag:`) raises `QueryError`.
+- **TT-104:** Undoing a complete restores the previous status rather than forcing `open`. This only differs from the ticket when completing an already-done task. `undo()` returns the affected task.
+
+I did not update `BACKLOG.md`. Untracked `__pycache__/` directories are in the working tree and were not committed.

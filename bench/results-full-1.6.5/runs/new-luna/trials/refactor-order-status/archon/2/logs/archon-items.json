@@ -1,0 +1,197 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88B4DZQ4603WF7R70AHSAEV",
+      "repo": "repo_01M88B3M8ZV6605MD9QBH13WS4",
+      "pipeline": "direct",
+      "title": "Refactor orders status to OrderStatus",
+      "brief": "Refactor the registered `refactor-order-status` repository's `orders` crate.\n\nRequirements:\n- Add `src/status.rs` with public `OrderStatus { Pending, Paid, Shipped, Cancelled }`, deriving at least Debug, Clone, Copy, PartialEq, Eq, Hash.\n- Implement `OrderStatus::as_str(self) -> &'static str` returning lowercase names; Display prints the same.\n- Implement FromStr<Err = ParseStatusError>; ParseStatusError is public, implements std::error::Error, and its message names the rejected input.\n- Implement can_transition_to(self, next) for exactly pending->paid, pending->cancelled, paid->shipped, paid->cancelled.\n- Change Order::status to OrderStatus, re-export OrderStatus and ParseStatusError from crate root, and use the enum everywhere so status string literals appear only in src/status.rs.\n- Preserve observable behavior exactly, including errors, report output and ordering, and parsing.\n- Run cargo test and address failures.\n- Commit the work on the assigned branch; do not push or merge.\nAcceptance: implementation meets all requirements, cargo test passes, commit exists.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88B4DZQ4603WF7R70AHSAEV",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T03:14:04.921918472Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T03:14:04.924918387Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T03:14:04.921918472Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88B4E02Q5YPSRQWSC2WT8WE",
+        "summary": "Added public OrderStatus parsing, formatting, and transition rules; migrated orders, billing, shipping, and reports to the enum while preserving serialized text and error messages. cargo fmt --check and cargo test pass (5 tests). Committed as 8034fce617f741cb213a82f584ab9a28335336f3; no open issues.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 8034fce617f741cb213a82f584ab9a28335336f3 on the run branch"
+      },
+      "created_at": "2026-11-25T03:14:04.919874542Z",
+      "updated_at": "2026-11-25T03:16:06.598449461Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88B4E02Q5YPSRQWSC2WT8WE",
+        "item": "qi_01M88B4DZQ4603WF7R70AHSAEV",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88B4E4F94XNWJ1QAK594TRZ",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/face5b9eb36c3eab16bec99f/.archon/data/worktrees/refactor-order-status/qi_01M88B4DZQ4603WF7R70AHSAEV",
+        "branch": "archon/70ahsaev-refactor-orders-status-to-orderstatus",
+        "state": {
+          "state": "succeeded",
+          "summary": "Added public OrderStatus parsing, formatting, and transition rules; migrated orders, billing, shipping, and reports to the enum while preserving serialized text and error messages. cargo fmt --check and cargo test pass (5 tests). Committed as 8034fce617f741cb213a82f584ab9a28335336f3; no open issues.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 8034fce617f741cb213a82f584ab9a28335336f3 on the run branch"
+        },
+        "cost_usd": 0.0107108,
+        "started_at": "2026-11-25T03:14:05.060885033Z",
+        "finished_at": "2026-11-25T03:16:06.598449461Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88B4E490RAPERDHKEVWWQ8S",
+        "run": "prun_01M88B4E02Q5YPSRQWSC2WT8WE",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88B4E4NMRQJ7PKNB3CPVQ1D",
+        "aether_task": "tsk_01M88B4E4NMRQJ7PKNB3CPVQ1E",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Added public OrderStatus parsing, formatting, and transition rules; migrated orders, billing, shipping, and reports to the enum while preserving serialized text and error messages. cargo fmt --check and cargo test pass (5 tests). Committed as 8034fce617f741cb213a82f584ab9a28335336f3; no open issues.",
+        "structured": {
+          "checks": [
+            "cargo fmt --check",
+            "cargo test",
+            "git diff --check",
+            "rg -n '\"(pending|paid|shipped|cancelled)\"' src"
+          ],
+          "commit": "8034fce617f741cb213a82f584ab9a28335336f3",
+          "evidence": {
+            "none": "Pure refactor with no visible or measurable output change; existing behavior is covered by the integration tests."
+          },
+          "local_commit": "8034fce617f741cb213a82f584ab9a28335336f3",
+          "pr": {
+            "body": "Added src/status.rs with OrderStatus, ParseStatusError, FromStr, Display, and transition rules; re-exported both public types. Migrated order lifecycle operations, billing, shipping, and CSV/report handling to enum values. Report counts still sort by the same lowercase status names. Verification: cargo fmt --check passed; cargo test passed (2 unit tests, 3 integration tests); git diff --check passed; source scan confirmed lowercase status literals are contained in src/status.rs. Assumption: the explicitly required Order::status type change is accepted as the public API change.",
+            "summary": "Orders now use a typed OrderStatus with parsing, display, and lifecycle transition rules. Before: status was an unrestricted string; now: callers use the enum while CSV/report text and errors retain their existing behavior.",
+            "title": "refactor orders to use OrderStatus"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "The required public Order::status type changes from String to OrderStatus, so downstream callers assigning arbitrary strings must adapt. The change is otherwise limited to order lifecycle and report handling; serialization and errors retain existing text. All five tests and formatting passed."
+          },
+          "tree": "0e4e6a7b678a41cb8f54fed0b27983855a2b58e7"
+        },
+        "cost_usd": 0.0107108,
+        "started_at": "2026-11-25T03:14:05.065783029Z",
+        "finished_at": "2026-11-25T03:16:06.331463069Z"
+      }
+    ],
+    "spent_usd": 0.0107108,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T03:14:04.921918472Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T03:14:04.924918387Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T03:14:04.921918472Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

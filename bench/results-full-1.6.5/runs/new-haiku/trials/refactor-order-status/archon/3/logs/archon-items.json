@@ -1,0 +1,430 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8905QMEKBA5623VZKPR7GPX",
+      "repo": "repo_01M8905B4PRHFNR8VAV10MQEEX",
+      "pipeline": "direct",
+      "title": "orders: replace String order status with OrderStatus enum",
+      "brief": "The `orders` crate stores an order's status as a `String` and compares string literals throughout. Refactor it to a typed enum without changing observable behaviour.\n\nRequirements:\n- Add `src/status.rs` with `pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }`, deriving at least `Debug, Clone, Copy, PartialEq, Eq, Hash`.\n- `OrderStatus::as_str(self) -> &'static str` returns \"pending\", \"paid\", \"shipped\", \"cancelled\". `Display` prints the same strings.\n- `impl FromStr for OrderStatus` with `type Err = ParseStatusError`. `ParseStatusError` is a public error type implementing `std::error::Error`, whose message names the rejected input.\n- `OrderStatus::can_transition_to(self, next: OrderStatus) -> bool` encodes exactly: pending -> paid, pending -> cancelled, paid -> shipped, paid -> cancelled. Nothing else.\n- `Order::status` becomes `OrderStatus`. Re-export `OrderStatus` and `ParseStatusError` from the crate root.\n- Use the enum everywhere; status string literals appear only in `src/status.rs`.\n- Observable behaviour (errors, report output and ordering, parsing) must stay exactly the same as before. Characterize current behaviour first where it is not already covered by tests.\n- `cargo test` must pass.\n- Commit nothing with any git identity override; commit as the repository's configured user, with no AI attribution lines.\n\nAcceptance: all of the above, and the change is committed on the local branch.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "orders",
+        "refactor"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8905QMEKBA5623VZKPR7GPX",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T09:21:47.794218450Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T09:21:47.795944508Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T09:21:47.794218450Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8905QRRMXASYRN0SX8E2W7C",
+        "summary": "Implement stage (attempt 2). No code changed: the committed work on the branch (5d7f0a0 characterization, b0ed248 OrderStatus refactor) already meets the brief. Verified on head b0ed248: cargo test passes (9 characterization, 3 orders, 4 status), clippy -D warnings clean, cargo fmt --check clean. Reviewer agt_01M890DV5VWB010Y3Q6BW2G94G, delegated by me, read the whole change from base 669f313 and passed it with no blocking findings; it confirmed both prior non-blocking findings still open. Left open as follow-ups: ParseStatusError has no input() accessor, and the semver break on Order::status and status_counts has no changelog note. Nothing is left running. The reviewer's leftover process had already exited. Record: review pass by agt_01M890DV5VWB010Y3Q6BW2G94G.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M890DV5VWB010Y3Q6BW2G94G)\n\nSHIPPED: commit b0ed248e0830a6ee33a4c66ea56347c216b11133 on the run branch"
+      },
+      "created_at": "2026-11-25T09:21:47.662411150Z",
+      "updated_at": "2026-11-25T09:27:19.875518379Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8905QRRMXASYRN0SX8E2W7C",
+        "item": "qi_01M8905QMEKBA5623VZKPR7GPX",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8905QXFZ67W73KMMKPYK43W",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/fa193a16431dd02dc4028cf8/.archon/data/worktrees/refactor-order-status/qi_01M8905QMEKBA5623VZKPR7GPX",
+        "branch": "archon/zkpr7gpx-orders-replace-string-order-status-with",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implement stage (attempt 2). No code changed: the committed work on the branch (5d7f0a0 characterization, b0ed248 OrderStatus refactor) already meets the brief. Verified on head b0ed248: cargo test passes (9 characterization, 3 orders, 4 status), clippy -D warnings clean, cargo fmt --check clean. Reviewer agt_01M890DV5VWB010Y3Q6BW2G94G, delegated by me, read the whole change from base 669f313 and passed it with no blocking findings; it confirmed both prior non-blocking findings still open. Left open as follow-ups: ParseStatusError has no input() accessor, and the semver break on Order::status and status_counts has no changelog note. Nothing is left running. The reviewer's leftover process had already exited. Record: review pass by agt_01M890DV5VWB010Y3Q6BW2G94G.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M890DV5VWB010Y3Q6BW2G94G)\n\nSHIPPED: commit b0ed248e0830a6ee33a4c66ea56347c216b11133 on the run branch"
+        },
+        "cost_usd": 0.09086708000000002,
+        "started_at": "2026-11-25T09:21:47.938607182Z",
+        "finished_at": "2026-11-25T09:27:19.875518379Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8905QX9H5BWEVVK719VJGK0",
+        "run": "prun_01M8905QRRMXASYRN0SX8E2W7C",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8905QXQSV5ZWYACAPDCMH6H",
+        "aether_task": "tsk_01M8905QXQSV5ZWYACAPDCMH6J",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Replaced the String order status in the `orders` crate with `OrderStatus` (Pending, Paid, Shipped, Cancelled), with observable behaviour unchanged. Two commits on archon/zkpr7gpx-orders-replace-string-order-status-with: 5d7f0a0 pins current behaviour in tests/characterization.rs before the change; b0ed248 adds src/status.rs (as_str, Display, FromStr with ParseStatusError, can_transition_to encoding the four allowed moves), switches Order::status, billing, shipping and report to the enum, and re-exports OrderStatus and ParseStatusError from the root. status_counts now returns (OrderStatus, usize), still sorted by status name. Checks on head: cargo test 16/16 pass, clippy 0 warnings, fmt clean. Independent review passed with no blocking findings (reviewer agt_01M890ASSK4PDDBX0Z33THW964), and a differential run showed base and head output identical. Risk is high because Order::status and status_counts change type (semver break for callers). Not done: I did not add a semver/changelog note, and ParseStatusError exposes no input accessor (non-blocking). The reviewer's Haiku process (pid 2747352) stops when this agent ends. Nothing else is running.",
+        "structured": {
+          "checks": [
+            "cargo test",
+            "cargo clippy --all-targets",
+            "cargo fmt --check"
+          ],
+          "commit": "b0ed248e0830a6ee33a4c66ea56347c216b11133",
+          "evidence": {
+            "none": "Pure refactor with no visible or measurable change; equivalence is shown by the characterization tests and the differential run instead."
+          },
+          "pr": {
+            "body": "Adds src/status.rs: OrderStatus (Debug, Clone, Copy, PartialEq, Eq, Hash), as_str, Display, FromStr with ParseStatusError (Display names the rejected input, implements std::error::Error), and can_transition_to (pending->paid, pending->cancelled, paid->shipped, paid->cancelled). Order::status is OrderStatus. billing::pay, shipping::ship and Order::cancel guard via can_transition_to and keep their error text. report::from_line parses the status in the same order of checks as before. report::status_counts returns (OrderStatus, usize) for occurring statuses, sorted by status name. Re-exports OrderStatus and ParseStatusError from the crate root. Status literals only in src/status.rs. Characterization tests (5d7f0a0) pin error text, from_line errors, trimming and status_counts ordering, and passed on the base before the change. Checks on head: cargo test 16/16 pass (3 orders, 9 characterization, 4 status); cargo clippy --all-targets 0 warnings; cargo fmt --check clean. Semver-breaking for callers of Order::status and report::status_counts. Assumption: tests keep exact message and CSV text expectations on purpose. Non-blocking follow-ups: ParseStatusError has no input accessor; a changelog note for the API break.",
+            "summary": "Order status is now a typed enum. Before: String status with literal comparisons. Now: OrderStatus with one transition table, same observable behaviour.",
+            "title": "orders: replace String order status with OrderStatus enum",
+            "tree_check": "7dfcd8b0accd01b7400e27178392bd731a209461"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M890ASSK4PDDBX0Z33THW964:1": {
+                "blocking": false,
+                "description": "ParseStatusError keeps its rejected input in a private field with no accessor, so callers can only get the message text via Display; a public input() accessor would let callers act on the rejected value without parsing the message. at src/status.rs:60",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8905QX9H5BWEVVK719VJGK0"
+                },
+                "id": "agt_01M890ASSK4PDDBX0Z33THW964:1",
+                "resolved_in": null
+              },
+              "agt_01M890ASSK4PDDBX0Z33THW964:2": {
+                "blocking": false,
+                "description": "This is a semver-breaking public API change (Order::status field type and report::status_counts return type). The commit message and any changelog should flag it for downstream users. at src/order.rs:4",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8905QX9H5BWEVVK719VJGK0"
+                },
+                "id": "agt_01M890ASSK4PDDBX0Z33THW964:2",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "b0ed248e0830a6ee33a4c66ea56347c216b11133",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M890ASSK4PDDBX0Z33THW964",
+                    "base": "669f313f27a66ada9ff61ddbf7d2145288f93e87",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M890ASSK4PDDBX0Z33THW964:1",
+                      "agt_01M890ASSK4PDDBX0Z33THW964:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Public API type change (Order::status, report::status_counts return type), a semver break for callers; behaviour verified equivalent by characterization tests and a differential run. Reviewer confirmed high."
+          },
+          "tree": "7dfcd8b0accd01b7400e27178392bd731a209461"
+        },
+        "cost_usd": 0.06370151,
+        "started_at": "2026-11-25T09:21:47.944906959Z",
+        "finished_at": "2026-11-25T09:25:47.665466999Z"
+      },
+      {
+        "id": "stg_01M890D218XSBCC2M8RZZNRWFG",
+        "run": "prun_01M8905QRRMXASYRN0SX8E2W7C",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 2,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "spent",
+        "aether_agent": "agt_01M890D69K2PD96DYA68CSCJ62",
+        "aether_task": "tsk_01M890D69KK10KKZ7QCK0A2DYW",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implement stage (attempt 2). No code changed: the committed work on the branch (5d7f0a0 characterization, b0ed248 OrderStatus refactor) already meets the brief. Verified on head b0ed248: cargo test passes (9 characterization, 3 orders, 4 status), clippy -D warnings clean, cargo fmt --check clean. Reviewer agt_01M890DV5VWB010Y3Q6BW2G94G, delegated by me, read the whole change from base 669f313 and passed it with no blocking findings; it confirmed both prior non-blocking findings still open. Left open as follow-ups: ParseStatusError has no input() accessor, and the semver break on Order::status and status_counts has no changelog note. Nothing is left running. The reviewer's leftover process had already exited. Record: review pass by agt_01M890DV5VWB010Y3Q6BW2G94G.",
+        "structured": {
+          "checks": [
+            "cargo test (9 characterization, 3 orders, 4 status: all pass)",
+            "cargo clippy --all-targets -- -D warnings (clean)",
+            "cargo fmt --check (clean)"
+          ],
+          "commit": "b0ed248e0830a6ee33a4c66ea56347c216b11133",
+          "local_commit": "b0ed248e0830a6ee33a4c66ea56347c216b11133",
+          "pr": {
+            "body": "Approach: src/status.rs adds OrderStatus (as_str, Display via f.pad, FromStr with ParseStatusError naming the rejected input, can_transition_to encoding pending->paid, pending->cancelled, paid->shipped, paid->cancelled). Order::status, billing, shipping and report use the enum; status_counts returns (OrderStatus, usize) still sorted by name. OrderStatus and ParseStatusError re-exported from lib.rs. Commit 5d7f0a0 adds characterization tests before the change. Checks: cargo test, clippy -D warnings and fmt all pass on head. Review: agt_01M890DV5VWB010Y3Q6BW2G94G passed the whole change, no blocking findings. Follow-ups (non-blocking): ParseStatusError has no input accessor; semver-breaking change to Order::status and status_counts has no changelog or migration note; status literals remain in test fixtures.",
+            "evidence": {
+              "none": "Pure refactor with no visible or measured change; behaviour is pinned by characterization tests and the reviewer confirmed output equality with base."
+            },
+            "summary": "Made order status a typed enum. Now: OrderStatus {Pending, Paid, Shipped, Cancelled} with can_transition_to, FromStr and Display. Before: String status compared by literal. Now: status literals only in src/status.rs. Observable behaviour unchanged. Breaking: Order::status and report::status_counts change type.",
+            "title": "orders: replace String order status with OrderStatus enum"
+          },
+          "review": {
+            "reviewed_head": "b0ed248e0830a6ee33a4c66ea56347c216b11133",
+            "reviewer_agents": [
+              "agt_01M890DV5VWB010Y3Q6BW2G94G"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M890DV5VWB010Y3Q6BW2G94G",
+                "base": "669f313f27a66ada9ff61ddbf7d2145288f93e87",
+                "findings": 3,
+                "head": "b0ed248e0830a6ee33a4c66ea56347c216b11133",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M890DV5VWB010Y3Q6BW2G94G"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M890ASSK4PDDBX0Z33THW964:1": {
+                "blocking": false,
+                "description": "ParseStatusError keeps its rejected input in a private field with no accessor, so callers can only get the message text via Display; a public input() accessor would let callers act on the rejected value without parsing the message. at src/status.rs:60",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8905QX9H5BWEVVK719VJGK0"
+                },
+                "id": "agt_01M890ASSK4PDDBX0Z33THW964:1",
+                "resolved_in": null
+              },
+              "agt_01M890ASSK4PDDBX0Z33THW964:2": {
+                "blocking": false,
+                "description": "This is a semver-breaking public API change (Order::status field type and report::status_counts return type). The commit message and any changelog should flag it for downstream users. at src/order.rs:4",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8905QX9H5BWEVVK719VJGK0"
+                },
+                "id": "agt_01M890ASSK4PDDBX0Z33THW964:2",
+                "resolved_in": null
+              },
+              "agt_01M890DV5VWB010Y3Q6BW2G94G:1": {
+                "blocking": false,
+                "description": "ParseStatusError keeps the rejected input in a private field with no accessor. Display does name the input, so the requirement is met; the accessor is a follow-up only. Prior finding agt_01M890ASSK4PDDBX0Z33THW964:1 is still open.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M890D218XSBCC2M8RZZNRWFG"
+                },
+                "id": "agt_01M890DV5VWB010Y3Q6BW2G94G:1",
+                "resolved_in": null
+              },
+              "agt_01M890DV5VWB010Y3Q6BW2G94G:2": {
+                "blocking": false,
+                "description": "Semver-breaking public API change: Order::status is now OrderStatus and report::status_counts returns Vec<(OrderStatus, usize)>. The status_counts doc comment was updated, but no CHANGELOG or migration note exists in the repo. Intentional per the brief; documentation follow-up only. Prior finding agt_01M890ASSK4PDDBX0Z33THW964:2 is still open.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M890D218XSBCC2M8RZZNRWFG"
+                },
+                "id": "agt_01M890DV5VWB010Y3Q6BW2G94G:2",
+                "resolved_in": null
+              },
+              "agt_01M890DV5VWB010Y3Q6BW2G94G:3": {
+                "blocking": false,
+                "description": "Status wire-name literals appear in tests/ (tests/status.rs:27 expected list, and from_line fixture inputs and expected messages in tests/characterization.rs). src/ contains literals only in src/status.rs, which satisfies the requirement for production code. Test fixtures are data, so this is a nit.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M890D218XSBCC2M8RZZNRWFG"
+                },
+                "id": "agt_01M890DV5VWB010Y3Q6BW2G94G:3",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "b0ed248e0830a6ee33a4c66ea56347c216b11133",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M890DV5VWB010Y3Q6BW2G94G",
+                    "base": "669f313f27a66ada9ff61ddbf7d2145288f93e87",
+                    "finding_count": 3,
+                    "finding_ids": [
+                      "agt_01M890DV5VWB010Y3Q6BW2G94G:1",
+                      "agt_01M890DV5VWB010Y3Q6BW2G94G:2",
+                      "agt_01M890DV5VWB010Y3Q6BW2G94G:3"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Public API break: Order::status and report::status_counts change type; new public ParseStatusError. Cross-cutting refactor touching order, billing, shipping, report, lib and tests. Runtime behaviour for valid and invalid inputs matches base. Reviewer confirmed high."
+          },
+          "tree": "7dfcd8b0accd01b7400e27178392bd731a209461"
+        },
+        "cost_usd": 0.027165570000000003,
+        "started_at": "2026-11-25T09:25:47.688563408Z",
+        "finished_at": "2026-11-25T09:27:16.903090389Z"
+      }
+    ],
+    "spent_usd": 0.09086708000000002,
+    "gates": [],
+    "delegations": {
+      "stg_01M8905QX9H5BWEVVK719VJGK0": {
+        "direct_usd": 0.046506460000000006,
+        "delegated_usd": 0.01719505,
+        "agents": [
+          {
+            "agent": "agt_01M890ASSK4PDDBX0Z33THW964",
+            "parent": "agt_01M8905QXQSV5ZWYACAPDCMH6H",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01719505
+          }
+        ]
+      },
+      "stg_01M890D218XSBCC2M8RZZNRWFG": {
+        "direct_usd": 0.013882660000000003,
+        "delegated_usd": 0.01328291,
+        "agents": [
+          {
+            "agent": "agt_01M890DV5VWB010Y3Q6BW2G94G",
+            "parent": "agt_01M890D69K2PD96DYA68CSCJ62",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01328291
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T09:21:47.794218450Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T09:21:47.795944508Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T09:21:47.794218450Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

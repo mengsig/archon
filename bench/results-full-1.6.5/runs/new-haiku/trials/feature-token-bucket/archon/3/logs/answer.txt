@@ -1,0 +1,19 @@
+I queued the rate limiter as item `qi_01M88XGJETM4GDRE42BCPPJCPK` on the `feature-token-bucket` repository, using the `direct` pipeline with standard review.
+
+- **What the item does:** one agent reads `SPEC.md` in full, implements `ratelimit.py` with the standard library only, checks every error and edge case the spec lists, adds tests for the ones `test_ratelimit.py` misses, and commits on the local branch.
+- **Shipping:** the repo ships locally, so the work is committed but not pushed. Merge is set to manual, so nothing merges without your go-ahead.
+
+I haven't read `SPEC.md` or `ratelimit.py` myself; the implementing agent does that. You'll be told when the item finishes or fails. I'll check the result and report back then.
+
+Done: Implement rate limiter per SPEC.md in ratelimit.py. Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py, with 18 tests in test_ratelimit.py (up from 3). Committed as 67160bb on archon/bcppjcpk-implement-rate-limiter-per-spec-md-in-ra; not pushed. Checks: python3 -W error -m unittest -v test_ratelimit gives 18 OK; py_compile OK. Before, all tests errored with NotImplementedError. Review: reviewer agt_01M88XJ9TBB5FB65BWAA0MFV9Z passed the head with no blocking findings. Open follow-up (non-blocking): add a direct test for LRU refresh via try_acquire. Standard library only. Tree 283e61fdfd259fbd5f3957d8485a0137ca45624e.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88XJ9TBB5FB65BWAA0MFV9Z)
+
+SHIPPED: commit 67160bb30c909a2248925209907d2a5610821ecc on the run branch
+Branch `archon/bcppjcpk-implement-rate-limiter-per-spec-md-in-ra` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/1dcd3bb9b60005c9b95ed137/feature-token-bucket holds it (2 files changed, 195 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M88XGJETM4GDRE42BCPPJCPK`; land it in `main`: `archon merge qi_01M88XGJETM4GDRE42BCPPJCPK`.
+
+Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py, with 18 tests in test_ratelimit.py (up from 3). Committed as 67160bb on archon/bcppjcpk-implement-rate-limiter-per-spec-md-in-ra; not pushed. Checks: python3 -W error -m unittest -v test_ratelimit gives 18 OK; py_compile OK. Before, all tests errored with NotImplementedError. Review: reviewer agt_01M88XJ9TBB5FB65BWAA0MFV9Z passed the head with no blocking findings. Open follow-up (non-blocking): add a direct test for LRU refresh via try_acquire. Standard library only. Tree 283e61fdfd259fbd5f3957d8485a0137ca45624e.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88XJ9TBB5FB65BWAA0MFV9Z)
+
+SHIPPED: commit 67160bb30c909a2248925209907d2a5610821ecc on the run branch

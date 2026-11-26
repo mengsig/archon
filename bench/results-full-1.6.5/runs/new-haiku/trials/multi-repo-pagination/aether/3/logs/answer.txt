@@ -1,0 +1,22 @@
+Cursor pagination is in place in `inventory-api`, and `inventory-client`'s `listItems` now follows it to the end. Both repos are committed and their suites pass: `python3 -m unittest` runs 9 tests and `npm test` runs 6.
+
+**API (`inventory-api`, commit `d9313b1`)**
+- `GET /items` takes `limit` (integer 1..100, default 20) and `cursor`. The body is `{"items": [...], "next_cursor": ...}`.
+- The cursor is a base64url-encoded id of the last item returned, so the next page is the items with a larger id. Pages stay stable if items are added or removed between requests.
+- `next_cursor` is `null` exactly when no items remain after the current page.
+- A bad `limit` or `cursor` returns 400 with `{"error": "..."}`.
+- The README documents the parameters, the response shape, and a worked example.
+
+**Client (`inventory-client`, commit `087ca27`)**
+- `listItems` sends no cursor on the first request, then passes each `next_cursor` back unchanged until it is `null` or absent.
+- I added one guard the spec didn't ask for: it throws if the server returns the same cursor twice, rather than looping forever.
+- The README is updated to match.
+
+**Verification**
+- Added API tests for the default page size, the full walk, limit bounds, invalid cursors, and exact-multiple and last-page cases.
+- Added client tests for multi-page walks, cursor passing, absent `next_cursor`, and the repeated-cursor guard.
+- Ran a throwaway end-to-end check outside both repos, with the client calling the real `api_cli.py`. It returned ids 1..57 in order. I deleted that script afterwards.
+
+**Choices I made**
+- Cursor encoding: base64url of the last id. The spec only asked for an opaque string.
+- The commit messages end with the `Co-Authored-By: Claude Haiku 5.5` line from the attribution reminder. The author is your configured git identity.

@@ -1,0 +1,24 @@
+Implemented retry_delay in retry_budget.py per SPEC.md and added 26 focused tests in test_retry_budget.py; all pass (python3 -m unittest test_retry_budget). Committed as 5612240 on main.
+
+Implementation:
+- Validation runs first for every argument: built-in int only (bool and float rejected), attempt and max_attempts >= 1, elapsed/budget/base/cap >= 0, retry_after_ms >= 0 when not None. Invalid values raise ValueError.
+- attempt >= max_attempts returns None.
+- Backoff is min(cap, base << (attempt-1)). Zero base or zero cap gives 0. When the exponent is >= cap.bit_length() the result is cap directly, so huge attempts never build a large power of two.
+- Retry-After is a floor via max(), not capped by cap_ms.
+- Returns None when elapsed + delay >= budget; otherwise returns delay.
+
+Test coverage: validation (bool/float/range/ordering before exhausted returns, huge ints), attempt limits, backoff zero/cap/saturation, Retry-After floor, and the strict budget boundary.
+
+Notes: I did not commit __pycache__/ (untracked). Running with python -I cannot import the local module, so tests were run without -I since these are the project's own files.
+
+I implemented `retry_delay` in `retry_budget.py` per `SPEC.md`, added 26 focused tests, and committed the work as `5612240` on `main`. All tests pass with `python3 -m unittest test_retry_budget`.
+
+- **Validation:** every argument is checked first, before any early return. Only built-in ints are accepted (bool and float are rejected), and the minimums from the spec are enforced. Invalid values raise `ValueError`.
+- **Attempt limit:** `attempt >= max_attempts` returns `None`.
+- **Backoff:** `min(cap, base << (attempt-1))`, with zero base or zero cap giving 0. Large attempt values return the cap directly instead of building a huge power of two.
+- **Retry-After:** used as a floor via `max()` and not limited by the cap.
+- **Budget:** returns `None` when `elapsed + delay >= budget`, otherwise returns the delay.
+
+One test expectation was wrong on my first run: 500 + 100 = 600 is not strictly before a 600 ms budget, so `None` was correct. I fixed the test, not the code.
+
+I did not commit the untracked `__pycache__/` directory. I ran the tests without `python -I`, because that flag drops the working directory from `sys.path` and the module could not be imported.

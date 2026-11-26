@@ -1,0 +1,38 @@
+----------------------------------------------------------------------
+Ran 4 tests in 0.000s
+
+OK
+expect_tests: 4 unittest tests passed (minimum 4)
+----------------------------------------------------------------------
+Ran 5 tests in 0.000s
+
+OK
+expect_tests: 5 unittest tests passed (minimum 5)
+----------------------------------------------------------------------
+Ran 4 tests in 0.000s
+
+OK
+expect_tests: 4 unittest tests passed (minimum 4)
+----------------------------------------------------------------------
+Ran 5 tests in 0.000s
+
+OK
+expect_tests: 5 unittest tests passed (minimum 5)
+======================================================================
+ERROR: test_hidden_undo (unittest.loader._FailedTest.test_hidden_undo)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_hidden_undo
+Traceback (most recent call last):
+  File "/usr/lib/python3.14/unittest/loader.py", line 141, in loadTestsFromName
+    module = __import__(module_name)
+  File "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-z4sn2xp1/archon-bench/work/20261125T062211Z/95058e3d8ec0416de064b576/long-backlog/tests/test_hidden_undo.py", line 4, in <module>
+    from tasktracker.store import NothingToUndo, TaskStore, UnknownTask
+ImportError: cannot import name 'NothingToUndo' from 'tasktracker.store' (/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-z4sn2xp1/archon-bench/work/20261125T062211Z/95058e3d8ec0416de064b576/long-backlog/tasktracker/store.py)
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+FAILED (errors=1)
+expect_tests: python3 exited 1
+ticket undo: FAIL

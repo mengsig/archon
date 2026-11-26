@@ -1,0 +1,9 @@
+Implemented and committed both repositories.
+
+- `ledger` accepts an optional currency column, defaults to `USD`, emits the new CSV header and row field, and returns status 2 with the line number for malformed currency codes.
+- `reports` totals by account and currency, sorts by both, accepts legacy CSV as `USD`, and returns status 2 for malformed currency codes.
+- Updated both READMEs.
+
+Validation passed: `cargo test`, `python3 -m unittest`, and `git diff --check`. Both repositories are clean.
+
+Commits: `ledger` `83406e5` (`Add transaction currency support`); `reports` `26a1e65` (`Report totals by currency`).

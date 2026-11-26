@@ -1,0 +1,29 @@
+## Root cause: category listings cache priced rows, and price updates only invalidate the product key
+
+**Responsible code path:** `src/pricing.js` → `updatePrice()` and `src/catalog.js` → `Catalog.listing()`.
+
+1. `Catalog.listing(category, page)` (`src/catalog.js:51-62`) builds rows of `{ sku, name, priceCents }` and stores them in the TTL cache under `listing:<category>:<page>` with `LISTING_TTL_SECONDS = 600` (`src/config.js:72`).
+2. `updatePrice()` (`src/pricing.js:18-25`) updates the store and then calls `catalog.cache.delete(productKey(sku))`, which removes only `product:<sku>`.
+3. Nothing removes the `listing:*` entries that contain that SKU. Category pages keep serving the copied `priceCents` until the entry expires.
+
+That is why product pages look correct and category pages don't. `Catalog.product()` (`src/catalog.js:41-49`) caches under `product:<sku>` with a 3600s TTL, so the delete in `updatePrice` takes effect on the next read.
+
+**Why the delay is about ten minutes:** the listing entry was written at some time `t0` with a 600s TTL. The price change doesn't touch it, so it stays stale until `t0 + 600s`, when `TtlCache.get()` (`src/cache.js:10-18`) treats it as expired and rebuilds it. The worst case is 10 minutes, matching the report.
+
+**Reproduced:** I ran a scratch script against the repo with an injected clock. The listing returned 5000 after the update, the product returned 4500, the listing was still 5000 at t=599,999ms, and it became 4500 at t=600,000ms. The existing `node --test` suite passes (3/3), but none of its tests read a listing after an update, which is why this wasn't caught.
+
+**Why the cache exists:** `src/config.js:70-71` says listings are cached because building them (filter and sort in `ProductStore.inCategory`) is expensive. The cache is caching the wrong thing: it stores the price along with the expensive ordering work, so price data gets a 600s lifetime it shouldn't have.
+
+## Fix options
+
+1. **Preferred: cache only the ordering, and hydrate prices at read time.** Store the sorted SKU list per category (or per category and page) in the listing cache. In `listing()`, map each SKU through `this.product(sku)`, which is already invalidated correctly by `updatePrice`. Price and name then stay consistent with product pages, and the expensive sort/filter is still cached. The cost is one product lookup per row on a listing page, which is cheap with the product cache. This also fixes stale names after a rename, which has the same bug.
+2. **Alternative: invalidate every listing page that contains the SKU.** In `updatePrice`, look up the product's category and delete all `listing:<category>:*` keys. `TtlCache` has no prefix or category index, so this needs one added (for example, a category-to-keys set, or a per-category version number in the key). It is more code and more coupling than option 1.
+3. **Stopgap only:** lower `LISTING_TTL_SECONDS`. This shrinks the window but doesn't fix the cause.
+
+I'd go with option 1 and add a test that reads a listing, updates a price, and reads the listing again.
+
+## Caveat
+
+`TtlCache` is an in-process `Map`. If `catalog-service` runs as several instances, `updatePrice` only clears the instance that handled the update, and other instances stay stale for up to 3600s on product pages and 600s on listings. The repo doesn't show the deployment topology. Support reporting an immediate product-page update suggests a single instance, but that should be confirmed. If there are multiple instances, the fix needs a shared cache or a broadcast invalidation.
+
+No files were changed.

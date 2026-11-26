@@ -1,0 +1,33 @@
+## Root cause
+
+The category listing is cached for 10 minutes, and the price-change path never clears it. The product page is cached too, but its entry is deleted on every price change, so it refreshes at once.
+
+**The path:**
+
+1. **`src/pricing.js:6-13`, `updatePrice`**: writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. It deletes only the `product:<sku>` key. Nothing touches `listing:<category>:<page>`.
+2. **`src/catalog.js:22-33`, `Catalog.listing`**: on a cache miss it reads the category from the store, maps each row to a new `{ sku, name, priceCents }` object, and stores that array under `listing:<category>:<page>` with `LISTING_TTL_SECONDS`. The stored rows are copies, so a later store update does not reach them.
+3. **`src/config.js:7`**: `LISTING_TTL_SECONDS: 600`. This is the "about ten minutes" in the report.
+
+**Why the delay is what it is:** a listing entry lives until its TTL expires, and the TTL is set when the entry is written, not refreshed on reads. Nothing removes it early, so a stale price can be served for up to the full 600 seconds after the listing was last built. The delay is the cache TTL, not a propagation or queue lag.
+
+**Reproduced** (read-only, injected clock, no files changed):
+
+- Listing shows 5000 before the change.
+- After `updatePrice(c, 'A1', 4500)`, `product('A1')` returns 4500 and `listing('tools')` still returns 5000.
+- The listing is still 5000 at 599 s and becomes 4500 at 600 s.
+
+The existing tests (`npm test`, 3 pass) cover the product page after a price change but have no listing case, which is why this went unnoticed.
+
+## Fix options
+
+1. **Hydrate prices at read time (my recommendation).** Cache only the ordered SKU list per page. In `Catalog.listing`, look up each SKU's price through `product()`, which is already invalidated correctly. Listings then can't disagree with product pages, and the price-update code stays unchanged. The cost is one product lookup per row on a listing read, which is cheap with a warm product cache.
+2. **Invalidate the category's listing keys in `updatePrice`.** Look up the SKU's category, then delete every `listing:<category>:*` key. `TtlCache` has no prefix delete, and a `Map` cannot find keys by prefix efficiently. You would need either a per-category key index or a per-category version number included in `listingKey`, which is a little more machinery.
+3. **Lower `LISTING_TTL_SECONDS`.** This only shrinks the window and does not fix it. I would not use it alone.
+
+Whichever you pick, add a listing test to `test/catalog.test.js` that changes a price and checks the listing.
+
+## Caveat
+
+The cache is an in-process `Map` (`src/cache.js`). If the service runs as several instances, `updatePrice` clears only the cache in the instance that handled the change. Other instances would keep stale product pages as well, which does not match the report that product pages update immediately. So the deployment is probably a single process, or the report came from one instance. If there are multiple instances, the fix also needs a shared cache or an invalidation message between them.
+
+I did not change any code. I only read the files, ran a read-only reproduction, and ran `npm test`.

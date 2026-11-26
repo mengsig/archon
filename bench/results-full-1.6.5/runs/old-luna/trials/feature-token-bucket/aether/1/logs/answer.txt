@@ -1,0 +1,3 @@
+Implemented `TokenBucket` and `KeyedLimiter` in [ratelimit.py](/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/3b0cf098fc34639eff227228/feature-token-bucket/ratelimit.py), including validation, continuous refill, backward-clock handling, and LRU eviction. The 3 existing unit tests pass, and the working tree is clean.
+
+Commit: `4949350` (`Implement token bucket rate limiter`).

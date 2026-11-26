@@ -1,0 +1,39 @@
+Multi-currency change is done in both repos and committed. Each repo's test suite passes: `cargo test` in ledger (5 tests), `python3 -m unittest` in reports (3 tests). An end-to-end pipe of ledger into reports also works.
+
+ledger (commit 1d7c059):
+- Input takes an optional 4th TSV column, the currency. A missing column means USD. Codes must be exactly 3 uppercase ASCII letters.
+- Output header is `date,account,amount_cents,currency`, with the currency on every row.
+- A new `ParseError` enum separates `Malformed` from `BadCurrency`. Bad currency exits 2 and every other input error still exits 1. Both messages name the line number on stderr.
+- Tests cover the USD default, explicit codes, bad codes, and the CLI exit statuses. README updated.
+
+reports (commit 4630d7f):
+- Totals are keyed by (account, currency). Output is `account,currency,total_cents`, sorted by account then currency.
+- Input without a `currency` column counts as USD. A bad code prints `error: ...` to stderr and exits 2.
+- Tests cover multi-currency totals, the old format, and bad codes. README updated.
+
+Choices I made (not spelled out in the request):
+- A present but empty 4th column (trailing tab) is a malformed currency, so it exits 2. It is not treated as the USD default.
+- Currency is trimmed like the other fields.
+- Commits have no Co-Authored-By line. The CLAUDE.md rule against attribution took precedence over the reminder's line. Commits use the repo's configured git identity (mengsig).
+
+Not changed: the existing rustfmt drift in ledger/src/lib.rs predates this work, so I left it alone. The `ledger` binary still writes the header before it hits a bad line, as before.
+
+Both repositories now handle multiple currencies, and each is committed. `cargo test` in `ledger` passes (5 tests), and `python3 -m unittest` in `reports` passes (3 tests). I also piped `ledger` output into `reports` end to end and got the expected per-currency totals.
+
+**ledger** (commit `1d7c059`)
+- An optional fourth TSV column carries the currency. A missing column means `USD`.
+- Codes must be exactly three uppercase ASCII letters. A bad code prints `line N: ...` to stderr and exits 2. Other input errors still exit 1.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+
+**reports** (commit `4630d7f`)
+- Totals are per (account, currency). Output is `account,currency,total_cents`, sorted by account, then currency.
+- CSV without a `currency` column counts as `USD`.
+- A bad code prints `error: ...` to stderr and exits 2.
+
+Both READMEs describe the new formats and exit statuses.
+
+Decisions I made that you may want to change:
+- An empty fourth column (a trailing tab) is treated as a malformed currency and exits 2. It is not silently defaulted to `USD`.
+- Commits have no `Co-Authored-By` line. CLAUDE.md says not to add Claude attribution, and it takes precedence over the attribution reminder. Commits use the repo's configured git identity.
+
+I left two things alone. The existing rustfmt drift in `ledger/src/lib.rs` predates this change. The `ledger` binary also still writes the header before it hits a bad line, as it did before.

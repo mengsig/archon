@@ -1,0 +1,3 @@
+Fixed the off-by-one in [window.py](/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/f559b21bdffd07f95d5dd7e5/fix-off-by-one/window.py). `python3 -m unittest` passes (3 tests). Committed as `622acb2` (`Fix sliding window endpoint`).
+
+The test run left an untracked `__pycache__/` directory.

@@ -1,0 +1,395 @@
+diff --git a/safe_extract.py b/safe_extract.py
+index 0007027..c62dc65 100644
+--- a/safe_extract.py
++++ b/safe_extract.py
+@@ -1,5 +1,120 @@
+ """Extract validated regular-file entries. See SPEC.md."""
+ 
++import os
++import stat
++from pathlib import Path
++
++FORBIDDEN_NAME_CHARS = ("\\", ":", "\0")
++
+ 
+ def extract(entries, root):
+-    raise NotImplementedError
++    _require_list(entries)
++    root_path = _validated_root(root)
++    names = _validate_entries(entries)
++    _validate_batch_names(names)
++    for name in names:
++        _check_target_free(root_path, name)
++    for name, data in entries:
++        _write_file(root_path / name, data)
++    assert len(names) == len(entries)
++    return names
++
++
++def _require_list(entries):
++    if not isinstance(entries, list):
++        raise ValueError(f"entries must be a list, not {type(entries).__name__}")
++
++
++def _validated_root(root):
++    if not isinstance(root, (str, Path)) or root == "":
++        raise ValueError(f"root must be a non-empty path or string, got {root!r}")
++    root_path = Path(root)
++    if root_path.is_symlink():
++        raise ValueError(f"root must not be a symlink: {root_path}")
++    if not root_path.is_dir():
++        raise ValueError(f"root must be an existing directory: {root_path}")
++    return root_path
++
++
++def _validate_entries(entries):
++    return [_validated_entry_name(entry) for entry in entries]
++
++
++def _validated_entry_name(entry):
++    if not isinstance(entry, tuple) or len(entry) != 2:
++        raise ValueError("each entry must be a (name, data) tuple")
++    name, data = entry
++    if not isinstance(name, str):
++        raise ValueError(f"entry name must be a string, not {type(name).__name__}")
++    if not isinstance(data, bytes):
++        raise ValueError(f"data for {name!r} must be bytes, not {type(data).__name__}")
++    _validate_name(name)
++    return name
++
++
++def _validate_name(name):
++    assert isinstance(name, str)
++    if name == "":
++        raise ValueError("entry name must not be empty")
++    try:
++        name.encode("utf-8")
++    except UnicodeEncodeError as exc:
++        raise ValueError(f"entry name is not valid Unicode: {name!r}") from exc
++    if any(char in name for char in FORBIDDEN_NAME_CHARS):
++        raise ValueError(f"entry name contains a forbidden character: {name!r}")
++    for part in name.split("/"):
++        if part in ("", ".", ".."):
++            raise ValueError(f"entry name has an empty, '.' or '..' component: {name!r}")
++
++
++def _validate_batch_names(names):
++    seen = set()
++    for name in names:
++        if name in seen:
++            raise ValueError(f"duplicate entry name: {name!r}")
++        seen.add(name)
++    for name in names:
++        _check_no_ancestor_is_entry(name, seen)
++
++
++def _check_no_ancestor_is_entry(name, batch_names):
++    parts = name.split("/")
++    for depth in range(1, len(parts)):
++        ancestor = "/".join(parts[:depth])
++        if ancestor in batch_names:
++            raise ValueError(
++                f"{ancestor!r} is both a file and a directory in this batch "
++                f"(conflicts with {name!r})"
++            )
++
++
++def _check_target_free(root_path, name):
++    parts = name.split("/")
++    assert parts[-1] not in ("", ".", "..")
++    current = root_path
++    for part in parts[:-1]:
++        current = current / part
++        status = _lstat_or_none(current)
++        if status is None:
++            return
++        if stat.S_ISLNK(status.st_mode):
++            raise ValueError(f"path component is a symlink: {current}")
++        if not stat.S_ISDIR(status.st_mode):
++            raise ValueError(f"path component is not a directory: {current}")
++    target = current / parts[-1]
++    if _lstat_or_none(target) is not None:
++        raise ValueError(f"target already exists: {target}")
++
++
++def _lstat_or_none(path):
++    try:
++        return os.lstat(path)
++    except FileNotFoundError:
++        return None
++
++
++def _write_file(path, data):
++    assert not path.is_symlink()
++    path.parent.mkdir(parents=True, exist_ok=True)
++    with open(path, "xb") as handle:
++        handle.write(data)
+diff --git a/test_safe_extract.py b/test_safe_extract.py
+index bbd5cb7..884f3ad 100644
+--- a/test_safe_extract.py
++++ b/test_safe_extract.py
+@@ -1,6 +1,8 @@
++import os
+ import tempfile
+ import unittest
+ from pathlib import Path
++from unittest import mock
+ 
+ from safe_extract import extract
+ 
+@@ -18,3 +20,255 @@ class ExtractBasics(unittest.TestCase):
+         with tempfile.TemporaryDirectory(dir=".") as directory:
+             self.assertEqual(extract([], Path(directory)), [])
+             self.assertEqual(list(Path(directory).iterdir()), [])
++
++
++class TempRootTestCase(unittest.TestCase):
++    def setUp(self):
++        self._tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self._tmp.cleanup)
++        self.base = Path(self._tmp.name)
++        self.root = self.base / "root"
++        self.root.mkdir()
++
++    def snapshot(self, directory):
++        return sorted(str(p.relative_to(directory)) for p in directory.rglob("*"))
++
++
++class BatchTypeTests(TempRootTestCase):
++    def test_non_list_batches_are_rejected_without_consuming(self):
++        generator = ((name, b"x") for name in ["a"])
++        iterator = iter([("a", b"x")])
++        for batch in [(), (("a", b"x"),), iterator, generator, None, "a"]:
++            with self.subTest(batch=type(batch).__name__):
++                with self.assertRaises(ValueError):
++                    extract(batch, self.root)
++        self.assertEqual(next(iterator), ("a", b"x"))
++        self.assertEqual(next(generator), ("a", b"x"))
++        self.assertEqual(self.snapshot(self.root), [])
++
++    def test_empty_tuple_batch_is_rejected(self):
++        with self.assertRaises(ValueError):
++            extract((), self.root)
++
++    def test_malformed_entries_are_rejected(self):
++        bad_entries = [
++            ["a", b"x"],
++            ("a",),
++            ("a", b"x", "extra"),
++            "ab",
++            None,
++        ]
++        for entry in bad_entries:
++            with self.subTest(entry=entry):
++                with self.assertRaises(ValueError):
++                    extract([("ok", b"1"), entry], self.root)
++        self.assertEqual(self.snapshot(self.root), [])
++
++    def test_non_string_names_are_rejected(self):
++        for name in [b"a", 1, None, ("a",)]:
++            with self.subTest(name=name):
++                with self.assertRaises(ValueError):
++                    extract([(name, b"x")], self.root)
++
++    def test_non_bytes_data_is_rejected(self):
++        for data in ["text", bytearray(b"x"), memoryview(b"x"), None, 3]:
++            with self.subTest(data=type(data).__name__):
++                with self.assertRaises(ValueError):
++                    extract([("a", data)], self.root)
++        self.assertEqual(self.snapshot(self.root), [])
++
++
++class NameTests(TempRootTestCase):
++    def assertRejectedName(self, name):
++        with self.assertRaises(ValueError):
++            extract([("good", b"1"), (name, b"2")], self.root)
++        self.assertEqual(self.snapshot(self.root), [])
++
++    def test_invalid_names_are_rejected(self):
++        invalid = [
++            "",
++            "/abs",
++            "a//b",
++            "a/",
++            "./a",
++            "a/./b",
++            "a/../b",
++            "..",
++            ".",
++            "a\\b",
++            "C:/x",
++            "c:x",
++            "a\0b",
++            "a/\0",
++        ]
++        for name in invalid:
++            with self.subTest(name=name):
++                self.assertRejectedName(name)
++
++    def test_name_that_is_not_valid_unicode_is_rejected(self):
++        self.assertRejectedName("bad\udcff")
++
++    def test_percent_signs_are_literal(self):
++        names = ["100%", "%2e%2e/x", "a%2Fb"]
++        self.assertEqual(extract([(n, b"x") for n in names], self.root), names)
++        self.assertEqual((self.root / "100%").read_bytes(), b"x")
++        self.assertEqual((self.root / "%2e%2e" / "x").read_bytes(), b"x")
++
++    def test_dotted_but_valid_names_are_allowed(self):
++        names = [".hidden", "a.b", "...", "dir/.x"]
++        self.assertEqual(extract([(n, b"") for n in names], self.root), names)
++
++
++class BatchConflictTests(TempRootTestCase):
++    def test_duplicate_names_are_rejected(self):
++        with self.assertRaises(ValueError):
++            extract([("a", b"1"), ("b", b"2"), ("a", b"3")], self.root)
++        self.assertEqual(self.snapshot(self.root), [])
++
++    def test_file_then_directory_collision_is_rejected(self):
++        with self.assertRaises(ValueError):
++            extract([("a", b"1"), ("a/b", b"2")], self.root)
++        self.assertEqual(self.snapshot(self.root), [])
++
++    def test_directory_then_file_collision_is_rejected(self):
++        with self.assertRaises(ValueError):
++            extract([("a/b", b"2"), ("a", b"1")], self.root)
++        self.assertEqual(self.snapshot(self.root), [])
++
++    def test_deep_collision_is_rejected(self):
++        with self.assertRaises(ValueError):
++            extract([("a/b/c", b"1"), ("a/b", b"2")], self.root)
++
++    def test_siblings_with_shared_prefix_are_not_collisions(self):
++        names = ["a", "ab", "a-b/c"]
++        self.assertEqual(extract([(n, b"x") for n in names], self.root), names)
++
++
++class RootTests(TempRootTestCase):
++    def test_root_as_string_and_path_both_work(self):
++        self.assertEqual(extract([("a", b"1")], str(self.root)), ["a"])
++        self.assertEqual(extract([("b", b"2")], self.root), ["b"])
++
++    def test_missing_root_is_rejected(self):
++        with self.assertRaises(ValueError):
++            extract([("a", b"1")], self.base / "missing")
++
++    def test_file_root_is_rejected(self):
++        file_root = self.base / "file"
++        file_root.write_bytes(b"")
++        with self.assertRaises(ValueError):
++            extract([], file_root)
++
++    def test_root_that_is_a_symlink_is_rejected(self):
++        link = self.base / "link"
++        os.symlink(self.root, link)
++        with self.assertRaises(ValueError):
++            extract([("a", b"1")], link)
++        with self.assertRaises(ValueError):
++            extract([], link)
++        self.assertEqual(self.snapshot(self.root), [])
++
++    def test_empty_string_and_bad_types_root_are_rejected(self):
++        for root in ["", None, 7, b"/tmp"]:
++            with self.subTest(root=root):
++                with self.assertRaises(ValueError):
++                    extract([], root)
++
++    def test_empty_batch_still_validates_root(self):
++        with self.assertRaises(ValueError):
++            extract([], self.base / "missing")
++
++
++class ExistingPathTests(TempRootTestCase):
++    def test_existing_file_is_not_overwritten(self):
++        (self.root / "a").write_bytes(b"keep")
++        with self.assertRaises(ValueError):
++            extract([("b", b"1"), ("a", b"2")], self.root)
++        self.assertEqual((self.root / "a").read_bytes(), b"keep")
++        self.assertEqual(self.snapshot(self.root), ["a"])
++
++    def test_existing_directory_target_is_rejected(self):
++        (self.root / "d").mkdir()
++        with self.assertRaises(ValueError):
++            extract([("d", b"1")], self.root)
++
++    def test_ancestor_that_is_a_file_is_rejected(self):
++        (self.root / "a").write_bytes(b"keep")
++        with self.assertRaises(ValueError):
++            extract([("a/b", b"1")], self.root)
++        self.assertEqual((self.root / "a").read_bytes(), b"keep")
++
++    def test_symlink_ancestor_inside_root_is_rejected(self):
++        (self.root / "real").mkdir()
++        os.symlink(self.root / "real", self.root / "link")
++        with self.assertRaises(ValueError):
++            extract([("link/x", b"1")], self.root)
++        self.assertEqual(list((self.root / "real").iterdir()), [])
++
++    def test_symlink_ancestor_pointing_outside_is_rejected(self):
++        outside = self.base / "outside"
++        outside.mkdir()
++        os.symlink(outside, self.root / "link")
++        with self.assertRaises(ValueError):
++            extract([("link/x", b"1")], self.root)
++        self.assertEqual(list(outside.iterdir()), [])
++
++    def test_dangling_symlink_target_is_rejected(self):
++        os.symlink(self.base / "nowhere", self.root / "dangling")
++        with self.assertRaises(ValueError):
++            extract([("dangling", b"1")], self.root)
++        self.assertFalse((self.base / "nowhere").exists())
++
++    def test_dangling_symlink_ancestor_is_rejected(self):
++        os.symlink(self.base / "nowhere", self.root / "dangling")
++        with self.assertRaises(ValueError):
++            extract([("dangling/x", b"1")], self.root)
++        self.assertFalse((self.base / "nowhere").exists())
++
++    def test_symlink_target_inside_root_is_rejected(self):
++        (self.root / "real.txt").write_bytes(b"keep")
++        os.symlink(self.root / "real.txt", self.root / "link.txt")
++        with self.assertRaises(ValueError):
++            extract([("link.txt", b"new")], self.root)
++        self.assertEqual((self.root / "real.txt").read_bytes(), b"keep")
++
++
++class ValidationAtomicityTests(TempRootTestCase):
++    def test_invalid_late_entry_creates_nothing(self):
++        (self.root / "exists").write_bytes(b"keep")
++        batch = [("new/dir/file", b"1"), ("ok", b"2"), ("exists", b"3")]
++        with self.assertRaises(ValueError):
++            extract(batch, self.root)
++        self.assertEqual(self.snapshot(self.root), ["exists"])
++
++    def test_batch_conflict_creates_nothing_outside_root(self):
++        outside = self.base / "outside"
++        outside.mkdir()
++        with self.assertRaises(ValueError):
++            extract([("x/y", b"1"), ("x", b"2")], self.root)
++        self.assertEqual(self.snapshot(self.base), ["outside", "root"])
++
++
++class WritingTests(TempRootTestCase):
++    def test_parent_directories_are_created(self):
++        self.assertEqual(extract([("a/b/c/d.bin", b"\x00\xff")], self.root), ["a/b/c/d.bin"])
++        self.assertEqual((self.root / "a/b/c/d.bin").read_bytes(), b"\x00\xff")
++
++    def test_exact_bytes_including_empty_file(self):
++        payload = bytes(range(256))
++        extract([("p", payload), ("e", b"")], self.root)
++        self.assertEqual((self.root / "p").read_bytes(), payload)
++        self.assertEqual((self.root / "e").stat().st_size, 0)
++
++    def test_returns_names_in_input_order(self):
++        names = ["z", "a/y", "m", "a/b"]
++        self.assertEqual(extract([(n, b"") for n in names], self.root), names)
++
++    def test_unexpected_io_error_is_visible(self):
++        with mock.patch("safe_extract.open", side_effect=OSError("disk full"), create=True):
++            with self.assertRaisesRegex(OSError, "disk full"):
++                extract([("a", b"1")], self.root)
++
++
++if __name__ == "__main__":
++    unittest.main()

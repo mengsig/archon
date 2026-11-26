@@ -1,0 +1,3 @@
+Implemented `extract` with full-batch validation, path and collision checks, symlink and existing-target rejection, and exact byte writes. Added focused tests for the specified boundary cases.
+
+Committed as `b7ff95f` (`Implement safe extraction validation`). Tests were not run.

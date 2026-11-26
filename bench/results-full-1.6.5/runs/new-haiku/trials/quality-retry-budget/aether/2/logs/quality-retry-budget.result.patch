@@ -1,0 +1,186 @@
+diff --git a/retry_budget.py b/retry_budget.py
+index 07b3b5e..2484e71 100644
+--- a/retry_budget.py
++++ b/retry_budget.py
+@@ -1,6 +1,45 @@
+ """Pure bounded retry scheduling. See SPEC.md."""
+ 
+ 
++def _require_int(name, value, minimum):
++    if type(value) is not int:
++        raise ValueError(
++            f"{name} must be a built-in int, got {type(value).__name__}")
++    if value < minimum:
++        raise ValueError(f"{name} must be >= {minimum}, got {value}")
++
++
++def _backoff(attempt, base_ms, cap_ms):
++    if base_ms == 0 or cap_ms == 0:
++        return 0
++    doublings = attempt - 1
++    # base_ms >= 1, so once 2**doublings exceeds cap_ms the result is cap_ms.
++    # Checking bit_length avoids building huge powers of two.
++    if doublings >= cap_ms.bit_length():
++        return cap_ms
++    return min(cap_ms, base_ms << doublings)
++
++
+ def retry_delay(attempt, elapsed_ms, *, max_attempts=4, budget_ms=1000,
+                 base_ms=100, cap_ms=400, retry_after_ms=None):
+-    raise NotImplementedError
++    _require_int("attempt", attempt, 1)
++    _require_int("elapsed_ms", elapsed_ms, 0)
++    _require_int("max_attempts", max_attempts, 1)
++    _require_int("budget_ms", budget_ms, 0)
++    _require_int("base_ms", base_ms, 0)
++    _require_int("cap_ms", cap_ms, 0)
++    if retry_after_ms is not None:
++        _require_int("retry_after_ms", retry_after_ms, 0)
++
++    if attempt >= max_attempts:
++        return None
++
++    delay = _backoff(attempt, base_ms, cap_ms)
++    if retry_after_ms is not None:
++        # Server-provided minimum wait; deliberately not limited by cap_ms.
++        delay = max(delay, retry_after_ms)
++    assert delay >= 0, "delay must be non-negative"
++
++    if elapsed_ms + delay >= budget_ms:
++        return None
++    return delay
+diff --git a/test_retry_budget.py b/test_retry_budget.py
+index f3df8dd..acc77cc 100644
+--- a/test_retry_budget.py
++++ b/test_retry_budget.py
+@@ -1,3 +1,4 @@
++import time
+ import unittest
+ 
+ from retry_budget import retry_delay
+@@ -9,10 +10,125 @@ class RetryBasics(unittest.TestCase):
+         self.assertEqual(retry_delay(2, 100), 200)
+         self.assertEqual(retry_delay(3, 300), 400)
+ 
++    def test_backoff_capped(self):
++        self.assertEqual(retry_delay(3, 0, max_attempts=10, budget_ms=10**6), 400)
++        self.assertEqual(retry_delay(9, 0, max_attempts=10, budget_ms=10**6), 400)
++
+     def test_attempt_limit(self):
+         self.assertIsNone(retry_delay(4, 0))
+         self.assertIsNone(retry_delay(1, 0, max_attempts=1))
+ 
++    def test_attempt_beyond_max_is_none(self):
++        self.assertIsNone(retry_delay(50, 0, max_attempts=4))
++
+     def test_retry_after(self):
+         self.assertEqual(retry_delay(1, 0, retry_after_ms=250), 250)
+         self.assertEqual(retry_delay(1, 0, retry_after_ms=25), 100)
++
++    def test_retry_after_not_limited_by_cap(self):
++        self.assertEqual(retry_delay(1, 0, cap_ms=50, retry_after_ms=300), 300)
++
++    def test_retry_after_zero_is_valid(self):
++        self.assertEqual(retry_delay(1, 0, base_ms=0, retry_after_ms=0), 0)
++
++
++class RetryBudget(unittest.TestCase):
++    def test_exactly_on_budget_is_refused(self):
++        self.assertIsNone(retry_delay(1, 900, budget_ms=1000))
++
++    def test_just_under_budget_is_allowed(self):
++        self.assertEqual(retry_delay(1, 899, budget_ms=1000), 100)
++
++    def test_wait_is_not_shortened_to_fit(self):
++        self.assertIsNone(retry_delay(1, 0, budget_ms=100, retry_after_ms=100))
++
++    def test_zero_budget_refuses_everything(self):
++        self.assertIsNone(retry_delay(1, 0, budget_ms=0))
++
++    def test_zero_delay_within_budget_is_returned(self):
++        self.assertEqual(retry_delay(1, 5, base_ms=0, budget_ms=6), 0)
++        self.assertIsNone(retry_delay(1, 6, base_ms=0, budget_ms=6))
++
++
++class RetryEdgeCases(unittest.TestCase):
++    def test_zero_base_yields_zero_backoff(self):
++        self.assertEqual(retry_delay(5, 0, base_ms=0, max_attempts=10), 0)
++
++    def test_zero_cap_yields_zero_backoff(self):
++        self.assertEqual(retry_delay(5, 0, cap_ms=0, max_attempts=10), 0)
++
++    def test_base_above_cap_is_capped(self):
++        self.assertEqual(retry_delay(1, 0, base_ms=500, cap_ms=400), 400)
++
++    def test_huge_attempt_saturates_quickly(self):
++        start = time.monotonic()
++        result = retry_delay(10**100, 0, max_attempts=10**100 + 1,
++                             budget_ms=10**200)
++        self.assertEqual(result, 400)
++        self.assertLess(time.monotonic() - start, 1.0)
++
++    def test_huge_base_and_cap_are_supported(self):
++        big = 10**30
++        self.assertEqual(retry_delay(1, 0, base_ms=big, cap_ms=big + 1,
++                                     budget_ms=10**40), big)
++
++    def test_large_attempt_with_small_base(self):
++        self.assertEqual(retry_delay(64, 0, base_ms=1, cap_ms=10**30,
++                                     max_attempts=100, budget_ms=10**40),
++                         2**63)
++
++    def test_defaults_match_spec(self):
++        self.assertEqual(retry_delay(1, 0), 100)
++        self.assertIsNone(retry_delay(1, 0, budget_ms=100))
++
++
++class RetryValidation(unittest.TestCase):
++    def assertRejects(self, *args, **kwargs):
++        with self.assertRaises(ValueError):
++            retry_delay(*args, **kwargs)
++
++    def test_bool_rejected(self):
++        self.assertRejects(True, 0)
++        self.assertRejects(1, False)
++        self.assertRejects(1, 0, max_attempts=True)
++        self.assertRejects(1, 0, retry_after_ms=False)
++
++    def test_float_rejected(self):
++        self.assertRejects(1.0, 0)
++        self.assertRejects(1, 0.0)
++        self.assertRejects(1, 0, budget_ms=1000.0)
++        self.assertRejects(1, 0, base_ms=100.0)
++        self.assertRejects(1, 0, cap_ms=400.0)
++        self.assertRejects(1, 0, retry_after_ms=1.5)
++
++    def test_attempt_must_be_at_least_one(self):
++        self.assertRejects(0, 0)
++        self.assertRejects(-1, 0)
++
++    def test_max_attempts_must_be_at_least_one(self):
++        self.assertRejects(1, 0, max_attempts=0)
++
++    def test_negative_values_rejected(self):
++        self.assertRejects(1, -1)
++        self.assertRejects(1, 0, budget_ms=-1)
++        self.assertRejects(1, 0, base_ms=-1)
++        self.assertRejects(1, 0, cap_ms=-1)
++        self.assertRejects(1, 0, retry_after_ms=-1)
++
++    def test_none_retry_after_is_accepted(self):
++        self.assertEqual(retry_delay(1, 0, retry_after_ms=None), 100)
++
++    def test_validation_precedes_attempt_limit(self):
++        self.assertRejects(10, 0, max_attempts=4, base_ms=-1)
++
++    def test_validation_precedes_exhausted_budget(self):
++        self.assertRejects(1, 5000, budget_ms=1000, retry_after_ms=-1)
++
++    def test_non_int_subclass_rejected(self):
++        class MyInt(int):
++            pass
++        self.assertRejects(MyInt(1), 0)
++
++
++if __name__ == "__main__":
++    unittest.main()

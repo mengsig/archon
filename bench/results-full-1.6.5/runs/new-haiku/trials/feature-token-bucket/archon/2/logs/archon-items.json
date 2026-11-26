@@ -1,0 +1,303 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88V25XMECG63JMQ4VASEJM5",
+      "repo": "repo_01M88V1NRQ285RQS16V96GHNHS",
+      "pipeline": "direct",
+      "title": "Implement token-bucket rate limiter per SPEC.md in ratelimit.py",
+      "brief": "Implement the rate limiter specified in SPEC.md in ratelimit.py, replacing the NotImplementedError stubs. Follow SPEC.md exactly, including its error cases and edge cases. Standard library only (no new dependencies). Commit the work locally; do not push.\n\nKey requirements (from SPEC.md, restated):\n- TokenBucket(capacity, refill_per_sec, clock=time.monotonic): capacity > 0 and refill_per_sec > 0, else ValueError. Starts full. Tokens accrue continuously (fractional allowed), never exceed capacity. Time is read only via the injected clock.\n- try_acquire(n=1) -> bool: succeeds and removes n tokens only if at least n are available; otherwise removes nothing and returns False. n <= 0 or n > capacity raises ValueError.\n- available() -> float: tokens available now, after refill.\n- wait_time(n=1) -> float: seconds until try_acquire(n) would succeed (0.0 if now). Does not consume tokens. Same ValueError rules.\n- If the clock goes backwards, nothing changes: no tokens added or removed until the clock passes the latest time the bucket has already seen.\n- KeyedLimiter(capacity, refill_per_sec, max_keys=1024, clock=time.monotonic): one independent TokenBucket per hashable key, created on first use. try_acquire(key, n=1) and wait_time(key, n=1) behave like the bucket methods for that key. At most max_keys buckets; when a new key would exceed the limit, evict the least recently used key first (try_acquire and wait_time both count as a use). An evicted key that returns starts full. max_keys < 1 raises ValueError, as do invalid capacity/refill_per_sec. len(limiter) is the number of keys currently tracked.\n\nGuidance:\n- Keep functions under 60 lines, with a single clear responsibility. Validate inputs at the boundary and raise ValueError with a clear message.\n- Add meaningful assertions/invariants where they catch real bugs (e.g. token count bounds, clock monotonicity handling); no decorative asserts, no try/except that hides errors.\n- Extend test_ratelimit.py with tests covering the spec's edge cases: invalid arguments, n <= 0 and n > capacity, fractional refill, cap at capacity, no consumption on failure, wait_time values, clock going backwards, LRU eviction order (including use via wait_time), evicted key returning full, max_keys validation, and len(). Do not change SPEC.md.\n- Run the test suite (python -m unittest) and make sure it passes before committing.\n- Commit with a clear message. Use the repository's configured git identity; do not add any attribution lines (no Claude/Anthropic/AI generation mentions).",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88V25XMECG63JMQ4VASEJM5",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T07:52:28.342692003Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T07:52:28.344208118Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T07:52:28.342692003Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "model_reasons": {},
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88V25XVFABZ0TJPHB6FV193",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, replacing the NotImplementedError stubs. Added 20 unit tests in test_ratelimit.py covering the spec's edge cases; `python -m unittest` passes (20 tests OK). Committed locally as fbb355d4dfe6d7c2932598896a8caa2b570779d9 (tree 609410fea1409477c4fcd2761e95cb2e3a215ba2) under the configured identity; nothing pushed. One reviewer (agt_01M88V3ZCHTGPFPPCJQTEC56FP) passed the head with no blocking findings; non-blocking follow-ups: non-numeric arguments raise TypeError not ValueError, invariants are asserts (stripped by -O), and no KeyedLimiter-level backwards-clock test. No servers were started. The reviewer agent's leftover claude/socat processes are still running until this run ends.\nREVIEW: pass by agt_01M88V3ZCHTGPFPPCJQTEC56FP\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88V3ZCHTGPFPPCJQTEC56FP)\n\nSHIPPED: commit fbb355d4dfe6d7c2932598896a8caa2b570779d9 on the run branch"
+      },
+      "created_at": "2026-11-25T07:52:28.340914125Z",
+      "updated_at": "2026-11-25T07:54:41.068177916Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88V25XVFABZ0TJPHB6FV193",
+        "item": "qi_01M88V25XMECG63JMQ4VASEJM5",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88V262NHBP5R327NQ14RSMG",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/566e9e34dc144f0e5d9beb5c/.archon/data/worktrees/feature-token-bucket/qi_01M88V25XMECG63JMQ4VASEJM5",
+        "branch": "archon/4vasejm5-implement-token-bucket-rate-limiter-per",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, replacing the NotImplementedError stubs. Added 20 unit tests in test_ratelimit.py covering the spec's edge cases; `python -m unittest` passes (20 tests OK). Committed locally as fbb355d4dfe6d7c2932598896a8caa2b570779d9 (tree 609410fea1409477c4fcd2761e95cb2e3a215ba2) under the configured identity; nothing pushed. One reviewer (agt_01M88V3ZCHTGPFPPCJQTEC56FP) passed the head with no blocking findings; non-blocking follow-ups: non-numeric arguments raise TypeError not ValueError, invariants are asserts (stripped by -O), and no KeyedLimiter-level backwards-clock test. No servers were started. The reviewer agent's leftover claude/socat processes are still running until this run ends.\nREVIEW: pass by agt_01M88V3ZCHTGPFPPCJQTEC56FP\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88V3ZCHTGPFPPCJQTEC56FP)\n\nSHIPPED: commit fbb355d4dfe6d7c2932598896a8caa2b570779d9 on the run branch"
+        },
+        "cost_usd": 0.03718649,
+        "started_at": "2026-11-25T07:52:28.489264682Z",
+        "finished_at": "2026-11-25T07:54:41.068177916Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88V262EF59VDYN0KRMRMND0",
+        "run": "prun_01M88V25XVFABZ0TJPHB6FV193",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88V26397PZF1X7852CRE1K6",
+        "aether_task": "tsk_01M88V26397PZF1X7852CRE1K7",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, replacing the NotImplementedError stubs. Added 20 unit tests in test_ratelimit.py covering the spec's edge cases; `python -m unittest` passes (20 tests OK). Committed locally as fbb355d4dfe6d7c2932598896a8caa2b570779d9 (tree 609410fea1409477c4fcd2761e95cb2e3a215ba2) under the configured identity; nothing pushed. One reviewer (agt_01M88V3ZCHTGPFPPCJQTEC56FP) passed the head with no blocking findings; non-blocking follow-ups: non-numeric arguments raise TypeError not ValueError, invariants are asserts (stripped by -O), and no KeyedLimiter-level backwards-clock test. No servers were started. The reviewer agent's leftover claude/socat processes are still running until this run ends.\nREVIEW: pass by agt_01M88V3ZCHTGPFPPCJQTEC56FP",
+        "structured": {
+          "checks": [
+            "PYTHONDONTWRITEBYTECODE=1 python -m unittest -v (20 tests, OK)"
+          ],
+          "commit": "fbb355d4dfe6d7c2932598896a8caa2b570779d9",
+          "evidence": [
+            {
+              "caption": "Test suite after the change: 20 tests, all pass (base had NotImplementedError stubs, so no test could pass before)",
+              "kind": "output",
+              "text": "Ran 20 tests in 0.001s\n\nOK"
+            }
+          ],
+          "local_commit": "fbb355d4dfe6d7c2932598896a8caa2b570779d9",
+          "pr": {
+            "body": "Approach: TokenBucket refills from the injected clock on each call; a clock that does not advance past the last seen time adds nothing. KeyedLimiter keeps an OrderedDict of buckets; try_acquire and wait_time both move the key to most-recent, and a new key evicts the least-recent one when full. Arguments are validated before any bucket is created, so invalid calls change no state. Key files: ratelimit.py, test_ratelimit.py. Checks: python -m unittest, 20 tests OK. Review: one reviewer, pass, no blocking findings. Non-blocking follow-ups: non-numeric arguments raise TypeError rather than ValueError; invariants use assert, which -O strips; no KeyedLimiter-level backwards-clock test. Assumption: capacity and refill_per_sec must be finite; infinity is rejected as invalid.",
+            "summary": "Made rate limiting work: TokenBucket and KeyedLimiter now implement SPEC.md. Before: both raised NotImplementedError. Now: buckets refill continuously, cap at capacity, ignore backwards clocks, and KeyedLimiter evicts LRU keys at max_keys.",
+            "title": "Implement token-bucket rate limiter and keyed LRU limiter"
+          },
+          "review": {
+            "reviewed_head": "fbb355d4dfe6d7c2932598896a8caa2b570779d9",
+            "reviewer_agents": [
+              "agt_01M88V3ZCHTGPFPPCJQTEC56FP"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88V3ZCHTGPFPPCJQTEC56FP",
+                "base": "84bd278eca4e23f5a7cf5fbe31ebad44e884032b",
+                "findings": 4,
+                "head": "fbb355d4dfe6d7c2932598896a8caa2b570779d9",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88V3ZCHTGPFPPCJQTEC56FP"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M88V3ZCHTGPFPPCJQTEC56FP:1": {
+                "blocking": false,
+                "description": "Non-numeric capacity or refill_per_sec raises TypeError from math.isfinite rather than ValueError. SPEC only requires ValueError for values <= 0, so this is non-blocking. at ratelimit.py:8",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88V262EF59VDYN0KRMRMND0"
+                },
+                "id": "agt_01M88V3ZCHTGPFPPCJQTEC56FP:1",
+                "resolved_in": null
+              },
+              "agt_01M88V3ZCHTGPFPPCJQTEC56FP:2": {
+                "blocking": false,
+                "description": "max_keys=None raises TypeError rather than ValueError. Not a SPEC requirement, so non-blocking. at ratelimit.py:68",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88V262EF59VDYN0KRMRMND0"
+                },
+                "id": "agt_01M88V3ZCHTGPFPPCJQTEC56FP:2",
+                "resolved_in": null
+              },
+              "agt_01M88V3ZCHTGPFPPCJQTEC56FP:3": {
+                "blocking": false,
+                "description": "Clock-result invariants are enforced with assert, which is stripped under python -O. An infinite clock raises AssertionError rather than a clear ValueError. Non-blocking. at ratelimit.py:30",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88V262EF59VDYN0KRMRMND0"
+                },
+                "id": "agt_01M88V3ZCHTGPFPPCJQTEC56FP:3",
+                "resolved_in": null
+              },
+              "agt_01M88V3ZCHTGPFPPCJQTEC56FP:4": {
+                "blocking": false,
+                "description": "No KeyedLimiter-level test for a backwards clock, and no test for non-numeric argument types. Coverage gap only; SPEC behaviour is covered at bucket level. Non-blocking. at test_ratelimit.py:1",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88V262EF59VDYN0KRMRMND0"
+                },
+                "id": "agt_01M88V3ZCHTGPFPPCJQTEC56FP:4",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "fbb355d4dfe6d7c2932598896a8caa2b570779d9",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88V3ZCHTGPFPPCJQTEC56FP",
+                    "base": "84bd278eca4e23f5a7cf5fbe31ebad44e884032b",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M88V3ZCHTGPFPPCJQTEC56FP:1",
+                      "agt_01M88V3ZCHTGPFPPCJQTEC56FP:2",
+                      "agt_01M88V3ZCHTGPFPPCJQTEC56FP:3",
+                      "agt_01M88V3ZCHTGPFPPCJQTEC56FP:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "New self-contained feature in two files with no existing callers; rate limiter is a gating control and the clock and eviction logic are subtle. Tests cover every SPEC rule; reviewer kept medium."
+          },
+          "tree": "609410fea1409477c4fcd2761e95cb2e3a215ba2"
+        },
+        "cost_usd": 0.03718649,
+        "started_at": "2026-11-25T07:52:28.494124294Z",
+        "finished_at": "2026-11-25T07:54:37.528542457Z"
+      }
+    ],
+    "spent_usd": 0.03718649,
+    "gates": [],
+    "delegations": {
+      "stg_01M88V262EF59VDYN0KRMRMND0": {
+        "direct_usd": 0.02670302,
+        "delegated_usd": 0.01048347,
+        "agents": [
+          {
+            "agent": "agt_01M88V3ZCHTGPFPPCJQTEC56FP",
+            "parent": "agt_01M88V26397PZF1X7852CRE1K6",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01048347
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T07:52:28.342692003Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T07:52:28.344208118Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T07:52:28.342692003Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

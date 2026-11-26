@@ -1,0 +1,88 @@
+diff --git a/README.md b/README.md
+index d04f33a..e752237 100644
+--- a/README.md
++++ b/README.md
+@@ -6,8 +6,11 @@ Converts a transaction log to CSV for the reporting tools.
+ cargo run -q < transactions.tsv > ledger.csv
+ ```
+ 
+-Input: one transaction per line, `date<TAB>account<TAB>amount` (ISO date,
+-amount with up to two decimals). Blank lines and `#` comments are skipped.
++Input: one transaction per line, `date<TAB>account<TAB>amount[<TAB>currency]`
++(ISO date, amount with up to two decimals, and an optional three-letter
++uppercase ISO 4217 code). A missing currency defaults to `USD`. Blank lines
++and `#` comments are skipped.
+ 
+-Output: `date,account,amount_cents`. Any malformed line stops the export
+-with `line N: ...` on stderr and exit status 1.
++Output: `date,account,amount_cents,currency`. Malformed lines stop the export
++with `line N: ...` on stderr. Invalid currency codes exit with status 2;
++other malformed input exits with status 1.
+diff --git a/src/lib.rs b/src/lib.rs
+index 051009d..ccb1eb4 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,15 +5,16 @@ pub struct Entry {
+     pub date: String,
+     pub account: String,
+     pub amount_cents: i64,
++    pub currency: String,
+ }
+ 
+-pub const CSV_HEADER: &str = "date,account,amount_cents";
++pub const CSV_HEADER: &str = "date,account,amount_cents,currency";
+ 
+-/// Parse one TSV line: `date<TAB>account<TAB>amount`.
++/// Parse one TSV line: `date<TAB>account<TAB>amount[<TAB>currency]`.
+ pub fn parse_line(line: &str) -> Result<Entry, String> {
+     let fields: Vec<&str> = line.split('\t').collect();
+-    if fields.len() != 3 {
+-        return Err(format!("expected 3 tab-separated fields, got {}", fields.len()));
++    if !(3..=4).contains(&fields.len()) {
++        return Err(format!("expected 3 or 4 tab-separated fields, got {}", fields.len()));
+     }
+     let date = fields[0].trim();
+     if !is_iso_date(date) {
+@@ -23,13 +24,22 @@ pub fn parse_line(line: &str) -> Result<Entry, String> {
+     if account.is_empty() || account.contains(',') {
+         return Err(format!("bad account {account:?}"));
+     }
++    let currency = fields.get(3).copied().unwrap_or("USD");
++    if !is_currency_code(currency) {
++        return Err(format!("bad currency code {currency:?}"));
++    }
+     Ok(Entry {
+         date: date.to_string(),
+         account: account.to_string(),
+         amount_cents: parse_cents(fields[2].trim())?,
++        currency: currency.to_string(),
+     })
+ }
+ 
++pub fn is_currency_code(code: &str) -> bool {
++    code.len() == 3 && code.bytes().all(|b| b.is_ascii_uppercase())
++}
++
+ fn is_iso_date(s: &str) -> bool {
+     let b = s.as_bytes();
+     b.len() == 10
+@@ -59,5 +69,5 @@ pub fn parse_cents(s: &str) -> Result<i64, String> {
+ }
+ 
+ pub fn to_csv_row(entry: &Entry) -> String {
+-    format!("{},{},{}", entry.date, entry.account, entry.amount_cents)
++    format!("{},{},{},{}", entry.date, entry.account, entry.amount_cents, entry.currency)
+ }
+diff --git a/src/main.rs b/src/main.rs
+index b2095b9..37cbdeb 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -16,7 +16,7 @@ fn main() -> ExitCode {
+             Ok(entry) => writeln!(out, "{}", to_csv_row(&entry)).expect("writing stdout"),
+             Err(e) => {
+                 eprintln!("line {}: {e}", index + 1);
+-                return ExitCode::from(1);
++                return ExitCode::from(if e.starts_with("bad currency code") { 2 } else { 1 });
+             }
+         }
+     }

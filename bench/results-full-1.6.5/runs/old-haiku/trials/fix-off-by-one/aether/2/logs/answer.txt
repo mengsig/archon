@@ -1,0 +1,17 @@
+`python3 -m unittest` now passes all 3 tests, and the fix is committed as `ab4f5de` on `main`.
+
+**The bug:** `sliding_windows` built its list with `range(len(items) - size)`, which drops the final window. For `[1, 2, 3]` with size 2, the last window `[2, 3]` was missing. The fix is `range(len(items) - size + 1)` in `window.py`. The test file is unchanged.
+
+**Edge cases:** I checked these by hand as well as through the tests:
+- Empty input returns `[]`.
+- A size larger than the input returns `[]`, because the range becomes empty.
+- An input whose length equals the size returns one window.
+- Size 1 returns each item as its own window.
+- A string input works, since slicing is generic.
+- The non-positive size check still raises `ValueError`.
+
+**Choices I made:**
+- I left the function otherwise unchanged. The existing `size <= 0` guard already covers the invalid-size case, so I did not add more asserts.
+- The commit uses the repo's configured identity (`mengsig`). I did not add a Co-Authored-By line, because the project CLAUDE.md says not to mention Claude Code in commits.
+
+There is an untracked `__pycache__/` directory from running the tests. I did not commit it.

@@ -1,0 +1,40 @@
+Root cause of the ~10-minute stale category prices in catalog-service (no code changed).
+
+Code path: updatePrice() in src/pricing.js:6-13 writes the new price to the store and calls catalog.cache.delete(productKey(sku)), which removes only the `product:<sku>` entry. Category pages are served by Catalog.listing() in src/catalog.js:22-33, which caches the rows under `listing:<category>:<page>` (src/keys.js:4) and copies priceCents into each row at build time (line 29). Nothing invalidates those listing keys.
+
+Why the delay is 10 minutes: LISTING_TTL_SECONDS = 600 (src/config.js:7). The listing entry is only dropped when its TTL expires (checked lazily in TtlCache.get, src/cache.js:10-18). The product page is fast because product() re-reads the invalidated product entry (catalog.js:12-20) and the store returns the new price.
+
+Reproduced locally with an injected clock: listing shows 5000 before the update, product() shows 4500 right after updatePrice, listing still shows 5000 at t=599s, and shows 4500 only at t=600s. npm test passes (3/3), but no test covers listing freshness after a price change, so the suite does not catch this.
+
+Fix options:
+1. Recommended: stop caching prices inside listings. Cache only the ordered SKU list (or sku/name) per category page, and hydrate priceCents per row from Catalog.product(), which is already invalidated on update. This makes listings and product pages agree by construction and needs no new invalidation rules. Cost: up to 24 cache lookups per listing render, which are cheap.
+2. Alternative: on price change, also invalidate the category's listing entries. TtlCache has no prefix delete, so this needs either a per-category version number in the listing key (bump it in updatePrice using the category from store.update's return value) or an index of listing keys per category.
+3. Shorter LISTING_TTL_SECONDS only reduces the window and does not fix it.
+
+Also note: the same staleness applies to any product field copied into listings (name, category, membership). Option 1 covers those too. Add a regression test: listing(category) after updatePrice must return the new price.
+
+The root cause is in the listing cache, not the product cache. I made no code changes and wrote no files.
+
+**Code path**
+- `updatePrice()` in `src/pricing.js:6-13` writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That removes only the `product:<sku>` entry.
+- Category pages are served by `Catalog.listing()` in `src/catalog.js:22-33`. It caches rows under `listing:<category>:<page>` (`src/keys.js:4`) and copies `priceCents` into each row when the entry is built (line 29).
+- Nothing invalidates those `listing:` keys when a price changes.
+
+**Why it lasts about 10 minutes**
+- `LISTING_TTL_SECONDS = 600` (`src/config.js:7`). A listing entry is dropped only when its TTL expires, which `TtlCache.get` checks lazily (`src/cache.js:10-18`).
+- Product pages update immediately because `product()` re-reads the invalidated `product:` entry from the store (`src/catalog.js:12-20`).
+
+**Reproduction**
+I ran a script with an injected clock against the repo's modules:
+- The listing shows 5000 before the update.
+- `product()` shows 4500 right after `updatePrice`.
+- The listing still shows 5000 at t=599s and shows 4500 only at t=600s.
+
+`npm test` passes (3/3), but no test checks listing freshness after a price change, so the suite misses this.
+
+**Fix options**
+1. **Recommended:** stop caching prices inside listings. Cache only the ordered SKU list (or SKU and name) per category page, and fill `priceCents` per row from `Catalog.product()`, which is already invalidated on update. Listings and product pages then agree by construction. The cost is up to 24 cheap cache lookups per listing render. This also covers name and category changes, which have the same staleness.
+2. **Alternative:** on a price change, also invalidate the category's listing entries. `TtlCache` has no prefix delete, so this needs a per-category version number in the listing key, bumped in `updatePrice` using the category returned by `store.update`, or an index of listing keys per category.
+3. Lowering `LISTING_TTL_SECONDS` only shrinks the window and does not fix the bug.
+
+Whichever fix is chosen, add a regression test: after `updatePrice`, `listing(category)` must return the new price.

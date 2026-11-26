@@ -1,0 +1,24 @@
+I queued the work as item `qi_01M88RWD5CV93QBR4PGK7YSVNR` rather than editing the repository myself, since I'm the orchestrator and don't change repositories directly.
+
+- **Repository:** `quality-retry-budget`, which ships locally (commit on the item's branch, no push or PR).
+- **Pipeline:** `direct`, one agent that implements, checks and commits. Review is `standard`, because the module is small but its error and boundary handling is the part most likely to hide a slip.
+- **Brief:** the request verbatim, plus acceptance criteria: every API item and error/boundary case in `SPEC.md` implemented and tested, the full test suite passing, no new dependencies, and errors raised as the spec names them.
+
+I did not read `SPEC.md` or the existing tests before queuing, so the brief is only as specific as the operator's request. I'll report the outcome when the item finishes.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py to cover every API item and error/boundary case. Committed 204762e on archon/gk7ysvnr-implement-retry-budget-py-per-spec-md-wi (base 7eead20, not pushed). Validation runs first and rejects any non-built-in-int value (bool, float, None) or out-of-range value with ValueError. Backoff is min(cap, base*2**(attempt-1)), saturating without building large powers of two. Retry-After is an uncapped floor, and the budget check is strict. Checks: `python3 -m unittest -v` in the worktree, 23 tests, all OK, run on tree c82a6c7. The reviewer re-ran the suite under `python3 -I` in a temp copy and ran a 200k-case randomized comparison against a reference implementation: PASS, no blocking findings. Not done: no before-run of the new tests against the NotImplementedError stub was captured; the before state is stated from reading the stub. No linter or formatter is configured in the repo, so none was run. Nothing is left running.
+
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RY256AGTJAJ2YC8K6PGJ2)
+
+SHIPPED: commit 204762e325d09c2eb9b65d038dcbca90cf37d548 on the run branch
+Branch `archon/gk7ysvnr-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/8c086898d0782247c6e8f682/quality-retry-budget holds it (2 files changed, 149 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M88RWD5CV93QBR4PGK7YSVNR`; land it in `main`: `archon merge qi_01M88RWD5CV93QBR4PGK7YSVNR`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py to cover every API item and error/boundary case. Committed 204762e on archon/gk7ysvnr-implement-retry-budget-py-per-spec-md-wi (base 7eead20, not pushed). Validation runs first and rejects any non-built-in-int value (bool, float, None) or out-of-range value with ValueError. Backoff is min(cap, base*2**(attempt-1)), saturating without building large powers of two. Retry-After is an uncapped floor, and the budget check is strict. Checks: `python3 -m unittest -v` in the worktree, 23 tests, all OK, run on tree c82a6c7. The reviewer re-ran the suite under `python3 -I` in a temp copy and ran a 200k-case randomized comparison against a reference implementation: PASS, no blocking findings. Not done: no before-run of the new tests against the NotImplementedError stub was captured; the before state is stated from reading the stub. No linter or formatter is configured in the repo, so none was run. Nothing is left running.
+
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RY256AGTJAJ2YC8K6PGJ2)
+
+SHIPPED: commit 204762e325d09c2eb9b65d038dcbca90cf37d548 on the run branch

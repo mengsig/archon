@@ -1,0 +1,31 @@
+Enqueued initiative **ini_01M888SMAJ0P50WA0N74JPPJDR** with one member for `ledger` and one for `reports`. Both briefs include the requested README updates, test commands, and commits; the shared contract specifies the currency defaults, validation, and CSV formats. The items are queued.
+
+Done: Aggregate report totals by account and currency. Aggregated report totals by account and currency, with legacy and blank currency defaulting to USD and invalid values rejected. Updated README and tests; python3 -m unittest passed (4 tests), git diff --check passed, and independent review passed with no findings. Committed 8d2426f3e1011f2fa0454dfed0c4dafb11acecef; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888W0TV0KV1RPJ7PRBTQWXZ)
+
+SHIPPED: commit 8d2426f3e1011f2fa0454dfed0c4dafb11acecef on the run branch
+Branch `archon/x7bpapct-aggregate-report-totals-by-account-and-c` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/c31894fec6f7a2ba6594b04a/reports holds it (3 files changed, 58 insertions(+), 11 deletions(-)). Review: `archon diff qi_01M888SMAPWW6J5N6WX7BPAPCT`; land it in `main`: `archon merge qi_01M888SMAPWW6J5N6WX7BPAPCT`.
+
+Done: Add optional currency to ledger TSV and CSV. Added optional TSV currency with USD default and currency-aware CSV output. Invalid currencies now require exactly three uppercase ASCII letters, report the input line, and exit 2; other malformed input remains status 1. README and regression tests updated. cargo test, cargo fmt -- --check, git diff --check and CLI exit-code probes passed. Independent review found padded values were accepted; fixed and verified the delta. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888WS20STN4NKP8BTSPTJBY), codex/gpt-6-luna (agent agt_01M888YZJSJW4PMJS6P9K3G87D)
+
+SHIPPED: commit 0dca863d245ea020634c5bea09187b411d030ca6 on the run branch
+Branch `archon/f1cvhjmg-add-optional-currency-to-ledger-tsv-and` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/c31894fec6f7a2ba6594b04a/ledger holds it (4 files changed, 74 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M888SMAKHBJV6RMQF1CVHJMG`; land it in `main`: `archon merge qi_01M888SMAKHBJV6RMQF1CVHJMG`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M888SMAKHBJV6RMQF1CVHJMG ended and its cargo target directory went.
+
+Aggregated report totals by account and currency, with legacy and blank currency defaulting to USD and invalid values rejected. Updated README and tests; python3 -m unittest passed (4 tests), git diff --check passed, and independent review passed with no findings. Committed 8d2426f3e1011f2fa0454dfed0c4dafb11acecef; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888W0TV0KV1RPJ7PRBTQWXZ)
+
+SHIPPED: commit 8d2426f3e1011f2fa0454dfed0c4dafb11acecef on the run branch
+
+Added optional TSV currency with USD default and currency-aware CSV output. Invalid currencies now require exactly three uppercase ASCII letters, report the input line, and exit 2; other malformed input remains status 1. README and regression tests updated. cargo test, cargo fmt -- --check, git diff --check and CLI exit-code probes passed. Independent review found padded values were accepted; fixed and verified the delta. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M888WS20STN4NKP8BTSPTJBY), codex/gpt-6-luna (agent agt_01M888YZJSJW4PMJS6P9K3G87D)
+
+SHIPPED: commit 0dca863d245ea020634c5bea09187b411d030ca6 on the run branch

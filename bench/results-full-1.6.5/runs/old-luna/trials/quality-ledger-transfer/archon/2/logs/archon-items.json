@@ -1,0 +1,313 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M888MKM3S1B58ZG3ZG9H73QW",
+      "repo": "repo_01M888KYTTJ7G6SVFEQWZ5FPK2",
+      "pipeline": "direct",
+      "title": "Implement ledger.py per SPEC with focused tests",
+      "brief": "Implement ledger.py according to SPEC.md. Preserve the documented API, handle every specified error and boundary case, add focused tests beyond existing basic coverage, use only the Python standard library, run appropriate tests, and commit the work. The user request is fully specified; follow SPEC.md and repository conventions. Do not expand scope beyond the specification.\n\n## Amendment (2026-11-25 02:31 UTC)\n\nThe direct stage escalated because SPEC.md requires linearizable thread-safe transfers and snapshots. Continue under adaptive, analyze concurrency correctness carefully, implement the complete spec, add focused tests for errors and boundaries plus concurrency behavior, run the suite, and commit. Preserve the documented API and standard-library-only constraint.\n\n## Amendment (2026-11-25 02:31 UTC)\n\nThis item continues with the stages of pipeline `adaptive` after its run failed at stage `implement`: ESCALATE: SPEC.md requires linearizable thread-safe transfers and snapshots, which necessarily involves concurrency/locking. The assignment contract says to commit nothing and escalate for concurrency or locking risk, and to include “re-queue on adaptive” in the error. Baseline `python -m unittest -v` ran 2 tests and both errored with NotImplementedError in ledger.py; no files were changed and no commit was made. Re-queue on adaptive so the concurrency requirement can be handled under an appropriate stage contract.\nThe work that run committed is on branch `archon/zg9h73qw-implement-ledger-py-per-spec-with-focuse` in this worktree. Continue from it; do not start over.\n",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M888MKM3S1B58ZG3ZG9H73QW",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T02:31:37.127795848Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-25T02:31:37.128691363Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T02:31:37.127795848Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:concurrency"
+        ],
+        "size": "small",
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:concurrency"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Use an available balanced provider because Codex quota pacing predicts depletion before reset."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M888PNY50V11A4QNW37SYPYS",
+        "summary": "Implemented the bounded thread-safe Ledger API in ledger.py and added validation, boundary, snapshot-copy, and concurrency tests in test_ledger.py. `python -m unittest -v` passed all 8 tests; `git diff --check` passed. Committed as 1affdf2633382e500d564e65594b80aaa82cdba6; worktree is clean. High risk due to concurrency/locking. Independent review passed with no findings.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M888RV7TA6VAW8VBPDJH2TCG)\n\nSHIPPED: commit 1affdf2633382e500d564e65594b80aaa82cdba6 on the run branch"
+      },
+      "created_at": "2026-11-25T02:30:29.251381648Z",
+      "updated_at": "2026-11-25T02:33:44.925147429Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M888MKPC67XZ34358G2BGQ5E",
+        "item": "qi_01M888MKM3S1B58ZG3ZG9H73QW",
+        "pipeline": "direct",
+        "shipped": false,
+        "aether_run": "run_01M888MKX7HRNQ34MY0S5XX8TD",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/ef84dfa1ec706bbf6fda9f2b/.archon/data/worktrees/quality-ledger-transfer/qi_01M888MKM3S1B58ZG3ZG9H73QW",
+        "branch": "archon/zg9h73qw-implement-ledger-py-per-spec-with-focuse",
+        "state": {
+          "state": "failed",
+          "stage_id": "implement",
+          "error": "ESCALATE: SPEC.md requires linearizable thread-safe transfers and snapshots, which necessarily involves concurrency/locking. The assignment contract says to commit nothing and escalate for concurrency or locking risk, and to include “re-queue on adaptive” in the error. Baseline `python -m unittest -v` ran 2 tests and both errored with NotImplementedError in ledger.py; no files were changed and no commit was made. Re-queue on adaptive so the concurrency requirement can be handled under an appropriate stage contract."
+        },
+        "cost_usd": 0.0052680800000000005,
+        "started_at": "2026-11-25T02:30:29.488519115Z",
+        "finished_at": "2026-11-25T02:31:05.309499082Z"
+      },
+      {
+        "id": "prun_01M888PNY50V11A4QNW37SYPYS",
+        "item": "qi_01M888MKM3S1B58ZG3ZG9H73QW",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M888PP0MCA9H37MRM6WMZ8FC",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/ef84dfa1ec706bbf6fda9f2b/.archon/data/worktrees/quality-ledger-transfer/qi_01M888MKM3S1B58ZG3ZG9H73QW",
+        "branch": "archon/zg9h73qw-implement-ledger-py-per-spec-with-focuse",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the bounded thread-safe Ledger API in ledger.py and added validation, boundary, snapshot-copy, and concurrency tests in test_ledger.py. `python -m unittest -v` passed all 8 tests; `git diff --check` passed. Committed as 1affdf2633382e500d564e65594b80aaa82cdba6; worktree is clean. High risk due to concurrency/locking. Independent review passed with no findings.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M888RV7TA6VAW8VBPDJH2TCG)\n\nSHIPPED: commit 1affdf2633382e500d564e65594b80aaa82cdba6 on the run branch"
+        },
+        "cost_usd": 0.01218038,
+        "started_at": "2026-11-25T02:31:37.207404372Z",
+        "finished_at": "2026-11-25T02:33:44.925147429Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M888MKWJPQF4T4M195R97RWV",
+        "run": "prun_01M888MKPC67XZ34358G2BGQ5E",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M888MKXTMWZS5QSTHZ5YS8TB",
+        "aether_task": "tsk_01M888MKXTZ9CZYPYDZQNMWPJM",
+        "state": {
+          "state": "failed",
+          "error": "ESCALATE: SPEC.md requires linearizable thread-safe transfers and snapshots, which necessarily involves concurrency/locking. The assignment contract says to commit nothing and escalate for concurrency or locking risk, and to include “re-queue on adaptive” in the error. Baseline `python -m unittest -v` ran 2 tests and both errored with NotImplementedError in ledger.py; no files were changed and no commit was made. Re-queue on adaptive so the concurrency requirement can be handled under an appropriate stage contract."
+        },
+        "verdict": null,
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": null,
+        "structured": null,
+        "cost_usd": 0.0052680800000000005,
+        "started_at": "2026-11-25T02:30:29.522706022Z",
+        "finished_at": "2026-11-25T02:31:05.298092688Z"
+      },
+      {
+        "id": "stg_01M888PP074NN36BN5460HAHQV",
+        "run": "prun_01M888PNY50V11A4QNW37SYPYS",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M888PP1KHTNCMDYKXZT30RY9",
+        "aether_task": "tsk_01M888PP1KHTNCMDYKXZT30RYA",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; the plan pins medium",
+        "summary": "Implemented the bounded thread-safe Ledger API in ledger.py and added validation, boundary, snapshot-copy, and concurrency tests in test_ledger.py. `python -m unittest -v` passed all 8 tests; `git diff --check` passed. Committed as 1affdf2633382e500d564e65594b80aaa82cdba6; worktree is clean. High risk due to concurrency/locking. Independent review passed with no findings.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (8 tests passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "1affdf2633382e500d564e65594b80aaa82cdba6",
+          "evidence": [
+            {
+              "caption": "Unit test evidence on final commit: all eight tests passed.",
+              "kind": "output",
+              "text": "Ran `python -m unittest -v` on 1affdf2633382e500d564e65594b80aaa82cdba6: 8 tests passed, including opposing transfers and snapshots."
+            }
+          ],
+          "local_commit": "1affdf2633382e500d564e65594b80aaa82cdba6",
+          "pr": {
+            "body": "Implemented built-in integer and account validation, defensive input/snapshot copies, transfer boundary handling, and a per-ledger RLock guarding transfers and snapshots. Added focused error, bounds, self-transfer, and concurrent opposing-transfer/snapshot tests. Verified with `python -m unittest -v` (8 passed) and `git diff --check` (passed). Independent reviewer read base 8f36d48c2cbdb51f37d068ba63f899579b924177 through head 1affdf2633382e500d564e65594b80aaa82cdba6 and passed with no findings. Assumption: validation follows SPEC literally, accepting dict subclasses but requiring exact built-in int values.",
+            "summary": "Implemented bounded ledger transfers with atomic thread safety. Before: ledger API raised NotImplementedError; now: validated transfers and consistent snapshots are supported.",
+            "title": "implement thread-safe bounded ledger"
+          },
+          "review": {
+            "reviewed_head": "1affdf2633382e500d564e65594b80aaa82cdba6",
+            "reviewer_agents": [
+              "agt_01M888RV7TA6VAW8VBPDJH2TCG"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M888RV7TA6VAW8VBPDJH2TCG",
+                "base": "8f36d48c2cbdb51f37d068ba63f899579b924177",
+                "findings": 0,
+                "head": "1affdf2633382e500d564e65594b80aaa82cdba6",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M888RV7TA6VAW8VBPDJH2TCG"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": "High is appropriate because concurrency and locking invariants are central; reviewer confirmed a shared lock protects transfer checks and updates and prevents inconsistent snapshots.",
+            "why": "ledger.py changes the concurrency invariant: transfers and snapshots are serialized under one lock. Eight unit tests passed, including bounded-time opposing transfers and snapshot total checks; reviewer found no issues."
+          },
+          "tree": "dd3929ddc6d2743742dfdeddcf06427a0154b1fb"
+        },
+        "cost_usd": 0.01218038,
+        "started_at": "2026-11-25T02:31:37.223162928Z",
+        "finished_at": "2026-11-25T02:33:41.202737355Z"
+      }
+    ],
+    "spent_usd": 0.017448460000000002,
+    "gates": [],
+    "delegations": {
+      "stg_01M888PP074NN36BN5460HAHQV": {
+        "direct_usd": 0.009217220000000002,
+        "delegated_usd": 0.0029631600000000003,
+        "agents": [
+          {
+            "agent": "agt_01M888RV7TA6VAW8VBPDJH2TCG",
+            "parent": "agt_01M888PP1KHTNCMDYKXZT30RY9",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0029631600000000003
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T02:31:37.127795848Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-25T02:31:37.128691363Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T02:31:37.127795848Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "steers": [
+      {
+        "at": "2026-11-25T02:31:37.128739203Z",
+        "by": "orchestrator",
+        "what": "amended the brief; switched the stages still to run to `adaptive`; stage `build` now runs on codex/gpt-6-luna at effort medium; queued it again on its branch",
+        "note": "The direct stage escalated because SPEC.md requires linearizable thread-safe transfers and snapshots. Continue under adaptive, analyze concurrency correctness carefully, implement the complete spec, add focused tests for errors and boundaries plus concurrency behavior, run the suite, and commit. Preserve the documented API and standard-library-only constraint."
+      }
+    ],
+    "switched_to": "adaptive"
+  }
+]

@@ -1,0 +1,21 @@
+I've queued the `ledger.py` implementation as item `qi_01M88TSHTXEWPAV3WXGS1HWPQN` on the `quality-ledger-transfer` repo. I haven't edited the repo myself, per the orchestrator rules.
+
+- **Pipeline:** `direct`, one agent that implements, tests and commits. The repo ships locally, so the commit lands on a local branch and no PR is opened.
+- **Brief:** implement `SPEC.md` exactly, keep the documented API, cover every specified error and boundary case, add focused tests, use only the standard library, and commit.
+- **Review:** `standard`, since the ledger is data-sensitive and a silent slip could hide.
+- **Model:** balanced tier at `medium` effort. My first try at `high` was refused because the configured maximum effort is `medium`.
+
+I'll post the outcome when the item finishes.
+
+Done: Implement ledger.py per SPEC.md with error handling and focused tests. Implemented ledger.py per SPEC.md and added focused tests; committed on archon/gs1hwpqn-implement-ledger-py-per-spec-md-with-err as 0addb9f693279f14ad2d05f5c39ca9bda347ff86 (tree 767c863cc0c722eb06a6a3e1c1e8f2e4d74a5c37), no push. Changes: ledger.py (validated constructor with copied input, transfer with amount validated before account lookup, KeyError for unknown or non-string accounts, False with no mutation for insufficient funds or destination overflow, same-account semantics, snapshot copy, one threading.Lock over every operation) and test_ledger.py (25 tests covering construction, amount and account errors, bounds, overflow, same-account, and a bounded 8-thread opposite-transfer test with join timeout). Before: both existing tests errored on the NotImplementedError stub. Check: `python3 -m unittest` in the worktree, 25 tests OK on 3.14.7. Review: reviewer agt_01M88TV4EXT2FDXPNDT2YZ2WDF passed the head with no blocking findings; risk confirmed high (lock-based concurrency). One non-blocking follow-up: the concurrency test does not assert that snapshot() never observes a half-applied transfer. Assumption: lock-based concurrency was treated as the task itself, not as an escalation trigger, since it is confined to the new file. Nothing left running from this stage. REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88TV4EXT2FDXPNDT2YZ2WDF)
+
+SHIPPED: commit 0addb9f693279f14ad2d05f5c39ca9bda347ff86 on the run branch
+Branch `archon/gs1hwpqn-implement-ledger-py-per-spec-md-with-err` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/390d62fe7fc59f9b294edb6b/quality-ledger-transfer holds it (2 files changed, 211 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M88TSHTXEWPAV3WXGS1HWPQN`; land it in `main`: `archon merge qi_01M88TSHTXEWPAV3WXGS1HWPQN`.
+
+Implemented ledger.py per SPEC.md and added focused tests; committed on archon/gs1hwpqn-implement-ledger-py-per-spec-md-with-err as 0addb9f693279f14ad2d05f5c39ca9bda347ff86 (tree 767c863cc0c722eb06a6a3e1c1e8f2e4d74a5c37), no push. Changes: ledger.py (validated constructor with copied input, transfer with amount validated before account lookup, KeyError for unknown or non-string accounts, False with no mutation for insufficient funds or destination overflow, same-account semantics, snapshot copy, one threading.Lock over every operation) and test_ledger.py (25 tests covering construction, amount and account errors, bounds, overflow, same-account, and a bounded 8-thread opposite-transfer test with join timeout). Before: both existing tests errored on the NotImplementedError stub. Check: `python3 -m unittest` in the worktree, 25 tests OK on 3.14.7. Review: reviewer agt_01M88TV4EXT2FDXPNDT2YZ2WDF passed the head with no blocking findings; risk confirmed high (lock-based concurrency). One non-blocking follow-up: the concurrency test does not assert that snapshot() never observes a half-applied transfer. Assumption: lock-based concurrency was treated as the task itself, not as an escalation trigger, since it is confined to the new file. Nothing left running from this stage. REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88TV4EXT2FDXPNDT2YZ2WDF)
+
+SHIPPED: commit 0addb9f693279f14ad2d05f5c39ca9bda347ff86 on the run branch

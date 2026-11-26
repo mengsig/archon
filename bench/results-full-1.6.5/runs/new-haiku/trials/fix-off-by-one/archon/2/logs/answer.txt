@@ -1,0 +1,22 @@
+I've queued the fix as item `qi_01M88V87CMNB581RZ4TC34J3NB` on the `fix-off-by-one` repository. I did not run the tests or edit the code myself, since the repository changes go through the queue.
+
+- **Pipeline:** `direct`, one agent that makes the change and commits it. The repo ships locally (`ship: local`), so the commit goes on a local branch and nothing is pushed.
+- **Instructions to the agent:** fix `window.py` so `python3 -m unittest` passes, don't modify the tests, check edge cases beyond the tested ones, and report the root cause.
+- **Review:** `standard`, which adds reviewers for a fix to a shared function.
+- **Model:** balanced tier at medium effort, since this is a small single-file change.
+- **Notification:** tagged `notify`, so you'll be told when it finishes, including on success.
+
+I'll report the outcome, the root cause and the commit when the item finishes.
+
+Done: Fix window.py bug so python3 -m unittest passes. Root cause: sliding_windows in window.py built its window count as len(items) - size, one short of the correct len(items) - size + 1, so the last window was always dropped (e.g. [1,2,3], size 2 returned [[1,2]]; [1,2], size 2 returned []). Fix: range(len(items) - size + 1). Committed as ef5241f (tree 86fa257) on archon/tc34j3nb-fix-window-py-bug-so-python3-m-unittest; not pushed. Checks: python3 -m unittest went from FAILED (2 failures) to OK, 3/3; edge cases verified: [] -> [], size > len -> [], size == len -> one window, size 1 -> each item, longer lists include the final window. The existing ValueError for size <= 0 is unchanged. No test files modified. Reviewer agt_01M88V8XQX1STN0QM0BJVGRQSP passed the head with no findings. Left untracked __pycache__ uncommitted. Nothing is left running: the reviewer's leftover process (PID 2351411) was stopped. Nothing left open.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88V8XQX1STN0QM0BJVGRQSP)
+
+SHIPPED: commit ef5241f5e2c8ebef67b8750cb1599adf109657ca on the run branch
+Branch `archon/tc34j3nb-fix-window-py-bug-so-python3-m-unittest` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/7988ae8ef46304d72bce6b23/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M88V87CMNB581RZ4TC34J3NB`; land it in `main`: `archon merge qi_01M88V87CMNB581RZ4TC34J3NB`.
+
+Root cause: sliding_windows in window.py built its window count as len(items) - size, one short of the correct len(items) - size + 1, so the last window was always dropped (e.g. [1,2,3], size 2 returned [[1,2]]; [1,2], size 2 returned []). Fix: range(len(items) - size + 1). Committed as ef5241f (tree 86fa257) on archon/tc34j3nb-fix-window-py-bug-so-python3-m-unittest; not pushed. Checks: python3 -m unittest went from FAILED (2 failures) to OK, 3/3; edge cases verified: [] -> [], size > len -> [], size == len -> one window, size 1 -> each item, longer lists include the final window. The existing ValueError for size <= 0 is unchanged. No test files modified. Reviewer agt_01M88V8XQX1STN0QM0BJVGRQSP passed the head with no findings. Left untracked __pycache__ uncommitted. Nothing is left running: the reviewer's leftover process (PID 2351411) was stopped. Nothing left open.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88V8XQX1STN0QM0BJVGRQSP)
+
+SHIPPED: commit ef5241f5e2c8ebef67b8750cb1599adf109657ca on the run branch

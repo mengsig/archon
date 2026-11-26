@@ -1,0 +1,35 @@
+Reviewed src/tokens.js (and encoding.js, index.js, test/tokens.test.js). No code changed. Critical: verify() accepts forged tokens. The signature check is `expected.startsWith(signature)`, so an empty signature (`<body>.`) matches every body. Confirmed: verify(base64url('{"user":"root","exp":9e15}') + '.', SECRET) returns the forged payload. Also, a 1-character signature prefix is accepted (about 1 in 64 guesses), and the prefix comparison is not constant-time. Important: verify() throws instead of returning null when the body decodes to JSON null (TypeError), and JSON.parse on non-JSON bodies is unguarded for valid-HMAC input. Minor: verify() does not enforce the secret length that sign() enforces; sign() checks string length, not entropy; verify's `now` is caller-controlled. Existing tests (4/4 pass) don't cover empty, truncated, or malformed signatures, so they miss the critical bug. Recommended fix: compare the full signature with crypto.timingSafeEqual on equal-length buffers, reject a missing or empty signature, wrap JSON parse and validate the payload is a plain object, and add tests for these cases. Do not ship to production before fixing the critical issue.
+
+The review found a critical forgery bug in `verify()`. I did not change any code. Do not ship `src/tokens.js` as it stands.
+
+## Findings
+
+**1. Critical — `src/tokens.js`, `verify()`: empty signature forges any token**
+- The check is `expected.startsWith(signature)`. An empty string is a prefix of every string, so `<body>.` passes for any body.
+- Confirmed by running it: `verify(base64url('{"user":"root","exp":9e15}') + '.', SECRET)` returns `{ user: 'root', exp: 9e15 }`.
+- Any attacker can mint an admin token with no key.
+
+**2. High — `src/tokens.js`, `verify()`: truncated signatures accepted, comparison not constant-time**
+- Any prefix of the correct MAC passes. A 1-character signature matches with probability 1/64, and the comparison leaks timing.
+- Confirmed: the token with the first character of the real signature accepted.
+
+**3. Medium — `src/tokens.js`, `verify()`: throws instead of returning `null`**
+- `JSON.parse(fromBase64Url(body))` is not guarded. A body that decodes to `null` (only reachable on the signature path, which the critical bug already opens) throws `TypeError` at `payload.exp`. Confirmed.
+- The documented contract is "payload or null," so callers that don't wrap `verify` in try/catch get a crash, not a clean rejection.
+
+**4. Low — `src/tokens.js`, `verify()` and `sign()`: inconsistent secret handling**
+- `sign()` enforces `secret.length >= 32`, but `verify()` does not check the secret at all.
+- The length check counts characters, not entropy, and there is no type check.
+- `verify()` also takes a caller-supplied `now`, which is fine in tests but risky if it reaches production paths.
+
+**5. Medium — `test/tokens.test.js`: the suite misses the bug**
+- All 4 tests pass (`node --test`), but none covers an empty, truncated, or malformed signature, or a non-object payload. The "tampered payload" test only changes the body, so it never exercises the signature comparison.
+
+## Recommended fix (not applied)
+- Reject a missing or empty signature before comparing.
+- Compare the full signature with `crypto.timingSafeEqual` on equal-length buffers, decoding the provided signature from base64url. Return `null` on a length mismatch.
+- Wrap `JSON.parse` and require the payload to be a plain object before reading `exp`.
+- Enforce the secret requirement in `verify()` as well.
+- Add regression tests for empty signature, one-character signature, `null` payload, and non-JSON body.
+
+Context: `encoding.js` and `index.js` looked correct. `sign()` correctly lets `iat` and `exp` override caller claims, and the fixed HMAC algorithm means there is no `alg` confusion. The main risk is `verify()`.

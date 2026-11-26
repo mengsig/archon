@@ -1,0 +1,16 @@
+The `OrderStatus` refactor is done and committed as `4efb1ca` on branch `refactor-order-status-enum`. `cargo test` passes (3 unit, 3 integration), and `cargo clippy --all-targets` and `cargo fmt --check` are clean.
+
+**What changed**
+- **`src/status.rs` (new):** the `OrderStatus` enum with `as_str`, `Display`, `FromStr`, and `can_transition_to`. `ParseStatusError` implements `std::error::Error`, and its message is `unknown status "<input>"`. The four status literals live only in this file.
+- **`src/order.rs`, `billing.rs`, `shipping.rs`:** `Order::status` is an `OrderStatus`. `pay`, `ship`, and `cancel` now check `can_transition_to`. I checked that each refuses exactly the same statuses as before, so the error messages are unchanged.
+- **`src/report.rs`:** `from_line` parses through `FromStr` and keeps the original `unknown status` message.
+- **`src/lib.rs`:** re-exports `OrderStatus` and `ParseStatusError`.
+- **`tests/orders.rs`:** compares against the enum instead of strings. The CSV fixtures and expected error text still contain the literal words, since they are data and message text.
+
+**Decisions to check**
+- **`status_counts` return type:** it now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. The printed text and order are unchanged. Ordering is still alphabetical by name, not by enum declaration order, which is why I did not derive `Ord`.
+- **No `Ord` on `OrderStatus`:** a derived `Ord` would sort by declaration order and silently change the report order.
+- **Assertions:** I did not add `assert!`s to the touched functions. The refactor is meant to keep behaviour identical, and the new transition check already guards the state changes. Adding asserts that panic would change observable behaviour.
+- **Commit attribution:** I left out the `Co-Authored-By` line. Your CLAUDE.md says not to add anything naming Claude, and it takes precedence over the attribution reminder.
+
+**Branch:** my first commit landed on `main`. I moved it to `refactor-order-status-enum` and reset `main` back to `ea7387a`, which is the original tip. Nothing was pushed.

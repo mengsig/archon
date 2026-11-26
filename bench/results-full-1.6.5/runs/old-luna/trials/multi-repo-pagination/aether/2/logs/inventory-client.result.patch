@@ -1,0 +1,36 @@
+diff --git a/README.md b/README.md
+index bfda2ff..eca7b7d 100644
+--- a/README.md
++++ b/README.md
+@@ -3,7 +3,8 @@
+ Client for `inventory-api`. Every function takes a `transport`,
+ `async (request) => response`, so callers choose HTTP, IPC or a fake.
+ 
+-- `listItems(transport)` → every item, ordered by `id`.
++- `listItems(transport)` → every item, ordered by `id`; it follows the API's
++  `next_cursor` values until the final page. The first request has no cursor.
+ - `getItem(transport, id)` → one item; rejects on any non-200 response.
+ - `lowStock(items, threshold)` → SKUs with `qty` below the threshold.
+ 
+diff --git a/client.js b/client.js
+index 6825096..618447d 100644
+--- a/client.js
++++ b/client.js
+@@ -12,8 +12,15 @@ async function request(transport, path, query = {}) {
+ }
+ 
+ async function listItems(transport) {
+-  const body = await request(transport, '/items');
+-  return body.items;
++  const items = [];
++  let cursor;
++  do {
++    const query = cursor === undefined ? {} : { cursor };
++    const body = await request(transport, '/items', query);
++    items.push(...body.items);
++    cursor = body.next_cursor;
++  } while (cursor !== null && cursor !== undefined);
++  return items;
+ }
+ 
+ async function getItem(transport, id) {

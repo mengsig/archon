@@ -1,0 +1,14 @@
+Queued as [qi_01M887954BTMH98GPMPPJ21WMY](#). The direct pipeline will fix `window.py`, run the unchanged test suite, and commit the fix. I kept this to one item to limit concurrent Codex work while quota is tight.
+
+Done: Fix window.py so unittest passes for all inputs. Fixed sliding_windows to include the final valid start position. Before: python3 -m unittest failed 2 of 3 tests; after: all 3 pass. Focused edge checks and git diff --check pass. Independent review passed with no findings. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M887AR7TYMZHDGRBNV41R31K)
+
+SHIPPED: commit dbc1feec4f9685bdb66df6c2cebbf91fab78cba7 on the run branch
+Branch `archon/ppj21wmy-fix-window-py-so-unittest-passes-for-all` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/56e8a366b0fbc7b0e2f05d3e/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M887954BTMH98GPMPPJ21WMY`; land it in `main`: `archon merge qi_01M887954BTMH98GPMPPJ21WMY`.
+
+Fixed sliding_windows to include the final valid start position. Before: python3 -m unittest failed 2 of 3 tests; after: all 3 pass. Focused edge checks and git diff --check pass. Independent review passed with no findings. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M887AR7TYMZHDGRBNV41R31K)
+
+SHIPPED: commit dbc1feec4f9685bdb66df6c2cebbf91fab78cba7 on the run branch

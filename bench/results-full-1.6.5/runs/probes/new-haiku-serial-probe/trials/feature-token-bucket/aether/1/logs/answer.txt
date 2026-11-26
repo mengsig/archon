@@ -1,0 +1,15 @@
+The rate limiter is implemented per `SPEC.md` and committed on `main` as `76432cb`. All 14 tests pass: the 3 existing ones plus 11 I added for the spec's error and edge cases.
+
+**What changed**
+- `ratelimit.py`: `TokenBucket` and `KeyedLimiter`, standard library only (`time`, `collections.OrderedDict`).
+- `test_ratelimit.py`: new `EdgeCaseTest` class covering invalid parameters, invalid `n` (including that it leaves no state behind), fractional refill, the capacity cap, `wait_time`, the clock going backwards, and LRU eviction.
+
+**Choices I made**
+- **Invalid `n` on `KeyedLimiter`** is rejected before any key is created or evicted. Otherwise a bad call could push out a live key.
+- **Clock regression**: the bucket only advances its reference time forward, so no tokens change until the clock passes the latest time already seen.
+- **Eviction** happens before inserting a new key, so the limit is never exceeded even momentarily.
+- **Validation** uses `ValueError` with the offending value in the message. Assertions are limited to the internal invariants (token count within bounds, key count within `max_keys`).
+
+**Not done**
+- I did not add a co-author line to the commit. The project's CLAUDE.md says not to put Claude attribution in commits, and that takes precedence over the attribution reminder.
+- The spec does not say what to do with non-finite capacity or rate (`inf`, `nan`) or non-integer `max_keys`. Only `nan` is rejected, because `not x > 0` catches it; `inf` and fractional `max_keys` are accepted as-is.

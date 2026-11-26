@@ -1,0 +1,14 @@
+Queued as **qi_01M887ZPRQZ4MXZWA8737NHR64**. The direct fix will run the full unittest suite and commit on its assigned branch.
+
+Done: Fix window.py for all inputs. Fixed sliding_windows to include the final valid start index; all three existing unittests pass. Independent review passed with no findings. Committed as e9c09aca1084e153543a091c29b66eccc39f676e; no work remains.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8882V546ND69439BTDNYGX9)
+
+SHIPPED: commit e9c09aca1084e153543a091c29b66eccc39f676e on the run branch
+Branch `archon/737nhr64-fix-window-py-for-all-inputs` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/8eccd001c9657e2d95160325/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M887ZPRQZ4MXZWA8737NHR64`; land it in `main`: `archon merge qi_01M887ZPRQZ4MXZWA8737NHR64`.
+
+Fixed sliding_windows to include the final valid start index; all three existing unittests pass. Independent review passed with no findings. Committed as e9c09aca1084e153543a091c29b66eccc39f676e; no work remains.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8882V546ND69439BTDNYGX9)
+
+SHIPPED: commit e9c09aca1084e153543a091c29b66eccc39f676e on the run branch

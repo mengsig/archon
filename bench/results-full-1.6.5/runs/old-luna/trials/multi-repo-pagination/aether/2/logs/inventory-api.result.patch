@@ -1,0 +1,72 @@
+diff --git a/README.md b/README.md
+index 1a55755..b67c9cc 100644
+--- a/README.md
++++ b/README.md
+@@ -6,7 +6,11 @@ In-memory inventory service. `api.handle(request)` maps a request
+ 
+ ## Endpoints
+ 
+-- `GET /items` → `{"items": [...]}`: every item, ordered by `id`.
++- `GET /items?limit=20&cursor=...` → `{"items": [...], "next_cursor": "..."}`:
++  items are ordered by `id`. `limit` is optional (1–100, default 20); pass
++  the previous response's `next_cursor` unchanged to fetch the next page.
++  `next_cursor` is `null` on the last page. Invalid limits or cursors return
++  status 400 with an `error` body.
+ - `GET /items/<id>` → the item, 404 when unknown, 400 when `id` is not a number.
+ 
+ Run the tests with `python3 -m unittest`.
+diff --git a/api.py b/api.py
+index aba1605..b79fbcf 100644
+--- a/api.py
++++ b/api.py
+@@ -5,6 +5,9 @@ response is `{"status": int, "body": object}`; the transport layer lives
+ elsewhere.
+ """
+ 
++import base64
++import binascii
++
+ from data import ITEMS
+ 
+ 
+@@ -22,7 +25,39 @@ def handle(request):
+ 
+ def list_items(query):
+     items = sorted(ITEMS, key=lambda item: item["id"])
+-    return {"status": 200, "body": {"items": items}}
++    raw_limit = query.get("limit", 20)
++    try:
++        if isinstance(raw_limit, bool):
++            raise ValueError
++        limit = int(raw_limit)
++        if str(limit) != str(raw_limit) or not 1 <= limit <= 100:
++            raise ValueError
++    except (TypeError, ValueError):
++        return _error(400, "limit must be an integer from 1 to 100")
++
++    start = 0
++    cursor = query.get("cursor")
++    if cursor is not None:
++        if not isinstance(cursor, str) or not cursor:
++            return _error(400, "invalid cursor")
++        try:
++            decoded = base64.urlsafe_b64decode(cursor.encode("ascii"))
++            if base64.urlsafe_b64encode(decoded).decode("ascii") != cursor:
++                raise ValueError
++            marker = decoded.decode("ascii")
++            if not marker.startswith("item:") or not marker[5:].isdigit():
++                raise ValueError
++            last_id = int(marker[5:])
++            start = next(i + 1 for i, item in enumerate(items) if item["id"] == last_id)
++        except (ValueError, UnicodeError, binascii.Error, StopIteration):
++            return _error(400, "invalid cursor")
++
++    page = items[start : start + limit]
++    next_cursor = None
++    if start + len(page) < len(items) and page:
++        marker = f"item:{page[-1]['id']}".encode("ascii")
++        next_cursor = base64.urlsafe_b64encode(marker).decode("ascii")
++    return {"status": 200, "body": {"items": page, "next_cursor": next_cursor}}
+ 
+ 
+ def get_item(raw_id):

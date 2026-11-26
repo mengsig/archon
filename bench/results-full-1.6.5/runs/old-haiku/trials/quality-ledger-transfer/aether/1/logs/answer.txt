@@ -1,0 +1,18 @@
+Implemented ledger.py per SPEC.md and added focused tests to test_ledger.py. Committed as 5ce368e on main. All 26 tests pass (python3 -m unittest test_ledger).
+
+Implementation: construction validates a dict of nonempty str names to plain int balances in [0, MAX_BALANCE] (bool rejected via type() check), then copies the input. transfer validates the amount first, then the accounts (KeyError), then runs one indivisible critical section under a single per-ledger threading.Lock. Self-transfers return balance >= amount and never write. snapshot returns a copy under the same lock. A single lock per ledger means opposite transfers cannot deadlock.
+
+Assumptions: a non-str account name (e.g. a list) raises KeyError rather than TypeError, since it can never name an account. The tests cover validation, overflow boundaries, self-transfer at MAX_BALANCE, aliasing, and thread invariants (no lost money, no overdraft, no deadlock), with no timing or randomness.
+
+Not committed: an untracked __pycache__/ directory from running the tests. The commit used the repo's configured git identity (mengsig).
+
+I implemented `ledger.py` to the spec, added focused tests, and committed as `5ce368e` on `main`. All 26 tests pass.
+
+- **Construction:** accepts a dict of non-empty string names to plain ints in `[0, MAX_BALANCE]`. Booleans are rejected. The input is copied, so later changes to it don't reach the ledger.
+- **Transfers:** the amount is validated first, then the accounts (unknown names raise `KeyError`). Insufficient funds or destination overflow return `False` with no change. Self-transfers return `balance >= amount` and never write, even at `MAX_BALANCE`.
+- **Concurrency:** each ledger has one lock. Transfers and snapshots run under it, so they are atomic and opposite transfers cannot deadlock.
+- **Tests:** cover each validation error, the overflow and self-transfer boundaries, aliasing in both directions, and thread invariants (no lost money, no overdraft, no deadlock). They use no timing or randomness.
+
+Assumption: a non-string account name, such as a list, raises `KeyError` rather than `TypeError`, because it can never name an account.
+
+I left an untracked `__pycache__/` from running the tests uncommitted. The commit used the repo's configured git identity.

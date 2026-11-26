@@ -1,0 +1,19 @@
+The rate limiter is implemented in `ratelimit.py` following `SPEC.md`, and committed on `main` as `e377449`. All 15 unit tests pass (`python3 -m unittest test_ratelimit`).
+
+**What's in the module**
+- `TokenBucket` and `KeyedLimiter` with the spec's signatures. Standard library only (`time`, `collections.OrderedDict`).
+- Invalid `capacity`, `refill_per_sec`, `max_keys`, or request size `n` raise `ValueError`. The check runs before any state changes, so a bad request never creates a key or evicts another one.
+- `KeyedLimiter` keeps buckets in an `OrderedDict` for LRU order. Both `try_acquire` and `wait_time` count as a use, and an evicted key that returns starts full.
+- A small `assert` checks the token-range invariant after each refill and the key-count bound after each insert.
+
+**Choices I made where the spec was silent**
+- A backwards clock: the bucket remembers the latest time it has seen and only refills for time past that point.
+- `wait_time` on an unseen key creates that key, since the spec says keys are created on first use and `wait_time` counts as use.
+
+**Tests**
+I added 12 tests to `test_ratelimit.py` covering the error cases, fractional refill, the capacity cap, `wait_time` not consuming tokens, the backwards clock, and LRU eviction. The original 3 tests are unchanged.
+
+**Attribution**
+The system reminder asked for a `Co-Authored-By: Claude Haiku` trailer, but your CLAUDE.md says not to put Claude attribution in commits. I followed CLAUDE.md, so the commit has no trailer and is authored as `mengsig`.
+
+The working tree is clean; I removed the generated `__pycache__` directory.

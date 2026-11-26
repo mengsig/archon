@@ -1,0 +1,331 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88DWZ4WG3ZV0PPR2FSQWD7E",
+      "repo": "repo_01M88DVZZDKDG9HG4FPK287HCQ",
+      "pipeline": "adaptive",
+      "title": "Implement the atomic thread-safe ledger",
+      "brief": "Operator request (inbox 3): “Implement `ledger.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.”\n\nImplement the full contract in SPEC.md and extend focused tests to cover all specified validation, boundaries, failure atomicity, same-account behavior, copied inputs/snapshots, and concurrency/linearizability including opposite transfers without deadlock. Use only the Python standard library. Preserve the public API. Run relevant tests and report their results. Commit the completed change in the item branch; do not push or merge.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88DWZ4WG3ZV0PPR2FSQWD7E",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T04:02:26.080286606Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T04:02:26.083706717Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T04:02:26.080286606Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:concurrency"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:concurrency"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88DWZ68RE2EKNSH6CHSNSNW",
+        "summary": "Implemented the atomic thread-safe ledger and expanded contract coverage in ledger.py and test_ledger.py. All 9 unittest cases and git diff --check pass; clean committed head 99b892adf24f78d0c2f7c59b1f5dacf0fe9fb1a7. Whole-change review passed; follow-up on the snapshot test race was fixed and re-reviewed.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M88DZB8FJWZPV7VFQGQX26QD), codex/gpt-6-luna (agent agt_01M88E1EY26B8KAAQP1PSFW96G)\n\nSHIPPED: commit 99b892adf24f78d0c2f7c59b1f5dacf0fe9fb1a7 on the run branch"
+      },
+      "created_at": "2026-11-25T04:02:26.076936108Z",
+      "updated_at": "2026-11-25T04:06:07.514862146Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88DWZ68RE2EKNSH6CHSNSNW",
+        "item": "qi_01M88DWZ4WG3ZV0PPR2FSQWD7E",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M88DWZBGA0W56DQJJXCM9BXW",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/9b00fc0f0878686b254568ad/.archon/data/worktrees/quality-ledger-transfer/qi_01M88DWZ4WG3ZV0PPR2FSQWD7E",
+        "branch": "archon/2fsqwd7e-implement-the-atomic-thread-safe-ledger",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the atomic thread-safe ledger and expanded contract coverage in ledger.py and test_ledger.py. All 9 unittest cases and git diff --check pass; clean committed head 99b892adf24f78d0c2f7c59b1f5dacf0fe9fb1a7. Whole-change review passed; follow-up on the snapshot test race was fixed and re-reviewed.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M88DZB8FJWZPV7VFQGQX26QD), codex/gpt-6-luna (agent agt_01M88E1EY26B8KAAQP1PSFW96G)\n\nSHIPPED: commit 99b892adf24f78d0c2f7c59b1f5dacf0fe9fb1a7 on the run branch"
+        },
+        "cost_usd": 0.01934766,
+        "started_at": "2026-11-25T04:02:26.261803Z",
+        "finished_at": "2026-11-25T04:06:07.514862146Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88DWZB5N0H1CE8H3DSNX7Y7",
+        "run": "prun_01M88DWZ68RE2EKNSH6CHSNSNW",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88DWZBWFQ12BCAE2K0CM5B0",
+        "aether_task": "tsk_01M88DWZBWPGFDV3KGVDFT869F",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented the atomic thread-safe ledger and expanded contract coverage in ledger.py and test_ledger.py. All 9 unittest cases and git diff --check pass; clean committed head 99b892adf24f78d0c2f7c59b1f5dacf0fe9fb1a7. Whole-change review passed; follow-up on the snapshot test race was fixed and re-reviewed.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (9 passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "99b892adf24f78d0c2f7c59b1f5dacf0fe9fb1a7",
+          "evidence": [
+            {
+              "caption": "Final focused test suite on the committed head",
+              "kind": "output",
+              "text": "Ran 9 tests in 0.007s\nOK\n\ngit diff --check: passed"
+            }
+          ],
+          "local_commit": "99b892adf24f78d0c2f7c59b1f5dacf0fe9fb1a7",
+          "pr": {
+            "body": "`ledger.py` validates account names, balances, and transfer amounts and protects transfers and copied snapshots with one per-ledger lock. `test_ledger.py` covers validation and precedence, limits and overflow atomicity, same-account transfers, defensive copies, concurrent snapshot consistency, and opposite transfers without deadlock. Verified on final head with `python -m unittest -v` (9 passed) and `git diff --check` (passed). Whole-change review covered 35e69c204fe4aac41e31d5b623ae1cf5d591d4e5..c933e33580f6af83d945efb04974d4103f93aa52; delta review covered c933e33580f6af83d945efb04974d4103f93aa52..99b892adf24f78d0c2f7c59b1f5dacf0fe9fb1a7 and confirmed the snapshot test race fix. No open findings; standard-library-only implementation.",
+            "summary": "Implemented bounded, atomic ledger transfers and consistent snapshots. Before: ledger operations were unimplemented; now validation, failure atomicity, same-account behavior, and concurrent access are covered.",
+            "title": "implement atomic thread-safe ledger"
+          },
+          "review": {
+            "reviewed_head": "99b892adf24f78d0c2f7c59b1f5dacf0fe9fb1a7",
+            "reviewer_agents": [
+              "agt_01M88DZB8FJWZPV7VFQGQX26QD",
+              "agt_01M88E1EY26B8KAAQP1PSFW96G"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88DZB8FJWZPV7VFQGQX26QD",
+                "base": "35e69c204fe4aac41e31d5b623ae1cf5d591d4e5",
+                "findings": 1,
+                "head": "c933e33580f6af83d945efb04974d4103f93aa52",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M88E1EY26B8KAAQP1PSFW96G",
+                "base": "c933e33580f6af83d945efb04974d4103f93aa52",
+                "findings": 0,
+                "head": "99b892adf24f78d0c2f7c59b1f5dacf0fe9fb1a7",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88DZB8FJWZPV7VFQGQX26QD",
+              "agt_01M88E1EY26B8KAAQP1PSFW96G"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M88DZB8FJWZPV7VFQGQX26QD:1": {
+                "blocking": false,
+                "description": "The concurrent snapshot test can finish without recording any snapshots if the writer completes before the main thread enters its observation loop. at test_ledger.py (remedy: Coordinate the writer and observer so the observer confirms it has recorded a snapshot before the writer is allowed to finish.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88DWZB5N0H1CE8H3DSNX7Y7"
+                },
+                "id": "agt_01M88DZB8FJWZPV7VFQGQX26QD:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M88DWZB5N0H1CE8H3DSNX7Y7"
+                }
+              }
+            },
+            "rounds": [
+              {
+                "head": "c933e33580f6af83d945efb04974d4103f93aa52",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88DZB8FJWZPV7VFQGQX26QD",
+                    "base": "35e69c204fe4aac41e31d5b623ae1cf5d591d4e5",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M88DZB8FJWZPV7VFQGQX26QD:1"
+                    ],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": true,
+                    "verdict": "pass"
+                  }
+                ]
+              },
+              {
+                "head": "99b892adf24f78d0c2f7c59b1f5dacf0fe9fb1a7",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88E1EY26B8KAAQP1PSFW96G",
+                    "base": "c933e33580f6af83d945efb04974d4103f93aa52",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": "The delta reviewer confirmed the race fix; whole-change reviewer rated risk high due locking and concurrency invariants.",
+            "why": "The ledger uses a shared lock to protect transfer and snapshot invariants and avoid deadlocks. Two reviewers passed; the snapshot test race identified as a follow-up was fixed in a separate commit and the delta reviewer confirmed the fix."
+          },
+          "tree": "b77fec1819077dc785f5a50564bca3537c71498b"
+        },
+        "cost_usd": 0.01934766,
+        "started_at": "2026-11-25T04:02:26.276971333Z",
+        "finished_at": "2026-11-25T04:06:05.295978350Z"
+      }
+    ],
+    "spent_usd": 0.01934766,
+    "gates": [],
+    "delegations": {
+      "stg_01M88DWZB5N0H1CE8H3DSNX7Y7": {
+        "direct_usd": 0.0141982,
+        "delegated_usd": 0.005149460000000001,
+        "agents": [
+          {
+            "agent": "agt_01M88DZB8FJWZPV7VFQGQX26QD",
+            "parent": "agt_01M88DWZBWFQ12BCAE2K0CM5B0",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0015495200000000002
+          },
+          {
+            "agent": "agt_01M88E1EY26B8KAAQP1PSFW96G",
+            "parent": "agt_01M88DWZBWFQ12BCAE2K0CM5B0",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.0035999400000000007
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T04:02:26.080286606Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T04:02:26.083706717Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T04:02:26.080286606Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

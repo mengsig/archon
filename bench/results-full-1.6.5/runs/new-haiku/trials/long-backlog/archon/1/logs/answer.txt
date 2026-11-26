@@ -1,0 +1,69 @@
+I've queued all four tickets from `BACKLOG.md` as separate items. They run in parallel and I'll report when they finish.
+
+| Ticket | Item | Pipeline | Files it may touch |
+|---|---|---|---|
+| TT-101 Reject impossible due dates | `qi_01M88RARSSS2RZJMZ5DM05TJSA` | direct | `tasktracker/dates.py` + its tests |
+| TT-102 RFC 4180 CSV export | `qi_01M88RATKQMYSARHX6QF8FVYFM` | direct | `tasktracker/export.py` + its tests |
+| TT-103 Search query syntax | `qi_01M88RAWH31819AAN51RRK7B1H` | direct | `tasktracker/search.py` + its tests |
+| TT-104 Undo | `qi_01M88RAYHEJ095273ASFY9GTGH` | direct | `tasktracker/store.py` + its tests |
+
+Each item gets the ticket's acceptance criteria verbatim, the stdlib-only rule, and the test command. Each agent makes one commit for its ticket and pushes nothing. Each item gets one standard review.
+
+Things to know:
+
+- **The tasktracker code is in the `long-backlog` repository.** There is no separate `tasktracker` repository registered with Archon, so I queued against `long-backlog`, where `BACKLOG.md` and the `tasktracker/` package live.
+- **Shipping is local.** `long-backlog` is registered with `ship: local`, so the commits stay on local branches and are not pushed or opened as pull requests. Merging is not done.
+- **The agents' commit identity is whatever the repository has configured.** I told them not to add attribution lines. The commits will not carry the Co-Authored-By trailer from the harness reminder unless that is added later.
+- **Not verified yet.** I have not run the tests myself, and per my role I won't. The item results will say whether `python3 -m unittest discover -s tests -t .` passes on each branch.
+
+Done: TT-104: Undo for TaskStore (add, complete, delete). TT-104 done. Added TaskStore.undo() in tasktracker/store.py: an undo log records a snapshot for each successful add, complete and delete; undo() reverts the newest entry (LIFO across kinds), removes an added task, restores a completed or deleted task under its id, never reuses ids, and raises NothingToUndo when empty. Failed operations are not logged. Tests in tests/test_undo.py (7 new). Checks: unittest discover before change 4 OK, after change 11 OK. Review: agt_01M88RCKWJ81TT2ZTY92N4GWJ4 passed head a2519a9 with one non-blocking note: undo restores snapshot objects, so Task references returned earlier by complete() go stale; the ticket does not require identity. Left open: that identity note, and the undo log grows with every operation (no cap). The reviewer's leftover claude -p process (pid 2133819) is still running; I did not start it and did not kill it; it stops when this run ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RCKWJ81TT2ZTY92N4GWJ4)
+
+SHIPPED: commit a2519a966f60d1123dad1624567ccf8f25e824bb on the run branch
+Branch `archon/sfy9gtgh-tt-104-undo-for-taskstore-add-complete-d` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/b0a7eaeb19fc33cf7352b0ac/long-backlog holds it (2 files changed, 108 insertions(+)). Review: `archon diff qi_01M88RAYHEJ095273ASFY9GTGH`; land it in `main`: `archon merge qi_01M88RAYHEJ095273ASFY9GTGH`.
+
+Done: TT-101: Reject impossible due dates in tasktracker.dates.parse_due. TT-101 is done in one commit, 7598fd81aa4b82c66a512a406801a6f7e4be90ac (tree c5bd71b8886056b6b7116c4b6dbc7638c8b7ff8a), on top of 645c648. parse_due in tasktracker/dates.py no longer clamps: impossible calendar dates raise InvalidDate, a ValueError subclass whose message holds the original text. Unsupported forms, including unsigned and negative offsets, also raise InvalidDate. +Nd, +0d, today and tomorrow behave as the ticket says, with case-insensitive matching and trimmed whitespace. Huge offsets that overflow are wrapped as InvalidDate. Tests: tests/test_dates.py adds 8 tests. The full check, `python3 -m unittest discover -s tests -t .`, gives 12 tests OK, including the 4 existing ones. Before, 2026-02-30 returned 2026-02-28; now it raises InvalidDate. Review: a fresh reviewer, agt_01M88REERSHTSWJ7QGRQREJJ2V, passed the whole change at head 7598fd8 with no findings and risk medium. Two earlier reviewers returned prose instead of the JSON verdict, so they count for nothing. Left open, non-blocking: a +Nd with more than 4300 digits raises a bare ValueError from int() rather than InvalidDate, and the ISO regex \d accepts non-ASCII digits (pre-existing). Nothing was pushed. No server or process was started by me. The reviewer's leftover claude -p process (pid 2139204) is still running until this run ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88REERSHTSWJ7QGRQREJJ2V)
+
+SHIPPED: commit 7598fd81aa4b82c66a512a406801a6f7e4be90ac on the run branch
+Branch `archon/dm05tjsa-tt-101-reject-impossible-due-dates-in-ta` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/b0a7eaeb19fc33cf7352b0ac/long-backlog holds it (2 files changed, 67 insertions(+), 7 deletions(-)). Review: `archon diff qi_01M88RARSSS2RZJMZ5DM05TJSA`; land it in `main`: `archon merge qi_01M88RARSSS2RZJMZ5DM05TJSA`.
+
+Done: TT-103: Search query syntax in tasktracker.search.search. TT-103 is done on archon/1rrk7b1h-tt-103-search-query-syntax-in-tasktracke at head 5bc8a74 (tree 1f7b7e5), on top of ed561d0 and base 645c648. tasktracker.search.search now supports quoted phrases, AND across terms, case-insensitive title matching, exact case-insensitive tag:NAME, status:open|done, and blank-query-matches-all. Unknown fields, unknown statuses, empty field values and unterminated quotes raise QueryError. Tests: 20/20 pass (4 existing, 16 new in tests/test_search.py). Review: reviewer agt_01M88RCSTVT7JQ4VFT936DCVTN failed one blocking finding (a colon inside quotes was parsed as a field); fixed in 5bc8a74 with Review-Fix trailer; reviewer agt_01M88REJCM850Z79VA4NY1FC9H passed the head. Open, non-blocking: an empty quoted phrase "" matches every task (undocumented edge). Left running: reviewer 2's leftover claude -p process, pid 2139390, which stops when this stage ends; no servers or stacks were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RCSTVT7JQ4VFT936DCVTN), claude-code/claude-haiku-5-5 (agent agt_01M88REJCM850Z79VA4NY1FC9H)
+
+SHIPPED: commit 5bc8a74dee6624ea373010617497bc0b3ff64e29 on the run branch
+Branch `archon/1rrk7b1h-tt-103-search-query-syntax-in-tasktracke` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/b0a7eaeb19fc33cf7352b0ac/long-backlog holds it (2 files changed, 161 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M88RAWH31819AAN51RRK7B1H`; land it in `main`: `archon merge qi_01M88RAWH31819AAN51RRK7B1H`.
+
+Done: TT-102: RFC 4180 CSV export in tasktracker.export.to_csv. TT-102 done. to_csv in tasktracker/export.py now uses the stdlib csv.writer with CRLF line endings and RFC 4180 quoting. Header, row order, ';' tags and ISO/empty due are unchanged. Added tests/test_export.py with 9 tests covering quoting of comma, quote, LF and CR, doubled quotes, plain fields, CRLF on every line, and tags. Unit tests: 13/13 pass on the final head. One reviewer (agt_01M88RG3BXKX317XWNM7TJKMEM) passed the head with no blocking findings. Open follow-up (non-blocking): no test yet for a tag containing a double quote. Nothing pushed; no services started; the reviewer's leftover process was stopped by PID.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RG3BXKX317XWNM7TJKMEM)
+
+SHIPPED: commit 7fc6fb1f2df503fc94127dc358305b3de36f4da0 on the run branch
+Branch `archon/qf8fvyfm-tt-102-rfc-4180-csv-export-in-tasktracke` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/b0a7eaeb19fc33cf7352b0ac/long-backlog holds it (2 files changed, 70 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M88RATKQMYSARHX6QF8FVYFM`; land it in `main`: `archon merge qi_01M88RATKQMYSARHX6QF8FVYFM`.
+
+TT-104 done. Added TaskStore.undo() in tasktracker/store.py: an undo log records a snapshot for each successful add, complete and delete; undo() reverts the newest entry (LIFO across kinds), removes an added task, restores a completed or deleted task under its id, never reuses ids, and raises NothingToUndo when empty. Failed operations are not logged. Tests in tests/test_undo.py (7 new). Checks: unittest discover before change 4 OK, after change 11 OK. Review: agt_01M88RCKWJ81TT2ZTY92N4GWJ4 passed head a2519a9 with one non-blocking note: undo restores snapshot objects, so Task references returned earlier by complete() go stale; the ticket does not require identity. Left open: that identity note, and the undo log grows with every operation (no cap). The reviewer's leftover claude -p process (pid 2133819) is still running; I did not start it and did not kill it; it stops when this run ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RCKWJ81TT2ZTY92N4GWJ4)
+
+SHIPPED: commit a2519a966f60d1123dad1624567ccf8f25e824bb on the run branch
+
+TT-103 is done on archon/1rrk7b1h-tt-103-search-query-syntax-in-tasktracke at head 5bc8a74 (tree 1f7b7e5), on top of ed561d0 and base 645c648. tasktracker.search.search now supports quoted phrases, AND across terms, case-insensitive title matching, exact case-insensitive tag:NAME, status:open|done, and blank-query-matches-all. Unknown fields, unknown statuses, empty field values and unterminated quotes raise QueryError. Tests: 20/20 pass (4 existing, 16 new in tests/test_search.py). Review: reviewer agt_01M88RCSTVT7JQ4VFT936DCVTN failed one blocking finding (a colon inside quotes was parsed as a field); fixed in 5bc8a74 with Review-Fix trailer; reviewer agt_01M88REJCM850Z79VA4NY1FC9H passed the head. Open, non-blocking: an empty quoted phrase "" matches every task (undocumented edge). Left running: reviewer 2's leftover claude -p process, pid 2139390, which stops when this stage ends; no servers or stacks were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RCSTVT7JQ4VFT936DCVTN), claude-code/claude-haiku-5-5 (agent agt_01M88REJCM850Z79VA4NY1FC9H)
+
+SHIPPED: commit 5bc8a74dee6624ea373010617497bc0b3ff64e29 on the run branch
+
+TT-102 done. to_csv in tasktracker/export.py now uses the stdlib csv.writer with CRLF line endings and RFC 4180 quoting. Header, row order, ';' tags and ISO/empty due are unchanged. Added tests/test_export.py with 9 tests covering quoting of comma, quote, LF and CR, doubled quotes, plain fields, CRLF on every line, and tags. Unit tests: 13/13 pass on the final head. One reviewer (agt_01M88RG3BXKX317XWNM7TJKMEM) passed the head with no blocking findings. Open follow-up (non-blocking): no test yet for a tag containing a double quote. Nothing pushed; no services started; the reviewer's leftover process was stopped by PID.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88RG3BXKX317XWNM7TJKMEM)
+
+SHIPPED: commit 7fc6fb1f2df503fc94127dc358305b3de36f4da0 on the run branch
+
+TT-101 is done in one commit, 7598fd81aa4b82c66a512a406801a6f7e4be90ac (tree c5bd71b8886056b6b7116c4b6dbc7638c8b7ff8a), on top of 645c648. parse_due in tasktracker/dates.py no longer clamps: impossible calendar dates raise InvalidDate, a ValueError subclass whose message holds the original text. Unsupported forms, including unsigned and negative offsets, also raise InvalidDate. +Nd, +0d, today and tomorrow behave as the ticket says, with case-insensitive matching and trimmed whitespace. Huge offsets that overflow are wrapped as InvalidDate. Tests: tests/test_dates.py adds 8 tests. The full check, `python3 -m unittest discover -s tests -t .`, gives 12 tests OK, including the 4 existing ones. Before, 2026-02-30 returned 2026-02-28; now it raises InvalidDate. Review: a fresh reviewer, agt_01M88REERSHTSWJ7QGRQREJJ2V, passed the whole change at head 7598fd8 with no findings and risk medium. Two earlier reviewers returned prose instead of the JSON verdict, so they count for nothing. Left open, non-blocking: a +Nd with more than 4300 digits raises a bare ValueError from int() rather than InvalidDate, and the ISO regex \d accepts non-ASCII digits (pre-existing). Nothing was pushed. No server or process was started by me. The reviewer's leftover claude -p process (pid 2139204) is still running until this run ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88REERSHTSWJ7QGRQREJJ2V)
+
+SHIPPED: commit 7598fd81aa4b82c66a512a406801a6f7e4be90ac on the run branch

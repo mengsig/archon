@@ -1,0 +1,11 @@
+Quota pace: codex's primary window is 68% used with 45% of it elapsed. At this rate it runs out around 2026-11-26 12:45 UTC, before it resets at 2026-11-28 20:29 UTC. Archon throttles nothing; the orchestrator chooses what runs on codex until then.
+
+The stale category price comes from a cache invalidation gap:
+
+- `updatePrice` updates the store and deletes only `product:<sku>` in [pricing.js](/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/07e405ea1f741afded29a753/.archon/data/orchestrator/repos/ask-cache-invalidation/src/pricing.js:6). That is why product pages, which read through that key, show the new price immediately.
+- Category pages use separate `listing:<category>:<page>` entries in [catalog.js](/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/07e405ea1f741afded29a753/.archon/data/orchestrator/repos/ask-cache-invalidation/src/catalog.js:22). Those cached rows include `priceCents`, and the price update does not evict them.
+- Those entries expire after `LISTING_TTL_SECONDS: 600`—ten minutes—in [config.js](/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/07e405ea1f741afded29a753/.archon/data/orchestrator/repos/ask-cache-invalidation/src/config.js:7). The delay is therefore the remaining lifetime of the listing cache entry, up to ten minutes.
+
+The fix is to invalidate the affected category listing keys when a price changes. If a product’s category is known, evict its cached pages for that category; if listings can span additional dependencies, invalidate them through a shared catalog or version key. Lowering the TTL would only reduce the maximum stale period, not fix the invalidation gap.
+
+Quota pace alert: Codex has used 68% of its weekly primary quota at 45% of the window; at the current pace it may run out before reset (2026-11-28 20:29 UTC). I’ll keep future work queued/concurrent load low and use lower effort/provider options where the task permits.

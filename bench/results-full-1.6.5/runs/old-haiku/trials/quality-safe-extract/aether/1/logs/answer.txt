@@ -1,0 +1,23 @@
+`safe_extract.py` is implemented to the spec and committed as `2ffaa58` on `main`. All 33 tests pass (`python3 -m unittest -v test_safe_extract`).
+
+**How it works**
+- `extract` validates the whole batch before creating anything: the batch type, the root, each entry, names, batch-internal conflicts, and the state of the filesystem under the root.
+- Only then does it write. Each file is created with exclusive mode (`'xb'`), so an existing file can never be overwritten.
+- Any unexpected `OSError` during the write propagates unchanged.
+
+**Choices I made where the spec was silent**
+- Entries must be 2-element `tuple`s; a list entry is rejected as malformed.
+- `bytearray` and `memoryview` data are rejected; only `bytes` is accepted.
+- Names that can't be encoded for the filesystem (e.g. a lone surrogate) are rejected during validation. Otherwise they would fail mid-write, after files had already been created.
+- An empty string root is rejected, even though it would resolve to the current directory.
+- Symlinks above the root are not checked, since the spec only constrains components below it.
+- Validation uses `ValueError`. Internal invariants use `assert`.
+
+**Tests**
+The two existing tests are unchanged. The new tests cover root handling, non-list and generator batches (not consumed), malformed entries, name rules, batch conflicts in both orders, existing files, directories, file ancestors, symlinks (including dangling ones and ones pointing inside root), atomicity on failure, exact bytes, and I/O error propagation.
+
+**Attribution**
+I left the Co-Authored-By line from the system reminder out of the commit. Your CLAUDE.md says not to include Claude attribution, and that takes precedence. The commit is authored as `mengsig`.
+
+**Known limit**
+A filesystem error during the write phase (such as ENOSPC or an over-long name) can leave earlier files from the same batch on disk. The spec puts rollback out of scope, so I didn't add it.

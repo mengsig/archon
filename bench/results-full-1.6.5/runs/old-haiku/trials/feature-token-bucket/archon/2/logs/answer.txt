@@ -1,0 +1,23 @@
+The rate limiter work is queued as item `qi_01M88SRYXQ1QVE8DP99TQSPHEX`, not yet started. I haven't touched the code myself, since changes go through the queue.
+
+- **Repo:** `feature-token-bucket`, base `main`. It ships locally, so the work is committed on the item's branch and not pushed.
+- **Pipeline:** `direct`, one agent that implements, tests and commits.
+- **Brief:** implement `SPEC.md` exactly, including its error and edge cases; add tests for those cases beyond the existing basics; standard library only; no changes to the spec's behaviour to make tests pass.
+- **Review:** `standard` (one reviewer). If the spec turns out to involve concurrency or locking, I'd raise this to `strict`; I haven't read the spec to check.
+
+I'll report back when the item finishes or fails.
+
+Done: Implement rate limiter from SPEC.md in ratelimit.py. Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py (standard library only) and extended test_ratelimit.py to 30 tests covering the spec's error and edge cases (validation, starts full, capped/fractional refill, failed acquire consumes nothing, wait_time, clock going backwards, LRU eviction with try_acquire and wait_time as use, evicted key returns full, invalid requests create or evict no key). Before: the 3 original tests errored with NotImplementedError from the stubs. After: `python3 -B -m unittest -v test_ratelimit` runs 30 tests, all OK. Committed as 512375224b978e646ce4ac8bb4487e793774ce91 (tree cfa641c17108793e6431673f26c7b155ed12388f) on archon/9tqsphex-implement-rate-limiter-from-spec-md-in-r; not pushed. No build or lint step exists in the repo, and pyflakes is not installed, so only py_compile and the unit tests ran. Review: one reviewer (agt_01M88STWNJ59PVPKY95XNDJRMC) passed the head with no blocking findings. Non-blocking follow-ups: max_keys accepts bool (isinstance(True, int)); no test covers a non-int max_keys; most methods have fewer than two assertions. No processes were left running; the reviewer's leftover process had already exited.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88STWNJ59PVPKY95XNDJRMC)
+
+SHIPPED: commit 512375224b978e646ce4ac8bb4487e793774ce91 on the run branch
+Branch `archon/9tqsphex-implement-rate-limiter-from-spec-md-in-r` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/76a21d8f571c2f70ab7caacb/feature-token-bucket holds it (2 files changed, 268 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M88SRYXQ1QVE8DP99TQSPHEX`; land it in `main`: `archon merge qi_01M88SRYXQ1QVE8DP99TQSPHEX`.
+
+Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py (standard library only) and extended test_ratelimit.py to 30 tests covering the spec's error and edge cases (validation, starts full, capped/fractional refill, failed acquire consumes nothing, wait_time, clock going backwards, LRU eviction with try_acquire and wait_time as use, evicted key returns full, invalid requests create or evict no key). Before: the 3 original tests errored with NotImplementedError from the stubs. After: `python3 -B -m unittest -v test_ratelimit` runs 30 tests, all OK. Committed as 512375224b978e646ce4ac8bb4487e793774ce91 (tree cfa641c17108793e6431673f26c7b155ed12388f) on archon/9tqsphex-implement-rate-limiter-from-spec-md-in-r; not pushed. No build or lint step exists in the repo, and pyflakes is not installed, so only py_compile and the unit tests ran. Review: one reviewer (agt_01M88STWNJ59PVPKY95XNDJRMC) passed the head with no blocking findings. Non-blocking follow-ups: max_keys accepts bool (isinstance(True, int)); no test covers a non-int max_keys; most methods have fewer than two assertions. No processes were left running; the reviewer's leftover process had already exited.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88STWNJ59PVPKY95XNDJRMC)
+
+SHIPPED: commit 512375224b978e646ce4ac8bb4487e793774ce91 on the run branch

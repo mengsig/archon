@@ -1,0 +1,20 @@
+Queued the `orders` refactor as item `qi_01M8905QMEKBA5623VZKPR7GPX` on repo `refactor-order-status`, pipeline `direct`, with `review: standard`.
+
+The item carries your full spec: the `OrderStatus` enum and its derives, `as_str` and `Display`, `FromStr` with a `ParseStatusError` that names the input, the exact transition table, the crate-root re-exports, and the rule that status literals live only in `src/status.rs`. It also requires behaviour to stay identical and `cargo test` to pass, and asks for the work to be committed on the local branch with no attribution lines.
+
+I used `direct` rather than `refactor` because the `refactor` pipeline fixes its own review at `strict`, which would not match the `standard` review I chose. I will report when the item finishes.
+
+Done: orders: replace String order status with OrderStatus enum. Implement stage (attempt 2). No code changed: the committed work on the branch (5d7f0a0 characterization, b0ed248 OrderStatus refactor) already meets the brief. Verified on head b0ed248: cargo test passes (9 characterization, 3 orders, 4 status), clippy -D warnings clean, cargo fmt --check clean. Reviewer agt_01M890DV5VWB010Y3Q6BW2G94G, delegated by me, read the whole change from base 669f313 and passed it with no blocking findings; it confirmed both prior non-blocking findings still open. Left open as follow-ups: ParseStatusError has no input() accessor, and the semver break on Order::status and status_counts has no changelog note. Nothing is left running. The reviewer's leftover process had already exited. Record: review pass by agt_01M890DV5VWB010Y3Q6BW2G94G.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M890DV5VWB010Y3Q6BW2G94G)
+
+SHIPPED: commit b0ed248e0830a6ee33a4c66ea56347c216b11133 on the run branch
+Branch `archon/zkpr7gpx-orders-replace-string-order-status-with` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/fa193a16431dd02dc4028cf8/refactor-order-status holds it (9 files changed, 325 insertions(+), 45 deletions(-)). Review: `archon diff qi_01M8905QMEKBA5623VZKPR7GPX`; land it in `main`: `archon merge qi_01M8905QMEKBA5623VZKPR7GPX`.
+
+Freed 0.1 GiB of build output: item qi_01M8905QMEKBA5623VZKPR7GPX ended and its cargo target directory went.
+
+Implement stage (attempt 2). No code changed: the committed work on the branch (5d7f0a0 characterization, b0ed248 OrderStatus refactor) already meets the brief. Verified on head b0ed248: cargo test passes (9 characterization, 3 orders, 4 status), clippy -D warnings clean, cargo fmt --check clean. Reviewer agt_01M890DV5VWB010Y3Q6BW2G94G, delegated by me, read the whole change from base 669f313 and passed it with no blocking findings; it confirmed both prior non-blocking findings still open. Left open as follow-ups: ParseStatusError has no input() accessor, and the semver break on Order::status and status_counts has no changelog note. Nothing is left running. The reviewer's leftover process had already exited. Record: review pass by agt_01M890DV5VWB010Y3Q6BW2G94G.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M890DV5VWB010Y3Q6BW2G94G)
+
+SHIPPED: commit b0ed248e0830a6ee33a4c66ea56347c216b11133 on the run branch

@@ -1,0 +1,251 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88W42PE3J4GJ1PP77NETRF2",
+      "repo": "repo_01M88W3RKXAD9CNPJ5GEE54QWT",
+      "pipeline": "direct",
+      "title": "Implement rate limiter in ratelimit.py per SPEC.md",
+      "brief": "Operator request (authenticated): Implement the rate limiter described in `SPEC.md` in `ratelimit.py`. The module currently only has stubs. Follow the spec exactly, including its error cases and edge cases. The tests in `test_ratelimit.py` only cover the basics, so also add tests for the spec's error cases and edge cases. Keep it dependency-free (standard library only). Commit the work on the local branch; do not push. Do not change files outside ratelimit.py and test_ratelimit.py unless the spec requires it.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88W42PE3J4GJ1PP77NETRF2",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T08:10:59.152634395Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T08:10:59.158289814Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T08:10:59.152634395Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88W42PW1Z8FXJ334RDP2209",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 24 tests to test_ratelimit.py covering the spec's error cases and edge cases. Committed as 1fae0da on archon/77netrf2-implement-rate-limiter-in-ratelimit-py-p; nothing pushed. Before: the 3 existing tests errored on the stubs (errors=3). After: `python3 -m unittest test_ratelimit` runs 27 tests, all OK. `ruff check` and `ruff format --check` pass on both files. Review: one reviewer (agt_01M88W623G12R6F6QDV92A75ER) passed the head with no blocking findings. Open, non-blocking follow-ups: add a KeyedLimiter NaN-capacity test; add a KeyedLimiter clock-backwards test; the spec does not say whether infinite capacity is valid, and it is currently accepted. Nothing is left running; no services were started. The worktree is clean.\nREVIEW: pass by agt_01M88W623G12R6F6QDV92A75ER\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88W623G12R6F6QDV92A75ER)\n\nSHIPPED: commit 1fae0daaa7cbcd3c2c554ab8592399e8e101a80d on the run branch"
+      },
+      "created_at": "2026-11-25T08:10:59.150275322Z",
+      "updated_at": "2026-11-25T08:12:56.793949049Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88W42PW1Z8FXJ334RDP2209",
+        "item": "qi_01M88W42PE3J4GJ1PP77NETRF2",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88W42VN4SHAB8DCJG4VSV9W",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/f64b2d80d0a8463b277f6c8f/.archon/data/worktrees/feature-token-bucket/qi_01M88W42PE3J4GJ1PP77NETRF2",
+        "branch": "archon/77netrf2-implement-rate-limiter-in-ratelimit-py-p",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 24 tests to test_ratelimit.py covering the spec's error cases and edge cases. Committed as 1fae0da on archon/77netrf2-implement-rate-limiter-in-ratelimit-py-p; nothing pushed. Before: the 3 existing tests errored on the stubs (errors=3). After: `python3 -m unittest test_ratelimit` runs 27 tests, all OK. `ruff check` and `ruff format --check` pass on both files. Review: one reviewer (agt_01M88W623G12R6F6QDV92A75ER) passed the head with no blocking findings. Open, non-blocking follow-ups: add a KeyedLimiter NaN-capacity test; add a KeyedLimiter clock-backwards test; the spec does not say whether infinite capacity is valid, and it is currently accepted. Nothing is left running; no services were started. The worktree is clean.\nREVIEW: pass by agt_01M88W623G12R6F6QDV92A75ER\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88W623G12R6F6QDV92A75ER)\n\nSHIPPED: commit 1fae0daaa7cbcd3c2c554ab8592399e8e101a80d on the run branch"
+        },
+        "cost_usd": 0.034925040000000004,
+        "started_at": "2026-11-25T08:10:59.301377271Z",
+        "finished_at": "2026-11-25T08:12:56.793949049Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88W42VEEZCP2ABTRYYGM76H",
+        "run": "prun_01M88W42PW1Z8FXJ334RDP2209",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88W42W3FDZ2J94QA2C7F60D",
+        "aether_task": "tsk_01M88W42W3WNHDDPPEE7P8TYYD",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 24 tests to test_ratelimit.py covering the spec's error cases and edge cases. Committed as 1fae0da on archon/77netrf2-implement-rate-limiter-in-ratelimit-py-p; nothing pushed. Before: the 3 existing tests errored on the stubs (errors=3). After: `python3 -m unittest test_ratelimit` runs 27 tests, all OK. `ruff check` and `ruff format --check` pass on both files. Review: one reviewer (agt_01M88W623G12R6F6QDV92A75ER) passed the head with no blocking findings. Open, non-blocking follow-ups: add a KeyedLimiter NaN-capacity test; add a KeyedLimiter clock-backwards test; the spec does not say whether infinite capacity is valid, and it is currently accepted. Nothing is left running; no services were started. The worktree is clean.\nREVIEW: pass by agt_01M88W623G12R6F6QDV92A75ER",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v test_ratelimit (27 tests OK)",
+            "ruff check ratelimit.py test_ratelimit.py (All checks passed)",
+            "ruff format --check ratelimit.py test_ratelimit.py (2 files already formatted)"
+          ],
+          "commit": "1fae0daaa7cbcd3c2c554ab8592399e8e101a80d",
+          "evidence": [
+            {
+              "after": "Ran 27 tests in 0.001s  OK",
+              "before": "Ran 3 tests ... FAILED (errors=3)  (NotImplementedError from the stubs)",
+              "caption": "Before: the existing unit tests against the stubs",
+              "kind": "output"
+            },
+            {
+              "caption": "After: full unit test run on the committed head",
+              "kind": "output",
+              "text": "Ran 27 tests in 0.001s\n\nOK"
+            }
+          ],
+          "local_commit": "1fae0daaa7cbcd3c2c554ab8592399e8e101a80d",
+          "pr": {
+            "body": "Approach: TokenBucket refills lazily from an injected clock, capped at capacity; it tracks the latest time seen so a clock that goes backwards changes nothing. KeyedLimiter keeps an OrderedDict of per-key buckets, moves a key to the end on every use (try_acquire and wait_time), and evicts the least recently used key before creating a bucket once max_keys is reached. Validation: capacity, refill_per_sec and max_keys must be positive (NaN rejected); request size n must satisfy 0 < n <= capacity; KeyedLimiter validates n before touching the key map. Key files: ratelimit.py, test_ratelimit.py. Checks: unit tests 27 OK; ruff check and ruff format --check pass. Assumptions: no thread safety (spec does not require it); infinite capacity is accepted. Follow-ups: KeyedLimiter NaN-capacity test; KeyedLimiter clock-backwards test.",
+            "summary": "Made token-bucket rate limiting work. Now can limit per-key request rates with LRU eviction. Before: stubs raised NotImplementedError; now: TokenBucket and KeyedLimiter implement the spec, 27 tests pass.",
+            "title": "Implement token-bucket rate limiter per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "1fae0daaa7cbcd3c2c554ab8592399e8e101a80d",
+            "reviewer_agents": [
+              "agt_01M88W623G12R6F6QDV92A75ER"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88W623G12R6F6QDV92A75ER",
+                "base": "7951516df05610202be020c86a8eef01b29d57a6",
+                "findings": 3,
+                "head": "1fae0daaa7cbcd3c2c554ab8592399e8e101a80d",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88W623G12R6F6QDV92A75ER"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "New feature in a contained, previously stubbed module; no locking, security, or persistence. Only ratelimit.py and test_ratelimit.py changed. Tests 27 OK, lint clean. Reviewer confirmed medium with no blocking findings."
+          },
+          "tree": "9b122b5b78acff403ac4a104b12e959f7e984dc8"
+        },
+        "cost_usd": 0.034925040000000004,
+        "started_at": "2026-11-25T08:10:59.310563893Z",
+        "finished_at": "2026-11-25T08:12:50.049506908Z"
+      }
+    ],
+    "spent_usd": 0.034925040000000004,
+    "gates": [],
+    "delegations": {
+      "stg_01M88W42VEEZCP2ABTRYYGM76H": {
+        "direct_usd": 0.0239317,
+        "delegated_usd": 0.01099334,
+        "agents": [
+          {
+            "agent": "agt_01M88W623G12R6F6QDV92A75ER",
+            "parent": "agt_01M88W42W3FDZ2J94QA2C7F60D",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01099334
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T08:10:59.152634395Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T08:10:59.158289814Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T08:10:59.152634395Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

@@ -1,0 +1,9 @@
+## Findings
+
+- **High — `src/tokens.js`, `verify`: accepts a forged token with an empty signature.** `expected.startsWith(signature)` returns `true` when `signature` is `""`. For example, `verify("<valid-body>.", secret)` passes the signature check and returns the body’s payload if it has a future numeric `exp`. An attacker who can supply a token can remove the signature and still be accepted. Require a full-length signature and compare it in constant time.
+
+- **High — `src/tokens.js`, `verify`: accepts truncated signatures.** The same prefix check accepts any prefix of the correct HMAC. Given a valid token, changing its signature to its first character still passes. Require the complete encoded signature and compare the full values.
+
+- **Medium — `src/tokens.js`, `verify`: malformed tokens can throw instead of returning `null`.** After the signature check, `JSON.parse` can throw. A token with a correctly signed body that is not JSON triggers this—for example, one produced by signing the body `not-json` with the secret. This can turn untrusted input into an exception and disrupt request handling if callers expect `null` for invalid tokens. Catch parse errors and reject malformed payloads.
+
+I couldn’t verify the mirror against the configured `main` base: it contains only a detached `bench-base` commit and no `main` ref. The review is based on the available `src/tokens.js`, encoding helper, tests, and call sites. No code was changed.

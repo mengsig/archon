@@ -1,0 +1,8 @@
+Implemented cursor pagination and updated both READMEs. The API validates `limit` and cursors, returns items ordered by ID, and sets `next_cursor` to `null` on the last page. The client follows cursors until the final page.
+
+Both requested test commands passed: `python3 -m unittest` and `npm test`. Both repositories have clean working trees.
+
+Commits:
+
+- `inventory-api`: `1c37939` — Add cursor pagination to items endpoint
+- `inventory-client`: `902afbe` — Follow item pagination cursors in client

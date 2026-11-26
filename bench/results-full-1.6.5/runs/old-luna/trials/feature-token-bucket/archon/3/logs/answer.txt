@@ -1,0 +1,14 @@
+Queued as `qi_01M88A9XAS6XYC24B6B0EW47ZH` on the `direct` pipeline. It will implement `SPEC.md`, cover edge cases, run the relevant tests, and commit locally without pushing.
+
+Done: Implement spec-complete token bucket rate limiter. Implemented the SPEC.md token bucket and keyed LRU limiter in ratelimit.py, with validation and coverage for continuous refill, wait_time, backward clocks, LRU eviction and invalid inputs. Before: all 3 existing tests errored on NotImplementedError. After: all 8 tests pass; compile and diff checks pass. Committed as a11dd27094a04ec0dae4fa37be7b25e09512b83e; no open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88ACWV778RXP03BXVQ1SAH3)
+
+SHIPPED: commit a11dd27094a04ec0dae4fa37be7b25e09512b83e on the run branch
+Branch `archon/b0ew47zh-implement-spec-complete-token-bucket-rat` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/c1c771e4004adfe2d1f49b01/feature-token-bucket holds it (2 files changed, 118 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M88A9XAS6XYC24B6B0EW47ZH`; land it in `main`: `archon merge qi_01M88A9XAS6XYC24B6B0EW47ZH`.
+
+Implemented the SPEC.md token bucket and keyed LRU limiter in ratelimit.py, with validation and coverage for continuous refill, wait_time, backward clocks, LRU eviction and invalid inputs. Before: all 3 existing tests errored on NotImplementedError. After: all 8 tests pass; compile and diff checks pass. Committed as a11dd27094a04ec0dae4fa37be7b25e09512b83e; no open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88ACWV778RXP03BXVQ1SAH3)
+
+SHIPPED: commit a11dd27094a04ec0dae4fa37be7b25e09512b83e on the run branch

@@ -1,0 +1,9 @@
+## Findings
+
+- **Critical — `src/tokens.js`, `verify`: empty signatures bypass authentication.** Given any base64url encoded JSON payload with a future numeric `exp`, `verify(`${body}.`, secret)` accepts it because every string starts with the empty string. For example, a payload containing `{"user":"root","exp":9999999999999}` can be forged with no HMAC at all.
+
+- **High — `src/tokens.js`, `verify`: truncated signatures are accepted.** The prefix check accepts any prefix of the expected HMAC. An attacker who can submit tokens can try short signatures; a one-character signature has a 1-in-64 chance of matching, and an empty signature always matches. Require a full-length signature and compare it with a constant-time function.
+
+- **Medium — `src/tokens.js`, `verify`: malformed signed payloads throw instead of returning `null`.** A token with a nonempty signature matching the corresponding body but invalid JSON causes `JSON.parse` to throw. That can turn an invalid token into an uncaught exception wherever callers expect `null` for rejection.
+
+I reviewed the mirror’s `src/tokens.js`, encoding helper, exports, and token tests without changing files or running tests. The mirror HEAD is `5698590a46d0509f4273bbcd05025a991becaca8`; the log shows only the fixture commit, so I can’t confirm the claimed recent rewrite from repository history.

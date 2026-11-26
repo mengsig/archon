@@ -1,0 +1,10 @@
+Implemented all four tickets and added regression tests. The requested unittest suite passes: **9 tests**.
+
+Each ticket has its own commit:
+
+- TT-101 `0877adf` — Reject impossible due dates
+- TT-102 `3781023` — Export RFC 4180 CSV
+- TT-103 `4022087` — Add task search query syntax
+- TT-104 `4b3e4be` — Add undo support to task store
+
+The working tree has no tracked changes. The test run left untracked `__pycache__` directories.

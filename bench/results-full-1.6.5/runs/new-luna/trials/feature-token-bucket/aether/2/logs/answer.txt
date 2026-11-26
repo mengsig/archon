@@ -1,0 +1,3 @@
+Implemented `TokenBucket` and `KeyedLimiter` per `SPEC.md`, including validation, fractional refill, backwards clock handling, and LRU eviction.
+
+Committed as `51b0cc4` (`Implement token bucket rate limiter`). I checked the diff with `git diff --check`; I did not run the test suite.

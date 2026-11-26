@@ -1,0 +1,15 @@
+Implemented retry_delay in retry_budget.py per SPEC.md and added focused stdlib unittest coverage in test_retry_budget.py (26 tests, all passing with `python3 -m unittest -v test_retry_budget`). Committed as 3e1039d on main.
+
+Behaviour: all arguments are validated first (built-in int only, not bool/float; attempt and max_attempts >= 1; elapsed, budget, base, cap, and non-None retry_after >= 0; ValueError otherwise). Then attempt >= max_attempts returns None. Backoff is min(cap, base * 2**(attempt-1)) computed without large powers: when the exponent is >= cap.bit_length() it returns cap directly, which is exact because base >= 1. A zero base or zero cap gives 0. The Retry-After value is a floor that is not capped. The budget check returns None when elapsed + delay >= budget, and never shortens the delay.
+
+Notes: the untracked __pycache__/ directory was left out of the commit. I ran tests without `python3 -I` because -I removes the working directory from sys.path and the test module then fails to import. The commit uses the repo's configured git identity (mengsig) with the Co-Authored-By trailer from the attribution reminder.
+
+I implemented `retry_delay` in `retry_budget.py` per `SPEC.md`, added 26 focused tests, and committed the work as `3e1039d` on `main`. All 26 tests pass with `python3 -m unittest -v test_retry_budget`.
+
+- **Validation:** every argument is checked before any early return. Values must be built-in ints (not bool or float) and meet the minimums in the spec, otherwise `ValueError`.
+- **Attempt limit:** `attempt >= max_attempts` returns `None`.
+- **Backoff:** `min(cap_ms, base_ms * 2**(attempt-1))`. A zero base or zero cap gives 0. Large attempt values return `cap_ms` directly, without building the power of two.
+- **Retry-After:** used as an uncapped floor via `max(backoff, retry_after_ms)`.
+- **Budget:** returns `None` when `elapsed_ms + delay >= budget_ms`. The delay is never shortened to fit.
+
+The untracked `__pycache__/` directory is not in the commit. I ran the tests without `python3 -I`, because `-I` removes the working directory from `sys.path` and the test module then fails to import. The commit uses the repo's configured identity (`mengsig`) and the Co-Authored-By trailer from the attribution reminder.

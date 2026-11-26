@@ -1,0 +1,3 @@
+Fixed the off by one error in [window.py](/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/2803b595d6088a1093f20264/fix-off-by-one/window.py). `python3 -m unittest` passes, and the working tree is clean.
+
+Commit: `ac2a1a3` — `Fix sliding window endpoint`

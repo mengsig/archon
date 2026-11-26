@@ -1,0 +1,13 @@
+Fixed the off-by-one in window.py and committed it as 0f2c47c ("Fix off-by-one dropping the last sliding window"). The bug was the range bound: `range(len(items) - size)` stopped one start position early, so the final window was never produced and a list exactly `size` long returned []. Changed it to `range(len(items) - size + 1)`. `python3 -m unittest` now passes all 3 tests (`Ran 3 tests ... OK`); tests were not modified. Also checked edge cases by hand: [] with size 1 gives [], size > len gives [], size == len gives one window, and [1,2,3,4] with size 2 gives three windows. The size <= 0 ValueError is unchanged. Working tree is clean; the test-generated __pycache__ was removed.
+
+The off-by-one is fixed and committed as `0f2c47c`. `python3 -m unittest` now passes all 3 tests, and the tests are unchanged.
+
+The bug was in the range bound in `window.py`. `range(len(items) - size)` stopped one start position early, so the last window was never produced, and a list exactly `size` long returned `[]`. I changed it to `range(len(items) - size + 1)`.
+
+I also checked edge cases by hand:
+- `[]` with size 1 returns `[]`.
+- Size larger than the list returns `[]`.
+- Size equal to the list length returns one window.
+- `[1, 2, 3, 4]` with size 2 returns three windows.
+
+The `size <= 0` check is unchanged. The commit is authored as `mengsig` and carries the Haiku co-author line from the attribution reminder. The working tree is clean.

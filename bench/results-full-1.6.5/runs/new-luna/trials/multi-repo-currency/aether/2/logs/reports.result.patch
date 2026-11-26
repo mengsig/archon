@@ -1,0 +1,65 @@
+diff --git a/README.md b/README.md
+index 25e668a..b2253b6 100644
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,7 @@
+ # reports
+ 
+-`python3 reports.py < ledger.csv` prints `account,total_cents`, one row per
+-account in alphabetical order, from the CSV that `ledger` exports.
++`python3 reports.py < ledger.csv` prints `account,currency,total_cents`,
++one row per account and currency, sorted by account then currency. CSV with
++the legacy `date,account,amount_cents` header is supported and treated as
++`USD`. Currency codes must contain exactly three uppercase ASCII letters;
++invalid codes are reported to stderr and exit with status 2.
+diff --git a/reports.py b/reports.py
+index 8061226..aa70650 100644
+--- a/reports.py
++++ b/reports.py
+@@ -8,25 +8,37 @@ import sys
+ 
+ 
+ def totals(rows):
+-    """{account: total_cents} from CSV dict rows."""
++    """{(account, currency): total_cents} from CSV dict rows."""
+     result = {}
+-    for row in rows:
++    has_currency = "currency" in (rows.fieldnames or [])
++    for line_number, row in enumerate(rows, start=2):
+         account = row["account"]
+-        result[account] = result.get(account, 0) + int(row["amount_cents"])
++        currency = row.get("currency") if has_currency else "USD"
++        if currency is None:
++            currency = ""
++        if (len(currency) != 3 or not currency.isascii()
++                or not currency.isalpha() or not currency.isupper()):
++            raise ValueError(f"line {line_number}: bad currency code {currency!r}")
++        key = (account, currency)
++        result[key] = result.get(key, 0) + int(row["amount_cents"])
+     return result
+ 
+ 
+ def render(result):
+-    lines = ["account,total_cents"]
+-    for account in sorted(result):
+-        lines.append(f"{account},{result[account]}")
+-    return "\n".join(lines) + "\n"
++    output = ["account,currency,total_cents"]
++    for (account, currency), total in sorted(result.items()):
++        output.append(f"{account},{currency},{total}")
++    return "\n".join(output) + "\n"
+ 
+ 
+ def main():
+     rows = csv.DictReader(sys.stdin)
+-    sys.stdout.write(render(totals(rows)))
++    try:
++        sys.stdout.write(render(totals(rows)))
++    except ValueError as error:
++        print(error, file=sys.stderr)
++        return 2
+ 
+ 
+ if __name__ == "__main__":
+-    main()
++    raise SystemExit(main())

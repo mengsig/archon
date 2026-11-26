@@ -1,0 +1,200 @@
+diff --git a/safe_extract.py b/safe_extract.py
+index 0007027..8b02688 100644
+--- a/safe_extract.py
++++ b/safe_extract.py
+@@ -1,5 +1,78 @@
+ """Extract validated regular-file entries. See SPEC.md."""
+ 
++from pathlib import Path
++import stat
+ 
+-def extract(entries, root):
+-    raise NotImplementedError
++
++def _validate_name(name):
++    if not isinstance(name, str) or not name or name.startswith("/"):
++        raise ValueError("entry names must be nonempty relative POSIX paths")
++    if "\\" in name or ":" in name or "\0" in name:
++        raise ValueError("entry name contains a forbidden character")
++    parts = name.split("/")
++    if any(part in ("", ".", "..") for part in parts):
++        raise ValueError("entry name contains an invalid path component")
++    return parts
++
++
++def extract(entries, root) -> list[str]:
++    """Create regular files below an existing directory without overwriting."""
++    if not isinstance(entries, list):
++        raise ValueError("entries must be a list")
++
++    names = []
++    paths = {}
++    for entry in entries:
++        if not isinstance(entry, tuple) or len(entry) != 2:
++            raise ValueError("each entry must be a (name, data) tuple")
++        name, data = entry
++        if not isinstance(data, bytes):
++            raise ValueError("entry data must be bytes")
++        parts = _validate_name(name)
++        if name in paths:
++            raise ValueError("duplicate entry name")
++        paths[name] = parts
++        names.append(name)
++
++    # A path which is also a parent of another batch entry cannot be a file.
++    name_set = set(paths)
++    for name, parts in paths.items():
++        if any("/".join(parts[:i]) in name_set for i in range(1, len(parts))):
++            raise ValueError("file/directory collision in entries")
++
++    try:
++        base = Path(root)
++    except (TypeError, ValueError) as exc:
++        raise ValueError("root must be an existing real directory") from exc
++    try:
++        root_mode = base.lstat().st_mode
++    except FileNotFoundError as exc:
++        raise ValueError("root must be an existing real directory") from exc
++    if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
++        raise ValueError("root must be an existing real directory")
++
++    # Inspect every component before making any filesystem changes.
++    for parts in paths.values():
++        current = base
++        for index, part in enumerate(parts):
++            current = current / part
++            try:
++                mode = current.lstat().st_mode
++            except FileNotFoundError:
++                break
++            if stat.S_ISLNK(mode):
++                raise ValueError("existing path component is a symlink")
++            if index < len(parts) - 1:
++                if not stat.S_ISDIR(mode):
++                    raise ValueError("existing ancestor is not a directory")
++            else:
++                raise ValueError("target already exists")
++
++    # Validation is complete. Create parents and exclusive files; the caller
++    # guarantees a stable filesystem, so no concurrent mutation is in scope.
++    for name, data in entries:
++        target = base.joinpath(*paths[name])
++        target.parent.mkdir(parents=True, exist_ok=True)
++        with target.open("xb") as output:
++            output.write(data)
++    return names
+diff --git a/test_safe_extract.py b/test_safe_extract.py
+index bbd5cb7..029ec2c 100644
+--- a/test_safe_extract.py
++++ b/test_safe_extract.py
+@@ -1,3 +1,4 @@
++import os
+ import tempfile
+ import unittest
+ from pathlib import Path
+@@ -9,12 +10,100 @@ class ExtractBasics(unittest.TestCase):
+     def test_nested_files(self):
+         with tempfile.TemporaryDirectory(dir=".") as directory:
+             root = Path(directory)
+-            entries = [("docs/readme.txt", b"hello"), ("empty", b"")]
+-            self.assertEqual(extract(entries, root), ["docs/readme.txt", "empty"])
++            self.assertEqual(extract([("docs/readme.txt", b"hello"), ("empty", b"")], root), ["docs/readme.txt", "empty"])
+             self.assertEqual((root / "docs/readme.txt").read_bytes(), b"hello")
+             self.assertEqual((root / "empty").read_bytes(), b"")
+ 
+-    def test_empty_batch(self):
++    def test_empty_batch_validates_root(self):
+         with tempfile.TemporaryDirectory(dir=".") as directory:
+-            self.assertEqual(extract([], Path(directory)), [])
+-            self.assertEqual(list(Path(directory).iterdir()), [])
++            root = Path(directory)
++            self.assertEqual(extract([], root), [])
++            self.assertEqual(list(root.iterdir()), [])
++            with self.assertRaises(ValueError):
++                extract([], root / "missing")
++
++    def test_rejects_non_list_without_consuming(self):
++        with tempfile.TemporaryDirectory(dir=".") as directory:
++            root = Path(directory)
++            for entries in ((), iter(()), (x for x in ())):
++                with self.assertRaises(ValueError):
++                    extract(entries, root)
++            self.assertEqual(list(root.iterdir()), [])
++
++    def test_malformed_entries(self):
++        with tempfile.TemporaryDirectory(dir=".") as directory:
++            root = Path(directory)
++            for entries in (["bad"], [("x",)], [("x", b"", b"")], [(1, b"x")], [("x", bytearray(b"x"))]):
++                with self.subTest(entries=entries), self.assertRaises(ValueError):
++                    extract(entries, root)
++            self.assertEqual(list(root.iterdir()), [])
++
++    def test_invalid_names(self):
++        invalid = ("", "/abs", "../up", "a/../b", "./a", "a/./b", "a//b", "a/", "a\\b", "C:/x", "a:b", "a\0b")
++        with tempfile.TemporaryDirectory(dir=".") as directory:
++            root = Path(directory)
++            for name in invalid:
++                with self.subTest(name=name), self.assertRaises(ValueError):
++                    extract([(name, b"x")], root)
++            self.assertEqual(extract([("literal%2e%2e", b"ok")], root), ["literal%2e%2e"])
++
++    def test_batch_duplicates_and_prefix_collisions_both_orders(self):
++        with tempfile.TemporaryDirectory(dir=".") as directory:
++            root = Path(directory)
++            batches = [[("same", b"1"), ("same", b"2")], [("a", b"x"), ("a/b", b"y")], [("a/b", b"y"), ("a", b"x")]]
++            for entries in batches:
++                with self.subTest(entries=entries), self.assertRaises(ValueError):
++                    extract(entries, root)
++            self.assertEqual(list(root.iterdir()), [])
++
++    def test_roots_must_be_existing_real_directories(self):
++        with tempfile.TemporaryDirectory(dir=".") as directory:
++            parent = Path(directory)
++            file = parent / "file"
++            file.write_bytes(b"x")
++            link = parent / "link"
++            link.symlink_to(file)
++            for root in (file, link, parent / "missing"):
++                with self.subTest(root=root), self.assertRaises(ValueError):
++                    extract([], root)
++
++    def test_rejects_existing_files_directories_and_symlinks_before_any_write(self):
++        with tempfile.TemporaryDirectory(dir=".") as directory, tempfile.TemporaryDirectory(dir=".") as outside:
++            root = Path(directory)
++            outside = Path(outside)
++            (root / "occupied").write_text("keep")
++            (root / "ancestor").write_text("keep")
++            (root / "dir").mkdir()
++            (root / "dir" / "target").write_text("keep")
++            (outside / "secret").write_text("secret")
++            (root / "link").symlink_to(outside, target_is_directory=True)
++            (root / "dangling").symlink_to(outside / "absent")
++            invalid_targets = ("occupied", "occupied/child", "dir/target", "link/secret", "dangling")
++            for target in invalid_targets:
++                with self.subTest(target=target), self.assertRaises(ValueError):
++                    extract([("new/first", b"new"), (target, b"bad")], root)
++                self.assertFalse((root / "new").exists())
++            self.assertEqual((root / "occupied").read_text(), "keep")
++            self.assertEqual((outside / "secret").read_text(), "secret")
++
++    def test_rejects_intermediate_dangling_and_directory_target_symlinks(self):
++        with tempfile.TemporaryDirectory(dir=".") as directory, tempfile.TemporaryDirectory(dir=".") as outside:
++            root, out = Path(directory), Path(outside)
++            (root / "middle").symlink_to(out, target_is_directory=True)
++            (root / "dangling").symlink_to(out / "nope")
++            (root / "file").write_bytes(b"x")
++            for name in ("middle/new", "dangling/child", "file"):
++                with self.subTest(name=name), self.assertRaises(ValueError):
++                    extract([(name, b"x")], root)
++
++    def test_oserror_from_write_is_not_hidden(self):
++        # A target whose parent is not a directory is rejected as a conflict.
++        with tempfile.TemporaryDirectory(dir=".") as directory:
++            root = Path(directory)
++            (root / "parent").write_bytes(b"x")
++            with self.assertRaises(ValueError):
++                extract([("parent/child", b"y")], root)
++
++
++if __name__ == "__main__":
++    unittest.main()

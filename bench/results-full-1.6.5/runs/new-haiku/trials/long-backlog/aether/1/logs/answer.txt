@@ -1,0 +1,19 @@
+All four backlog tickets (TT-101 to TT-104) are implemented, each in its own commit on `main`. The suite passes: `python3 -m unittest discover -s tests -t .` runs 40 tests, up from 4. The work used only the standard library.
+
+Commits:
+- `88777ff` TT-101: `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible dates, malformed input, and non-`+Nd` offsets. Tests are in `tests/test_dates.py`.
+- `31d2ff4` TT-102: `to_csv` uses the `csv` module with `\r\n` line endings and minimal quoting. Tests are in `tests/test_export.py`.
+- `73a1214` TT-103: `search` parses a small query language and raises `QueryError` on bad input. Tests are in `tests/test_search.py`.
+- `b36f511` TT-104: `TaskStore.undo()` walks back a LIFO history of add, complete and delete, and raises `NothingToUndo` when empty. Tests are in `tests/test_undo.py`.
+
+Choices I made where the ticket was silent:
+- **Undo of a complete on an already-done task** restores the previous status, so it stays done.
+- **Field names and `status:` values** are case-insensitive, so `TAG:x` and `status:OPEN` work.
+- **`tag:` with no value and `status:` with no value** raise `QueryError`.
+- **`tag:"my tag"`** is read as the tag `my tag`, since quotes are stripped inside a field value.
+- **Overflowing offsets** such as `+999999999d` raise `InvalidDate` rather than `OverflowError`.
+- **Year 0000** is rejected as an impossible date.
+
+I did not add the Co-Authored-By trailer to the commits. Your CLAUDE.md says not to attribute commits to Claude Code, and it takes precedence over the attribution reminder. Commits use the configured `mengsig` identity.
+
+The new functions include a few assertions, as CLAUDE.md asks. I did not add two per function; the simpler helpers have fewer. The repo's `__pycache__` directories were removed after testing, so the working tree is clean.

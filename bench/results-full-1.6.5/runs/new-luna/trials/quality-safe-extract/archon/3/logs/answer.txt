@@ -1,0 +1,16 @@
+Queued as **qi_01M88EGD79W7TMYJCZRPX8EHZJ** on the adaptive pipeline with strict review. The brief requires preserving the API, covering `SPEC.md`’s errors and boundary cases with focused tests, using only the standard library, and committing the work.
+
+Archon reports the allowed model for this repository is `codex/gpt-6-luna`. Its quota is currently pacing toward depletion before reset, so this work may be affected by limited Codex capacity.
+
+Done: Implement spec-complete safe_extract.py. Implemented spec-complete safe extraction in safe_extract.py with focused regression coverage in test_safe_extract.py. Before: extraction raised NotImplementedError; now: full-batch and filesystem validation precede exclusive writes. `PYTHONDONTWRITEBYTECODE=1 python -m unittest -v` passes (10 tests); `git diff --check` passes. Three independent whole-change reviewers passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88EM9MSS2B2KDVVZSTVTHQZ), codex/gpt-6-luna (agent agt_01M88EM9PEP11365ECN1WP71N1), codex/gpt-6-luna (agent agt_01M88EM9NK2YJWD5GRYM3AFSEP)
+
+SHIPPED: commit 59732aa9a5bfe73948f0ff8c3a8b0689e175e1db on the run branch
+Branch `archon/rpx8ehzj-implement-spec-complete-safe-extract-py` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/5ec39ff4d35d664c32dff97c/quality-safe-extract holds it (2 files changed, 144 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M88EGD79W7TMYJCZRPX8EHZJ`; land it in `main`: `archon merge qi_01M88EGD79W7TMYJCZRPX8EHZJ`.
+
+Implemented spec-complete safe extraction in safe_extract.py with focused regression coverage in test_safe_extract.py. Before: extraction raised NotImplementedError; now: full-batch and filesystem validation precede exclusive writes. `PYTHONDONTWRITEBYTECODE=1 python -m unittest -v` passes (10 tests); `git diff --check` passes. Three independent whole-change reviewers passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M88EM9MSS2B2KDVVZSTVTHQZ), codex/gpt-6-luna (agent agt_01M88EM9PEP11365ECN1WP71N1), codex/gpt-6-luna (agent agt_01M88EM9NK2YJWD5GRYM3AFSEP)
+
+SHIPPED: commit 59732aa9a5bfe73948f0ff8c3a8b0689e175e1db on the run branch

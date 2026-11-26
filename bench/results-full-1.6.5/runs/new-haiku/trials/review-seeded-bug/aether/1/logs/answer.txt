@@ -1,0 +1,45 @@
+I found one critical forgery bug in `verify()` that lets anyone mint a valid token, plus several smaller problems. I changed no code. The existing 4 tests pass, but none exercises an empty or truncated signature, so they don't catch the bug.
+
+## Findings
+
+**1. Critical: `verify()` accepts any payload with an empty signature**
+- **File/function:** `src/tokens.js`, `verify()`, line 27 (`expected.startsWith(signature)`)
+- **What goes wrong:** `startsWith` treats `""` as a prefix of every string. A token with an empty signature part passes the check, so an attacker can choose any claims, such as `{"user":"root","exp":9e15}`, and skip the secret entirely.
+- **Concrete input:** `base64url('{"user":"root","exp":9000000000000000}') + "."`. I ran this against the current code and it returned `{"user":"root","exp":9000000000000000}`.
+- **Severity:** Critical. Authentication bypass. This must be fixed before shipping.
+
+**2. High: the signature is compared as a prefix, not in full**
+- **File/function:** `src/tokens.js`, `verify()`, line 27
+- **What goes wrong:** A truncated signature is accepted. A real token's signature cut to its first character also verifies, so forgery needs roughly 1 in 64 guesses instead of 2^256. The `startsWith` comparison also short-circuits, which is not constant-time and leaks timing information.
+- **Concrete input:** Take a valid token and replace its signature with only its first character. I confirmed it is accepted.
+- **Severity:** High. Weakens the MAC to a few bits and adds a timing side channel.
+- **Fix direction (not applied):** Compare the full decoded HMAC with `crypto.timingSafeEqual` on equal-length Buffers, after checking the lengths match.
+
+**3. Medium: unexpected input throws instead of returning `null`**
+- **File/function:** `src/tokens.js`, `verify()`, lines 28–29
+- **What goes wrong:** `JSON.parse` and the `payload.exp` access are not guarded, so malformed input causes an uncaught exception. Examples: a body that is not JSON throws `SyntaxError`, and a body decoding to `null` throws `TypeError: Cannot read properties of null`. Callers that don't wrap `verify()` may return a 500 or crash, and an attacker can trigger this without the secret.
+- **Concrete input:** `verify("!!!.", secret)` throws `SyntaxError`. `verify(base64url("null") + ".", secret)` throws `TypeError`.
+- **Severity:** Medium. Denial-of-service and error-handling problem, not a bypass. The documented contract is "payload or null", so this breaks it.
+
+**4. Low: extra dot-separated segments are silently ignored**
+- **File/function:** `src/tokens.js`, `verify()`, line 24
+- **What goes wrong:** `token.split('.')` drops everything after the second segment, so `good + ".junk"` verifies. This makes tokens malleable and hides malformed input.
+- **Severity:** Low on its own, but it adds to the malleability in finding 1.
+
+**5. Low: `verify()` does not validate the secret**
+- **File/function:** `src/tokens.js`, `verify()`, line 26
+- **What goes wrong:** `sign()` checks the secret length, but `verify()` does not. An `undefined` or empty secret throws a `TypeError` from `createHmac` instead of failing with a clear message.
+- **Severity:** Low. Crashes loudly rather than failing open, but the error is unclear.
+
+**6. Low: test coverage gap**
+- **File:** `test/tokens.test.js`
+- **What goes wrong:** The tamper test reuses the real signature, so it only checks that a mismatched payload fails. It never tries an empty, truncated, or extra-segment signature, which is why all 4 tests pass despite finding 1.
+- **Severity:** Low, but it is why the critical bug shipped unnoticed. Add regression cases for these inputs when the fix lands.
+
+## Checked and fine
+- `sign()` writes `iat` and `exp` after spreading the claims, so a caller cannot override expiry.
+- The HMAC algorithm is fixed to HMAC-SHA256, so there is no `alg` confusion.
+- `exp` is checked to be a number and compared against `now`.
+
+## Recommendation
+Do not ship until finding 1 is fixed. Findings 2 and 3 should also be fixed before release. Finding 1 is a single unauthenticated request away from exploitation, and the fix is small: require a non-empty signature, compare the full MAC with `timingSafeEqual`, and wrap parsing so malformed input returns `null`.

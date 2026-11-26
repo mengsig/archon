@@ -1,0 +1,3 @@
+Fixed the range endpoint in [window.py](/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/199c179a5000fb0a60c0c888/fix-off-by-one/window.py:5), so the final valid window is included. `python3 -m unittest` passes, and the working tree is clean.
+
+Commit: `966f042` — `Fix sliding window endpoint`

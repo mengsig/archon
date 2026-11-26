@@ -1,0 +1,20 @@
+Cursor pagination is in `GET /items` and `listItems` now follows `next_cursor` to the end. Both repos are committed and their tests pass.
+
+**inventory-api** (commit `895f490`)
+- `GET /items` takes `limit` (1..100, default 20) and `cursor`. The body is `{"items": [...], "next_cursor": ...}`, ordered by `id`.
+- Invalid `limit` or `cursor` returns 400 with `{"error": "..."}`.
+- The cursor is the base64 of the last returned id. `next_cursor` is non-null only when more items remain, so there is no empty trailing page.
+- Tests: 8 pass with `python3 -m unittest`. New tests cover a full cursor walk, the last-page `null`, limit bounds, and malformed cursors.
+
+**inventory-client** (commit `1812231`)
+- `listItems(transport)` sends no cursor on the first request, then passes each `next_cursor` back unchanged until it is `null` or absent.
+- It throws if the server repeats a cursor, so a buggy server cannot make it loop forever.
+- Tests: 6 pass with `npm test`. New tests cover multi-page walks, a missing `next_cursor`, and the repeated-cursor guard.
+- An end-to-end run against the real API CLI returned all 57 items in order.
+
+Both READMEs document the new parameters and response shape.
+
+Choices I made:
+- **No Co-Authored-By trailer.** The reminder asked for one, but your CLAUDE.md says not to put Claude attribution in commits, and it takes precedence. Say if you want the trailer added.
+- **Commits use the repo's configured identity** (`mengsig`).
+- **Client version left at 1.4.0.** The client now depends on the new API, but I did not bump `package.json`.

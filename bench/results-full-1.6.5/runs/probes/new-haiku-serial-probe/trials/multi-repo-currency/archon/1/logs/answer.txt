@@ -1,0 +1,38 @@
+Both changes are queued as one initiative, `ini_01M88PVKWXQWC54CW52AHND8VJ`, with a shared contract covering the TSV/CSV formats, the default `USD`, the exit codes and the sort order. I haven't touched either repository myself.
+
+- **`ledger`** (`qi_01M88PVKWYSSBHBVTANH50TBKV`): optional fourth TSV column, new `date,account,amount_cents,currency` header, exit 2 with the line number on a malformed code.
+- **`reports`** (`qi_01M88PVKXJTJ6R5R4HV4DEXECC`): totals per `account,currency` with the new `account,currency,total_cents` header, accepts the old no-currency CSV as `USD`, exit 2 on a malformed code.
+
+Both run the `direct` pipeline with standard review, so each is checked by reviewers before it ships. Both repositories ship locally, so the commits land on local branches and nothing is pushed. Each brief asks for tests and README updates, and for commits made with the repository's existing git config, without attribution lines.
+
+The members build against the shared contract at the same time rather than in sequence. I'll report back when they finish.
+
+Done: reports: per-account-and-currency totals. Implemented per-(account, currency) totals in reports.py on archon/v4dexecc-reports-per-account-and-currency-totals, committed as fc219c1 (tree 2ded95cb09bb719f198c069e33d115f076a06870, author mengsig from repo config, no attribution lines). Accepts the new header with currency and the old header (rows count as USD). Output header is account,currency,total_cents, sorted by account then currency. A malformed currency code prints the line number to stderr and exits 2. Added tests for old-CSV-as-USD, per-currency totals, sorting and malformed codes (exit 2); unittest passes 5/5. Updated README. Before: new-format rows were summed ignoring currency. Review: pass on fc219c1 by agt_01M88PX9B2VPJF32R0HDMM574S, no blocking findings. Non-blocking follow-ups: account names are not CSV-quoted in output (pre-existing); an unknown header raises a traceback with exit 1 (README does not mention it); a short row reports 'malformed currency code None' (cosmetic). Nothing left running; no services started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88PX9B2VPJF32R0HDMM574S)
+
+SHIPPED: commit fc219c1d3d0390d04d27899ca5dd0fa3dad867c0 on the run branch
+Branch `archon/v4dexecc-reports-per-account-and-currency-totals` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-z4sn2xp1/archon-bench/work/20261125T062211Z/4bac4fc44015dcc28cd0f612/reports holds it (3 files changed, 129 insertions(+), 13 deletions(-)). Review: `archon diff qi_01M88PVKXJTJ6R5R4HV4DEXECC`; land it in `main`: `archon merge qi_01M88PVKXJTJ6R5R4HV4DEXECC`.
+
+Done: ledger: currency column and validation. ledger: optional fourth TSV currency column is implemented and committed on archon/nh50tbkv-ledger-currency-column-and-validation. Head 297f5579b2f4e8067d7ea4fde5a0d3d158171d9d, tree 8d2e06ec7c93736e3dbe9bcaf7888053101f8080. Missing currency defaults to USD; the code must be exactly 3 uppercase ASCII letters, shape-checked only. Output header is date,account,amount_cents,currency. A malformed currency exits 2 with the line number; other errors exit 1. Checks: cargo test 9/9 passing, clippy -D warnings clean, rustfmt clean on touched test code. The README documents the input and output formats. Reviews: whole-change pass at 53e8d9f and delta pass 53e8d9f..297f557 with no findings. Non-blocking follow-ups, not changed: error precedence (a bad currency with another bad field exits 1); an empty fourth column exits 2; trimmed ' EUR ' is accepted; Cargo version not bumped for the output change. Reports repo is a sibling item and was not touched. No processes remain running. Review: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88PYPDFPB9SB0AWZP8FXCM2), claude-code/claude-haiku-5-5 (agent agt_01M88Q0MV764Y2T6VJHM9V8KM0)
+
+SHIPPED: commit 297f5579b2f4e8067d7ea4fde5a0d3d158171d9d on the run branch
+Branch `archon/nh50tbkv-ledger-currency-column-and-validation` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-z4sn2xp1/archon-bench/work/20261125T062211Z/4bac4fc44015dcc28cd0f612/ledger holds it (4 files changed, 183 insertions(+), 16 deletions(-)). Review: `archon diff qi_01M88PVKWYSSBHBVTANH50TBKV`; land it in `main`: `archon merge qi_01M88PVKWYSSBHBVTANH50TBKV`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M88PVKWYSSBHBVTANH50TBKV ended and its cargo target directory went.
+
+Implemented per-(account, currency) totals in reports.py on archon/v4dexecc-reports-per-account-and-currency-totals, committed as fc219c1 (tree 2ded95cb09bb719f198c069e33d115f076a06870, author mengsig from repo config, no attribution lines). Accepts the new header with currency and the old header (rows count as USD). Output header is account,currency,total_cents, sorted by account then currency. A malformed currency code prints the line number to stderr and exits 2. Added tests for old-CSV-as-USD, per-currency totals, sorting and malformed codes (exit 2); unittest passes 5/5. Updated README. Before: new-format rows were summed ignoring currency. Review: pass on fc219c1 by agt_01M88PX9B2VPJF32R0HDMM574S, no blocking findings. Non-blocking follow-ups: account names are not CSV-quoted in output (pre-existing); an unknown header raises a traceback with exit 1 (README does not mention it); a short row reports 'malformed currency code None' (cosmetic). Nothing left running; no services started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88PX9B2VPJF32R0HDMM574S)
+
+SHIPPED: commit fc219c1d3d0390d04d27899ca5dd0fa3dad867c0 on the run branch
+
+ledger: optional fourth TSV currency column is implemented and committed on archon/nh50tbkv-ledger-currency-column-and-validation. Head 297f5579b2f4e8067d7ea4fde5a0d3d158171d9d, tree 8d2e06ec7c93736e3dbe9bcaf7888053101f8080. Missing currency defaults to USD; the code must be exactly 3 uppercase ASCII letters, shape-checked only. Output header is date,account,amount_cents,currency. A malformed currency exits 2 with the line number; other errors exit 1. Checks: cargo test 9/9 passing, clippy -D warnings clean, rustfmt clean on touched test code. The README documents the input and output formats. Reviews: whole-change pass at 53e8d9f and delta pass 53e8d9f..297f557 with no findings. Non-blocking follow-ups, not changed: error precedence (a bad currency with another bad field exits 1); an empty fourth column exits 2; trimmed ' EUR ' is accepted; Cargo version not bumped for the output change. Reports repo is a sibling item and was not touched. No processes remain running. Review: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88PYPDFPB9SB0AWZP8FXCM2), claude-code/claude-haiku-5-5 (agent agt_01M88Q0MV764Y2T6VJHM9V8KM0)
+
+SHIPPED: commit 297f5579b2f4e8067d7ea4fde5a0d3d158171d9d on the run branch

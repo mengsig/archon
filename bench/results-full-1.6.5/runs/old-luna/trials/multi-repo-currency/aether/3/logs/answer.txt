@@ -1,0 +1,9 @@
+Implemented and committed both repositories.
+
+- `ledger` now accepts an optional three-letter uppercase currency code, defaults it to `USD`, and emits the currency column. Invalid codes report the line number and exit with status 2.
+- `reports` now totals by account and currency, supports legacy CSV without a currency column as `USD`, and exits with status 2 for invalid codes.
+- Updated both READMEs and added coverage for the new behavior.
+
+`cargo test` and `python3 -m unittest` pass. Both working trees are clean.
+
+Commits: `ledger` — `9b92e39`; `reports` — `9d6d5b3`.

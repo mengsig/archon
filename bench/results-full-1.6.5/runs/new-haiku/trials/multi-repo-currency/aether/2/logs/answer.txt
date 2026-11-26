@@ -1,0 +1,25 @@
+Implemented multi-currency support across both repos and committed in each. ledger (commit 44ad0e6): optional 4th TSV column with ISO 4217 code (default USD, exactly 3 uppercase ASCII letters after trimming), CSV header date,account,amount_cents,currency, bad currency exits 2 with 'line N:' on stderr, other malformed input still exits 1; cargo test 8 passed, README updated. reports (commit d182387): totals per account and currency, header account,currency,total_cents sorted by account then currency, CSV without currency column counts as USD, bad currency prints error to stderr and exits 2 with no stdout; python3 -m unittest 5 passed, README updated. Assumptions: currency is trimmed in ledger (like other columns), reports matches strictly. No attribution trailers added, per the user's CLAUDE.md taking precedence over the reminder.
+
+Both repositories now handle currency, and each change is committed with its tests passing.
+
+**ledger (commit `44ad0e6`)**
+- Lines take an optional fourth column. When it's missing the currency is `USD`. The code must be exactly three uppercase ASCII letters.
+- The CSV header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A bad currency code prints `line N: bad currency ...` to stderr and exits 2. Other malformed lines still exit 1.
+- `cargo test`: 8 passed. Clippy is clean.
+
+**reports (commit `d182387`)**
+- Totals are per (account, currency), output as `account,currency,total_cents`, sorted by account, then currency.
+- Input without a `currency` column counts as `USD`.
+- A bad code prints `error: line N: ...` to stderr, exits 2, and writes nothing to stdout.
+- `python3 -m unittest`: 5 passed.
+
+I also piped ledger's output into reports and got the expected per-currency totals.
+
+**Choices I made**
+- **Trimming:** ledger trims surrounding whitespace from the currency column, like the other columns. Your spec said "exactly three letters," so if you want no whitespace allowed, that's a one-line change in `parse_currency`. Reports matches strictly and does no trimming.
+- **Error type:** `parse_line` returns a `LineError` enum (`Malformed` or `BadCurrency`) so `main` can pick the exit status.
+- **Attribution:** I left out the `Co-Authored-By` trailer from the system reminder. Your CLAUDE.md says not to add anything like that, and it takes precedence. Commits use the repo's configured `mengsig` identity.
+- **Formatting:** `cargo fmt --check` flags a few lines that were already there. I didn't reformat unrelated code.
+
+Both READMEs describe the new input and output formats and the exit statuses.

@@ -1,0 +1,19 @@
+All four tickets are implemented, each in its own commit, and the suite passes: 44 tests, up from 4, run with `python3 -m unittest discover -s tests -t .`. Standard library only.
+
+| Commit | Ticket | Change |
+|---|---|---|
+| `69ad22a` | TT-101 | `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible dates, unsupported forms, and `-Nd`/`Nd` offsets. The message includes the original text. |
+| `5763d1e` | TT-102 | `to_csv` uses the `csv` module with CRLF endings and `QUOTE_MINIMAL`. |
+| `f225211` | TT-103 | Query language with AND-ed terms, quoted phrases, `tag:`, `status:`. Bad fields, statuses, or quotes raise `QueryError`. |
+| `6900231` | TT-104 | `TaskStore` records each successful add, complete, or delete on a LIFO stack; `undo()` reverts the last one. Raises `NothingToUndo` when empty. |
+
+New tests are in `tests/test_dates.py`, `tests/test_export.py`, `tests/test_search.py` and `tests/test_undo.py`.
+
+Choices I made where the ticket was silent:
+- **TT-101:** an offset too large for the date range (e.g. `+99999999999d`) raises `InvalidDate` rather than `OverflowError`.
+- **TT-103:** quotes only group words and are stripped from the term. `10:30` is a bare word because `10` is not a field name. Field names and status values are case-insensitive. An empty value such as `tag:` is an error.
+- **TT-104:** completing an already-done task is recorded, and undo restores its previous status, so it stays done. `undo()` returns the affected task.
+
+I did not add a `Co-Authored-By` trailer to the commits. Your CLAUDE.md says not to mention Claude in commits, and that rule takes precedence over the attribution reminder. Commits are authored as `mengsig`, the configured identity.
+
+`tasktracker/__pycache__/` and `tests/__pycache__/` are untracked from my test runs and were not committed. The repo has no `.gitignore`, so you may want to add one.

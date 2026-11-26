@@ -1,0 +1,27 @@
+Root cause: updatePrice() in src/pricing.js only evicts the product-detail cache key (`product:<sku>`). Category listings are cached separately under `listing:<category>:<page>` (src/catalog.js, listing()) with LISTING_TTL_SECONDS = 600 (src/config.js), and each listing entry embeds priceCents. Nothing evicts those entries on a price change, so category pages serve the old price until the 600 s TTL expires. The product page is correct because its own key (TTL 3600 s) is deleted on update. Reproduced with an injected clock: after updatePrice, product() returns 4500 while listing() still returns 5000 at +599 s and returns 4500 at +600 s. No code was changed. Fix: on price update, also invalidate the listing entries that contain the SKU. The simplest option is to look up the product's category and evict all of that category's listing pages, which needs a prefix/category delete in TtlCache or a per-category generation counter in the listing key. Alternatives: drop the price from cached listings and join current prices at read time, or lower the listing TTL (a mitigation only). Existing tests do not cover listing freshness after a price update.
+
+The root cause is that a price update invalidates only the product-detail cache entry, not the category-listing entries that also hold the price. I made no code changes; I only read the code and ran a read-only reproduction.
+
+**Code path**
+
+- `updatePrice()` in `src/pricing.js:6-13` writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That removes only the `product:<sku>` key.
+- `Catalog.listing()` in `src/catalog.js:22-33` caches the page rows under `listing:<category>:<page>`. Each row embeds `priceCents`.
+- Nothing evicts those `listing:` keys on a price change. `updatePrice` doesn't know the page keys, and `TtlCache` has no prefix or category delete.
+
+**Why the delay is about ten minutes**
+
+- `LISTING_TTL_SECONDS` is 600 (`src/config.js:7`), so a listing keeps the old price until its entry expires.
+- `PRODUCT_TTL_SECONDS` is 3600, but the product page is correct immediately because its own key is deleted on update.
+
+**Reproduction** (injected clock, no files written)
+
+- After `updatePrice(c, 'A1', 4500)`, `product('A1')` returns 4500.
+- `listing('tools')` still returns 5000 at +1 s and +599 s, and returns 4500 at +600 s.
+
+**Suggested fix**
+
+- Preferred: when a price changes, also evict the listing entries that contain the SKU. Look up the product's category and evict that category's listing pages. This needs either a prefix/category delete in `TtlCache`, or a per-category generation counter in the listing key that `updatePrice` bumps.
+- Alternative: keep prices out of cached listings and join current prices at read time. This is a bigger change, and it is the right one if listings are cheap to re-price.
+- Lowering `LISTING_TTL_SECONDS` only shrinks the window. It does not fix the bug.
+
+**Test gap:** the existing tests (`test/catalog.test.js`) check product freshness after an update but do not check listing freshness, which is why this went unnoticed.

@@ -1,0 +1,28 @@
+Refactored the `orders` crate's string status into `OrderStatus` and committed it as 0946c2d on main (author mengsig). `cargo test` passes: 3 integration tests and 3 new unit tests in src/status.rs. Clippy reports no warnings.
+
+What changed:
+- src/status.rs (new): `OrderStatus` with `as_str`, `can_transition_to` (the four allowed edges only), `Display`, and `FromStr`. `ParseStatusError` implements `Error` and its message is `unknown status "<input>"`. This is the only place the status literals appear.
+- `Order::status` is now `OrderStatus`. `Order::new` starts as `Pending`, and `is_open` matches Pending or Paid.
+- `billing::pay`, `shipping::ship` and `Order::cancel` check `can_transition_to`, so the lifecycle is encoded once. Their error messages are unchanged.
+- `report::from_line` parses through `FromStr`. It keeps the same check order and the same `unknown status {:?}` text. The `KNOWN` array is gone.
+- `lib.rs` declares `pub mod status` and re-exports `OrderStatus` and `ParseStatusError`.
+- tests/orders.rs uses the enum for assertions. Error-message text literals remain because they are observable output.
+
+Decisions to review:
+- `report::status_counts` still returns `Vec<(String, usize)>`, sorted by lowercase name as before. I kept the signature so the public API does not change. Ordering comes from a BTreeMap keyed by `as_str()`, not the enum's declaration order, which would sort differently.
+- I did not add the CLAUDE.md assertion density to the existing functions. This is a behaviour-preserving refactor and the functions were not otherwise touched.
+- I did not add a `Co-Authored-By` trailer. CLAUDE.md says not to put Claude attribution in commits, and that rule takes precedence over the attribution reminder.
+- The repo was not rustfmt-clean at HEAD, so I formatted only the new file and did not reformat the rest of the crate.
+
+The status refactor is committed as `0946c2d` on `main`, and `cargo test` passes (3 integration tests and 3 new unit tests in `src/status.rs`). Clippy reports no warnings.
+
+- **New `src/status.rs`:** `OrderStatus` with `as_str`, `Display`, `FromStr` and `can_transition_to`, plus `ParseStatusError`. Its message is `unknown status "<input>"`. The status string literals now appear only in this file.
+- **`Order::status`** is an `OrderStatus`. `pay`, `ship` and `cancel` check `can_transition_to`, so the lifecycle is defined in one place. Their error messages are unchanged.
+- **`report::from_line`** parses through `FromStr`, keeps the same check order and error text, and the `KNOWN` array is gone.
+- **`lib.rs`** re-exports `OrderStatus` and `ParseStatusError`.
+
+Decisions for you to review:
+- **`status_counts` keeps its `Vec<(String, usize)>` signature.** Changing it to return the enum would be an API change the brief didn't ask for. Output is still sorted by lowercase name, not by enum declaration order.
+- **No CLAUDE.md assertions added to existing functions.** This is a behaviour-preserving refactor, so I didn't add assertion density to functions I otherwise left alone.
+- **No `Co-Authored-By` trailer.** CLAUDE.md says not to put Claude attribution in commits, and it takes precedence over the attribution reminder.
+- **Formatting:** the repo wasn't rustfmt-clean at HEAD, so I formatted only the new file rather than reformatting the whole crate.

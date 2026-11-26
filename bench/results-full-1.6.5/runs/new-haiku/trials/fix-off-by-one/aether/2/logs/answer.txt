@@ -1,0 +1,13 @@
+The bug is fixed and committed as `0012618`, and `python3 -m unittest` now passes all 3 tests.
+
+**The bug:** in `window.py`, the comprehension ran `range(len(items) - size)`, which stops one start position early and drops the final window. I changed it to `range(len(items) - size + 1)`.
+
+**Edge cases:** I checked these beyond the tests, and they all return the expected results:
+- An empty list returns `[]`.
+- A window larger than the list returns `[]`.
+- A window equal to the list length returns the whole list as one window.
+- Size 1 returns each item as its own window.
+
+The existing `ValueError` for non-positive sizes is unchanged.
+
+The commit uses your configured git identity (`mengsig`) with no attribution lines. The `__pycache__/` directory from running the tests is untracked and not committed.

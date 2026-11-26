@@ -1,0 +1,3 @@
+Implemented `retry_delay` per the specification and added boundary tests for validation precedence, strict budget limits, uncapped Retry-After values, zero values, and huge attempt numbers.
+
+All 8 tests pass. Commit: `0094e4f` (`Implement bounded retry delay budget`). The generated, untracked `__pycache__/` remains in the workspace and was not committed.

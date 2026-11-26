@@ -1,0 +1,20 @@
+I queued the `retry_budget.py` work as one item, `qi_01M88TYNYPENKEDRG5KMWNCCM5`, on the `quality-retry-budget` repo. I haven't changed the repo myself.
+
+- **Pipeline:** `direct`, one agent that implements, tests and commits on a local branch (`ship: local`, so nothing is pushed).
+- **Review:** `standard`, because the budget and backoff arithmetic is easy to get subtly wrong.
+- **Brief:** it carries the full `SPEC.md` rules, the validation requirements, the boundary cases to test, and the commit instruction.
+
+I'll report back when the item finishes. If it fails, I'll read the stage output and decide whether to retry it.
+
+Done: Implement retry_budget.retry_delay per SPEC.md with focused tests. Implemented retry_budget.retry_delay per SPEC.md in commit eca740c on archon/kmwnccm5-implement-retry-budget-retry-delay-per-s (base 57ec30a). Validation of every argument runs before the exhausted-attempt and exhausted-budget returns; bool and float are rejected; backoff saturates via an exponent shortcut with no large power of two; Retry-After is an uncapped floor; the budget check is elapsed + delay >= budget. Extended test_retry_budget.py from 3 to 29 tests covering all validation rules, attempt boundaries, zero base and cap, base > cap, retry_after cases, the budget boundary, zero delay, and a huge attempt value. Before: the 3 existing tests errored on the NotImplementedError stub. After: `python3 -m unittest -v` runs 29 tests, all OK; 10**6 attempts return 400 instantly. One test of my own had a wrong default budget and was fixed before commit. No linter is installed in this environment, so only a syntax check was run. Review: agent agt_01M88V0GAK8C4P2TSKBGFW6601 passed the head with no findings, risk low. Nothing is left running and nothing was pushed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88V0GAK8C4P2TSKBGFW6601)
+
+SHIPPED: commit eca740c7e053d77354544addb50b40b3bab961bf on the run branch
+Branch `archon/kmwnccm5-implement-retry-budget-retry-delay-per-s` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/d7a52b930eb783f847e34c6f/quality-retry-budget holds it (2 files changed, 174 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M88TYNYPENKEDRG5KMWNCCM5`; land it in `main`: `archon merge qi_01M88TYNYPENKEDRG5KMWNCCM5`.
+
+Implemented retry_budget.retry_delay per SPEC.md in commit eca740c on archon/kmwnccm5-implement-retry-budget-retry-delay-per-s (base 57ec30a). Validation of every argument runs before the exhausted-attempt and exhausted-budget returns; bool and float are rejected; backoff saturates via an exponent shortcut with no large power of two; Retry-After is an uncapped floor; the budget check is elapsed + delay >= budget. Extended test_retry_budget.py from 3 to 29 tests covering all validation rules, attempt boundaries, zero base and cap, base > cap, retry_after cases, the budget boundary, zero delay, and a huge attempt value. Before: the 3 existing tests errored on the NotImplementedError stub. After: `python3 -m unittest -v` runs 29 tests, all OK; 10**6 attempts return 400 instantly. One test of my own had a wrong default budget and was fixed before commit. No linter is installed in this environment, so only a syntax check was run. Review: agent agt_01M88V0GAK8C4P2TSKBGFW6601 passed the head with no findings, risk low. Nothing is left running and nothing was pushed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88V0GAK8C4P2TSKBGFW6601)
+
+SHIPPED: commit eca740c7e053d77354544addb50b40b3bab961bf on the run branch

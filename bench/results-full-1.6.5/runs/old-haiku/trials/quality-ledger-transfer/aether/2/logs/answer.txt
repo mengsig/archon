@@ -1,0 +1,16 @@
+`ledger.py` now implements `SPEC.md`, and the tests pass (25 of 25, three runs in a row). The work is committed as `49a1d27` on `main`.
+
+**Implementation**
+- **Construction:** rejects a non-dict input, empty or non-string names, and balances that are not built-in ints in `[0, MAX_BALANCE]`. Booleans are rejected. The input dict is copied.
+- **`transfer`:** validates the amount first, then looks up both accounts and raises `KeyError` for unknown or non-string names. Insufficient funds or destination overflow returns `False` with no change. Self-transfers return `True` iff the balance covers the amount and never change it.
+- **`snapshot`:** returns a copy.
+- **Concurrency:** one `threading.Lock` per ledger guards every operation. This makes each transfer atomic, snapshots never see a half-applied transfer, and opposite transfers cannot deadlock.
+
+**Tests** (`test_ledger.py`, standard library only): the two original tests are kept, and new cases cover construction and amount validation, the ordering of validation before lookup, exact-boundary and `MAX_BALANCE` cases, overflow, self-transfers, and deterministic thread tests for deadlock, snapshot consistency, and overdraw. The thread tests use join timeouts only to detect a hang.
+
+**Decisions to review**
+- A single lock serializes all transfers on a ledger. It is simpler and clearly correct. Per-account locks would allow more parallelism but add complexity the spec does not require.
+- Non-string account names (for example `None` or a list) raise `KeyError` rather than `TypeError`, so every unknown-account input follows the one documented error path.
+- I did not add a `Co-Authored-By` trailer to the commit. Your CLAUDE.md says not to attribute commits to Claude Code, and it takes precedence over the attribution reminder.
+
+pyflakes is not installed in this environment, so I ran `py_compile` and the unit tests but no lint pass.

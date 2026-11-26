@@ -1,0 +1,30 @@
+I reviewed `src/tokens.js` and found one critical forgery bug, plus several smaller problems. Don't ship this as written. I made no changes.
+
+**Scope note:** No repository is registered as `session-lib`. The mirror I reviewed is `review-seeded-bug`, whose `package.json` name is `session-lib`. Its HEAD is `f754e7a` with a clean tree, so I reviewed the committed version. If your rewrite is uncommitted or lives elsewhere, these findings may not match it. I worked from reading the code; I did not run a proof-of-concept.
+
+**1. Critical: `verify`, `src/tokens.js:24-27`. Any token can be forged.**
+- Line 25 rejects a missing signature but not an empty one. For `"abc."`, `split('.')` gives signature `''`.
+- Line 27 is `expected.startsWith(signature)`, and every string starts with `''`, so the check always passes.
+- Concrete input: take `base64url(JSON.stringify({sub:"admin", exp: 4102444800000}))` and append a trailing dot with nothing after it. `verify` returns `{sub:"admin", exp:4102444800000}` for any secret, with no key material.
+- Fix direction: require the full-length signature and compare it with `crypto.timingSafeEqual`.
+
+**2. High: prefix comparison and timing, `src/tokens.js:27`.**
+- `startsWith` accepts any prefix of the correct MAC. A one-character signature matches a random guess with probability 1/64.
+- The comparison is not constant-time, so response timing can leak how many leading characters matched.
+- Fix direction: same as #1, a full constant-time comparison.
+
+**3. Medium: `verify` throws instead of returning `null`, `src/tokens.js:28-29`.**
+- Line 28 `JSON.parse` throws on a non-JSON body. A body that decodes to `null` makes line 29 throw a `TypeError`.
+- The documented contract is "payload or null". Callers that only handle `null` will crash. With #1, an attacker controls the body, so this is reachable without a valid key.
+- Also, `verify` with an empty or undefined secret throws from `createHmac` rather than returning `null`.
+
+**4. Low: trailing segments are ignored, `src/tokens.js:24`.**
+- `"<valid-token>.junk"` verifies, because `split('.')` takes only the second segment and ignores the rest.
+- The token is malleable, which matters if tokens are used as identifiers, cache keys or dedupe keys.
+- Fix direction: require exactly two segments.
+
+**5. Low: weak secret validation, `src/tokens.js:15`.**
+- `sign` checks only `secret.length >= 32`, so 32 identical characters pass.
+- `verify` does not validate the secret at all.
+
+**Not a bug, but worth knowing:** `sign` spreads `claims` before setting `iat` and `exp`, so callers cannot override expiry. Tokens are not revocable before `exp`, which is expected for a stateless design.

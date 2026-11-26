@@ -1,0 +1,362 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M882Z9H86EAFMEQVYPH8J6JR",
+      "repo": "repo_01M882YP74X3YNGQGJZVE8CXNW",
+      "pipeline": "direct",
+      "title": "Implement SPEC.md rate limiter",
+      "brief": "Implement the rate limiter described in SPEC.md in ratelimit.py, replacing the current stubs. Follow the specification exactly, including all error cases and edge cases; existing test_ratelimit.py covers only basics, so inspect the full spec and add/adjust tests as useful to verify its requirements. Keep the implementation dependency-free using only the Python standard library. Run the relevant tests/checks and commit the work. User explicitly authorized implementation and commit.\n\n## Amendment (2026-11-25 00:55 UTC)\n\nAutomatic repair (archond retries a refused record once). The gate refused your finished work: the review this pipeline declares is not on record: reviewer agt_01M883219BFVAJY9WF7A8Z85MS read 394ff79caa19940523e8ee9e9f4ee85cd2381fa7, a commit the run's workspace does not hold\n\nRepair the record only. Do not change code unless a reviewer finds a defect. Delegate one reviewer over the whole change from the merge base, copy its agent id exactly, and return the review object and ship record the gate requires.\n\nRun any check in the foreground or wait on it, and never end your turn while one runs: Archon reads the end of your turn as your result.\n",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M882Z9H86EAFMEQVYPH8J6JR",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T00:51:27.915872674Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T00:51:27.930553371Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T00:51:27.915872674Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8835YS04KNABAXJHECSHM45",
+        "summary": "Restored the missing review/ship record for the existing rate limiter implementation; no source changes were needed. `python -m unittest -v` passed all 10 tests, reviewer `agt_01M8836ZK4NCW4AFAFGJXDGNZN` independently passed the full diff from base fb098811c62e33ac30fec8bb225af6defa2966e8 through HEAD, and `git diff --check` passed. Branch remains clean at f185d8cf896cf015a490af2a9225a2c163bedf9c. Reviewer noted positive infinity is accepted by positivity validation; this is nonblocking under the stated spec.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8836ZK4NCW4AFAFGJXDGNZN)\n\nSHIPPED: commit f185d8cf896cf015a490af2a9225a2c163bedf9c on the run branch"
+      },
+      "created_at": "2026-11-25T00:51:27.912653956Z",
+      "updated_at": "2026-11-25T00:57:09.710455126Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M882Z9K78NMCMCYSN55PJ8VA",
+        "item": "qi_01M882Z9H86EAFMEQVYPH8J6JR",
+        "pipeline": "direct",
+        "shipped": false,
+        "aether_run": "run_01M882Z9T051D60QMMQMC031QD",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/65b8f946cb00035fcd4564d6/.archon/data/worktrees/feature-token-bucket/qi_01M882Z9H86EAFMEQVYPH8J6JR",
+        "branch": "archon/yph8j6jr-implement-spec-md-rate-limiter",
+        "state": {
+          "state": "failed",
+          "stage_id": "implement",
+          "error": "stage `implement` failed: the review this pipeline declares is not on record: reviewer agt_01M883219BFVAJY9WF7A8Z85MS read 394ff79caa19940523e8ee9e9f4ee85cd2381fa7, a commit the run's workspace does not hold\n\n**Stage `implement` attempt 1: the review this pipeline declares is not on record: reviewer agt_01M883219BFVAJY9WF7A8Z85MS read 394ff79caa19940523e8ee9e9f4ee85cd2381fa7, a commit the run's workspace does not hold**\n\nImplemented the SPEC.md token bucket and keyed LRU limiter in ratelimit.py, with validation, fractional refill/wait calculations, backward-clock handling, and bounded eviction. Expanded test_ratelimit.py to cover edge cases, including fractional max_keys. Final checks passed: 10 unit tests, compileall, and diff check. Committed as f185d8cf896cf015a490af2a9225a2c163bedf9c; worktree is clean. Initial whole-change review and fix-only delta review passed; no blocking findings. One nonblocking robustness note remains: positive infinity inputs are accepted, consistent with the spec’s explicit >0 condition.\n"
+        },
+        "cost_usd": 0.024947420000000005,
+        "started_at": "2026-11-25T00:51:28.132299518Z",
+        "finished_at": "2026-11-25T00:55:06.087065793Z"
+      },
+      {
+        "id": "prun_01M8835YS04KNABAXJHECSHM45",
+        "item": "qi_01M882Z9H86EAFMEQVYPH8J6JR",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8835YVDPH7EQPA7MENATNE7",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/65b8f946cb00035fcd4564d6/.archon/data/worktrees/feature-token-bucket/qi_01M882Z9H86EAFMEQVYPH8J6JR",
+        "branch": "archon/yph8j6jr-implement-spec-md-rate-limiter",
+        "state": {
+          "state": "succeeded",
+          "summary": "Restored the missing review/ship record for the existing rate limiter implementation; no source changes were needed. `python -m unittest -v` passed all 10 tests, reviewer `agt_01M8836ZK4NCW4AFAFGJXDGNZN` independently passed the full diff from base fb098811c62e33ac30fec8bb225af6defa2966e8 through HEAD, and `git diff --check` passed. Branch remains clean at f185d8cf896cf015a490af2a9225a2c163bedf9c. Reviewer noted positive infinity is accepted by positivity validation; this is nonblocking under the stated spec.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8836ZK4NCW4AFAFGJXDGNZN)\n\nSHIPPED: commit f185d8cf896cf015a490af2a9225a2c163bedf9c on the run branch"
+        },
+        "cost_usd": 0.01135452,
+        "started_at": "2026-11-25T00:55:06.313567408Z",
+        "finished_at": "2026-11-25T00:57:09.710455126Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M882Z9S2W9QXMX0QNEJ2M6SM",
+        "run": "prun_01M882Z9K78NMCMCYSN55PJ8VA",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M882Z9TZST9DNNKH7PC0DCDV",
+        "aether_task": "tsk_01M882Z9TZST9DNNKH7PC0DCDW",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented the SPEC.md token bucket and keyed LRU limiter in ratelimit.py, with validation, fractional refill/wait calculations, backward-clock handling, and bounded eviction. Expanded test_ratelimit.py to cover edge cases, including fractional max_keys. Final checks passed: 10 unit tests, compileall, and diff check. Committed as f185d8cf896cf015a490af2a9225a2c163bedf9c; worktree is clean. Initial whole-change review and fix-only delta review passed; no blocking findings. One nonblocking robustness note remains: positive infinity inputs are accepted, consistent with the spec’s explicit >0 condition.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v — passed, 10 tests",
+            "python -m compileall -q ratelimit.py test_ratelimit.py — passed",
+            "git diff --check — passed"
+          ],
+          "commit": "f185d8cf896cf015a490af2a9225a2c163bedf9c",
+          "evidence": [
+            {
+              "after": "Ran 10 tests in 0.000s; OK.",
+              "before": "Ran 3 tests; all 3 errored because TokenBucket.__init__ and KeyedLimiter.__init__ raised NotImplementedError.",
+              "caption": "Baseline and final unit-test results.",
+              "kind": "output"
+            }
+          ],
+          "pr": {
+            "body": "Implemented both dependency-free limiter classes in ratelimit.py. TokenBucket starts full, refills continuously up to capacity, handles backward clock readings without adding refill, and validates acquisition and wait requests. KeyedLimiter uses OrderedDict for LRU tracking, refreshes recency for acquire and wait calls, returns evicted keys as fresh buckets, and enforces the maximum even when max_keys is fractional. Expanded test_ratelimit.py with validation, fractional refill, wait non-consumption, clock reversal, LRU, eviction, and fractional max_keys cases. Final checks: python -m unittest -v (10 passed), python -m compileall -q ratelimit.py test_ratelimit.py (passed), git diff --check (passed). Positive infinity is not rejected because the spec requires values greater than zero and does not explicitly require finiteness.",
+            "summary": "Implemented SPEC.md’s token bucket and per-key LRU limiter. Before: all 3 existing tests failed on stubs. Now: continuous fractional refill, wait estimates, validation, bounded LRU eviction and backward-clock behavior are implemented and covered by 10 passing tests.",
+            "title": "Implement specified token bucket rate limiter"
+          },
+          "review": {
+            "reviewers": [
+              "agt_01M883219BFVAJY9WF7A8Z85MS",
+              "agt_01M8834Q53PKPHFJ30E8T4X18X"
+            ],
+            "unverified": "reviewer agt_01M883219BFVAJY9WF7A8Z85MS read 394ff79caa19940523e8ee9e9f4ee85cd2381fa7, a commit the run's workspace does not hold",
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M883219BFVAJY9WF7A8Z85MS",
+            "why": "Contained behavior change implementing the existing TokenBucket and KeyedLimiter interfaces. No persistence, concurrency, security, or cross-cutting changes. The whole-change reviewer assessed medium; the focused fractional-bound fix reviewer assessed low."
+          },
+          "tree": "06c80f296fd57cde10dcc4ef80664edaf3d0dc83"
+        },
+        "cost_usd": 0.024947420000000005,
+        "started_at": "2026-11-25T00:51:28.162093068Z",
+        "finished_at": "2026-11-25T00:55:06.071845297Z"
+      },
+      {
+        "id": "stg_01M8835YTVSJE8F4M4NEVXQDSJ",
+        "run": "prun_01M8835YS04KNABAXJHECSHM45",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8835YVMQ0PGW53HH2XSF74P",
+        "aether_task": "tsk_01M8835YVMQ0PGW53HH2XSF74Q",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Restored the missing review/ship record for the existing rate limiter implementation; no source changes were needed. `python -m unittest -v` passed all 10 tests, reviewer `agt_01M8836ZK4NCW4AFAFGJXDGNZN` independently passed the full diff from base fb098811c62e33ac30fec8bb225af6defa2966e8 through HEAD, and `git diff --check` passed. Branch remains clean at f185d8cf896cf015a490af2a9225a2c163bedf9c. Reviewer noted positive infinity is accepted by positivity validation; this is nonblocking under the stated spec.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (10 tests passed)",
+            "python -m unittest -v test_ratelimit (reviewer: 10 tests passed)",
+            "git diff --check fb098811c62e33ac30fec8bb225af6defa2966e8..HEAD (passed)",
+            "Reviewer full-change spec review base fb098811c62e33ac30fec8bb225af6defa2966e8 head f185d8cf896cf015a490af2a9225a2c163bedf9c (pass)"
+          ],
+          "commit": "f185d8cf896cf015a490af2a9225a2c163bedf9c",
+          "evidence": [
+            {
+              "caption": "Post-change unit suite and review of the rate limiter specification",
+              "kind": "output",
+              "text": "python -m unittest -v: 10 tests passed\npython -m unittest -v test_ratelimit (reviewer): 10 tests passed\ngit diff --check: passed\nWhole-change review: pass; no blocking findings."
+            }
+          ],
+          "local_commit": "f185d8cf896cf015a490af2a9225a2c163bedf9c",
+          "pr": {
+            "body": "`ratelimit.py` implements TokenBucket and KeyedLimiter using only the Python standard library. `test_ratelimit.py` covers refill, wait time, validation, backwards time, key independence, LRU eviction and fractional max_keys bounds. Checks: `python -m unittest -v` (10 passed); reviewer `python -m unittest -v test_ratelimit` (10 passed); `git diff --check` passed. Assumption: numeric inputs follow the spec's positivity requirements. Review noted positive infinity passes those checks; treated as nonblocking because the spec does not require finite-only numbers.",
+            "summary": "Implemented the specified token bucket and per-key LRU limiter. Before: rate limiter stubs; now: fractional refill, wait estimates, bounded keyed buckets, validation, and backward-clock handling.",
+            "title": "Implement specified token bucket rate limiter"
+          },
+          "review": {
+            "reviewed_head": "f185d8cf896cf015a490af2a9225a2c163bedf9c",
+            "reviewer_agents": [
+              "agt_01M8836ZK4NCW4AFAFGJXDGNZN"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8836ZK4NCW4AFAFGJXDGNZN",
+                "base": "fb098811c62e33ac30fec8bb225af6defa2966e8",
+                "findings": 1,
+                "head": "f185d8cf896cf015a490af2a9225a2c163bedf9c",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8836ZK4NCW4AFAFGJXDGNZN"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M8836ZK4NCW4AFAFGJXDGNZN",
+            "why": "Contained rate-limiter behavior change involving stateful token accounting and keyed eviction; ten focused tests pass and an independent reviewer passed the full change. Review observation on positive infinity is nonblocking."
+          },
+          "tree": "06c80f296fd57cde10dcc4ef80664edaf3d0dc83"
+        },
+        "cost_usd": 0.01135452,
+        "started_at": "2026-11-25T00:55:06.331565642Z",
+        "finished_at": "2026-11-25T00:57:07.023441403Z"
+      }
+    ],
+    "spent_usd": 0.036301940000000005,
+    "gates": [],
+    "delegations": {
+      "stg_01M882Z9S2W9QXMX0QNEJ2M6SM": {
+        "direct_usd": 0.018065080000000004,
+        "delegated_usd": 0.0068823400000000015,
+        "agents": [
+          {
+            "agent": "agt_01M883219BFVAJY9WF7A8Z85MS",
+            "parent": "agt_01M882Z9TZST9DNNKH7PC0DCDV",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.0050776200000000014
+          },
+          {
+            "agent": "agt_01M8834Q53PKPHFJ30E8T4X18X",
+            "parent": "agt_01M882Z9TZST9DNNKH7PC0DCDV",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.0018047200000000003
+          }
+        ]
+      },
+      "stg_01M8835YTVSJE8F4M4NEVXQDSJ": {
+        "direct_usd": 0.0072809,
+        "delegated_usd": 0.00407362,
+        "agents": [
+          {
+            "agent": "agt_01M8836ZK4NCW4AFAFGJXDGNZN",
+            "parent": "agt_01M8835YVMQ0PGW53HH2XSF74P",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00407362
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T00:51:27.915872674Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T00:51:27.930553371Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T00:51:27.915872674Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

@@ -1,0 +1,16 @@
+Queued as **qi_01M88781CK7EDX5WG2MXXA1KXF** on the `direct` pipeline. The item includes the enum refactor, `cargo test`, and a commit on its branch. I set implementation effort to low to conserve the limited Codex quota; only Codex is allowed for this repository.
+
+Done: Refactor orders status to OrderStatus. Introduced the OrderStatus enum, parsing/error type, transition graph, crate-root exports, and replaced raw status strings throughout order operations and reporting. Verified with cargo fmt --check, cargo test (4 integration tests), git diff --check, and a status-literal scan. Committed as 3ecef49936172ed9b60e09843321da5918e40493; tree e7791aa0239dd8d8ebfa808d9c88da83a5027f9c. Nothing remains open.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 3ecef49936172ed9b60e09843321da5918e40493 on the run branch
+Branch `archon/mxxa1kxf-refactor-orders-status-to-orderstatus` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/919503f15cd445bd7850ed62/refactor-order-status holds it (7 files changed, 148 insertions(+), 29 deletions(-)). Review: `archon diff qi_01M88781CK7EDX5WG2MXXA1KXF`; land it in `main`: `archon merge qi_01M88781CK7EDX5WG2MXXA1KXF`.
+
+Freed 0.0 GiB of build output: item qi_01M88781CK7EDX5WG2MXXA1KXF ended and its cargo target directory went.
+
+Introduced the OrderStatus enum, parsing/error type, transition graph, crate-root exports, and replaced raw status strings throughout order operations and reporting. Verified with cargo fmt --check, cargo test (4 integration tests), git diff --check, and a status-literal scan. Committed as 3ecef49936172ed9b60e09843321da5918e40493; tree e7791aa0239dd8d8ebfa808d9c88da83a5027f9c. Nothing remains open.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 3ecef49936172ed9b60e09843321da5918e40493 on the run branch

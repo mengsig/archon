@@ -1,0 +1,221 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88A9XAS6XYC24B6B0EW47ZH",
+      "repo": "repo_01M88A97QR11GNZXEQWWWD11AT",
+      "pipeline": "direct",
+      "title": "Implement spec-complete token bucket rate limiter",
+      "brief": "Implement ratelimit.py exactly per SPEC.md, including all validation/error cases, continuous refill, backwards-clock behavior and LRU eviction semantics for KeyedLimiter. Standard library only. Examine existing tests and add/adjust coverage for spec edge cases where appropriate; run relevant tests and commit the finished work. Do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88A9XAS6XYC24B6B0EW47ZH",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-25T02:59:35.901566411Z"
+              },
+              "effort": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-25T02:59:35.901566411Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged: the learned route's effort"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88A9XBC9KW2V1BEK1X9NA09",
+        "summary": "Implemented the SPEC.md token bucket and keyed LRU limiter in ratelimit.py, with validation and coverage for continuous refill, wait_time, backward clocks, LRU eviction and invalid inputs. Before: all 3 existing tests errored on NotImplementedError. After: all 8 tests pass; compile and diff checks pass. Committed as a11dd27094a04ec0dae4fa37be7b25e09512b83e; no open findings.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M88ACWV778RXP03BXVQ1SAH3)\n\nSHIPPED: commit a11dd27094a04ec0dae4fa37be7b25e09512b83e on the run branch"
+      },
+      "created_at": "2026-11-25T02:59:35.897979093Z",
+      "updated_at": "2026-11-25T03:02:00.799302009Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88A9XBC9KW2V1BEK1X9NA09",
+        "item": "qi_01M88A9XAS6XYC24B6B0EW47ZH",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88A9XGACD7TK90VXM59H1B9",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/c1c771e4004adfe2d1f49b01/.archon/data/worktrees/feature-token-bucket/qi_01M88A9XAS6XYC24B6B0EW47ZH",
+        "branch": "archon/b0ew47zh-implement-spec-complete-token-bucket-rat",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the SPEC.md token bucket and keyed LRU limiter in ratelimit.py, with validation and coverage for continuous refill, wait_time, backward clocks, LRU eviction and invalid inputs. Before: all 3 existing tests errored on NotImplementedError. After: all 8 tests pass; compile and diff checks pass. Committed as a11dd27094a04ec0dae4fa37be7b25e09512b83e; no open findings.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M88ACWV778RXP03BXVQ1SAH3)\n\nSHIPPED: commit a11dd27094a04ec0dae4fa37be7b25e09512b83e on the run branch"
+        },
+        "cost_usd": 0.014851740000000002,
+        "started_at": "2026-11-25T02:59:36.060544467Z",
+        "finished_at": "2026-11-25T03:02:00.799302009Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88A9XG3CY4G26V37Z5FRY2Q",
+        "run": "prun_01M88A9XBC9KW2V1BEK1X9NA09",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88A9XGMBBV6KC8QF5JH6ZGM",
+        "aether_task": "tsk_01M88A9XGMMEXJ301T4V7J2BZS",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "learned",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged: the learned route's effort",
+        "summary": "Implemented the SPEC.md token bucket and keyed LRU limiter in ratelimit.py, with validation and coverage for continuous refill, wait_time, backward clocks, LRU eviction and invalid inputs. Before: all 3 existing tests errored on NotImplementedError. After: all 8 tests pass; compile and diff checks pass. Committed as a11dd27094a04ec0dae4fa37be7b25e09512b83e; no open findings.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (final: 8 tests passed)",
+            "python -m py_compile ratelimit.py test_ratelimit.py (passed)",
+            "git diff --check HEAD^ HEAD (passed)"
+          ],
+          "commit": "a11dd27094a04ec0dae4fa37be7b25e09512b83e",
+          "evidence": [
+            {
+              "after": "Ran 8 tests in 0.000s\nOK",
+              "before": "Ran 3 tests in 0.001s\nFAILED (errors=3)\nEach error was NotImplementedError in TokenBucket or KeyedLimiter initialization.",
+              "caption": "Before, the three existing tests errored because the implementation consisted of NotImplementedError stubs; after, all eight tests passed.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "a11dd27094a04ec0dae4fa37be7b25e09512b83e",
+          "pr": {
+            "body": "Implemented TokenBucket validation, full initial state, fractional refill, capacity capping, non-consuming wait_time, and backwards-clock anchoring. Implemented KeyedLimiter with one bucket per hashable key and OrderedDict LRU updates on both operations; evicted keys are recreated full. Expanded unittest coverage for validation, fractional refill, backwards time and eviction behavior. Final checks: python -m unittest -v (8 passed), python -m py_compile ratelimit.py test_ratelimit.py (passed), git diff --check HEAD^ HEAD (passed). Assumption: the injected clock is callable and returns comparable seconds as specified.",
+            "summary": "Implemented continuous token bucket rate limiting and keyed LRU eviction. Before: limiter methods were unimplemented. Now: bucket and per-key behavior follow SPEC.md, with edge-case coverage.",
+            "title": "Implement spec-complete token bucket limiter"
+          },
+          "review": {
+            "reviewed_head": "a11dd27094a04ec0dae4fa37be7b25e09512b83e",
+            "reviewer_agents": [
+              "agt_01M88ACWV778RXP03BXVQ1SAH3"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88ACWV778RXP03BXVQ1SAH3",
+                "base": "130f41cfc1107893bb2e2a978a298c64ccc2977d",
+                "findings": 0,
+                "head": "a11dd27094a04ec0dae4fa37be7b25e09512b83e",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88ACWV778RXP03BXVQ1SAH3"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M88ACWV778RXP03BXVQ1SAH3",
+            "why": "Contained behavior changes implement new token bucket and keyed rate-limiting behavior in ratelimit.py; the requested edge cases are covered by passing unit tests, and independent review found no blockers."
+          },
+          "tree": "abf3b8abb156268ab3e1899ec3d3ed32d608867b"
+        },
+        "cost_usd": 0.014851740000000002,
+        "started_at": "2026-11-25T02:59:36.067108437Z",
+        "finished_at": "2026-11-25T03:01:58.635553739Z"
+      }
+    ],
+    "spent_usd": 0.014851740000000002,
+    "gates": [],
+    "delegations": {
+      "stg_01M88A9XG3CY4G26V37Z5FRY2Q": {
+        "direct_usd": 0.011535040000000002,
+        "delegated_usd": 0.003316700000000001,
+        "agents": [
+          {
+            "agent": "agt_01M88ACWV778RXP03BXVQ1SAH3",
+            "parent": "agt_01M88A9XGMBBV6KC8QF5JH6ZGM",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.003316700000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-25T02:59:35.901566411Z"
+          },
+          "effort": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-25T02:59:35.901566411Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

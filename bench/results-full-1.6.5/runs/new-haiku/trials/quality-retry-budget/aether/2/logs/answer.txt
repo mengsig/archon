@@ -1,0 +1,28 @@
+Implemented `retry_delay` in retry_budget.py per SPEC.md and expanded test_retry_budget.py. Committed as c28c484 on main (author mengsig).
+
+Behavior:
+- Validation runs first for every argument: type must be built-in `int` (bool, float, and int subclasses rejected); attempt and max_attempts >= 1; elapsed, budget, base, cap, and non-None retry_after >= 0. Failures raise ValueError.
+- attempt >= max_attempts returns None.
+- Backoff is min(cap, base * 2**(attempt-1)). Zero base or cap returns 0. Once the doubling count reaches cap.bit_length(), it returns cap directly, so huge attempts never build a big power of two.
+- Retry-After raises the delay to max(backoff, retry_after), and is not limited by cap.
+- Returns None when elapsed + delay >= budget, otherwise the delay. The wait is never shortened.
+
+Verification:
+- 28 unit tests pass with `python3 -m unittest`, and also with `-O`.
+- The saturating backoff matched the naive formula on a grid of 79×20×300 small values, with zero mismatches.
+
+Decisions:
+- Non-int types raise ValueError, not TypeError, because the spec says invalid values raise ValueError.
+- `-I` was not used for the test run because it removes the working directory from sys.path, so the test module cannot be imported.
+
+I implemented `retry_delay` in `retry_budget.py` per `SPEC.md`, expanded the tests, and committed the work as c28c484 on `main` under `mengsig`. All 28 tests pass with `python3 -m unittest`, and also with `-O`.
+
+- **Validation:** every argument is checked before any early return. Values must be built-in `int`, so bools, floats and int subclasses are rejected. Ranges follow the spec, and failures raise `ValueError`.
+- **Attempt limit:** `attempt >= max_attempts` returns `None`.
+- **Backoff:** `min(cap, base * 2**(attempt-1))`, with a zero base or cap giving 0. Once the doubling count reaches `cap.bit_length()`, the code returns `cap` directly, so huge attempt values never build a large power of two.
+- **Retry-After:** the delay is raised to `max(backoff, retry_after)`, and the cap does not apply to it.
+- **Budget:** returns `None` when `elapsed + delay >= budget`, otherwise the delay. The wait is never shortened to fit.
+
+I also checked the saturating backoff against the naive formula over a grid of small values, with no mismatches.
+
+One judgment call: the spec says invalid values raise `ValueError`, so wrong types also raise `ValueError` rather than `TypeError`. If you'd rather have `TypeError` for wrong types, that is a small change.

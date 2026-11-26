@@ -1,0 +1,18 @@
+`safe_extract.extract` is implemented per SPEC.md, with 25 tests (the 2 existing plus 23 new) passing under `python3 -m unittest`. The work is committed as `4c9f1bd` on `main`, authored as mengsig.
+
+**What it does**
+- **Batch validation first.** Entries, names, data, duplicates, file/directory collisions, and the root are all checked before anything is created. A failure leaves the root untouched.
+- **Entry checks.** The batch must be a `list`, so tuples, iterators and generators are rejected unconsumed. Each entry must be a 2-tuple with a `str` name and `bytes` data.
+- **Name checks.** Names are rejected if they contain `\`, `:` or NUL, have an empty, `.` or `..` component, or can't be UTF-8 encoded. Percent signs are kept literally.
+- **Root check.** The root must be a real directory (not a symlink) that exists. An empty batch still requires a valid root.
+- **On-disk check.** Each target is checked with `lstat`, so symlinks are never followed. Existing targets (including dangling links) and non-directory or symlink ancestors are rejected.
+- **Writes.** Missing parents are created, and each file is opened with `O_EXCL`, so nothing is overwritten. Unexpected OS errors propagate.
+
+**Choices I made where the spec was silent**
+- Entries must be tuples. A `[name, data]` list is treated as malformed.
+- The root may be `str` or `os.PathLike`. Other types, including bytes, raise `ValueError`.
+- Names that aren't encodable (for example lone surrogates) are rejected as `ValueError`.
+
+**Not covered**
+- Case-insensitive filesystems: `A` and `a` in one batch are distinct on Linux. On a case-insensitive filesystem the second write would hit the existing-target check. I did not add a case-folding check.
+- Concurrent changes and rollback after I/O errors are out of scope per the spec.

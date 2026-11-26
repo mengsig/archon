@@ -1,0 +1,23 @@
+I queued the rate limiter as item `qi_01M88V25XMECG63JMQ4VASEJM5` on the `feature-token-bucket` repository. I did not write the code myself; the daemon runs it in a fresh worktree.
+
+- **Pipeline:** `direct`, one agent, then the daemon ships it.
+- **Review:** `standard`, since the limiter's clock and eviction logic are easy to get subtly wrong.
+- **Shipping:** the repo is set to `ship: local`, so the work is committed on a local branch and not pushed.
+- **Scope:** the brief restates every SPEC.md rule, the error cases and the LRU and clock-backwards behaviour. It asks for tests covering those edge cases and for `python -m unittest` to pass before the commit. The agent is told not to change SPEC.md and to add no attribution lines.
+
+I'll report back when the item finishes. If it fails, I'll read the stage output and tell you what blocked it.
+
+Done: Implement token-bucket rate limiter per SPEC.md in ratelimit.py. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, replacing the NotImplementedError stubs. Added 20 unit tests in test_ratelimit.py covering the spec's edge cases; `python -m unittest` passes (20 tests OK). Committed locally as fbb355d4dfe6d7c2932598896a8caa2b570779d9 (tree 609410fea1409477c4fcd2761e95cb2e3a215ba2) under the configured identity; nothing pushed. One reviewer (agt_01M88V3ZCHTGPFPPCJQTEC56FP) passed the head with no blocking findings; non-blocking follow-ups: non-numeric arguments raise TypeError not ValueError, invariants are asserts (stripped by -O), and no KeyedLimiter-level backwards-clock test. No servers were started. The reviewer agent's leftover claude/socat processes are still running until this run ends.
+REVIEW: pass by agt_01M88V3ZCHTGPFPPCJQTEC56FP
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88V3ZCHTGPFPPCJQTEC56FP)
+
+SHIPPED: commit fbb355d4dfe6d7c2932598896a8caa2b570779d9 on the run branch
+Branch `archon/4vasejm5-implement-token-bucket-rate-limiter-per` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/566e9e34dc144f0e5d9beb5c/feature-token-bucket holds it (2 files changed, 220 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M88V25XMECG63JMQ4VASEJM5`; land it in `main`: `archon merge qi_01M88V25XMECG63JMQ4VASEJM5`.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, replacing the NotImplementedError stubs. Added 20 unit tests in test_ratelimit.py covering the spec's edge cases; `python -m unittest` passes (20 tests OK). Committed locally as fbb355d4dfe6d7c2932598896a8caa2b570779d9 (tree 609410fea1409477c4fcd2761e95cb2e3a215ba2) under the configured identity; nothing pushed. One reviewer (agt_01M88V3ZCHTGPFPPCJQTEC56FP) passed the head with no blocking findings; non-blocking follow-ups: non-numeric arguments raise TypeError not ValueError, invariants are asserts (stripped by -O), and no KeyedLimiter-level backwards-clock test. No servers were started. The reviewer agent's leftover claude/socat processes are still running until this run ends.
+REVIEW: pass by agt_01M88V3ZCHTGPFPPCJQTEC56FP
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88V3ZCHTGPFPPCJQTEC56FP)
+
+SHIPPED: commit fbb355d4dfe6d7c2932598896a8caa2b570779d9 on the run branch

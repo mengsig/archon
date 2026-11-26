@@ -1,0 +1,612 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88VG7WF69XYPSXEWX0F1RW6",
+      "repo": "repo_01M88VFVAJS1QBPVF80Z6RXBQF",
+      "pipeline": "refactor",
+      "title": "Refactor order status String into OrderStatus enum",
+      "brief": "The orders crate stores an order's status as a String and compares string literals throughout. Refactor it to a typed enum without changing observable behaviour.\n\nRequirements (from the operator, authenticated chat instruction):\n- Add src/status.rs with `pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }` deriving at least Debug, Clone, Copy, PartialEq, Eq, Hash.\n- `OrderStatus::as_str(self) -> &'static str` returns lowercase names (\"pending\", \"paid\", \"shipped\", \"cancelled\"); `Display` prints the same.\n- `FromStr` for OrderStatus with `type Err = ParseStatusError`, a public error type implementing std::error::Error whose message names the rejected input.\n- `OrderStatus::can_transition_to(self, next: OrderStatus) -> bool` encodes: pending -> paid, pending -> cancelled, paid -> shipped, paid -> cancelled; nothing else.\n- `Order::status` becomes an OrderStatus; re-export OrderStatus and ParseStatusError from the crate root; use the enum everywhere, so status string literals appear only in src/status.rs.\n- Observable behaviour (errors, report output and ordering, parsing) must stay exactly the same. cargo test must pass.\n- Commit the work on the local branch (ship is local; do not push).\n\nAssumption: if current code allows transitions beyond those listed, do not silently change behaviour; flag it in the verdict.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "baseline": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "refactor": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "review": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ],
+        "verify": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88VG7WF69XYPSXEWX0F1RW6",
+        "entries": {
+          "baseline": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T08:00:09.105848665Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T08:00:09.107970676Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T08:00:09.105848665Z"
+              }
+            }
+          ],
+          "refactor": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T08:00:09.105848665Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T08:00:09.107970676Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T08:00:09.105848665Z"
+              }
+            }
+          ],
+          "review": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T08:00:09.105848665Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T08:00:09.107970676Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T08:00:09.105848665Z"
+              }
+            }
+          ],
+          "verify": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T08:00:09.105848665Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T08:00:09.107970676Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T08:00:09.105848665Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:security",
+          "review:strict"
+        ],
+        "keys": {
+          "baseline": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "high",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          },
+          "refactor": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "high",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          },
+          "review": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": true
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          },
+          "verify": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "high",
+              "checks": true
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88VG7X547225SRNA8693DV6",
+        "summary": "Review of the OrderStatus refactor at 7aa8be2 (branch archon/wx0f1rw6-refactor-order-status-string-into-orders). The structural goal is met: Order::status is an OrderStatus enum, src/status.rs holds as_str, Display, can_transition_to, FromStr with ParseStatusError, and the crate root re-exports both. pay, ship and cancel use can_transition_to, and status-name literals in src/ appear only in src/status.rs. The worktree is clean. Behaviour is preserved for every typed state; the only observable changes are the mandated ones (Order.status type, Debug output, and the unrepresentable \"lost\" state). I checked this by building a clean git-archive copy of HEAD: cargo test --locked passed 24/24 (3 orders, 11 reports, 8 transitions, 2 unvalidated-status), and cargo clippy --all-targets -D warnings passed. cargo fmt --check fails only on tests/orders.rs:40, which is untouched and pre-existing; the new files pass rustfmt. Note: cargo test run directly in the worktree with the item cache failed with a spurious E0432 (stale fingerprint), so the clean-copy run is the reliable evidence. Findings are all non-blocking: the public API break is brief-mandated, the removal of six \"lost\" cases is justified, and the ALL const duplicates the variant list. Risk is high because the public field type change breaks callers. VERDICT: PASS\n\nSHIPPED: commit 7aa8be2dd6258a92ac8bfe6c64827b8bf8ee4b52 on the run branch"
+      },
+      "created_at": "2026-11-25T08:00:09.103194952Z",
+      "updated_at": "2026-11-25T08:07:06.315340425Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88VG7X547225SRNA8693DV6",
+        "item": "qi_01M88VG7WF69XYPSXEWX0F1RW6",
+        "pipeline": "refactor",
+        "shipped": true,
+        "aether_run": "run_01M88VG82ES6VDSMYYJRJFVSTF",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-hxzat4av/archon-bench/work/20261125T065314Z/29327e00df6fef34023ba26a/.archon/data/worktrees/refactor-order-status/qi_01M88VG7WF69XYPSXEWX0F1RW6",
+        "branch": "archon/wx0f1rw6-refactor-order-status-string-into-orders",
+        "state": {
+          "state": "succeeded",
+          "summary": "Review of the OrderStatus refactor at 7aa8be2 (branch archon/wx0f1rw6-refactor-order-status-string-into-orders). The structural goal is met: Order::status is an OrderStatus enum, src/status.rs holds as_str, Display, can_transition_to, FromStr with ParseStatusError, and the crate root re-exports both. pay, ship and cancel use can_transition_to, and status-name literals in src/ appear only in src/status.rs. The worktree is clean. Behaviour is preserved for every typed state; the only observable changes are the mandated ones (Order.status type, Debug output, and the unrepresentable \"lost\" state). I checked this by building a clean git-archive copy of HEAD: cargo test --locked passed 24/24 (3 orders, 11 reports, 8 transitions, 2 unvalidated-status), and cargo clippy --all-targets -D warnings passed. cargo fmt --check fails only on tests/orders.rs:40, which is untouched and pre-existing; the new files pass rustfmt. Note: cargo test run directly in the worktree with the item cache failed with a spurious E0432 (stale fingerprint), so the clean-copy run is the reliable evidence. Findings are all non-blocking: the public API break is brief-mandated, the removal of six \"lost\" cases is justified, and the ALL const duplicates the variant list. Risk is high because the public field type change breaks callers. VERDICT: PASS\n\nSHIPPED: commit 7aa8be2dd6258a92ac8bfe6c64827b8bf8ee4b52 on the run branch"
+        },
+        "cost_usd": 0.10278752,
+        "started_at": "2026-11-25T08:00:09.271252821Z",
+        "finished_at": "2026-11-25T08:07:06.315340425Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88VG81W2RQD0FYK7KY1VRWK",
+        "run": "prun_01M88VG7X547225SRNA8693DV6",
+        "stage_id": "baseline",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88VG82M2AYZTH2MM98B7D43",
+        "aether_task": "tsk_01M88VG82M4F3Y49E9RMW33Q5S",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "critical",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "BASELINE + CHARACTERIZATION for \"Refactor order status String into OrderStatus enum\". No production code changed.\n\nStructural goal: replace Order::status: String and its literal comparisons with a typed OrderStatus enum (src/status.rs; as_str, Display, FromStr with ParseStatusError, can_transition_to; re-exports at crate root), with observable behaviour unchanged.\n\nCommits (branch archon/wx0f1rw6-refactor-order-status-string-into-orders, local only, not pushed):\n- Original baseline: e67c115df027e0de4d93ffddf1e8a810205fd726 (tree 6e35d20143ea2a04a1a2774dbb91a210c78ccdcf)\n- 4406a99 test: characterize transition rules and refusal messages (tests/characterize_transitions.rs, 8 tests)\n- 7a9f2ef test: characterize report ordering and CSV parsing (tests/characterize_reports.rs, 11 tests)\n- 0949383 test: characterize unvalidated status strings (tests/characterize_unvalidated_status.rs, 6 tests)\n- Head 0949383, tree c9cb2bfed00248e6ca75ffea1924a3a23667caad. Worktree clean.\nNo existing test was modified. Original tests/orders.rs and src/ are untouched.\n\nChecks (no README, Makefile or CI config exists; the standard cargo checks are used; CARGO_TARGET_DIR set to the item cache):\n- Before new tests (at e67c115): `cargo test --locked` exit 0, 3 passed. `cargo clippy --all-targets --locked -- -D warnings` exit 0. `cargo build --locked` exit 0. `cargo fmt --check` exit 1: pre-existing, diffs in src/billing.rs, src/order.rs, src/report.rs, src/shipping.rs, tests/orders.rs. Not fixed, since that would touch lines the refactor edits.\n- After new tests (at c9cb2bf): `cargo test --locked` exit 0, 28 passed (3 original + 25 new). Clippy exit 0, build exit 0, fmt exit 1 with the same 5 pre-existing files. The new test files pass `rustfmt --check`.\nNo servers or services were started.\n\nPublic surface inventory (must stay unchanged):\n- Order { pub id: u32, pub customer: String, pub total_cents: u64, pub status: String }, derives Debug, Clone, PartialEq. Order::new(id, &str, u64) starts \"pending\". Order::is_open() is true for pending or paid. Order::cancel() -> Result<(), String>.\n- billing::pay(&mut Order) -> Result<(), String>; billing::outstanding_cents(&[Order]) -> u64 (sums pending only).\n- shipping::ship(&mut Order) -> Result<(), String>; shipping::ready_to_ship(&[Order]) -> Vec<u32> (input order, paid only).\n- report::status_counts(&[Order]) -> Vec<(String, usize)>, sorted by status NAME (cancelled, paid, pending, shipped), not lifecycle order. Derived enum Ord would give pending, paid, shipped, cancelled, so the refactor must sort by as_str.\n- report::to_line(&Order) -> \"id,customer,total_cents,status\"; report::from_line(&str) -> Result<Order, String>, which trims input and checks in this order: field count, id, total, status.\n- Error strings (exact): \"order {id} cannot be paid: it is {status}\"; \"order {id} cannot be shipped: it is {status}\"; \"order {id} cannot be cancelled: it is {status}\"; \"expected 4 fields, got {n}\"; \"bad id {:?}: {std err}\"; \"bad total {:?}: {std err}\" (std err \"invalid digit found in string\"); \"unknown status {:?}\".\n- Transition rules actually in code: pay pending->paid; ship paid->shipped; cancel pending->cancelled and paid->cancelled. cancel() refuses only shipped and cancelled. No transitions beyond the brief's list exist for typed statuses. The brief's can_transition_to table matches current behaviour.\n\nAllowed exceptions: none explicitly in the brief, other than the enum/ParseStatusError addition and crate-root re-exports. The brief's \"status string literals only in src/status.rs\" rule conflicts with the pinned expected strings in tests/. I've assumed it applies to src/ only.\n\nCoverage (what the characterization tests pin):\n- Every pay/ship/cancel refusal from each status, with exact message, and the order left unchanged. Success paths. is_open for all four statuses. New orders start pending.\n- status_counts: name sort, repeat tally, empty input. outstanding_cents and ready_to_ship: filtering and order. to_line for all four statuses; from_line round-trip for all four; whitespace trim; field-count, id, total and unknown-status errors; check ordering (id before status); wrong case \"Paid\" and empty status rejected.\n- tests/characterize_unvalidated_status.rs pins a surprising case: the pub String field accepts any value (e.g. \"lost\"). cancel() accepts it and sets \"cancelled\". pay and ship refuse it. is_open is false. It is counted, sorted between \"cancelled\" and \"paid\", and ignored by money and shipping queries. to_line writes it verbatim; from_line rejects it. An enum cannot represent this. The refactorer and verifier must decide and flag the behaviour change; this file is expected to change with the refactor. Its header comment says so.\n\nKnown gaps: no test for Debug output or Clone/Eq semantics beyond use in assertions. No tests for lines with extra whitespace inside fields. Checks are not run against a Display implementation (none exists yet).\n\nFeedback: none (attempt 1). Remaining notes for the refactorer: (1) keep status_counts sorted by name; (2) the test helper pattern (.to_string() / Display) works for both String and OrderStatus, so the first three new files should compile unchanged; (3) the unvalidated-status file needs an explicit decision; (4) pre-existing fmt drift is not part of this refactor, so keep fmt diffs to the lines you edit.",
+        "structured": null,
+        "cost_usd": 0.024758400000000003,
+        "started_at": "2026-11-25T08:00:09.276209045Z",
+        "finished_at": "2026-11-25T08:01:48.775180074Z"
+      },
+      {
+        "id": "stg_01M88VK981JHTZC2K6HBYBVRTF",
+        "run": "prun_01M88VG7X547225SRNA8693DV6",
+        "stage_id": "refactor",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88VK98ASJTH6ZEKH29GGDMA",
+        "aether_task": "tsk_01M88VK98ASJTH6ZEKH29GGDMB",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "critical",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Refactored Order::status from String to a typed OrderStatus enum on branch archon/wx0f1rw6-refactor-order-status-string-into-orders (local, not pushed). Head 7aa8be2dd6258a92ac8bfe6c64827b8bf8ee4b52, tree f7ea7e45c8822d02925f66da60fae1cc2337a22d, worktree clean.\n\nCommits on top of the characterization commits: f8c9b99 adds src/status.rs (OrderStatus with as_str, Display, can_transition_to, FromStr; public ParseStatusError whose Display is `unknown status \"<input>\"`) and re-exports both from the crate root. 7aa8be2 switches Order::status and every caller to the enum: pay, ship and cancel use can_transition_to, is_open matches Pending|Paid, status_counts keys a BTreeMap by as_str so the output order is unchanged, and from_line keeps its check order (field count, id, total, status) and exact error strings. Status string literals now appear only in src/status.rs.\n\nChecks on the final tree: cargo test --locked exit 0, 24 passed (11 reports, 8 transitions, 2 unvalidated-status, 3 original orders). cargo clippy --all-targets --locked -- -D warnings exit 0. cargo build --locked exit 0. cargo fmt --check exit 1, but only tests/orders.rs:40 remains, which is pre-existing and untouched; the baseline's drift in billing, order, report and shipping is gone because those files were rewritten and formatted.\n\nCharacterization references: tests/characterize_transitions.rs and tests/characterize_reports.rs are unchanged, and tests/orders.rs is unchanged. The only test file changed is tests/characterize_unvalidated_status.rs, as its header anticipated: 6 cases that set arbitrary status text (e.g. \"lost\") were removed because the enum cannot hold that state, and 2 cases were added (from_line rejects \"lost\" with the same message; \"lost\".parse::<OrderStatus>() fails naming the input). The surviving assertion is unchanged.\n\nFlagged behaviour change: Order.status is a public field, so its type change (String to OrderStatus) breaks downstream code that compares it to strings. Within this crate, every observable output is unchanged. The unrepresentable \"lost\" state no longer exists. The brief requires the enum, so this is accepted, but it is a breaking API change for callers.\n\nNot done: CLAUDE.md's assertion-density rules were not applied. The types already rule out the invalid states such assertions would check, and adding asserts would change panic behaviour, which the brief forbids. No servers were started; nothing is running.",
+        "structured": {
+          "checks": [
+            "cargo test --locked (exit 0, 24 passed, 0 failed)",
+            "cargo clippy --all-targets --locked -- -D warnings (exit 0)",
+            "cargo build --locked (exit 0)",
+            "cargo fmt --check (exit 1; pre-existing drift only in tests/orders.rs:40, untouched)"
+          ],
+          "commit": "7aa8be2dd6258a92ac8bfe6c64827b8bf8ee4b52",
+          "evidence": [
+            {
+              "caption": "cargo test --locked on final head 7aa8be2: all 4 test binaries pass, 24 tests, 0 failed",
+              "kind": "output",
+              "text": "test result: ok. 11 passed; 0 failed (characterize_reports)\ntest result: ok. 8 passed; 0 failed (characterize_transitions)\ntest result: ok. 2 passed; 0 failed (characterize_unvalidated_status)\ntest result: ok. 3 passed; 0 failed (orders)\nclippy --all-targets -D warnings: exit 0; build: exit 0"
+            }
+          ],
+          "local_commit": "7aa8be2dd6258a92ac8bfe6c64827b8bf8ee4b52",
+          "pr": {
+            "body": "Approach: src/status.rs defines OrderStatus (Pending, Paid, Shipped, Cancelled) with as_str (single source of lowercase names), Display via as_str, can_transition_to encoding pending->paid, pending->cancelled, paid->shipped, paid->cancelled, and FromStr via an ALL array matched on as_str, returning ParseStatusError (Display: unknown status \"<input>\"). ParseStatusError and OrderStatus are re-exported at the crate root; the module is private.\n\nKey files: src/status.rs (new), src/order.rs, src/billing.rs, src/shipping.rs, src/report.rs, src/lib.rs, tests/characterize_unvalidated_status.rs.\n\nObservable behaviour: error strings, status_counts name-sort order, to_line/from_line format and check order, is_open, cancel refusals, pay/ship refusals are unchanged; pinned by the characterization tests, which pass unmodified except for the unvalidated-status file.\n\nTests: cargo test --locked 24 passed (was 28: 6 arbitrary-status cases removed, 2 FromStr/from_line cases added). clippy -D warnings and build pass. cargo fmt --check still fails only at tests/orders.rs:40 (pre-existing).\n\nAssumptions and limits: Order.status is a pub field, so its type change is a breaking API change for external callers. The arbitrary-status state that tests/characterize_unvalidated_status.rs pinned is no longer representable; the brief mandates the enum. CLAUDE.md assertion-density rules not applied: invalid states are type-excluded, and asserts would change panic behaviour.",
+            "risk": "high",
+            "summary": "made order status a typed enum. now status literals live only in src/status.rs and transitions use can_transition_to. before: Order.status String compared to literals in 4 modules; now: OrderStatus, observable output unchanged.",
+            "title": "refactor: store order status as OrderStatus enum"
+          },
+          "risk": {
+            "level": "high",
+            "why": "Changes the public type of the pub field Order::status from String to OrderStatus, which breaks any external caller that compares or assigns it as a string. Touches report parsing and error paths. Behaviour inside the crate is unchanged and verified by 24 passing tests, but the breaking public API change pushes the rating to high per the API-break rubric."
+          },
+          "tree": "f7ea7e45c8822d02925f66da60fae1cc2337a22d"
+        },
+        "cost_usd": 0.02375492,
+        "started_at": "2026-11-25T08:01:48.801759779Z",
+        "finished_at": "2026-11-25T08:03:33.070800864Z"
+      },
+      {
+        "id": "stg_01M88VPF4P97X9AP8ZH9KDF749",
+        "run": "prun_01M88VG7X547225SRNA8693DV6",
+        "stage_id": "verify",
+        "kind": "test",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88VPF5CRH7HA3Y1DRNXB526",
+        "aether_task": "tsk_01M88VPF5CRH7HA3Y1DRNXB527",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "pass",
+        "risk_class": "critical",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Verified the OrderStatus refactor on archon/wx0f1rw6-refactor-order-status-string-into-orders at 7aa8be2. The worktree was clean before and after my checks, and nothing is running.\n\nChecks on HEAD, all run with CARGO_TARGET_DIR in the item cache:\n- cargo test --locked: exit 0, 24 passed (3 orders, 11 reports, 8 transitions, 2 unvalidated-status).\n- cargo clippy --all-targets --locked -- -D warnings: exit 0.\n- cargo build --locked: exit 0.\n- cargo fmt --check: exit 1, only tests/orders.rs:40. That is an untouched original file that also failed at baseline, and it is not a refactor failure.\n- rustfmt --check on src/status.rs and the three characterization test files: exit 0.\n- grep: status literals in src/ appear only in src/status.rs.\n\nTest modifications:\n- tests/orders.rs, tests/characterize_reports.rs and tests/characterize_transitions.rs are byte-identical to their introducing commits.\n- tests/characterize_unvalidated_status.rs lost its 6 \"lost\"-status cases. The enum makes those states unconstructible, which the brief requires. The surviving from_line assertion is unchanged, and 2 parse-level cases were added. I accept this as justified, but it is a deliberate behaviour change for the operator to acknowledge.\n\nPublic-surface comparison: I ran a 71-line probe against baseline e67c115 and HEAD, using separate target dirs. It covers pay/ship/cancel from every state, is_open, status_counts, outstanding_cents, ready_to_ship, to_line and 45 from_line inputs. Output is byte-identical.\n\nDifferences found:\n- Order's derived Debug now prints `status: Pending` instead of `status: \"pending\"`. This follows from the mandated type.\n- Callers that compare `order.status` to a string break. This is a required API change.\n\nVerdict: pass. No blocking findings. The evidence is published as artifact verify-evidence. The throwaway probe directory is removed.\n\nVERDICT: PASS",
+        "structured": {
+          "findings": [
+            {
+              "blocking": false,
+              "detail": "Baseline prints status: \"pending\"; HEAD prints status: Pending. Follows from the mandated OrderStatus field type with derived Debug.",
+              "path": "src/order.rs:6",
+              "severity": "medium",
+              "title": "Order Debug output changed: status now prints as enum variant"
+            },
+            {
+              "blocking": false,
+              "detail": "The 6 tests setting Order.status=\"lost\" were removed; the enum makes those states unconstructible, which the brief requires. The from_line rejection assertion is kept verbatim and 2 parse-level tests were added. Baseline probe confirms the old behaviour, and operator should acknowledge it.",
+              "path": "tests/characterize_unvalidated_status.rs:1",
+              "severity": "high",
+              "title": "Unrepresentable 'lost' status: 6 characterization cases removed"
+            },
+            {
+              "blocking": false,
+              "detail": "Only diff is tests/orders.rs:40, an untouched original file that also failed at baseline. Refactor-touched files are fmt-clean.",
+              "path": "tests/orders.rs:40",
+              "severity": "medium",
+              "title": "cargo fmt --check fails on pre-existing original test file"
+            },
+            {
+              "blocking": false,
+              "detail": "Callers comparing order.status to strings will no longer compile. Required by the brief and flagged by the refactorer.",
+              "path": "src/order.rs:6",
+              "severity": "low",
+              "title": "Downstream API break from Order.status type change"
+            },
+            {
+              "blocking": false,
+              "detail": "Literals appear in src/ only in src/status.rs. Tests pin expected strings; the brief's rule is read as applying to src/ only.",
+              "path": "src/status.rs:22",
+              "severity": "low",
+              "title": "Status literals remain in tests/ (assumed allowed)"
+            }
+          ],
+          "verdict": "pass"
+        },
+        "cost_usd": 0.033239830000000005,
+        "started_at": "2026-11-25T08:03:33.142132898Z",
+        "finished_at": "2026-11-25T08:05:50.447539737Z"
+      },
+      {
+        "id": "stg_01M88VTN8D58NWQN5V0DRMV732",
+        "run": "prun_01M88VG7X547225SRNA8693DV6",
+        "stage_id": "review",
+        "kind": "review",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88VTN95DYFBRX0Q8GSVFDP0",
+        "aether_task": "tsk_01M88VTN95GPWXY5GQERAV5ZXF",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "pass",
+        "risk_class": "critical",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Review of the OrderStatus refactor at 7aa8be2 (branch archon/wx0f1rw6-refactor-order-status-string-into-orders). The structural goal is met: Order::status is an OrderStatus enum, src/status.rs holds as_str, Display, can_transition_to, FromStr with ParseStatusError, and the crate root re-exports both. pay, ship and cancel use can_transition_to, and status-name literals in src/ appear only in src/status.rs. The worktree is clean. Behaviour is preserved for every typed state; the only observable changes are the mandated ones (Order.status type, Debug output, and the unrepresentable \"lost\" state). I checked this by building a clean git-archive copy of HEAD: cargo test --locked passed 24/24 (3 orders, 11 reports, 8 transitions, 2 unvalidated-status), and cargo clippy --all-targets -D warnings passed. cargo fmt --check fails only on tests/orders.rs:40, which is untouched and pre-existing; the new files pass rustfmt. Note: cargo test run directly in the worktree with the item cache failed with a spurious E0432 (stale fingerprint), so the clean-copy run is the reliable evidence. Findings are all non-blocking: the public API break is brief-mandated, the removal of six \"lost\" cases is justified, and the ALL const duplicates the variant list. Risk is high because the public field type change breaks callers. VERDICT: PASS",
+        "structured": {
+          "findings": [
+            {
+              "blocking": false,
+              "detail": "Order.status changed from String to OrderStatus, and derived Debug now prints `status: Pending` instead of `status: \"pending\"`. Downstream code that compares order.status to a string will not compile. Required by the brief, but the PR must call it out as a breaking change.",
+              "path": "src/order.rs:6",
+              "severity": "medium",
+              "title": "Breaking public API change on Order.status (brief-mandated)"
+            },
+            {
+              "blocking": false,
+              "detail": "tests/characterize_unvalidated_status.rs dropped its six cases that set arbitrary status text, because the enum cannot hold it. The surviving from_line assertion is byte-identical in expected output, and two parse-level cases were added. Justified by the brief and the file's header; the operator should acknowledge the behaviour change.",
+              "path": "tests/characterize_unvalidated_status.rs:1",
+              "severity": "low",
+              "title": "Six 'lost'-status characterization cases removed"
+            },
+            {
+              "blocking": false,
+              "detail": "OrderStatus::ALL repeats the four variants, so a future variant added to the enum and to as_str can be forgotten in ALL, and from_str would silently reject it. A small exhaustive match over the names in from_str, or a unit test that checks ALL covers every as_str value, would prevent this.",
+              "path": "src/status.rs:10",
+              "severity": "low",
+              "title": "ALL array duplicates the variant list"
+            },
+            {
+              "blocking": false,
+              "detail": "cargo test --locked run directly in the worktree with the item CARGO_TARGET_DIR failed with E0432 (no OrderStatus in the crate root), although HEAD's lib.rs re-exports it. A clean git-archive copy passes 24/24. Likely a stale mtime fingerprint in the shared cache. Before any further test run in this worktree, run `cargo clean -p orders` against the item cache so the evidence is reproducible.",
+              "path": "tests/characterize_unvalidated_status.rs:3",
+              "severity": "low",
+              "title": "Stale shared build cache gives false compile failure in worktree"
+            },
+            {
+              "blocking": false,
+              "detail": "The refactorer did not add assertions to the new functions. That is defensible: the enum rules out the invalid states, and panicking asserts would change behaviour. Consider noting the deviation in the PR description.",
+              "path": "src/status.rs:17",
+              "severity": "low",
+              "title": "CLAUDE.md assertion-density rule not applied"
+            }
+          ],
+          "risk": {
+            "level": "high",
+            "why": "Public API type change on Order.status breaks downstream callers that compare it to strings; the change is also cross-cutting across every module."
+          },
+          "verdict": "pass"
+        },
+        "cost_usd": 0.021034369999999997,
+        "started_at": "2026-11-25T08:05:50.477860135Z",
+        "finished_at": "2026-11-25T08:07:06.067914153Z"
+      }
+    ],
+    "spent_usd": 0.10278752,
+    "gates": [],
+    "plan_origins": {
+      "baseline": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T08:00:09.105848665Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T08:00:09.107970676Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T08:00:09.105848665Z"
+          }
+        }
+      ],
+      "refactor": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T08:00:09.105848665Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T08:00:09.107970676Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T08:00:09.105848665Z"
+          }
+        }
+      ],
+      "review": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T08:00:09.105848665Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T08:00:09.107970676Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T08:00:09.105848665Z"
+          }
+        }
+      ],
+      "verify": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T08:00:09.105848665Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T08:00:09.107970676Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T08:00:09.105848665Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "baseline": "high",
+      "refactor": "high",
+      "review": "medium",
+      "verify": "high"
+    }
+  }
+]

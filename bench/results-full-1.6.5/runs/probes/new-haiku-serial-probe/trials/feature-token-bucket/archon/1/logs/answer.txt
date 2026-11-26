@@ -1,0 +1,25 @@
+I queued the rate limiter as item `qi_01M88P0ETBT1FRMZYDW8B7Q53H`. I have not written any code myself.
+
+- **Repository:** `feature-token-bucket` (ship mode local, base `main`).
+- **Pipeline:** `direct`, one agent implements, tests and commits. Review is `standard`, since the spec has edge cases (clock moving backwards, `max_keys` limits, constructor validation) that could hide a slip.
+- **Model:** balanced tier, medium effort.
+- **Scope:** every requirement in `SPEC.md` (including error and edge cases), tests added to `test_ratelimit.py`, standard library only, existing tests still passing, committed on the item's branch.
+
+I chose `direct` over `adaptive` because the spec has no concurrency or locking requirement. If the agent finds threading needs in the spec, it should be re-routed.
+
+I'll report when the item finishes or fails.
+
+Done: Implement rate limiter per SPEC.md in ratelimit.py. Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py, with 25 unit tests in test_ratelimit.py covering every requirement and error case. Committed as f5d98a857fd6360a97604f114e1687e8d0c5c081 (tree 5831715d2a60c90514210d05e5656fd5c87195ee) on archon/w8b7q53h-implement-rate-limiter-per-spec-md-in-ra, under the repo's configured identity; not pushed. Standard library only. Checks: python3 -m unittest -v test_ratelimit gives 25 OK; before the change the 3 existing tests errored with NotImplementedError. Review: pass with no blocking findings, reviewer agt_01M88P2HW369XY3KMYB9SR5XM6. Non-blocking follow-ups: a wait_time round trip can miss by about 3e-10 tokens from float rounding, and a clock returning NaN at construction leaves the bucket without refill; neither is covered by a test. Assumed no thread-safety requirement, since the spec is silent. Still running: reviewer's leftover process pid 1955561 (a claude -p session); it stops when this stage ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88P2HW369XY3KMYB9SR5XM6)
+
+SHIPPED: commit f5d98a857fd6360a97604f114e1687e8d0c5c081 on the run branch
+Branch `archon/w8b7q53h-implement-rate-limiter-per-spec-md-in-ra` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-z4sn2xp1/archon-bench/work/20261125T062211Z/2172b91c58091c39e1cc3e14/feature-token-bucket holds it (2 files changed, 243 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M88P0ETBT1FRMZYDW8B7Q53H`; land it in `main`: `archon merge qi_01M88P0ETBT1FRMZYDW8B7Q53H`.
+
+Rate limiter implemented in ratelimit.py per SPEC.md and committed as f5d98a857fd6360a97604f114e1687e8d0c5c081 on branch archon/w8b7q53h-implement-rate-limiter-per-spec-md-in-ra (local only, not pushed). Standard library only. `python3 -m unittest -v test_ratelimit` runs 25 tests, all OK; before the change the 3 existing tests failed with NotImplementedError. Review passed with no blocking findings. Non-blocking follow-ups: a wait_time round trip can miss by about 3e-10 tokens from float rounding, and a clock returning NaN at construction leaves the bucket without refill; neither is covered by a test. The spec is silent on thread safety, so none was added. Cost $0.04.
+
+Implemented TokenBucket and KeyedLimiter per SPEC.md in ratelimit.py, with 25 unit tests in test_ratelimit.py covering every requirement and error case. Committed as f5d98a857fd6360a97604f114e1687e8d0c5c081 (tree 5831715d2a60c90514210d05e5656fd5c87195ee) on archon/w8b7q53h-implement-rate-limiter-per-spec-md-in-ra, under the repo's configured identity; not pushed. Standard library only. Checks: python3 -m unittest -v test_ratelimit gives 25 OK; before the change the 3 existing tests errored with NotImplementedError. Review: pass with no blocking findings, reviewer agt_01M88P2HW369XY3KMYB9SR5XM6. Non-blocking follow-ups: a wait_time round trip can miss by about 3e-10 tokens from float rounding, and a clock returning NaN at construction leaves the bucket without refill; neither is covered by a test. Assumed no thread-safety requirement, since the spec is silent. Still running: reviewer's leftover process pid 1955561 (a claude -p session); it stops when this stage ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88P2HW369XY3KMYB9SR5XM6)
+
+SHIPPED: commit f5d98a857fd6360a97604f114e1687e8d0c5c081 on the run branch

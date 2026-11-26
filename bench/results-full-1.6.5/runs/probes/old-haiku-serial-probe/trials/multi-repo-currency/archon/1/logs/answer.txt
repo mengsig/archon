@@ -1,0 +1,43 @@
+I've queued the multi-currency change as one initiative, `ini_01M88PQY14XY3CCWBBD7XXE3GC`, so both repositories build against the same contract.
+
+- **`ledger`** (`qi_01M88PQY15DGRJ4BDZ7FTGPQ8E`): optional fourth TSV column, default `USD`. The header becomes `date,account,amount_cents,currency`. A malformed currency exits 2 with the line number on stderr; other input errors still exit 1.
+- **`reports`** (`qi_01M88PQY19TSXCWKPPPKYQJNTK`): totals per account and currency, output `account,currency,total_cents` sorted by account then currency. Old CSV without a currency column counts as `USD`. A malformed currency exits 2 with an error on stderr.
+
+Both use the `direct` pipeline with standard review, and both ship local, so each commit lands on a local branch and nothing is pushed. Each member updates its README and keeps its existing tests passing. I'll report when the initiative finishes.
+
+Done: reports: per account and currency totals. Implemented per-account, per-currency totals in the reports repo on archon/pkyqjntk-reports-per-account-and-currency-totals, committed as a1cd20d (not pushed). reports.py now reads the optional currency column (missing means USD), sums per (account, currency), and prints account,currency,total_cents sorted by account then currency. A malformed currency code (anything but exactly three uppercase ASCII letters, including empty) prints an error naming the account to stderr, writes nothing to stdout, and exits 2. README documents the format and error behaviour. Checks: `python3 -m unittest` passes 4/4 on the final head (tree 2b35d9c1df3ef488b84e31c93c7b6eb209037199). Before: the currency was ignored, so EUR and USD rows were summed together (rent,-120100) and a malformed `eur` was accepted. Independent review (agt_01M88PSCPN8N0F20XT0HP7PBBV) passed the commit with no blocking findings. Open follow-ups, non-blocking: (1) a row with a missing amount_cents raises an uncaught TypeError (pre-existing, unchanged); (2) the malformed-currency test does not assert the account name the README promises. Nothing is left running. Risk is high: the CLI output header changes, so any caller parsing the old account,total_cents output will break.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88PSCPN8N0F20XT0HP7PBBV)
+
+SHIPPED: commit a1cd20db78ae4f3a3472ed32211acbb2cdf181bd on the run branch
+Branch `archon/pkyqjntk-reports-per-account-and-currency-totals` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-d56p74a0/archon-bench/work/20261125T062211Z/f8b1662955d90fe093619b2a/reports holds it (3 files changed, 93 insertions(+), 18 deletions(-)). Review: `archon diff qi_01M88PQY19TSXCWKPPPKYQJNTK`; land it in `main`: `archon merge qi_01M88PQY19TSXCWKPPPKYQJNTK`.
+
+Done: ledger: currency column and validation. Repaired the review record only; no code changed. The branch head ba3cf5e (currency column and validation, already committed by the earlier attempt) was re-checked: `cargo test` passes, 10 passed, 0 failed, with CARGO_TARGET_DIR set to the item cache. Tree 09597a3310fb2c00f79e24bfe3dab2e42826b887. Reviewer agt_01M88PVXHAD2QTPFDR7J4EJECQ read the whole change from base d27c400 to head ba3cf5e and passed it with no blocking findings. It confirmed the header, the USD default, exit 2 for a malformed currency with `line N:` on stderr, and exit 1 for other input errors. One non-blocking follow-up: an empty 4th column (a trailing tab) is rejected as a bad currency with exit 2 rather than defaulting to USD. This is untested and not in the README; left as is, since it is not blocking. Risk is high: the CSV header and the exit-status mapping change for existing callers, as the spec requires. Nothing is left running; no servers or stacks were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88PVXHAD2QTPFDR7J4EJECQ)
+
+SHIPPED: commit ba3cf5ee9ce8e65fda98d664ccd8601919c802ea on the run branch
+Branch `archon/7ftgpq8e-ledger-currency-column-and-validation` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-d56p74a0/archon-bench/work/20261125T062211Z/f8b1662955d90fe093619b2a/ledger holds it (4 files changed, 164 insertions(+), 16 deletions(-)). Review: `archon diff qi_01M88PQY15DGRJ4BDZ7FTGPQ8E`; land it in `main`: `archon merge qi_01M88PQY15DGRJ4BDZ7FTGPQ8E`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M88PQY15DGRJ4BDZ7FTGPQ8E ended and its cargo target directory went.
+
+Multi-currency change finished; both members succeeded and passed review.
+
+- ledger (ba3cf5e on its run branch): `cargo test` 10/10 passing. Header is `date,account,amount_cents,currency`, missing currency defaults to USD, malformed currency exits 2 with `line N:` on stderr, other input errors exit 1. Follow-up not in the README: an empty 4th column (trailing tab) is rejected with exit 2, not defaulted to USD.
+- reports (a1cd20d on archon/pkyqjntk-reports-per-account-and-currency-totals): `python3 -m unittest` 4/4 passing. Totals are per account and currency, sorted by account then currency. Old CSV without a currency column counts as USD. A malformed currency exits 2 with an error naming the account. Follow-ups: a row with a missing amount_cents raises an uncaught TypeError (pre-existing), and the malformed-currency test does not check the account name.
+
+Both commits are on local run branches, not main, and nothing was pushed. The output format changes in both tools, so any caller parsing the old header will break. Say if you want the branches merged to main.
+
+Implemented per-account, per-currency totals in the reports repo on archon/pkyqjntk-reports-per-account-and-currency-totals, committed as a1cd20d (not pushed). reports.py now reads the optional currency column (missing means USD), sums per (account, currency), and prints account,currency,total_cents sorted by account then currency. A malformed currency code (anything but exactly three uppercase ASCII letters, including empty) prints an error naming the account to stderr, writes nothing to stdout, and exits 2. README documents the format and error behaviour. Checks: `python3 -m unittest` passes 4/4 on the final head (tree 2b35d9c1df3ef488b84e31c93c7b6eb209037199). Before: the currency was ignored, so EUR and USD rows were summed together (rent,-120100) and a malformed `eur` was accepted. Independent review (agt_01M88PSCPN8N0F20XT0HP7PBBV) passed the commit with no blocking findings. Open follow-ups, non-blocking: (1) a row with a missing amount_cents raises an uncaught TypeError (pre-existing, unchanged); (2) the malformed-currency test does not assert the account name the README promises. Nothing is left running. Risk is high: the CLI output header changes, so any caller parsing the old account,total_cents output will break.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88PSCPN8N0F20XT0HP7PBBV)
+
+SHIPPED: commit a1cd20db78ae4f3a3472ed32211acbb2cdf181bd on the run branch
+
+Repaired the review record only; no code changed. The branch head ba3cf5e (currency column and validation, already committed by the earlier attempt) was re-checked: `cargo test` passes, 10 passed, 0 failed, with CARGO_TARGET_DIR set to the item cache. Tree 09597a3310fb2c00f79e24bfe3dab2e42826b887. Reviewer agt_01M88PVXHAD2QTPFDR7J4EJECQ read the whole change from base d27c400 to head ba3cf5e and passed it with no blocking findings. It confirmed the header, the USD default, exit 2 for a malformed currency with `line N:` on stderr, and exit 1 for other input errors. One non-blocking follow-up: an empty 4th column (a trailing tab) is rejected as a bad currency with exit 2 rather than defaulting to USD. This is untested and not in the README; left as is, since it is not blocking. Risk is high: the CSV header and the exit-status mapping change for existing callers, as the spec requires. Nothing is left running; no servers or stacks were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88PVXHAD2QTPFDR7J4EJECQ)
+
+SHIPPED: commit ba3cf5ee9ce8e65fda98d664ccd8601919c802ea on the run branch

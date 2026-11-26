@@ -1,0 +1,102 @@
+diff --git a/retry_budget.py b/retry_budget.py
+index 07b3b5e..3eec823 100644
+--- a/retry_budget.py
++++ b/retry_budget.py
+@@ -3,4 +3,55 @@
+ 
+ def retry_delay(attempt, elapsed_ms, *, max_attempts=4, budget_ms=1000,
+                 base_ms=100, cap_ms=400, retry_after_ms=None):
+-    raise NotImplementedError
++    """Return the required wait before another attempt, or ``None``.
++
++    The initial request counts as attempt one.  Inputs are validated even if
++    the attempt limit has already been reached.
++    """
++    integers = {
++        "attempt": attempt,
++        "elapsed_ms": elapsed_ms,
++        "max_attempts": max_attempts,
++        "budget_ms": budget_ms,
++        "base_ms": base_ms,
++        "cap_ms": cap_ms,
++    }
++    if retry_after_ms is not None:
++        integers["retry_after_ms"] = retry_after_ms
++
++    for name, value in integers.items():
++        if type(value) is not int:
++            raise ValueError(f"{name} must be a built-in int")
++
++    if attempt < 1:
++        raise ValueError("attempt must be at least 1")
++    if max_attempts < 1:
++        raise ValueError("max_attempts must be at least 1")
++    for name in ("elapsed_ms", "budget_ms", "base_ms", "cap_ms",
++                 "retry_after_ms"):
++        value = integers.get(name)
++        if value is not None and value < 0:
++            raise ValueError(f"{name} must be at least 0")
++
++    if attempt >= max_attempts:
++        return None
++
++    # Compare the exponent's bit length to the cap first, so even enormous
++    # attempt values never cause construction of an enormous power of two.
++    if base_ms == 0 or cap_ms == 0:
++        backoff = 0
++    elif base_ms >= cap_ms:
++        backoff = cap_ms
++    else:
++        exponent = attempt - 1
++        # Once 2**exponent reaches ceil(cap/base), the capped result is cap.
++        threshold = (cap_ms + base_ms - 1) // base_ms
++        if exponent >= threshold.bit_length():
++            backoff = cap_ms
++        else:
++            backoff = min(cap_ms, base_ms << exponent)
++
++    delay = max(backoff, retry_after_ms or 0)
++    if elapsed_ms + delay >= budget_ms:
++        return None
++    return delay
+diff --git a/test_retry_budget.py b/test_retry_budget.py
+index f3df8dd..4534ef9 100644
+--- a/test_retry_budget.py
++++ b/test_retry_budget.py
+@@ -16,3 +16,36 @@ class RetryBasics(unittest.TestCase):
+     def test_retry_after(self):
+         self.assertEqual(retry_delay(1, 0, retry_after_ms=250), 250)
+         self.assertEqual(retry_delay(1, 0, retry_after_ms=25), 100)
++
++
++class RetryBoundaries(unittest.TestCase):
++    def test_validation_precedes_early_returns(self):
++        for kwargs in ({"attempt": True}, {"elapsed_ms": 1.0},
++                       {"max_attempts": False}, {"budget_ms": -1},
++                       {"base_ms": -1}, {"cap_ms": -1},
++                       {"retry_after_ms": -1}):
++            values = {"attempt": 4, "elapsed_ms": 0}
++            values.update(kwargs)
++            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
++                retry_delay(**values)
++
++    def test_attempt_greater_than_limit_is_valid(self):
++        self.assertIsNone(retry_delay(5, 0))
++
++    def test_zero_delay_and_strict_budget(self):
++        self.assertEqual(retry_delay(1, 0, base_ms=0), 0)
++        self.assertEqual(retry_delay(1, 0, cap_ms=0), 0)
++        self.assertIsNone(retry_delay(1, 900, base_ms=100, budget_ms=1000))
++        self.assertEqual(retry_delay(1, 899, base_ms=100, budget_ms=1000), 100)
++
++    def test_retry_after_is_not_capped_and_must_fit_whole(self):
++        self.assertEqual(retry_delay(1, 0, retry_after_ms=500), 500)
++        self.assertIsNone(retry_delay(1, 500, retry_after_ms=500,
++                                      budget_ms=1000))
++
++    def test_large_attempt_saturates(self):
++        self.assertEqual(retry_delay(10**100, 0, max_attempts=10**100 + 1),
++                         400)
++
++    def test_base_above_cap(self):
++        self.assertEqual(retry_delay(1, 0, base_ms=900, cap_ms=2), 2)

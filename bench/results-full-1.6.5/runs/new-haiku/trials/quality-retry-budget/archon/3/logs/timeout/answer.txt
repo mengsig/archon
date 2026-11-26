@@ -1,0 +1,11 @@
+I queued the work as item `qi_01M88Z3WFFAD70PVV7EC4K3X86` in the `direct` pipeline on `quality-retry-budget`. I have not started any changes myself.
+
+- **Scope:** one item covers `retry_budget.py` and `test_retry_budget.py`. The spec is a single pure function, so splitting it would add overhead without benefit.
+- **Brief:** it carries the full spec rules: exact signature, validation before any early return, the exponent saturation requirement, the `retry_after` floor that ignores `cap_ms`, and the strict budget boundary. It also asks for stdlib `unittest` tests covering each validation error and boundary case.
+- **Commit:** the agent is told to commit on the local branch with the repository's existing git identity, and not to push. Attribution lines are excluded per your CLAUDE.md.
+- **Review and model:** `review: standard` (one reviewer), `balanced` tier at `medium` effort. This is my judgement, since the function is small and pure but correctness-sensitive.
+- **Notification:** the item is tagged `notify`, so you will hear when it finishes, including on success.
+
+I'll report the outcome, including test results and the commit id, when the item completes.
+
+Cancelled: Implement retry_budget.py per SPEC.md with focused tests. archon-bench: trial timeout

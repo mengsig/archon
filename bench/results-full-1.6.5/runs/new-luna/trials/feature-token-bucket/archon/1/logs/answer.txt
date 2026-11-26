@@ -1,0 +1,16 @@
+Quota pace is projected to exhaust Codex’s primary window around 2026-11-26 13:21 UTC, before its 2026-11-28 20:29 UTC reset. I’m keeping this change to one direct implementation run; future work may need lower concurrency/effort or another provider.
+
+Queued as `qi_01M8849SN0D7EAM184NT7K0DRG` on the `direct` pipeline. It will implement the spec, run the relevant tests, and commit the change.
+
+Done: Implement the SPEC.md rate limiter. Implemented the SPEC.md token bucket and bounded keyed LRU limiter in ratelimit.py, with tests for refill, wait_time, clock rollback, validation, and eviction. All 9 unit tests, syntax compilation, and git diff --check passed. Committed as fd06f80; independent review passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M884CCFCWMVNHSGYP6PTRNHE)
+
+SHIPPED: commit fd06f80fd0b875cab877735ec6bea3f631e84a0c on the run branch
+Branch `archon/nt7k0drg-implement-the-spec-md-rate-limiter` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-dwsb1bl5/archon-bench/work/20261125T011222Z/8edce6f6039acd2b4585e780/feature-token-bucket holds it (2 files changed, 123 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8849SN0D7EAM184NT7K0DRG`; land it in `main`: `archon merge qi_01M8849SN0D7EAM184NT7K0DRG`.
+
+Implemented the SPEC.md token bucket and bounded keyed LRU limiter in ratelimit.py, with tests for refill, wait_time, clock rollback, validation, and eviction. All 9 unit tests, syntax compilation, and git diff --check passed. Committed as fd06f80; independent review passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M884CCFCWMVNHSGYP6PTRNHE)
+
+SHIPPED: commit fd06f80fd0b875cab877735ec6bea3f631e84a0c on the run branch

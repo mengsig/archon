@@ -1,0 +1,24 @@
+Cursor pagination is in place in `inventory-api`, and `inventory-client`'s `listItems` now follows `next_cursor` to the end. Both suites pass (`python3 -m unittest` and `npm test`), and both changes are committed.
+
+**Commits**
+- `inventory-api` `1b34563`: "Add cursor pagination to GET /items"
+- `inventory-client` `c57735a`: "Make listItems follow next_cursor across pages"
+
+**API (`api.py`)**
+- `limit` accepts an integer from 1 to 100 and defaults to 20.
+- `cursor` is the id of the last item on the page, sent as a decimal string.
+- `next_cursor` is `null` when no items remain after the page. A final page that exactly fills `limit` also returns `null`.
+- Invalid `limit` or `cursor` values return 400 with `{"error": "..."}`.
+
+**Client (`client.js`)**
+- The first request sends no cursor. Each later request passes `next_cursor` back unchanged.
+- It stops when `next_cursor` is null or absent.
+- It rejects if the server returns the same cursor twice in a row, so a misbehaving server can't loop it forever. This guard goes beyond the spec; say if you'd rather drop it.
+
+**Tests and docs**
+- API tests cover the default page size, walking every page with `limit=7`, the exact-full last page, and invalid `limit` and `cursor` values.
+- Client tests cover multi-page traversal, an absent `next_cursor`, and the non-advancing cursor guard.
+- An end-to-end check ran the real client against the real API through `api_cli.py`. It returned all 57 items in order. That check was a throwaway script, not committed.
+- Both READMEs document the new parameters, the response shape, and the error behaviour.
+
+The cursor is currently a plain item id, so it is not hidden from callers. Clients should still treat it as opaque, as the spec says. If you want it obscured, I can encode it (e.g. base64) as a follow-up.

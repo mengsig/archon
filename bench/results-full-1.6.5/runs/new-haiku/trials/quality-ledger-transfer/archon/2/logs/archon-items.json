@@ -1,0 +1,295 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88W6G4V0F9RDQKB8VQS1HHX",
+      "repo": "repo_01M88W650C2HBBNCK3702HD40V",
+      "pipeline": "direct",
+      "title": "Implement ledger.py per SPEC.md with focused tests",
+      "brief": "Operator request (verbatim): \"Implement `ledger.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nGoal: make ledger.py match SPEC.md exactly. Preserve the documented API. Handle every error and boundary case the spec names. Extend test_ledger.py with focused tests for each specified error and boundary case; the existing tests cover basics only. Use only the Python standard library. Commit the work on the local branch; do not push.\n\nAcceptance criteria: every behaviour in SPEC.md is implemented and covered by a test; the full test suite passes with the standard library runner; no public API signature changes.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "ledger",
+        "operator-request"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88W6G4V0F9RDQKB8VQS1HHX",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T08:12:18.461352804Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T08:12:18.472612059Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T08:12:18.461352804Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88W6G5QM75578K96EHAD6M8",
+        "summary": "Implemented Ledger per SPEC.md in ledger.py and added 27 focused tests in test_ledger.py. All 29 tests pass under `python3 -m unittest`. Committed as 993d6442fc9028236d1d31953656076c6f065371 (tree 0848c752726eb278a9585e962c4c7a3cbb323e20) on archon/8vqs1hhx-implement-ledger-py-per-spec-md-with-foc; not pushed. Public API unchanged. Concurrency: one threading.Lock guards all operations; concurrency tests fail rather than hang. Risk: high (locking). Reviewer agt_01M88W896FB0HF4NPSX41A6XGJ passed the head with no blocking findings. Open, non-blocking: unhashable account names raise TypeError rather than KeyError (SPEC.md does not define it); str subclasses are accepted as names. A reviewer child process (pid 2429271) was handed back and will stop when this task ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88W896FB0HF4NPSX41A6XGJ)\n\nSHIPPED: commit 993d6442fc9028236d1d31953656076c6f065371 on the run branch"
+      },
+      "created_at": "2026-11-25T08:12:18.459219959Z",
+      "updated_at": "2026-11-25T08:14:06.705627431Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88W6G5QM75578K96EHAD6M8",
+        "item": "qi_01M88W6G4V0F9RDQKB8VQS1HHX",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88W6GAR9G0F293NA3AWQS5X",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-899p0x1k/archon-bench/work/20261125T065314Z/d8ab31ead21972f82747255b/.archon/data/worktrees/quality-ledger-transfer/qi_01M88W6G4V0F9RDQKB8VQS1HHX",
+        "branch": "archon/8vqs1hhx-implement-ledger-py-per-spec-md-with-foc",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented Ledger per SPEC.md in ledger.py and added 27 focused tests in test_ledger.py. All 29 tests pass under `python3 -m unittest`. Committed as 993d6442fc9028236d1d31953656076c6f065371 (tree 0848c752726eb278a9585e962c4c7a3cbb323e20) on archon/8vqs1hhx-implement-ledger-py-per-spec-md-with-foc; not pushed. Public API unchanged. Concurrency: one threading.Lock guards all operations; concurrency tests fail rather than hang. Risk: high (locking). Reviewer agt_01M88W896FB0HF4NPSX41A6XGJ passed the head with no blocking findings. Open, non-blocking: unhashable account names raise TypeError rather than KeyError (SPEC.md does not define it); str subclasses are accepted as names. A reviewer child process (pid 2429271) was handed back and will stop when this task ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88W896FB0HF4NPSX41A6XGJ)\n\nSHIPPED: commit 993d6442fc9028236d1d31953656076c6f065371 on the run branch"
+        },
+        "cost_usd": 0.031841570000000013,
+        "started_at": "2026-11-25T08:12:18.628336195Z",
+        "finished_at": "2026-11-25T08:14:06.705627431Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88W6GADR3SDYJY9GWNJSVHT",
+        "run": "prun_01M88W6G5QM75578K96EHAD6M8",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88W6GB3CM956MR5RFAJTN36",
+        "aether_task": "tsk_01M88W6GB3EH141E8M45AS3Y18",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented Ledger per SPEC.md in ledger.py and added 27 focused tests in test_ledger.py. All 29 tests pass under `python3 -m unittest`. Committed as 993d6442fc9028236d1d31953656076c6f065371 (tree 0848c752726eb278a9585e962c4c7a3cbb323e20) on archon/8vqs1hhx-implement-ledger-py-per-spec-md-with-foc; not pushed. Public API unchanged. Concurrency: one threading.Lock guards all operations; concurrency tests fail rather than hang. Risk: high (locking). Reviewer agt_01M88W896FB0HF4NPSX41A6XGJ passed the head with no blocking findings. Open, non-blocking: unhashable account names raise TypeError rather than KeyError (SPEC.md does not define it); str subclasses are accepted as names. A reviewer child process (pid 2429271) was handed back and will stop when this task ends.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest (before: 2 tests, errors=2; after: 29 tests OK)"
+          ],
+          "commit": "993d6442fc9028236d1d31953656076c6f065371",
+          "evidence": [
+            {
+              "after": "Ran 29 tests in 0.004s  OK",
+              "before": "Ran 2 tests ... FAILED (errors=2)  (NotImplementedError from Ledger.__init__)",
+              "caption": "Before: the stub fails both existing tests",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "993d6442fc9028236d1d31953656076c6f065371",
+          "pr": {
+            "body": "Approach: one threading.Lock guards all Ledger state. transfer() validates the amount, then checks accounts (KeyError), then either returns the same-account funds check or runs _move (insufficient funds and destination overflow return False before any write). Input dict and snapshots are copied. Validation helpers reject bool and float via exact type checks. Key files: ledger.py, test_ledger.py. Checks: python3 -m unittest, 29 tests OK on 993d644. Concurrency tests use fixed thread counts, join with a 30s timeout, and fail on hang. Assumptions: unhashable account names raise TypeError from the dict lookup (SPEC.md does not define this case). Public API is unchanged.",
+            "summary": "made Ledger match SPEC.md: validated construction, atomic locked transfers, copied snapshots. now every spec error and boundary case has a test. before: both methods raised NotImplementedError; now: 29 tests pass.",
+            "title": "Implement Ledger per SPEC.md with focused tests"
+          },
+          "review": {
+            "reviewed_head": "993d6442fc9028236d1d31953656076c6f065371",
+            "reviewer_agents": [
+              "agt_01M88W896FB0HF4NPSX41A6XGJ"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88W896FB0HF4NPSX41A6XGJ",
+                "base": "9921fdb87ec5c61537e85910aac07472ff4a50c8",
+                "findings": 3,
+                "head": "993d6442fc9028236d1d31953656076c6f065371",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88W896FB0HF4NPSX41A6XGJ"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M88W896FB0HF4NPSX41A6XGJ:1": {
+                "blocking": false,
+                "description": "Unhashable account names (list/dict) passed to transfer() raise TypeError from the dict membership test instead of KeyError or a documented error. SPEC.md does not define this case, so it is not a spec violation. at ledger.py:64",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88W6GADR3SDYJY9GWNJSVHT"
+                },
+                "id": "agt_01M88W896FB0HF4NPSX41A6XGJ:1",
+                "resolved_in": null
+              },
+              "agt_01M88W896FB0HF4NPSX41A6XGJ:2": {
+                "blocking": false,
+                "description": "_validate_name accepts str subclasses, so a subclass name is stored and works. Harmless, but it is looser than the 'built-in' wording used for integers. at ledger.py:9",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88W6GADR3SDYJY9GWNJSVHT"
+                },
+                "id": "agt_01M88W896FB0HF4NPSX41A6XGJ:2",
+                "resolved_in": null
+              },
+              "agt_01M88W896FB0HF4NPSX41A6XGJ:3": {
+                "blocking": false,
+                "description": "test_opposite_transfers_do_not_deadlock only asserts the total sum; it does not assert that the transfers succeeded. The test is correct, but it is weak. at test_ledger.py:165",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M88W6GADR3SDYJY9GWNJSVHT"
+                },
+                "id": "agt_01M88W896FB0HF4NPSX41A6XGJ:3",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "993d6442fc9028236d1d31953656076c6f065371",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M88W896FB0HF4NPSX41A6XGJ",
+                    "base": "9921fdb87ec5c61537e85910aac07472ff4a50c8",
+                    "finding_count": 3,
+                    "finding_ids": [
+                      "agt_01M88W896FB0HF4NPSX41A6XGJ:1",
+                      "agt_01M88W896FB0HF4NPSX41A6XGJ:2",
+                      "agt_01M88W896FB0HF4NPSX41A6XGJ:3"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Concurrency/locking in a new module with no existing callers; no persistence or migration. Reviewer agt_01M88W896FB0HF4NPSX41A6XGJ confirmed high risk and passed the head."
+          },
+          "tree": "0848c752726eb278a9585e962c4c7a3cbb323e20"
+        },
+        "cost_usd": 0.031841570000000013,
+        "started_at": "2026-11-25T08:12:18.637615489Z",
+        "finished_at": "2026-11-25T08:14:03.480500519Z"
+      }
+    ],
+    "spent_usd": 0.031841570000000013,
+    "gates": [],
+    "delegations": {
+      "stg_01M88W6GADR3SDYJY9GWNJSVHT": {
+        "direct_usd": 0.02302079000000001,
+        "delegated_usd": 0.00882078,
+        "agents": [
+          {
+            "agent": "agt_01M88W896FB0HF4NPSX41A6XGJ",
+            "parent": "agt_01M88W6GB3CM956MR5RFAJTN36",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00882078
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T08:12:18.461352804Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T08:12:18.472612059Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T08:12:18.461352804Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

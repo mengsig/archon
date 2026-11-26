@@ -1,0 +1,14 @@
+Queued as [qi_01M883DAV6DSRGT89NRN5DRN9Z](#) on the `direct` pipeline. The task asks the agent to fix `window.py` across its full input domain, leave tests unchanged, run `python3 -m unittest`, and commit the fix.
+
+Done: Fix window.py for all inputs. Fixed `sliding_windows` by including the final valid start index. Baseline `python3 -m unittest` had two failures; after the fix all 3 tests passed, and the independent review passed with no findings. Committed as 8fe8f2e9c876f22119c6dbf5c575e5d981231bbc. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M883EYR8ZH6BNFMH5NBG0Z68)
+
+SHIPPED: commit 8fe8f2e9c876f22119c6dbf5c575e5d981231bbc on the run branch
+Branch `archon/rn5drn9z-fix-window-py-for-all-inputs` in /home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-p5gy6w9p/archon-bench/work/20261125T004922Z/72e84064b850e3339a4e41fa/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M883DAV6DSRGT89NRN5DRN9Z`; land it in `main`: `archon merge qi_01M883DAV6DSRGT89NRN5DRN9Z`.
+
+Fixed `sliding_windows` by including the final valid start index. Baseline `python3 -m unittest` had two failures; after the fix all 3 tests passed, and the independent review passed with no findings. Committed as 8fe8f2e9c876f22119c6dbf5c575e5d981231bbc. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M883EYR8ZH6BNFMH5NBG0Z68)
+
+SHIPPED: commit 8fe8f2e9c876f22119c6dbf5c575e5d981231bbc on the run branch

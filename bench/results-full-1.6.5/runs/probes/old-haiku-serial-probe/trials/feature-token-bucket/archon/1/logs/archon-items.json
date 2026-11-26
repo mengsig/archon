@@ -1,0 +1,241 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M88P0HM4Q43MG8DXVTT6461C",
+      "repo": "repo_01M88P004WZKP8G7TBR3MVWPSS",
+      "pipeline": "direct",
+      "title": "Implement token bucket and keyed rate limiter in ratelimit.py per SPEC.md",
+      "brief": "Operator request (verbatim): \"Implement the rate limiter described in `SPEC.md` in `ratelimit.py` (the module currently only has stubs). Follow the spec exactly, including its error cases and edge cases; the tests in `test_ratelimit.py` only cover the basics. Keep it dependency-free (standard library only) and commit your work.\"\n\nRequirements:\n- Implement `TokenBucket` and `KeyedLimiter` in `ratelimit.py` exactly as `SPEC.md` states: validation (ValueError for capacity/refill_per_sec <= 0, n <= 0 or n > capacity, max_keys < 1), starts full, continuous refill capped at capacity, clock injected (default time.monotonic), clock going backwards changes nothing until it passes the latest seen time, LRU eviction at max_keys (try_acquire and wait_time both count as use; evicted key returns full), len() = tracked keys.\n- Standard library only. No new dependencies.\n- Add tests in `test_ratelimit.py` covering the spec's error cases and edge cases (clock regression, LRU eviction, evicted key starts full, fractional tokens, wait_time not consuming tokens). Keep existing tests passing.\n- Follow the maintainability rules: functions under 60 lines, clear names, guard clauses, no unnecessary comments, at least two meaningful assertions/validations at boundaries.\n- Commit the work on the item's branch with a clear message. Do not push. Do not add any attribution lines to the commit.\n",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "ratelimit"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M88P0HM4Q43MG8DXVTT6461C",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T06:24:12.042289078Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T06:24:12.062617161Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T06:24:12.042289078Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M88P0HSNBW4WMEQVH7FEV4TG",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 15 tests in test_ratelimit.py covering validation, refill and cap, fractional tokens, wait_time not consuming tokens, clock regression, LRU eviction (try_acquire and wait_time both count as use), evicted keys starting full, and len(). Committed as ab9c302 on archon/vtt6461c-implement-token-bucket-and-keyed-rate-li; not pushed. Checks: `python3 -m unittest -v test_ratelimit` on the final tree gives 18 tests, OK; the base stubs fail with 21 errors. No pyflakes or ruff is installed, so no linter ran; both files parse. Reviewer agt_01M88P2QX5E077E6VCTC5RXJPK passed head ab9c302 with no blocking findings. Open follow-ups (non-blocking): max_keys is not checked to be an integer (2.5 is accepted); available() and wait_time() have fewer than two assertions; KeyedLimiter re-validates n before delegating to TokenBucket, which duplicates the check. No processes were started. Review: {\"review\": {\"verdict\": \"pass\", \"reviewers\": [\"agt_01M88P2QX5E077E6VCTC5RXJPK\"]}}\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88P2QX5E077E6VCTC5RXJPK)\n\nSHIPPED: commit ab9c302f8f5f29f99532599a3642bb62573c0656 on the run branch"
+      },
+      "created_at": "2026-11-25T06:24:11.908503937Z",
+      "updated_at": "2026-11-25T06:26:02.675207154Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M88P0HSNBW4WMEQVH7FEV4TG",
+        "item": "qi_01M88P0HM4Q43MG8DXVTT6461C",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M88P0J2M0EHG9HHTBE7J2GPM",
+        "workspace": "/home/mengsig/.local/share/archon-bench/full-165-Q4J35ZNK/r-d56p74a0/archon-bench/work/20261125T062211Z/19489167f17a51bf1427fa34/.archon/data/worktrees/feature-token-bucket/qi_01M88P0HM4Q43MG8DXVTT6461C",
+        "branch": "archon/vtt6461c-implement-token-bucket-and-keyed-rate-li",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 15 tests in test_ratelimit.py covering validation, refill and cap, fractional tokens, wait_time not consuming tokens, clock regression, LRU eviction (try_acquire and wait_time both count as use), evicted keys starting full, and len(). Committed as ab9c302 on archon/vtt6461c-implement-token-bucket-and-keyed-rate-li; not pushed. Checks: `python3 -m unittest -v test_ratelimit` on the final tree gives 18 tests, OK; the base stubs fail with 21 errors. No pyflakes or ruff is installed, so no linter ran; both files parse. Reviewer agt_01M88P2QX5E077E6VCTC5RXJPK passed head ab9c302 with no blocking findings. Open follow-ups (non-blocking): max_keys is not checked to be an integer (2.5 is accepted); available() and wait_time() have fewer than two assertions; KeyedLimiter re-validates n before delegating to TokenBucket, which duplicates the check. No processes were started. Review: {\"review\": {\"verdict\": \"pass\", \"reviewers\": [\"agt_01M88P2QX5E077E6VCTC5RXJPK\"]}}\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M88P2QX5E077E6VCTC5RXJPK)\n\nSHIPPED: commit ab9c302f8f5f29f99532599a3642bb62573c0656 on the run branch"
+        },
+        "cost_usd": 0.03661049,
+        "started_at": "2026-11-25T06:24:12.298744536Z",
+        "finished_at": "2026-11-25T06:26:02.675207154Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M88P0J1VQC4XXZ0FZBV07MZ9",
+        "run": "prun_01M88P0HSNBW4WMEQVH7FEV4TG",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M88P0J3ZJSKSFM1QWDPBNY37",
+        "aether_task": "tsk_01M88P0J3ZJSKSFM1QWDPBNY38",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 15 tests in test_ratelimit.py covering validation, refill and cap, fractional tokens, wait_time not consuming tokens, clock regression, LRU eviction (try_acquire and wait_time both count as use), evicted keys starting full, and len(). Committed as ab9c302 on archon/vtt6461c-implement-token-bucket-and-keyed-rate-li; not pushed. Checks: `python3 -m unittest -v test_ratelimit` on the final tree gives 18 tests, OK; the base stubs fail with 21 errors. No pyflakes or ruff is installed, so no linter ran; both files parse. Reviewer agt_01M88P2QX5E077E6VCTC5RXJPK passed head ab9c302 with no blocking findings. Open follow-ups (non-blocking): max_keys is not checked to be an integer (2.5 is accepted); available() and wait_time() have fewer than two assertions; KeyedLimiter re-validates n before delegating to TokenBucket, which duplicates the check. No processes were started. Review: {\"review\": {\"verdict\": \"pass\", \"reviewers\": [\"agt_01M88P2QX5E077E6VCTC5RXJPK\"]}}",
+        "structured": {
+          "checks": [
+            "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_ratelimit (18 tests, OK)",
+            "python3 ast.parse of ratelimit.py and test_ratelimit.py (ok); no linter installed"
+          ],
+          "commit": "ab9c302f8f5f29f99532599a3642bb62573c0656",
+          "evidence": [
+            {
+              "after": "Ran 18 tests ... OK",
+              "before": "Ran 18 tests ... FAILED (errors=21)",
+              "caption": "Unit tests on base commit 26b4810 (stubs), new test file",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "ab9c302f8f5f29f99532599a3642bb62573c0656",
+          "pr": {
+            "body": "Approach: TokenBucket tracks tokens and the latest seen clock time; refill only advances when the clock passes that time. KeyedLimiter keeps an OrderedDict of buckets, moves a key to the end on each use, and pops the oldest key when a new key would exceed max_keys. Invalid capacity, refill_per_sec, max_keys, or n raise ValueError before any state changes. Key files: ratelimit.py, test_ratelimit.py. Checks: unittest 18 tests OK on final tree; base stubs gave 21 errors. No linter available. Assumptions/limits: max_keys is not checked to be an integer; SPEC does not require it. Follow-ups (non-blocking, reviewer): fewer than two assertions in available() and wait_time(); duplicate n validation in KeyedLimiter.",
+            "summary": "Made rate limiting available: TokenBucket and KeyedLimiter now work per SPEC.md. Before: both classes raised NotImplementedError. Now: buckets start full, refill continuously up to capacity, ignore clock regressions, and keyed limiting evicts least-recently-used keys at max_keys.",
+            "title": "Implement token bucket and keyed rate limiter"
+          },
+          "review": {
+            "reviewed_head": "ab9c302f8f5f29f99532599a3642bb62573c0656",
+            "reviewer_agents": [
+              "agt_01M88P2QX5E077E6VCTC5RXJPK"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M88P2QX5E077E6VCTC5RXJPK",
+                "base": "26b4810df1a04b53325f37d3e7ad7a6302f78cb8",
+                "findings": 3,
+                "head": "ab9c302f8f5f29f99532599a3642bb62573c0656",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M88P2QX5E077E6VCTC5RXJPK"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "New standard-library feature in one contained module with no concurrency, persistence, or security surface. Only tests and the new module changed. Reviewer confirmed medium after checking every SPEC rule; 18 tests pass."
+          },
+          "tree": "dddefa1519dc83ba5f396c2ac9aef0f9ecd717e1"
+        },
+        "cost_usd": 0.03661049,
+        "started_at": "2026-11-25T06:24:12.347035056Z",
+        "finished_at": "2026-11-25T06:25:58.917726823Z"
+      }
+    ],
+    "spent_usd": 0.03661049,
+    "gates": [],
+    "delegations": {
+      "stg_01M88P0J1VQC4XXZ0FZBV07MZ9": {
+        "direct_usd": 0.025905760000000003,
+        "delegated_usd": 0.01070473,
+        "agents": [
+          {
+            "agent": "agt_01M88P2QX5E077E6VCTC5RXJPK",
+            "parent": "agt_01M88P0J3ZJSKSFM1QWDPBNY37",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01070473
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T06:24:12.042289078Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T06:24:12.062617161Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T06:24:12.042289078Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

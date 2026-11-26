@@ -509,7 +509,14 @@ export function mountDesign(view, ctx) {
     const d = state.dialog;
     const input = d.kind === 'prompt' ? promptInput(d.defaultPrompt ?? '') : null;
     let accepted = false;
-    const answer = (accept) => { accepted = true; ctx.design.dialogAnswer(session(), accept, accept && input ? input.value : null).catch(refuse); sheet.close(); };
+    const answer = (accept) => {
+      accepted = true;
+      const text = accept && input ? input.value : null;
+      // Done now: the app may open the same dialog again before this sheet has closed.
+      dispatch({ type: 'dialog_closed', dialog: d });
+      ctx.design.dialogAnswer(session(), accept, text).catch(refuse);
+      sheet.close();
+    };
     const content = h('div', { class: 'confirm' }, h('p', { class: 'confirm-message', text: d.message }), input,
       h('button', { class: 'button button-primary button-block', type: 'button', onclick: () => answer(true) }, 'OK'),
       d.kind === 'alert' ? null : h('button', { class: 'button button-plain button-block', type: 'button', onclick: () => answer(false) }, 'Cancel'));

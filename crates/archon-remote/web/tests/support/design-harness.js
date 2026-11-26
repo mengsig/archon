@@ -69,7 +69,7 @@ const json = (res, body) => res.writeHead(200, { 'Content-Type': 'application/js
 
 function createDaemon({ appPage, fixtureApp, role }) {
   const state = { notes: [], seq: 0, ended: false, paused: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false, questions: [], summaries: [], sessionPatch: {}, sessionId: 'ds_FIXTURE', endReason: null,
-    viewportOutcomes: [], viewportsAnswered: 0, viewHolds: [], dialog: null };
+    viewportOutcomes: [], viewportsAnswered: 0, viewHolds: [], dialog: null, nextDialogs: [] };
   let stopping = false;
   const timers = new Set();
   const running = new Set();
@@ -179,7 +179,7 @@ function createDaemon({ appPage, fixtureApp, role }) {
           reply(ws, req, 'design_done', null);
         }
         state.viewportsAnswered += 1;
-        return undefined;
+        return;
       }
       case 'subscribe_design': {
         conn.subscribed = true;
@@ -188,7 +188,14 @@ function createDaemon({ appPage, fixtureApp, role }) {
         if (state.dialog) push(ws, { event: 'dialog', ...state.dialog });
         return later(() => sendFrame(conn), 50);
       }
-      case 'design_dialog_answer': state.dialog = null; return reply(ws, req, 'design_done', null);
+      case 'design_dialog_answer': {
+        state.dialog = null;
+        reply(ws, req, 'design_done', null);
+        // As an app that opens its next dialog the moment one is answered.
+        const next = state.nextDialogs.shift();
+        if (next) { state.dialog = next; broadcast({ event: 'dialog', ...next }); }
+        return;
+      }
       case 'design_unsubscribe': conn.subscribed = false; return reply(ws, req, 'design_done', null);
       case 'design_frame_ack': reply(ws, req, 'design_done', null); return later(() => sendFrame(conn), 120);
       case 'design_input': {
@@ -305,6 +312,13 @@ function createDaemon({ appPage, fixtureApp, role }) {
     openDialog({ kind = 'alert', message, defaultPrompt = null }) {
       state.dialog = { kind, message, default_prompt: defaultPrompt };
       broadcast({ event: 'dialog', ...state.dialog });
+    },
+    // Dialogs the app opens one after another, each as soon as the one before is answered.
+    openDialogs(dialogs) {
+      const [first, ...rest] = dialogs.map(({ kind = 'alert', message, defaultPrompt = null }) => ({ kind, message, default_prompt: defaultPrompt }));
+      state.nextDialogs = rest;
+      state.dialog = first;
+      broadcast({ event: 'dialog', ...first });
     },
     // The next design_viewport is refused, as archond refuses one, with `message`.
     refuseViewport(message) { state.viewportOutcomes.push({ refuse: message }); },

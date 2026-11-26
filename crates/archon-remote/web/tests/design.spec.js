@@ -440,6 +440,27 @@ test.describe('desktop', () => {
     } finally { await harness.stop(); }
   });
 
+  test('the same dialog opened again as soon as it is answered is shown and answered too', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      const sheet = page.getByRole('dialog', { name: 'The app says (alert)' });
+      const answers = () => harness.daemon.state.requests.filter((r) => r.cmd === 'design_dialog_answer').map((r) => r.accept);
+      harness.daemon.openDialogs([{ message: 'Saved' }, { message: 'Saved' }]);
+      await expect(sheet).toBeVisible();
+      await sheet.getByRole('button', { name: 'OK' }).click();
+      // The app's second alert, the same text, comes while the first sheet closes.
+      await expect.poll(answers).toEqual([true]);
+      await page.waitForTimeout(500);
+      await expect(sheet, 'the second alert is up').toHaveCount(1);
+      await sheet.getByRole('button', { name: 'OK' }).click();
+      await expect.poll(answers).toEqual([true, true]);
+      await page.waitForTimeout(500);
+      await expect(sheet).toHaveCount(0);
+      expect(harness.daemon.state.dialog).toBeNull();
+    } finally { await harness.stop(); }
+  });
+
   test('an app dialog left open while the operator was away is shown again, once', async ({ browser, page }) => {
     const harness = await open(browser, page);
     try {

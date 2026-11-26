@@ -165,6 +165,16 @@ test('a given-up switch whose fallback is refused still ends, and does not start
   assert.equal(presetMismatch(s), false);
 });
 
+test('a dialog answered and opened again with the same text is a new dialog', () => {
+  const alert = { type: 'event', event: { event: 'dialog', kind: 'alert', message: 'Saved', default_prompt: null } };
+  const first = reduce(live(), alert);
+  const answered = reduce(first, { type: 'dialog_closed', dialog: first.dialog });
+  assert.equal(answered.dialog, null);
+  const second = reduce(answered, alert);
+  assert.notEqual(second.dialog, first.dialog, 'the app opened it again');
+  assert.equal(reduce(second, { type: 'dialog_closed', dialog: first.dialog }).dialog, second.dialog, 'the first one closing late leaves it');
+});
+
 test('a dialog archond shows again to a rejoining stream is one dialog', () => {
   const alert = { type: 'event', event: { event: 'dialog', kind: 'alert', message: 'Unsaved changes', default_prompt: null } };
   const once = reduce(live(), alert);

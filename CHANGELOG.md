@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 1.6.6
+
+Released 2026-11-26.
+
+Archon 1.6.6 fixes and completes the live design preview, turns live
+design sessions on by default, and still requires **Aether 1.4.3**. Store
+schema 32 adds how each design picture was taken; pictures taken before it
+keep only their viewport. From 1.6.5, `archon update --yes` is enough; from
+an earlier release, update Aether first with `aether update --version v1.4.3`
+and restart aetherd.
+
 ### Added
 
 - The live design preview hands what a headless browser cannot show to the
@@ -16,19 +27,20 @@
   can be copied out with one press, and pasting types into the app. Only paired operator devices may
   send or fetch files; observers are refused. New requests:
   `design_file_part`, `design_file_set`, `design_file_drop`,
-  `design_download`, `design_picker_answer` and `design_go_back`.
+  `design_download`, `design_picker_answer` and `design_go_back` (#505).
 
 ### Changed
 
 - Live design sessions are enabled by default. Only items with `proposal = live`
-  start a design stage; set `[design] enabled = false` to turn sessions off.
+  start a design stage; set `[design] enabled = false` to turn sessions off
+  (#503).
 
 ### Fixed
 
 - JavaScript dialogs in the design preview show the page's message and a
   prompt's suggested answer, and still wait for the operator's answer. A page
   opening a new tab or window no longer ends the preview. On a Mac, Cmd+A, C,
-  X, V, Z and Shift+Z now run their editing command in the app.
+  X, V, Z and Shift+Z now run their editing command in the app (#505).
 - Scrolling in the live design preview works like a browser tab. A scrolled
   page's frame showed the top of the document instead: Chromium's screenshot
   clip is in page coordinates and Archon gave it the visible area's, so a
@@ -39,7 +51,7 @@
   corner, and comment-mode picks on a scrolled page find the element under the
   pointer, right-to-left pages scrolled sideways included. PageUp, PageDown, Space, the arrows, Home and End now scroll the app, wheel line and
   page steps and trackpad fractions are converted to the app's pixels, and
-  frames come ten a second while you scroll.
+  frames come ten a second while you scroll (#504).
 - Fast scrolling no longer floods archond with input or shows a red "at most
   16 requests may be in flight" error. Input goes one request at a time, and
   archond ends each within about 20 seconds, so it runs in order; meanwhile
@@ -48,14 +60,14 @@
   The web app holds any request but input past archond's in-flight limit
   until a reply comes, and a request that never gets a reply frees its place
   after 30 seconds. A preview that falls behind shows one quiet status line
-  instead of toasts.
+  instead of toasts (#504).
 - A key, mouse button or finger can no longer stay stuck down in the design
   preview. archond alone tracks what is held (a press once sent, a release
   once Chromium answers it); after any input request that fails, times out or
   is turned away, or once a page's stream ends with input still queued (and
   again after any input it had already sent runs), it lets go of everything
   held before the next request, or within about three seconds if none comes,
-  each release with its own deadline.
+  each release with its own deadline (#504).
 - A live design whose layout did not change no longer fails intent
   acceptance with a "layout gap". The ledger recorded only the CSS viewport
   of a picture shot at clip scale 2, so a 1440×900 reference was a 2880×1800
@@ -68,9 +80,10 @@
   capture, or a built picture of another pixel size, before judging, and a
   judge reports a pair still taken differently as a capture mismatch. Store
   schema 32 adds the capture to design pictures; pictures taken before it
-  keep only their viewport.
-
-- Report Aether releases below the required minimum in doctor, status, update and the installer.
+  keep only their viewport (#502).
+- `archon doctor`, `archon status`, `archon update` and the installer report
+  an installed Aether older than the required release (1.4.3) as unsupported,
+  instead of accepting it because its protocol is compatible (#501).
 
 ## 1.6.5
 

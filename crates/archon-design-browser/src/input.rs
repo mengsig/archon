@@ -245,7 +245,7 @@ impl Held {
 }
 
 impl Browser {
-    /// Dispatch `events` in order within [`INPUT_DEADLINE`], first letting go
+    /// Dispatch `events` in order within the input deadline, first letting go
     /// of whatever a lost batch left held. A failure marks this batch lost.
     pub async fn input(&self, events: &[Input]) -> Result<(), BrowserError> {
         let sh = &self.sh;

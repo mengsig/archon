@@ -1607,6 +1607,48 @@ mod stream {
         assert_eq!(browser.calls(|c| c.inputs_lost), 1);
     }
 
+    /// Input read off a connection before its stream ended can run after the
+    /// end; its press must still be let go of, so the end waits for it.
+    #[tokio::test]
+    async fn a_stream_that_ends_before_earlier_input_runs_lets_go_after_it() {
+        use archon_core::protocol::MouseAction;
+        let f = Fixture::new().await;
+        let service = f.h.ctx.design.clone();
+        let (_rx, task) = subscribe(&f, 1);
+        until("a counted subscriber", || {
+            service.subscriber_count(&f.session) == 1
+        })
+        .await;
+        let browser = f.factory.browser(0);
+        let earlier = service
+            .input_admitted(&f.session)
+            .expect("a watched session admits input");
+        task.abort();
+        let _ = task.await;
+        until("no subscribers", || {
+            service.subscriber_count(&f.session) == 0
+        })
+        .await;
+        let pressed = f
+            .operator(Request::DesignInput {
+                session: f.session.clone(),
+                events: vec![click(MouseAction::Down, 10.0)],
+            })
+            .await;
+        assert!(matches!(pressed, Ok(Reply::DesignDone)), "{pressed:?}");
+        assert_eq!(
+            browser.calls(|c| c.inputs_lost),
+            0,
+            "nothing is let go of before the earlier input ends"
+        );
+        drop(earlier);
+        assert_eq!(
+            browser.calls(|c| c.inputs_lost),
+            1,
+            "its press is let go of"
+        );
+    }
+
     #[tokio::test]
     async fn without_an_ack_the_latest_frame_wins_after_the_wait() {
         let f = Fixture::new().await;

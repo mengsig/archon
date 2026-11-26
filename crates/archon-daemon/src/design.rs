@@ -37,7 +37,7 @@ use archon_queue::Store;
 
 pub(crate) use self::assets::dimensions;
 pub use self::browser::{
-    BrowserFactory, BrowserRegistration, FrameFeed, PreviewBrowser, RealFactory,
+    AdmittedInput, BrowserFactory, BrowserRegistration, FrameFeed, PreviewBrowser, RealFactory,
 };
 pub(crate) use self::delivery::sweep;
 pub use self::recovery::recover;

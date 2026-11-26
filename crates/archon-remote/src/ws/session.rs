@@ -330,6 +330,7 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
             format!("at most {MAX_IN_FLIGHT} requests may be in flight; wait for a reply");
         return queue(session, error_frame(id, ErrorCode::Unavailable, message));
     };
+    let admitted = session.backend.admitted(&request);
     let (backend, outbox) = (session.backend.clone(), session.outbox.clone());
     let device = session.device.clone();
     let request = session.features.adapt_request(request);
@@ -341,6 +342,7 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
         };
         let _gone = outbox.send(frame).await;
         drop(permit);
+        drop(admitted);
     });
     Ok(())
 }

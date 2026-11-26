@@ -75,6 +75,12 @@ pub trait Backend: Send + Sync + 'static {
     /// `request` was refused unrun, past the session's in-flight cap. A
     /// backend whose requests carry state across each other (held preview input) hears it.
     fn refused(&self, _request: &Request) {}
+    /// `request` was admitted to run, before the session reads its next frame.
+    /// What this returns is dropped once it ends, answered or abandoned, so a
+    /// backend can order a later frame's effects after it (held preview input).
+    fn admitted(&self, _request: &Request) -> Option<Box<dyn Send>> {
+        None
+    }
 }
 
 /// One `subscribe_feed` on a device's WebSocket.

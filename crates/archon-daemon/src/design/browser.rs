@@ -462,6 +462,10 @@ pub(crate) struct RtState {
     pub launching: bool,
     /// Health probes missed in a row; one slow answer is not "down".
     pub probe_misses: u32,
+    /// Input requests admitted and not yet ended: see [`AdmittedInput`].
+    inputs_admitted: u32,
+    /// A stream ended while input was admitted: it is lost once that ends.
+    lost_after_input: bool,
 }
 
 impl Default for RtState {
@@ -486,6 +490,38 @@ impl Default for RtState {
             resolve_window: (now, 0),
             launching: false,
             probe_misses: 0,
+            inputs_admitted: 0,
+            lost_after_input: false,
+        }
+    }
+}
+
+/// An input request read off a connection, held until it ends. A stream that
+/// ends meanwhile lets go of held input only after it: it may still press.
+pub struct AdmittedInput {
+    rt: Arc<Runtime>,
+}
+
+impl std::fmt::Debug for AdmittedInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdmittedInput").finish_non_exhaustive()
+    }
+}
+
+impl Drop for AdmittedInput {
+    fn drop(&mut self) {
+        let browser = {
+            let mut st = self.rt.st();
+            debug_assert!(st.inputs_admitted > 0, "an admitted input ends once");
+            st.inputs_admitted = st.inputs_admitted.saturating_sub(1);
+            if st.inputs_admitted > 0 || !st.lost_after_input {
+                return;
+            }
+            st.lost_after_input = false;
+            st.browser.clone()
+        };
+        if let Some(browser) = browser {
+            browser.input_lost();
         }
     }
 }
@@ -919,6 +955,16 @@ impl DesignService {
             .map_or(0, |rt| rt.st().subscribers)
     }
 
+    /// Count an input request admitted for `session` until the guard drops;
+    /// `None` for a session with no runtime, which holds nothing to let go of.
+    pub fn input_admitted(&self, session: &DesignSessionId) -> Option<AdmittedInput> {
+        let rt = self.existing_runtime(session)?;
+        let mut st = rt.st();
+        st.inputs_admitted = st.inputs_admitted.checked_add(1)?;
+        drop(st);
+        Some(AdmittedInput { rt })
+    }
+
     /// A stream ended: its page closed, reset or lost its connection, and any
     /// input it still had queued, a release among it, will not come.
     pub(crate) fn subscriber_left(&self, session: &DesignSessionId) {
@@ -930,6 +976,11 @@ impl DesignService {
             st.subscribers = st.subscribers.saturating_sub(1);
             if st.subscribers == 0 {
                 st.last_sub_gone = Some(Instant::now());
+            }
+            if st.inputs_admitted > 0 {
+                // Input read before the stream ended may press after this.
+                st.lost_after_input = true;
+                return;
             }
             st.browser.clone()
         };

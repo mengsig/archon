@@ -33,9 +33,10 @@
 - A key, mouse button or finger can no longer stay stuck down in the design
   preview. archond alone tracks what is held (a press once sent, a release
   once Chromium answers it); after any input request that fails, times out or
-  is turned away, or once a page's stream ends with input still queued, it
-  lets go of everything held before the next request, or within about three
-  seconds if none comes, each release with its own deadline.
+  is turned away, or once a page's stream ends with input still queued (after
+  the input it had already sent has run), it lets go of everything held
+  before the next request, or within about three seconds if none comes, each
+  release with its own deadline.
 - A live design whose layout did not change no longer fails intent
   acceptance with a "layout gap". The ledger recorded only the CSS viewport
   of a picture shot at clip scale 2, so a 1440×900 reference was a 2880×1800

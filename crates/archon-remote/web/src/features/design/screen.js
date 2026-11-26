@@ -510,6 +510,8 @@ export function mountDesign(view, ctx) {
     const input = d.kind === 'prompt' ? promptInput(d.defaultPrompt ?? '') : null;
     let accepted = false;
     const answer = (accept) => {
+      // One answer per sheet: its buttons still take clicks while it closes.
+      if (accepted) return;
       accepted = true;
       const text = accept && input ? input.value : null;
       // Done now: the app may open the same dialog again before this sheet has closed.

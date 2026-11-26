@@ -440,7 +440,7 @@ test.describe('desktop', () => {
     } finally { await harness.stop(); }
   });
 
-  test('the same dialog opened again as soon as it is answered is shown and answered too', async ({ browser, page }) => {
+  test('the same dialog opened again as soon as it is answered is shown and answered too, even after a double click', async ({ browser, page }) => {
     const harness = await open(browser, page);
     try {
       await expect(page.locator('.design-canvas')).toBeVisible();
@@ -448,10 +448,11 @@ test.describe('desktop', () => {
       const answers = () => harness.daemon.state.requests.filter((r) => r.cmd === 'design_dialog_answer').map((r) => r.accept);
       harness.daemon.openDialogs([{ message: 'Saved' }, { message: 'Saved' }]);
       await expect(sheet).toBeVisible();
-      await sheet.getByRole('button', { name: 'OK' }).click();
+      await sheet.getByRole('button', { name: 'OK' }).dblclick();
       // The app's second alert, the same text, comes while the first sheet closes.
       await expect.poll(answers).toEqual([true]);
       await page.waitForTimeout(500);
+      expect(answers(), 'the closing sheet answers once: a second click answers nothing').toEqual([true]);
       await expect(sheet, 'the second alert is up').toHaveCount(1);
       await sheet.getByRole('button', { name: 'OK' }).click();
       await expect.poll(answers).toEqual([true, true]);

@@ -154,8 +154,8 @@ in the compose file instead. After `compose` only `$COMPOSE_PROJECT_NAME`
 and a double-quoted value of `-f`, `--file`, `--profile`, `--env-file` or
 `--project-directory` (`--profile "$PROFILE"`) may be expanded; any other
 `$VAR`, `$(…)` or backtick there is refused. A Compose call inside a quoted
-`sh -c` script is read with the shell's quoting and line continuations as
-well; one whose quoting cannot be read, or into which the outer shell
+`sh -c` script or in `eval`'s arguments is read again as the shell reads it,
+with its quoting and line continuations, as well; one whose quoting cannot be read, or into which the outer shell
 expands a variable, is refused.
 A secret, or a path to one, is
 written as a whole variable (`$DB_PASSWORD` or `${DB_PASSWORD}`), never

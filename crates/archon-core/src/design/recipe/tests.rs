@@ -217,6 +217,8 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "docker compose -f \"$COMPOSE_FILE\" --profile=\"$PROFILE\" up -d",
         "docker compose -p \"$COMPOSE_PROJECT_NAME\" --env-file \"${ENV_FILE:-.env}\" up -d",
         "sh -c 'docker compose --profile \"$COMPOSE_PROFILE\" up -d'",
+        "eval docker compose up -d",
+        "eval 'docker compose --profile \"$COMPOSE_PROFILE\" up -d'",
     ] {
         recipe(vec![step("stack", command)])
             .check()
@@ -266,6 +268,10 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "docker compose --profile --env-file \"$X\" up -d",
         "docker compose -d --profile \"$X\" up",
         "eval docker compose --profile '$X' up -d",
+        "eval docker compose --profile \"$X\" up -d",
+        "eval \"docker compose --profile $X up -d\"",
+        "sh -c 'eval docker compose --profile \"$X\" up -d'",
+        "eval eval docker compose -p other up -d",
         "sh -c \"docker compose --profile $X up -d\"",
         "sh -c 'docker compose --profile '$X' up -d'",
         "docker compose --profile \"`echo x`\" `echo -p` other up -d",

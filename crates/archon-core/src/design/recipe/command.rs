@@ -82,8 +82,8 @@ pub(super) fn check_command(field: &str, command: &str) -> Result<(), String> {
     compose_expands_safely(field, &readings)
 }
 
-/// The commands of scripts nested in words, as in `sh -c '…'`, read with the
-/// shell's quoting; a nested script naming Compose that cannot be read is refused.
+/// The commands of scripts the shell reads again, in words as in `sh -c '…'`
+/// or as `eval`'s arguments; a nested script naming Compose that cannot be read is refused.
 fn nested_commands(field: &str, commands: &[Vec<Word>]) -> Result<Vec<Vec<Word>>, String> {
     let unreadable = || {
         format!(
@@ -91,28 +91,40 @@ fn nested_commands(field: &str, commands: &[Vec<Word>]) -> Result<Vec<Vec<Word>>
         )
     };
     let mut nested = Vec::new();
-    let mut level: Vec<String> = commands.iter().flatten().map(|w| w.text.clone()).collect();
+    let mut level = commands.to_vec();
     for _ in 0..MAX_NESTING {
         let mut next = Vec::new();
-        for word in level.iter().filter(|word| may_be_script(word)) {
-            match shell_commands(word) {
-                Ok(inner) => {
-                    next.extend(inner.iter().flatten().map(|w| w.text.clone()));
-                    nested.extend(inner);
-                }
-                Err(_) if word.contains("compose") => return Err(unreadable()),
+        for script in level.iter().flat_map(|words| scripts(words)) {
+            match shell_commands(&script) {
+                Ok(inner) => next.extend(inner),
+                Err(_) if script.contains("compose") => return Err(unreadable()),
                 Err(_) => {}
             }
         }
+        nested.extend(next.iter().cloned());
         level = next;
     }
-    if level
-        .iter()
-        .any(|word| may_be_script(word) && word.contains("compose"))
-    {
+    let deeper = level.iter().flat_map(|words| scripts(words));
+    if deeper.into_iter().any(|script| script.contains("compose")) {
         return Err(unreadable());
     }
     Ok(nested)
+}
+
+/// Text the shell reads again as a script: a word that may be one, and the
+/// arguments of `eval`, which it joins with spaces, so an expansion there is
+/// read unquoted.
+fn scripts(words: &[Word]) -> Vec<String> {
+    let mut scripts: Vec<String> = words
+        .iter()
+        .filter(|word| may_be_script(&word.text))
+        .map(|word| word.text.clone())
+        .collect();
+    if let Some(eval) = words.iter().position(|word| word.text == "eval") {
+        let arguments: Vec<&str> = words[eval + 1..].iter().map(|w| w.text.as_str()).collect();
+        scripts.push(arguments.join(" "));
+    }
+    scripts
 }
 
 /// A word the shell would read differently were it run as a script; reading

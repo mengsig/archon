@@ -1,0 +1,33 @@
+**Caveat first:** the only registered repo is `review-seeded-bug` (its `package.json` name is `session-lib`), and I reviewed its mirror at the base commit `ff51ec9`. The mirror excludes uncommitted work, so if the rewrite is not committed, this review does not cover it. I made no changes and did not run the code. The findings below come from reading `src/tokens.js` and `src/encoding.js`.
+
+**1. `verify`, line 27: the signature check is a prefix match. Critical.**
+`expected.startsWith(signature)` accepts any prefix of the correct MAC, and an empty one.
+- Concrete forgery: take `base64url(JSON.stringify({user:'root', exp:9e15}))` and append a bare `.`. The split gives `signature === ''`, `startsWith('')` is true, and the token verifies as `root`, with no key needed.
+- Even with a non-empty signature, an attacker only has to guess a prefix. Each character can be found with at most 64 tries, using the accept/reject result as an oracle, so a full 43-character MAC falls in about 2,800 requests.
+- The existing test "tampered payloads are rejected" passes only because it reuses the full valid signature. Nothing covers the empty or partial signature.
+
+**2. `verify`, line 27: the comparison is not constant-time. High.**
+Even with a full-length equality check, `string` comparison leaks timing. The fix is `crypto.timingSafeEqual` on equal-length buffers. This is the timing side channel that makes finding (1) practical over the network.
+
+**3. `verify`, lines 24–29: malformed input throws instead of returning `null`. Medium (High with finding 1).**
+`JSON.parse` and `fromBase64Url` are not guarded. The verify contract is "payload or null", so callers get an exception instead.
+- With finding 1 the input `"bnVsbA."` (base64url of `null`, empty signature) makes `payload.exp` throw a TypeError, because `payload` is `null`.
+- `"eA."` (base64url of `x`) throws a SyntaxError.
+- Without finding 1, these need a valid signature to reach the parse, so the risk is lower then.
+
+**4. `verify`, line 24: extra segments are silently ignored. Medium.**
+`token.split('.')` discards everything after the second part. A valid token with `.junk` appended still verifies, so one token has many string forms. Any revocation list, dedupe or cache keyed on the token string can be bypassed this way.
+
+**5. `sign`, line 14: `ttlSeconds` is not validated. Low.**
+A negative or zero TTL silently produces an already-expired token. `ttlSeconds: NaN` gives `exp: NaN`, which `JSON.stringify` turns into `null`, so the token is issued and then always rejected. That is a silent failure, which the house rules forbid. Validate `Number.isFinite(ttlSeconds) && ttlSeconds > 0`.
+
+**6. `verify`, line 22: no secret validation, unlike `sign`. Low.**
+`sign` refuses secrets under 32 characters, but `verify` accepts any value. An empty secret gives a valid HMAC key, so the two functions enforce different policies. Share the check.
+
+**7. Design gaps, not bugs. Low.**
+- No `nbf` or clock-skew handling.
+- No audience or purpose claim, so a token signed for one use is valid for any other that shares the secret.
+- No key id, so secret rotation invalidates every outstanding token.
+- No revocation path.
+
+**Recommendation before production:** fix (1) and (2) by parsing the signature as a whole and comparing it with `timingSafeEqual`. Fix (3) by returning `null` on parse failure. Fix (4) by requiring exactly two segments. Then add tests for an empty signature, a partial signature, extra segments and malformed JSON. Do not ship until (1) is fixed.

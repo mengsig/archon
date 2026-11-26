@@ -1,0 +1,83 @@
+I queued the four tickets from `BACKLOG.md` as separate items. I did not implement them myself, since the orchestrator does not change repositories.
+
+The repository is registered as `long-backlog`, with the `tasktracker` package inside it. Each item is one direct pipeline run that makes one commit on its own branch and runs the test command. Shipping is local, so nothing is pushed.
+
+| Item | Ticket | Review | Effort |
+|---|---|---|---|
+| `qi_01M89Z45FSYRJDRXERA987VV7A` | TT-101 Reject impossible due dates | standard | medium |
+| `qi_01M89Z470NTZT0TFEPJFJ6DTY5` | TT-102 RFC 4180 CSV export | standard | medium |
+| `qi_01M89Z49CHJZGBEFHWPDC4W7F0` | TT-103 Search query syntax | standard | medium |
+| `qi_01M89Z4EW9A6JRRMFW9RHDEGZ3` | TT-104 Undo | standard | medium |
+
+Choices I made:
+- **Separate test files.** Each ticket adds its own `tests/test_ticket_ttNNN.py` and leaves `tests/test_basic.py` alone, so the four branches don't conflict.
+- **No attribution in commits.** Your CLAUDE.md says not to add Claude attribution, so I told the workers to add none, even though a later reminder asked for a Co-Authored-By line. Tell me if you want the trailer instead.
+- **Effort capped at medium.** TT-104 was first queued at high, but the model policy caps effort at medium, so I lowered it. Its brief lists the edge cases explicitly.
+
+I'll report each item's outcome as it finishes, with the test output.
+
+Done: TT-104: Undo. TT-104 (undo) implemented in one commit, 49bd6a3, on archon/9rhdegz3-tt-104-undo, based on main dcc0060. TaskStore now keeps a history stack of successful add, complete and delete calls. undo() reverts the most recent entry: removes an added task, restores the previous status of a completed task, or puts a deleted task back under its original id. Ids are never reused. With no history it raises NothingToUndo, which is defined in tasktracker/store.py. Failed operations are not recorded. Changed files: tasktracker/store.py and the new tests/test_ticket_tt104.py. Checks: python3 -m unittest discover -s tests -t . gives 13 tests, OK (4 existing, 9 new). No build step or linter in this repo. Review: one reviewer (agt_01M89Z60Z9ME0VA274N4P4CWGM) passed the head with no blocking findings. Open follow-up (non-blocking): no test covers a blank-title add leaving no history entry; the code is correct by reading. Nothing was pushed. No processes were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89Z60Z9ME0VA274N4P4CWGM)
+
+SHIPPED: commit 49bd6a3c4cb380244da57a2997a9652d1d633cd3 on the run branch
+Branch `archon/9rhdegz3-tt-104-undo` in /home/mengsig/.local/share/archon-bench/rerun-165/r-mow2bnfw/archon-bench/work/20261125T182220Z/28f51e164b8cce5151c11a14/long-backlog holds it (2 files changed, 116 insertions(+)). Review: `archon diff qi_01M89Z4EW9A6JRRMFW9RHDEGZ3`; land it in `main`: `archon merge qi_01M89Z4EW9A6JRRMFW9RHDEGZ3`.
+
+Done: TT-101: Reject impossible due dates. TT-101 done: parse_due now raises InvalidDate (ValueError subclass, message includes the input) for impossible calendar dates, unsupported forms and out-of-range offsets. It no longer clamps. Committed as 324e25e on archon/a987vv7a-tt-101-reject-impossible-due-dates, tree 16ade616de2ab73e103d0a6d9a601aaa43b461f5, on top of dcc0060. Not pushed.
+
+Changed: tasktracker/dates.py; new tests/test_ticket_tt101.py (6 tests). tests/test_basic.py is untouched.
+
+Checks: python3 -m unittest discover -s tests -t . gives 10 tests OK (4 existing, 6 new). py_compile is clean. Review: agt_01M89Z5NEASWP5VM82EWQP7R8J passed the head, risk medium confirmed.
+
+Open: one non-blocking nit. The days >= 0 assert in _offset_date is decorative because the regex only matches unsigned digits. I left it rather than edit a reviewed head. Nothing is left running: the reviewer's leftover process had already exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89Z5NEASWP5VM82EWQP7R8J)
+
+SHIPPED: commit 324e25e1d796801823723f4a8151556dc3b6836a on the run branch
+Branch `archon/a987vv7a-tt-101-reject-impossible-due-dates` in /home/mengsig/.local/share/archon-bench/rerun-165/r-mow2bnfw/archon-bench/work/20261125T182220Z/28f51e164b8cce5151c11a14/long-backlog holds it (2 files changed, 63 insertions(+), 7 deletions(-)). Review: `archon diff qi_01M89Z45FSYRJDRXERA987VV7A`; land it in `main`: `archon merge qi_01M89Z45FSYRJDRXERA987VV7A`.
+
+Done: TT-103: Search query syntax. TT-103 done: tasktracker/search.py now parses the query language (whitespace split with quoted phrases, AND, case-insensitive title match, tag:NAME exact and case-insensitive, status:open|done, QueryError on unknown fields, unknown statuses, empty tag names and unterminated quotes; blank query matches all, input order kept). Added tests/test_ticket_tt103.py (16 tests); tests/test_basic.py untouched. Full check on head da2f751 (tree cbea53cd): python3 -m unittest discover -s tests -t . gives 20 tests, OK. Before: 4 tests passed on dcc0060. Independent review passed at da2f751 with no blocking findings; follow-ups (not blocking): empty quoted phrase matches everything, quotes stripped anywhere in field values, search() has one assertion. Nothing is left running: the reviewer's leftover process had already exited. Untracked __pycache__ dirs were removed and are not committed. Nothing pushed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89Z5YDNWWJ5J7HTXFCMHG2C)
+
+SHIPPED: commit da2f751bb80d7e59efff28b6afe4fcf656bc5f07 on the run branch
+Branch `archon/pdc4w7f0-tt-103-search-query-syntax` in /home/mengsig/.local/share/archon-bench/rerun-165/r-mow2bnfw/archon-bench/work/20261125T182220Z/28f51e164b8cce5151c11a14/long-backlog holds it (2 files changed, 140 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M89Z49CHJZGBEFHWPDC4W7F0`; land it in `main`: `archon merge qi_01M89Z49CHJZGBEFHWPDC4W7F0`.
+
+Done: TT-102: RFC 4180 CSV export. TT-102 is implemented and committed on archon/jfj6dty5-tt-102-rfc-4180-csv-export as bbc3bf4 (single commit on top of main dcc0060; no push). tasktracker/export.py now writes via csv.writer with CRLF line terminators and QUOTE_MINIMAL, giving the spec header, row order, ';'-joined tags, ISO or empty due, RFC 4180 quoting and CRLF on every line. New tests are in tests/test_ticket_tt102.py; tests/test_basic.py is untouched. Check run in the worktree: `python3 -m unittest discover -s tests -t .` gives Ran 14 tests, OK. Review: reviewer agt_01M89Z74G4VC3MB1B95HC0ZX7J passed the whole change from dcc0060 to bbc3bf4 with no blocking findings, risk low. Left open (non-blocking): QUOTE_MINIMAL is the csv default and could be dropped. Untracked __pycache__ directories were not committed. Nothing is running or left started.
+review: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89Z74G4VC3MB1B95HC0ZX7J)
+
+SHIPPED: commit bbc3bf47dbb5c5c24b34af88e786c60f52075600 on the run branch
+Branch `archon/jfj6dty5-tt-102-rfc-4180-csv-export` in /home/mengsig/.local/share/archon-bench/rerun-165/r-mow2bnfw/archon-bench/work/20261125T182220Z/28f51e164b8cce5151c11a14/long-backlog holds it (2 files changed, 90 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M89Z470NTZT0TFEPJFJ6DTY5`; land it in `main`: `archon merge qi_01M89Z470NTZT0TFEPJFJ6DTY5`.
+
+TT-104 (undo) implemented in one commit, 49bd6a3, on archon/9rhdegz3-tt-104-undo, based on main dcc0060. TaskStore now keeps a history stack of successful add, complete and delete calls. undo() reverts the most recent entry: removes an added task, restores the previous status of a completed task, or puts a deleted task back under its original id. Ids are never reused. With no history it raises NothingToUndo, which is defined in tasktracker/store.py. Failed operations are not recorded. Changed files: tasktracker/store.py and the new tests/test_ticket_tt104.py. Checks: python3 -m unittest discover -s tests -t . gives 13 tests, OK (4 existing, 9 new). No build step or linter in this repo. Review: one reviewer (agt_01M89Z60Z9ME0VA274N4P4CWGM) passed the head with no blocking findings. Open follow-up (non-blocking): no test covers a blank-title add leaving no history entry; the code is correct by reading. Nothing was pushed. No processes were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89Z60Z9ME0VA274N4P4CWGM)
+
+SHIPPED: commit 49bd6a3c4cb380244da57a2997a9652d1d633cd3 on the run branch
+
+TT-103 done: tasktracker/search.py now parses the query language (whitespace split with quoted phrases, AND, case-insensitive title match, tag:NAME exact and case-insensitive, status:open|done, QueryError on unknown fields, unknown statuses, empty tag names and unterminated quotes; blank query matches all, input order kept). Added tests/test_ticket_tt103.py (16 tests); tests/test_basic.py untouched. Full check on head da2f751 (tree cbea53cd): python3 -m unittest discover -s tests -t . gives 20 tests, OK. Before: 4 tests passed on dcc0060. Independent review passed at da2f751 with no blocking findings; follow-ups (not blocking): empty quoted phrase matches everything, quotes stripped anywhere in field values, search() has one assertion. Nothing is left running: the reviewer's leftover process had already exited. Untracked __pycache__ dirs were removed and are not committed. Nothing pushed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89Z5YDNWWJ5J7HTXFCMHG2C)
+
+SHIPPED: commit da2f751bb80d7e59efff28b6afe4fcf656bc5f07 on the run branch
+
+TT-102 is implemented and committed on archon/jfj6dty5-tt-102-rfc-4180-csv-export as bbc3bf4 (single commit on top of main dcc0060; no push). tasktracker/export.py now writes via csv.writer with CRLF line terminators and QUOTE_MINIMAL, giving the spec header, row order, ';'-joined tags, ISO or empty due, RFC 4180 quoting and CRLF on every line. New tests are in tests/test_ticket_tt102.py; tests/test_basic.py is untouched. Check run in the worktree: `python3 -m unittest discover -s tests -t .` gives Ran 14 tests, OK. Review: reviewer agt_01M89Z74G4VC3MB1B95HC0ZX7J passed the whole change from dcc0060 to bbc3bf4 with no blocking findings, risk low. Left open (non-blocking): QUOTE_MINIMAL is the csv default and could be dropped. Untracked __pycache__ directories were not committed. Nothing is running or left started.
+review: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89Z74G4VC3MB1B95HC0ZX7J)
+
+SHIPPED: commit bbc3bf47dbb5c5c24b34af88e786c60f52075600 on the run branch
+
+TT-101 done: parse_due now raises InvalidDate (ValueError subclass, message includes the input) for impossible calendar dates, unsupported forms and out-of-range offsets. It no longer clamps. Committed as 324e25e on archon/a987vv7a-tt-101-reject-impossible-due-dates, tree 16ade616de2ab73e103d0a6d9a601aaa43b461f5, on top of dcc0060. Not pushed.
+
+Changed: tasktracker/dates.py; new tests/test_ticket_tt101.py (6 tests). tests/test_basic.py is untouched.
+
+Checks: python3 -m unittest discover -s tests -t . gives 10 tests OK (4 existing, 6 new). py_compile is clean. Review: agt_01M89Z5NEASWP5VM82EWQP7R8J passed the head, risk medium confirmed.
+
+Open: one non-blocking nit. The days >= 0 assert in _offset_date is decorative because the regex only matches unsigned digits. I left it rather than edit a reviewed head. Nothing is left running: the reviewer's leftover process had already exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89Z5NEASWP5VM82EWQP7R8J)
+
+SHIPPED: commit 324e25e1d796801823723f4a8151556dc3b6836a on the run branch

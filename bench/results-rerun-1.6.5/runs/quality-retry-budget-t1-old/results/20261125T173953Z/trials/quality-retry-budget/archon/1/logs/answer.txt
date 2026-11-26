@@ -1,0 +1,18 @@
+I queued the work as item `qi_01M89WPJQ99W2JT80GR297JX3Y` on the `quality-retry-budget` repo, using the `direct` pipeline with one standard-strength reviewer.
+
+I didn't edit the repo myself. The item's brief carries the operator's request and the full spec requirements: validation first, the `min(cap, base·2^(attempt−1))` backoff with saturation for huge attempts, the uncapped `retry_after` floor, and the strict budget check. It also lists the focused unittest cases to add, with `python -m unittest` as the check. The work will be committed locally and not pushed, since the repo ships local.
+
+I read `SPEC.md` and the stub before queueing. The repo is one small module with one test file, so a single author fits and no split was needed. The daemon will post the outcome when the item finishes.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md, replacing the NotImplementedError stub, and added 29 focused unittest tests to test_retry_budget.py alongside the 3 existing ones. Committed as 2f665c9b1cb5b13093a209accc27eb36543fe190 on archon/r297jx3y-implement-retry-budget-py-per-spec-md-wi (tree f9e5e5e55acc404dd41be1cab297c70cbbf3443c); not pushed. Before: the base stub made all 3 existing tests error (FAILED, errors=3). After: `python3 -m unittest` runs 32 tests, all OK; py_compile passes; pyflakes is not installed so no lint ran. One reviewer (agt_01M89WRA80T72T1CH6R9Y00FBT, claude-haiku-5-5, medium) read base 145c0e4 to head 2f665c9 and passed it with no findings; it confirmed risk low. Nothing is left running from this stage. Open: none for the spec. The reviewer's leftover process had already exited when I checked.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89WRA80T72T1CH6R9Y00FBT)
+
+SHIPPED: commit 2f665c9b1cb5b13093a209accc27eb36543fe190 on the run branch
+Branch `archon/r297jx3y-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-ll4khpxl/archon-bench/work/20261125T173953Z/7d3b3b8911f031b77d3aa165/quality-retry-budget holds it (2 files changed, 196 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M89WPJQ99W2JT80GR297JX3Y`; land it in `main`: `archon merge qi_01M89WPJQ99W2JT80GR297JX3Y`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md, replacing the NotImplementedError stub, and added 29 focused unittest tests to test_retry_budget.py alongside the 3 existing ones. Committed as 2f665c9b1cb5b13093a209accc27eb36543fe190 on archon/r297jx3y-implement-retry-budget-py-per-spec-md-wi (tree f9e5e5e55acc404dd41be1cab297c70cbbf3443c); not pushed. Before: the base stub made all 3 existing tests error (FAILED, errors=3). After: `python3 -m unittest` runs 32 tests, all OK; py_compile passes; pyflakes is not installed so no lint ran. One reviewer (agt_01M89WRA80T72T1CH6R9Y00FBT, claude-haiku-5-5, medium) read base 145c0e4 to head 2f665c9 and passed it with no findings; it confirmed risk low. Nothing is left running from this stage. Open: none for the spec. The reviewer's leftover process had already exited when I checked.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89WRA80T72T1CH6R9Y00FBT)
+
+SHIPPED: commit 2f665c9b1cb5b13093a209accc27eb36543fe190 on the run branch

@@ -1,0 +1,262 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8ANWDEJ9SS7WJRTM3HKM85P",
+      "repo": "repo_01M8ANW2SK8QA7HVA5SXFZB3F7",
+      "pipeline": "direct",
+      "title": "Implement rate limiter per SPEC.md in ratelimit.py",
+      "brief": "Implement the rate limiter described in SPEC.md in ratelimit.py. The module currently only has stubs. Follow the spec exactly, including its error cases and edge cases. The tests in test_ratelimit.py only cover the basics, so verify the error cases and edge cases in SPEC.md beyond what those tests check. Keep the implementation dependency-free (Python standard library only). Commit the work on the local branch; do not push. Do not change SPEC.md or the existing tests to make them pass.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "ratelimit",
+        "operator-request"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8ANWDEJ9SS7WJRTM3HKM85P",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-26T01:00:25.444491123Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-26T01:00:25.444491123Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-26T01:00:25.444491123Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8ANWDG8GJXMVQJDPRX1JCD9",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, standard library only. Added test_ratelimit_spec.py (19 tests) for the SPEC error and edge cases; test_ratelimit.py and SPEC.md are unchanged. Head 8c0b1a8, tree 6062ea9, on archon/m3hkm85p-implement-rate-limiter-per-spec-md-in-ra, not pushed. Before: all 3 existing tests errored with NotImplementedError. After: 22 tests OK under python3 -X dev -m unittest, ruff check and ruff format --check clean. A first whole-change review failed on a float-tolerance issue at large capacities (absolute 1e-9 token tolerance); fixed with a capacity-relative tolerance (1e-12 * capacity) and a seeded large-capacity test that fails 9/300 cases without the tolerance. A delta review of the fix passed. Open: the tolerance is a small, documented-in-code deviation from the literal SPEC: a deficit under 1e-12 * capacity tokens is accepted. Not thread-safe; the spec does not require it. No processes are left running.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ANYHRNWFP2M1RSY62MC81A), claude-code/claude-haiku-5-5 (agent agt_01M8AP1HQ3E3HXJCY5Q532Y88Q)\n\nSHIPPED: commit 8c0b1a831422bf9ed139e9d77eb0281aecbe5f60 on the run branch"
+      },
+      "created_at": "2026-11-26T01:00:25.426842660Z",
+      "updated_at": "2026-11-26T01:03:56.334369822Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8ANWDG8GJXMVQJDPRX1JCD9",
+        "item": "qi_01M8ANWDEJ9SS7WJRTM3HKM85P",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8ANWDQKC3NHQWY4PW6R1212",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-ft2j92hz/archon-bench/work/20261126T010013Z/9628d082e56e9511a07d2439/.archon/data/worktrees/feature-token-bucket/qi_01M8ANWDEJ9SS7WJRTM3HKM85P",
+        "branch": "archon/m3hkm85p-implement-rate-limiter-per-spec-md-in-ra",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, standard library only. Added test_ratelimit_spec.py (19 tests) for the SPEC error and edge cases; test_ratelimit.py and SPEC.md are unchanged. Head 8c0b1a8, tree 6062ea9, on archon/m3hkm85p-implement-rate-limiter-per-spec-md-in-ra, not pushed. Before: all 3 existing tests errored with NotImplementedError. After: 22 tests OK under python3 -X dev -m unittest, ruff check and ruff format --check clean. A first whole-change review failed on a float-tolerance issue at large capacities (absolute 1e-9 token tolerance); fixed with a capacity-relative tolerance (1e-12 * capacity) and a seeded large-capacity test that fails 9/300 cases without the tolerance. A delta review of the fix passed. Open: the tolerance is a small, documented-in-code deviation from the literal SPEC: a deficit under 1e-12 * capacity tokens is accepted. Not thread-safe; the spec does not require it. No processes are left running.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ANYHRNWFP2M1RSY62MC81A), claude-code/claude-haiku-5-5 (agent agt_01M8AP1HQ3E3HXJCY5Q532Y88Q)\n\nSHIPPED: commit 8c0b1a831422bf9ed139e9d77eb0281aecbe5f60 on the run branch"
+        },
+        "cost_usd": 0.05732147999999999,
+        "started_at": "2026-11-26T01:00:25.657501604Z",
+        "finished_at": "2026-11-26T01:03:56.334369822Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8ANWDPXGS7T52EG34744M56",
+        "run": "prun_01M8ANWDG8GJXMVQJDPRX1JCD9",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8ANWDRQJ31JH3QE9YW617NA",
+        "aether_task": "tsk_01M8ANWDRQJ31JH3QE9YW617NB",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, standard library only. Added test_ratelimit_spec.py (19 tests) for the SPEC error and edge cases; test_ratelimit.py and SPEC.md are unchanged. Head 8c0b1a8, tree 6062ea9, on archon/m3hkm85p-implement-rate-limiter-per-spec-md-in-ra, not pushed. Before: all 3 existing tests errored with NotImplementedError. After: 22 tests OK under python3 -X dev -m unittest, ruff check and ruff format --check clean. A first whole-change review failed on a float-tolerance issue at large capacities (absolute 1e-9 token tolerance); fixed with a capacity-relative tolerance (1e-12 * capacity) and a seeded large-capacity test that fails 9/300 cases without the tolerance. A delta review of the fix passed. Open: the tolerance is a small, documented-in-code deviation from the literal SPEC: a deficit under 1e-12 * capacity tokens is accepted. Not thread-safe; the spec does not require it. No processes are left running.",
+        "structured": {
+          "checks": [
+            "python3 -X dev -m unittest -v test_ratelimit test_ratelimit_spec (22 tests OK)",
+            "ruff check ratelimit.py test_ratelimit_spec.py (All checks passed)",
+            "ruff format --check ratelimit.py test_ratelimit_spec.py test_ratelimit.py (already formatted)"
+          ],
+          "commit": "8c0b1a831422bf9ed139e9d77eb0281aecbe5f60",
+          "evidence": [
+            {
+              "after": "python3 -X dev -m unittest -v test_ratelimit test_ratelimit_spec\nRan 22 tests in 0.002s\nOK",
+              "before": "test_ratelimit.py: 3 errors, each raising NotImplementedError from KeyedLimiter.__init__ (Ran 3 tests, FAILED errors=3)",
+              "caption": "Test suite before and after the implementation",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "8c0b1a831422bf9ed139e9d77eb0281aecbe5f60",
+          "pr": {
+            "body": "Approach: TokenBucket keeps tokens and the latest clock time seen; refill only moves forward when the clock advances, so a backwards clock changes nothing. KeyedLimiter keeps an OrderedDict of buckets, moves a key to the end on each use (try_acquire and wait_time), and evicts the least recently used key before creating a new one. Invalid request sizes are rejected before any bucket is created or evicted.\n\nKey files: ratelimit.py, test_ratelimit_spec.py (new). test_ratelimit.py and SPEC.md unchanged.\n\nChecks: unittest 22 OK; ruff check and ruff format --check clean. Mutant check: with the tolerance set to 0, the large-capacity test fails 9 of 300 cases.\n\nAssumptions and limits: (1) A relative tolerance of 1e-12 * capacity absorbs float rounding so the wait_time promise holds. This lets a deficit below that amount succeed, a small deviation from the literal SPEC. (2) Not thread-safe; no locking was specified. (3) Clock resolution limits the promise for very large monotonic clock values.",
+            "summary": "Made rate limiting available: TokenBucket and KeyedLimiter per SPEC.md. Now: refill capped at capacity, non-consuming wait_time, LRU eviction bounded by max_keys, ValueError on invalid args. Before: module was stubs raising NotImplementedError; now: 22 tests pass.",
+            "title": "Implement token bucket and keyed rate limiter per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "8c0b1a831422bf9ed139e9d77eb0281aecbe5f60",
+            "reviewer_agents": [
+              "agt_01M8ANYHRNWFP2M1RSY62MC81A",
+              "agt_01M8AP1HQ3E3HXJCY5Q532Y88Q"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8ANYHRNWFP2M1RSY62MC81A",
+                "base": "10987375c2e42c844c088e37d58bc411594d438a",
+                "findings": 3,
+                "head": "ec7fba4",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8AP1HQ3E3HXJCY5Q532Y88Q",
+                "base": "ec7fba4",
+                "findings": 1,
+                "head": "8c0b1a8",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8ANYHRNWFP2M1RSY62MC81A",
+              "agt_01M8AP1HQ3E3HXJCY5Q532Y88Q"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M8ANYHRNWFP2M1RSY62MC81A",
+            "why": "New module behind a new public interface; behaviour is contained, with no security, persistence, locking or breaking API changes. Whole-change review rated medium. Delta review of the fix rated low. Review found a float-tolerance defect at large capacities, now fixed and covered by a test."
+          },
+          "tree": "6062ea9069ecdff18aa541ee340ef29c3a824d19"
+        },
+        "cost_usd": 0.05732147999999999,
+        "started_at": "2026-11-26T01:00:25.693678244Z",
+        "finished_at": "2026-11-26T01:03:53.316188926Z"
+      }
+    ],
+    "spent_usd": 0.05732147999999999,
+    "gates": [],
+    "delegations": {
+      "stg_01M8ANWDPXGS7T52EG34744M56": {
+        "direct_usd": 0.03886718999999999,
+        "delegated_usd": 0.01845429,
+        "agents": [
+          {
+            "agent": "agt_01M8ANYHRNWFP2M1RSY62MC81A",
+            "parent": "agt_01M8ANWDRQJ31JH3QE9YW617NA",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01287231
+          },
+          {
+            "agent": "agt_01M8AP1HQ3E3HXJCY5Q532Y88Q",
+            "parent": "agt_01M8ANWDRQJ31JH3QE9YW617NA",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "low",
+            "cost_usd": 0.00558198
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-26T01:00:25.444491123Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-26T01:00:25.444491123Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-26T01:00:25.444491123Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

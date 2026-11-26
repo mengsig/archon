@@ -1,0 +1,16 @@
+I've queued the fix as item `qi_01M89XCE70S4YVQ9WDDSEWK5E1` on the `fix-off-by-one` repository, using the `direct` pipeline with standard review.
+
+I didn't edit `window.py` or run the tests myself. The item's agent will find the bug, fix it without touching the tests, check edge cases beyond the tested inputs, and commit locally. The repository ships locally, so nothing is pushed. I'll report the outcome when the item finishes.
+
+Done: Fix bug in window.py so python3 -m unittest passes (fix-off-by-one). Fixed the off-by-one in sliding_windows (window.py). The loop ranged over len(items) - size, dropping the last window and returning [] when size == len(items). It now ranges over len(items) - size + 1. Committed as bad6013 on archon/dsewk5e1-fix-bug-in-window-py-so-python3-m-unitte (base 2392d97); not pushed. No test files changed. Checks: python3 -m unittest runs 3 tests, all OK (before the fix: 2 failures). Edge cases checked by hand: [] with size 1 gives []; [1] size 1 gives [[1]]; size > len gives []; size == len gives one window; size 3 on [1,2,3,4] gives three windows; size 0 and -1 raise ValueError. Independent read-only review of bad6013 (agent agt_01M89XD8NDMRKE4T2XNDMXDDEF) passed with no findings. Nothing left open; no servers were started. REVIEW: pass (reviewer agt_01M89XD8NDMRKE4T2XNDMXDDEF).
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89XD8NDMRKE4T2XNDMXDDEF)
+
+SHIPPED: commit bad601386bf77c24a086309e375d55522f9bed6c on the run branch
+Branch `archon/dsewk5e1-fix-bug-in-window-py-so-python3-m-unitte` in /home/mengsig/.local/share/archon-bench/rerun-165/r-4dcpujpr/archon-bench/work/20261125T175205Z/0ac3f4e9de2b9fda12cf9dde/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M89XCE70S4YVQ9WDDSEWK5E1`; land it in `main`: `archon merge qi_01M89XCE70S4YVQ9WDDSEWK5E1`.
+
+Fixed the off-by-one in sliding_windows (window.py). The loop ranged over len(items) - size, dropping the last window and returning [] when size == len(items). It now ranges over len(items) - size + 1. Committed as bad6013 on archon/dsewk5e1-fix-bug-in-window-py-so-python3-m-unitte (base 2392d97); not pushed. No test files changed. Checks: python3 -m unittest runs 3 tests, all OK (before the fix: 2 failures). Edge cases checked by hand: [] with size 1 gives []; [1] size 1 gives [[1]]; size > len gives []; size == len gives one window; size 3 on [1,2,3,4] gives three windows; size 0 and -1 raise ValueError. Independent read-only review of bad6013 (agent agt_01M89XD8NDMRKE4T2XNDMXDDEF) passed with no findings. Nothing left open; no servers were started. REVIEW: pass (reviewer agt_01M89XD8NDMRKE4T2XNDMXDDEF).
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89XD8NDMRKE4T2XNDMXDDEF)
+
+SHIPPED: commit bad601386bf77c24a086309e375d55522f9bed6c on the run branch

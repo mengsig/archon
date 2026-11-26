@@ -1,0 +1,34 @@
+I've queued the rate limiter as one item, `qi_01M8APE3HHK5K9ESGGQ6GSS8WA`, in the `feature-token-bucket` repository. It uses the `direct` pipeline with standard review, and the agent will implement `ratelimit.py` from `SPEC.md`.
+
+The brief tells the agent to follow the spec's error and edge cases exactly, keep it to the standard library, add tests for the cases `test_ratelimit.py` doesn't cover yet, and commit the work. I didn't read `SPEC.md` or the stubs myself, so I can't yet say whether the spec has ambiguities that need your decision.
+
+The repository is set to ship locally, so the commit stays on a local branch and nothing is pushed. I'll report the outcome when the item finishes.
+
+Done: Implement rate limiter in ratelimit.py per SPEC.md. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 21 tests for the spec's error and edge cases. Committed as 3f1335e on archon/q6gss8wa-implement-rate-limiter-in-ratelimit-py-p (tree 6dfc27270f8c9ab2f9d7a206c2aa1c34159bd0e7). All 24 tests pass (3 existing, 21 new). Before: all methods raised NotImplementedError. Checks: unit tests, a round-trip probe, and a mutant check that the regression test fails without the float tolerance. Review: one reviewer (agt_01M8APH42GA8FN3CC06MJ1921J) passed the head with no blocking findings.
+
+Deviation to note: TOKEN_TOLERANCE=1e-9 lets try_acquire succeed when slightly under n tokens, so waiting exactly wait_time() always works. Without it, about 4.8% of round-trips failed on float rounding.
+
+Open, non-blocking follow-ups: non-integer max_keys (e.g. 1.5) is not rejected at the boundary and trips an internal assert; no test for KeyedLimiter.try_acquire with n > capacity; the tolerance is not documented in SPEC.md.
+
+Nothing started by me is running. The completed reviewer's agent process (pid 1199981) was handed to me; I did not kill it and the harness stops it when this stage ends.
+
+REVIEW: pass (agt_01M8APH42GA8FN3CC06MJ1921J)
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8APH42GA8FN3CC06MJ1921J)
+
+SHIPPED: commit 3f1335eb36b21456e310181c48c2085ed427a87a on the run branch
+Branch `archon/q6gss8wa-implement-rate-limiter-in-ratelimit-py-p` in /home/mengsig/.local/share/archon-bench/rerun-165/r-optc7hl3/archon-bench/work/20261126T010957Z/107c28262834a3675dcc0dfc/feature-token-bucket holds it (2 files changed, 245 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8APE3HHK5K9ESGGQ6GSS8WA`; land it in `main`: `archon merge qi_01M8APE3HHK5K9ESGGQ6GSS8WA`.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only) and added 21 tests for the spec's error and edge cases. Committed as 3f1335e on archon/q6gss8wa-implement-rate-limiter-in-ratelimit-py-p (tree 6dfc27270f8c9ab2f9d7a206c2aa1c34159bd0e7). All 24 tests pass (3 existing, 21 new). Before: all methods raised NotImplementedError. Checks: unit tests, a round-trip probe, and a mutant check that the regression test fails without the float tolerance. Review: one reviewer (agt_01M8APH42GA8FN3CC06MJ1921J) passed the head with no blocking findings.
+
+Deviation to note: TOKEN_TOLERANCE=1e-9 lets try_acquire succeed when slightly under n tokens, so waiting exactly wait_time() always works. Without it, about 4.8% of round-trips failed on float rounding.
+
+Open, non-blocking follow-ups: non-integer max_keys (e.g. 1.5) is not rejected at the boundary and trips an internal assert; no test for KeyedLimiter.try_acquire with n > capacity; the tolerance is not documented in SPEC.md.
+
+Nothing started by me is running. The completed reviewer's agent process (pid 1199981) was handed to me; I did not kill it and the harness stops it when this stage ends.
+
+REVIEW: pass (agt_01M8APH42GA8FN3CC06MJ1921J)
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8APH42GA8FN3CC06MJ1921J)
+
+SHIPPED: commit 3f1335eb36b21456e310181c48c2085ed427a87a on the run branch

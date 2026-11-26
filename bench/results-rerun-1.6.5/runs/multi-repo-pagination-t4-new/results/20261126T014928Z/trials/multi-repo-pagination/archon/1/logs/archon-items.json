@@ -1,0 +1,919 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8ARPMA5VQ3FG3BE97XS9E7E",
+      "repo": "repo_01M8ARP903PAX2JXDFRWXR36RB",
+      "pipeline": "adaptive",
+      "title": "listItems follows next_cursor",
+      "brief": "Change listItems(transport) so it resolves to every item in order by following next_cursor until it is null or absent, sending no cursor on the first request and passing the cursor back unchanged. Update the README to document this. Keep npm test passing and add tests for multi-page, single-page, and absent-next_cursor cases. Commit in this repository only; do not push or merge.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8ARPMA5VQ3FG3BE97XS9E7E",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-26T01:49:41.575274302Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-26T01:49:41.585449174Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-26T01:49:41.575274302Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M8ARPM9TJYFM618F83CC8173",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8ARPMB5NF4HQ1YC8V1TTHJQ",
+        "summary": "listItems in inventory-client now follows next_cursor until it is null or absent and returns every item in order. The first request sends no cursor and later requests pass the cursor back unchanged. Commits on archon/97xs9e7e-listitems-follows-next-cursor: ba8647c (feature) and 99110bb (review fixes). Tree d61c8a77b0a4b316d28bc6e1550692619e33fc7f. Verification: npm test passes, 10 tests with 0 failures, covering multi-page, single-page, absent next_cursor, null or non-object body, repeated cursor and a failing later page. Review: three whole-change reviews on ba8647c and one delta review on 99110bb, all pass (agt_01M8ARQQTVRXYXPE5SPRC2A4QQ, agt_01M8ARQX3GVWQKF5MD9E0Y21WJ, agt_01M8ARR26R11EYHD3VEJ5BKNZQ, agt_01M8ARS62CSBG9CS8YZF9MWTNF). Left open (non-blocking): a non-string next_cursor repeating by value is not caught by the repeat guard, since it compares by reference; the API uses string cursors. No processes were started; nothing was pushed or merged. The working tree is clean. Note: the README was updated, and the inventory-api side of the change is not touched in this repo.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ARQQTVRXYXPE5SPRC2A4QQ), claude-code/claude-haiku-5-5 (agent agt_01M8ARQX3GVWQKF5MD9E0Y21WJ), claude-code/claude-haiku-5-5 (agent agt_01M8ARR26R11EYHD3VEJ5BKNZQ), claude-code/claude-haiku-5-5 (agent agt_01M8ARS62CSBG9CS8YZF9MWTNF)\n\nSHIPPED: commit 99110bb14b67d21ccfebaccf0de170cc51d81095 on the run branch"
+      },
+      "created_at": "2026-11-26T01:49:41.562622229Z",
+      "updated_at": "2026-11-26T01:52:01.116420244Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8ARPMB5NF4HQ1YC8V1TTHJQ",
+        "item": "qi_01M8ARPMA5VQ3FG3BE97XS9E7E",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M8ARPMJBXGADKYCQ5K4AQQ5H",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-7mxyo9jl/archon-bench/work/20261126T014928Z/98ecd5c7b2bbdcc65330e9a7/.archon/data/worktrees/inventory-client/qi_01M8ARPMA5VQ3FG3BE97XS9E7E",
+        "branch": "archon/97xs9e7e-listitems-follows-next-cursor",
+        "state": {
+          "state": "succeeded",
+          "summary": "listItems in inventory-client now follows next_cursor until it is null or absent and returns every item in order. The first request sends no cursor and later requests pass the cursor back unchanged. Commits on archon/97xs9e7e-listitems-follows-next-cursor: ba8647c (feature) and 99110bb (review fixes). Tree d61c8a77b0a4b316d28bc6e1550692619e33fc7f. Verification: npm test passes, 10 tests with 0 failures, covering multi-page, single-page, absent next_cursor, null or non-object body, repeated cursor and a failing later page. Review: three whole-change reviews on ba8647c and one delta review on 99110bb, all pass (agt_01M8ARQQTVRXYXPE5SPRC2A4QQ, agt_01M8ARQX3GVWQKF5MD9E0Y21WJ, agt_01M8ARR26R11EYHD3VEJ5BKNZQ, agt_01M8ARS62CSBG9CS8YZF9MWTNF). Left open (non-blocking): a non-string next_cursor repeating by value is not caught by the repeat guard, since it compares by reference; the API uses string cursors. No processes were started; nothing was pushed or merged. The working tree is clean. Note: the README was updated, and the inventory-api side of the change is not touched in this repo.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ARQQTVRXYXPE5SPRC2A4QQ), claude-code/claude-haiku-5-5 (agent agt_01M8ARQX3GVWQKF5MD9E0Y21WJ), claude-code/claude-haiku-5-5 (agent agt_01M8ARR26R11EYHD3VEJ5BKNZQ), claude-code/claude-haiku-5-5 (agent agt_01M8ARS62CSBG9CS8YZF9MWTNF)\n\nSHIPPED: commit 99110bb14b67d21ccfebaccf0de170cc51d81095 on the run branch"
+        },
+        "cost_usd": 0.05511873000000001,
+        "started_at": "2026-11-26T01:49:41.766709328Z",
+        "finished_at": "2026-11-26T01:52:01.116420244Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8ARPMHXDGYK2JA0KVQ97R0E",
+        "run": "prun_01M8ARPMB5NF4HQ1YC8V1TTHJQ",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8ARPMM6K5WBG9W7BGBNJNA8",
+        "aether_task": "tsk_01M8ARPMM6K5WBG9W7BGBNJNA9",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "listItems in inventory-client now follows next_cursor until it is null or absent and returns every item in order. The first request sends no cursor and later requests pass the cursor back unchanged. Commits on archon/97xs9e7e-listitems-follows-next-cursor: ba8647c (feature) and 99110bb (review fixes). Tree d61c8a77b0a4b316d28bc6e1550692619e33fc7f. Verification: npm test passes, 10 tests with 0 failures, covering multi-page, single-page, absent next_cursor, null or non-object body, repeated cursor and a failing later page. Review: three whole-change reviews on ba8647c and one delta review on 99110bb, all pass (agt_01M8ARQQTVRXYXPE5SPRC2A4QQ, agt_01M8ARQX3GVWQKF5MD9E0Y21WJ, agt_01M8ARR26R11EYHD3VEJ5BKNZQ, agt_01M8ARS62CSBG9CS8YZF9MWTNF). Left open (non-blocking): a non-string next_cursor repeating by value is not caught by the repeat guard, since it compares by reference; the API uses string cursors. No processes were started; nothing was pushed or merged. The working tree is clean. Note: the README was updated, and the inventory-api side of the change is not touched in this repo.",
+        "structured": {
+          "checks": [
+            "npm test"
+          ],
+          "commit": "99110bb14b67d21ccfebaccf0de170cc51d81095",
+          "evidence": [
+            {
+              "caption": "npm test after the fixes: 10 tests pass, 0 fail",
+              "kind": "output",
+              "text": "# tests 10\n# pass 10\n# fail 0"
+            }
+          ],
+          "local_commit": "99110bb14b67d21ccfebaccf0de170cc51d81095",
+          "pr": {
+            "body": "Approach: listItems loops over GET /items, sending no query on the first request and {cursor} afterwards, stopping when next_cursor is null or absent. A Set of seen cursors makes a server that repeats a cursor fail instead of looping forever. A page body that is not an object with an items array throws a descriptive error.\n\nFiles: client.js, test/client.test.js, README.md.\n\nChecks: npm test -> 10 tests, 10 pass, 0 fail (multi-page, single-page, absent next_cursor, null/non-object body, repeated cursor, failing later page).\n\nReview: three whole-change reviews on ba8647c and one delta review on 99110bb, all pass. Their findings (repeated cursor, null body) were fixed in 99110bb.\n\nOpen follow-up (non-blocking): the repeated-cursor Set compares object cursors by reference, so a non-string next_cursor repeating by value is not detected. The API uses string cursors. Rejecting non-string cursors would close this.\n\nAssumptions: next_cursor is a string or null/absent, per the shared contract.",
+            "summary": "listItems follows next_cursor across pages. Before: returned only the first page of GET /items. Now: returns every item in order; first request has no cursor, later requests pass the cursor back unchanged. Repeated cursors and malformed pages throw.",
+            "title": "feat: make listItems follow next_cursor across pages"
+          },
+          "review": {
+            "reviewed_head": "99110bb14b67d21ccfebaccf0de170cc51d81095",
+            "reviewer_agents": [
+              "agt_01M8ARQQTVRXYXPE5SPRC2A4QQ",
+              "agt_01M8ARQX3GVWQKF5MD9E0Y21WJ",
+              "agt_01M8ARR26R11EYHD3VEJ5BKNZQ",
+              "agt_01M8ARS62CSBG9CS8YZF9MWTNF"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8ARQQTVRXYXPE5SPRC2A4QQ",
+                "base": "d4ac5bc772cf026c3a510ac9f5b59970d436c69a",
+                "findings": 1,
+                "head": "ba8647ceed4b7a05727dd5a35ecc2da857dcaca4",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8ARQX3GVWQKF5MD9E0Y21WJ",
+                "base": "d4ac5bc772cf026c3a510ac9f5b59970d436c69a",
+                "findings": 2,
+                "head": "ba8647ceed4b7a05727dd5a35ecc2da857dcaca4",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8ARR26R11EYHD3VEJ5BKNZQ",
+                "base": "d4ac5bc772cf026c3a510ac9f5b59970d436c69a",
+                "findings": 1,
+                "head": "ba8647ceed4b7a05727dd5a35ecc2da857dcaca4",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8ARS62CSBG9CS8YZF9MWTNF",
+                "base": "ba8647ceed4b7a05727dd5a35ecc2da857dcaca4",
+                "findings": 1,
+                "head": "99110bb14b67d21ccfebaccf0de170cc51d81095",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8ARQQTVRXYXPE5SPRC2A4QQ",
+              "agt_01M8ARQX3GVWQKF5MD9E0Y21WJ",
+              "agt_01M8ARR26R11EYHD3VEJ5BKNZQ",
+              "agt_01M8ARS62CSBG9CS8YZF9MWTNF"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8ARQQTVRXYXPE5SPRC2A4QQ:1": {
+                "blocking": false,
+                "description": "The do/while loop has no guard against a server that keeps returning the same next_cursor, so listItems would loop forever and keep growing items. at client.js:18 (remedy: Track seen cursors in a Set and throw a descriptive error on a repeat, or cap the page count, then add a test for a repeated cursor.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ARPMHXDGYK2JA0KVQ97R0E"
+                },
+                "id": "agt_01M8ARQQTVRXYXPE5SPRC2A4QQ:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ARPMHXDGYK2JA0KVQ97R0E"
+                }
+              },
+              "agt_01M8ARQX3GVWQKF5MD9E0Y21WJ:1": {
+                "blocking": false,
+                "description": "listItems loops until next_cursor is null or absent, with no check for a cursor that repeats or a page limit. at client.js:18 (remedy: Track the cursors already sent in a Set and throw a descriptive error when one repeats, or cap the number of pages. Add a test where the server always returns the same cursor.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ARPMHXDGYK2JA0KVQ97R0E"
+                },
+                "id": "agt_01M8ARQX3GVWQKF5MD9E0Y21WJ:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ARPMHXDGYK2JA0KVQ97R0E"
+                }
+              },
+              "agt_01M8ARQX3GVWQKF5MD9E0Y21WJ:2": {
+                "blocking": false,
+                "description": "If the response body is null or not an object, `body.items` throws a bare TypeError before the intended 'without an items array' message is reached. at client.js:21 (remedy: Check `body !== null && typeof body === 'object'` before reading `body.items`, or wrap the access in one guard that throws the same descriptive error.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ARPMHXDGYK2JA0KVQ97R0E"
+                },
+                "id": "agt_01M8ARQX3GVWQKF5MD9E0Y21WJ:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ARPMHXDGYK2JA0KVQ97R0E"
+                }
+              },
+              "agt_01M8ARR26R11EYHD3VEJ5BKNZQ:1": {
+                "blocking": false,
+                "description": "The do/while loop has no guard against a server that returns the same next_cursor repeatedly. It would request forever and keep growing `items`. at client.js:21 (remedy: Track seen cursors in a Set and throw a descriptive error when a cursor repeats, or cap the page count.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ARPMHXDGYK2JA0KVQ97R0E"
+                },
+                "id": "agt_01M8ARR26R11EYHD3VEJ5BKNZQ:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ARPMHXDGYK2JA0KVQ97R0E"
+                }
+              },
+              "agt_01M8ARS62CSBG9CS8YZF9MWTNF:1": {
+                "blocking": false,
+                "description": "Repeated-cursor guard uses a Set, which compares object cursors by reference, so a non-string next_cursor that repeats by value (e.g. {p:1} twice) is not detected and the loop continues. at client.js:27 (remedy: Optionally reject non-string cursors at the boundary (throw if cursor is present and typeof cursor !== 'string') or compare JSON.stringify(cursor) in the Set.)",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ARPMHXDGYK2JA0KVQ97R0E"
+                },
+                "id": "agt_01M8ARS62CSBG9CS8YZF9MWTNF:1",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "ba8647ceed4b7a05727dd5a35ecc2da857dcaca4",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8ARQQTVRXYXPE5SPRC2A4QQ",
+                    "base": "d4ac5bc772cf026c3a510ac9f5b59970d436c69a",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8ARQQTVRXYXPE5SPRC2A4QQ:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": true,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8ARQX3GVWQKF5MD9E0Y21WJ",
+                    "base": "d4ac5bc772cf026c3a510ac9f5b59970d436c69a",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8ARQX3GVWQKF5MD9E0Y21WJ:1",
+                      "agt_01M8ARQX3GVWQKF5MD9E0Y21WJ:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": true,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8ARR26R11EYHD3VEJ5BKNZQ",
+                    "base": "d4ac5bc772cf026c3a510ac9f5b59970d436c69a",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8ARR26R11EYHD3VEJ5BKNZQ:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": true,
+                    "verdict": "pass"
+                  }
+                ]
+              },
+              {
+                "head": "99110bb14b67d21ccfebaccf0de170cc51d81095",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8ARS62CSBG9CS8YZF9MWTNF",
+                    "base": "ba8647ceed4b7a05727dd5a35ecc2da857dcaca4",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8ARS62CSBG9CS8YZF9MWTNF:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "client.js: listItems behaviour changes from one request to a paging loop, contained behind the existing transport interface. Tests cover the new paths. No security, persistence or API surface changes. Reviewers agreed on medium."
+          },
+          "tree": "d61c8a77b0a4b316d28bc6e1550692619e33fc7f"
+        },
+        "cost_usd": 0.055118730000000005,
+        "started_at": "2026-11-26T01:49:41.821237419Z",
+        "finished_at": "2026-11-26T01:51:56.882741335Z"
+      }
+    ],
+    "spent_usd": 0.05511873000000001,
+    "gates": [],
+    "delegations": {
+      "stg_01M8ARPMHXDGYK2JA0KVQ97R0E": {
+        "direct_usd": 0.03024366000000001,
+        "delegated_usd": 0.02487507,
+        "agents": [
+          {
+            "agent": "agt_01M8ARQQTVRXYXPE5SPRC2A4QQ",
+            "parent": "agt_01M8ARPMM6K5WBG9W7BGBNJNA8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.005760020000000001
+          },
+          {
+            "agent": "agt_01M8ARQX3GVWQKF5MD9E0Y21WJ",
+            "parent": "agt_01M8ARPMM6K5WBG9W7BGBNJNA8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00546706
+          },
+          {
+            "agent": "agt_01M8ARR26R11EYHD3VEJ5BKNZQ",
+            "parent": "agt_01M8ARPMM6K5WBG9W7BGBNJNA8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0050506200000000005
+          },
+          {
+            "agent": "agt_01M8ARS62CSBG9CS8YZF9MWTNF",
+            "parent": "agt_01M8ARPMM6K5WBG9W7BGBNJNA8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00859737
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-26T01:49:41.575274302Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-26T01:49:41.585449174Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-26T01:49:41.575274302Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8ARPM9V3K439Y0RD773KEGR",
+      "repo": "repo_01M8ARP8YZ2WRGFE4H1T2ZTV0W",
+      "pipeline": "adaptive",
+      "title": "Cursor pagination for GET /items",
+      "brief": "Add cursor pagination to GET /items as described in the shared contract: optional limit (integer 1..100, default 20) and cursor query parameters; body {\"items\": [...], \"next_cursor\": <string or null>}; items ordered by id; 400 with {\"error\": \"...\"} for an invalid limit or cursor. Update the README to document the new parameters and response. Keep python3 -m unittest passing and add tests for paging, limits, and 400 cases. Commit in this repository only; do not push or merge.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8ARPM9V3K439Y0RD773KEGR",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-26T01:49:41.564826255Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-26T01:49:41.585199588Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-26T01:49:41.564826255Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M8ARPM9TJYFM618F83CC8173",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8ARPMB4802NZ0SNSXF44BJT",
+        "summary": "GET /items cursor pagination is committed on archon/d773kegr-cursor-pagination-for-get-items: 9ca9cd2 (feature) and 4948b57 (review fix). Head 4948b57, tree a5289312. limit (1..100, default 20) and cursor are implemented; next_cursor is null on the last page; invalid limit or cursor returns 400 with error. Files: api.py, test_api.py, README.md. Checks: python3 -m unittest -v on 4948b57 gives 10 tests OK; CLI probes show 400 for an oversized limit and a 200 page for limit=2. Review: three whole-change reviewers (agt_01M8ARR6Y91ZJX9S487KE633QD, agt_01M8ARRCPEPC7HVRNS9FZ1QRDY, agt_01M8ARRJFA11C969E9Z7HS1KH5) failed on an oversized-digit ValueError and a decorative assert. Fixed in 4948b57 with Review-Fix trailers; delta reviewer agt_01M8ART7Z98XWHJ8J3S1BPW7HF passed head 4948b57 with all six findings resolved. Open, non-blocking: get_item (GET /items/<id>) has the same int() gap. inventory-client adoption is a sibling item and is not in this change. No servers started; all reviewers finished; tracked tree clean.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ARR6Y91ZJX9S487KE633QD), claude-code/claude-haiku-5-5 (agent agt_01M8ARRCPEPC7HVRNS9FZ1QRDY), claude-code/claude-haiku-5-5 (agent agt_01M8ARRJFA11C969E9Z7HS1KH5), claude-code/claude-haiku-5-5 (agent agt_01M8ART7Z98XWHJ8J3S1BPW7HF)\n\nSHIPPED: commit 4948b57d59fe28338f2bcdb999b794ef0fddf3fe on the run branch"
+      },
+      "created_at": "2026-11-26T01:49:41.562622229Z",
+      "updated_at": "2026-11-26T01:52:44.881561902Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8ARPMB4802NZ0SNSXF44BJT",
+        "item": "qi_01M8ARPM9V3K439Y0RD773KEGR",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M8ARPMJTGGTWQPNJ1CTGWSJ0",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-7mxyo9jl/archon-bench/work/20261126T014928Z/98ecd5c7b2bbdcc65330e9a7/.archon/data/worktrees/inventory-api/qi_01M8ARPM9V3K439Y0RD773KEGR",
+        "branch": "archon/d773kegr-cursor-pagination-for-get-items",
+        "state": {
+          "state": "succeeded",
+          "summary": "GET /items cursor pagination is committed on archon/d773kegr-cursor-pagination-for-get-items: 9ca9cd2 (feature) and 4948b57 (review fix). Head 4948b57, tree a5289312. limit (1..100, default 20) and cursor are implemented; next_cursor is null on the last page; invalid limit or cursor returns 400 with error. Files: api.py, test_api.py, README.md. Checks: python3 -m unittest -v on 4948b57 gives 10 tests OK; CLI probes show 400 for an oversized limit and a 200 page for limit=2. Review: three whole-change reviewers (agt_01M8ARR6Y91ZJX9S487KE633QD, agt_01M8ARRCPEPC7HVRNS9FZ1QRDY, agt_01M8ARRJFA11C969E9Z7HS1KH5) failed on an oversized-digit ValueError and a decorative assert. Fixed in 4948b57 with Review-Fix trailers; delta reviewer agt_01M8ART7Z98XWHJ8J3S1BPW7HF passed head 4948b57 with all six findings resolved. Open, non-blocking: get_item (GET /items/<id>) has the same int() gap. inventory-client adoption is a sibling item and is not in this change. No servers started; all reviewers finished; tracked tree clean.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ARR6Y91ZJX9S487KE633QD), claude-code/claude-haiku-5-5 (agent agt_01M8ARRCPEPC7HVRNS9FZ1QRDY), claude-code/claude-haiku-5-5 (agent agt_01M8ARRJFA11C969E9Z7HS1KH5), claude-code/claude-haiku-5-5 (agent agt_01M8ART7Z98XWHJ8J3S1BPW7HF)\n\nSHIPPED: commit 4948b57d59fe28338f2bcdb999b794ef0fddf3fe on the run branch"
+        },
+        "cost_usd": 0.07515231,
+        "started_at": "2026-11-26T01:49:41.781080672Z",
+        "finished_at": "2026-11-26T01:52:44.881561902Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8ARPMHCWNY3WGF6TG62F9GP",
+        "run": "prun_01M8ARPMB4802NZ0SNSXF44BJT",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8ARPMMBMCZ0GTMW63MW008K",
+        "aether_task": "tsk_01M8ARPMMBMCZ0GTMW63MW008M",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "GET /items cursor pagination is committed on archon/d773kegr-cursor-pagination-for-get-items: 9ca9cd2 (feature) and 4948b57 (review fix). Head 4948b57, tree a5289312. limit (1..100, default 20) and cursor are implemented; next_cursor is null on the last page; invalid limit or cursor returns 400 with error. Files: api.py, test_api.py, README.md. Checks: python3 -m unittest -v on 4948b57 gives 10 tests OK; CLI probes show 400 for an oversized limit and a 200 page for limit=2. Review: three whole-change reviewers (agt_01M8ARR6Y91ZJX9S487KE633QD, agt_01M8ARRCPEPC7HVRNS9FZ1QRDY, agt_01M8ARRJFA11C969E9Z7HS1KH5) failed on an oversized-digit ValueError and a decorative assert. Fixed in 4948b57 with Review-Fix trailers; delta reviewer agt_01M8ART7Z98XWHJ8J3S1BPW7HF passed head 4948b57 with all six findings resolved. Open, non-blocking: get_item (GET /items/<id>) has the same int() gap. inventory-client adoption is a sibling item and is not in this change. No servers started; all reviewers finished; tracked tree clean.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v (10 tests, OK, on 4948b57)",
+            "api_cli.py probe: limit of 5000 nines returns 400 with error; limit=2 returns 200 with next_cursor \"2\""
+          ],
+          "commit": "4948b57d59fe28338f2bcdb999b794ef0fddf3fe",
+          "evidence": [
+            {
+              "caption": "After the fix: oversized limit returns 400 with error; normal request returns a 2-item page with next_cursor \"2\". Before (reproduced by reviewers on 9ca9cd2, not captured by me): oversized limit or cursor raised ValueError out of handle().",
+              "kind": "output",
+              "text": "{\"status\": 400, \"body\": {\"error\": \"limit must be an integer from 1 to 100\"}}\n{\"status\": 200, \"body\": {\"items\": [{\"id\": 1, \"sku\": \"SKU-0001\", \"name\": \"green nut\", \"qty\": 37}, {\"id\": 2, \"sku\": \"SKU-0002\", \"name\": \"blue washer\", \"qty\": 74}], \"next_cursor\": \"2\"}}"
+            }
+          ],
+          "local_commit": "4948b57d59fe28338f2bcdb999b794ef0fddf3fe",
+          "pr": {
+            "body": "Approach: cursor is the last returned id as a decimal string; a page holds ids greater than the cursor, sorted by id, with next_cursor set when more items remain. Digit strings are capped at 18 characters before int() so oversized input returns 400 instead of raising. Files: api.py, test_api.py, README.md. Checks: python3 -m unittest on 4948b57 gives 10 tests OK. Review: three whole-change reviewers (agt_01M8ARR6Y91ZJX9S487KE633QD, agt_01M8ARRCPEPC7HVRNS9FZ1QRDY, agt_01M8ARRJFA11C969E9Z7HS1KH5) read base 0e761c5 through 9ca9cd2 and failed on the oversized-digit crash and a decorative assert; fixed in 4948b57 with Review-Fix trailers. Delta reviewer agt_01M8ART7Z98XWHJ8J3S1BPW7HF read 9ca9cd2..4948b57 and passed head 4948b57 with all six findings resolved. Open follow-up (non-blocking): get_item (GET /items/<id>) still uses str.isdigit and int() without the length cap, so a very long or superscript-digit id can raise; outside this change. Assumptions: cursor is id-based but documented as opaque; inventory-client adoption is a sibling item, not in this change.",
+            "risk": {
+              "level": "medium",
+              "why": "Contained feature behind the existing handle() interface, changing GET /items with an additive next_cursor key and new 400 paths. Touches api.py, test_api.py, README.md; behaviour changes plus tests. Three reviewers found the oversized-input crash, fixed and re-verified by a delta reviewer."
+            },
+            "summary": "GET /items returned every item in one response. Now takes limit (1..100, default 20) and cursor, returns next_cursor; invalid limit or cursor returns 400 with error. Before: one unbounded page. Now: paged walk in id order.",
+            "title": "feat: add cursor pagination to GET /items"
+          },
+          "review": {
+            "reviewed_head": "4948b57d59fe28338f2bcdb999b794ef0fddf3fe",
+            "reviewer_agents": [
+              "agt_01M8ARR6Y91ZJX9S487KE633QD",
+              "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY",
+              "agt_01M8ARRJFA11C969E9Z7HS1KH5",
+              "agt_01M8ART7Z98XWHJ8J3S1BPW7HF"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8ARR6Y91ZJX9S487KE633QD",
+                "base": "0e761c5f3f607c8447b5a7e1dc434dad40df2eed",
+                "findings": 1,
+                "head": "9ca9cd2862f891577af57ae3fe45a505f2208da9",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY",
+                "base": "0e761c5f3f607c8447b5a7e1dc434dad40df2eed",
+                "findings": 3,
+                "head": "9ca9cd2862f891577af57ae3fe45a505f2208da9",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8ARRJFA11C969E9Z7HS1KH5",
+                "base": "0e761c5f3f607c8447b5a7e1dc434dad40df2eed",
+                "findings": 2,
+                "head": "9ca9cd2862f891577af57ae3fe45a505f2208da9",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8ART7Z98XWHJ8J3S1BPW7HF",
+                "base": "9ca9cd2862f891577af57ae3fe45a505f2208da9",
+                "findings": 1,
+                "head": "4948b57d59fe28338f2bcdb999b794ef0fddf3fe",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8ARR6Y91ZJX9S487KE633QD",
+              "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY",
+              "agt_01M8ARRJFA11C969E9Z7HS1KH5",
+              "agt_01M8ART7Z98XWHJ8J3S1BPW7HF"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8ARR6Y91ZJX9S487KE633QD:1": {
+                "blocking": true,
+                "description": "parse_cursor and parse_limit call int(raw) on any ASCII digit string. On Python 3.14 (default int max str digits 4300), a cursor or limit of 4301+ digits raises an uncaught ValueError from handle(), instead of the documented 400 {\"error\": ...}. Reproduced: cursor='1'*5000 and limit='1'*5000 both raise ValueError. at api.py (remedy: Reject over-long digit strings before int() (for example, a length",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ARPMHCWNY3WGF6TG62F9GP"
+                },
+                "id": "agt_01M8ARR6Y91ZJX9S487KE633QD:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ARPMHCWNY3WGF6TG62F9GP"
+                }
+              },
+              "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY:1": {
+                "blocking": true,
+                "description": "parse_limit and parse_cursor call int(raw) after _is_digits passes. On Python 3.11+ int() raises ValueError for digit strings over 4300 characters, and nothing catches it because list_items only catches InvalidQuery. Reproduced: handle({'method':'GET','path':'/items','query':{'limit':'9'*5000}}) and the same value as cursor both raise ValueError. at api.py (remedy: Reject over-long digit strings b",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ARPMHCWNY3WGF6TG62F9GP"
+                },
+                "id": "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ARPMHCWNY3WGF6TG62F9GP"
+                }
+              },
+              "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY:2": {
+                "blocking": true,
+                "description": "The invalid-input tests cover only short malformed values (\"abc\", \"-1\", \"1.5\", etc.). None exercises a very long digit string, so the crash above passes the suite unnoticed. at test_api.py (remedy: Add the oversized-digit cases to test_invalid_limit_is_400 and test_invalid_cursor_is_400 (see the api.py fix).)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ARPMHCWNY3WGF6TG62F9GP"
+                },
+                "id": "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ARPMHCWNY3WGF6TG62F9GP"
+                }
+              },
+              "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY:3": {
+                "blocking": false,
+                "description": "The assert `assert len(page) <= limit` in _page is always true, since page is items[:limit]. at api.py (remedy: Remove it, or replace it with an invariant that can fail, e.g. that next_cursor is None when has_more is False.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ARPMHCWNY3WGF6TG62F9GP"
+                },
+                "id": "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY:3",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ARPMHCWNY3WGF6TG62F9GP"
+                }
+              },
+              "agt_01M8ARRJFA11C969E9Z7HS1KH5:1": {
+                "blocking": true,
+                "description": "parse_limit and parse_cursor call int(raw) after _is_digits accepts any ASCII digit string. On Python 3.11+ (3.14.7 here) int() raises ValueError for strings over 4300 digits, and this is not caught by the InvalidQuery handler in list_items. Reproduced: query {\"limit\": \"9\"*5000} and {\"cursor\": \"9\"*5000} both raise ValueError('Exceeds the limit (4300 digits)...') out of api.handle instead of return",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ARPMHCWNY3WGF6TG62F9GP"
+                },
+                "id": "agt_01M8ARRJFA11C969E9Z7HS1KH5:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ARPMHCWNY3WGF6TG62F9GP"
+                }
+              },
+              "agt_01M8ARRJFA11C969E9Z7HS1KH5:2": {
+                "blocking": false,
+                "description": "The assertion `assert len(page) <= limit` in _page is decorative. items[:limit] guarantees it, so it cannot catch a real bug. at api.py (remedy: Remove it, or replace it with an assertion that checks a real invariant, such as next_cursor being None exactly when no items remain after the page.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ARPMHCWNY3WGF6TG62F9GP"
+                },
+                "id": "agt_01M8ARRJFA11C969E9Z7HS1KH5:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ARPMHCWNY3WGF6TG62F9GP"
+                }
+              },
+              "agt_01M8ART7Z98XWHJ8J3S1BPW7HF:1": {
+                "blocking": false,
+                "description": "get_item (GET /items/<id>) still calls int() on raw_id after only str.isdigit(). Digit strings over 4300 characters raise ValueError, and superscript digits such as '²' also pass isdigit() and raise ValueError. The exception is uncaught, so the request crashes instead of returning 400 or 404. at api.py (remedy: Reuse _is_digits in get_item (for example if not _is_digits(raw_id): return 400), and a",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ARPMHCWNY3WGF6TG62F9GP"
+                },
+                "id": "agt_01M8ART7Z98XWHJ8J3S1BPW7HF:1",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "9ca9cd2862f891577af57ae3fe45a505f2208da9",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8ARR6Y91ZJX9S487KE633QD",
+                    "base": "0e761c5f3f607c8447b5a7e1dc434dad40df2eed",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8ARR6Y91ZJX9S487KE633QD:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": true,
+                    "verdict": "fail"
+                  },
+                  {
+                    "agent": "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY",
+                    "base": "0e761c5f3f607c8447b5a7e1dc434dad40df2eed",
+                    "finding_count": 3,
+                    "finding_ids": [
+                      "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY:1",
+                      "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY:2",
+                      "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY:3"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": true,
+                    "verdict": "fail"
+                  },
+                  {
+                    "agent": "agt_01M8ARRJFA11C969E9Z7HS1KH5",
+                    "base": "0e761c5f3f607c8447b5a7e1dc434dad40df2eed",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8ARRJFA11C969E9Z7HS1KH5:1",
+                      "agt_01M8ARRJFA11C969E9Z7HS1KH5:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": true,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "4948b57d59fe28338f2bcdb999b794ef0fddf3fe",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8ART7Z98XWHJ8J3S1BPW7HF",
+                    "base": "9ca9cd2862f891577af57ae3fe45a505f2208da9",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8ART7Z98XWHJ8J3S1BPW7HF:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained feature behind the existing handle() interface, changing GET /items with an additive next_cursor key and new 400 paths. Three reviewers found the oversized-input crash, fixed and re-verified by a delta reviewer."
+          },
+          "tree": "a5289312fff64505df81710b3dd61de04f4217cb"
+        },
+        "cost_usd": 0.07515231,
+        "started_at": "2026-11-26T01:49:41.804740512Z",
+        "finished_at": "2026-11-26T01:52:39.668113927Z"
+      }
+    ],
+    "spent_usd": 0.07515231,
+    "gates": [],
+    "delegations": {
+      "stg_01M8ARPMHCWNY3WGF6TG62F9GP": {
+        "direct_usd": 0.04383604,
+        "delegated_usd": 0.03131627,
+        "agents": [
+          {
+            "agent": "agt_01M8ARR6Y91ZJX9S487KE633QD",
+            "parent": "agt_01M8ARPMMBMCZ0GTMW63MW008K",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00752666
+          },
+          {
+            "agent": "agt_01M8ARRCPEPC7HVRNS9FZ1QRDY",
+            "parent": "agt_01M8ARPMMBMCZ0GTMW63MW008K",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00949772
+          },
+          {
+            "agent": "agt_01M8ARRJFA11C969E9Z7HS1KH5",
+            "parent": "agt_01M8ARPMMBMCZ0GTMW63MW008K",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.007416590000000001
+          },
+          {
+            "agent": "agt_01M8ART7Z98XWHJ8J3S1BPW7HF",
+            "parent": "agt_01M8ARPMMBMCZ0GTMW63MW008K",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.006875299999999999
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-26T01:49:41.564826255Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-26T01:49:41.585199588Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-26T01:49:41.564826255Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

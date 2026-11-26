@@ -1,0 +1,31 @@
+Do not ship this as-is. The first finding is a critical forgery bug, and the test suite does not catch it.
+
+Reviewed `src/tokens.js` at commit `7eab6a8` (the mirror at `repos/review-seeded-bug`, whose `package.json` name is `session-lib`), along with `src/encoding.js`, `src/index.js` and `test/tokens.test.js`. I did not change code or execute anything. The findings below come from tracing the code.
+
+**1. `verify`, line 27: `expected.startsWith(signature)` accepts forged tokens. Critical.**
+- The check is a prefix match, not an equality check. An empty signature is a prefix of everything.
+- Input: `base64url('{"user":"root","exp":9e15}') + "."`. The split gives `signature === ""`, `"".startsWith` is never false for `startsWith("")`, so `verify` returns `{user:"root", exp:9e15}` with no secret.
+- Even without the empty case, an attacker only needs to guess one character at a time: at most 64 guesses per position over a 43-character base64url signature, about 2,800 attempts to forge any token.
+- Fix: require the full-length signature and compare with `crypto.timingSafeEqual` on equal-length buffers.
+
+**2. `verify`, line 27: non-constant-time comparison. High.**
+- Even with an exact-match fix, a `startsWith`-style or `===` comparison leaks timing about the expected MAC. This is the mechanism that makes finding 1 practical online. Use `timingSafeEqual`.
+
+**3. `verify`, lines 22–26: no secret validation on the verify path. High if the verifier's secret can be empty.**
+- `sign` refuses secrets under 32 characters (line 15), but `verify` does not. If the verifier is configured with `''` (for example an unset env var that defaults to empty), `mac` uses an empty HMAC key that anyone can compute, so anyone can mint valid tokens.
+- An `undefined` secret throws a `TypeError` from `createHmac` rather than failing with a clear message.
+- Fix: apply the same secret check in `verify`, or share one helper.
+
+**4. `verify`, lines 28–29: `JSON.parse` and property access can throw on a verified-looking token. Low on its own.**
+- Malformed base64 or non-object JSON throws instead of returning `null`. Input: a body of `base64url("null")` such as `bnVsbA` with a matching signature makes `payload.exp` throw a `TypeError`.
+- The parse runs after the MAC check, so an outside attacker only reaches it through finding 1 or with the real secret. Still, a verifier that throws on this input is a crash or 500 risk. Wrap the parse and return `null` on failure.
+
+**5. `verify`, line 24: extra segments are ignored. Low.**
+- `token.split('.')` plus destructuring accepts `body.sig.junk`. It does not bypass the MAC, but the format is not strict. Check `split('.').length === 2`.
+
+**6. `sign`, lines 14–16: `ttlSeconds` is not validated. Low.**
+- `ttlSeconds` of 0 or a negative value produces an already-expired token. `NaN` produces `exp: null` after JSON encoding, and `verify` then rejects it. Validate it as a positive finite number.
+
+**Test gap.** The "tampered payloads are rejected" test reuses a valid signature over a different body. It passes whether or not the comparison is correct, because the full signature is not a prefix of the expected MAC for the forged body. Nothing tests an empty signature, a truncated signature, a short secret on `verify`, or malformed input. Adding those cases would have caught finding 1.
+
+**Suggested order before release:** fix 1 and 2 together with a full-length `timingSafeEqual` check, add the verify-side secret check (3), then add the tests above. Findings 4–6 are small hardening changes.

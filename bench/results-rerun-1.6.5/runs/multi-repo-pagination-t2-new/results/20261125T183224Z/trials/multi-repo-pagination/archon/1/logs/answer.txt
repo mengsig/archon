@@ -1,0 +1,50 @@
+The pagination change is queued as one initiative, `ini_01M89ZPJP1QFXCNGG8BVATTG0Q`, with one item per repository:
+
+- **inventory-api** (`qi_01M89ZPJPNHX4X52TPF5G3ZF5N`): adds `limit` and `cursor` to `GET /items`, returns `{"items", "next_cursor"}`, and gives 400 on invalid params. Updates the README and runs `python3 -m unittest`. Reviewed with strict settings because it changes a public API.
+- **inventory-client** (`qi_01M89ZPJQBZXMFAT7701VMK4SG`): `listItems` follows `next_cursor` until it is null or absent, with no cursor on the first request. Updates the README and runs `npm test`. Standard review.
+
+Both items use the `direct` pipeline and both repositories ship local, so each commit stays on a local branch and nothing is pushed. The client item does not wait for the API item. Both build against the shared contract, which fixes the response shape and the cursor rules.
+
+I'll report when the items finish. Any failure or blocker will come to me as an event.
+
+Done: Add cursor pagination to GET /items. GET /items cursor pagination is implemented and committed as d1ab38a (tree 88f9cc8) on archon/f5g3zf5n-add-cursor-pagination-to-get-items; not pushed. Changes: api.py (limit 1..100, default 20; cursor is base64 of the last returned id; response {items, next_cursor}; invalid limit or cursor gives 400 with {error}), test_api.py (paging, last page, exact fit, past end, bounds, invalid params, oversized and malformed input, default limit), README.md. Check: python3 -m unittest, 11 tests OK at d1ab38a. Reviews: three whole-change reviewers (review IDs agt_01M89ZRR0H3WXSN3JDX2GPZ787, agt_01M89ZRXW2K63E2XR2V75W3MHT, agt_01M89ZS3RXHCG67HF4ZM63G77X) failed on an uncaught ValueError for oversized digit strings. Fixed in d1ab38a with Review-Fix trailers; delta reviewer agt_01M89ZVVBM1KJ8GXEWAAVDT0RG passed 3f6b85e..d1ab38a and resolved the blocking IDs. Open non-blocking follow-ups: one assert in list_items; cursor accepts non-canonical base64 and leading-zero ids; test_api.py duplicates the encoder; non-string query values raise AttributeError; GET /items/<5000-digit id> raises ValueError (pre-existing, get_item); limits with leading zeros longer than 3 chars are now rejected. Risk is high: the default limit of 20 truncates GET /items for existing callers, which is the approved contract. The findings report is at .archon/reports/review-findings-e997e516f109f852f58b20d1808bf407fe37de739eb3306f9909391785f5e508.txt (untracked, not shipped). Nothing was left running; the reviewer processes have exited. The sibling inventory-client repo was not touched.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89ZRR0H3WXSN3JDX2GPZ787), claude-code/claude-haiku-5-5 (agent agt_01M89ZRXW2K63E2XR2V75W3MHT), claude-code/claude-haiku-5-5 (agent agt_01M89ZS3RXHCG67HF4ZM63G77X), claude-code/claude-haiku-5-5 (agent agt_01M89ZVVBM1KJ8GXEWAAVDT0RG)
+
+SHIPPED: commit d1ab38ab9701ccf2e574cd9daa2f0168aceadeb1 on the run branch
+Branch `archon/f5g3zf5…
+
+Done: Make listItems follow cursor pagination. listItems(transport) now follows next_cursor across GET /items until it is null or absent. The first request sends no cursor, and each later request passes the previous next_cursor back unchanged. It rejects non-200 pages, pages without an items array, and any cursor already seen, so cycles of any length throw. Tests cover single page, multi-page, missing next_cursor, opaque cursor pass-through, page failure, two-cursor cycle and self-loop. README documents the behaviour. npm test passes 9/9 on head ff6068d (tree f4db1fc). Review passed at ff6068d: the first reviewer failed on the multi-cursor cycle; fixed in 98bdb45 with a Review-Fix trailer; later delta reviews passed and confirmed the blocker resolved. Nothing left running; no servers started. Open: no test covers the missing-items rejection (documented in README). Only the client repo was changed; inventory-api is the sibling stage's work. Commits are not pushed.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8A02Q1HFPDJ1XSE5AY1MQ4D), claude-code/claude-haiku-5-5 (agent agt_01M89ZZ0AAYX6BJHFT4GMN7Q63), claude-code/claude-haiku-5-5 (agent agt_01M89ZS3GZ6X2X2V0FYNV6S2KV), claude-code/claude-haiku-5-5 (agent agt_01M89ZQVRY33N3QBNHJT48BAME)
+
+SHIPPED: commit ff6068d94efbe84933de7d6a56d30b8bd430dab5 on the run branch
+Branch `archon/01vmk4sg-make-listitems-follow-cursor-pagination` in /home/mengsig/.local/share/archon-bench/rerun-165/r-_rnypuzo/archon-bench/work/20261125T183224Z/875663caf9dea2788c13c74d/inventory-client holds it (3 files changed, 92 insertions(+), 5 deletions(-)). Review: `archon diff qi_01M89ZPJQBZXMFAT7701VMK4SG`; land it in `main`: `archon merge qi_01M89ZPJQBZXMFAT7701VMK4SG`.
+
+Initiative finished; coordinated result queued.
+
+Cursor pagination for GET /items is done in both repositories (initiative ini_01M89ZPJP1QFXCNGG8BVATTG0Q). Both commits are on local run branches and nothing is pushed (ship: local).
+
+- inventory-api: commit d1ab38a. limit (1..100, default 20) and cursor (base64 of the last returned id) are implemented, with 400 + {"error"} on invalid input. 11 unittest tests pass. The README is updated. Review passed after one blocking fix (oversized digit strings raised an uncaught ValueError).
+- inventory-client: commit ff6068d. listItems follows next_cursor until it is null or absent and rejects cycles. npm test passes 9/9. The README is updated. Review passed after one blocking fix (multi-cursor cycles).
+
+Things to know before merging:
+1. Breaking for existing callers: the default limit of 20 now truncates GET /items for any caller that expected the full list. This is what the approved contract specifies, but existing consumers need to pass limit or follow next_cursor.
+2. Non-blocking follow-ups from the API review, not fixed: non-canonical base64 and leading-zero ids are accepted; non-string query values raise AttributeError; GET /items/<5000-digit id> raises ValueError (pre-existing in get_item). The full findings report is untracked at .archon/reports/review-findings-e997e516f109f852f58b20d1808bf407fe37de739eb3306f9909391785f5e508.txt.
+3. The client's missing-items rejection has no test (it is documented in the README).
+
+Merging is yours to decide. Tell me to request_merge when ready.
+
+listItems(transport) now follows next_cursor across GET /items until it is null or absent. The first request sends no cursor, and each later request passes the previous next_cursor back unchanged. It rejects non-200 pages, pages without an items array, and any cursor already seen, so cycles of any length throw. Tests cover single page, multi-page, missing next_cursor, opaque cursor pass-through, page failure, two-cursor cycle and self-loop. README documents the behaviour. npm test passes 9/9 on head ff6068d (tree f4db1fc). Review passed at ff6068d: the first reviewer failed on the multi-cursor cycle; fixed in 98bdb45 with a Review-Fix trailer; later delta reviews passed and confirmed the blocker resolved. Nothing left running; no servers started. Open: no test covers the missing-items rejection (documented in README). Only the client repo was changed; inventory-api is the sibling stage's work. Commits are not pushed.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8A02Q1HFPDJ1XSE5AY1MQ4D), claude-code/claude-haiku-5-5 (agent agt_01M89ZZ0AAYX6BJHFT4GMN7Q63), claude-code/claude-haiku-5-5 (agent agt_01M89ZS3GZ6X2X2V0FYNV6S2KV), claude-code/claude-haiku-5-5 (agent agt_01M89ZQVRY33N3QBNHJT48BAME)
+
+SHIPPED: commit ff6068d94efbe84933de7d6a56d30b8bd430dab5 on the run branch
+
+GET /items cursor pagination is implemented and committed as d1ab38a (tree 88f9cc8) on archon/f5g3zf5n-add-cursor-pagination-to-get-items; not pushed. Changes: api.py (limit 1..100, default 20; cursor is base64 of the last returned id; response {items, next_cursor}; invalid limit or cursor gives 400 with {error}), test_api.py (paging, last page, exact fit, past end, bounds, invalid params, oversized and malformed input, default limit), README.md. Check: python3 -m unittest, 11 tests OK at d1ab38a. Reviews: three whole-change reviewers (review IDs agt_01M89ZRR0H3WXSN3JDX2GPZ787, agt_01M89ZRXW2K63E2XR2V75W3MHT, agt_01M89ZS3RXHCG67HF4ZM63G77X) failed on an uncaught ValueError for oversized digit strings. Fixed in d1ab38a with Review-Fix trailers; delta reviewer agt_01M89ZVVBM1KJ8GXEWAAVDT0RG passed 3f6b85e..d1ab38a and resolved the blocking IDs. Open non-blocking follow-ups: one assert in list_items; cursor accepts non-canonical base64 and leading-zero ids; test_api.py duplicates the encoder; non-string query values raise AttributeError; GET /items/<5000-digit id> raises ValueError (pre-existing, get_item); limits with leading zeros longer than 3 chars are now rejected. Risk is high: the default limit of 20 truncates GET /items for existing callers, which is the approved contract. The findings report is at .archon/reports/review-findings-e997e516f109f852f58b20d1808bf407fe37de739eb3306f9909391785f5e508.txt (untracked, not shipped). Nothing was left running; the reviewer processes have exited. The sibling inventory-client repo was not touched.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89ZRR0H3WXSN3JDX2GPZ787), claude-code/claude-haiku-5-5 (agent agt_01M89ZRXW2K63E2XR2V75W3MHT), claude-code/claude-haiku-5-5 (agent agt_01M89ZS3RXHCG67HF4ZM63G77X), claude-code/claude-haiku-5-5 (agent agt_01M89ZVVBM1KJ8GXEWAAVDT0RG)
+
+SHIPPED: commit d1ab38ab9701ccf2e574cd9daa2f0168aceadeb1 on the run branch

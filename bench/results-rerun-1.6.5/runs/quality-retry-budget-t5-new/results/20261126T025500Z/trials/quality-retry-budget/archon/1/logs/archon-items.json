@@ -1,0 +1,289 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8AWEK60JXH04A6T4320TRNY",
+      "repo": "repo_01M8AWE7VBCMAP4QVVZK38AP55",
+      "pipeline": "direct",
+      "title": "Implement retry_budget.py per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated): \"Implement `retry_budget.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nRepository root contains SPEC.md (the contract), retry_budget.py (stub/partial implementation) and test_retry_budget.py (basic existing tests). Steps: read SPEC.md fully; implement every documented function/class and error and boundary behaviour exactly as specified, preserving the documented API; extend test_retry_budget.py with focused tests covering each specified error and boundary case; use only the Python standard library; run the tests and confirm they pass; commit the work on the branch with a clear message. Keep functions under 60 lines, validate inputs at the boundary with explicit errors, and never swallow exceptions.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "retry-budget"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8AWEK60JXH04A6T4320TRNY",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-26T02:55:12.583673895Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-26T02:55:12.592641291Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-26T02:55:12.583673895Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8AWEK73NVPR5S5X0HGRTJJ6",
+        "summary": "Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py. Committed as bab9599 on archon/4320trny-implement-retry-budget-py-per-spec-md-wi (not pushed). Before: the stub raised NotImplementedError. Now: all 24 tests pass. Validation rejects non-int (bool/float/None) and out-of-range values with ValueError before the exhausted returns. The attempt limit, saturating backoff, Retry-After floor not limited by cap, and strict budget boundary follow the spec. Checks: `python3 -B -m unittest -v test_retry_budget` gives 24 tests OK; `python3 -B -m py_compile` on both files succeeds. pyflakes is not installed, so no lint ran. Review: one reviewer (agt_01M8AWFTMQEBNTS4F5D25TR665) passed head bab9599 with no blocking findings, risk medium confirmed. Open follow-ups (non-blocking): tests do not pin non-int rejection for max_attempts, budget_ms, cap_ms, or bool retry_after_ms; the shared check covers them but they are not tested individually. Nothing is left running. No processes were started.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AWFTMQEBNTS4F5D25TR665)\n\nSHIPPED: commit bab959991890b4985a4d26786075bd6f2f5ea033 on the run branch"
+      },
+      "created_at": "2026-11-26T02:55:12.576197406Z",
+      "updated_at": "2026-11-26T02:56:24.454806283Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8AWEK73NVPR5S5X0HGRTJJ6",
+        "item": "qi_01M8AWEK60JXH04A6T4320TRNY",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8AWEKD4YJC37MHHW2KDN7SP",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-c9ofsrgz/archon-bench/work/20261126T025500Z/92d4636ac0a050b3e3025fac/.archon/data/worktrees/quality-retry-budget/qi_01M8AWEK60JXH04A6T4320TRNY",
+        "branch": "archon/4320trny-implement-retry-budget-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py. Committed as bab9599 on archon/4320trny-implement-retry-budget-py-per-spec-md-wi (not pushed). Before: the stub raised NotImplementedError. Now: all 24 tests pass. Validation rejects non-int (bool/float/None) and out-of-range values with ValueError before the exhausted returns. The attempt limit, saturating backoff, Retry-After floor not limited by cap, and strict budget boundary follow the spec. Checks: `python3 -B -m unittest -v test_retry_budget` gives 24 tests OK; `python3 -B -m py_compile` on both files succeeds. pyflakes is not installed, so no lint ran. Review: one reviewer (agt_01M8AWFTMQEBNTS4F5D25TR665) passed head bab9599 with no blocking findings, risk medium confirmed. Open follow-ups (non-blocking): tests do not pin non-int rejection for max_attempts, budget_ms, cap_ms, or bool retry_after_ms; the shared check covers them but they are not tested individually. Nothing is left running. No processes were started.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AWFTMQEBNTS4F5D25TR665)\n\nSHIPPED: commit bab959991890b4985a4d26786075bd6f2f5ea033 on the run branch"
+        },
+        "cost_usd": 0.024842940000000004,
+        "started_at": "2026-11-26T02:55:12.762663504Z",
+        "finished_at": "2026-11-26T02:56:24.454806283Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8AWEKCP20YEEQ7J5SXRSREC",
+        "run": "prun_01M8AWEK73NVPR5S5X0HGRTJJ6",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8AWEKE19S83CH5GMYDZ0VDC",
+        "aether_task": "tsk_01M8AWEKE19S83CH5GMYDZ0VDD",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py. Committed as bab9599 on archon/4320trny-implement-retry-budget-py-per-spec-md-wi (not pushed). Before: the stub raised NotImplementedError. Now: all 24 tests pass. Validation rejects non-int (bool/float/None) and out-of-range values with ValueError before the exhausted returns. The attempt limit, saturating backoff, Retry-After floor not limited by cap, and strict budget boundary follow the spec. Checks: `python3 -B -m unittest -v test_retry_budget` gives 24 tests OK; `python3 -B -m py_compile` on both files succeeds. pyflakes is not installed, so no lint ran. Review: one reviewer (agt_01M8AWFTMQEBNTS4F5D25TR665) passed head bab9599 with no blocking findings, risk medium confirmed. Open follow-ups (non-blocking): tests do not pin non-int rejection for max_attempts, budget_ms, cap_ms, or bool retry_after_ms; the shared check covers them but they are not tested individually. Nothing is left running. No processes were started.",
+        "structured": {
+          "checks": [
+            "python3 -B -m unittest -v test_retry_budget (24 tests, OK)",
+            "python3 -B -m py_compile retry_budget.py test_retry_budget.py (OK)"
+          ],
+          "commit": "bab959991890b4985a4d26786075bd6f2f5ea033",
+          "evidence": [
+            {
+              "caption": "Test run after the change: all 24 tests pass",
+              "kind": "output",
+              "text": "Ran 24 tests in 0.000s\n\nOK"
+            }
+          ],
+          "local_commit": "bab959991890b4985a4d26786075bd6f2f5ea033",
+          "pr": {
+            "body": "Files: retry_budget.py (retry_delay, _check_int, _backoff), test_retry_budget.py (24 tests across validation, attempt limit, backoff, Retry-After, budget boundary). Approach: explicit ValueError validation for every argument before any early return; backoff uses a bit_length guard so huge attempts never build a large power of two. Checks: unittest 24 OK; py_compile OK; pyflakes unavailable. Review: one reviewer passed with no blocking findings. Follow-up (non-blocking): add individual non-int tests for max_attempts, budget_ms, cap_ms and bool retry_after_ms. Assumption: non-int types raise ValueError, as SPEC says 'Invalid values raise ValueError'.",
+            "summary": "Made retry_delay implemented per SPEC.md. Now validates inputs, applies attempt limit, saturating backoff, Retry-After floor and strict budget check. Before: NotImplementedError stub, now: 24 passing tests.",
+            "title": "Implement retry_delay per SPEC.md with focused tests"
+          },
+          "review": {
+            "reviewed_head": "bab959991890b4985a4d26786075bd6f2f5ea033",
+            "reviewer_agents": [
+              "agt_01M8AWFTMQEBNTS4F5D25TR665"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8AWFTMQEBNTS4F5D25TR665",
+                "base": "7bf8858f0286eea47cdca56097e09ecdf7e86324",
+                "findings": 2,
+                "head": "bab959991890b4985a4d26786075bd6f2f5ea033",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8AWFTMQEBNTS4F5D25TR665"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8AWFTMQEBNTS4F5D25TR665:1": {
+                "blocking": false,
+                "description": "Validation tests do not cover non-int rejection for max_attempts, budget_ms, cap_ms, or bool retry_after_ms; the shared _check_int path is exercised only by attempt, elapsed_ms, base_ms and float/bool cases, so these are not separately pinned.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8AWEKCP20YEEQ7J5SXRSREC"
+                },
+                "id": "agt_01M8AWFTMQEBNTS4F5D25TR665:1",
+                "resolved_in": null
+              },
+              "agt_01M8AWFTMQEBNTS4F5D25TR665:2": {
+                "blocking": false,
+                "description": "Spec rules 1-5 checked against retry_budget.py and verified by spot-check: int-only validation runs before exhausted returns; attempt >= max_attempts returns None; backoff saturates via bit_length without a large power; retry_after is a floor not capped by cap_ms; the budget check is strict (elapsed+delay >= budget returns None). Unit tests: 24 run, OK.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8AWEKCP20YEEQ7J5SXRSREC"
+                },
+                "id": "agt_01M8AWFTMQEBNTS4F5D25TR665:2",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "bab959991890b4985a4d26786075bd6f2f5ea033",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8AWFTMQEBNTS4F5D25TR665",
+                    "base": "7bf8858f0286eea47cdca56097e09ecdf7e86324",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8AWFTMQEBNTS4F5D25TR665:1",
+                      "agt_01M8AWFTMQEBNTS4F5D25TR665:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "New behaviour in a pure function with no callers; no concurrency, security, persistence or API surface. Reviewer confirmed medium. Tests cover each spec rule."
+          },
+          "tree": "bd203631d2622beba923ccdbe2d2cffb3a4cbff2"
+        },
+        "cost_usd": 0.024842940000000004,
+        "started_at": "2026-11-26T02:55:12.789836736Z",
+        "finished_at": "2026-11-26T02:56:21.363784137Z"
+      }
+    ],
+    "spent_usd": 0.024842940000000004,
+    "gates": [],
+    "delegations": {
+      "stg_01M8AWEKCP20YEEQ7J5SXRSREC": {
+        "direct_usd": 0.017396630000000003,
+        "delegated_usd": 0.007446310000000001,
+        "agents": [
+          {
+            "agent": "agt_01M8AWFTMQEBNTS4F5D25TR665",
+            "parent": "agt_01M8AWEKE19S83CH5GMYDZ0VDC",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.007446310000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-26T02:55:12.583673895Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-26T02:55:12.592641291Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-26T02:55:12.583673895Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

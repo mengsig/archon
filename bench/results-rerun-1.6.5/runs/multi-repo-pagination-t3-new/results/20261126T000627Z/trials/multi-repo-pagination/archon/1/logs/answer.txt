@@ -1,0 +1,36 @@
+Queued the change as one initiative, `ini_01M8AJSZQ0J4PHAX3Z4HQ624MN`, with one item per repository:
+
+- **inventory-api** (`qi_01M8AJSZQ2Z5MKHFNYHV9AA5FT`): cursor pagination on `GET /items`, with strict review because it changes a public API. Invalid `limit` or `cursor` returns 400 with `{"error": "..."}`.
+- **inventory-client** (`qi_01M8AJSZQ76F48C54QYVP79FEV`): `listItems` follows `next_cursor` until it is null or absent, sends no cursor on the first request, and passes the cursor back unchanged. Standard review.
+
+Both items use the `direct` pipeline with the same shared contract, which is your spec. The client's tests use a fake transport, so the two items run in parallel rather than one waiting on the other. Each repository's README is updated in its item.
+
+Both repositories are set to `ship: local`, so the work is committed on a local branch and never pushed. Nothing has been committed yet; I'll report back when the items finish.
+
+Done: Make listItems follow cursor pagination. listItems now pages through GET /items by following next_cursor until it is null or absent, passing the cursor back unchanged; the first request sends no cursor. Committed as 7a62aba on archon/yvp79fev-make-listitems-follow-cursor-pagination (not pushed). The change is in client.js, test/client.test.js (fake paged transport: multi-page, missing next_cursor, single page, first request has no cursor, repeated-cursor and missing-items errors) and README.md. npm test: 8/8 pass, up from 3. Independent review agt_01M8AJV8Q4V4AW46VEDWETV3SC passed the head with no blocking findings. Non-blocking follow-ups: cycle detection beyond an immediate repeat (A->B->A) would need a seen-cursor set; the test does not prove the first request has no cursor key; a null 200 body throws a bare TypeError. Nothing left running; the reviewer's leftover process 2652638 was stopped. The inventory-api half of the initiative is not part of this task.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJV8Q4V4AW46VEDWETV3SC)
+
+SHIPPED: commit 7a62abaa732ffc060fbe369eab9b3210473f5277 on the run branch
+Branch `archon/yvp79fev-make-listitems-follow-cursor-pagination` in /home/mengsig/.local/share/archon-bench/rerun-165/r-xwi1423i/archon-bench/work/20261126T000627Z/e1fc70ca5947a60ef9a763c9/inventory-client holds it (3 files changed, 67 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8AJSZQ76F48C54QYVP79FEV`; land it in `main`: `archon merge qi_01M8AJSZQ76F48C54QYVP79FEV`.
+
+Done: Add cursor pagination to GET /items. Cursor pagination for GET /items is committed on archon/hv9aa5ft-add-cursor-pagination-to-get-items, head c48c080 (tree 45a16194b69262ac5884aa2651b0bcc9b9987931). Not pushed. GET /items takes limit (1..100, default 20) and cursor, returns {items, next_cursor}, and gives 400 {"error"} for bad input. Checks: python3 -m unittest, 12 tests OK on the final head. The whole-change review failed on one blocking bug (over-long digit strings raised instead of 400); it was fixed in c48c080 and a delta review of 071f068..c48c080 passed. Open non-blocking follow-ups: non-string query values raise AttributeError from Python callers; assertion density is below CLAUDE.md in the parsing helpers; no test pins the 18/19-digit MAX_DIGITS boundary. The default-page behaviour (20 items plus next_cursor) is covered by a unit test; the after evidence was taken from the limit=2 CLI run. npm test for inventory-client is out of this stage's scope and was not run. Nothing was started, so no processes need stopping. The review pass rests on the four reviewers listed in structured.review.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJVXC0KT0CYZ4V3CJ57FGZ), claude-code/claude-haiku-5-5 (agent agt_01M8AJW2PENG4ZEHHZFZ07GYZ7), claude-code/claude-haiku-5-5 (agent agt_01M8AJW8DMAS7T97XHD9KVZY0R), claude-code/claude-haiku-5-5 (agent agt_01M8AJZ73JW608ZK963CTMEC86)
+
+SHIPPED: commit c48c0809749923527a4074b8943b6f40f2ca292b on the run branch
+Branch `archon/hv9aa5ft-add-cursor-pagination-to-get-items` in /home/mengsig/.local/share/archon-bench/rerun-165/r-xwi1423i/archon-bench/work/20261126T000627Z/e1fc70ca5947a60ef9a763c9/inventory-api holds it (3 files changed, 126 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M8AJSZQ2Z5MKHFNYHV9AA5FT`; land it in `main`: `archon merge qi_01M8AJSZQ2Z5MKHFNYHV9AA5FT`.
+
+Initiative finished; coordinated result queued.
+
+listItems now pages through GET /items by following next_cursor until it is null or absent, passing the cursor back unchanged; the first request sends no cursor. Committed as 7a62aba on archon/yvp79fev-make-listitems-follow-cursor-pagination (not pushed). The change is in client.js, test/client.test.js (fake paged transport: multi-page, missing next_cursor, single page, first request has no cursor, repeated-cursor and missing-items errors) and README.md. npm test: 8/8 pass, up from 3. Independent review agt_01M8AJV8Q4V4AW46VEDWETV3SC passed the head with no blocking findings. Non-blocking follow-ups: cycle detection beyond an immediate repeat (A->B->A) would need a seen-cursor set; the test does not prove the first request has no cursor key; a null 200 body throws a bare TypeError. Nothing left running; the reviewer's leftover process 2652638 was stopped. The inventory-api half of the initiative is not part of this task.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJV8Q4V4AW46VEDWETV3SC)
+
+SHIPPED: commit 7a62abaa732ffc060fbe369eab9b3210473f5277 on the run branch
+
+Cursor pagination for GET /items is committed on archon/hv9aa5ft-add-cursor-pagination-to-get-items, head c48c080 (tree 45a16194b69262ac5884aa2651b0bcc9b9987931). Not pushed. GET /items takes limit (1..100, default 20) and cursor, returns {items, next_cursor}, and gives 400 {"error"} for bad input. Checks: python3 -m unittest, 12 tests OK on the final head. The whole-change review failed on one blocking bug (over-long digit strings raised instead of 400); it was fixed in c48c080 and a delta review of 071f068..c48c080 passed. Open non-blocking follow-ups: non-string query values raise AttributeError from Python callers; assertion density is below CLAUDE.md in the parsing helpers; no test pins the 18/19-digit MAX_DIGITS boundary. The default-page behaviour (20 items plus next_cursor) is covered by a unit test; the after evidence was taken from the limit=2 CLI run. npm test for inventory-client is out of this stage's scope and was not run. Nothing was started, so no processes need stopping. The review pass rests on the four reviewers listed in structured.review.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJVXC0KT0CYZ4V3CJ57FGZ), claude-code/claude-haiku-5-5 (agent agt_01M8AJW2PENG4ZEHHZFZ07GYZ7), claude-code/claude-haiku-5-5 (agent agt_01M8AJW8DMAS7T97XHD9KVZY0R), claude-code/claude-haiku-5-5 (agent agt_01M8AJZ73JW608ZK963CTMEC86)
+
+SHIPPED: commit c48c0809749923527a4074b8943b6f40f2ca292b on the run branch

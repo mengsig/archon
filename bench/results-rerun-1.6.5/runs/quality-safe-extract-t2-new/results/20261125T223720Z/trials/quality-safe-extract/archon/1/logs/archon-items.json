@@ -1,0 +1,834 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8ADPYT098B2KMGVATZ1KX17",
+      "repo": "repo_01M8ADPERH2F39A6Q25WQCSEYF",
+      "pipeline": "adaptive",
+      "title": "Implement safe_extract.py per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated, local socket): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nRepository: quality-safe-extract. Read SPEC.md first; it is the source of truth for the API, error types and boundary cases. Current safe_extract.py is a stub-sized file; keep the documented API exactly. Existing test_safe_extract.py covers basics only: add focused tests for every error case and boundary case in SPEC.md. Use only the Python standard library. Keep functions under 60 lines, validate inputs at the boundary, never swallow exceptions, and keep path-traversal, absolute-path, symlink and size/limit checks as the SPEC requires. Run the tests and make them pass. Commit the work on the local branch with a clear message; no attribution lines naming any AI tool.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "safe-extract"
+      ],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8ADPYT098B2KMGVATZ1KX17",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T22:37:37.989679843Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T22:37:37.995209776Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T22:37:37.989679843Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:security",
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8ADPYTR7CY2KMY6CTZ36FJB",
+        "summary": "Implemented safe_extract.extract per SPEC.md with 42 stdlib unittest tests, committed as 1f0... chain ending at d93807a (tree c856894e76a74613f188adcf3e5402a402c8c929). Commits: 1d6a857 feat (implementation and first tests), 3f1189d test fixes, d93807a fix for a tuple-subclass bypass that wrote outside root. Checks: python3 -m unittest test_safe_extract -> 42 OK; python3 -O -m unittest test_safe_extract -> 42 OK. Review pass on head d93807a: delta reviewer agt_01M8AE93APQ5356SBZ6KZSQWAN (base 1d6a857); whole-change reads of 1d6a857 by agt_01M8ADSJ7W5X2M1M907TDZ01NS and agt_01M8ADSYF5GXHZRYF5X2X1AFM3 (pass) and agt_01M8ADSRBGK6PX9N47WVZBW2H9 (fail, fixed). Blocker agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:1 confirmed resolved. Documented limits, not changed: Path('') is cwd; case-insensitive filesystems unsupported; '..' through a symlinked root not checked; no guard against concurrent tree changes. Open non-blocking follow-ups: fewer than two asserts in helper functions; list subclasses accepted by isinstance while tuple/str/bytes subclasses are rejected; missing-midpath symlink case untested (unreachable). No processes left running by this stage; delegated reviewers have completed or been cancelled. Worktree is clean except untracked .archon/ runtime data. Not pushed.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ADSJ7W5X2M1M907TDZ01NS), claude-code/claude-haiku-5-5 (agent agt_01M8ADSRBGK6PX9N47WVZBW2H9), claude-code/claude-haiku-5-5 (agent agt_01M8ADSYF5GXHZRYF5X2X1AFM3), claude-code/claude-haiku-5-5 (agent agt_01M8AE2CJM9QQAEQXWJW9TC07K), claude-code/claude-haiku-5-5 (agent agt_01M8AE7S0C1BBEXMGKF7CG03HV), claude-code/claude-haiku-5-5 (agent agt_01M8AE93APQ5356SBZ6KZSQWAN)\n\nSHIPPED: commit d93807acf27b0b70d42a014129485cf38828e42d on the run branch"
+      },
+      "created_at": "2026-11-25T22:37:37.984395166Z",
+      "updated_at": "2026-11-25T22:48:37.333707109Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8ADPYTR7CY2KMY6CTZ36FJB",
+        "item": "qi_01M8ADPYT098B2KMGVATZ1KX17",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M8ADPZ05W9XE7S15HQF38R5F",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-d55247go/archon-bench/work/20261125T223720Z/177ab59ff79aa7718606bfe2/.archon/data/worktrees/quality-safe-extract/qi_01M8ADPYT098B2KMGVATZ1KX17",
+        "branch": "archon/atz1kx17-implement-safe-extract-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract per SPEC.md with 42 stdlib unittest tests, committed as 1f0... chain ending at d93807a (tree c856894e76a74613f188adcf3e5402a402c8c929). Commits: 1d6a857 feat (implementation and first tests), 3f1189d test fixes, d93807a fix for a tuple-subclass bypass that wrote outside root. Checks: python3 -m unittest test_safe_extract -> 42 OK; python3 -O -m unittest test_safe_extract -> 42 OK. Review pass on head d93807a: delta reviewer agt_01M8AE93APQ5356SBZ6KZSQWAN (base 1d6a857); whole-change reads of 1d6a857 by agt_01M8ADSJ7W5X2M1M907TDZ01NS and agt_01M8ADSYF5GXHZRYF5X2X1AFM3 (pass) and agt_01M8ADSRBGK6PX9N47WVZBW2H9 (fail, fixed). Blocker agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:1 confirmed resolved. Documented limits, not changed: Path('') is cwd; case-insensitive filesystems unsupported; '..' through a symlinked root not checked; no guard against concurrent tree changes. Open non-blocking follow-ups: fewer than two asserts in helper functions; list subclasses accepted by isinstance while tuple/str/bytes subclasses are rejected; missing-midpath symlink case untested (unreachable). No processes left running by this stage; delegated reviewers have completed or been cancelled. Worktree is clean except untracked .archon/ runtime data. Not pushed.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ADSJ7W5X2M1M907TDZ01NS), claude-code/claude-haiku-5-5 (agent agt_01M8ADSRBGK6PX9N47WVZBW2H9), claude-code/claude-haiku-5-5 (agent agt_01M8ADSYF5GXHZRYF5X2X1AFM3), claude-code/claude-haiku-5-5 (agent agt_01M8AE2CJM9QQAEQXWJW9TC07K), claude-code/claude-haiku-5-5 (agent agt_01M8AE7S0C1BBEXMGKF7CG03HV), claude-code/claude-haiku-5-5 (agent agt_01M8AE93APQ5356SBZ6KZSQWAN)\n\nSHIPPED: commit d93807acf27b0b70d42a014129485cf38828e42d on the run branch"
+        },
+        "cost_usd": 0.4725310099999999,
+        "started_at": "2026-11-25T22:37:38.156852953Z",
+        "finished_at": "2026-11-25T22:48:37.333707109Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8ADPYZTE1PJN5QSVH83638T",
+        "run": "prun_01M8ADPYTR7CY2KMY6CTZ36FJB",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8ADPZ0KWW33WEZTENCWGYY3",
+        "aether_task": "tsk_01M8ADPZ0KWW33WEZTENCWGYY4",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "critical",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented safe_extract.extract per SPEC.md with 42 stdlib unittest tests, committed as 1f0... chain ending at d93807a (tree c856894e76a74613f188adcf3e5402a402c8c929). Commits: 1d6a857 feat (implementation and first tests), 3f1189d test fixes, d93807a fix for a tuple-subclass bypass that wrote outside root. Checks: python3 -m unittest test_safe_extract -> 42 OK; python3 -O -m unittest test_safe_extract -> 42 OK. Review pass on head d93807a: delta reviewer agt_01M8AE93APQ5356SBZ6KZSQWAN (base 1d6a857); whole-change reads of 1d6a857 by agt_01M8ADSJ7W5X2M1M907TDZ01NS and agt_01M8ADSYF5GXHZRYF5X2X1AFM3 (pass) and agt_01M8ADSRBGK6PX9N47WVZBW2H9 (fail, fixed). Blocker agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:1 confirmed resolved. Documented limits, not changed: Path('') is cwd; case-insensitive filesystems unsupported; '..' through a symlinked root not checked; no guard against concurrent tree changes. Open non-blocking follow-ups: fewer than two asserts in helper functions; list subclasses accepted by isinstance while tuple/str/bytes subclasses are rejected; missing-midpath symlink case untested (unreachable). No processes left running by this stage; delegated reviewers have completed or been cancelled. Worktree is clean except untracked .archon/ runtime data. Not pushed.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest test_safe_extract (42 OK)",
+            "python3 -O -m unittest test_safe_extract (42 OK)"
+          ],
+          "commit": "d93807acf27b0b70d42a014129485cf38828e42d",
+          "evidence": {
+            "none": "New library module with no visible or measurable before/after change. The before state was the NotImplementedError stub."
+          },
+          "local_commit": "d93807acf27b0b70d42a014129485cf38828e42d",
+          "pr": {
+            "body": "Approach: each entry is normalized once into an exact (str, bytes) tuple (subclasses rejected), the batch is checked for duplicate and file/directory collisions, then each target is walked with lstat so every existing ancestor must be a real directory and the target must be absent. Only then are files written, with open(path, 'xb'). Files changed: safe_extract.py, test_safe_extract.py. Checks: python3 -m unittest test_safe_extract -> 42 OK; python3 -O -m unittest test_safe_extract -> 42 OK. Review scope: whole-change reads of 1d6a857 by agt_01M8ADSJ7W5X2M1M907TDZ01NS (pass), agt_01M8ADSYF5GXHZRYF5X2X1AFM3 (pass) and agt_01M8ADSRBGK6PX9N47WVZBW2H9 (fail, test gaps fixed in 3f1189d). Delta 1d6a857..d93807a: agt_01M8AE93APQ5356SBZ6KZSQWAN (pass on head). Earlier delta reads: agt_01M8ADZ3FMCT0V2VXZGPM07V4Z (fail on 3f1189d, tuple-subclass bypass fixed in d93807a), agt_01M8AE2CJM9QQAEQXWJW9TC07K and agt_01M8AE7S0C1BBEXMGKF7CG03HV (pass on head). Documented limits, not changed: Path('') resolves to cwd; case-insensitive filesystems are not supported (case-fold collisions can leave a partial write); a root spelled through a symlink with '..' is not checked; check-then-write is not guarded against concurrent changes to the tree (out of scope per SPEC). Open non-blocking follow-ups: the validation helpers have fewer than two asserts; list subclasses pass isinstance while tuple/str/bytes subclasses are rejected; the missing-midpath-then-symlink case is untested (unreachable).",
+            "summary": "Adds extract(entries, root) that writes a validated batch of regular files under root. Before: safe_extract.py was a stub raising NotImplementedError. Now: the whole batch is validated before any write; unsafe names, duplicates, collisions, symlinks, existing targets and invalid roots are rejected; links are never overwritten or followed.",
+            "title": "feat: add safe batch extraction of regular files"
+          },
+          "review": {
+            "reviewed_head": "d93807acf27b0b70d42a014129485cf38828e42d",
+            "reviewer_agents": [
+              "agt_01M8ADSJ7W5X2M1M907TDZ01NS",
+              "agt_01M8ADSRBGK6PX9N47WVZBW2H9",
+              "agt_01M8ADSYF5GXHZRYF5X2X1AFM3",
+              "agt_01M8AE2CJM9QQAEQXWJW9TC07K",
+              "agt_01M8AE7S0C1BBEXMGKF7CG03HV",
+              "agt_01M8AE93APQ5356SBZ6KZSQWAN"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8ADSJ7W5X2M1M907TDZ01NS",
+                "base": "8cffcfd15217a05adbb539c9a42f38fd9d1b8293",
+                "findings": 4,
+                "head": "1d6a8572d54e5045c302e953dcd3c1223e692a12",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8ADSRBGK6PX9N47WVZBW2H9",
+                "base": "8cffcfd15217a05adbb539c9a42f38fd9d1b8293",
+                "findings": 8,
+                "head": "1d6a8572d54e5045c302e953dcd3c1223e692a12",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8ADSYF5GXHZRYF5X2X1AFM3",
+                "base": "8cffcfd15217a05adbb539c9a42f38fd9d1b8293",
+                "findings": 5,
+                "head": "1d6a8572d54e5045c302e953dcd3c1223e692a12",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z",
+                "base": "1d6a8572d54e5045c302e953dcd3c1223e692a12",
+                "findings": 6,
+                "head": "3f1189d1e145a2d4060c612db1cad466f65d9292",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8AE2CJM9QQAEQXWJW9TC07K",
+                "base": "3f1189d1e145a2d4060c612db1cad466f65d9292",
+                "findings": 3,
+                "head": "d93807acf27b0b70d42a014129485cf38828e42d",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8AE7S0C1BBEXMGKF7CG03HV",
+                "base": "3f1189d1e145a2d4060c612db1cad466f65d9292",
+                "findings": 0,
+                "head": "d93807acf27b0b70d42a014129485cf38828e42d",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8AE93APQ5356SBZ6KZSQWAN",
+                "base": "1d6a8572d54e5045c302e953dcd3c1223e692a12",
+                "findings": 2,
+                "head": "d93807acf27b0b70d42a014129485cf38828e42d",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8ADSJ7W5X2M1M907TDZ01NS",
+              "agt_01M8ADSRBGK6PX9N47WVZBW2H9",
+              "agt_01M8ADSYF5GXHZRYF5X2X1AFM3",
+              "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z",
+              "agt_01M8AE2CJM9QQAEQXWJW9TC07K",
+              "agt_01M8AE7S0C1BBEXMGKF7CG03HV",
+              "agt_01M8AE93APQ5356SBZ6KZSQWAN"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8ADSJ7W5X2M1M907TDZ01NS:1": {
+                "blocking": false,
+                "description": "Empty-string root is rejected, but Path('') is accepted and silently resolves to the current working directory, which is then written to. at safe_extract.py:25 (remedy: Reject Path roots whose str() is '.' or '', or document that Path('') means cwd, and add a test.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSJ7W5X2M1M907TDZ01NS:1",
+                "resolved_in": null
+              },
+              "agt_01M8ADSJ7W5X2M1M907TDZ01NS:2": {
+                "blocking": false,
+                "description": "Over-long name components raise a raw OSError (ENAMETOOLONG) from the lstat in validation instead of ValueError. at safe_extract.py:92 (remedy: Catch OSError at the name-validation boundary, or check component length against 255 bytes, and re-raise as ValueError with context; add a test.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSJ7W5X2M1M907TDZ01NS:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                }
+              },
+              "agt_01M8ADSJ7W5X2M1M907TDZ01NS:3": {
+                "blocking": false,
+                "description": "Repository guidance asks for at least two meaningful assertions in non-trivial functions; _write_file has one assert, which is redundant with the construction and is stripped under python -O. at safe_extract.py:101 (remedy: Assert the real invariant before mutation (for example that the parent is inside root and the name has no empty components) rather than adding decorative asserts.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSJ7W5X2M1M907TDZ01NS:3",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                }
+              },
+              "agt_01M8ADSJ7W5X2M1M907TDZ01NS:4": {
+                "blocking": false,
+                "description": "No test covers a dangling symlink used as an intermediate ancestor (for example 'dangle/x'); the code rejects it correctly by reasoning, but it is untested. at test_safe_extract.py:189 (remedy: Add a test analogous to test_symlink_ancestor_to_outside_is_rejected using a dangling symlink, asserting ValueError and an unchanged snapshot.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSJ7W5X2M1M907TDZ01NS:4",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                }
+              },
+              "agt_01M8ADSRBGK6PX9N47WVZBW2H9:1": {
+                "blocking": true,
+                "description": "No test checks that an empty batch still validates the root. Mutant that returns [] before _check_root survives the suite (tests only use a valid root with []). at test_safe_extract.py:47 (remedy: Add a test asserting ValueError for extract([], root) with a missing root, a file root, and a symlink root, alongside the existing valid-root [] test.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSRBGK6PX9N47WVZBW2H9:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                }
+              },
+              "agt_01M8ADSRBGK6PX9N47WVZBW2H9:2": {
+                "blocking": true,
+                "description": "No positive test writes into a pre-existing real directory ancestor. Mutant that rejects every existing component (or makes mkdir exist_ok=False) survives all 33 tests. at test_safe_extract.py:55 (remedy: Add a test: create root/'real' with a sibling file, extract([('real/x', b'1')]) must return ['real/x'], write the bytes, and leave the sibling intact.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSRBGK6PX9N47WVZBW2H9:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                }
+              },
+              "agt_01M8ADSRBGK6PX9N47WVZBW2H9:3": {
+                "blocking": true,
+                "description": "No test for a dangling symlink as an ancestor. The SPEC explicitly says 'including dangling symlinks'; only a dangling target is tested. Mutant treating a dangling ancestor as absent survives. at test_safe_extract.py:200 (remedy: Add a test: os.symlink(base/'nowhere', root/'dang'); extract([('dang/x', b'x')], root) must raise ValueError; assert nowhere was not created and dang is still a symlink.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSRBGK6PX9N47WVZBW2H9:3",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                }
+              },
+              "agt_01M8ADSRBGK6PX9N47WVZBW2H9:4": {
+                "blocking": false,
+                "description": "The NUL ban is not what rejects 'nul\\0byte' in practice. Removing '\\0' from _FORBIDDEN_NAME_CHARS keeps the suite green because os.lstat raises ValueError('embedded null byte') during target validation. at safe_extract.py:7 (remedy: Assert the message in test_unsafe_names_are_rejected for the NUL case (for example assertRaisesRegex on 'forbidden') or add a dedicated NUL test so the explicit check ",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSRBGK6PX9N47WVZBW2H9:4",
+                "resolved_in": {
+                  "number": 3,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                }
+              },
+              "agt_01M8ADSRBGK6PX9N47WVZBW2H9:5": {
+                "blocking": false,
+                "description": "The S_ISLNK root branch is effectively redundant: an lstat'd symlink never passes S_ISDIR, so the symlink-root test passes via the 'must be a directory' branch. The symlink test does not assert which message fires. at safe_extract.py:31 (remedy: Either remove the S_ISLNK branch and keep one clear check, or assert the 'must not be a symlink' message in the symlink-root test.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSRBGK6PX9N47WVZBW2H9:5",
+                "resolved_in": {
+                  "number": 3,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                }
+              },
+              "agt_01M8ADSRBGK6PX9N47WVZBW2H9:6": {
+                "blocking": false,
+                "description": "Repository guidance asks for at least two meaningful assertions in non-trivial functions. extract, _check_root, _validate_entries, _check_target_absent and _check_no_collisions have none; the only assert is at line 103 and is decorative, since names are validated first, and it is stripped under python -O. at safe_extract.py:10 (remedy: Add 2 meaningful invariant checks in extract/_check_target_abs",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSRBGK6PX9N47WVZBW2H9:6",
+                "resolved_in": null
+              },
+              "agt_01M8ADSRBGK6PX9N47WVZBW2H9:7": {
+                "blocking": false,
+                "description": "IoErrors mocks only the builtin open. Unexpected errors from os.lstat or Path.mkdir are not tested as propagating. at test_safe_extract.py:225 (remedy: Add mock cases for os.lstat and Path.mkdir raising PermissionError and assert it propagates unchanged.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSRBGK6PX9N47WVZBW2H9:7",
+                "resolved_in": {
+                  "number": 3,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                }
+              },
+              "agt_01M8ADSRBGK6PX9N47WVZBW2H9:8": {
+                "blocking": false,
+                "description": "By reading (not run on a case-insensitive FS): names differing only by case ('Case' and 'case') pass validation. On case-insensitive filesystems the second open('xb') fails after the first file is created. at safe_extract.py:105 (remedy: Document that the API targets case-sensitive POSIX filesystems, or detect case-folded duplicates in _check_no_collisions if cross-platform use is planned.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSRBGK6PX9N47WVZBW2H9:8",
+                "resolved_in": null
+              },
+              "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:1": {
+                "blocking": false,
+                "description": "Duplicate and collision checks are exact string comparisons. On case-insensitive filesystems, a batch with 'A' and 'a' passes validation, and the second write then fails with FileExistsError after the first file is already created. at safe_extract.py:75 (remedy: Reject case-fold collisions in _check_no_collisions (compare casefold() values), or document that the API assumes a case-sensitive filesy",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:1",
+                "resolved_in": null
+              },
+              "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:2": {
+                "blocking": false,
+                "description": "entries is iterated three times (_validate_entries, the target-absent loop, the write loop). A list subclass with side-effecting __iter__ could make validation and writes see different batches. at safe_extract.py:45 (remedy: After the type check, take one snapshot (entries = list(entries)) and use it for validation and writes.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:2",
+                "resolved_in": {
+                  "number": 3,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                }
+              },
+              "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:3": {
+                "blocking": false,
+                "description": "_write_file guards the containment invariant with assert, which is stripped under python -O. at safe_extract.py:103 (remedy: Keep it as a cheap explicit check that raises ValueError, or drop it if the name validation is considered sufficient.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:3",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                }
+              },
+              "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:4": {
+                "blocking": false,
+                "description": "Test gaps: no test for a dangling symlink as an intermediate component (for example 'dangle/x'); no test for a missing mid-path component followed by a symlink later in the name; no test for an unexpected OSError during validation (the only I/O error test patches the write-phase open). at test_safe_extract.py:189 (remedy: Add unittest cases for each gap, asserting the ValueError or propagated OSEr",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:4",
+                "resolved_in": null
+              },
+              "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:5": {
+                "blocking": false,
+                "description": "The root is only lstat-checked as its final component. A root spelled through a symlink with '..' (for example 'link_to_dir/..') is accepted because pathlib does not resolve '..'. at safe_extract.py:27 (remedy: Document that ancestors of root are not checked, or resolve the root and compare it with the spelled path.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:5",
+                "resolved_in": null
+              },
+              "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:1": {
+                "blocking": true,
+                "description": "YF:2 fix is incomplete. batch = list(entries) snapshots only the outer list. Each entry is still a caller-supplied tuple, and tuple subclasses with a side-effecting __iter__ are unpacked again in _check_target_absent and in the write loop. Validation sees 'good', but the write goes to '../evil'. Experiment: extract([T(('good', b'x'))], root) returned ['../evil'] and created root/../evil. Pre-exist",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:1",
+                "resolved_in": {
+                  "number": 3,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                }
+              },
+              "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:2": {
+                "blocking": false,
+                "description": "Path('') resolves to cwd and is accepted as a root. Only the empty str is rejected. Confirmed: extract([('zz', b'1')], Path('')) wrote ./zz. Intentionally not changed; documented limit per brief. at safe_extract.py:27 (remedy: Keep as a documented limit, or reject Path roots whose str() is '.' or ''.)",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:2",
+                "resolved_in": null
+              },
+              "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:3": {
+                "blocking": false,
+                "description": "Duplicate and collision checks are case-sensitive. On case-insensitive filesystems 'A' and 'a' pass validation and the second write fails with FileExistsError after the first file exists. Intentionally not changed; documented limit per brief. at safe_extract.py:75 (remedy: Keep as a documented limit, or compare casefold() values.)",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:3",
+                "resolved_in": null
+              },
+              "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:4": {
+                "blocking": false,
+                "description": "The root is only lstat-checked as its final component. A root spelled through a symlink with '..' is accepted. Intentionally not changed; documented limit per brief. at safe_extract.py:27 (remedy: Keep as a documented limit, or resolve the root and compare it with the spelled path.)",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:4",
+                "resolved_in": null
+              },
+              "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:5": {
+                "blocking": false,
+                "description": "_write_file now has zero assertions after the assert was removed. The containment invariant is still guaranteed upstream by _check_name, which rejects empty, '.' and '..' parts. CLAUDE.md asks for at least two meaningful assertions in non-trivial functions, so this is a minor maintainability gap, not a defect. at safe_extract.py:107 (remedy: Optionally add a real pre-mutation invariant check that ",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:5",
+                "resolved_in": null
+              },
+              "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:6": {
+                "blocking": false,
+                "description": "Test gap from YF:4 still open: no test for a missing mid-path component followed by a symlink later. This case is not reachable, since nothing below a missing component can exist. The dangling-ancestor, lstat OSError and mkdir OSError tests were added. at test_safe_extract.py:224 (remedy: Optionally document why the case is unreachable, or drop it.)",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:6",
+                "resolved_in": null
+              },
+              "agt_01M8AE2CJM9QQAEQXWJW9TC07K:1": {
+                "blocking": false,
+                "description": "_check_batch_type uses isinstance(entries, list), so list subclasses are accepted while tuple, str and bytes subclasses are rejected by exact-type checks. at safe_extract.py:24 (remedy: Use type(entries) is list for consistency, or document why list subclasses are allowed. Add a test for a list subclass with a changing __iter__.)",
+                "found_in": {
+                  "number": 3,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8AE2CJM9QQAEQXWJW9TC07K:1",
+                "resolved_in": null
+              },
+              "agt_01M8AE2CJM9QQAEQXWJW9TC07K:2": {
+                "blocking": false,
+                "description": "Open follow-up SYF:4: no test covers a missing mid-path component followed by a symlink later in the name. The dangling-ancestor and lstat-error gaps are closed. at test_safe_extract.py:223 (remedy: Add a test for 'missing/dang' where dang is a symlink created under the missing path's parent, asserting a clean ValueError or success with no link following.)",
+                "found_in": {
+                  "number": 3,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8AE2CJM9QQAEQXWJW9TC07K:2",
+                "resolved_in": null
+              },
+              "agt_01M8AE2CJM9QQAEQXWJW9TC07K:3": {
+                "blocking": false,
+                "description": "Open follow-up SRB:6: extract, _check_root, _check_target_absent and _check_no_collisions contain zero assert statements. The CLAUDE.md assert-density guidance is unmet. at safe_extract.py:11 (remedy: Add two meaningful invariant checks, for example a non-empty normalized batch and a contained parent path, rather than decorative asserts.)",
+                "found_in": {
+                  "number": 3,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8AE2CJM9QQAEQXWJW9TC07K:3",
+                "resolved_in": null
+              },
+              "agt_01M8AE93APQ5356SBZ6KZSQWAN:1": {
+                "blocking": false,
+                "description": "_check_batch_type uses isinstance(entries, list), so list subclasses are accepted while tuple/str/bytes subclasses are rejected by exact-type checks. at safe_extract.py:24 (remedy: Use type(entries) is list for consistency, or document why list subclasses are allowed; add a test for a list subclass with a changing __iter__.)",
+                "found_in": {
+                  "number": 3,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8AE93APQ5356SBZ6KZSQWAN:1",
+                "resolved_in": null
+              },
+              "agt_01M8AE93APQ5356SBZ6KZSQWAN:2": {
+                "blocking": false,
+                "description": "extract, _check_root, _check_target_absent and _check_no_collisions contain no assert statements; CLAUDE.md assert-density guidance is unmet (follow-up, not a failure). at safe_extract.py:11 (remedy: Add two meaningful invariant checks, e.g. a non-empty normalized batch and a contained parent path.)",
+                "found_in": {
+                  "number": 3,
+                  "stage": "stg_01M8ADPYZTE1PJN5QSVH83638T"
+                },
+                "id": "agt_01M8AE93APQ5356SBZ6KZSQWAN:2",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "1d6a8572d54e5045c302e953dcd3c1223e692a12",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8ADSJ7W5X2M1M907TDZ01NS",
+                    "base": "8cffcfd15217a05adbb539c9a42f38fd9d1b8293",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M8ADSJ7W5X2M1M907TDZ01NS:1",
+                      "agt_01M8ADSJ7W5X2M1M907TDZ01NS:2",
+                      "agt_01M8ADSJ7W5X2M1M907TDZ01NS:3",
+                      "agt_01M8ADSJ7W5X2M1M907TDZ01NS:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8ADSRBGK6PX9N47WVZBW2H9",
+                    "base": "8cffcfd15217a05adbb539c9a42f38fd9d1b8293",
+                    "finding_count": 8,
+                    "finding_ids": [
+                      "agt_01M8ADSRBGK6PX9N47WVZBW2H9:1",
+                      "agt_01M8ADSRBGK6PX9N47WVZBW2H9:2",
+                      "agt_01M8ADSRBGK6PX9N47WVZBW2H9:3",
+                      "agt_01M8ADSRBGK6PX9N47WVZBW2H9:4",
+                      "agt_01M8ADSRBGK6PX9N47WVZBW2H9:5",
+                      "agt_01M8ADSRBGK6PX9N47WVZBW2H9:6",
+                      "agt_01M8ADSRBGK6PX9N47WVZBW2H9:7",
+                      "agt_01M8ADSRBGK6PX9N47WVZBW2H9:8"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  },
+                  {
+                    "agent": "agt_01M8ADSYF5GXHZRYF5X2X1AFM3",
+                    "base": "8cffcfd15217a05adbb539c9a42f38fd9d1b8293",
+                    "finding_count": 5,
+                    "finding_ids": [
+                      "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:1",
+                      "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:2",
+                      "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:3",
+                      "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:4",
+                      "agt_01M8ADSYF5GXHZRYF5X2X1AFM3:5"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "pass"
+                  }
+                ]
+              },
+              {
+                "head": "3f1189d1e145a2d4060c612db1cad466f65d9292",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z",
+                    "base": "1d6a8572d54e5045c302e953dcd3c1223e692a12",
+                    "finding_count": 6,
+                    "finding_ids": [
+                      "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:1",
+                      "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:2",
+                      "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:3",
+                      "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:4",
+                      "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:5",
+                      "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z:6"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "d93807acf27b0b70d42a014129485cf38828e42d",
+                "number": 3,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8AE2CJM9QQAEQXWJW9TC07K",
+                    "base": "3f1189d1e145a2d4060c612db1cad466f65d9292",
+                    "finding_count": 3,
+                    "finding_ids": [
+                      "agt_01M8AE2CJM9QQAEQXWJW9TC07K:1",
+                      "agt_01M8AE2CJM9QQAEQXWJW9TC07K:2",
+                      "agt_01M8AE2CJM9QQAEQXWJW9TC07K:3"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8AE7S0C1BBEXMGKF7CG03HV",
+                    "base": "3f1189d1e145a2d4060c612db1cad466f65d9292",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8AE93APQ5356SBZ6KZSQWAN",
+                    "base": "1d6a8572d54e5045c302e953dcd3c1223e692a12",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8AE93APQ5356SBZ6KZSQWAN:1",
+                      "agt_01M8AE93APQ5356SBZ6KZSQWAN:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Writes caller-supplied names to the filesystem; one validation bypass could write outside root. Touches file creation, symlink handling and path validation. 42 tests pass. A tuple-subclass bypass was found in review and fixed."
+          },
+          "tree": "c856894e76a74613f188adcf3e5402a402c8c929"
+        },
+        "cost_usd": 0.4725310099999999,
+        "started_at": "2026-11-25T22:37:38.170512282Z",
+        "finished_at": "2026-11-25T22:48:33.371746509Z"
+      }
+    ],
+    "spent_usd": 0.4725310099999999,
+    "gates": [],
+    "delegations": {
+      "stg_01M8ADPYZTE1PJN5QSVH83638T": {
+        "direct_usd": 0.3420101199999999,
+        "delegated_usd": 0.13052089,
+        "agents": [
+          {
+            "agent": "agt_01M8ADSJ7W5X2M1M907TDZ01NS",
+            "parent": "agt_01M8ADPZ0KWW33WEZTENCWGYY3",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01977146
+          },
+          {
+            "agent": "agt_01M8ADSRBGK6PX9N47WVZBW2H9",
+            "parent": "agt_01M8ADPZ0KWW33WEZTENCWGYY3",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.02665918
+          },
+          {
+            "agent": "agt_01M8ADSYF5GXHZRYF5X2X1AFM3",
+            "parent": "agt_01M8ADPZ0KWW33WEZTENCWGYY3",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0179671
+          },
+          {
+            "agent": "agt_01M8ADZ3FMCT0V2VXZGPM07V4Z",
+            "parent": "agt_01M8ADPZ0KWW33WEZTENCWGYY3",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01542751
+          },
+          {
+            "agent": "agt_01M8AE1Z6Q6V55BYHG258DS4QJ",
+            "parent": "agt_01M8ADPZ0KWW33WEZTENCWGYY3",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.0
+          },
+          {
+            "agent": "agt_01M8AE2CJM9QQAEQXWJW9TC07K",
+            "parent": "agt_01M8ADPZ0KWW33WEZTENCWGYY3",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.020541659999999996
+          },
+          {
+            "agent": "agt_01M8AE65A5BZX757QVPXW7ZF6X",
+            "parent": "agt_01M8ADPZ0KWW33WEZTENCWGYY3",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01129413
+          },
+          {
+            "agent": "agt_01M8AE7S0C1BBEXMGKF7CG03HV",
+            "parent": "agt_01M8ADPZ0KWW33WEZTENCWGYY3",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00678673
+          },
+          {
+            "agent": "agt_01M8AE93APQ5356SBZ6KZSQWAN",
+            "parent": "agt_01M8ADPZ0KWW33WEZTENCWGYY3",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01207312
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T22:37:37.989679843Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T22:37:37.995209776Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T22:37:37.989679843Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

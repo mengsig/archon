@@ -1,0 +1,262 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8AJ1SM5WEG4BTJ9N7DKP0GT",
+      "repo": "repo_01M8AJ1F3X8DJBRTP37521WQ39",
+      "pipeline": "direct",
+      "title": "Refactor order status String into OrderStatus enum",
+      "brief": "Operator request (authenticated inbox message): The `orders` crate stores an order's status as a `String` and compares string literals all over the code. Refactor it to a proper type.\n\n- Add `src/status.rs` with `pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }` deriving at least `Debug, Clone, Copy, PartialEq, Eq, Hash`.\n- `OrderStatus::as_str(self) -> &'static str` returns the lowercase names (\"pending\", \"paid\", \"shipped\", \"cancelled\"); `Display` prints the same.\n- `FromStr` for `OrderStatus` with `type Err = ParseStatusError`, a public error type that implements `std::error::Error` and whose message names the rejected input.\n- `OrderStatus::can_transition_to(self, next: OrderStatus) -> bool` encodes the lifecycle: pending -> paid, pending -> cancelled, paid -> shipped, paid -> cancelled; nothing else.\n- `Order::status` becomes an `OrderStatus`; re-export `OrderStatus` and `ParseStatusError` from the crate root; use the enum everywhere, so the status string literals appear only in `src/status.rs`.\n\nObservable behaviour (errors, report output and ordering, parsing) must stay exactly the same, and `cargo test` must pass. Commit the work.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8AJ1SM5WEG4BTJ9N7DKP0GT",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T23:53:27.439146344Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T23:53:27.448309218Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T23:53:27.439146344Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8AJ1SNDPX7KASEV898WBPWG",
+        "summary": "Refactored order status from String to an OrderStatus enum. Added src/status.rs (OrderStatus with as_str, Display, FromStr returning ParseStatusError, and can_transition_to for the four lifecycle edges). Order::status is now OrderStatus, all modules use the enum, status literals appear only in src/status.rs, and OrderStatus and ParseStatusError are re-exported from the crate root. status_counts now returns Vec<(OrderStatus, usize)> in the same name order. Error messages, CSV output and parsing are unchanged. Checks on head e95726e (tree 9ce08c92): cargo test passes (9 tests, including new tests/status.rs), cargo clippy --all-targets -- -D warnings is clean, and cargo fmt --check is clean. Reviewer agt_01M8AJ3QJCZ8RB5D1QQYKE92AX passed the change with no findings. Risk is high because the public Order::status and status_counts types change. Nothing is left running; the reviewer's leftover process (PID 2577707) was stopped. Not done: nothing pushed, per the contract.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJ3QJCZ8RB5D1QQYKE92AX)\n\nSHIPPED: commit e95726e27b970e27d9d48c7cb941fef6f95c729b on the run branch"
+      },
+      "created_at": "2026-11-25T23:53:27.429624615Z",
+      "updated_at": "2026-11-25T23:55:05.356279776Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8AJ1SNDPX7KASEV898WBPWG",
+        "item": "qi_01M8AJ1SM5WEG4BTJ9N7DKP0GT",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8AJ1SVSXTZJWFE05SP60091",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-yb1ghtst/archon-bench/work/20261125T235314Z/6e12507d6acaa629eedbe0f8/.archon/data/worktrees/refactor-order-status/qi_01M8AJ1SM5WEG4BTJ9N7DKP0GT",
+        "branch": "archon/n7dkp0gt-refactor-order-status-string-into-orders",
+        "state": {
+          "state": "succeeded",
+          "summary": "Refactored order status from String to an OrderStatus enum. Added src/status.rs (OrderStatus with as_str, Display, FromStr returning ParseStatusError, and can_transition_to for the four lifecycle edges). Order::status is now OrderStatus, all modules use the enum, status literals appear only in src/status.rs, and OrderStatus and ParseStatusError are re-exported from the crate root. status_counts now returns Vec<(OrderStatus, usize)> in the same name order. Error messages, CSV output and parsing are unchanged. Checks on head e95726e (tree 9ce08c92): cargo test passes (9 tests, including new tests/status.rs), cargo clippy --all-targets -- -D warnings is clean, and cargo fmt --check is clean. Reviewer agt_01M8AJ3QJCZ8RB5D1QQYKE92AX passed the change with no findings. Risk is high because the public Order::status and status_counts types change. Nothing is left running; the reviewer's leftover process (PID 2577707) was stopped. Not done: nothing pushed, per the contract.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJ3QJCZ8RB5D1QQYKE92AX)\n\nSHIPPED: commit e95726e27b970e27d9d48c7cb941fef6f95c729b on the run branch"
+        },
+        "cost_usd": 0.03165942,
+        "started_at": "2026-11-25T23:53:27.627739678Z",
+        "finished_at": "2026-11-25T23:55:05.356279776Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8AJ1SV63D1616PZ51HBNSQS",
+        "run": "prun_01M8AJ1SNDPX7KASEV898WBPWG",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8AJ1SWDMXD8DXASKQ0Y9T40",
+        "aether_task": "tsk_01M8AJ1SWDMXD8DXASKQ0Y9T41",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Refactored order status from String to an OrderStatus enum. Added src/status.rs (OrderStatus with as_str, Display, FromStr returning ParseStatusError, and can_transition_to for the four lifecycle edges). Order::status is now OrderStatus, all modules use the enum, status literals appear only in src/status.rs, and OrderStatus and ParseStatusError are re-exported from the crate root. status_counts now returns Vec<(OrderStatus, usize)> in the same name order. Error messages, CSV output and parsing are unchanged. Checks on head e95726e (tree 9ce08c92): cargo test passes (9 tests, including new tests/status.rs), cargo clippy --all-targets -- -D warnings is clean, and cargo fmt --check is clean. Reviewer agt_01M8AJ3QJCZ8RB5D1QQYKE92AX passed the change with no findings. Risk is high because the public Order::status and status_counts types change. Nothing is left running; the reviewer's leftover process (PID 2577707) was stopped. Not done: nothing pushed, per the contract.",
+        "structured": {
+          "checks": [
+            "cargo test",
+            "cargo clippy --all-targets -- -D warnings",
+            "cargo fmt --check"
+          ],
+          "commit": "e95726e27b970e27d9d48c7cb941fef6f95c729b",
+          "evidence": {
+            "none": "Pure refactor with no visible or measurable change; behaviour is verified by the test suite."
+          },
+          "local_commit": "e95726e27b970e27d9d48c7cb941fef6f95c729b",
+          "pr": {
+            "body": "Adds src/status.rs: OrderStatus (Pending, Paid, Shipped, Cancelled) with as_str, Display, FromStr (ParseStatusError, Error impl) and can_transition_to encoding pending->paid, pending->cancelled, paid->shipped, paid->cancelled. Order::status is now OrderStatus; billing, shipping, order and report use the enum. status_counts returns Vec<(OrderStatus, usize)>, sorted by status name as before. Error messages, CSV lines and from_line errors are unchanged. Status literals appear only in src/status.rs. Tests: existing suite unchanged in behaviour, plus tests/status.rs covering names, parsing and the transition table. Checks: cargo test (9 tests pass), clippy -D warnings clean, fmt --check clean. Review: reviewer agt_01M8AJ3QJCZ8RB5D1QQYKE92AX passed with no findings. Assumption: public API changes (Order::status type, status_counts return type) are intended; downstream callers must update.",
+            "summary": "Made order status type-safe. Now: OrderStatus enum with lifecycle checks, parsing and display. Before: String status with literal comparisons. Behaviour, errors and report output unchanged.",
+            "title": "Replace order status String with OrderStatus enum"
+          },
+          "review": {
+            "reviewed_head": "e95726e27b970e27d9d48c7cb941fef6f95c729b",
+            "reviewer_agents": [
+              "agt_01M8AJ3QJCZ8RB5D1QQYKE92AX"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8AJ3QJCZ8RB5D1QQYKE92AX",
+                "base": "f0a1b88626c65110c14071197579f6443e79f6db",
+                "findings": 0,
+                "head": "e95726e27b970e27d9d48c7cb941fef6f95c729b",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8AJ3QJCZ8RB5D1QQYKE92AX"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {},
+            "rounds": [
+              {
+                "head": "e95726e27b970e27d9d48c7cb941fef6f95c729b",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8AJ3QJCZ8RB5D1QQYKE92AX",
+                    "base": "f0a1b88626c65110c14071197579f6443e79f6db",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Changes public Order::status type and status_counts return type across all modules; runtime behaviour unchanged and covered by tests; reviewer confirmed high."
+          },
+          "tree": "9ce08c927cb6e8c400f50e49e0ae0bb3e993307a"
+        },
+        "cost_usd": 0.03165942,
+        "started_at": "2026-11-25T23:53:27.654054682Z",
+        "finished_at": "2026-11-25T23:55:02.039655416Z"
+      }
+    ],
+    "spent_usd": 0.03165942,
+    "gates": [],
+    "delegations": {
+      "stg_01M8AJ1SV63D1616PZ51HBNSQS": {
+        "direct_usd": 0.02453131,
+        "delegated_usd": 0.00712811,
+        "agents": [
+          {
+            "agent": "agt_01M8AJ3QJCZ8RB5D1QQYKE92AX",
+            "parent": "agt_01M8AJ1SWDMXD8DXASKQ0Y9T40",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00712811
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T23:53:27.439146344Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T23:53:27.448309218Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T23:53:27.439146344Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

@@ -1,0 +1,23 @@
+The fix is queued as item `qi_01M8AFGE3QED73ME2P6JWXE5DH` on repo `fix-off-by-one`. I have not run the tests or edited `window.py` myself, because changes to repositories go through the queue.
+
+- **Pipeline:** `direct`, with one agent making the change and committing it on a local branch. Nothing is pushed.
+- **Review:** `standard`, since the fix touches shared code and a fix that only works for the tested inputs would be easy to miss.
+- **Brief:** it asks for the `window.py` fix with no test changes, correctness for all valid inputs including edge cases, and a commit that explains the root cause.
+- **Notify:** tagged so you get a message when it finishes, whether it succeeds or fails.
+
+I'll report the outcome when the item finishes.
+
+Done: Fix window.py bug so python3 -m unittest passes. Fixed the off-by-one bug in window.py's sliding_windows. The start range was range(len(items) - size), one short of the number of valid starts, so the final window was dropped ([1,2,3] size 2 gave [[1,2]]). It is now range(len(items) - size + 1). Committed as dbdd825 on archon/6jwxe5dh-fix-window-py-bug-so-python3-m-unittest, only window.py changed, no test files touched, not pushed. python3 -m unittest passes 3/3 with exit 0. Manual edge checks pass: empty input, single element, size greater than length, and full-length window. Size <= 0 still raises ValueError. An independent reviewer (agt_01M8AFH5WRQ1QANRBJ0H5J06C5) passed head dbdd825 with no findings. Nothing left running; the reviewer's leftover process had already exited. Nothing is left open. Review: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AFH5WRQ1QANRBJ0H5J06C5)
+
+SHIPPED: commit dbdd82555913c465367d15325b2731814e54ee54 on the run branch
+Branch `archon/6jwxe5dh-fix-window-py-bug-so-python3-m-unittest` in /home/mengsig/.local/share/archon-bench/rerun-165/r-ozj82ti3/archon-bench/work/20261125T230852Z/ff4e6deb4587d2bfced97518/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M8AFGE3QED73ME2P6JWXE5DH`; land it in `main`: `archon merge qi_01M8AFGE3QED73ME2P6JWXE5DH`.
+
+Fixed and committed. The bug was an off-by-one in window.py's sliding_windows: the start range was range(len(items) - size), so the last window was dropped ([1,2,3] with size 2 gave [[1,2]]). It is now range(len(items) - size + 1). Commit dbdd82555913c465367d15325b2731814e54ee54 is on branch archon/6jwxe5dh-fix-window-py-bug-so-python3-m-unittest; only window.py changed, no test files touched, not pushed. python3 -m unittest passes 3/3 with exit 0. Edge cases checked: empty input, single element, size greater than length, full-length window; size <= 0 still raises ValueError. Independent review passed at that head with no findings.
+
+Fixed the off-by-one bug in window.py's sliding_windows. The start range was range(len(items) - size), one short of the number of valid starts, so the final window was dropped ([1,2,3] size 2 gave [[1,2]]). It is now range(len(items) - size + 1). Committed as dbdd825 on archon/6jwxe5dh-fix-window-py-bug-so-python3-m-unittest, only window.py changed, no test files touched, not pushed. python3 -m unittest passes 3/3 with exit 0. Manual edge checks pass: empty input, single element, size greater than length, and full-length window. Size <= 0 still raises ValueError. An independent reviewer (agt_01M8AFH5WRQ1QANRBJ0H5J06C5) passed head dbdd825 with no findings. Nothing left running; the reviewer's leftover process had already exited. Nothing is left open. Review: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AFH5WRQ1QANRBJ0H5J06C5)
+
+SHIPPED: commit dbdd82555913c465367d15325b2731814e54ee54 on the run branch

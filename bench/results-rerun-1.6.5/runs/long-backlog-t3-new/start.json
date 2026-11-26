@@ -1,0 +1,16 @@
+{
+  "task": "long-backlog",
+  "trial": 3,
+  "arm": "new",
+  "version": "1.6.5",
+  "load1_at_start": 1.3037109375,
+  "load5_at_start": 1.25146484375,
+  "hashes": {
+    "archon": "34c31d36c0668a78014c382de578d8b0b714745cb3db68e2ad54a6f2b8c787f7",
+    "aether": "3a795ff2a718e8c227ac66ad6bbefd2cfe1838bfcbf77b37eac10e56ca3cc923",
+    "archon-bench": "0d76d33482cdd47fd4efc3463aa02982ac5b61569ac0589dcc27beb3cc816682"
+  },
+  "start": "2026-11-26T01:26:07.362007+00:00",
+  "exit": 0,
+  "end": "2026-11-26T01:31:17.930559+00:00"
+}

@@ -1,0 +1,23 @@
+The cause is in the listing cache, not the product cache. `updatePrice` invalidates only the product entry, so a category page keeps serving its cached copy of the old price until its 10-minute TTL expires.
+
+I read the code in the mirror `repos/ask-cache-invalidation` (base commit `3bde597`). That is the only mirrored repository. I found no `catalog-service` directory, so I'm assuming this is the code the report refers to. I changed nothing and ran no tests.
+
+**The responsible code path**
+
+- `src/pricing.js:6-13`, `updatePrice`: writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. It never touches any `listing:<category>:<page>` key.
+- `src/catalog.js:12-20`, `Catalog.product`: reads `product:<sku>` from the cache, so the product page sees the new price once that key is deleted. This is why the product page updates immediately.
+- `src/catalog.js:22-33`, `Catalog.listing`: caches the whole page under `listing:<category>:<page>` with `LISTING_TTL_SECONDS`. Each cached row is a copy of `{sku, name, priceCents}`, so the price is frozen inside the listing entry.
+- `src/config.js:4-7`: `LISTING_TTL_SECONDS: 600`, which is the ten-minute window support is seeing. The comment says listings are cached separately because they are expensive to build.
+- `src/cache.js`: a plain `Map` with TTL expiry. It has no index from category to listing keys and no prefix delete, so `updatePrice` has no way to find the listing pages that contain the changed SKU.
+
+**Why the delay is what it is**
+
+Listing rows copy the price, but the invalidation only covers the product key. The stale value lives until its page entry expires, so the lag is the listing TTL, up to 600 seconds. The product TTL (3600 s) does not matter here, because `updatePrice` already deletes that key.
+
+**Fix options**
+
+1. **Recommended: stop caching price in listings.** Store only `sku` and `name` in the listing rows, then resolve the price per row through `this.product(sku)`. Product reads are already invalidated by `updatePrice`, so prices are fresh with no new invalidation logic. Cost: up to 24 small cache lookups per page, which is cheap, and a cache miss now means a store read per row.
+2. **Invalidate by category.** Keep the price in listings, but have `updatePrice` drop every listing page for the product's category. This needs a category-to-listing-keys index, or a per-category version number included in `listingKey`, which is more machinery.
+3. **Shorten `LISTING_TTL_SECONDS`.** This narrows the window but does not remove it, and it increases store load for every category.
+
+I'd pick option 1. It fixes the root cause and removes a second copy of the price. Before implementing, check that `test/catalog.test.js` does not assert that listing rows carry `priceCents` directly.

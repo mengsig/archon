@@ -1,0 +1,24 @@
+I've queued the work as item `qi_01M8B0K1VR6NB0HE7J11PQRXQQ` on the `quality-retry-budget` repository. I did not edit the repository myself, since the orchestrator hands changes to a pipeline.
+
+- **Pipeline:** `direct`, one agent that implements, checks and commits. Review is `standard`, because a new module with error paths should get a second look.
+- **Model:** balanced tier at medium effort.
+- **Brief:** implement `retry_budget.py` per `SPEC.md`, keep the documented API, cover every specified error and boundary case in `test_retry_budget.py`, use the standard library only, and commit with the `Co-Authored-By: Claude Haiku 5.5` trailer.
+
+The daemon will post the outcome when the item finishes. I have not verified the commit or the tests yet.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. No code change this attempt: the branch commit f0ae8b6a4c55036bb830b5c76f36d74d668dd113 (tree f286dc6d350531c9b67fdf0bb966ae97830b405d, base d92a8da8d1370e571a932dbeb13d6b16e21eb2b3) stands and ships as is. retry_delay in retry_budget.py implements SPEC.md: validation first, attempt limit, saturating backoff, uncapped Retry-After floor, strict budget check. test_retry_budget.py has 19 tests. Checks on the final head: `python3 -m unittest -v test_retry_budget` 19/19 OK; py_compile OK; pyflakes not installed, so no lint ran. Review: agt_01M8B0Q13VKX7ET5V468S6TZ1D read the whole change and passed it with no blocking findings. The earlier reviewer agt_01M8B0NX426EJ3N9PHTX411F0J returned no readable verdict and is not named. Left open (non-blocking): retry_delay has one assert where guidance asks for two, since the spec mandates ValueError for validation. Both reviewer processes were stopped. Nothing is left running. The worktree is clean apart from the removed __pycache__.
+
+REVIEW: pass by agt_01M8B0Q13VKX7ET5V468S6TZ1D on f0ae8b6a4c55036bb830b5c76f36d74d668dd113
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B0Q13VKX7ET5V468S6TZ1D)
+
+SHIPPED: commit f0ae8b6a4c55036bb830b5c76f36d74d668dd113 on the run branch
+Branch `archon/11pqrxqq-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-9ipdqdlh/archon-bench/work/20261126T040720Z/0310c4bfa1b30adca3bbf3e0/quality-retry-budget holds it (2 files changed, 128 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8B0K1VR6NB0HE7J11PQRXQQ`; land it in `main`: `archon merge qi_01M8B0K1VR6NB0HE7J11PQRXQQ`.
+
+No code change this attempt: the branch commit f0ae8b6a4c55036bb830b5c76f36d74d668dd113 (tree f286dc6d350531c9b67fdf0bb966ae97830b405d, base d92a8da8d1370e571a932dbeb13d6b16e21eb2b3) stands and ships as is. retry_delay in retry_budget.py implements SPEC.md: validation first, attempt limit, saturating backoff, uncapped Retry-After floor, strict budget check. test_retry_budget.py has 19 tests. Checks on the final head: `python3 -m unittest -v test_retry_budget` 19/19 OK; py_compile OK; pyflakes not installed, so no lint ran. Review: agt_01M8B0Q13VKX7ET5V468S6TZ1D read the whole change and passed it with no blocking findings. The earlier reviewer agt_01M8B0NX426EJ3N9PHTX411F0J returned no readable verdict and is not named. Left open (non-blocking): retry_delay has one assert where guidance asks for two, since the spec mandates ValueError for validation. Both reviewer processes were stopped. Nothing is left running. The worktree is clean apart from the removed __pycache__.
+
+REVIEW: pass by agt_01M8B0Q13VKX7ET5V468S6TZ1D on f0ae8b6a4c55036bb830b5c76f36d74d668dd113
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B0Q13VKX7ET5V468S6TZ1D)
+
+SHIPPED: commit f0ae8b6a4c55036bb830b5c76f36d74d668dd113 on the run branch

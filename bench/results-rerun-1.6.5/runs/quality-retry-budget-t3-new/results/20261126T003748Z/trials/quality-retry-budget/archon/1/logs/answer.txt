@@ -1,0 +1,20 @@
+I've queued the work as item `qi_01M8AMK8PGTA28WKAWEXJY4Z6X`. It is not done yet.
+
+- **What it does:** Implements `retry_budget.py` in the `quality-retry-budget` repository according to `SPEC.md`, with focused tests for every error and boundary case in the spec, standard library only. The item is committed locally (ship mode `local`, so nothing is pushed).
+- **Pipeline:** `direct` (one author, single module), with standard review because the change is new code rather than shared or security-sensitive code.
+- **Commit identity:** The brief asks for the repository's configured git user and no attribution lines. I did not read the spec or the repo myself, since the operator's changes are made by the queued agents.
+
+I'll be notified when the item finishes or fails. If it fails, I'll read the stage output and report back before retrying.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay per SPEC.md in retry_budget.py (stdlib only) and extended test_retry_budget.py to 25 tests covering all API items and error/boundary cases. Validation runs before every early return; bool/float rejected; backoff saturates without large powers; Retry-After is a floor not capped; budget check is strict. Before: the original 3 tests errored with NotImplementedError. After: python3 -m unittest, 25 tests OK. Also cross-checked the backoff shortcut against the naive formula over a grid with 0 mismatches. Committed as c4830f5 under the repo's configured identity, no attribution lines. Independent reviewer (agt_01M8AMMYWHQWBPP8Z1XTW1TM8J) passed the head with no findings. Nothing left open; no servers started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AMMYWHQWBPP8Z1XTW1TM8J)
+
+SHIPPED: commit c4830f5f16db77274f34271b36b811bc6c047045 on the run branch
+Branch `archon/exjy4z6x-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-7ruucit9/archon-bench/work/20261126T003748Z/98284207183d4e124b498d5a/quality-retry-budget holds it (2 files changed, 165 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8AMK8PGTA28WKAWEXJY4Z6X`; land it in `main`: `archon merge qi_01M8AMK8PGTA28WKAWEXJY4Z6X`.
+
+Implemented retry_delay per SPEC.md in retry_budget.py (stdlib only) and extended test_retry_budget.py to 25 tests covering all API items and error/boundary cases. Validation runs before every early return; bool/float rejected; backoff saturates without large powers; Retry-After is a floor not capped; budget check is strict. Before: the original 3 tests errored with NotImplementedError. After: python3 -m unittest, 25 tests OK. Also cross-checked the backoff shortcut against the naive formula over a grid with 0 mismatches. Committed as c4830f5 under the repo's configured identity, no attribution lines. Independent reviewer (agt_01M8AMMYWHQWBPP8Z1XTW1TM8J) passed the head with no findings. Nothing left open; no servers started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AMMYWHQWBPP8Z1XTW1TM8J)
+
+SHIPPED: commit c4830f5f16db77274f34271b36b811bc6c047045 on the run branch

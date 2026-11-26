@@ -1,0 +1,19 @@
+I queued the work as item `qi_01M8B230EVYVRV738ST9KZF58R` rather than editing the repo myself. As orchestrator I don't change repositories directly.
+
+- **Repo:** `quality-retry-budget`, on its current branch (base `main`).
+- **Pipeline:** `direct`, one agent that implements, checks and commits. Review is `standard`, since the retry logic has error and boundary behaviour that could hide a slip.
+- **Brief:** your request verbatim, plus acceptance criteria: every `SPEC.md` requirement met, documented API preserved, a focused test for each error and boundary case, standard library only, full suite passing, and a commit.
+- **Not verified yet:** I haven't read `SPEC.md` or the existing code, so I can't confirm the spec's details or the test results. I'll report the outcome when the item finishes.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_budget.retry_delay per SPEC.md and added 31 unittest tests (the 3 original basics plus 28 covering validation, attempt limit, backoff, saturation, Retry-After floor and budget boundaries). Committed as d5746e731df58914a7c7e26425ee2e8f2238a9ec on archon/t9kzf58r-implement-retry-budget-py-per-spec-md-wi, with no attribution lines and the repository's configured identity (mengsig). Checks: `python3 -m unittest -v test_retry_budget` gives 31 tests, OK; py_compile succeeds. pyflakes is not installed here, so no lint was run. Reviewer agt_01M8B24C2QQYXTQYP5M8VT3QQW (low effort) returned pass with no findings and confirmed risk low. Nothing left open; no services were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B24C2QQYXTQYP5M8VT3QQW)
+
+SHIPPED: commit d5746e731df58914a7c7e26425ee2e8f2238a9ec on the run branch
+Branch `archon/t9kzf58r-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-gy94xvy3/archon-bench/work/20261126T043333Z/8fd8349a45f173171c808367/quality-retry-budget holds it (2 files changed, 181 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8B230EVYVRV738ST9KZF58R`; land it in `main`: `archon merge qi_01M8B230EVYVRV738ST9KZF58R`.
+
+Implemented retry_budget.retry_delay per SPEC.md and added 31 unittest tests (the 3 original basics plus 28 covering validation, attempt limit, backoff, saturation, Retry-After floor and budget boundaries). Committed as d5746e731df58914a7c7e26425ee2e8f2238a9ec on archon/t9kzf58r-implement-retry-budget-py-per-spec-md-wi, with no attribution lines and the repository's configured identity (mengsig). Checks: `python3 -m unittest -v test_retry_budget` gives 31 tests, OK; py_compile succeeds. pyflakes is not installed here, so no lint was run. Reviewer agt_01M8B24C2QQYXTQYP5M8VT3QQW (low effort) returned pass with no findings and confirmed risk low. Nothing left open; no services were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B24C2QQYXTQYP5M8VT3QQW)
+
+SHIPPED: commit d5746e731df58914a7c7e26425ee2e8f2238a9ec on the run branch

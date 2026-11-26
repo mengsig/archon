@@ -1,0 +1,20 @@
+The implementation is queued as item `qi_01M8AWEK60JXH04A6T4320TRNY` ("Implement retry_budget.py per SPEC.md with focused tests") in repo `quality-retry-budget`. I haven't written or committed anything myself, since changes go through the queue.
+
+- **Pipeline:** `direct` (one agent builds, tests and commits), with `standard` review. This is a small, self-contained module, so one review pass seemed right.
+- **Brief:** the operator's request verbatim, plus instructions to read SPEC.md, keep the documented API, cover each specified error and boundary case with focused tests, use only the standard library, and run the tests before committing.
+- **Shipping:** the repo is set to `ship: local`, so the work is committed to a local branch and not pushed.
+
+I haven't read SPEC.md myself, so I can't yet confirm the spec's scope. The queue will report when the item finishes, or if it fails or gets blocked.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py. Committed as bab9599 on archon/4320trny-implement-retry-budget-py-per-spec-md-wi (not pushed). Before: the stub raised NotImplementedError. Now: all 24 tests pass. Validation rejects non-int (bool/float/None) and out-of-range values with ValueError before the exhausted returns. The attempt limit, saturating backoff, Retry-After floor not limited by cap, and strict budget boundary follow the spec. Checks: `python3 -B -m unittest -v test_retry_budget` gives 24 tests OK; `python3 -B -m py_compile` on both files succeeds. pyflakes is not installed, so no lint ran. Review: one reviewer (agt_01M8AWFTMQEBNTS4F5D25TR665) passed head bab9599 with no blocking findings, risk medium confirmed. Open follow-ups (non-blocking): tests do not pin non-int rejection for max_attempts, budget_ms, cap_ms, or bool retry_after_ms; the shared check covers them but they are not tested individually. Nothing is left running. No processes were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AWFTMQEBNTS4F5D25TR665)
+
+SHIPPED: commit bab959991890b4985a4d26786075bd6f2f5ea033 on the run branch
+Branch `archon/4320trny-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-c9ofsrgz/archon-bench/work/20261126T025500Z/92d4636ac0a050b3e3025fac/quality-retry-budget holds it (2 files changed, 149 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8AWEK60JXH04A6T4320TRNY`; land it in `main`: `archon merge qi_01M8AWEK60JXH04A6T4320TRNY`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py. Committed as bab9599 on archon/4320trny-implement-retry-budget-py-per-spec-md-wi (not pushed). Before: the stub raised NotImplementedError. Now: all 24 tests pass. Validation rejects non-int (bool/float/None) and out-of-range values with ValueError before the exhausted returns. The attempt limit, saturating backoff, Retry-After floor not limited by cap, and strict budget boundary follow the spec. Checks: `python3 -B -m unittest -v test_retry_budget` gives 24 tests OK; `python3 -B -m py_compile` on both files succeeds. pyflakes is not installed, so no lint ran. Review: one reviewer (agt_01M8AWFTMQEBNTS4F5D25TR665) passed head bab9599 with no blocking findings, risk medium confirmed. Open follow-ups (non-blocking): tests do not pin non-int rejection for max_attempts, budget_ms, cap_ms, or bool retry_after_ms; the shared check covers them but they are not tested individually. Nothing is left running. No processes were started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AWFTMQEBNTS4F5D25TR665)
+
+SHIPPED: commit bab959991890b4985a4d26786075bd6f2f5ea033 on the run branch

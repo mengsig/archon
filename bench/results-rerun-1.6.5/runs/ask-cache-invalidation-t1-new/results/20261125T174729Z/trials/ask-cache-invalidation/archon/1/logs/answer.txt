@@ -1,0 +1,34 @@
+**Root cause: `updatePrice` evicts only the product cache entry, so cached category listings keep the old price until their 600-second TTL expires.**
+
+The code is in the only mirror available, `repos/ask-cache-invalidation`. There is no `catalog-service` directory. The relevant module is `src/catalog.js`, and I'm assuming that is the service you mean. I made no changes.
+
+**Code path**
+
+1. `src/pricing.js`, `updatePrice(catalog, sku, priceCents)`:
+   - Writes the new price to the store.
+   - Calls `catalog.cache.delete(productKey(sku))`, which removes only `product:<sku>`.
+   - It never touches listing keys.
+2. `src/catalog.js`, `listing(category, page)`:
+   - Caches the mapped rows (`sku`, `name`, `priceCents`) under `listing:<category>:<page>`.
+   - Uses `LISTING_TTL_SECONDS`, which is 600 in `src/config.js`.
+   - Once cached, the rows are served without reading the store again.
+3. `product(sku)` caches under `product:<sku>` with a 3600 s TTL, but the write path evicts it, so product pages are fresh.
+
+**Why the delay is about ten minutes**
+
+The listing cache holds denormalised copies of `priceCents`, and nothing invalidates them on a price write. The only thing that ends the staleness is the 600 s TTL. The config comment says listings are cached separately because they are expensive to build, so the design accepts this delay without making invalidation explicit.
+
+**Reproduction (read-only, against the mirror)**
+
+- Listing shows 5000 before the update.
+- After `updatePrice(c, 'A1', 4500)`, `product('A1')` returns 4500 but `listing('tools')` still returns 5000.
+- The listing still shows 5000 at 599 s and returns 4500 at 600 s.
+- The existing tests pass (3/3 with `node --test test/catalog.test.js`). None of them covers listing staleness, which is why this was not caught.
+
+**Fix options**
+
+- **Preferred: stop caching the price in listings.** Cache only the SKU order per category page and join prices from the product cache or store at read time. The price then has one invalidation point, which `updatePrice` already handles.
+- **Alternative: invalidate on write.** `updatePrice` looks up the SKU's category and deletes its listing pages. This needs a way to delete keys by category prefix, because `TtlCache` is a flat `Map` and the page count is unknown. Track the keys per category or add a prefix delete. It is more code and easier to get wrong.
+- **Cheapest but weakest: lower `LISTING_TTL_SECONDS`.** This shrinks the window but does not remove it, and costs more rebuilds.
+
+Whichever fix is chosen, add a test that updates a price and then asserts `listing(...)` returns the new value immediately.

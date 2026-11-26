@@ -1,0 +1,324 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8AXMF2PG4YNDNE54Q3HC64D",
+      "repo": "repo_01M8AXM31WHJPQWF505D2Z56EE",
+      "pipeline": "adaptive",
+      "title": "Implement safe_extract.py per SPEC.md with focused tests",
+      "brief": "Operator instruction (authenticated inbox message, verbatim): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nRepository: quality-safe-extract. Read SPEC.md first; it is the authority for the API, errors and boundary cases. Keep the existing public API unchanged. Extend test_safe_extract.py (or add a focused test module) to cover every error and boundary case in SPEC.md. Use only the Python standard library. This is security-sensitive archive extraction: reject path traversal, absolute paths and unsafe links as the spec requires, and never hide failures. Keep functions under 60 lines and add meaningful input validation. Commit the work on the current branch with the repository's git identity; no attribution lines.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "safe-extract",
+        "spec"
+      ],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8AXMF2PG4YNDNE54Q3HC64D",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-26T03:15:53.565731423Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-26T03:15:53.577012166Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-26T03:15:53.565731423Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:security",
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8AXMF3S844NPV1JC7DDQYK8",
+        "summary": "Implemented safe_extract.extract(entries, root) per SPEC.md (standard library only) with 39 unit tests in test_safe_extract.py; committed on archon/4q3hc64d-implement-safe-extract-py-per-spec-md-wi as 705b662 (implementation and tests) and 5010b24 (fix). Head 5010b24, tree 479d8c75e937b8b3ff4b2c88e12217b2248ec11b. Check: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest test_safe_extract` -> 39 tests OK on the head. No build or lint config exists in the repo. Review: three whole-change reviewers (review-1 passed 705b662; review-2 and review-3 failed it with blocking findings); those were fixed in 5010b24 (empty root rejected, '..' components in root rejected, validation-stage I/O error test added). review-delta passed 705b662..5010b24 with no blocking findings. Open non-blocking follow-ups: a root containing '..' is refused even when it names a real directory; case-only or Unicode-normalisation collisions within a batch are not detected (a partial tree can result on case-insensitive filesystems); I/O failures after validation can leave partial directories (rollback is out of scope per SPEC); assert density is light. Workers: none. No services were started; the delta reviewer's leftover claude process (pid 2863235) is a completed child and stops when this stage ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AXR0PJXDM66R8TRE87214G), claude-code/claude-haiku-5-5 (agent agt_01M8AXR6QD2R7WKRPF1N2CEGPW), claude-code/claude-haiku-5-5 (agent agt_01M8AXRCYXQ7ACH7GBW1K0VC46), claude-code/claude-haiku-5-5 (agent agt_01M8AXWSDFTYV63G6G3N4YBX0H)\n\nSHIPPED: commit 5010b24645d50d1be1a75c5ff6b527f52509f243 on the run branch"
+      },
+      "created_at": "2026-11-26T03:15:53.558867575Z",
+      "updated_at": "2026-11-26T03:21:17.191664938Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8AXMF3S844NPV1JC7DDQYK8",
+        "item": "qi_01M8AXMF2PG4YNDNE54Q3HC64D",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M8AXMFA2VT1EVF4N8JJEWA1N",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-ypm1h004/archon-bench/work/20261126T031539Z/6eb4cbb59cc09b7759704ccf/.archon/data/worktrees/quality-safe-extract/qi_01M8AXMF2PG4YNDNE54Q3HC64D",
+        "branch": "archon/4q3hc64d-implement-safe-extract-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract(entries, root) per SPEC.md (standard library only) with 39 unit tests in test_safe_extract.py; committed on archon/4q3hc64d-implement-safe-extract-py-per-spec-md-wi as 705b662 (implementation and tests) and 5010b24 (fix). Head 5010b24, tree 479d8c75e937b8b3ff4b2c88e12217b2248ec11b. Check: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest test_safe_extract` -> 39 tests OK on the head. No build or lint config exists in the repo. Review: three whole-change reviewers (review-1 passed 705b662; review-2 and review-3 failed it with blocking findings); those were fixed in 5010b24 (empty root rejected, '..' components in root rejected, validation-stage I/O error test added). review-delta passed 705b662..5010b24 with no blocking findings. Open non-blocking follow-ups: a root containing '..' is refused even when it names a real directory; case-only or Unicode-normalisation collisions within a batch are not detected (a partial tree can result on case-insensitive filesystems); I/O failures after validation can leave partial directories (rollback is out of scope per SPEC); assert density is light. Workers: none. No services were started; the delta reviewer's leftover claude process (pid 2863235) is a completed child and stops when this stage ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AXR0PJXDM66R8TRE87214G), claude-code/claude-haiku-5-5 (agent agt_01M8AXR6QD2R7WKRPF1N2CEGPW), claude-code/claude-haiku-5-5 (agent agt_01M8AXRCYXQ7ACH7GBW1K0VC46), claude-code/claude-haiku-5-5 (agent agt_01M8AXWSDFTYV63G6G3N4YBX0H)\n\nSHIPPED: commit 5010b24645d50d1be1a75c5ff6b527f52509f243 on the run branch"
+        },
+        "cost_usd": 0.11277367,
+        "started_at": "2026-11-26T03:15:53.748316084Z",
+        "finished_at": "2026-11-26T03:21:17.191664938Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8AXMF9J84W7YYFDYN3NKR2R",
+        "run": "prun_01M8AXMF3S844NPV1JC7DDQYK8",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8AXMFAT0BCYRCZ6WHD8FZB9",
+        "aether_task": "tsk_01M8AXMFATHGS1PV22YB322AD2",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "critical",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented safe_extract.extract(entries, root) per SPEC.md (standard library only) with 39 unit tests in test_safe_extract.py; committed on archon/4q3hc64d-implement-safe-extract-py-per-spec-md-wi as 705b662 (implementation and tests) and 5010b24 (fix). Head 5010b24, tree 479d8c75e937b8b3ff4b2c88e12217b2248ec11b. Check: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest test_safe_extract` -> 39 tests OK on the head. No build or lint config exists in the repo. Review: three whole-change reviewers (review-1 passed 705b662; review-2 and review-3 failed it with blocking findings); those were fixed in 5010b24 (empty root rejected, '..' components in root rejected, validation-stage I/O error test added). review-delta passed 705b662..5010b24 with no blocking findings. Open non-blocking follow-ups: a root containing '..' is refused even when it names a real directory; case-only or Unicode-normalisation collisions within a batch are not detected (a partial tree can result on case-insensitive filesystems); I/O failures after validation can leave partial directories (rollback is out of scope per SPEC); assert density is light. Workers: none. No services were started; the delta reviewer's leftover claude process (pid 2863235) is a completed child and stops when this stage ends.",
+        "structured": {
+          "checks": [
+            "PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest test_safe_extract (39 tests OK, on 5010b24)"
+          ],
+          "commit": "5010b24645d50d1be1a75c5ff6b527f52509f243",
+          "evidence": [
+            {
+              "caption": "Unit suite on the final head 5010b24 (no before/after UI; a behaviour test result)",
+              "kind": "output",
+              "text": "Ran 39 tests in 0.009s\n\nOK"
+            }
+          ],
+          "local_commit": "5010b24645d50d1be1a75c5ff6b527f52509f243",
+          "pr": {
+            "body": "Approach: extract() runs read-only validation over the full batch (_require_list, _validate_root, _validate_entry, _check_batch_names, _check_target_free) before any mutation; _write_file creates parents with os.makedirs and writes via open(path, 'xb'). Root rejects empty strings and any '..' component so a symlink cannot be reached through a '..' spelling. Key files: safe_extract.py, test_safe_extract.py. Checks: python3 -B -m unittest test_safe_extract -> 39 OK on 5010b24. Review: review-1 passed 705b662 (whole change); review-2 and review-3 failed 705b662 (empty root, 'link/..' bypass, untested validation I/O error); fixed in 5010b24; review-delta passed 705b662..5010b24. Advisory follow-ups left open: '..' in root is stricter than SPEC (e.g. 'data/../out' is refused); case-only and Unicode-normalised collisions within a batch are not detected; I/O failures after validation may leave partial directories (SPEC puts rollback out of scope); assert density is light. Assumptions: entries must be tuples (lists are rejected); data must be bytes (bytearray and memoryview are rejected).",
+            "summary": "Made extract(entries, root) work per SPEC.md. Now validates the whole batch (entries, names, collisions, root, every target path incl. symlinks) before writing, writes with exclusive create, and propagates I/O errors. Before: NotImplementedError stub. Now: 39 tests cover every SPEC rule.",
+            "title": "feat: implement safe batch extraction of regular files"
+          },
+          "review": {
+            "reviewed_head": "5010b24645d50d1be1a75c5ff6b527f52509f243",
+            "reviewer_agents": [
+              "agt_01M8AXR0PJXDM66R8TRE87214G",
+              "agt_01M8AXR6QD2R7WKRPF1N2CEGPW",
+              "agt_01M8AXRCYXQ7ACH7GBW1K0VC46",
+              "agt_01M8AXWSDFTYV63G6G3N4YBX0H"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8AXR0PJXDM66R8TRE87214G",
+                "base": "17e704588a8a4edb5f64ab33d2579fa4d8a7307d",
+                "findings": 3,
+                "head": "705b66281b845003e9743bd0e6704e95ec0c75c1",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8AXR6QD2R7WKRPF1N2CEGPW",
+                "base": "17e704588a8a4edb5f64ab33d2579fa4d8a7307d",
+                "findings": 5,
+                "head": "705b66281b845003e9743bd0e6704e95ec0c75c1",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8AXRCYXQ7ACH7GBW1K0VC46",
+                "base": "17e704588a8a4edb5f64ab33d2579fa4d8a7307d",
+                "findings": 5,
+                "head": "705b66281b845003e9743bd0e6704e95ec0c75c1",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8AXWSDFTYV63G6G3N4YBX0H",
+                "base": "705b66281b845003e9743bd0e6704e95ec0c75c1",
+                "findings": 1,
+                "head": "5010b24645d50d1be1a75c5ff6b527f52509f243",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8AXR0PJXDM66R8TRE87214G",
+              "agt_01M8AXR6QD2R7WKRPF1N2CEGPW",
+              "agt_01M8AXRCYXQ7ACH7GBW1K0VC46",
+              "agt_01M8AXWSDFTYV63G6G3N4YBX0H"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "Security-sensitive archive extraction: root validation, symlink handling and path confinement are the only defence against writes outside root. Files touched: safe_extract.py, test_safe_extract.py. Behaviour changes from a stub to the full API; tests only in the test file. Reviewers confirmed the rule set; two blocking root bugs were found and fixed before pass."
+          },
+          "tree": "479d8c75e937b8b3ff4b2c88e12217b2248ec11b"
+        },
+        "cost_usd": 0.11277367000000002,
+        "started_at": "2026-11-26T03:15:53.778059752Z",
+        "finished_at": "2026-11-26T03:21:13.877343522Z"
+      }
+    ],
+    "spent_usd": 0.11277367,
+    "gates": [],
+    "delegations": {
+      "stg_01M8AXMF9J84W7YYFDYN3NKR2R": {
+        "direct_usd": 0.04856157000000001,
+        "delegated_usd": 0.06421210000000001,
+        "agents": [
+          {
+            "agent": "agt_01M8AXR0PJXDM66R8TRE87214G",
+            "parent": "agt_01M8AXMFAT0BCYRCZ6WHD8FZB9",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01302168
+          },
+          {
+            "agent": "agt_01M8AXR6QD2R7WKRPF1N2CEGPW",
+            "parent": "agt_01M8AXMFAT0BCYRCZ6WHD8FZB9",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.02496016
+          },
+          {
+            "agent": "agt_01M8AXRCYXQ7ACH7GBW1K0VC46",
+            "parent": "agt_01M8AXMFAT0BCYRCZ6WHD8FZB9",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01570071
+          },
+          {
+            "agent": "agt_01M8AXWSDFTYV63G6G3N4YBX0H",
+            "parent": "agt_01M8AXMFAT0BCYRCZ6WHD8FZB9",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01052955
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-26T03:15:53.565731423Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-26T03:15:53.577012166Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-26T03:15:53.565731423Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

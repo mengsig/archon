@@ -1,0 +1,255 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M89XME2TAGYJ4SG842NZ0DN2",
+      "repo": "repo_01M89XM07A62RY1XR20HAKF4S2",
+      "pipeline": "direct",
+      "title": "Implement rate limiter per SPEC.md in ratelimit.py",
+      "brief": "Operator request (authenticated, local socket): \"Implement the rate limiter described in `SPEC.md` in `ratelimit.py` (the module currently only has stubs). Follow the spec exactly, including its error cases and edge cases; the tests in `test_ratelimit.py` only cover the basics. Keep it dependency-free (standard library only) and commit your work.\"\n\nAcceptance criteria:\n- Every behaviour, error case and edge case in SPEC.md is implemented exactly as written; where SPEC.md is silent on an edge case, do not invent behaviour, state the assumption in your summary.\n- ratelimit.py uses only the Python standard library.\n- Existing tests in test_ratelimit.py pass; add tests covering the spec's error cases and edge cases.\n- Keep functions under 60 lines and follow the repository's existing style.\n- Commit the work in the repository. Commit only as the configured git user, with no tool or AI attribution in the commit message.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M89XME2TAGYJ4SG842NZ0DN2",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-25T17:56:38.124709651Z"
+              },
+              "effort": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-25T17:56:38.124709651Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged: the learned route's effort"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M89XME3J049P8DJCVRA9XMJ1",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, using only the standard library (time, collections), and added 16 tests to test_ratelimit.py. All 19 tests pass (the 3 original ones plus 16 new ones). Before the change, the 3 original tests errored on the NotImplementedError stubs.\n\nA whole-change review failed on one blocking item: NaN max_keys passed the `< 1` check and only failed later as an AssertionError. The fix (`not max_keys >= 1`) and a NaN test are in commit 248b3d0. A delta review of that commit passed.\n\nAssumptions where SPEC.md is silent: NaN capacity, refill_per_sec, max_keys and n are rejected as invalid. Non-integer max_keys (e.g. 2.5) is accepted, so the limit is effectively ceil(max_keys); this is not spec'd. Tokens are floats and wait_time returns (n - tokens) / refill_per_sec, so a caller sleeping exactly that long may hit a float rounding miss on the next try_acquire; no guard was added.\n\nLeft running: three reviewer `claude -p` processes (pids 388388, 392719, 394703) were started by the reviewer agents, not by me. I did not kill them; they stop when this run ends or can be stopped with kill <pid>. I started no servers.\n\nUntracked __pycache__ was removed from the worktree; the tree is clean.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89XQ8RYA30ZWDNARWWTX3TJ), claude-code/claude-haiku-5-5 (agent agt_01M89XTCXTQ0HYDNS93PTZ64DM)\n\nSHIPPED: commit 248b3d064a13142040cc8f2446742c7349279fd3 on the run branch"
+      },
+      "created_at": "2026-11-25T17:56:38.106582171Z",
+      "updated_at": "2026-11-25T18:00:32.318108630Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M89XME3J049P8DJCVRA9XMJ1",
+        "item": "qi_01M89XME2TAGYJ4SG842NZ0DN2",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M89XME902GA92AWV8C2WKRC3",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-mkossb3v/archon-bench/work/20261125T175623Z/8b3a1f1bfbeebd385b005579/.archon/data/worktrees/feature-token-bucket/qi_01M89XME2TAGYJ4SG842NZ0DN2",
+        "branch": "archon/42nz0dn2-implement-rate-limiter-per-spec-md-in-ra",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, using only the standard library (time, collections), and added 16 tests to test_ratelimit.py. All 19 tests pass (the 3 original ones plus 16 new ones). Before the change, the 3 original tests errored on the NotImplementedError stubs.\n\nA whole-change review failed on one blocking item: NaN max_keys passed the `< 1` check and only failed later as an AssertionError. The fix (`not max_keys >= 1`) and a NaN test are in commit 248b3d0. A delta review of that commit passed.\n\nAssumptions where SPEC.md is silent: NaN capacity, refill_per_sec, max_keys and n are rejected as invalid. Non-integer max_keys (e.g. 2.5) is accepted, so the limit is effectively ceil(max_keys); this is not spec'd. Tokens are floats and wait_time returns (n - tokens) / refill_per_sec, so a caller sleeping exactly that long may hit a float rounding miss on the next try_acquire; no guard was added.\n\nLeft running: three reviewer `claude -p` processes (pids 388388, 392719, 394703) were started by the reviewer agents, not by me. I did not kill them; they stop when this run ends or can be stopped with kill <pid>. I started no servers.\n\nUntracked __pycache__ was removed from the worktree; the tree is clean.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89XQ8RYA30ZWDNARWWTX3TJ), claude-code/claude-haiku-5-5 (agent agt_01M89XTCXTQ0HYDNS93PTZ64DM)\n\nSHIPPED: commit 248b3d064a13142040cc8f2446742c7349279fd3 on the run branch"
+        },
+        "cost_usd": 0.056397470000000005,
+        "started_at": "2026-11-25T17:56:38.277415035Z",
+        "finished_at": "2026-11-25T18:00:32.318108630Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M89XME8SC7FGZEY9N05M2TD0",
+        "run": "prun_01M89XME3J049P8DJCVRA9XMJ1",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M89XME9P4JFW2VHGS7AX8HPB",
+        "aether_task": "tsk_01M89XME9PYR12EVD6Q0AX9VVA",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "learned",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged: the learned route's effort",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, using only the standard library (time, collections), and added 16 tests to test_ratelimit.py. All 19 tests pass (the 3 original ones plus 16 new ones). Before the change, the 3 original tests errored on the NotImplementedError stubs.\n\nA whole-change review failed on one blocking item: NaN max_keys passed the `< 1` check and only failed later as an AssertionError. The fix (`not max_keys >= 1`) and a NaN test are in commit 248b3d0. A delta review of that commit passed.\n\nAssumptions where SPEC.md is silent: NaN capacity, refill_per_sec, max_keys and n are rejected as invalid. Non-integer max_keys (e.g. 2.5) is accepted, so the limit is effectively ceil(max_keys); this is not spec'd. Tokens are floats and wait_time returns (n - tokens) / refill_per_sec, so a caller sleeping exactly that long may hit a float rounding miss on the next try_acquire; no guard was added.\n\nLeft running: three reviewer `claude -p` processes (pids 388388, 392719, 394703) were started by the reviewer agents, not by me. I did not kill them; they stop when this run ends or can be stopped with kill <pid>. I started no servers.\n\nUntracked __pycache__ was removed from the worktree; the tree is clean.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest test_ratelimit (19 tests, OK, run after the final commit)"
+          ],
+          "commit": "248b3d064a13142040cc8f2446742c7349279fd3",
+          "evidence": [
+            {
+              "after": "Ran 19 tests in 0.000s\n\nOK",
+              "before": "Ran 3 tests ... FAILED (errors=3)  (NotImplementedError from stubs)",
+              "caption": "Unit tests before the change (stubs) and after (spec implementation)",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "248b3d064a13142040cc8f2446742c7349279fd3",
+          "pr": {
+            "body": "Approach: ratelimit.py holds TokenBucket (float tokens, refill computed from injected clock; no refill when clock goes backwards) and KeyedLimiter (OrderedDict of buckets; try_acquire and wait_time both move the key to MRU; the LRU key is evicted before inserting a new key beyond max_keys; invalid n is rejected before any key is created or evicted). Validation helpers use `not x > 0` / `not 0 < n <= capacity` so NaN is rejected. Tests: test_ratelimit.py adds error-case and edge-case tests (invalid params, bad n leaves state unchanged, clock regression, LRU eviction, wait_time counting as use, evicted key returns full, NaN max_keys).\n\nChecks: python3 -m unittest test_ratelimit: 19 tests, OK. No linter or formatter is configured in the repo.\n\nAssumptions: NaN is invalid input; non-integer max_keys is accepted (effective limit ceil(max_keys)); float rounding may make a try_acquire just after the wait_time delay fail.",
+            "risk": "medium",
+            "summary": "Made per-key rate limiting possible with a stdlib-only token bucket. Now: TokenBucket (fractional refill capped at capacity, wait_time, clock regression safe) and KeyedLimiter (LRU-bounded per-key buckets). Before: stubs raising NotImplementedError; now: spec'd behaviour and ValueError validation, 19 passing tests.",
+            "title": "Implement token bucket and keyed rate limiter per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "248b3d064a13142040cc8f2446742c7349279fd3",
+            "reviewer_agents": [
+              "agt_01M89XQ8RYA30ZWDNARWWTX3TJ",
+              "agt_01M89XTCXTQ0HYDNS93PTZ64DM"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M89XQ8RYA30ZWDNARWWTX3TJ",
+                "base": "efbd7cfb2629d8ba7bf909e3611ddd909174ec8e",
+                "findings": 1,
+                "head": "9f672b4c07470970453dbada12b2070cfe6b532e",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M89XTCXTQ0HYDNS93PTZ64DM",
+                "base": "9f672b4c07470970453dbada12b2070cfe6b532e",
+                "findings": 0,
+                "head": "248b3d064a13142040cc8f2446742c7349279fd3",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M89XQ8RYA30ZWDNARWWTX3TJ",
+              "agt_01M89XTCXTQ0HYDNS93PTZ64DM"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "New standard-library module behind no existing interface; no concurrency, persistence or API break. Behaviour changes only in the new module; tests added for error and edge cases. Whole-change reviewer rated medium; delta reviewer rated low for the one-line fix."
+          },
+          "tree": "8ca8bbe93b4b69f04b2ca6005eb41e0ce25c5e66"
+        },
+        "cost_usd": 0.056397470000000005,
+        "started_at": "2026-11-25T17:56:38.297879776Z",
+        "finished_at": "2026-11-25T18:00:28.296911799Z"
+      }
+    ],
+    "spent_usd": 0.056397470000000005,
+    "gates": [],
+    "delegations": {
+      "stg_01M89XME8SC7FGZEY9N05M2TD0": {
+        "direct_usd": 0.03516463,
+        "delegated_usd": 0.02123284,
+        "agents": [
+          {
+            "agent": "agt_01M89XQ8RYA30ZWDNARWWTX3TJ",
+            "parent": "agt_01M89XME9P4JFW2VHGS7AX8HPB",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01165858
+          },
+          {
+            "agent": "agt_01M89XSGAXZERR9MBR3ZEN0KM1",
+            "parent": "agt_01M89XME9P4JFW2VHGS7AX8HPB",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "low",
+            "cost_usd": 0.00438271
+          },
+          {
+            "agent": "agt_01M89XTCXTQ0HYDNS93PTZ64DM",
+            "parent": "agt_01M89XME9P4JFW2VHGS7AX8HPB",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "low",
+            "cost_usd": 0.0051915500000000005
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-25T17:56:38.124709651Z"
+          },
+          "effort": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-25T17:56:38.124709651Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

@@ -1,0 +1,258 @@
+{
+  "A_targeted": {
+    "pass": {
+      "old": [
+        21,
+        24
+      ],
+      "new": [
+        24,
+        24
+      ]
+    },
+    "fisher_p": 0.23404255319148937,
+    "ratios": {
+      "cost": [
+        1.5192179692614707,
+        1.0543155350891127,
+        2.155716247050967
+      ],
+      "wall": [
+        1.1792563972809291,
+        0.8713616917659216,
+        1.5839638106224991
+      ]
+    }
+  },
+  "B_broad": {
+    "pass": {
+      "old": [
+        18,
+        18
+      ],
+      "new": [
+        16,
+        18
+      ]
+    },
+    "fisher_p": 0.4857142857142857,
+    "ratios": {
+      "cost": [
+        1.245893586278023,
+        0.6702758074092433,
+        2.2181735007858947
+      ],
+      "wall": [
+        1.6373943748034918,
+        0.7379512945542223,
+        3.2767558625491886
+      ]
+    }
+  },
+  "all": {
+    "pass": {
+      "old": [
+        39,
+        42
+      ],
+      "new": [
+        40,
+        42
+      ]
+    },
+    "fisher_p": 1.0,
+    "ratios": {
+      "cost": [
+        1.439731253376312,
+        1.0126016241152314,
+        1.9952877133932447
+      ],
+      "wall": [
+        1.309523430962382,
+        0.9013963702843472,
+        1.855418056284388
+      ]
+    }
+  },
+  "per_task": {
+    "ask-cache-invalidation": {
+      "new": {
+        "pass": 2,
+        "n": 3,
+        "wall": 46.75277624266667,
+        "cost": 0.01399457
+      },
+      "old": {
+        "pass": 3,
+        "n": 3,
+        "wall": 31.71529687366667,
+        "cost": 0.00898409
+      }
+    },
+    "feature-token-bucket": {
+      "new": {
+        "pass": 2,
+        "n": 3,
+        "wall": 654.318697927,
+        "cost": 0.10494893666666667
+      },
+      "old": {
+        "pass": 3,
+        "n": 3,
+        "wall": 232.64010756633334,
+        "cost": 0.06593581333333333
+      }
+    },
+    "fix-off-by-one": {
+      "new": {
+        "pass": 3,
+        "n": 3,
+        "wall": 81.535110196,
+        "cost": 0.02887822666666667
+      },
+      "old": {
+        "pass": 3,
+        "n": 3,
+        "wall": 75.68965351233334,
+        "cost": 0.027997633333333338
+      }
+    },
+    "long-backlog": {
+      "new": {
+        "pass": 3,
+        "n": 3,
+        "wall": 193.86995969,
+        "cost": 0.14868530333333332
+      },
+      "old": {
+        "pass": 3,
+        "n": 3,
+        "wall": 191.93429915466663,
+        "cost": 0.13401279333333332
+      }
+    },
+    "multi-repo-pagination": {
+      "new": {
+        "pass": 8,
+        "n": 8,
+        "wall": 290.52930237,
+        "cost": 0.1618444025
+      },
+      "old": {
+        "pass": 5,
+        "n": 8,
+        "wall": 306.104219523875,
+        "cost": 0.13255563875
+      }
+    },
+    "quality-retry-budget": {
+      "new": {
+        "pass": 8,
+        "n": 8,
+        "wall": 133.274616625125,
+        "cost": 0.0421380575
+      },
+      "old": {
+        "pass": 8,
+        "n": 8,
+        "wall": 123.9192118145,
+        "cost": 0.0411903075
+      }
+    },
+    "quality-safe-extract": {
+      "new": {
+        "pass": 8,
+        "n": 8,
+        "wall": 449.80926918,
+        "cost": 0.22503045375
+      },
+      "old": {
+        "pass": 8,
+        "n": 8,
+        "wall": 310.79357011225,
+        "cost": 0.10864468000000001
+      }
+    },
+    "refactor-order-status": {
+      "new": {
+        "pass": 3,
+        "n": 3,
+        "wall": 265.31957270933333,
+        "cost": 0.07709383333333333
+      },
+      "old": {
+        "pass": 3,
+        "n": 3,
+        "wall": 204.51244179466667,
+        "cost": 0.060178409999999995
+      }
+    },
+    "review-seeded-bug": {
+      "new": {
+        "pass": 3,
+        "n": 3,
+        "wall": 43.385663496333336,
+        "cost": 0.011129383333333333
+      },
+      "old": {
+        "pass": 3,
+        "n": 3,
+        "wall": 48.40266515533333,
+        "cost": 0.011689906666666666
+      }
+    }
+  },
+  "failures": [
+    {
+      "task": "ask-cache-invalidation",
+      "trial": 3,
+      "arm": "new",
+      "timed_out": false,
+      "wall": 70.09625351,
+      "dir": "ask-cache-invalidation-t3-new",
+      "error": null
+    },
+    {
+      "task": "feature-token-bucket",
+      "trial": 2,
+      "arm": "new",
+      "timed_out": true,
+      "wall": 1502.463359121,
+      "dir": "feature-token-bucket-t2-new",
+      "error": null
+    },
+    {
+      "task": "multi-repo-pagination",
+      "trial": 4,
+      "arm": "old",
+      "timed_out": false,
+      "wall": 232.39672242,
+      "dir": "multi-repo-pagination-t4-old",
+      "error": null
+    },
+    {
+      "task": "multi-repo-pagination",
+      "trial": 5,
+      "arm": "old",
+      "timed_out": false,
+      "wall": 214.178936734,
+      "dir": "multi-repo-pagination-t5-old",
+      "error": null
+    },
+    {
+      "task": "multi-repo-pagination",
+      "trial": 7,
+      "arm": "old",
+      "timed_out": false,
+      "wall": 520.556413759,
+      "dir": "multi-repo-pagination-t7-old",
+      "error": null
+    }
+  ],
+  "missing": [],
+  "load5_at_start": {
+    "min": 0.37548828125,
+    "max": 7.84375
+  },
+  "spent_usd": 7.77181502
+}

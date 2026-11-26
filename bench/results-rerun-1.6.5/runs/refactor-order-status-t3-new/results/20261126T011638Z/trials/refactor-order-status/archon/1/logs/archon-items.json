@@ -1,0 +1,387 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8APTG18SCTQ42H9RSSF50RT",
+      "repo": "repo_01M8APT404KGHDWKTYDF6RGXFF",
+      "pipeline": "direct",
+      "title": "Refactor orders: OrderStatus enum replaces status strings",
+      "brief": "Operator request (verbatim, authenticated local socket): \"The `orders` crate stores an order's status as a `String` and compares string literals all over the code. Refactor it to a proper type:\n\n- Add `src/status.rs` with `pub enum OrderStatus { Pending, Paid, Shipped, Cancelled }` deriving at least `Debug, Clone, Copy, PartialEq, Eq, Hash`.\n- `OrderStatus::as_str(self) -> &'static str` returns the lowercase names (\"pending\", \"paid\", \"shipped\", \"cancelled\"); `Display` prints the same.\n- `FromStr` for `OrderStatus` with `type Err = ParseStatusError`, a public error type that implements `std::error::Error` and whose message names the rejected input.\n- `OrderStatus::can_transition_to(self, next: OrderStatus) -> bool` encodes the lifecycle: pending -> paid, pending -> cancelled, paid -> shipped, paid -> cancelled; nothing else.\n- `Order::status` becomes an `OrderStatus`; re-export `OrderStatus` and `ParseStatusError` from the crate root; use the enum everywhere, so the status string literals appear only in `src/status.rs`.\n\nObservable behaviour (errors, report output and ordering, parsing) must stay exactly the same, and `cargo test` must pass. Commit your work.\"\n\nConstraints: the crate is at the root of this item's worktree. Before changing anything, read the existing status handling and confirm current behaviour (report output, ordering, error messages, parsing) so it stays identical. Keep functions under 60 lines and keep comments minimal. Commit only with the configured git identity; do not override it and do not add any attribution line that names Claude, Claude Code, or any tool.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8APTG18SCTQ42H9RSSF50RT",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-26T01:16:51.116309730Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-26T01:16:51.118348537Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-26T01:16:51.116309730Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8APTG1ZVYCNXK4KJ381CA56",
+        "summary": "Repair attempt: no code changed. Branch head 78871ddb8b649d5331d9cb330cef817ded802c1a (tree a1cd97255079e324c1cbd092f6a71c7a149f3c64) carries the OrderStatus refactor committed in attempt 1; worktree clean. Checks on this head: cargo fmt --check clean; cargo clippy --all-targets -D warnings clean; cargo test passes (3 unit, 3 integration). Reviewer agt_01M8APZ83PS7G763KAG8HPDAE5 read the whole change from base 74972a908c2e9d52d93518274a5edd297610a745 and passed it with no blocking findings; behaviour matches base for report order, CSV parsing, error and refusal text. Risk is high because of the public API break (Order.status type and report::status_counts return type). Open non-blocking follow-up: tests/orders.rs:52 still checks from_line's unknown-status error with is_err() only, not its message. Nothing pushed; no processes started or left running.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8APZ83PS7G763KAG8HPDAE5)\n\nSHIPPED: commit 78871ddb8b649d5331d9cb330cef817ded802c1a on the run branch"
+      },
+      "created_at": "2026-11-26T01:16:51.112916698Z",
+      "updated_at": "2026-11-26T01:19:59.085495159Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8APTG1ZVYCNXK4KJ381CA56",
+        "item": "qi_01M8APTG18SCTQ42H9RSSF50RT",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8APTG79YM3TVPB10TPAGRVV",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-ug9flabj/archon-bench/work/20261126T011638Z/6af34c76c07a938171b403c1/.archon/data/worktrees/refactor-order-status/qi_01M8APTG18SCTQ42H9RSSF50RT",
+        "branch": "archon/rssf50rt-refactor-orders-orderstatus-enum-replace",
+        "state": {
+          "state": "succeeded",
+          "summary": "Repair attempt: no code changed. Branch head 78871ddb8b649d5331d9cb330cef817ded802c1a (tree a1cd97255079e324c1cbd092f6a71c7a149f3c64) carries the OrderStatus refactor committed in attempt 1; worktree clean. Checks on this head: cargo fmt --check clean; cargo clippy --all-targets -D warnings clean; cargo test passes (3 unit, 3 integration). Reviewer agt_01M8APZ83PS7G763KAG8HPDAE5 read the whole change from base 74972a908c2e9d52d93518274a5edd297610a745 and passed it with no blocking findings; behaviour matches base for report order, CSV parsing, error and refusal text. Risk is high because of the public API break (Order.status type and report::status_counts return type). Open non-blocking follow-up: tests/orders.rs:52 still checks from_line's unknown-status error with is_err() only, not its message. Nothing pushed; no processes started or left running.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8APZ83PS7G763KAG8HPDAE5)\n\nSHIPPED: commit 78871ddb8b649d5331d9cb330cef817ded802c1a on the run branch"
+        },
+        "cost_usd": 0.05958739,
+        "started_at": "2026-11-26T01:16:51.279234792Z",
+        "finished_at": "2026-11-26T01:19:59.085495159Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8APTG6NXHNJFW9B51XCNS9C",
+        "run": "prun_01M8APTG1ZVYCNXK4KJ381CA56",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8APTG7FDYVBXF6Q25KT57W5",
+        "aether_task": "tsk_01M8APTG7FDYVBXF6Q25KT57W6",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Refactored the orders crate to use an OrderStatus enum in place of status strings. Added src/status.rs with OrderStatus (as_str, Display, FromStr, can_transition_to) and ParseStatusError (std::error::Error). Order::status is now OrderStatus; OrderStatus and ParseStatusError are re-exported from the crate root. Status literals appear only in src/status.rs. Public API change: Order.status type, and report::status_counts now returns Vec<(OrderStatus, usize)> sorted by status name as before. Verified against a temporary characterization test run before and after (removed afterwards): report order, CSV lines, parse errors, refusal messages and totals are identical. Checks on head 78871dd: cargo fmt --check clean, cargo clippy --all-targets -D warnings clean, cargo test passes (3 integration, 3 unit). Review: agt_01M8APXDTVHZS1R168HY4DDMM2 passed the head with no blocking findings. Open follow-up (non-blocking): from_line's unknown-status message is not asserted through from_line, only in the ParseStatusError unit test. Nothing was pushed, and no processes were started. Review: pass.",
+        "structured": {
+          "checks": [
+            "cargo fmt --check",
+            "cargo clippy --all-targets -- -D warnings",
+            "cargo test"
+          ],
+          "commit": "78871ddb8b649d5331d9cb330cef817ded802c1a",
+          "evidence": [
+            {
+              "after": "counts=[(Cancelled, 1), (Paid, 1), (Pending, 1), (Shipped, 1)]\nline=1,ada,100,paid\nparse \"5,eve,9,lost\" => Err(\"unknown status \\\"lost\\\"\")\nship_err=Err(\"order 2 cannot be shipped: it is pending\")\npay_err=Err(\"order 3 cannot be paid: it is cancelled\")\ncancel_err=Err(\"order 4 cannot be cancelled: it is shipped\")",
+              "before": "counts=[(\"cancelled\", 1), (\"paid\", 1), (\"pending\", 1), (\"shipped\", 1)]\nline=1,ada,100,paid\nparse \"5,eve,9,lost\" => Err(\"unknown status \\\"lost\\\"\")\nship_err=Err(\"order 2 cannot be shipped: it is pending\")\npay_err=Err(\"order 3 cannot be paid: it is cancelled\")\ncancel_err=Err(\"order 4 cannot be cancelled: it is shipped\")",
+              "caption": "Characterization of observable output, before vs after the refactor. Only Debug rendering of the status changed; Display output identical.",
+              "kind": "output"
+            }
+          ],
+          "pr": {
+            "body": "Approach: add src/status.rs (OrderStatus, ParseStatusError). Order::status and billing/shipping/report use the enum. Lifecycle rules live in can_transition_to. status_counts keys by as_str() to keep the alphabetical report order. from_line uses ParseStatusError's Display, which yields the same 'unknown status {:?}' text as before. Key files: src/status.rs, src/order.rs, src/billing.rs, src/shipping.rs, src/report.rs, src/lib.rs, tests/orders.rs. Checks: fmt, clippy -D warnings and cargo test all pass. Characterization before/after matched for report output, CSV lines, parse errors, refusal messages and totals. Assumptions: the Order.status type and status_counts return type are intentional API changes. Open follow-up (non-blocking): assert from_line's unknown-status message in tests/orders.rs.",
+            "evidence_note": "Pure refactor; behaviour checked by characterization diff",
+            "summary": "Order status is now a type. Before: String compared against literals everywhere. Now: OrderStatus enum with as_str, Display, FromStr and can_transition_to; literals only in src/status.rs; report output and errors unchanged.",
+            "title": "Replace order status strings with OrderStatus enum"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8APXDTVHZS1R168HY4DDMM2:1": {
+                "blocking": false,
+                "description": "from_line's unknown-status error text (\"unknown status \\\"lost\\\"\") is only checked with is_err(). Adding an assert_eq on the message would pin the operator-required message through the CSV path. The ParseStatusError message is already covered in src/status.rs. at tests/orders.rs:46",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8APTG6NXHNJFW9B51XCNS9C"
+                },
+                "id": "agt_01M8APXDTVHZS1R168HY4DDMM2:1",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "78871ddb8b649d5331d9cb330cef817ded802c1a",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8APXDTVHZS1R168HY4DDMM2",
+                    "base": "74972a908c2e9d52d93518274a5edd297610a745",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8APXDTVHZS1R168HY4DDMM2:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Public API change: Order.status is now OrderStatus and status_counts returns OrderStatus keys, which breaks downstream callers that compile against String. Operator requested it. Runtime report output and error messages unchanged. Reviewer confirmed high."
+          },
+          "tree": "a1cd97255079e324c1cbd092f6a71c7a149f3c64"
+        },
+        "cost_usd": 0.04062333,
+        "started_at": "2026-11-26T01:16:51.284924920Z",
+        "finished_at": "2026-11-26T01:18:56.947020035Z"
+      },
+      {
+        "id": "stg_01M8APYAYAZPHVS5W99FP495SZ",
+        "run": "prun_01M8APTG1ZVYCNXK4KJ381CA56",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 2,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "spent",
+        "aether_agent": "agt_01M8APYMHBCAPQ88KWEQ1D7ZR7",
+        "aether_task": "tsk_01M8APYMHBCAPQ88KWEQ1D7ZR8",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Repair attempt: no code changed. Branch head 78871ddb8b649d5331d9cb330cef817ded802c1a (tree a1cd97255079e324c1cbd092f6a71c7a149f3c64) carries the OrderStatus refactor committed in attempt 1; worktree clean. Checks on this head: cargo fmt --check clean; cargo clippy --all-targets -D warnings clean; cargo test passes (3 unit, 3 integration). Reviewer agt_01M8APZ83PS7G763KAG8HPDAE5 read the whole change from base 74972a908c2e9d52d93518274a5edd297610a745 and passed it with no blocking findings; behaviour matches base for report order, CSV parsing, error and refusal text. Risk is high because of the public API break (Order.status type and report::status_counts return type). Open non-blocking follow-up: tests/orders.rs:52 still checks from_line's unknown-status error with is_err() only, not its message. Nothing pushed; no processes started or left running.",
+        "structured": {
+          "checks": [
+            "cargo fmt --check",
+            "cargo clippy --all-targets -- -D warnings",
+            "cargo test"
+          ],
+          "commit": "78871ddb8b649d5331d9cb330cef817ded802c1a",
+          "evidence": {
+            "none": "Pure refactor with no visible or measured change; behaviour equivalence was checked by a characterization test against base, removed afterwards, and by the reviewer's read of the whole diff."
+          },
+          "local_commit": "78871ddb8b649d5331d9cb330cef817ded802c1a",
+          "pr": {
+            "body": "Adds src/status.rs with OrderStatus (Pending, Paid, Shipped, Cancelled), as_str, Display, FromStr with public ParseStatusError (std::error::Error), and can_transition_to encoding pending->paid, pending->cancelled, paid->shipped, paid->cancelled. Order.status is OrderStatus; OrderStatus and ParseStatusError are re-exported from the crate root. Files touched: src/status.rs (new), src/lib.rs, src/order.rs, src/billing.rs, src/shipping.rs, src/report.rs, tests/orders.rs. Public API change: Order.status type; report::status_counts returns Vec<(OrderStatus, usize)>. Checks on 78871dd: cargo fmt --check clean, cargo clippy --all-targets -D warnings clean, cargo test passes (3 unit, 3 integration). Earlier characterization test against base (removed afterwards) showed identical report order, CSV lines, parse errors, refusal messages and totals. Open non-blocking follow-up: tests/orders.rs:52 asserts from_line's unknown-status error only with is_err(); the message is covered in the ParseStatusError unit test.",
+            "summary": "Order status is now a typed OrderStatus enum with validated transitions. Before: status was a String compared against literals. Now: OrderStatus with as_str, Display, FromStr (ParseStatusError) and can_transition_to; literals live only in src/status.rs. Report output, ordering, parsing and error text unchanged.",
+            "title": "Replace order status strings with OrderStatus enum"
+          },
+          "review": {
+            "reviewed_head": "78871ddb8b649d5331d9cb330cef817ded802c1a",
+            "reviewer_agents": [
+              "agt_01M8APZ83PS7G763KAG8HPDAE5"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8APZ83PS7G763KAG8HPDAE5",
+                "base": "74972a908c2e9d52d93518274a5edd297610a745",
+                "findings": 1,
+                "head": "78871ddb8b649d5331d9cb330cef817ded802c1a",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8APZ83PS7G763KAG8HPDAE5"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8APXDTVHZS1R168HY4DDMM2:1": {
+                "blocking": false,
+                "description": "from_line's unknown-status error text (\"unknown status \\\"lost\\\"\") is only checked with is_err(). Adding an assert_eq on the message would pin the operator-required message through the CSV path. The ParseStatusError message is already covered in src/status.rs. at tests/orders.rs:46",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8APTG6NXHNJFW9B51XCNS9C"
+                },
+                "id": "agt_01M8APXDTVHZS1R168HY4DDMM2:1",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "78871ddb8b649d5331d9cb330cef817ded802c1a",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8APZ83PS7G763KAG8HPDAE5",
+                    "base": "74972a908c2e9d52d93518274a5edd297610a745",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8APXDTVHZS1R168HY4DDMM2:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Public API break: Order.status changes from String to OrderStatus and report::status_counts changes its return type. Persistence and CSV wire format are unchanged; the reviewer confirmed behaviour equals base. Touches src/status.rs plus five call sites and tests."
+          },
+          "tree": "a1cd97255079e324c1cbd092f6a71c7a149f3c64"
+        },
+        "cost_usd": 0.01896406,
+        "started_at": "2026-11-26T01:18:56.970203405Z",
+        "finished_at": "2026-11-26T01:19:56.103269076Z"
+      }
+    ],
+    "spent_usd": 0.05958739,
+    "gates": [],
+    "delegations": {
+      "stg_01M8APTG6NXHNJFW9B51XCNS9C": {
+        "direct_usd": 0.03294707,
+        "delegated_usd": 0.00767626,
+        "agents": [
+          {
+            "agent": "agt_01M8APXDTVHZS1R168HY4DDMM2",
+            "parent": "agt_01M8APTG7FDYVBXF6Q25KT57W5",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00767626
+          }
+        ]
+      },
+      "stg_01M8APYAYAZPHVS5W99FP495SZ": {
+        "direct_usd": 0.01112993,
+        "delegated_usd": 0.00783413,
+        "agents": [
+          {
+            "agent": "agt_01M8APZ83PS7G763KAG8HPDAE5",
+            "parent": "agt_01M8APYMHBCAPQ88KWEQ1D7ZR7",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00783413
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-26T01:16:51.116309730Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-26T01:16:51.118348537Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-26T01:16:51.116309730Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

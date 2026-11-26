@@ -1,0 +1,22 @@
+The change is queued as item `qi_01M8ASECC79S0K069KZRGQ7Y5G` in the `quality-safe-extract` repository. Nothing has been built or committed yet; the daemon will run it.
+
+- **Pipeline:** `adaptive`, not `direct`. Archon's rules send security-sensitive work like path extraction to `adaptive`.
+- **Review:** `strict`, which is three reviewers.
+- **Model:** a balanced tier at `medium` effort. I first asked for `high`, but the configured maximum effort is `medium`, so the item runs at `medium`.
+- **Shipping:** the repo ships locally, so the commit lands on a local branch. Merge is set to `manual`, so nothing is merged without your say-so.
+- **Notification:** tagged `notify`, so you'll hear when it succeeds as well as when it fails.
+
+I haven't read `SPEC.md` or the module myself. The item's agents will do that, and I'll report the outcome when it finishes.
+
+Done: Implement safe_extract.py per SPEC.md with focused tests. Implemented safe_extract.py per SPEC.md and added focused tests. Head 71f80a415a257409464c548fe1ed8a785681a82e, tree 1726503e8bbcc13fffbeb62278bf7e0769428b70, on archon/zrgq7y5g-implement-safe-extract-py-per-spec-md-wi (not pushed). Changed: safe_extract.py (extract validates the whole batch and every planned path on disk before any create; exclusive 'xb' writes) and test_safe_extract.py (47 tests, incl. the 2 original basics). Check: python3 -m unittest test_safe_extract -> 47 OK on the final head. Review: 3 whole-change reviewers passed 59a02af; 2 delta reviewers passed a740b1d and 71f80a4 (fixes for their findings). Deviations/follow-ups: roots containing '..' or empty are rejected (stricter than SPEC); assertion density is below CLAUDE.md (only the write-boundary assert; validation raises ValueError); NUL-in-root test passes via os.lstat's ValueError, not an explicit check. Workers: none. Nothing left running; .archon/ is untracked operator/Archon output and is not committed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ASHP9MT35M70HVERHJ6WTS), claude-code/claude-haiku-5-5 (agent agt_01M8ASHVT2E6XVEM11P6YQYQDB), claude-code/claude-haiku-5-5 (agent agt_01M8ASJ0BMDCBC37JKSEMB3YMQ), claude-code/claude-haiku-5-5 (agent agt_01M8ASNZFK9DB0D5QBFVMQTFAD), claude-code/claude-haiku-5-5 (agent agt_01M8ASS4DGXTFPY3Z1DHZ42GMX)
+
+SHIPPED: commit 71f80a415a257409464c548fe1ed8a785681a82e on the run branch
+Branch `archon/zrgq7y5g-implement-safe-extract-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-c1_0tldx/archon-bench/work/20261126T020226Z/7364c6ae6329a888217fae6c/quality-safe-extract holds it (2 files changed, 470 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8ASECC79S0K069KZRGQ7Y5G`; land it in `main`: `archon merge qi_01M8ASECC79S0K069KZRGQ7Y5G`.
+
+Implemented safe_extract.py per SPEC.md and added focused tests. Head 71f80a415a257409464c548fe1ed8a785681a82e, tree 1726503e8bbcc13fffbeb62278bf7e0769428b70, on archon/zrgq7y5g-implement-safe-extract-py-per-spec-md-wi (not pushed). Changed: safe_extract.py (extract validates the whole batch and every planned path on disk before any create; exclusive 'xb' writes) and test_safe_extract.py (47 tests, incl. the 2 original basics). Check: python3 -m unittest test_safe_extract -> 47 OK on the final head. Review: 3 whole-change reviewers passed 59a02af; 2 delta reviewers passed a740b1d and 71f80a4 (fixes for their findings). Deviations/follow-ups: roots containing '..' or empty are rejected (stricter than SPEC); assertion density is below CLAUDE.md (only the write-boundary assert; validation raises ValueError); NUL-in-root test passes via os.lstat's ValueError, not an explicit check. Workers: none. Nothing left running; .archon/ is untracked operator/Archon output and is not committed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ASHP9MT35M70HVERHJ6WTS), claude-code/claude-haiku-5-5 (agent agt_01M8ASHVT2E6XVEM11P6YQYQDB), claude-code/claude-haiku-5-5 (agent agt_01M8ASJ0BMDCBC37JKSEMB3YMQ), claude-code/claude-haiku-5-5 (agent agt_01M8ASNZFK9DB0D5QBFVMQTFAD), claude-code/claude-haiku-5-5 (agent agt_01M8ASS4DGXTFPY3Z1DHZ42GMX)
+
+SHIPPED: commit 71f80a415a257409464c548fe1ed8a785681a82e on the run branch

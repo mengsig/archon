@@ -1,0 +1,108 @@
+diff --git a/README.md b/README.md
+index bfda2ff..cae1bd4 100644
+--- a/README.md
++++ b/README.md
+@@ -3,7 +3,11 @@
+ Client for `inventory-api`. Every function takes a `transport`,
+ `async (request) => response`, so callers choose HTTP, IPC or a fake.
+ 
+-- `listItems(transport)` → every item, ordered by `id`.
++- `listItems(transport)` → every item, ordered by `id`. `GET /items` is paged:
++  the first request sends no cursor, and each following request passes the
++  previous response's `next_cursor` back unchanged. It stops when `next_cursor`
++  is `null` or absent, so a single-page response takes one request. It rejects
++  on any non-200 response, and on a repeated cursor.
+ - `getItem(transport, id)` → one item; rejects on any non-200 response.
+ - `lowStock(items, threshold)` → SKUs with `qty` below the threshold.
+ 
+diff --git a/client.js b/client.js
+index 6825096..9f6d155 100644
+--- a/client.js
++++ b/client.js
+@@ -11,9 +11,24 @@ async function request(transport, path, query = {}) {
+   return res.body;
+ }
+ 
++// Follows next_cursor until it is null or absent, returning every item in order.
+ async function listItems(transport) {
+-  const body = await request(transport, '/items');
+-  return body.items;
++  const items = [];
++  const seenCursors = new Set();
++  let query = {};
++  for (;;) {
++    const body = await request(transport, '/items', query);
++    if (!body || !Array.isArray(body.items)) {
++      throw new Error(`GET /items returned no items array: ${JSON.stringify(body)}`);
++    }
++    for (const item of body.items) items.push(item);
++    if (body.next_cursor == null) return items;
++    if (seenCursors.has(body.next_cursor)) {
++      throw new Error(`GET /items repeated cursor ${JSON.stringify(body.next_cursor)}`);
++    }
++    seenCursors.add(body.next_cursor);
++    query = { cursor: body.next_cursor };
++  }
+ }
+ 
+ async function getItem(transport, id) {
+diff --git a/test/client.test.js b/test/client.test.js
+index db0605e..e31ad68 100644
+--- a/test/client.test.js
++++ b/test/client.test.js
+@@ -20,6 +20,55 @@ test('lists items', async () => {
+   assert.deepEqual(await listItems(singlePage), ITEMS);
+ });
+ 
++function paged(pages) {
++  const seen = [];
++  const transport = async (request) => {
++    seen.push(request.query);
++    const page = pages[request.query.cursor ?? ''];
++    if (!page) return { status: 400, body: { error: 'invalid cursor' } };
++    return { status: 200, body: page };
++  };
++  return { transport, seen };
++}
++
++test('follows next_cursor across pages in order', async () => {
++  const { transport, seen } = paged({
++    '': { items: [ITEMS[0]], next_cursor: 'opaque/2==' },
++    'opaque/2==': { items: [ITEMS[1]], next_cursor: 'opaque/3==' },
++    'opaque/3==': { items: [{ id: 3, sku: 'SKU-0003', qty: 0 }], next_cursor: null },
++  });
++  const items = await listItems(transport);
++  assert.deepEqual(items.map((item) => item.id), [1, 2, 3]);
++  assert.deepEqual(seen, [{}, { cursor: 'opaque/2==' }, { cursor: 'opaque/3==' }]);
++});
++
++test('returns a single page when next_cursor is null', async () => {
++  const { transport, seen } = paged({ '': { items: ITEMS, next_cursor: null } });
++  assert.deepEqual(await listItems(transport), ITEMS);
++  assert.deepEqual(seen, [{}]);
++});
++
++test('returns a single page when next_cursor is missing', async () => {
++  const { transport, seen } = paged({ '': { items: ITEMS } });
++  assert.deepEqual(await listItems(transport), ITEMS);
++  assert.deepEqual(seen, [{}]);
++});
++
++test('rejects a repeated cursor instead of looping forever', async () => {
++  const { transport } = paged({ '': { items: ITEMS, next_cursor: 'same' }, same: { items: [], next_cursor: 'same' } });
++  await assert.rejects(listItems(transport), /repeated cursor/);
++});
++
++test('rejects a cursor cycle across pages instead of looping forever', async () => {
++  const { transport, seen } = paged({
++    '': { items: [ITEMS[0]], next_cursor: 'a' },
++    a: { items: [ITEMS[1]], next_cursor: 'b' },
++    b: { items: [], next_cursor: 'a' },
++  });
++  await assert.rejects(listItems(transport), /repeated cursor "a"/);
++  assert.equal(seen.length, 3);
++});
++
+ test('gets one item and reports failures', async () => {
+   assert.equal((await getItem(singlePage, 2)).sku, 'SKU-0002');
+   await assert.rejects(getItem(singlePage, 9), /404/);

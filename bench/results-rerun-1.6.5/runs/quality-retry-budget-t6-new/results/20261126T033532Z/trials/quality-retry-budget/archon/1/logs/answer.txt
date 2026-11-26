@@ -1,0 +1,20 @@
+I queued the work as item `qi_01M8AYS1JVWKWQ1SFMW2R9TE24` on the `quality-retry-budget` repo, using the `direct` pipeline with standard review. It's queued, not yet running, so nothing is committed yet.
+
+The brief gives the worker the full `SPEC.md` rules: validation before any early return, the saturating backoff, the uncapped `retry_after` floor, and the strict budget boundary. It also lists the test cases to cover and asks for a local commit under the repo's configured git identity, with no attribution text and no push.
+
+I'll report back when the item finishes or fails.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and added focused stdlib unittest coverage in test_retry_budget.py. Committed as b17f3da (tree 9399d658) on archon/w2r9te24-implement-retry-budget-py-per-spec-md-wi; not pushed. Checks: python3 -B -m unittest test_retry_budget passes all 26 tests on the head; the base commit 2898069 gives 3 errors (stub raised NotImplementedError). Review agt_01M8AYT64JTV6W59NZM6PFWH88 passed the head with no findings. Its 200k-case differential probe against the spec formula found no mismatches. Nothing is left running from me; the reviewer's leftover claude -p process (pid 2924948) is for the harness to stop.
+REVIEW: pass (agt_01M8AYT64JTV6W59NZM6PFWH88)
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AYT64JTV6W59NZM6PFWH88)
+
+SHIPPED: commit b17f3dad92df2e702503d7055387debcd7c252cb on the run branch
+Branch `archon/w2r9te24-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-kulwcrzu/archon-bench/work/20261126T033532Z/1139976f79bd9d5a8f7522a3/quality-retry-budget holds it (2 files changed, 163 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8AYS1JVWKWQ1SFMW2R9TE24`; land it in `main`: `archon merge qi_01M8AYS1JVWKWQ1SFMW2R9TE24`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and added focused stdlib unittest coverage in test_retry_budget.py. Committed as b17f3da (tree 9399d658) on archon/w2r9te24-implement-retry-budget-py-per-spec-md-wi; not pushed. Checks: python3 -B -m unittest test_retry_budget passes all 26 tests on the head; the base commit 2898069 gives 3 errors (stub raised NotImplementedError). Review agt_01M8AYT64JTV6W59NZM6PFWH88 passed the head with no findings. Its 200k-case differential probe against the spec formula found no mismatches. Nothing is left running from me; the reviewer's leftover claude -p process (pid 2924948) is for the harness to stop.
+REVIEW: pass (agt_01M8AYT64JTV6W59NZM6PFWH88)
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AYT64JTV6W59NZM6PFWH88)
+
+SHIPPED: commit b17f3dad92df2e702503d7055387debcd7c252cb on the run branch

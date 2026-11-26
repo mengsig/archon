@@ -1,0 +1,592 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M89VEMXZXJWXFWYH7P3KGWFK",
+      "repo": "repo_01M89VE8CNT8QCY1R7S30GQQ1C",
+      "pipeline": "direct",
+      "title": "Make listItems follow cursor pagination",
+      "brief": "Change listItems(transport) so it resolves to every item in order by requesting GET /items and following next_cursor until it is null or absent, passing the cursor back unchanged; the first request sends no cursor. Add tests with a fake transport that serves multiple pages, a single page, an absent next_cursor, and checks the cursor is passed unchanged and the first request has no cursor. Update the README to document that listItems pages through the API. Keep `npm test` passing. Commit on the local branch; do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M89VEMXZXJWXFWYH7P3KGWFK",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T17:18:31.360825436Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T17:18:31.366025244Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T17:18:31.360825436Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M89VEMXR6JJC85M74B85PBPA",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M89VEMYDA8C9QPY0KE6CSTZQ",
+        "summary": "listItems(transport) now follows cursor pagination. It sends GET /items with no cursor first, passes next_cursor back unchanged, stops when next_cursor is null or absent, and returns all items in order. It throws if a response lacks an items array or repeats any cursor, so a cycle fails instead of looping. Tests: 9 pass (npm test), covering multi-page, single page, absent next_cursor, cursor passthrough, first request without a cursor, a repeated-cursor self-loop and an A->B->A cycle. README documents the paging. Commits on the local branch, nothing pushed: feb5abb (feature) and 0489a9c (cycle fix after review). Review: the first reviewer failed the A->B->A gap; the fix was verified by a delta reviewer, which passed it with one non-blocking readability nit (while(true)/break loop, left as is). Not done: no check of the API side (inventory-api), which is out of scope here. Still running: a claude -p process, pid 210835, handed over by the first reviewer; I did not start it and left it running. Stop with `kill 210835`.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89VG08V038B6E1R2YJ8NRQF), claude-code/claude-haiku-5-5 (agent agt_01M89VH3VWSBZD5M91CQJB0MHT)\n\nSHIPPED: commit 0489a9c9854eb635f8ea80fb359659ca005b08aa on the run branch"
+      },
+      "created_at": "2026-11-25T17:18:31.352235608Z",
+      "updated_at": "2026-11-25T17:20:22.040550854Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M89VEMYDA8C9QPY0KE6CSTZQ",
+        "item": "qi_01M89VEMXZXJWXFWYH7P3KGWFK",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M89VEN46W766B3EG27KAM9MJ",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-rp2ahayt/archon-bench/work/20261125T171818Z/d7b999a73c9440ccaf2a4820/.archon/data/worktrees/inventory-client/qi_01M89VEMXZXJWXFWYH7P3KGWFK",
+        "branch": "archon/7p3kgwfk-make-listitems-follow-cursor-pagination",
+        "state": {
+          "state": "succeeded",
+          "summary": "listItems(transport) now follows cursor pagination. It sends GET /items with no cursor first, passes next_cursor back unchanged, stops when next_cursor is null or absent, and returns all items in order. It throws if a response lacks an items array or repeats any cursor, so a cycle fails instead of looping. Tests: 9 pass (npm test), covering multi-page, single page, absent next_cursor, cursor passthrough, first request without a cursor, a repeated-cursor self-loop and an A->B->A cycle. README documents the paging. Commits on the local branch, nothing pushed: feb5abb (feature) and 0489a9c (cycle fix after review). Review: the first reviewer failed the A->B->A gap; the fix was verified by a delta reviewer, which passed it with one non-blocking readability nit (while(true)/break loop, left as is). Not done: no check of the API side (inventory-api), which is out of scope here. Still running: a claude -p process, pid 210835, handed over by the first reviewer; I did not start it and left it running. Stop with `kill 210835`.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89VG08V038B6E1R2YJ8NRQF), claude-code/claude-haiku-5-5 (agent agt_01M89VH3VWSBZD5M91CQJB0MHT)\n\nSHIPPED: commit 0489a9c9854eb635f8ea80fb359659ca005b08aa on the run branch"
+        },
+        "cost_usd": 0.03973173,
+        "started_at": "2026-11-25T17:18:31.532992279Z",
+        "finished_at": "2026-11-25T17:20:22.040550854Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M89VEN3YVTZ4HBRM2VGSVCTD",
+        "run": "prun_01M89VEMYDA8C9QPY0KE6CSTZQ",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M89VEN4F9CJSB0EP5PW59240",
+        "aether_task": "tsk_01M89VEN4FWVGT0N0F6E73F6W9",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "listItems(transport) now follows cursor pagination. It sends GET /items with no cursor first, passes next_cursor back unchanged, stops when next_cursor is null or absent, and returns all items in order. It throws if a response lacks an items array or repeats any cursor, so a cycle fails instead of looping. Tests: 9 pass (npm test), covering multi-page, single page, absent next_cursor, cursor passthrough, first request without a cursor, a repeated-cursor self-loop and an A->B->A cycle. README documents the paging. Commits on the local branch, nothing pushed: feb5abb (feature) and 0489a9c (cycle fix after review). Review: the first reviewer failed the A->B->A gap; the fix was verified by a delta reviewer, which passed it with one non-blocking readability nit (while(true)/break loop, left as is). Not done: no check of the API side (inventory-api), which is out of scope here. Still running: a claude -p process, pid 210835, handed over by the first reviewer; I did not start it and left it running. Stop with `kill 210835`.",
+        "structured": {
+          "checks": [
+            "npm test (feb5abb: 8 pass; 0489a9c: 9 pass, 0 fail)",
+            "node -e two-page fake before/after and A->B->A cycle probe"
+          ],
+          "commit": "0489a9c9854eb635f8ea80fb359659ca005b08aa",
+          "evidence": [
+            {
+              "after": [
+                "after: [{\"id\":1},{\"id\":2}]"
+              ],
+              "before": [
+                "before: [{\"id\":1}]"
+              ],
+              "caption": "Two-page fake, before change: listItems returns only the first page",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "0489a9c9854eb635f8ea80fb359659ca005b08aa",
+          "pr": {
+            "body": "Approach: client.js listItems loops GET /items, first request with no cursor, passing next_cursor back unchanged; a Set of seen cursors rejects any repeat, so A->A and A->B->A throw. Throws if the response lacks an items array. Key files: client.js, test/client.test.js (fake paged transport, 5 new tests), README.md (documents paging). Checks: npm test 9/9 on 0489a9c. Assumptions: the server follows the shared contract (cursor opaque, null or absent on last page). inventory-api not touched. Known gap: no test for a very long non-cyclic chain or an empty-string cursor. Non-blocking nit: while(true)/break loop shape.",
+            "summary": "listItems now returns every item across pages. now follows next_cursor until null/absent, and rejects cursor cycles. before: first page only, now: all pages in order.",
+            "title": "Make listItems follow cursor pagination"
+          },
+          "review": {
+            "reviewed_head": "0489a9c9854eb635f8ea80fb359659ca005b08aa",
+            "reviewer_agents": [
+              "agt_01M89VG08V038B6E1R2YJ8NRQF",
+              "agt_01M89VH3VWSBZD5M91CQJB0MHT"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M89VG08V038B6E1R2YJ8NRQF",
+                "base": "c4d2d75460e31e1328ae83499474f6decc16532d",
+                "findings": 1,
+                "head": "feb5abb223a094eb9a7b9cb697b8bd32d36772c1",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M89VH3VWSBZD5M91CQJB0MHT",
+                "base": "feb5abb223a094eb9a7b9cb697b8bd32d36772c1",
+                "findings": 1,
+                "head": "0489a9c9854eb635f8ea80fb359659ca005b08aa",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M89VG08V038B6E1R2YJ8NRQF",
+              "agt_01M89VH3VWSBZD5M91CQJB0MHT"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "medium",
+            "reviewer": "agt_01M89VH3VWSBZD5M91CQJB0MHT",
+            "why": "Contained behaviour change in client.js listItems only: one call now makes N requests and returns all pages. No API, persistence or security surface changed. Tests run and passing. Review found one blocking gap (A->B->A cycle), fixed and delta-reviewed. Non-blocking nit left open."
+          },
+          "tree": "280a2654a29d172e7a22bba33b6462bad080b630"
+        },
+        "cost_usd": 0.03973173,
+        "started_at": "2026-11-25T17:18:31.550701201Z",
+        "finished_at": "2026-11-25T17:20:18.352519967Z"
+      }
+    ],
+    "spent_usd": 0.03973173,
+    "gates": [],
+    "delegations": {
+      "stg_01M89VEN3YVTZ4HBRM2VGSVCTD": {
+        "direct_usd": 0.02600719,
+        "delegated_usd": 0.01372454,
+        "agents": [
+          {
+            "agent": "agt_01M89VG08V038B6E1R2YJ8NRQF",
+            "parent": "agt_01M89VEN4F9CJSB0EP5PW59240",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00864082
+          },
+          {
+            "agent": "agt_01M89VH3VWSBZD5M91CQJB0MHT",
+            "parent": "agt_01M89VEN4F9CJSB0EP5PW59240",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.005083720000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T17:18:31.360825436Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T17:18:31.366025244Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T17:18:31.360825436Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M89VEMXS3RNGV4CY026B8V8S",
+      "repo": "repo_01M89VE8BNES0EZQM3J32E6A43",
+      "pipeline": "adaptive",
+      "title": "Add cursor pagination to GET /items",
+      "brief": "Implement the GET /items pagination exactly as the shared contract specifies: optional limit (1..100, default 20) and cursor query parameters; body {\"items\": [...], \"next_cursor\": <string or null>}; items ordered by id; 400 with {\"error\": \"...\"} for an invalid limit or cursor. Add unit tests covering: default page size, limit bounds (0, 101, non-integer), cursor round-trip across pages, last page returns null next_cursor, invalid cursor returns 400, and that every item is returned exactly once across pages. Update the README to document the parameters, response shape and errors. Keep `python3 -m unittest` passing. Commit on the local branch; do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M89VEMXS3RNGV4CY026B8V8S",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-25T17:18:31.355124147Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-25T17:18:31.365805451Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-25T17:18:31.355124147Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M89VEMXR6JJC85M74B85PBPA",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M89VEMYCSH7R6CY6EH7GS1P8",
+        "summary": "Implemented cursor pagination for GET /items in inventory-api on branch archon/026b8v8s-add-cursor-pagination-to-get-items, committed locally, not pushed. Head 3dc9b5f (tree 194d7edf). Two commits: 2e34fcf (feature) and 3dc9b5f (fix). Files: api.py, test_api.py, README.md. limit (1..100, default 20) and cursor (last served id, validated against the catalogue) are parsed; the body is {\"items\", \"next_cursor\"}; invalid limit or cursor returns 400 {\"error\"}, including non-string JSON values. Verification: python3 -B -m unittest → 10 tests OK on the final tree; api_cli.py checks show limit=2 returns ids 1,2 with next_cursor \"2\", cursor \"2\" returns ids 3,4, and limit=0, limit=5 (JSON number) and cursor=20 return 400. Review: reviewer 3 failed 2e34fcf on a blocking finding (non-string query values crashed on assert); fixed in 3dc9b5f; the delta reviewer passed 3dc9b5f; reviewers 1 and 2 passed 2e34fcf. The inventory-client half is out of scope for this item (sibling item qi_01M89VEMXZXJWXFWYH7P3KGWFK). Open, non-blocking follow-ups: the default page size of 20 is a breaking change for existing callers and needs a changelog note; the catalogue is re-sorted per request. Services: none started. Reviewer processes from completed children are left to exit with their ancestor.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89VGDTKAB1KD2G67ECT5W0T), claude-code/claude-haiku-5-5 (agent agt_01M89VGJJEWNTHDJF6MXBBZ2RZ), claude-code/claude-haiku-5-5 (agent agt_01M89VGQ1Y4FJA9MKKQ2KZJ9D0), claude-code/claude-haiku-5-5 (agent agt_01M89VJGJT2QQ73ERW0GD1KDDK)\n\nSHIPPED: commit 3dc9b5f07820be1fbee5d583341ef54021270c5b on the run branch"
+      },
+      "created_at": "2026-11-25T17:18:31.352235608Z",
+      "updated_at": "2026-11-25T17:21:20.066276449Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M89VEMYCSH7R6CY6EH7GS1P8",
+        "item": "qi_01M89VEMXS3RNGV4CY026B8V8S",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M89VEN48SETPJKNACWGSSVZC",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-rp2ahayt/archon-bench/work/20261125T171818Z/d7b999a73c9440ccaf2a4820/.archon/data/worktrees/inventory-api/qi_01M89VEMXS3RNGV4CY026B8V8S",
+        "branch": "archon/026b8v8s-add-cursor-pagination-to-get-items",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented cursor pagination for GET /items in inventory-api on branch archon/026b8v8s-add-cursor-pagination-to-get-items, committed locally, not pushed. Head 3dc9b5f (tree 194d7edf). Two commits: 2e34fcf (feature) and 3dc9b5f (fix). Files: api.py, test_api.py, README.md. limit (1..100, default 20) and cursor (last served id, validated against the catalogue) are parsed; the body is {\"items\", \"next_cursor\"}; invalid limit or cursor returns 400 {\"error\"}, including non-string JSON values. Verification: python3 -B -m unittest → 10 tests OK on the final tree; api_cli.py checks show limit=2 returns ids 1,2 with next_cursor \"2\", cursor \"2\" returns ids 3,4, and limit=0, limit=5 (JSON number) and cursor=20 return 400. Review: reviewer 3 failed 2e34fcf on a blocking finding (non-string query values crashed on assert); fixed in 3dc9b5f; the delta reviewer passed 3dc9b5f; reviewers 1 and 2 passed 2e34fcf. The inventory-client half is out of scope for this item (sibling item qi_01M89VEMXZXJWXFWYH7P3KGWFK). Open, non-blocking follow-ups: the default page size of 20 is a breaking change for existing callers and needs a changelog note; the catalogue is re-sorted per request. Services: none started. Reviewer processes from completed children are left to exit with their ancestor.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89VGDTKAB1KD2G67ECT5W0T), claude-code/claude-haiku-5-5 (agent agt_01M89VGJJEWNTHDJF6MXBBZ2RZ), claude-code/claude-haiku-5-5 (agent agt_01M89VGQ1Y4FJA9MKKQ2KZJ9D0), claude-code/claude-haiku-5-5 (agent agt_01M89VJGJT2QQ73ERW0GD1KDDK)\n\nSHIPPED: commit 3dc9b5f07820be1fbee5d583341ef54021270c5b on the run branch"
+        },
+        "cost_usd": 0.07159027,
+        "started_at": "2026-11-25T17:18:31.529031003Z",
+        "finished_at": "2026-11-25T17:21:20.066276449Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M89VEN3QJ49TPR5N4JTD53SQ",
+        "run": "prun_01M89VEMYCSH7R6CY6EH7GS1P8",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M89VEN4RA5E1DG1YBZDSW4NB",
+        "aether_task": "tsk_01M89VEN4RA5E1DG1YBZDSW4NC",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented cursor pagination for GET /items in inventory-api on branch archon/026b8v8s-add-cursor-pagination-to-get-items, committed locally, not pushed. Head 3dc9b5f (tree 194d7edf). Two commits: 2e34fcf (feature) and 3dc9b5f (fix). Files: api.py, test_api.py, README.md. limit (1..100, default 20) and cursor (last served id, validated against the catalogue) are parsed; the body is {\"items\", \"next_cursor\"}; invalid limit or cursor returns 400 {\"error\"}, including non-string JSON values. Verification: python3 -B -m unittest → 10 tests OK on the final tree; api_cli.py checks show limit=2 returns ids 1,2 with next_cursor \"2\", cursor \"2\" returns ids 3,4, and limit=0, limit=5 (JSON number) and cursor=20 return 400. Review: reviewer 3 failed 2e34fcf on a blocking finding (non-string query values crashed on assert); fixed in 3dc9b5f; the delta reviewer passed 3dc9b5f; reviewers 1 and 2 passed 2e34fcf. The inventory-client half is out of scope for this item (sibling item qi_01M89VEMXZXJWXFWYH7P3KGWFK). Open, non-blocking follow-ups: the default page size of 20 is a breaking change for existing callers and needs a changelog note; the catalogue is re-sorted per request. Services: none started. Reviewer processes from completed children are left to exit with their ancestor.",
+        "structured": {
+          "checks": [
+            "python3 -B -m unittest (inventory-api): Ran 10 tests, OK, on tree 194d7edf",
+            "python3 -B api_cli.py with query limit=2 cursor=2 returns ids [3,4] and next_cursor 4",
+            "python3 -B api_cli.py with query limit=0, limit=5 (JSON number), cursor=20 (JSON number) each returns status 400"
+          ],
+          "commit": "3dc9b5f07820be1fbee5d583341ef54021270c5b",
+          "evidence": [
+            {
+              "after": "{\"items\": [ids 1, 2], \"next_cursor\": \"2\"} for query limit=2",
+              "before": "{\"items\": [57 items, ordered by id], no next_cursor key}",
+              "caption": "Before: GET /items returns all 57 items with no next_cursor field and ignores limit (body keys ['items'], 57 items).",
+              "kind": "output"
+            },
+            {
+              "caption": "After: invalid limit and cursor return 400 with an error message.",
+              "kind": "output",
+              "text": "{\"status\": 400, \"body\": {\"error\": \"limit must be an integer from 1 to 100\"}} for limit=0 and limit=5; {\"status\": 400, \"body\": {\"error\": \"invalid cursor\"}} for cursor=20"
+            }
+          ],
+          "local_commit": "3dc9b5f07820be1fbee5d583341ef54021270c5b",
+          "pr": {
+            "body": "Approach: cursor is the id of the last item served, as a string; the next page holds items with a greater id. The cursor must match an item in the catalogue, otherwise 400 'invalid cursor'. Non-string query values (for example JSON numbers from api_cli.py) return 400 instead of raising. Key files: api.py (list_items, parse_limit, parse_cursor), test_api.py (PaginationTest), README.md (endpoint documentation). Checks: python3 -B -m unittest, 10 tests OK on tree 194d7edf. Review: reviewers 1 and 2 passed 2e34fcf; reviewer 3 failed it on the non-string input bug, fixed in 3dc9b5f; the delta reviewer passed 3dc9b5f. Advisory, left open: the default page size of 20 changes output for existing callers and needs a changelog note; the catalogue is sorted on every request (fine at 57 items). Assumptions: the cursor is validated against the current catalogue, so a cursor for a deleted item returns 400. inventory-client is handled by its own item.",
+            "summary": "Made GET /items paginate with limit and cursor. Now returns at most 20 items by default (limit 1..100) plus next_cursor. Before: every item in one response, no next_cursor. Now: pages of items ordered by id, null next_cursor on the last page, 400 for invalid limit or cursor.",
+            "title": "feat(api): add cursor pagination to GET /items"
+          },
+          "review": {
+            "reviewed_head": "3dc9b5f07820be1fbee5d583341ef54021270c5b",
+            "reviewer_agents": [
+              "agt_01M89VGDTKAB1KD2G67ECT5W0T",
+              "agt_01M89VGJJEWNTHDJF6MXBBZ2RZ",
+              "agt_01M89VGQ1Y4FJA9MKKQ2KZJ9D0",
+              "agt_01M89VJGJT2QQ73ERW0GD1KDDK"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M89VGDTKAB1KD2G67ECT5W0T",
+                "base": "4d83e39a9a9090c2b6dedf585b566f7834a3caaf",
+                "findings": 4,
+                "head": "2e34fcf427a2f5e78fd0aaa8fe2b3d974326816d",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M89VGJJEWNTHDJF6MXBBZ2RZ",
+                "base": "4d83e39a9a9090c2b6dedf585b566f7834a3caaf",
+                "findings": 3,
+                "head": "2e34fcf427a2f5e78fd0aaa8fe2b3d974326816d",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M89VGQ1Y4FJA9MKKQ2KZJ9D0",
+                "base": "4d83e39a9a9090c2b6dedf585b566f7834a3caaf",
+                "findings": 4,
+                "head": "2e34fcf427a2f5e78fd0aaa8fe2b3d974326816d",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M89VJGJT2QQ73ERW0GD1KDDK",
+                "base": "2e34fcf427a2f5e78fd0aaa8fe2b3d974326816d",
+                "findings": 0,
+                "head": "3dc9b5f07820be1fbee5d583341ef54021270c5b",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M89VGDTKAB1KD2G67ECT5W0T",
+              "agt_01M89VGJJEWNTHDJF6MXBBZ2RZ",
+              "agt_01M89VGQ1Y4FJA9MKKQ2KZJ9D0",
+              "agt_01M89VJGJT2QQ73ERW0GD1KDDK"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": "agt_01M89VGDTKAB1KD2G67ECT5W0T",
+            "why": "Public API change: GET /items now returns 20 items by default, which silently truncates responses for existing callers, and adds new 400 paths. Touches api.py, test_api.py and README.md. Behaviour changes; tests added and passing. Reviewer risk levels: high (reviewers 1 and 2), medium on the delta."
+          },
+          "tree": "194d7edfedbe017bc08f0f23a22aedbb264479b6"
+        },
+        "cost_usd": 0.07159027,
+        "started_at": "2026-11-25T17:18:31.543141996Z",
+        "finished_at": "2026-11-25T17:21:16.154978718Z"
+      }
+    ],
+    "spent_usd": 0.07159027,
+    "gates": [],
+    "delegations": {
+      "stg_01M89VEN3QJ49TPR5N4JTD53SQ": {
+        "direct_usd": 0.03875984,
+        "delegated_usd": 0.03283043,
+        "agents": [
+          {
+            "agent": "agt_01M89VGDTKAB1KD2G67ECT5W0T",
+            "parent": "agt_01M89VEN4RA5E1DG1YBZDSW4NB",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00911273
+          },
+          {
+            "agent": "agt_01M89VGJJEWNTHDJF6MXBBZ2RZ",
+            "parent": "agt_01M89VEN4RA5E1DG1YBZDSW4NB",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.008432019999999998
+          },
+          {
+            "agent": "agt_01M89VGQ1Y4FJA9MKKQ2KZJ9D0",
+            "parent": "agt_01M89VEN4RA5E1DG1YBZDSW4NB",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.009301630000000002
+          },
+          {
+            "agent": "agt_01M89VJGJT2QQ73ERW0GD1KDDK",
+            "parent": "agt_01M89VEN4RA5E1DG1YBZDSW4NB",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00598405
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-25T17:18:31.355124147Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-25T17:18:31.365805451Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-25T17:18:31.355124147Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

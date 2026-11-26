@@ -1,0 +1,31 @@
+## Root cause: category listings are cached for 10 minutes and never invalidated on price change
+
+I made no code changes. Everything below comes from reading the mirror at `repos/ask-cache-invalidation` (HEAD `da6c898`), whose `package.json` names the package `catalog-service`.
+
+**The two cache paths:**
+
+- **Product page** (`src/catalog.js`, `product()`): reads the cache under `product:<sku>`, with a 3600 s TTL (`src/config.js`).
+- **Category listing** (`src/catalog.js`, `listing()`): reads the cache under `listing:<category>:<page>`, with a 600 s TTL (`LISTING_TTL_SECONDS`). Each cached row is a copy of `{sku, name, priceCents}`, so the price is baked into the cached page.
+
+**The price-change path** (`src/pricing.js`, `updatePrice`):
+
+```js
+const updated = catalog.store.update(sku, { priceCents });
+catalog.cache.delete(productKey(sku));   // only the product key
+```
+
+It writes to the store, then deletes only `product:<sku>`. It never touches the `listing:<category>:<page>` entries that contain that SKU. So the product page reads fresh data immediately, and the category page keeps serving its cached rows until they expire.
+
+**Why the delay is about ten minutes:** a listing entry is written at time T and expires at T + 600 s. A price change at any point in that window leaves the listing showing the old price until expiry, so the worst case is 600 s, which matches "up to about ten minutes". The 600 s comes from `LISTING_TTL_SECONDS`. The comment in `config.js` explains the separate TTL: listings are expensive to build (filter, sort, slice), so they are cached longer.
+
+**Why the existing test misses it:** `test/catalog.test.js` checks that the product page updates immediately. It has no assertion that a listing reflects a price change, so the gap is not covered.
+
+**Fix options:**
+
+1. **Invalidate listings on price change (targeted).** `updatePrice` needs the SKU's category, which it can get from `catalog.store.find(sku)`. It then has to drop every cached page of that category. `TtlCache` has no prefix delete and listing pages are unbounded, so this means adding a per-category key index or a category version key in the cache.
+2. **Store SKUs in listings and hydrate prices at read time.** The listing would cache only the SKU order and page membership, and read each price from the product cache or store. Price changes then show immediately, and the listing cache only needs invalidating when membership or order changes. This is the cleanest fix but changes the listing read path.
+3. **Shorten `LISTING_TTL_SECONDS`.** This is the smallest change, but it only shrinks the window and adds rebuild load.
+
+I'd recommend option 2, or option 1 if the cache layer should stay as it is. Either way, add a test that a listing shows the new price right after `updatePrice`.
+
+**Minor note:** `updatePrice` is safe with this synchronous in-memory store. If the store becomes async, a listing rebuilt from the old price between the store write and the cache delete could re-cache the stale price. Any fix should account for that.

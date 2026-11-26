@@ -1,0 +1,24 @@
+The refactor is queued as item `qi_01M8AJ1SM5WEG4BTJ9N7DKP0GT` against the `refactor-order-status` repo. I haven't touched the code myself; a worker will make the change and commit it.
+
+- **Pipeline:** `direct` with standard review. One agent makes the change, and the daemon ships it on a local branch. The `refactor` pipeline was ruled out because it fixes its own review level at strict.
+- **Brief:** Your request is passed on verbatim, including the enum, `as_str`/`Display`, `FromStr` with `ParseStatusError`, `can_transition_to`, the crate-root re-exports, and the requirement that behaviour and `cargo test` stay the same.
+- **Notify:** I tagged it `notify`, so you'll hear when it finishes, including on success.
+
+I'll report the outcome when the item finishes.
+
+Done: Refactor order status String into OrderStatus enum. Refactored order status from String to an OrderStatus enum. Added src/status.rs (OrderStatus with as_str, Display, FromStr returning ParseStatusError, and can_transition_to for the four lifecycle edges). Order::status is now OrderStatus, all modules use the enum, status literals appear only in src/status.rs, and OrderStatus and ParseStatusError are re-exported from the crate root. status_counts now returns Vec<(OrderStatus, usize)> in the same name order. Error messages, CSV output and parsing are unchanged. Checks on head e95726e (tree 9ce08c92): cargo test passes (9 tests, including new tests/status.rs), cargo clippy --all-targets -- -D warnings is clean, and cargo fmt --check is clean. Reviewer agt_01M8AJ3QJCZ8RB5D1QQYKE92AX passed the change with no findings. Risk is high because the public Order::status and status_counts types change. Nothing is left running; the reviewer's leftover process (PID 2577707) was stopped. Not done: nothing pushed, per the contract.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJ3QJCZ8RB5D1QQYKE92AX)
+
+SHIPPED: commit e95726e27b970e27d9d48c7cb941fef6f95c729b on the run branch
+Branch `archon/n7dkp0gt-refactor-order-status-string-into-orders` in /home/mengsig/.local/share/archon-bench/rerun-165/r-yb1ghtst/archon-bench/work/20261125T235314Z/6e12507d6acaa629eedbe0f8/refactor-order-status holds it (8 files changed, 169 insertions(+), 28 deletions(-)). Review: `archon diff qi_01M8AJ1SM5WEG4BTJ9N7DKP0GT`; land it in `main`: `archon merge qi_01M8AJ1SM5WEG4BTJ9N7DKP0GT`.
+
+Freed 0.0 GiB of build output: item qi_01M8AJ1SM5WEG4BTJ9N7DKP0GT ended and its cargo target directory went.
+
+OrderStatus refactor succeeded. Committed e95726e on the run branch in refactor-order-status (ship local, nothing pushed). Checks at that head: cargo test passes (9 tests, including new tests/status.rs), clippy -D warnings clean, fmt clean. Review passed with no findings. Order::status is now OrderStatus; status literals only in src/status.rs; OrderStatus and ParseStatusError are re-exported from the crate root. Error messages, CSV output and parsing are unchanged. One thing beyond the brief: status_counts now returns Vec<(OrderStatus, usize)> instead of strings, in the same name order. That is a public API change, so check it before merging.
+
+Refactored order status from String to an OrderStatus enum. Added src/status.rs (OrderStatus with as_str, Display, FromStr returning ParseStatusError, and can_transition_to for the four lifecycle edges). Order::status is now OrderStatus, all modules use the enum, status literals appear only in src/status.rs, and OrderStatus and ParseStatusError are re-exported from the crate root. status_counts now returns Vec<(OrderStatus, usize)> in the same name order. Error messages, CSV output and parsing are unchanged. Checks on head e95726e (tree 9ce08c92): cargo test passes (9 tests, including new tests/status.rs), cargo clippy --all-targets -- -D warnings is clean, and cargo fmt --check is clean. Reviewer agt_01M8AJ3QJCZ8RB5D1QQYKE92AX passed the change with no findings. Risk is high because the public Order::status and status_counts types change. Nothing is left running; the reviewer's leftover process (PID 2577707) was stopped. Not done: nothing pushed, per the contract.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJ3QJCZ8RB5D1QQYKE92AX)
+
+SHIPPED: commit e95726e27b970e27d9d48c7cb941fef6f95c729b on the run branch

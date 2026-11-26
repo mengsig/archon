@@ -1,0 +1,274 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8B27GBCWSNWCW9W6C1AZ3H3",
+      "repo": "repo_01M8B275NFNRNZA1J9XSQZNCAS",
+      "pipeline": "direct",
+      "title": "Implement retry_budget.py per SPEC.md with focused tests",
+      "brief": "Operator request (verbatim): \"Implement `retry_budget.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nGoal: implement retry_budget.py exactly to SPEC.md in the repository root.\nAcceptance criteria:\n- Every documented API name, signature and return/raise behaviour in SPEC.md is preserved.\n- Every error case and boundary case in SPEC.md is handled explicitly; failures are not swallowed.\n- Add focused tests covering each error and boundary case, in addition to the existing basic tests. Existing tests must still pass.\n- Standard library only; no new dependencies.\n- Run the test suite and report the result.\n- Commit the work to the local branch with a clear message. Do not push. Do not add attribution lines naming any AI tool.\n\nConstraints: follow the repository's existing style; keep functions short, validate inputs at the boundary, and avoid silent fallbacks.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8B27GBCWSNWCW9W6C1AZ3H3",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-26T04:36:11.759716955Z"
+              },
+              "effort": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-26T04:36:11.759716955Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged: the learned route's effort"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8B27GBX7990QQJSSCRKVDFH",
+        "summary": "Implemented retry_delay in retry_budget.py per SPEC.md and added 19 focused tests in test_retry_budget.py. Before: the stub raised NotImplementedError and the 3 existing tests errored. After: `python3 -m unittest -v` runs 22 tests, all OK. Committed as 3a0a833 on archon/6c1az3h3-implement-retry-budget-py-per-spec-md-wi, tree f940086c0aaf80b8782f5979f4a055a585422744; not pushed. Standard library only. One reviewer passed the branch head with no blocking findings; two non-blocking coverage follow-ups remain: tests for float budget_ms/cap_ms and bool/float max_attempts, and a test pinning the shift == cap.bit_length() boundary with a small cap. No repository contributor guidance file exists; I assumed the spec is the only guidance. Nothing left running on my side; the reviewer's leftover claude -p process (pid 3139363) is stopped by the runtime when this run ends.\nREVIEW: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B28GDJ46JF5WPJKZM36T5J)\n\nSHIPPED: commit 3a0a8331462a9c77c2abe7e57aa7fa61ece05386 on the run branch"
+      },
+      "created_at": "2026-11-26T04:36:11.756516262Z",
+      "updated_at": "2026-11-26T04:37:17.225822641Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8B27GBX7990QQJSSCRKVDFH",
+        "item": "qi_01M8B27GBCWSNWCW9W6C1AZ3H3",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8B27GH289G6S7ZT8N7T37KE",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-rgwc_oqn/archon-bench/work/20261126T043600Z/7b0ae6ef56adcb3da1704802/.archon/data/worktrees/quality-retry-budget/qi_01M8B27GBCWSNWCW9W6C1AZ3H3",
+        "branch": "archon/6c1az3h3-implement-retry-budget-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented retry_delay in retry_budget.py per SPEC.md and added 19 focused tests in test_retry_budget.py. Before: the stub raised NotImplementedError and the 3 existing tests errored. After: `python3 -m unittest -v` runs 22 tests, all OK. Committed as 3a0a833 on archon/6c1az3h3-implement-retry-budget-py-per-spec-md-wi, tree f940086c0aaf80b8782f5979f4a055a585422744; not pushed. Standard library only. One reviewer passed the branch head with no blocking findings; two non-blocking coverage follow-ups remain: tests for float budget_ms/cap_ms and bool/float max_attempts, and a test pinning the shift == cap.bit_length() boundary with a small cap. No repository contributor guidance file exists; I assumed the spec is the only guidance. Nothing left running on my side; the reviewer's leftover claude -p process (pid 3139363) is stopped by the runtime when this run ends.\nREVIEW: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B28GDJ46JF5WPJKZM36T5J)\n\nSHIPPED: commit 3a0a8331462a9c77c2abe7e57aa7fa61ece05386 on the run branch"
+        },
+        "cost_usd": 0.023337680000000003,
+        "started_at": "2026-11-26T04:36:11.919340563Z",
+        "finished_at": "2026-11-26T04:37:17.225822641Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8B27GGV8SV4SF841REFWF3B",
+        "run": "prun_01M8B27GBX7990QQJSSCRKVDFH",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8B27GHPKX0MCV3SQKNM8H7E",
+        "aether_task": "tsk_01M8B27GHPKX0MCV3SQKNM8H7F",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "learned",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged: the learned route's effort",
+        "summary": "Implemented retry_delay in retry_budget.py per SPEC.md and added 19 focused tests in test_retry_budget.py. Before: the stub raised NotImplementedError and the 3 existing tests errored. After: `python3 -m unittest -v` runs 22 tests, all OK. Committed as 3a0a833 on archon/6c1az3h3-implement-retry-budget-py-per-spec-md-wi, tree f940086c0aaf80b8782f5979f4a055a585422744; not pushed. Standard library only. One reviewer passed the branch head with no blocking findings; two non-blocking coverage follow-ups remain: tests for float budget_ms/cap_ms and bool/float max_attempts, and a test pinning the shift == cap.bit_length() boundary with a small cap. No repository contributor guidance file exists; I assumed the spec is the only guidance. Nothing left running on my side; the reviewer's leftover claude -p process (pid 3139363) is stopped by the runtime when this run ends.\nREVIEW: pass",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v"
+          ],
+          "commit": "3a0a8331462a9c77c2abe7e57aa7fa61ece05386",
+          "evidence": [
+            {
+              "after": [
+                "Ran 22 tests",
+                "OK"
+              ],
+              "before": [
+                "Ran 3 tests",
+                "FAILED (errors=3)",
+                "NotImplementedError from retry_delay"
+              ],
+              "caption": "python3 -m unittest -v on the stub (before) and on 3a0a833 (after)",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "3a0a8331462a9c77c2abe7e57aa7fa61ece05386",
+          "pr": {
+            "body": "Files: retry_budget.py (validation helpers, saturating backoff, retry_delay), test_retry_budget.py (19 new tests for each error and boundary case in SPEC.md). Approach: all args validated as built-in int before any early return; backoff min(cap, base<<(attempt-1)) with shortcut when the shift exceeds cap.bit_length(), so huge attempts never build large powers; Retry-After applied as uncapped minimum; None when elapsed+delay >= budget. Checks: python3 -m unittest -v -> before 3 errors (NotImplementedError), after Ran 22 tests OK. Review: one reviewer, pass on 3a0a833, no blocking findings; two non-blocking coverage follow-ups (float budget_ms/cap_ms and bool/float max_attempts tests; no test pins shift == cap.bit_length() with small cap). Assumptions: no repository contributor guidance file found; standard library only.",
+            "risk": {
+              "level": "low",
+              "why": "Pure function in one module plus tests; no behaviour outside the new function, no I/O, concurrency or persistence. Review pass at low risk."
+            },
+            "summary": "Implemented retry_budget.retry_delay per SPEC.md. before: NotImplementedError stub, 3 existing tests erroring. now: all 22 tests pass, covering validation, attempt limit, backoff saturation, Retry-After floor and budget edges.",
+            "title": "Implement retry_delay per SPEC.md with focused tests"
+          },
+          "review": {
+            "reviewed_head": "3a0a8331462a9c77c2abe7e57aa7fa61ece05386",
+            "reviewer_agents": [
+              "agt_01M8B28GDJ46JF5WPJKZM36T5J"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8B28GDJ46JF5WPJKZM36T5J",
+                "base": "7626facf42c0afd70895b99ca59a387605e1fdf3",
+                "findings": 2,
+                "head": "3a0a8331462a9c77c2abe7e57aa7fa61ece05386",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8B28GDJ46JF5WPJKZM36T5J"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8B28GDJ46JF5WPJKZM36T5J:1": {
+                "blocking": false,
+                "description": "Tests do not cover float budget_ms, float cap_ms/base_ms-only-by-type, or bool/float max_attempts; validation logic handles them, so this is coverage only.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B27GGV8SV4SF841REFWF3B"
+                },
+                "id": "agt_01M8B28GDJ46JF5WPJKZM36T5J:1",
+                "resolved_in": null
+              },
+              "agt_01M8B28GDJ46JF5WPJKZM36T5J:2": {
+                "blocking": false,
+                "description": "No test pins the exact _backoff shift boundary (shift == cap.bit_length()) with a small cap; huge-attempt tests only exercise the saturation branch.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B27GGV8SV4SF841REFWF3B"
+                },
+                "id": "agt_01M8B28GDJ46JF5WPJKZM36T5J:2",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "3a0a8331462a9c77c2abe7e57aa7fa61ece05386",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8B28GDJ46JF5WPJKZM36T5J",
+                    "base": "7626facf42c0afd70895b99ca59a387605e1fdf3",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8B28GDJ46JF5WPJKZM36T5J:1",
+                      "agt_01M8B28GDJ46JF5WPJKZM36T5J:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "low",
+            "why": "Pure function in one module plus tests; no behaviour outside the new function, no I/O, concurrency or persistence. Review pass at low risk."
+          },
+          "tree": "f940086c0aaf80b8782f5979f4a055a585422744"
+        },
+        "cost_usd": 0.023337680000000003,
+        "started_at": "2026-11-26T04:36:11.930907042Z",
+        "finished_at": "2026-11-26T04:37:14.693684606Z"
+      }
+    ],
+    "spent_usd": 0.023337680000000003,
+    "gates": [],
+    "delegations": {
+      "stg_01M8B27GGV8SV4SF841REFWF3B": {
+        "direct_usd": 0.016859600000000002,
+        "delegated_usd": 0.006478080000000001,
+        "agents": [
+          {
+            "agent": "agt_01M8B28GDJ46JF5WPJKZM36T5J",
+            "parent": "agt_01M8B27GHPKX0MCV3SQKNM8H7E",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "low",
+            "cost_usd": 0.006478080000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-26T04:36:11.759716955Z"
+          },
+          "effort": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-26T04:36:11.759716955Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

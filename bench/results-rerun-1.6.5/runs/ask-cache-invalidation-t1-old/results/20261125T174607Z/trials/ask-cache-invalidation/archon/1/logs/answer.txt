@@ -1,0 +1,35 @@
+The stale category prices come from `updatePrice` invalidating only the product cache entry. The category listing cache is never touched, so it keeps serving the old price until its 600-second TTL expires. I reproduced this in a scratch Node run against the mirror. I changed no code.
+
+**Code path**
+
+- `src/pricing.js:6-13`, `updatePrice`: it writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That is the only invalidation. It never removes any `listing:<category>:<page>` key.
+- `src/catalog.js:22-33`, `Catalog.listing`: it caches the paged rows (`sku`, `name`, `priceCents` copies) under `listingKey(category, page)` for `LISTING_TTL_SECONDS`.
+- `src/config.js:4-7`: `PRODUCT_TTL_SECONDS` is 3600 and `LISTING_TTL_SECONDS` is 600.
+
+**Why the delay is what it is**
+
+- Product pages read `catalog.product(sku)`, which goes through `productKey`. The update deleted that key, so the next read hits the store and returns the new price immediately.
+- Category pages read `catalog.listing(category, page)`. Those rows are copies held under `listing:` keys that nothing clears on a price change. They expire only when the 600-second TTL runs out, which is the "up to about ten minutes" support sees.
+- The comment in `config.js` says listings are cached separately because they are expensive to build. That is why the TTL is long, and it is also why the stale window is that long.
+
+**Reproduction (scratch script, injected clock)**
+
+- Listing before the update: 5000
+- Product after `updatePrice(…, 4500)`: 4500
+- Listing right after the update: 5000 (stale)
+- Listing at 599 s: 5000 (stale)
+- Listing at 600 s: 4500 (fresh)
+
+**Fix options**
+
+1. Invalidate the affected listings on write. `updatePrice` already has the updated product, so it knows the category. Delete every page for that category. `TtlCache` has no prefix delete, so either add one, or keep a per-category index of listing keys that `Catalog.listing` populates.
+2. Use a per-category generation number. Include the generation in `listingKey`, and bump it in `updatePrice`. Old entries become unreachable and expire on their own. This avoids a scan but leaves dead entries until their TTL runs out.
+3. Shorten `LISTING_TTL_SECONDS`. This is the smallest change but only narrows the window, and it costs rebuild work on every page.
+
+I would take option 1 or 2. Either one is the real fix. Option 3 is only a mitigation.
+
+**Adjacent gaps**
+
+- The same invalidation gap applies to any other field a listing copies (`name`, and the sort order that depends on it). The fix should cover all listing fields, not just price.
+- If a product can change category, the old category's listings are also stale, and `updatePrice` as written does not handle that because it only takes a price.
+- `test/catalog.test.js` checks product-page freshness but has no test that a listing reflects a price update. That is why this was not caught. A regression test should follow the same pattern: warm the listing, update the price, and assert the listing shows the new value without advancing the clock.

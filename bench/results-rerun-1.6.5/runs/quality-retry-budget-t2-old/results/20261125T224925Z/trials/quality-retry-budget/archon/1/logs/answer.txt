@@ -1,0 +1,22 @@
+The implementation is queued as item `qi_01M8AECWBH3QCGBVS2JV5WX7EV` in the `quality-retry-budget` repository. I have not edited the repository myself.
+
+- **What's queued:** one `direct` pipeline item. The agent implements `retry_budget.py` against `SPEC.md`, keeps the documented API, handles every specified error and boundary case, adds focused tests, and uses only the standard library. It commits the work on the current branch.
+- **Review:** `standard`, which gives one reviewer. The module is small, but a budget bug could be silent, so I did not choose `none`.
+- **Model:** balanced tier, medium effort, because the spec is written out and the work is bounded.
+- **Shipping:** the repository ships `local`, so the commit stays on the local branch. Nothing is pushed or merged.
+- **Notification:** tagged `notify`, so you will hear when it finishes, including on success.
+
+I read only the file list and sizes to judge risk: `SPEC.md` is 29 lines, `retry_budget.py` is 6, and the existing test file is short. I did not read the spec's contents, so I have not checked the implementation's scope against it.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and added 28 focused tests to test_retry_budget.py (33 total, the 5 existing ones kept). Commit 617ddfb on archon/jv5wx7ev-implement-retry-budget-py-per-spec-md-wi, tree 87aa805d3fce5b67bbee40247df8ced1053c1c4e. Arguments are validated first (built-in int, not bool or float; minimums per spec; ValueError), then attempt-limit and budget checks run. Backoff saturates at cap_ms without building a large power of two, and Retry-After is an uncapped floor. Check run: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_retry_budget` gave 33 tests, OK. No linter is installed in this environment, so only a manual line-length check (no lines over 79) was done. Reviewer agt_01M8AEE8DQEGPA38ZZQTWENWPQ passed the head with no blocking findings. Open non-blocking follow-ups: the validation tests do not pin bool or float handling for elapsed_ms or bool for max_attempts (the validator already handles them), and the functions use validation rather than assert statements. Nothing was started that is still running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AEE8DQEGPA38ZZQTWENWPQ)
+
+SHIPPED: commit 617ddfb1e313ade6b40dfd964893ac21bfe9275b on the run branch
+Branch `archon/jv5wx7ev-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-27t3s_wo/archon-bench/work/20261125T224925Z/9b241e25ec4225b5a309d166/quality-retry-budget holds it (2 files changed, 186 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8AECWBH3QCGBVS2JV5WX7EV`; land it in `main`: `archon merge qi_01M8AECWBH3QCGBVS2JV5WX7EV`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and added 28 focused tests to test_retry_budget.py (33 total, the 5 existing ones kept). Commit 617ddfb on archon/jv5wx7ev-implement-retry-budget-py-per-spec-md-wi, tree 87aa805d3fce5b67bbee40247df8ced1053c1c4e. Arguments are validated first (built-in int, not bool or float; minimums per spec; ValueError), then attempt-limit and budget checks run. Backoff saturates at cap_ms without building a large power of two, and Retry-After is an uncapped floor. Check run: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_retry_budget` gave 33 tests, OK. No linter is installed in this environment, so only a manual line-length check (no lines over 79) was done. Reviewer agt_01M8AEE8DQEGPA38ZZQTWENWPQ passed the head with no blocking findings. Open non-blocking follow-ups: the validation tests do not pin bool or float handling for elapsed_ms or bool for max_attempts (the validator already handles them), and the functions use validation rather than assert statements. Nothing was started that is still running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AEE8DQEGPA38ZZQTWENWPQ)
+
+SHIPPED: commit 617ddfb1e313ade6b40dfd964893ac21bfe9275b on the run branch

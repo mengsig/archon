@@ -1,0 +1,48 @@
+I reviewed `src/tokens.js` and did not change any code. The mirror is registered as `review-seeded-bug`, but its `package.json` names the package `session-lib`, and this is the only `tokens.js` in it, so I reviewed that copy. I confirmed the two most serious problems by running `verify()` against crafted tokens in the mirror. The probes only read the code.
+
+## Problems
+
+**1. Critical: `verify` accepts a token with an empty signature, so anyone can forge a session.**
+- **File/function:** `src/tokens.js`, `verify()`, line 27: `if (!expected.startsWith(signature)) return null;`
+- **What goes wrong:** the signature is checked as a prefix of the expected MAC, not compared in full. An empty signature is a prefix of every string, so any payload passes.
+- **Concrete input:** take any signed token `body.sig`, change `sub` to `"admin"` and `exp` to a far-future time in the body, re-encode it, and submit `newBody + "."`. The probe returned `{ sub: 'admin', ... }`.
+- **Severity:** critical. Authentication bypass. This must be fixed before it ships.
+
+**2. Critical: a signature with any prefix of the correct MAC passes.**
+- **File/function:** same line, `verify()`.
+- **What goes wrong:** because only a prefix is compared, an attacker needs to guess one base64url character at a time, roughly 64 guesses per character. The first character can be found by trying each of the 64 characters against a token of their choosing, then the next, and so on, without the secret.
+- **Severity:** critical, and it is a consequence of the same line as problem 1. Fixing the prefix check fixes both.
+
+**3. Important: the MAC comparison is not constant-time.**
+- **File/function:** `verify()`, line 27.
+- **What goes wrong:** `startsWith` and string comparison exit on the first mismatch, which leaks timing information about the expected MAC. Combined with problem 2 this makes the guessing easier.
+- **Fix direction:** compare the decoded buffers with `crypto.timingSafeEqual` after a length check.
+- **Severity:** important.
+
+**4. Important: `verify()` does not check the secret, so an empty or short key makes forgery trivial.**
+- **File/function:** `verify()`, line 22 onward. Only `sign()`, line 15, enforces the 32-character minimum.
+- **What goes wrong:** if a verifier is configured with `''`, `verify` computes HMAC with an empty key, and anyone can compute the same key. The probe with an empty secret accepted a token that the attacker signed with an empty key.
+- **Severity:** important. Add the same length check in `verify`, or in a shared helper that both functions call.
+
+**5. Important: `verify()` throws on malformed input instead of returning `null`.**
+- **File/function:** `verify()`, line 28: `JSON.parse(fromBase64Url(body))`, and line 29 `payload.exp`.
+- **What goes wrong:** the probe with a valid-looking base64 body of `notjson.` threw `SyntaxError`. A body that parses to `null` would throw a `TypeError` at `payload.exp`. Callers that expect `null` for invalid tokens get an exception, which can turn into a 500 or an unhandled error. This gets worse with problems 1 and 2, because unsigned bodies reach the parser.
+- **Fix direction:** wrap the parse in a try and return `null` for failures, and check that `payload` is a non-null object.
+- **Severity:** important.
+
+**6. Nit: extra dot-separated segments are ignored.**
+- **File/function:** `verify()`, line 24: `token.split('.')`.
+- **What goes wrong:** `validToken + ".zzz"` verifies successfully, so tokens are malleable in the trailing part. It is not exploitable by itself, but it should be rejected.
+- **Fix direction:** require exactly two parts.
+- **Severity:** nit.
+
+**7. Nit: no revocation or `iat`/`nbf` checks.**
+- **File/function:** `verify()`.
+- **What goes wrong:** a stolen token is valid until `exp`, and `iat` is not checked. This may be intended, but it should be a deliberate decision before production.
+- **Severity:** nit, design question.
+
+## Not checked
+- The test file `test/tokens.test.js` was not read, so I do not know whether it covers tampering. The probes above suggest it does not cover an empty signature.
+- I did not check `src/index.js` for how callers handle `null` or exceptions from `verify`.
+
+**Recommendation:** do not ship until problems 1 to 5 are fixed. The core fix is to compare the full MAC in constant time, reject empty or mismatched lengths, and validate the secret in `verify`.

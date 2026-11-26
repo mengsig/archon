@@ -1,0 +1,35 @@
+I found one critical authentication bypass in `src/tokens.js`, plus several smaller issues. I did not change any code and did not run the exploit; the bypass follows from JavaScript's `startsWith` semantics, which I checked by reading the code.
+
+The file lives in the registered repository `review-seeded-bug`, whose `package.json` names it `session-lib`. I read the mirror at `repos/review-seeded-bug` (HEAD `03d4ef8`, working tree clean).
+
+**1. Critical: signature check accepts an empty or partial signature.** `src/tokens.js:27`, `verify`
+- The check is `expected.startsWith(signature)`, a prefix match, not equality.
+- Concrete input: take `base64url(JSON.stringify({ user: 'root', exp: 9e15 }))` and append a bare `.`. The signature is `''`, and `'<anything>'.startsWith('')` is `true`. `verify` returns `{ user: 'root', exp: 9e15 }` with no knowledge of the secret.
+- Any signature that is a prefix of the real one also passes. A one-character guess succeeds with probability 1/64, and a two-character prefix needs about 4,096 tries, which is feasible online.
+- The comparison is also not constant-time, which leaks prefix information through timing.
+- Fix: reject a missing or empty signature, then compare the full MAC with `crypto.timingSafeEqual` on equal-length buffers.
+
+**2. Medium: token parsing is not strict.** `src/tokens.js:24`, `verify`
+- `token.split('.')` takes only the first two segments. `body.sig.junk` verifies if `body.sig` is valid, so tokens are accepted in a non-canonical form.
+- Fix: require exactly two non-empty segments.
+
+**3. Medium: `verify` can throw instead of returning `null`.** `src/tokens.js:28-29`, `verify`
+- `JSON.parse` on the decoded body is unguarded. A malformed body throws `SyntaxError`, and a body that decodes to `null` throws `TypeError` at `payload.exp`. The function's contract is to return `null` for invalid tokens.
+- Once bug 1 is fixed, only bodies this library signed reach this line, so the practical impact drops. Until then, attacker-controlled bodies reach it.
+- Fix: wrap the parse, return `null` on failure, and check that the payload is a plain object.
+
+**4. Low: `verify` does not validate its secret.** `src/tokens.js:22`, `verify`
+- `sign` refuses secrets under 32 characters, but `verify` accepts any value. An empty secret yields a valid HMAC key. This library's `sign` cannot produce a token with an empty key, so the exposure is small, but the two sides should enforce the same rule.
+
+**5. Low: no `iat` or not-before check.** `src/tokens.js:29`, `verify`
+- Only `exp` is checked, so a token with a future `iat` is accepted. This matters only if issuers and verifiers disagree on clocks.
+
+**6. Low: the length check counts characters, not entropy.** `src/tokens.js:15`, `sign`
+- `'k'.repeat(32)` passes. A minimum-length check does not guarantee a secret is random.
+
+**7. Low: the tests miss the bypass.** `test/tokens.test.js:15-20`
+- The tampering test replaces the body with a valid signature from a different body. That never exercises an empty, short, or partial signature, so it passes despite bug 1. Add cases for an empty signature, a one-character signature, and an extra segment.
+
+**Informational:** `iat` and `exp` are in milliseconds, while JWT numeric dates (RFC 7519) are in seconds. This is fine if only this library reads the tokens, but it will break interop with anything that expects standard claims.
+
+**Recommendation:** do not ship tomorrow until finding 1 is fixed and a test for an empty signature is added. Findings 2 and 3 should go in the same change.

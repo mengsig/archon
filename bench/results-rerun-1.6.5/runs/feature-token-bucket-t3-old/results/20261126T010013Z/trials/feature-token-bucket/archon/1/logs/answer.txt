@@ -1,0 +1,20 @@
+I queued the rate limiter as item `qi_01M8ANWDEJ9SS7WJRTM3HKM85P`. It is not built yet. I'll report back when it finishes.
+
+- **Pipeline:** `direct`, one agent that implements and commits the change. Archon ships it. The repo's ship mode is `local`, so the commit lands on a local branch and nothing is pushed.
+- **Work:** The agent implements `ratelimit.py` from `SPEC.md`, including the error and edge cases, and checks those beyond what `test_ratelimit.py` covers. It must not edit `SPEC.md` or the existing tests, and it must stay standard library only.
+- **Review:** `standard`, which runs one reviewer. I chose this because the module is new and self-contained, but its correctness matters.
+- **Effort:** I asked for `high`, but the model policy caps effort at `medium` here. The implement stage runs at balanced tier, medium effort. If you want higher effort, the operator needs to raise `[models] max_effort`.
+- **Merge:** Manual. Nothing merges without your request.
+
+Done: Implement rate limiter per SPEC.md in ratelimit.py. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, standard library only. Added test_ratelimit_spec.py (19 tests) for the SPEC error and edge cases; test_ratelimit.py and SPEC.md are unchanged. Head 8c0b1a8, tree 6062ea9, on archon/m3hkm85p-implement-rate-limiter-per-spec-md-in-ra, not pushed. Before: all 3 existing tests errored with NotImplementedError. After: 22 tests OK under python3 -X dev -m unittest, ruff check and ruff format --check clean. A first whole-change review failed on a float-tolerance issue at large capacities (absolute 1e-9 token tolerance); fixed with a capacity-relative tolerance (1e-12 * capacity) and a seeded large-capacity test that fails 9/300 cases without the tolerance. A delta review of the fix passed. Open: the tolerance is a small, documented-in-code deviation from the literal SPEC: a deficit under 1e-12 * capacity tokens is accepted. Not thread-safe; the spec does not require it. No processes are left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ANYHRNWFP2M1RSY62MC81A), claude-code/claude-haiku-5-5 (agent agt_01M8AP1HQ3E3HXJCY5Q532Y88Q)
+
+SHIPPED: commit 8c0b1a831422bf9ed139e9d77eb0281aecbe5f60 on the run branch
+Branch `archon/m3hkm85p-implement-rate-limiter-per-spec-md-in-ra` in /home/mengsig/.local/share/archon-bench/rerun-165/r-ft2j92hz/archon-bench/work/20261126T010013Z/9628d082e56e9511a07d2439/feature-token-bucket holds it (2 files changed, 253 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8ANWDEJ9SS7WJRTM3HKM85P`; land it in `main`: `archon merge qi_01M8ANWDEJ9SS7WJRTM3HKM85P`.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, standard library only. Added test_ratelimit_spec.py (19 tests) for the SPEC error and edge cases; test_ratelimit.py and SPEC.md are unchanged. Head 8c0b1a8, tree 6062ea9, on archon/m3hkm85p-implement-rate-limiter-per-spec-md-in-ra, not pushed. Before: all 3 existing tests errored with NotImplementedError. After: 22 tests OK under python3 -X dev -m unittest, ruff check and ruff format --check clean. A first whole-change review failed on a float-tolerance issue at large capacities (absolute 1e-9 token tolerance); fixed with a capacity-relative tolerance (1e-12 * capacity) and a seeded large-capacity test that fails 9/300 cases without the tolerance. A delta review of the fix passed. Open: the tolerance is a small, documented-in-code deviation from the literal SPEC: a deficit under 1e-12 * capacity tokens is accepted. Not thread-safe; the spec does not require it. No processes are left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ANYHRNWFP2M1RSY62MC81A), claude-code/claude-haiku-5-5 (agent agt_01M8AP1HQ3E3HXJCY5Q532Y88Q)
+
+SHIPPED: commit 8c0b1a831422bf9ed139e9d77eb0281aecbe5f60 on the run branch

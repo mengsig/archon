@@ -1,0 +1,447 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8B02V9T0PSE6B222V59RDHD",
+      "repo": "repo_01M8B02M01B483FJZSC8HE6X72",
+      "pipeline": "direct",
+      "title": "Implement safe_extract.py per SPEC.md with tests",
+      "brief": "Operator request (verbatim): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nSteps: read SPEC.md and the existing safe_extract.py and tests in the repository. Implement every behaviour and error case the spec names, keeping the documented public API unchanged. Add focused tests covering each specified error and boundary case (path traversal, absolute paths, links, size/count limits and similar, whatever the spec lists), in addition to the existing tests. Use only the Python standard library. Run the test suite and make sure it passes. Keep functions under 60 lines, validate inputs at the boundary, never swallow exceptions, and do not add unnecessary comments. Commit the work on the local branch with a clear commit message (no AI attribution lines added by you beyond what the repository requires).\n\nAcceptance: every SPEC.md requirement is implemented and has a test; the full test suite passes; the public API matches the spec.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8B02V9T0PSE6B222V59RDHD",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-26T03:58:41.982169931Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-26T03:58:41.984326266Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-26T03:58:41.982169931Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "review:strict"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8B02VAMZNPRCQCZD9PCDS7N",
+        "summary": "Implemented safe_extract.extract per SPEC.md (stdlib only; public API unchanged) with 49 unittest tests: the 2 original tests plus 47 new ones covering each spec rule. Committed as e23c676 (tree 89d9327118798a9de835ba3b759c5794456be09c) on archon/2v59rdhd-implement-safe-extract-py-per-spec-md-wi, on top of e2969eb. Checks: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_safe_extract gives 49 OK; the base commit gave 2 errors (stub). Review: reviewers 1 and 3 failed on lone-surrogate names, which were fixed in e23c676 with Review-Fix trailers and confirmed by a delta reviewer; a whole-change reviewer passed the head. Reviewer 2's pass was not accepted because its final message lacked the JSON verdict. Risk is high (security-sensitive filesystem writes); the delta reviewer proposed low, which I did not accept. Left open (non-blocking): case-only duplicates such as 'a' and 'A' are not rejected, so writes can fail mid-batch on case-insensitive filesystems; ExtractBasics writes into the worktree via dir='.'; bare asserts are stripped under python -O; symlinked ancestors of root are not checked (spec wording ambiguous). Nothing is running that I started; the reviewer agent processes are stopped when this stage ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B0A054RSF7RFCR8XWNR6ND), claude-code/claude-haiku-5-5 (agent agt_01M8B0887P17YW3SMXJ59Y15VF), claude-code/claude-haiku-5-5 (agent agt_01M8B057PDWYR6HBVXERH9HSK8), claude-code/claude-haiku-5-5 (agent agt_01M8B05KB7E547W8NZCPCYAQX1)\n\nSHIPPED: commit e23c676765a601cd194ad2d9aeb20652ef53e348 on the run branch"
+      },
+      "created_at": "2026-11-26T03:58:41.978255418Z",
+      "updated_at": "2026-11-26T04:03:33.712370254Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8B02VAMZNPRCQCZD9PCDS7N",
+        "item": "qi_01M8B02V9T0PSE6B222V59RDHD",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8B02VG9QRA07RB6CZ3ASW99",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-7rcfgkf1/archon-bench/work/20261126T035832Z/59c1e4f380196392ae614259/.archon/data/worktrees/quality-safe-extract/qi_01M8B02V9T0PSE6B222V59RDHD",
+        "branch": "archon/2v59rdhd-implement-safe-extract-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract per SPEC.md (stdlib only; public API unchanged) with 49 unittest tests: the 2 original tests plus 47 new ones covering each spec rule. Committed as e23c676 (tree 89d9327118798a9de835ba3b759c5794456be09c) on archon/2v59rdhd-implement-safe-extract-py-per-spec-md-wi, on top of e2969eb. Checks: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_safe_extract gives 49 OK; the base commit gave 2 errors (stub). Review: reviewers 1 and 3 failed on lone-surrogate names, which were fixed in e23c676 with Review-Fix trailers and confirmed by a delta reviewer; a whole-change reviewer passed the head. Reviewer 2's pass was not accepted because its final message lacked the JSON verdict. Risk is high (security-sensitive filesystem writes); the delta reviewer proposed low, which I did not accept. Left open (non-blocking): case-only duplicates such as 'a' and 'A' are not rejected, so writes can fail mid-batch on case-insensitive filesystems; ExtractBasics writes into the worktree via dir='.'; bare asserts are stripped under python -O; symlinked ancestors of root are not checked (spec wording ambiguous). Nothing is running that I started; the reviewer agent processes are stopped when this stage ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B0A054RSF7RFCR8XWNR6ND), claude-code/claude-haiku-5-5 (agent agt_01M8B0887P17YW3SMXJ59Y15VF), claude-code/claude-haiku-5-5 (agent agt_01M8B057PDWYR6HBVXERH9HSK8), claude-code/claude-haiku-5-5 (agent agt_01M8B05KB7E547W8NZCPCYAQX1)\n\nSHIPPED: commit e23c676765a601cd194ad2d9aeb20652ef53e348 on the run branch"
+        },
+        "cost_usd": 0.1170653,
+        "started_at": "2026-11-26T03:58:42.154213790Z",
+        "finished_at": "2026-11-26T04:03:33.712370254Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8B02VFWS1H20JPWFH4CT63R",
+        "run": "prun_01M8B02VAMZNPRCQCZD9PCDS7N",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8B02VGWQ31DT3W7FW5EFP9M",
+        "aether_task": "tsk_01M8B02VGWQ31DT3W7FW5EFP9N",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented safe_extract.extract per SPEC.md (stdlib only; public API unchanged) with 49 unittest tests: the 2 original tests plus 47 new ones covering each spec rule. Committed as e23c676 (tree 89d9327118798a9de835ba3b759c5794456be09c) on archon/2v59rdhd-implement-safe-extract-py-per-spec-md-wi, on top of e2969eb. Checks: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_safe_extract gives 49 OK; the base commit gave 2 errors (stub). Review: reviewers 1 and 3 failed on lone-surrogate names, which were fixed in e23c676 with Review-Fix trailers and confirmed by a delta reviewer; a whole-change reviewer passed the head. Reviewer 2's pass was not accepted because its final message lacked the JSON verdict. Risk is high (security-sensitive filesystem writes); the delta reviewer proposed low, which I did not accept. Left open (non-blocking): case-only duplicates such as 'a' and 'A' are not rejected, so writes can fail mid-batch on case-insensitive filesystems; ExtractBasics writes into the worktree via dir='.'; bare asserts are stripped under python -O; symlinked ancestors of root are not checked (spec wording ambiguous). Nothing is running that I started; the reviewer agent processes are stopped when this stage ends.",
+        "structured": {
+          "checks": [
+            "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_safe_extract (49 tests OK)"
+          ],
+          "commit": "e23c676765a601cd194ad2d9aeb20652ef53e348",
+          "evidence": [
+            {
+              "after": "Ran 49 tests in 0.010s\n\nOK",
+              "before": "Ran 2 tests in 0.001s\n\nFAILED (errors=2)",
+              "caption": "Base commit: stub raises NotImplementedError, original tests error",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "e23c676765a601cd194ad2d9aeb20652ef53e348",
+          "pr": {
+            "body": "Approach: extract() plans the whole batch first (types, names, batch conflicts, root and on-disk checks via lstat), then writes each file with exclusive 'xb' creation. Key file: safe_extract.py; tests in test_safe_extract.py. Checks: python3 -m unittest test_safe_extract -> 49 OK. Review: two whole-change reviewers failed on lone-surrogate names at e2969eb; fixed in e23c676 (Review-Fix trailers) and confirmed by a delta reviewer; a whole-change reviewer passed e23c676. Open non-blocking follow-ups: case-only duplicate names (e.g. 'a' and 'A') not rejected, so writes can fail mid-batch on case-insensitive filesystems; ExtractBasics writes into the worktree via dir='.'; bare asserts are stripped under python -O; symlinked ancestors of root are not checked (spec wording ambiguous). Assumptions: Linux/case-sensitive filesystem.",
+            "summary": "made extract() work per SPEC.md. now validates whole batch before any write; rejects traversal, symlinks, collisions, bad roots. before: NotImplementedError stub, 2 tests erroring; now: 49 tests passing.",
+            "title": "Implement safe_extract per SPEC.md with validation tests"
+          },
+          "review": {
+            "reviewed_head": "e23c676765a601cd194ad2d9aeb20652ef53e348",
+            "reviewer_agents": [
+              "agt_01M8B0A054RSF7RFCR8XWNR6ND",
+              "agt_01M8B0887P17YW3SMXJ59Y15VF",
+              "agt_01M8B057PDWYR6HBVXERH9HSK8",
+              "agt_01M8B05KB7E547W8NZCPCYAQX1"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8B0A054RSF7RFCR8XWNR6ND",
+                "base": "349b99e024037f3eb1acc9e2f054552cae819163",
+                "findings": 0,
+                "head": "e23c676765a601cd194ad2d9aeb20652ef53e348",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8B0887P17YW3SMXJ59Y15VF",
+                "base": "e2969eb307796355a2c0fecaebcce7547bb6c684",
+                "findings": 4,
+                "head": "e23c676765a601cd194ad2d9aeb20652ef53e348",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8B057PDWYR6HBVXERH9HSK8",
+                "base": "349b99e024037f3eb1acc9e2f054552cae819163",
+                "findings": 4,
+                "head": "e2969eb307796355a2c0fecaebcce7547bb6c684",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8B05KB7E547W8NZCPCYAQX1",
+                "base": "349b99e024037f3eb1acc9e2f054552cae819163",
+                "findings": 2,
+                "head": "e2969eb307796355a2c0fecaebcce7547bb6c684",
+                "verdict": "fail"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8B0A054RSF7RFCR8XWNR6ND",
+              "agt_01M8B0887P17YW3SMXJ59Y15VF",
+              "agt_01M8B057PDWYR6HBVXERH9HSK8",
+              "agt_01M8B05KB7E547W8NZCPCYAQX1"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8B057PDWYR6HBVXERH9HSK8:1": {
+                "blocking": true,
+                "description": "Names containing lone surrogates (e.g. '\\ud800') pass validation. _check_name() does not check that the name is encodable, and _check_on_disk() relies on os.path.lexists(), which returns False on ValueError. The write phase then raises UnicodeEncodeError (a ValueError) after earlier entries in the batch have already been written, e.g. extract([('ok.txt', b'1'), ('\\ud800', b'2')], root) leaves ok.t",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B02VFWS1H20JPWFH4CT63R"
+                },
+                "id": "agt_01M8B057PDWYR6HBVXERH9HSK8:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8B02VFWS1H20JPWFH4CT63R"
+                }
+              },
+              "agt_01M8B057PDWYR6HBVXERH9HSK8:2": {
+                "blocking": false,
+                "description": "Duplicate detection is case-sensitive only. On case-insensitive filesystems (e.g. default macOS), entries 'a' and 'A' pass batch validation, and the second O_EXCL open fails after earlier writes. Platform-dependent and not verified here; consider a casefold-based collision check or documenting the Linux/case-sensitive assumption. at safe_extract.py:81",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B02VFWS1H20JPWFH4CT63R"
+                },
+                "id": "agt_01M8B057PDWYR6HBVXERH9HSK8:2",
+                "resolved_in": null
+              },
+              "agt_01M8B057PDWYR6HBVXERH9HSK8:3": {
+                "blocking": false,
+                "description": "ExtractBasics tests use tempfile.TemporaryDirectory(dir='.'), so they write into the worktree during test runs (cleaned up afterwards). Use the default temp location or a subdirectory of the test's own temp root. at test_safe_extract.py:11",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B02VFWS1H20JPWFH4CT63R"
+                },
+                "id": "agt_01M8B057PDWYR6HBVXERH9HSK8:3",
+                "resolved_in": null
+              },
+              "agt_01M8B057PDWYR6HBVXERH9HSK8:4": {
+                "blocking": false,
+                "description": "Sanity checks use bare assert (also line 105). They are stripped under python -O. Replace with explicit checks or drop them, since duplicate detection already covers the invariant. at safe_extract.py:50",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B02VFWS1H20JPWFH4CT63R"
+                },
+                "id": "agt_01M8B057PDWYR6HBVXERH9HSK8:4",
+                "resolved_in": null
+              },
+              "agt_01M8B05KB7E547W8NZCPCYAQX1:1": {
+                "blocking": true,
+                "description": "Names that cannot be encoded to the filesystem encoding (for example lone surrogates such as '\\ud800x') pass planning and then fail mid-batch. os.path.lexists() swallows the UnicodeEncodeError (a ValueError subclass) and returns False, so _check_on_disk accepts the entry. The encode error then fires in _write_file (open at line 106) after earlier entries in the batch have been created. Example: ex",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B02VFWS1H20JPWFH4CT63R"
+                },
+                "id": "agt_01M8B05KB7E547W8NZCPCYAQX1:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8B02VFWS1H20JPWFH4CT63R"
+                }
+              },
+              "agt_01M8B05KB7E547W8NZCPCYAQX1:2": {
+                "blocking": false,
+                "description": "Case-only collisions such as 'a' and 'A' in one batch are not detected. They are only a problem on case-insensitive filesystems (default macOS and Windows), where the second open('xb') raises FileExistsError after earlier files were written. The SPEC does not require case folding, so this is a follow-up, not a failure. Consider folding case for the batch check or documenting the limit. at safe_ext",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B02VFWS1H20JPWFH4CT63R"
+                },
+                "id": "agt_01M8B05KB7E547W8NZCPCYAQX1:2",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "e2969eb307796355a2c0fecaebcce7547bb6c684",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8B057PDWYR6HBVXERH9HSK8",
+                    "base": "349b99e024037f3eb1acc9e2f054552cae819163",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M8B057PDWYR6HBVXERH9HSK8:1",
+                      "agt_01M8B057PDWYR6HBVXERH9HSK8:2",
+                      "agt_01M8B057PDWYR6HBVXERH9HSK8:3",
+                      "agt_01M8B057PDWYR6HBVXERH9HSK8:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  },
+                  {
+                    "agent": "agt_01M8B05KB7E547W8NZCPCYAQX1",
+                    "base": "349b99e024037f3eb1acc9e2f054552cae819163",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8B05KB7E547W8NZCPCYAQX1:1",
+                      "agt_01M8B05KB7E547W8NZCPCYAQX1:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "e23c676765a601cd194ad2d9aeb20652ef53e348",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8B0887P17YW3SMXJ59Y15VF",
+                    "base": "e2969eb307796355a2c0fecaebcce7547bb6c684",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M8B057PDWYR6HBVXERH9HSK8:2",
+                      "agt_01M8B05KB7E547W8NZCPCYAQX1:2",
+                      "agt_01M8B057PDWYR6HBVXERH9HSK8:3",
+                      "agt_01M8B057PDWYR6HBVXERH9HSK8:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8B0A054RSF7RFCR8XWNR6ND",
+                    "base": "349b99e024037f3eb1acc9e2f054552cae819163",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": "agt_01M8B0A054RSF7RFCR8XWNR6ND",
+            "why": "Security-sensitive filesystem write API: path traversal, symlink following, overwrite and validation-before-write ordering. The whole-change reviewer confirmed high."
+          },
+          "tree": "89d9327118798a9de835ba3b759c5794456be09c"
+        },
+        "cost_usd": 0.11706529999999998,
+        "started_at": "2026-11-26T03:58:42.172593331Z",
+        "finished_at": "2026-11-26T04:03:29.568706078Z"
+      }
+    ],
+    "spent_usd": 0.1170653,
+    "gates": [],
+    "delegations": {
+      "stg_01M8B02VFWS1H20JPWFH4CT63R": {
+        "direct_usd": 0.05957915,
+        "delegated_usd": 0.05748614999999999,
+        "agents": [
+          {
+            "agent": "agt_01M8B057PDWYR6HBVXERH9HSK8",
+            "parent": "agt_01M8B02VGWQ31DT3W7FW5EFP9M",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01529073
+          },
+          {
+            "agent": "agt_01M8B05DKB4M9Z48RX9R94EM2P",
+            "parent": "agt_01M8B02VGWQ31DT3W7FW5EFP9M",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01313986
+          },
+          {
+            "agent": "agt_01M8B05KB7E547W8NZCPCYAQX1",
+            "parent": "agt_01M8B02VGWQ31DT3W7FW5EFP9M",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01392775
+          },
+          {
+            "agent": "agt_01M8B0887P17YW3SMXJ59Y15VF",
+            "parent": "agt_01M8B02VGWQ31DT3W7FW5EFP9M",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00524492
+          },
+          {
+            "agent": "agt_01M8B0A054RSF7RFCR8XWNR6ND",
+            "parent": "agt_01M8B02VGWQ31DT3W7FW5EFP9M",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00988289
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-26T03:58:41.982169931Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-26T03:58:41.984326266Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-26T03:58:41.982169931Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

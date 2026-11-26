@@ -134,8 +134,8 @@ impl DesignService {
         let seen = match &recipe {
             Some(_) => {
                 let repo = super::recipe::repo_of(ctx, &session.item).await?;
-                let row = super::recipe::stored_row(&*ctx.store.lock().await, &repo)?;
-                Some((repo, row))
+                let revision = super::recipe::revision(&*ctx.store.lock().await, &repo)?;
+                Some((repo, revision))
             }
             None => None,
         };
@@ -151,9 +151,9 @@ impl DesignService {
         if current.preview_url != session.preview_url {
             return Err(overtaken("another design_preview finished"));
         }
-        if let (Some(recipe), Some((repo, row))) = (recipe, seen) {
+        if let (Some(recipe), Some((repo, revision))) = (recipe, seen) {
             let mut store = ctx.store.lock().await;
-            if super::recipe::stored_row(&store, &repo)? != row {
+            if super::recipe::revision(&store, &repo)? != revision {
                 return Err(overtaken("the saved recipe was replaced or cleared"));
             }
             super::recipe::save(&mut store, &repo, &session.item, recipe)?;

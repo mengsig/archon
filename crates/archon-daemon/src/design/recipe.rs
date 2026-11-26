@@ -60,21 +60,42 @@ pub(crate) fn save(
     };
     let raw = serde_json::to_string(&saved)?;
     store.kv_set(&archon_queue::store::keys::design_recipe(repo), &raw)?;
+    bump_revision(store, repo)?;
     debug_assert_eq!(load(store, repo)?.as_ref(), Some(&saved));
     Ok(saved)
 }
 
-/// The stored row of `repo`'s recipe, as it is, to tell whether a save or a
-/// clear came in between.
-pub(super) fn stored_row(store: &Store, repo: &RepoId) -> Result<Option<String>, ArchonError> {
-    store.kv_get(&archon_queue::store::keys::design_recipe(repo))
+/// How many times `repo`'s recipe was saved or cleared, so a request can
+/// tell that one came in between, even one that left the same row.
+pub(super) fn revision(store: &Store, repo: &RepoId) -> Result<u64, ArchonError> {
+    let key = archon_queue::store::keys::design_recipe_revision(repo);
+    let Some(raw) = store.kv_get(&key)? else {
+        return Ok(0);
+    };
+    raw.parse().map_err(|e| {
+        ArchonError::Corrupt(format!(
+            "the design recipe revision of {repo} is unreadable: {e}"
+        ))
+    })
 }
 
-/// Forget `repo`'s recipe; true when there was one.
+fn bump_revision(store: &mut Store, repo: &RepoId) -> Result<(), ArchonError> {
+    let next = revision(store, repo)?.checked_add(1).ok_or_else(|| {
+        ArchonError::Corrupt(format!("the design recipe revision of {repo} is full"))
+    })?;
+    let key = archon_queue::store::keys::design_recipe_revision(repo);
+    store.kv_set(&key, &next.to_string())?;
+    debug_assert_eq!(revision(store, repo)?, next, "the revision moved on");
+    Ok(())
+}
+
+/// Forget `repo`'s recipe; true when there was one. Even clearing nothing
+/// moves the revision, so a request checked before it saves nothing.
 pub(crate) fn clear(store: &mut Store, repo: &RepoId) -> Result<bool, ArchonError> {
     let key = archon_queue::store::keys::design_recipe(repo);
     let existed = store.kv_get(&key)?.is_some();
     store.kv_delete(&key)?;
+    bump_revision(store, repo)?;
     debug_assert!(store.kv_get(&key)?.is_none(), "the recipe is gone");
     Ok(existed)
 }

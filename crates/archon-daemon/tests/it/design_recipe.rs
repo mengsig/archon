@@ -167,30 +167,47 @@ async fn overtaken_by<F: std::future::Future<Output = ()>>(
 async fn a_preview_overtaken_while_it_checks_saves_nothing() {
     tokio::time::timeout(std::time::Duration::from_secs(20), async {
         let f = Fixture::new().await;
-        preview_with(&f, stack())
-            .await
-            .expect("the first recipe is saved");
         let mut older = stack();
         older.notes = Some("older".into());
-        let clear = async {
+        let clear = || async {
             settings(&f, Request::ClearDesignRecipe { repo: repo() }).await;
         };
-        let error = overtaken_by(&f, older.clone(), clear).await.unwrap_err();
-        assert!(error.to_string().contains("replaced or cleared"), "{error}");
-        let view = settings(&f, Request::Settings { repo: Some(repo()) }).await;
-        assert!(view.design_recipe.is_none(), "the clear stands");
+        let assert_overtaken = |outcome: Result<Reply, ArchonError>| {
+            let error = outcome.unwrap_err().to_string();
+            assert!(error.contains("replaced or cleared"), "{error}");
+        };
+        let saved = || async {
+            settings(&f, Request::Settings { repo: Some(repo()) })
+                .await
+                .design_recipe
+                .map(|saved| saved.recipe)
+        };
+
+        assert_overtaken(overtaken_by(&f, older.clone(), clear()).await);
+        assert_eq!(saved().await, None, "a clear of nothing still stands");
+
+        preview_with(&f, stack()).await.expect("a recipe is saved");
+        assert_overtaken(overtaken_by(&f, older.clone(), clear()).await);
+        assert_eq!(saved().await, None, "the clear stands");
 
         let mut newer = stack();
         newer.notes = Some("newer".into());
+        let newer_then_clear = async {
+            preview_with(&f, newer.clone())
+                .await
+                .expect("the newer preview");
+            clear().await;
+        };
+        assert_overtaken(overtaken_by(&f, older.clone(), newer_then_clear).await);
+        assert_eq!(saved().await, None, "the clear after the newer save stands");
+
         let newer_preview = async {
             preview_with(&f, newer.clone())
                 .await
                 .expect("the newer preview");
         };
-        let error = overtaken_by(&f, older, newer_preview).await.unwrap_err();
-        assert!(error.to_string().contains("replaced or cleared"), "{error}");
-        let view = settings(&f, Request::Settings { repo: Some(repo()) }).await;
-        assert_eq!(view.design_recipe.expect("saved").recipe, newer);
+        assert_overtaken(overtaken_by(&f, older, newer_preview).await);
+        assert_eq!(saved().await, Some(newer), "the newer recipe stands");
     })
     .await
     .expect("bounded overtaking test");

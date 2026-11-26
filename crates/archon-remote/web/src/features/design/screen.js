@@ -9,6 +9,7 @@ import { initialState, reduce, isLive, currentPath, followsNewSession, presetMis
 import { createDesignStream } from './stream.js';
 import { nextRequest } from './viewport.js';
 import { createStage } from './overlay.js';
+import { SWITCH_LIMIT_MS } from './switching.js';
 import { fileLimitMessage, uploadFiles } from './files.js';
 import { showFileChooser, showDownload, showPicker, showClipboard } from './browser-prompts.js';
 import { BEHIND, createBehindLine } from './behind.js';
@@ -284,6 +285,14 @@ export function mountDesign(view, ctx) {
     dispatch({ type: 'preset_settled', session: id, preset, ok });
     if (!ok && session() === id) refuse(error);
   }
+  // A size archond confirmed that the frames do not reach in time is asked for
+  // again, then given up with a toast: "Switching…" never stays.
+  let stallTimer = null;
+  function watchSwitch(stuck) {
+    if (!stuck) { clearTimeout(stallTimer); stallTimer = null; return; }
+    if (stallTimer !== null) return;
+    stallTimer = setTimeout(() => { stallTimer = null; dispatch({ type: 'preset_stalled' }); }, SWITCH_LIMIT_MS);
+  }
   function reload() { dispatch({ type: 'new_tab_dismissed' }); ctx.design.reload(session()).catch(refuse); }
 
   // Taps resolve against the streamed size; until it matches the preset, say so instead of the daemon's "outside the preview".
@@ -513,6 +522,34 @@ export function mountDesign(view, ctx) {
 
   // ---- render ----
   const previewPath = () => currentPath(state);
+  // The stage shows while the preview runs, dimmed while it is down or
+  // reconnecting, with no picture at the old size while it switches size.
+  function renderStage(p, live) {
+    const showStage = live && (p.kind === 'live' || p.kind === 'finishing' || p.kind === 'preview_down' || p.kind === 'reconnecting');
+    stage.element.hidden = !showStage;
+    stage.layer.setAttribute('aria-label', status.frameText.textContent);
+    stage.element.classList.toggle('is-dim', p.kind === 'preview_down' || p.kind === 'reconnecting');
+    const switching = (p.kind === 'live' || p.kind === 'finishing') && presetMismatch(state);
+    stage.setSwitching(showStage && switching ? PRESET_SIZE[state.preset] : null, pointerBlockedText(state));
+    watchSwitch(operator && p.kind === 'live' && switching && !nextRequest(state.viewport) && !state.viewport.pending);
+    return showStage;
+  }
+  // Notes or the version tree; the tabs between them only with iterations on.
+  function renderTabs(iter) {
+    tabs.hidden = !iter;
+    const treeTab = iter && tab === 'tree';
+    for (const b of tabButtons) { const on = b.dataset.tab === (treeTab ? 'tree' : 'notes'); b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
+    if (iter) {
+      notes.element.setAttribute('role', 'tabpanel');
+      notes.element.setAttribute('aria-labelledby', 'design-tab-notes');
+    } else {
+      notes.element.removeAttribute('role');
+      notes.element.setAttribute('aria-labelledby', 'design-notes-title');
+    }
+    notes.element.hidden = treeTab;
+    tree.element.hidden = !treeTab;
+    return treeTab;
+  }
   function render() {
     const features = ctx.store.get().designEnabled || ctx.store.get().connection.state !== 'open';
     const p = phase.update(state, { operator, features, continued });
@@ -526,29 +563,11 @@ export function mountDesign(view, ctx) {
     bottom.element.hidden = atEnd;
     bottom.update(state.mode);
     status.update(state, { path: previewPath() });
-    const showStage = live && (p.kind === 'live' || p.kind === 'finishing' || p.kind === 'preview_down' || p.kind === 'reconnecting');
-    stage.element.hidden = !showStage;
-    stage.layer.setAttribute('aria-label', status.frameText.textContent);
-    stage.element.classList.toggle('is-dim', p.kind === 'preview_down' || p.kind === 'reconnecting');
-    // A picture at the old size is not shown while the preview switches size;
-    // with the preview down or reconnecting the dimmed last picture says so.
-    const switching = (p.kind === 'live' || p.kind === 'finishing') && presetMismatch(state);
-    stage.setSwitching(showStage && switching ? PRESET_SIZE[state.preset] : null, pointerBlockedText(state));
+    const showStage = renderStage(p, live);
     typeForm.hidden = !(showStage && state.mode === 'interact');
     side.hidden = !operator || !state.session;
     const iter = iterations() && operator;
-    tabs.hidden = !iter;
-    const treeTab = iter && tab === 'tree';
-    for (const b of tabButtons) { const on = b.dataset.tab === (treeTab ? 'tree' : 'notes'); b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
-    if (iter) {
-      notes.element.setAttribute('role', 'tabpanel');
-      notes.element.setAttribute('aria-labelledby', 'design-tab-notes');
-    } else {
-      notes.element.removeAttribute('role');
-      notes.element.setAttribute('aria-labelledby', 'design-notes-title');
-    }
-    notes.element.hidden = treeTab;
-    tree.element.hidden = !treeTab;
+    const treeTab = renderTabs(iter);
     composer.setRefsEnabled(iterations());
     if (viewing && !state.notes.some((n) => n.id === viewing)) viewing = null;
     const shown = iter && viewing ? state.notes.find((n) => n.id === viewing) : null;
@@ -676,6 +695,6 @@ export function mountDesign(view, ctx) {
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', fit);
     vv?.removeEventListener('resize', onViewport);
-    clearInterval(clock); clearTimeout(follower); clearTimeout(answeredTimer); follower = null; offFeatures(); offConn(); offItem();
+    clearInterval(clock); clearTimeout(follower); clearTimeout(answeredTimer); clearTimeout(stallTimer); follower = null; offFeatures(); offConn(); offItem();
   };
 }

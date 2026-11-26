@@ -95,7 +95,9 @@ and restart aetherd.
 - Answering a confirm, prompt or alert in the preview takes effect at once.
   The answer waited behind the click that opened the dialog, which waits for
   the answer, so it settled only at the 8-second input deadline. A dialog
-  the app opens right after another is shown too. Switching the preview's
+  the app opens right after another is shown too, and a dialog still open
+  when the operator's browser comes back or reconnects is shown again, once,
+  instead of leaving the preview frozen. Switching the preview's
   size while a dialog is open says to answer it first and keeps the size it
   has, instead of a red "Browser call timed out:
   Emulation.setTouchEmulationEnabled" after 15 seconds with the preview half
@@ -104,7 +106,17 @@ and restart aetherd.
   choice waits for the answer and replaces any older one still waiting. A
   refused change goes back to the size archond last confirmed and ends the
   switching state, and a view asked for before a change was answered no
-  longer undoes it.
+  longer undoes it. Quick clicks on Desktop, Tablet and Phone end on the last
+  one: the size buttons no longer move under the pointer (the "Switching to…"
+  label kept no room and a chosen size's bold text widened its button), and a
+  resize no longer overlaps a stream frame's screenshot, after which Chromium
+  kept drawing the old size and every frame was withheld. A size archond
+  confirmed that the frames still do not show after 8 seconds is asked for
+  once more and then given up with a message, so "Switching…" always ends.
+  The preview no longer shifts about 12 px after a click or scroll: it was
+  fitted to the desk with its padding, so the desk could scroll.
+- Phone previews follow Chromium's mobile layout: a page wider than the phone
+  zooms out, and its fixed bars move with the visual viewport as on a device.
 - When the app opens a new tab, the preview's status line says the preview
   followed it and that **Back** returns, until the operator goes back or
   reloads. The design subscription has a new `new_tab {message}` event.

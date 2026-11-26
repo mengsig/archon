@@ -1,7 +1,7 @@
 // The design screen's state as a pure reducer, and what the state means for
 // the screen: which of the sec 7.3 states shows, and how a note reads.
 import { DROP_OFFERED_AFTER_MINUTES } from '../../core/design.js';
-import { initialViewport, chosenPreset, choose, resend, sending, settled, fromView } from './viewport.js';
+import { initialViewport, chosenPreset, choose, resend, sending, settled, stalled, fromView } from './viewport.js';
 
 export function initialState(item) {
   return {
@@ -34,6 +34,18 @@ export function upsertNote(notes, note) {
 // `preset` is always the chosen one of `viewport`, for everything that shows it.
 function withViewport(state, viewport) {
   return { ...state, viewport, preset: chosenPreset(viewport) };
+}
+
+// Frames stayed at another size than archond confirmed: ask again, then give up visibly.
+function stalledSwitch(state) {
+  if (!presetMismatch(state) || !state.session?.id) return state;
+  const shown = confirmedPreset(state.frame);
+  const { vp, gaveUp } = stalled(state.viewport, state.session.id, shown);
+  if (vp === state.viewport) return state;
+  const next = withViewport(state, vp);
+  if (!gaveUp) return next;
+  const message = `The preview did not switch to ${presetName(state.preset)}, so it stays at ${presetName(shown)}. Pick a size to try again.`;
+  return { ...next, toasts: [...next.toasts, message] };
 }
 
 // A first or new session starts from its own preset; otherwise the view's counts only if current.
@@ -91,6 +103,8 @@ export function reduce(state, action) {
       return withViewport(state, sending(state.viewport, action.session, action.preset));
     case 'preset_settled':
       return withViewport(state, settled(state.viewport, action));
+    case 'preset_stalled':
+      return stalledSwitch(state);
     case 'selection':
       return { ...state, selection: action.selection };
     case 'new_tab_dismissed':
@@ -131,8 +145,13 @@ function reduceEvent(state, e) {
       return { ...state, progress: e.line };
     case 'file_chooser': case 'download': case 'picker': case 'clipboard':
       return { ...state, browserEvents: [...state.browserEvents, e] };
-    case 'dialog':
-      return { ...state, dialog: { kind: e.kind, message: e.message, defaultPrompt: e.default_prompt ?? null } };
+    case 'dialog': {
+      const dialog = { kind: e.kind, message: e.message, defaultPrompt: e.default_prompt ?? null };
+      // archond shows a still-open dialog again to a stream that rejoins: one sheet for it.
+      const shown = state.dialog;
+      const same = shown && shown.kind === dialog.kind && shown.message === dialog.message && shown.defaultPrompt === dialog.defaultPrompt;
+      return same ? state : { ...state, dialog };
+    }
     case 'toast':
       return { ...state, toasts: [...state.toasts, e.message] };
     case 'new_tab':

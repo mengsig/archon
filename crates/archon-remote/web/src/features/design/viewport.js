@@ -16,7 +16,7 @@ function assertNamed(preset) {
 export function initialViewport(preset = 'desktop', settles = 0) {
   assertNamed(preset);
   if (!Number.isInteger(settles) || settles < 0) throw new RangeError(`bad settle count ${settles}`);
-  return { confirmed: preset, pending: null, queued: null, lastSent: null, settles };
+  return { confirmed: preset, pending: null, queued: null, lastSent: null, retried: null, settles };
 }
 
 // The preset the screen shows as chosen: the newest choice, else what archond has.
@@ -25,16 +25,29 @@ export function chosenPreset(vp) {
 }
 
 // A newer choice replaces any queued one; one equal to what will stand needs no request.
+// The operator's choice also earns a stalled switch its one more try.
 export function choose(vp, preset) {
   assertPreset(preset);
   const standing = vp.pending ? vp.pending.preset : vp.confirmed;
-  return { ...vp, queued: preset === standing ? null : preset };
+  return { ...vp, queued: preset === standing ? null : preset, retried: null };
 }
 
 // Frames at another size than archond confirmed, with nothing in flight: ask for it again, once per preset.
 export function resend(vp, session) {
   if (vp.pending || vp.queued || vp.lastSent === `${session}|${vp.confirmed}`) return vp;
   return { ...vp, queued: vp.confirmed };
+}
+
+// archond confirmed a preset its frames have not reached for a while. Ask for it
+// once more, then for the preset the frames show, so a switch always ends.
+export function stalled(vp, session, shown) {
+  if (vp.pending || vp.queued) return { vp, gaveUp: false };
+  assertNamed(session);
+  const asked = `${session}|${vp.confirmed}`;
+  if (vp.retried !== asked) return { vp: { ...vp, queued: vp.confirmed, retried: asked }, gaveUp: false };
+  if (!shown || shown === vp.confirmed) return { vp, gaveUp: false };
+  assertPreset(shown);
+  return { vp: { ...vp, queued: shown, retried: null }, gaveUp: true };
 }
 
 // The request to send now, or null while one is in flight.

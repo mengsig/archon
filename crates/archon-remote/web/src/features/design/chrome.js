@@ -54,10 +54,12 @@ export function buildTopBar({ title, onBack, onPreset, onReload, onPreviewBack, 
         b.setAttribute('aria-busy', String(asked && pending));
         b.tabIndex = asked ? 0 : -1;
       }
+      // The label keeps its room while the presets show: a label that came and
+      // went moved the buttons under a fast second click.
       switching.textContent = pending && state.frame ? `Switching to ${presetName(state.preset)}…` : '';
-      switching.hidden = !switching.textContent;
+      switching.classList.toggle('is-idle', !switching.textContent);
       const live = operator && state.session && (state.session.state === 'live' || state.session.state === 'finishing');
-      presets.hidden = reload.hidden = previewBack.hidden = !live;
+      presets.hidden = reload.hidden = previewBack.hidden = switching.hidden = !live;
       deadline.textContent = live ? deadlineText(state.deadline) : '';
       const finishing = state.session?.state === 'finishing';
       finish.hidden = !(operator && state.session && state.session.state === 'live');

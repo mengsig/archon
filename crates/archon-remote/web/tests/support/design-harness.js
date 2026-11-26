@@ -69,7 +69,7 @@ const json = (res, body) => res.writeHead(200, { 'Content-Type': 'application/js
 
 function createDaemon({ appPage, fixtureApp, role }) {
   const state = { notes: [], seq: 0, ended: false, paused: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false, questions: [], summaries: [], sessionPatch: {}, sessionId: 'ds_FIXTURE', endReason: null,
-    viewportOutcomes: [], viewportsAnswered: 0, viewHolds: [] };
+    viewportOutcomes: [], viewportsAnswered: 0, viewHolds: [], dialog: null };
   let stopping = false;
   const timers = new Set();
   const running = new Set();
@@ -181,7 +181,14 @@ function createDaemon({ appPage, fixtureApp, role }) {
         state.viewportsAnswered += 1;
         return undefined;
       }
-      case 'subscribe_design': conn.subscribed = true; reply(ws, req, 'subscribed', { id: 1, last_seq: 0 }); return later(() => sendFrame(conn), 50);
+      case 'subscribe_design': {
+        conn.subscribed = true;
+        reply(ws, req, 'subscribed', { id: 1, last_seq: 0 });
+        // As archond: a dialog still open is shown again to a stream that joins.
+        if (state.dialog) push(ws, { event: 'dialog', ...state.dialog });
+        return later(() => sendFrame(conn), 50);
+      }
+      case 'design_dialog_answer': state.dialog = null; return reply(ws, req, 'design_done', null);
       case 'design_unsubscribe': conn.subscribed = false; return reply(ws, req, 'design_done', null);
       case 'design_frame_ack': reply(ws, req, 'design_done', null); return later(() => sendFrame(conn), 120);
       case 'design_input': {
@@ -293,6 +300,11 @@ function createDaemon({ appPage, fixtureApp, role }) {
       let release;
       state.viewportOutcomes.push({ hold: new Promise((done) => { release = done; }), refuse });
       return release;
+    },
+    // The app opened a dialog, open until the operator answers it.
+    openDialog({ kind = 'alert', message, defaultPrompt = null }) {
+      state.dialog = { kind, message, default_prompt: defaultPrompt };
+      broadcast({ event: 'dialog', ...state.dialog });
     },
     // The next design_viewport is refused, as archond refuses one, with `message`.
     refuseViewport(message) { state.viewportOutcomes.push({ refuse: message }); },

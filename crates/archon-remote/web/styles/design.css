@@ -11,7 +11,10 @@
 .design-title { font-size: 17px; font-weight: 600; margin: 0; flex: 1 1 8rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .design-state { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 14px; color: var(--text-2); }
 .design-top .nav-back { flex: none; margin-left: 0; }
-.design-switching { font-size: 13px; color: var(--text-2); }
+.design-switching { flex: none; inline-size: 11em; font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.design-switching.is-idle { visibility: hidden; }
+/* Equal widths: a choice's bold text widened its button and moved the rest. */
+.design-top .segment { flex: none; inline-size: 5.5em; }
 .design-dot { width: 10px; height: 10px; border-radius: var(--radius-pill); background: var(--text-3); }
 .design-dot.tone-green { background: var(--green); }
 .design-dot.tone-accent { background: var(--accent); }

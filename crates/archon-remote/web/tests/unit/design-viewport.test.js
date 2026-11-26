@@ -103,3 +103,51 @@ test("an answer for an earlier session's request changes nothing in the new one"
   assert.equal(s.viewport.confirmed, 'phone');
   assert.throws(() => reduce(s, { type: 'preset', preset: 'watch' }), RangeError);
 });
+
+test('a switch archond confirmed but the frames never reach is asked again once, then given up with a toast', () => {
+  let { s } = send(reduce(live(), { type: 'preset', preset: 'phone' }));
+  s = answer(s, 'phone', true);
+  assert.ok(presetMismatch(s), 'the frames are still at Desktop');
+  assert.equal(needsResend(s), true);
+  assert.equal(send(reduce(s, { type: 'preset_resend' })).sent, null, 'the usual resend is spent: Phone was just sent');
+  let sent;
+  ({ s, sent } = send(reduce(s, { type: 'preset_stalled' })));
+  assert.equal(sent, 'phone', 'the stalled switch is asked for once more');
+  assert.equal(s.toasts.length, 0, 'no error while it is retried');
+  s = answer(s, 'phone', true);
+  ({ s, sent } = send(reduce(s, { type: 'preset_stalled' })));
+  assert.equal(sent, 'desktop', 'then the size the frames show is asked for');
+  assert.equal(s.preset, 'desktop');
+  assert.equal(presetMismatch(s), false, 'nothing is left switching');
+  assert.deepEqual(s.toasts, ['The preview did not switch to Phone, so it stays at Desktop. Pick a size to try again.']);
+});
+
+test('a stall check with a request in flight, or with the frames at the size, changes nothing', () => {
+  let { s } = send(reduce(live(), { type: 'preset', preset: 'tablet' }));
+  assert.equal(reduce(s, { type: 'preset_stalled' }), s, 'the request in flight answers first');
+  s = reduce(answer(s, 'tablet', true), frame(834, 1112));
+  assert.equal(reduce(s, { type: 'preset_stalled' }), s, 'the frames are at the confirmed size');
+});
+
+test('a new choice after a given-up switch gets its own retry', () => {
+  let { s } = send(reduce(live(), { type: 'preset', preset: 'phone' }));
+  s = answer(s, 'phone', true);
+  ({ s } = send(reduce(s, { type: 'preset_stalled' })));
+  s = answer(s, 'phone', true);
+  ({ s } = send(reduce(s, { type: 'preset_stalled' })));
+  s = reduce(answer(s, 'desktop', true), { type: 'toasts_taken' });
+  ({ s } = send(reduce(s, { type: 'preset', preset: 'phone' })));
+  s = answer(s, 'phone', true);
+  const retried = send(reduce(s, { type: 'preset_stalled' }));
+  assert.equal(retried.sent, 'phone', 'asked again, not given up at once');
+  assert.equal(retried.s.toasts.length, 0);
+});
+
+test('a dialog archond shows again to a rejoining stream is one dialog', () => {
+  const alert = { type: 'event', event: { event: 'dialog', kind: 'alert', message: 'Unsaved changes', default_prompt: null } };
+  const once = reduce(live(), alert);
+  const twice = reduce(once, alert);
+  assert.equal(twice.dialog, once.dialog, 'the open dialog is kept, not replaced by its copy');
+  const other = reduce(twice, { ...alert, event: { ...alert.event, message: 'Saved' } });
+  assert.equal(other.dialog.message, 'Saved', 'a different dialog still replaces it');
+});

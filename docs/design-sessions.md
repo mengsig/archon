@@ -131,7 +131,9 @@ Home and End scroll the page when nothing editable in the app has focus.
 
 Each frame is the part of the page that is on screen, as Chromium itself draws
 it: sticky and fixed headers stay where the app puts them, and a phone page
-wider than the screen is shown zoomed out, as a phone shows it. Comment picks,
+wider than the screen is shown zoomed out, as a phone shows it. Phone previews
+follow Chromium's mobile layout, so on a page wider than the phone fixed bars
+move with the visual viewport as they do on a device. Comment picks,
 element boxes and regions you draw are all measured on that frame, zoom
 included, so a crop shows what you saw. Frames come ten a second while you
 scroll or type and four a second at rest, so the frame after a scroll stops
@@ -486,7 +488,13 @@ be, shows only its start, and one with characters other than line breaks and
 tabs that cannot be shown (such as a carriage return) shows without them. In
 both cases the dialog says so; check the answer before pressing OK. A dialog
 from a page outside the preview's origin shows "The preview opened a dialog."
-without its text.
+without its text. A dialog still open when you come back to the preview, or
+when the connection returns, is shown again.
+
+The preview's size changes one request at a time, and the last size you click
+is the one it ends on. If the frames have not reached a size archond applied
+after 8 seconds, it is asked for once more; if they still have not, the preview
+stays at the size it shows and says so, so "Switching to…" never stays.
 
 ## Limits
 

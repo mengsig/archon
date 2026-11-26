@@ -396,6 +396,78 @@ test.describe('desktop', () => {
     } finally { await harness.stop(); }
   });
 
+  test('bursts of quick size clicks end on the last click, and the buttons never move', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(presetRadio(page, 'Desktop')).toHaveAttribute('aria-checked', 'true');
+      const names = ['Desktop', 'Tablet', 'Phone'];
+      const boxes = () => Promise.all(names.map((name) => presetRadio(page, name).boundingBox()));
+      const still = await boxes();
+      const at = Object.fromEntries(names.map((name, i) => [name, { x: still[i].x + still[i].width / 2, y: still[i].y + still[i].height / 2 }]));
+      const bursts = [['Tablet', 'Phone', 'Desktop'], ['Phone', 'Desktop', 'Tablet', 'Phone'], ['Desktop', 'Tablet', 'Phone', 'Desktop', 'Tablet'],
+        ['Phone', 'Tablet', 'Desktop', 'Phone', 'Tablet', 'Desktop'], ['Desktop', 'Phone', 'Tablet', 'Phone']];
+      for (const burst of bursts) {
+        // Clicks at where the buttons were, as fast as a hand goes: a moved button takes the wrong one.
+        for (const name of burst) await page.mouse.click(at[name].x, at[name].y);
+        expect(await boxes(), `the buttons stay put through ${burst}`).toEqual(still);
+        const last = burst.at(-1);
+        await expect(presetRadio(page, last)).toHaveAttribute('aria-checked', 'true');
+        await expect(page.locator('.design-desk')).not.toHaveClass(/is-switching/);
+        await expect(page.locator('.design-switching')).toHaveText('');
+        await expect.poll(() => harness.daemon.state.viewportsAnswered).toBe(viewportAsks(harness).length);
+        expect(viewportAsks(harness).at(-1)).toBe(last.toLowerCase());
+        expect(harness.daemon.state.sessionPatch.viewport_preset).toBe(last.toLowerCase());
+      }
+      await expect(page.locator('.toast'), 'no request errors').toHaveCount(0);
+    } finally { await harness.stop(); }
+  });
+
+  test('the stage keeps its place when the operator clicks and scrolls on it', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      const canvas = page.locator('.design-canvas');
+      await expect(canvas).toBeVisible();
+      const desk = page.locator('.design-desk');
+      const before = await canvas.boundingBox();
+      const fits = () => desk.evaluate((d) => ({ y: d.scrollHeight - d.clientHeight, x: d.scrollWidth - d.clientWidth }));
+      expect(await fits(), 'the fitted stage leaves the desk nothing to scroll').toEqual({ x: 0, y: 0 });
+      await page.mouse.click(before.x + before.width / 2, before.y + before.height / 2);
+      await page.mouse.wheel(0, 400);
+      await page.locator('.design-layer').focus();
+      await page.waitForTimeout(300);
+      expect(await canvas.boundingBox()).toEqual(before);
+      expect(await desk.evaluate((d) => [d.scrollTop, d.scrollLeft])).toEqual([0, 0]);
+    } finally { await harness.stop(); }
+  });
+
+  test('an app dialog left open while the operator was away is shown again, once', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      const sheet = page.getByRole('dialog', { name: 'The app says (alert)' });
+      harness.daemon.openDialog({ message: 'Unsaved changes' });
+      await expect(sheet).toBeVisible();
+      // The operator's browser went away and came back.
+      await page.reload();
+      await expect(sheet).toBeVisible();
+      await expect(sheet).toContainText('Unsaved changes');
+      // The network drops with the sheet still up: archond shows the same dialog again.
+      const subscribes = () => harness.daemon.state.requests.filter((r) => r.cmd === 'subscribe_design').length;
+      const joined = subscribes();
+      harness.daemon.dropSockets();
+      await expect.poll(subscribes).toBeGreaterThan(joined);
+      await page.waitForTimeout(300);
+      await expect(sheet).toHaveCount(1);
+      await sheet.getByRole('button', { name: 'OK' }).click();
+      await page.waitForTimeout(300);
+      await expect(sheet, 'one answer closes it: no copy comes up behind it').toHaveCount(0);
+      expect(harness.daemon.state.requests.filter((r) => r.cmd === 'design_dialog_answer').map((r) => r.accept)).toEqual([true]);
+      await page.reload();
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      await expect(sheet).toHaveCount(0);
+    } finally { await harness.stop(); }
+  });
+
   test('T-E4: a frozen old tab learns its session ended and sends nothing more', async ({ browser, page }) => {
     const harness = await open(browser, page);
     try {

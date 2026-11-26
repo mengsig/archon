@@ -20,6 +20,9 @@ const heldKey = (e) => (e.type === 'key' ? `key:${e.code || e.key}`
     : e.type === 'touch' ? 'touch' : null);
 const isPress = (e) => e.action === 'down' || e.action === 'start';
 const isRelease = (e) => e.action === 'up' || e.action === 'end' || e.action === 'cancel';
+// Ticks that turn back stay apart: summed, a scroll down and back up again
+// could cancel to nothing.
+const sameWay = (a, b) => a * b >= 0;
 
 // `send(events)` may return a promise: the batch counts as outstanding until it
 // settles. A rejection means archond refused it unrun; it goes again first, a
@@ -93,7 +96,7 @@ export function createInputBatcher({
   }
 
   // Only back-to-back events merge, so order and targets stay as they were:
-  // a move keeps the latest, wheel ticks at the same point add up.
+  // a move keeps the latest, wheel ticks at the same point and way add up.
   function merge(event) {
     const last = queue[queue.length - 1];
     if (!last || last.type !== event.type) return false;
@@ -106,7 +109,8 @@ export function createInputBatcher({
       queue[queue.length - 1] = event;
       return true;
     }
-    if (event.type === 'wheel' && last.modifiers === event.modifiers && last.x === event.x && last.y === event.y) {
+    const atPoint = last.modifiers === event.modifiers && last.x === event.x && last.y === event.y;
+    if (event.type === 'wheel' && atPoint && sameWay(last.dx, event.dx) && sameWay(last.dy, event.dy)) {
       queue[queue.length - 1] = { ...event, dx: round(last.dx + event.dx), dy: round(last.dy + event.dy) };
       return true;
     }
@@ -169,6 +173,8 @@ export function createInputBatcher({
     flush,
     get pending() { return queue.length; },
     get outstanding() { return outstanding; },
+    // Only as the page's stream ends: archond then lets go of what the
+    // dropped queue would have released.
     stop() {
       if (timer !== null) clearTimer(timer);
       timer = null;

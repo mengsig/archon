@@ -170,6 +170,24 @@ test('only back-to-back events merge, so order and wheel targets stay as they we
   ]);
 });
 
+test('wheel ticks that turn back are not summed away', async () => {
+  const c = clock();
+  const s = slowSend();
+  const b = createInputBatcher({ send: s.send, ...c });
+  b.push({ type: 'text', text: 'hold' }); c.advance(1);
+  const at = { x: 100, y: 100 };
+  b.push(wheelEvent(at, 0, 120));
+  b.push(wheelEvent(at, 0, 40));
+  b.push(wheelEvent(at, 0, -160));
+  b.push(wheelEvent(at, 30, -10));
+  b.push(wheelEvent(at, -30, 0));
+  await s.answer();
+  c.advance(20);
+  assert.deepEqual(s.batches[1], [
+    wheelEvent(at, 0, 160), wheelEvent(at, 30, -170), wheelEvent(at, -30, 0),
+  ], 'one way adds up; each turn starts a new tick');
+});
+
 test('a refused batch goes again first, in order, so a release is never lost', async () => {
   const c = clock();
   const s = slowSend();

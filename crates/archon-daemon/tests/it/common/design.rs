@@ -54,6 +54,8 @@ pub struct FakeBrowser {
     load_error: Mutex<Option<adb::BrowserError>>,
     /// The `accept` of the file input under any drop point, if one is there.
     drop_accept: Mutex<Option<String>>,
+    /// The dialog the page has open, until it is answered.
+    dialog: Mutex<Option<adb::BrowserEvent>>,
     pid: u32,
 }
 
@@ -70,6 +72,7 @@ impl FakeBrowser {
             no_elements: Mutex::default(),
             load_error: Mutex::default(),
             drop_accept: Mutex::default(),
+            dialog: Mutex::default(),
             pid,
         }
     }
@@ -106,6 +109,17 @@ impl FakeBrowser {
         let _ = self.events.send(adb::BrowserEvent::FileChooserFailed {
             reason: reason.into(),
         });
+    }
+
+    /// The page opened an alert saying `message`.
+    pub fn open_alert(&self, message: &str) {
+        let dialog = adb::BrowserEvent::Dialog {
+            kind: "alert".into(),
+            message: message.into(),
+            default_prompt: None,
+        };
+        *self.dialog.lock().unwrap() = Some(dialog.clone());
+        let _ = self.events.send(dialog);
     }
 
     /// The page opened a new tab for `url`.
@@ -332,7 +346,11 @@ impl PreviewBrowser for FakeBrowser {
         true
     }
     async fn answer_dialog(&self, _: bool, _: Option<String>) -> Result<(), adb::BrowserError> {
+        self.dialog.lock().unwrap().take();
         Ok(())
+    }
+    fn open_dialog(&self) -> Option<adb::BrowserEvent> {
+        self.dialog.lock().unwrap().clone()
     }
     fn events(&self) -> broadcast::Receiver<adb::BrowserEvent> {
         self.events.subscribe()

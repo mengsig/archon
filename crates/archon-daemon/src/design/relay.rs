@@ -97,9 +97,12 @@ async fn send(frames: &mpsc::Sender<ServerFrame>, sub: u64, event: DesignEvent) 
         .map_err(|_| ())
 }
 
+/// The session as it stands, then any dialog still waiting for an answer:
+/// an operator who left while one was open would see a frozen page.
 async fn send_state(
     ctx: &DaemonContext,
     sub: &DesignSubscription,
+    rt: &super::browser::Runtime,
     frames: &mpsc::Sender<ServerFrame>,
 ) -> bool {
     let event = match ctx.design.session_event(ctx, &sub.session).await {
@@ -112,7 +115,15 @@ async fn send_state(
         }
     };
     let ended = matches!(event, DesignEvent::Ended { .. });
-    send(frames, sub.id, event).await.is_ok() && !ended
+    if send(frames, sub.id, event).await.is_err() || ended {
+        return false;
+    }
+    let Some(dialog) = rt.browser().and_then(|browser| browser.open_dialog()) else {
+        return true;
+    };
+    send(frames, sub.id, super::browser::dialog_event(dialog))
+        .await
+        .is_ok()
 }
 
 async fn run(
@@ -126,7 +137,7 @@ async fn run(
     let mut live = rt.frames.subscribe();
     // Subscribing marks the current frame seen; a late joiner still gets it.
     live.mark_changed();
-    if !send_state(ctx, sub, frames).await {
+    if !send_state(ctx, sub, &rt, frames).await {
         return;
     }
     let mut window = FrameWindow {
@@ -152,7 +163,7 @@ async fn run(
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    if !send_state(ctx, sub, frames).await { return; }
+                    if !send_state(ctx, sub, &rt, frames).await { return; }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
             },

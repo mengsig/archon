@@ -83,6 +83,10 @@ pub trait PreviewBrowser: Send + Sync {
         accept: bool,
         text: Option<String>,
     ) -> Result<(), adb::BrowserError>;
+    /// The JavaScript dialog the page has open and nobody has answered.
+    fn open_dialog(&self) -> Option<adb::BrowserEvent> {
+        None
+    }
     /// Set files on the file input whose chooser the page opened.
     async fn set_files(&self, _node: i64, _files: &[PathBuf]) -> Result<(), adb::BrowserError> {
         Err(adb::BrowserError::Protocol(
@@ -368,6 +372,9 @@ impl PreviewBrowser for Real {
         text: Option<String>,
     ) -> Result<(), adb::BrowserError> {
         self.get()?.answer_dialog(accept, text).await
+    }
+    fn open_dialog(&self) -> Option<adb::BrowserEvent> {
+        self.get().ok().and_then(|browser| browser.open_dialog())
     }
     async fn set_files(&self, node: i64, files: &[PathBuf]) -> Result<(), adb::BrowserError> {
         self.get()?.set_files(node, files).await
@@ -1214,6 +1221,24 @@ async fn monitor(
     }
 }
 
+/// The operator's view of a dialog the page opened.
+pub(crate) fn dialog_event(dialog: adb::BrowserEvent) -> DesignEvent {
+    let adb::BrowserEvent::Dialog {
+        kind,
+        message,
+        default_prompt,
+    } = dialog
+    else {
+        unreachable!("only a dialog is shown as one: {dialog:?}");
+    };
+    debug_assert!(!kind.is_empty(), "a dialog has a kind");
+    DesignEvent::Dialog {
+        kind,
+        message,
+        default_prompt,
+    }
+}
+
 async fn report_browser_event(
     ctx: &DaemonContext,
     session: &DesignSessionId,
@@ -1221,16 +1246,8 @@ async fn report_browser_event(
     event: adb::BrowserEvent,
 ) {
     match event {
-        adb::BrowserEvent::Dialog {
-            kind,
-            message,
-            default_prompt,
-        } => {
-            let _ = rt.events.send(DesignEvent::Dialog {
-                kind,
-                message,
-                default_prompt,
-            });
+        dialog @ adb::BrowserEvent::Dialog { .. } => {
+            let _ = rt.events.send(dialog_event(dialog));
         }
         adb::BrowserEvent::BlockedHost { host } => {
             let hosts = {

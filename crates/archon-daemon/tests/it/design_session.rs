@@ -1573,6 +1573,80 @@ mod stream {
         task.abort();
     }
 
+    /// The events before the first frame `seq`, which the fake pushes once the
+    /// stream is up: whatever the subscriber was told on joining.
+    async fn events_before_frame(
+        f: &Fixture,
+        rx: &mut mpsc::Receiver<ServerFrame>,
+        seq: u64,
+    ) -> Vec<DesignEvent> {
+        let mut seen = Vec::new();
+        let mut sent = false;
+        loop {
+            let frame = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await;
+            match frame {
+                Ok(Some(ServerFrame::Design { event, .. })) => match event {
+                    DesignEvent::Frame { seq: got, .. } if got >= seq => return seen,
+                    DesignEvent::Frame { .. } => {}
+                    event => seen.push(event),
+                },
+                Ok(Some(_)) => {}
+                Ok(None) => panic!("the stream closed after {seen:?}"),
+                Err(_) if !sent => sent = true,
+                Err(_) => {}
+            }
+            if sent {
+                f.factory.browser(0).frame(seq);
+            }
+            assert!(seen.len() < 64, "the stream keeps talking: {seen:?}");
+        }
+    }
+
+    fn dialogs(events: &[DesignEvent]) -> Vec<&str> {
+        let messages = events.iter().filter_map(|event| match event {
+            DesignEvent::Dialog { message, .. } => Some(message.as_str()),
+            _ => None,
+        });
+        messages.collect()
+    }
+
+    /// An alert left open when the operator's browser went away is shown again
+    /// when it comes back; once answered it is not.
+    #[tokio::test]
+    async fn an_open_dialog_is_shown_again_to_an_operator_who_comes_back() {
+        let f = Fixture::new().await;
+        let (mut first, task) = subscribe(&f, 1);
+        until("the preview browser", || {
+            f.factory.browser(0).calls(|c| c.screencasts_started == 1)
+        })
+        .await;
+        f.factory.browser(0).open_alert("Unsaved changes");
+        let joined = events_before_frame(&f, &mut first, 1).await;
+        assert_eq!(dialogs(&joined), ["Unsaved changes"], "{joined:?}");
+        task.abort();
+
+        let (mut back, task) = subscribe(&f, 2);
+        let rejoined = events_before_frame(&f, &mut back, 2).await;
+        assert!(
+            matches!(rejoined.first(), Some(DesignEvent::Session { .. })),
+            "the session comes first: {rejoined:?}"
+        );
+        assert_eq!(dialogs(&rejoined), ["Unsaved changes"], "{rejoined:?}");
+        task.abort();
+
+        f.operator(Request::DesignDialogAnswer {
+            session: f.session.clone(),
+            accept: true,
+            text: None,
+        })
+        .await
+        .expect("the alert is answered");
+        let (mut later, task) = subscribe(&f, 3);
+        let answered = events_before_frame(&f, &mut later, 3).await;
+        assert!(dialogs(&answered).is_empty(), "{answered:?}");
+        task.abort();
+    }
+
     async fn stage_file(f: &Fixture, transfer: &str, name: &str) {
         stage_typed(f, transfer, name, None).await;
     }

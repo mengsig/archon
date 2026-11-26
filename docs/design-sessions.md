@@ -149,7 +149,9 @@ a secret-named variable or flag (`DB_PASSWORD=…`, `PGPASSWORD=…`,
 `--api-key …`), a password in a URL or a `user:password` pair, an
 `Authorization` header, a well-known token, and one that names a Compose
 project other than as `$COMPOSE_PROJECT_NAME`. A secret, or a path to one, is
-written as a variable (`$DB_PASSWORD`), never spelled out. The next session of the same repository tries
+written as a whole variable (`$DB_PASSWORD` or `${DB_PASSWORD}`), never
+spelled out, and commands are read with the shell's quoting, so one with an
+unclosed quote is refused. The next session of the same repository tries
 it first, and saves a corrected one when it had to find the route again.
 
 See it with `archon settings --repo NAME` (the line

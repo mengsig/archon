@@ -240,6 +240,46 @@ mod tests {
         .expect("bounded socket ownership check");
     }
 
+    /// A port a container publishes belongs to docker-proxy, a process outside
+    /// the worktree; a declared service running there does not make it the page's.
+    #[tokio::test]
+    async fn a_port_owned_by_a_process_outside_the_worktree_is_refused() {
+        let worktree = tempfile::tempdir().unwrap();
+        let mut declared = std::process::Command::new("sleep")
+            .arg("30")
+            .current_dir(worktree.path())
+            .spawn()
+            .expect("start a declared worktree service");
+        let outcome = tokio::time::timeout(Duration::from_secs(4), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let (client, accepted) = tokio::join!(
+                TcpStream::connect(listener.local_addr().unwrap()),
+                listener.accept()
+            );
+            let client = client.unwrap();
+            let _accepted = accepted.unwrap();
+            let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+            let root = worktree.path().canonicalize().unwrap();
+            assert!(!cwd.starts_with(&root), "the socket owner runs elsewhere");
+            let service = Service {
+                worktree: root,
+                leaders: BTreeSet::from([i32::try_from(declared.id()).unwrap()]),
+            };
+            service.verify_peer(&client).await
+        })
+        .await;
+        declared.kill().expect("stop the declared service");
+        declared.wait().expect("reap the declared service");
+        let refused = outcome.expect("bounded socket ownership check");
+        let error = refused
+            .expect_err("the outside owner is refused")
+            .to_string();
+        assert!(
+            error.contains("a port a container publishes does not count"),
+            "{error}"
+        );
+    }
+
     #[test]
     fn localhost_resolves_only_to_numeric_loopback() {
         assert_eq!(

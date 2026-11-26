@@ -131,6 +131,13 @@ fn spelled_out_secrets_are_refused_and_never_echoed() {
         "mysql -uroot -phunter2 app",
         "curl -H \"Authorization: Bearer hunter2hunter2\" http://127.0.0.1:8000/",
         "git clone https://ghp_0123456789abcdefABCDEF@github.com/o/r",
+        "TOKEN=${PREFIX}hunter2 ./serve",
+        "./serve --password=$PREFIX'hunter2'",
+        "./serve --password \"$PREFIX\"hunter2",
+        "psql postgres://app:${P}hunter2@127.0.0.1:5432/app",
+        "PASSWORD=$(echo hunter2) ./serve",
+        "DATABASE_URL=postgres://app:hu/nter2@127.0.0.1:5432/app ./serve",
+        "./serve \"--api-key=hunter2\"",
     ] {
         let error = refused(&recipe(vec![step("web", command)]));
         assert!(error.contains("secret"), "{command}: {error}");
@@ -163,6 +170,10 @@ fn references_and_ordinary_words_are_not_secrets() {
         "mysql -u root -p\"$DB_PASSWORD\" app",
         "curl -H \"Authorization: Bearer $API_TOKEN\" http://127.0.0.1:8000/",
         "make dev; npm run dev && ./serve",
+        "curl http://127.0.0.1:5173/@vite/client",
+        "curl \"http://[::1]/@vite/client\"",
+        "curl http://127.0.0.1:5173/@fs/web/src/main.ts",
+        "./serve --title \"the app's page\"",
     ] {
         recipe(vec![step("web", command)])
             .check()
@@ -181,6 +192,9 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "docker compose -f compose.yml -p \"$COMPOSE_PROJECT_NAME\" up -d",
         "docker compose -f compose.yml run -p 8080:80 web",
         "docker compose -p$COMPOSE_PROJECT_NAME up -d",
+        "docker compose -f 'compose dev.yml' -p \"$COMPOSE_PROJECT_NAME\" up -d",
+        "docker compose up -d && psql -h 127.0.0.1 -p 5432 app",
+        "docker compose exec db psql -p 5432 app",
     ] {
         recipe(vec![step("stack", command)])
             .check()
@@ -196,6 +210,11 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "docker compose -f compose.yml -p other up -d",
         "docker compose -p",
         "cd web;COMPOSE_PROJECT_NAME=ccso docker compose up",
+        "docker compose -f 'compose dev.yml' -p other up -d",
+        "docker compose --parallel 4 -p other up -d",
+        "docker compose -p\"other\" up -d",
+        "docker compose -p\\ other up -d",
+        "docker compose --project-name \"$COMPOSE_PROJECT_NAME\"x up -d",
     ] {
         let error = refused(&recipe(vec![step("stack", command)]));
         assert!(
@@ -222,4 +241,17 @@ fn a_saved_recipe_says_when_and_by_whom() {
     assert!(text.contains("1. web (service): npm start"));
     let json = serde_json::to_value(&saved).unwrap();
     assert_eq!(serde_json::from_value::<SavedRecipe>(json).unwrap(), saved);
+}
+
+#[test]
+fn a_command_with_an_unclosed_quote_is_refused() {
+    let error = refused(&recipe(vec![step("web", "./serve --title 'oops")]));
+    assert!(error.contains("never closed"), "{error}");
+}
+
+#[test]
+fn readiness_urls_with_an_at_sign_in_the_path_are_accepted() {
+    let mut web = step("web", "npm run dev");
+    web.ready = Some("http://127.0.0.1:5173/@vite/client".into());
+    recipe(vec![web]).check().unwrap();
 }

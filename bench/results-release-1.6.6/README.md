@@ -136,3 +136,12 @@ scratch): 5,724 tests passed, 0 failed, 10 ignored across 130 summaries.
 Formatting, shell checks, clippy and rustdoc with warnings denied passed. No
 test needed a rerun and no flake was seen. The commit after it adds only this
 paragraph.
+
+## make ci after the client accept-check fix
+
+`CARGO_BUILD_JOBS=2 nice -n 19 ionice -c3 make ci` passed on `9c33e9ff` (tree
+`482eee60`) inside the host CI slot, started at load5 4.76 (a first run was cut off
+by a harness time limit and rerun from scratch): 5,724 tests passed, 0 failed,
+10 ignored across 130 summaries. Formatting, shell checks, clippy and rustdoc
+with warnings denied passed. No test needed a rerun. The commit after it adds
+only this paragraph.

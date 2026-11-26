@@ -563,6 +563,8 @@ fn collect_frames(
 /// One step of a scroll: the bar's box is at the view's top, the bar is what
 /// is drawn there, and Chrome's own picture of the view is kept to check.
 async fn sampled_step(b: &Browser, step: &str, shots: &mut Vec<Vec<u8>>) {
+    // A finger's pace, so the stream sends frames while the scroll runs.
+    tokio::time::sleep(Duration::from_millis(40)).await;
     let (bar, top) = bar_sample(b).await;
     assert_eq!(
         (bar.y, bar.w),
@@ -607,6 +609,7 @@ async fn a_phone_page_that_fits_keeps_its_fixed_bar_at_every_step_of_a_scroll() 
     let relay = b.start_screencast().await.unwrap();
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let collector = collect_frames(&relay, stop.clone());
+    let started = Instant::now();
     let mut shots = Vec::new();
     for round in 0..4 {
         let moves = (1..=10).map(|i| finger(TouchAction::Move, 700.0 - f64::from(i) * 30.0));
@@ -622,10 +625,17 @@ async fn a_phone_page_that_fits_keeps_its_fixed_bar_at_every_step_of_a_scroll() 
         b.input(&[wheel(200.0, 400.0, 0.0, 200.0)]).await.unwrap();
         sampled_step(&b, "the wheel", &mut shots).await;
     }
+    let ran = started.elapsed();
     stop.store(true, std::sync::atomic::Ordering::SeqCst);
     let frames = collector.await.unwrap();
     assert_eq!(shots.len(), 52, "every step was sampled");
-    assert!(frames.len() >= 8, "the stream ran: {} frames", frames.len());
+    // The stream sends a frame at least every 250 ms; half that rate is the floor.
+    let floor = usize::try_from(ran.as_millis() / 500).unwrap().max(1);
+    let sent = frames.len();
+    assert!(
+        sent >= floor,
+        "the stream ran throughout: {sent} frames in {ran:?}"
+    );
     assert!(
         element_at(&b, 10.0, 300.0).await != "div#b0",
         "the page scrolled"

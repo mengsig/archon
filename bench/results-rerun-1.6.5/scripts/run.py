@@ -195,7 +195,7 @@ def run_trial(task, trial, arm, destination, load1, load5):
         return record
     except BaseException:
         if created:
-            shutil.rmtree(destination, ignore_errors=True)
+            shutil.rmtree(destination)
         raise
     finally:
         try:
@@ -217,7 +217,7 @@ def redact(directory):
             redacted = email_redaction.redact_bytes(data)
             if redacted != data:
                 path.write_bytes(redacted)
-        elif email_redaction.personal_addresses(data):
+        elif email_redaction.personal_addresses_any_encoding(data):
             raise RuntimeError(f'personal email address in non-text output: {path}')
 
 

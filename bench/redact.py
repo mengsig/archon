@@ -24,6 +24,11 @@ def personal_addresses(data):
     return [found for found in EMAIL.findall(data) if not is_kept(found)]
 
 
+def personal_addresses_any_encoding(data):
+    # Dropping NULs exposes ASCII text stored as UTF-16, as SQLite may do.
+    return personal_addresses(data) + personal_addresses(data.replace(b'\0', b''))
+
+
 def redact_bytes(data):
     assert isinstance(data, bytes)
     result = EMAIL.sub(lambda match: match.group(0) if is_kept(match.group(0)) else PLACEHOLDER, data)

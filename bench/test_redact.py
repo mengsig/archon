@@ -28,6 +28,11 @@ class RedactTests(unittest.TestCase):
         text = b'mail p@example.com. then q@example.org, and r@example.net;'
         self.assertEqual(redact.redact_bytes(text), text)
 
+    def test_utf16_text_is_detected_in_binary_data(self):
+        data = b'\x00\x01' + PERSONAL.decode().encode('utf-16le') + b'\x00'
+        self.assertEqual(redact.personal_addresses(data), [])
+        self.assertEqual(redact.personal_addresses_any_encoding(data), [PERSONAL])
+
     def test_text_without_address_is_unchanged(self):
         self.assertEqual(redact.redact_bytes(b'user@ and @handle'), b'user@ and @handle')
 

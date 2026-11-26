@@ -69,7 +69,7 @@ const json = (res, body) => res.writeHead(200, { 'Content-Type': 'application/js
 
 function createDaemon({ appPage, fixtureApp, role }) {
   const state = { notes: [], seq: 0, ended: false, paused: false, sessionState: 'live', requests: [], connections: new Set(), timer: null, version: 1, finishing: false, questions: [], summaries: [], sessionPatch: {}, sessionId: 'ds_FIXTURE', endReason: null,
-    viewportOutcomes: [], viewHolds: [] };
+    viewportOutcomes: [], viewportsAnswered: 0, viewHolds: [] };
   let stopping = false;
   const timers = new Set();
   const running = new Set();
@@ -171,11 +171,15 @@ function createDaemon({ appPage, fixtureApp, role }) {
       case 'design_viewport': {
         const outcome = state.viewportOutcomes.shift();
         if (outcome?.hold) await outcome.hold;
-        if (outcome?.refuse) return refuse(ws, req, 'unavailable', outcome.refuse);
-        const size = PRESETS[msg.preset];
-        state.sessionPatch.viewport_preset = msg.preset;
-        if (size) await appPage.setViewportSize(size);
-        return reply(ws, req, 'design_done', null);
+        if (outcome?.refuse) {
+          refuse(ws, req, 'unavailable', outcome.refuse);
+        } else {
+          state.sessionPatch.viewport_preset = msg.preset;
+          if (PRESETS[msg.preset]) await appPage.setViewportSize(PRESETS[msg.preset]);
+          reply(ws, req, 'design_done', null);
+        }
+        state.viewportsAnswered += 1;
+        return undefined;
       }
       case 'subscribe_design': conn.subscribed = true; reply(ws, req, 'subscribed', { id: 1, last_seq: 0 }); return later(() => sendFrame(conn), 50);
       case 'design_unsubscribe': conn.subscribed = false; return reply(ws, req, 'design_done', null);
@@ -283,10 +287,11 @@ function createDaemon({ appPage, fixtureApp, role }) {
       if ('degraded' in fields) state.sessionPatch.degraded = fields.degraded;
       broadcast({ event: 'session', state: state.sessionState, degraded: false, preview_path: '/', commit: null, browser: { status: 'running' }, note_version: state.version, ...fields });
     },
-    // The next design_viewport waits until the returned function is called.
-    holdViewport() {
+    // The next design_viewport waits until the returned function is called, then
+    // is refused with `refuse` if given.
+    holdViewport({ refuse } = {}) {
       let release;
-      state.viewportOutcomes.push({ hold: new Promise((done) => { release = done; }) });
+      state.viewportOutcomes.push({ hold: new Promise((done) => { release = done; }), refuse });
       return release;
     },
     // The next design_viewport is refused, as archond refuses one, with `message`.

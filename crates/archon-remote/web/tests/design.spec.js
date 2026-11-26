@@ -334,9 +334,36 @@ test.describe('desktop', () => {
       await page.waitForTimeout(300);
       expect(viewportAsks(harness), 'nothing more while Tablet is unanswered').toEqual(['tablet']);
       release();
-      await expect(presetRadio(page, 'Phone')).toHaveAttribute('aria-checked', 'true');
-      await page.waitForTimeout(300);
+      await expect.poll(() => harness.daemon.state.viewportsAnswered).toBe(2);
       expect(viewportAsks(harness), 'Desktop was replaced before it was sent').toEqual(['tablet', 'phone']);
+      expect(harness.daemon.state.sessionPatch.viewport_preset).toBe('phone');
+      await expect(presetRadio(page, 'Phone')).toHaveAttribute('aria-checked', 'true');
+      // Phone is what the screen holds as confirmed: a refused change goes back to it.
+      harness.daemon.refuseViewport('the app has a dialog open; answer it first');
+      await presetRadio(page, 'Desktop').click();
+      await expect(page.getByText(/dialog open/i)).toBeVisible();
+      await expect(presetRadio(page, 'Phone')).toHaveAttribute('aria-checked', 'true');
+      await expect(page.locator('.design-desk')).not.toHaveClass(/is-switching/);
+    } finally { await harness.stop(); }
+  });
+
+  test('overlapping sizes both refused go back to the one archond confirmed', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(presetRadio(page, 'Desktop')).toHaveAttribute('aria-checked', 'true');
+      const refusal = 'the app has a dialog open; answer it first';
+      const release = harness.daemon.holdViewport({ refuse: refusal });
+      harness.daemon.refuseViewport(refusal);
+      await presetRadio(page, 'Tablet').click();
+      await expect.poll(() => viewportAsks(harness)).toEqual(['tablet']);
+      await presetRadio(page, 'Phone').click();
+      await expect(presetRadio(page, 'Phone')).toHaveAttribute('aria-busy', 'true');
+      release();
+      await expect.poll(() => harness.daemon.state.viewportsAnswered).toBe(2);
+      expect(viewportAsks(harness)).toEqual(['tablet', 'phone']);
+      await expect(presetRadio(page, 'Desktop')).toHaveAttribute('aria-checked', 'true');
+      await expect(presetRadio(page, 'Phone')).toHaveAttribute('aria-busy', 'false');
+      await expect(page.locator('.design-desk')).not.toHaveClass(/is-switching/);
     } finally { await harness.stop(); }
   });
 
@@ -353,13 +380,19 @@ test.describe('desktop', () => {
       harness.daemon.pushSession({});
       await expect.poll(gets).toBe(before + 1);
       await presetRadio(page, 'Tablet').click();
-      await expect(presetRadio(page, 'Tablet')).toHaveAttribute('aria-checked', 'true');
+      // The Tablet answer goes out on the socket before the late view, so the screen has it first.
+      await expect.poll(() => harness.daemon.state.viewportsAnswered).toBe(1);
       late.release();
       await late.delivered;
       await expect(page.getByText('the late view arrived')).toBeVisible();
-      await page.waitForTimeout(300);
       await expect(presetRadio(page, 'Tablet')).toHaveAttribute('aria-checked', 'true');
-      expect(viewportAsks(harness)).toEqual(['tablet']);
+      // Tablet stayed confirmed: a refused change goes back to it, not to the late view's Desktop.
+      harness.daemon.refuseViewport('the app has a dialog open; answer it first');
+      await presetRadio(page, 'Phone').click();
+      await expect(page.getByText(/dialog open/i)).toBeVisible();
+      await expect(presetRadio(page, 'Tablet')).toHaveAttribute('aria-checked', 'true');
+      await expect(page.locator('.design-desk')).not.toHaveClass(/is-switching/);
+      expect(viewportAsks(harness)).toEqual(['tablet', 'phone']);
     } finally { await harness.stop(); }
   });
 

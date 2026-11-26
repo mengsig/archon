@@ -46,6 +46,16 @@ test('overlapping choices: one request at a time, and only the newest is sent ne
   assert.equal(s.viewport.confirmed, 'phone');
 });
 
+test('overlapping choices both refused go back to the confirmed preset', () => {
+  let { s } = send(reduce(live(), { type: 'preset', preset: 'tablet' }));
+  s = reduce(s, { type: 'preset', preset: 'phone' });
+  let sent;
+  ({ s, sent } = send(answer(s, 'tablet', false)));
+  assert.deepEqual([sent, s.preset], ['phone', 'phone'], 'the newer choice still goes out');
+  s = answer(s, 'phone', false);
+  assert.deepEqual([s.preset, s.viewport.confirmed, presetMismatch(s), nextRequest(s.viewport)], ['desktop', 'desktop', false, null]);
+});
+
 test('a choice equal to what archond will have once answered is dropped', () => {
   let { s } = send(reduce(live(), { type: 'preset', preset: 'tablet' }));
   s = reduce(s, { type: 'preset', preset: 'desktop' });

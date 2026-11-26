@@ -1607,10 +1607,10 @@ mod stream {
         assert_eq!(browser.calls(|c| c.inputs_lost), 1);
     }
 
-    /// Input read off a connection before its stream ended can run after the
-    /// end; its press must still be let go of, so the end waits for it.
+    /// Input read off a connection before its stream ended can press after
+    /// the end let go; it lets go again as it ends, whatever runs after it.
     #[tokio::test]
-    async fn a_stream_that_ends_before_earlier_input_runs_lets_go_after_it() {
+    async fn input_read_before_a_stream_ended_lets_go_again_as_it_ends() {
         use archon_core::protocol::MouseAction;
         let f = Fixture::new().await;
         let service = f.h.ctx.design.clone();
@@ -1620,15 +1620,19 @@ mod stream {
         })
         .await;
         let browser = f.factory.browser(0);
-        let earlier = service
-            .input_admitted(&f.session)
-            .expect("a watched session admits input");
+        let earlier = service.input_admitted(&f.session);
         task.abort();
         let _ = task.await;
         until("no subscribers", || {
             service.subscriber_count(&f.session) == 0
         })
         .await;
+        assert_eq!(
+            browser.calls(|c| c.inputs_lost),
+            1,
+            "the end lets go at once"
+        );
+        let later = service.input_admitted(&f.session);
         let pressed = f
             .operator(Request::DesignInput {
                 session: f.session.clone(),
@@ -1636,16 +1640,50 @@ mod stream {
             })
             .await;
         assert!(matches!(pressed, Ok(Reply::DesignDone)), "{pressed:?}");
+        drop(earlier);
         assert_eq!(
             browser.calls(|c| c.inputs_lost),
-            0,
-            "nothing is let go of before the earlier input ends"
+            2,
+            "the earlier input lets go again, later input still running"
+        );
+        drop(later);
+        assert_eq!(
+            browser.calls(|c| c.inputs_lost),
+            2,
+            "input read after the end lets go of nothing"
+        );
+    }
+
+    /// Input read before the preview started can start it and press after a
+    /// stream that came and went; it lets go again as it ends.
+    #[tokio::test]
+    async fn input_read_before_the_preview_started_lets_go_after_a_stream_that_ended() {
+        let f = Fixture::with_preview(design_config()).await;
+        let service = f.h.ctx.design.clone();
+        let earlier = service.input_admitted(&f.session);
+        let (_rx, task) = subscribe(&f, 1);
+        until("the screencast", || {
+            f.factory.browsers.lock().unwrap().len() == 1
+                && f.factory.browser(0).calls(|c| c.screencasts_started) >= 1
+        })
+        .await;
+        let browser = f.factory.browser(0);
+        task.abort();
+        let _ = task.await;
+        until("no subscribers", || {
+            service.subscriber_count(&f.session) == 0
+        })
+        .await;
+        assert_eq!(
+            browser.calls(|c| c.inputs_lost),
+            1,
+            "the end lets go at once"
         );
         drop(earlier);
         assert_eq!(
             browser.calls(|c| c.inputs_lost),
-            1,
-            "its press is let go of"
+            2,
+            "input read before the runtime existed lets go again"
         );
     }
 

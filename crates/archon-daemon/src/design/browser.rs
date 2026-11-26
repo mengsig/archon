@@ -462,10 +462,8 @@ pub(crate) struct RtState {
     pub launching: bool,
     /// Health probes missed in a row; one slow answer is not "down".
     pub probe_misses: u32,
-    /// Input requests admitted and not yet ended: see [`AdmittedInput`].
-    inputs_admitted: u32,
-    /// A stream ended while input was admitted: it is lost once that ends.
-    lost_after_input: bool,
+    /// Streams of this runtime that have ended: see [`AdmittedInput`].
+    streams_ended: u64,
 }
 
 impl Default for RtState {
@@ -490,34 +488,46 @@ impl Default for RtState {
             resolve_window: (now, 0),
             launching: false,
             probe_misses: 0,
-            inputs_admitted: 0,
-            lost_after_input: false,
+            streams_ended: 0,
         }
     }
 }
 
-/// An input request read off a connection, held until it ends. A stream that
-/// ends meanwhile lets go of held input only after it: it may still press.
+/// An input request read off a connection, held until it ends. One read
+/// before a stream ended may press after that end let go, so it lets go again.
 pub struct AdmittedInput {
-    rt: Arc<Runtime>,
+    service: Arc<DesignService>,
+    session: DesignSessionId,
+    /// The session's runtime when it was read, and its streams ended by then.
+    seen: Option<(Arc<Runtime>, u64)>,
 }
 
 impl std::fmt::Debug for AdmittedInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AdmittedInput").finish_non_exhaustive()
+        f.debug_struct("AdmittedInput")
+            .field("session", &self.session)
+            .finish_non_exhaustive()
     }
 }
 
 impl Drop for AdmittedInput {
     fn drop(&mut self) {
+        let Some(now) = self.service.existing_runtime(&self.session) else {
+            return;
+        };
         let browser = {
-            let mut st = self.rt.st();
-            debug_assert!(st.inputs_admitted > 0, "an admitted input ends once");
-            st.inputs_admitted = st.inputs_admitted.saturating_sub(1);
-            if st.inputs_admitted > 0 || !st.lost_after_input {
+            let st = now.st();
+            let ended_since = match &self.seen {
+                Some((then, ended)) if Arc::ptr_eq(then, &now) => {
+                    debug_assert!(st.streams_ended >= *ended, "stream ends only add up");
+                    st.streams_ended > *ended
+                }
+                // Made after this was read: each stream it ended came later.
+                _ => st.streams_ended > 0,
+            };
+            if !ended_since {
                 return;
             }
-            st.lost_after_input = false;
             st.browser.clone()
         };
         if let Some(browser) = browser {
@@ -955,14 +965,18 @@ impl DesignService {
             .map_or(0, |rt| rt.st().subscribers)
     }
 
-    /// Count an input request admitted for `session` until the guard drops;
-    /// `None` for a session with no runtime, which holds nothing to let go of.
-    pub fn input_admitted(&self, session: &DesignSessionId) -> Option<AdmittedInput> {
-        let rt = self.existing_runtime(session)?;
-        let mut st = rt.st();
-        st.inputs_admitted = st.inputs_admitted.checked_add(1)?;
-        drop(st);
-        Some(AdmittedInput { rt })
+    /// Note an input request for `session` as read, before the connection
+    /// reads on; dropped once it ends, after any press it made.
+    pub fn input_admitted(self: &Arc<Self>, session: &DesignSessionId) -> AdmittedInput {
+        let seen = self.existing_runtime(session).map(|rt| {
+            let ended = rt.st().streams_ended;
+            (rt, ended)
+        });
+        AdmittedInput {
+            service: Arc::clone(self),
+            session: session.clone(),
+            seen,
+        }
     }
 
     /// A stream ended: its page closed, reset or lost its connection, and any
@@ -977,11 +991,7 @@ impl DesignService {
             if st.subscribers == 0 {
                 st.last_sub_gone = Some(Instant::now());
             }
-            if st.inputs_admitted > 0 {
-                // Input read before the stream ended may press after this.
-                st.lost_after_input = true;
-                return;
-            }
+            st.streams_ended = st.streams_ended.saturating_add(1);
             st.browser.clone()
         };
         if let Some(browser) = browser {

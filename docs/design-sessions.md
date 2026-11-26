@@ -155,9 +155,10 @@ ready, past the rate or the in-flight limit), it may have carried a release, so
 archond lets go of everything held before the next request runs, or within
 about three seconds if none comes. It does the same when a page's stream
 ends: closing or reloading the page, a reconnect, or opening another session
-drops any input the page still had queued. Input already sent on that
-connection runs first, and archond lets go once it has. Each release has its own
-two-second deadline; one Chromium leaves unanswered is sent again later.
+drops any input the page still had queued. Input it had already sent that
+runs after the end makes archond let go again once it has run. Each release
+has its own two-second deadline; one Chromium leaves unanswered is sent again
+later.
 Closing the session closes its browser, which lets go of everything with it. A press that
 spans requests that all succeed, such as a drag, is never cut short.
 

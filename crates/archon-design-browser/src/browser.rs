@@ -373,6 +373,8 @@ impl Shared {
             return Err(BrowserError::Protocol("empty capture area".into()));
         }
         let (bytes, scale) = fit_to_budget(|q, s| self.shoot(clip, q, s), dpr).await?;
+        // A capture's place counts from the page's own top-left corner.
+        let origin = layout.page.map_or((0.0, 0.0), |p| (p.x, p.y));
         let (width, height) = jpeg_dims(&bytes).unwrap_or((
             (clip.w * scale).round() as u32,
             (clip.h * scale).round() as u32,
@@ -382,8 +384,8 @@ impl Shared {
             viewport_h: vp.height,
             device_scale_factor: vp.dpr,
             mobile: vp.touch,
-            x: clip.x as u32,
-            y: clip.y as u32,
+            x: (clip.x - origin.0) as u32,
+            y: (clip.y - origin.1) as u32,
             w: clip.w as u32,
             h: clip.h as u32,
             screenshot_scale: scale,
@@ -1269,10 +1271,15 @@ impl Browser {
 /// sticky header was drawn far down.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PageLayout {
-    /// The visible area's top-left corner in page CSS px.
+    /// The visible area's top-left corner in page CSS px, from the page's
+    /// left edge even where it is right to left.
     pub(crate) scroll: (f64, f64),
-    /// The page's full size, when the browser says.
-    pub(crate) size: Option<(f64, f64)>,
+    /// The same corner as scrollX and scrollY, where `DOM.getNodeForLocation`
+    /// counts from: left of 0 on a right-to-left page scrolled sideways.
+    pub(crate) hit_scroll: (f64, f64),
+    /// The page's full area, when the browser says; it starts left of 0 on a
+    /// right-to-left page that overflows.
+    pub(crate) page: Option<ClipRect>,
     /// The page scale: below 1 where a phone shows a page wider than itself
     /// zoomed out, above 1 after a pinch or double tap.
     pub(crate) zoom: f64,
@@ -1282,7 +1289,8 @@ impl Default for PageLayout {
     fn default() -> Self {
         Self {
             scroll: (0.0, 0.0),
-            size: None,
+            hit_scroll: (0.0, 0.0),
+            page: None,
             zoom: 1.0,
         }
     }
@@ -1292,24 +1300,34 @@ impl PageLayout {
     /// None when the visible area's place or zoom is missing or not a number.
     pub(crate) fn from_metrics(m: &Value) -> Option<Self> {
         let visual = &m["cssVisualViewport"];
-        // An overscrolled page can report a small negative offset; it shows the top.
-        let offset = |key: &str| {
-            visual[key]
-                .as_f64()
-                .filter(|v| v.is_finite())
-                .map(|v| v.max(0.0))
-        };
-        let size = &m["cssContentSize"];
-        let size = match (size["width"].as_f64(), size["height"].as_f64()) {
-            (Some(w), Some(h)) if w >= 1.0 && h >= 1.0 => Some((w, h)),
+        let finite = |v: &Value| v.as_f64().filter(|v| v.is_finite());
+        let content = &m["cssContentSize"];
+        let page = match (finite(&content["width"]), finite(&content["height"])) {
+            (Some(w), Some(h)) if w >= 1.0 && h >= 1.0 => Some(ClipRect {
+                x: finite(&content["x"]).unwrap_or(0.0),
+                y: finite(&content["y"]).unwrap_or(0.0),
+                w,
+                h,
+            }),
             _ => None,
         };
-        let zoom = visual["scale"]
-            .as_f64()
-            .filter(|z| z.is_finite() && *z > 0.0)?;
+        // The visual viewport's pageX is scrollX, 0 or less on a right-to-left
+        // page; screenshots and hit tests count from the left edge, as the layout viewport does.
+        let layout = &m["cssLayoutViewport"];
+        let place = |axis: &str| match finite(&layout[format!("page{axis}")]) {
+            Some(at) => Some(at + finite(&visual[format!("offset{axis}")])?),
+            None => finite(&visual[format!("page{axis}")]),
+        };
+        // An overscrolled page can report an offset before its start; it shows the start.
+        let start = page.map_or((f64::NEG_INFINITY, f64::NEG_INFINITY), |p| (p.x, p.y));
+        let x = place("X")?.max(start.0);
+        let y = place("Y")?.max(start.1);
+        let hit_scroll = (finite(&visual["pageX"])?, finite(&visual["pageY"])?);
+        let zoom = finite(&visual["scale"]).filter(|z| *z > 0.0)?;
         Some(Self {
-            scroll: (offset("pageX")?, offset("pageY")?),
-            size,
+            scroll: (x, y),
+            hit_scroll,
+            page,
             zoom,
         })
     }
@@ -1356,13 +1374,24 @@ impl PageLayout {
         point
     }
 
+    /// A point on the frame where `DOM.getNodeForLocation` finds what it shows.
+    pub(crate) fn hit_point(&self, x: f64, y: f64) -> (f64, f64) {
+        assert!(x.is_finite() && y.is_finite(), "a frame point is finite");
+        let point = (
+            self.hit_scroll.0 + x / self.zoom,
+            self.hit_scroll.1 + y / self.zoom,
+        );
+        debug_assert!(point.0.is_finite() && point.1.is_finite());
+        point
+    }
+
     /// A crop of the frame as a page clip cut to the page's edges, and the
     /// screenshot scale that draws it at its size on the frame times `dpr`.
     pub(crate) fn crop_clip(&self, seen: ClipRect, dpr: f64) -> (ClipRect, f64) {
         assert!(dpr.is_finite() && dpr > 0.0, "a crop's scale is positive");
         let page = self.on_page(seen);
-        let clipped = match self.size {
-            Some((w, h)) => clamp_to_page(page, w, h),
+        let clipped = match self.page {
+            Some(bounds) => clamp_to_page(page, bounds),
             None => page,
         };
         debug_assert!(clipped.w <= page.w && clipped.h <= page.h);
@@ -1387,23 +1416,34 @@ impl PageLayout {
     }
 }
 
-/// `clip` cut to the page (`width` × `height` CSS px): a margin around an
-/// element at the page's edge must not add an empty strip beyond it.
-pub(crate) fn clamp_to_page(clip: ClipRect, width: f64, height: f64) -> ClipRect {
-    let x = clip.x.clamp(0.0, width);
-    let y = clip.y.clamp(0.0, height);
-    ClipRect {
+/// `clip` cut to the page's area: a margin around an element at the page's
+/// edge must not add an empty strip beyond it.
+pub(crate) fn clamp_to_page(clip: ClipRect, page: ClipRect) -> ClipRect {
+    assert!(
+        page.w >= 0.0 && page.h >= 0.0,
+        "a page has a size: {page:?}"
+    );
+    let (right, bottom) = (page.x + page.w, page.y + page.h);
+    let x = clip.x.clamp(page.x, right);
+    let y = clip.y.clamp(page.y, bottom);
+    let cut = ClipRect {
         x,
         y,
-        w: ((clip.x + clip.w).min(width) - x).max(0.0),
-        h: ((clip.y + clip.h).min(height) - y).max(0.0),
-    }
+        w: ((clip.x + clip.w).min(right) - x).max(0.0),
+        h: ((clip.y + clip.h).min(bottom) - y).max(0.0),
+    };
+    debug_assert!(cut.x + cut.w <= right && cut.y + cut.h <= bottom);
+    cut
 }
 
 /// `clip` grown outward to whole CSS px, so the area a picture records is
 /// exactly the area it shows and a build can be cut to the same one.
 pub(crate) fn whole_pixels(clip: ClipRect) -> ClipRect {
-    let (x, y) = (clip.x.max(0.0).floor(), clip.y.max(0.0).floor());
+    assert!(
+        clip.x.is_finite() && clip.y.is_finite(),
+        "a clip is finite: {clip:?}"
+    );
+    let (x, y) = (clip.x.floor(), clip.y.floor());
     let snapped = ClipRect {
         x,
         y,
@@ -1454,7 +1494,13 @@ mod tests {
             w: 1464.0,
             h: 88.0,
         };
-        let cut = clamp_to_page(header, 1440.0, 3000.0);
+        let page = |w, h| ClipRect {
+            x: 0.0,
+            y: 0.0,
+            w,
+            h,
+        };
+        let cut = clamp_to_page(header, page(1440.0, 3000.0));
         assert_eq!((cut.x, cut.w, cut.h), (0.0, 1440.0, 88.0));
         let inside = ClipRect {
             x: 10.0,
@@ -1463,7 +1509,7 @@ mod tests {
             h: 50.0,
         };
         assert_eq!(
-            clamp_to_page(inside, 1440.0, 900.0),
+            clamp_to_page(inside, page(1440.0, 900.0)),
             inside,
             "inside: unchanged"
         );
@@ -1474,10 +1520,87 @@ mod tests {
                 w: 100.0,
                 h: 100.0,
             },
-            1440.0,
-            900.0,
+            page(1440.0, 900.0),
         );
         assert_eq!((low.w, low.h), (40.0, 20.0));
+        let rtl = ClipRect {
+            x: -800.0,
+            y: 0.0,
+            w: 1600.0,
+            h: 900.0,
+        };
+        let left = clamp_to_page(header_at(-830.0), rtl);
+        assert_eq!(
+            (left.x, left.w),
+            (-800.0, 1434.0),
+            "cut at a page that starts left of 0"
+        );
+    }
+
+    fn header_at(x: f64) -> ClipRect {
+        ClipRect {
+            x,
+            y: 0.0,
+            w: 1464.0,
+            h: 88.0,
+        }
+    }
+
+    #[test]
+    fn a_right_to_left_page_scrolled_sideways_is_placed_from_its_left_edge() {
+        let layout = PageLayout::from_metrics(&json!({
+            "cssLayoutViewport": {"pageX": 465.0, "pageY": 0.0},
+            "cssVisualViewport": {
+                "pageX": -350.0, "pageY": 0.0, "offsetX": 0.0, "offsetY": 0.0, "scale": 1.0
+            },
+            "cssContentSize": {"x": 0.0, "y": 0.0, "width": 1600.0, "height": 900.0},
+        }))
+        .expect("a layout");
+        assert_eq!(
+            layout.scroll,
+            (465.0, 0.0),
+            "from the left edge, not scrollX"
+        );
+        assert_eq!(
+            layout.hit_point(10.0, 5.0),
+            (-340.0, 5.0),
+            "hit tests use scrollX"
+        );
+        let vp = Viewport {
+            width: 800,
+            height: 600,
+            touch: false,
+            dpr: 1.0,
+        };
+        let (view, _) = layout.view_clip(vp, 1.0);
+        assert_eq!((view.x, view.y, view.w), (465.0, 0.0, 800.0));
+        let (crop, _) = layout.crop_clip(header_at(-500.0), 1.0);
+        assert_eq!(
+            (crop.x, crop.w),
+            (0.0, 1429.0),
+            "cut at the page's left edge"
+        );
+    }
+
+    #[test]
+    fn a_pinch_zoomed_view_adds_its_offset_to_the_layout_viewport() {
+        let layout = PageLayout::from_metrics(&json!({
+            "cssLayoutViewport": {"pageX": 0.0, "pageY": 300.0},
+            "cssVisualViewport": {
+                "pageX": 40.0, "pageY": 320.0, "offsetX": 40.0, "offsetY": 20.0, "scale": 2.0
+            },
+        }))
+        .expect("a layout");
+        assert_eq!(layout.scroll, (40.0, 320.0));
+        let missing = json!({
+            "cssLayoutViewport": {"pageX": 0.0, "pageY": 0.0},
+            "cssVisualViewport": {"pageX": 0.0, "pageY": 0.0, "scale": 1.0},
+        });
+        assert_eq!(
+            PageLayout::from_metrics(&missing),
+            None,
+            "an offset is not guessed"
+        );
     }
 
     #[test]
@@ -1726,7 +1849,8 @@ mod capture_tests {
     fn a_zoomed_view_is_shot_whole_at_its_page_scale() {
         let layout = PageLayout {
             scroll: (0.0, 100.0),
-            size: None,
+            hit_scroll: (0.0, 100.0),
+            page: None,
             zoom: 0.25,
         };
         let vp = Viewport {
@@ -1763,10 +1887,17 @@ mod capture_tests {
         );
         let overscrolled = PageLayout::from_metrics(&json!({
             "cssVisualViewport": {"pageX": -4.0, "pageY": 12.0, "scale": 1.0},
-            "cssContentSize": {"width": 0.0, "height": 10.0},
+            "cssContentSize": {"width": 100.0, "height": 10.0},
         }));
         let expected = PageLayout {
             scroll: (0.0, 12.0),
+            hit_scroll: (-4.0, 12.0),
+            page: Some(ClipRect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 10.0,
+            }),
             ..PageLayout::default()
         };
         assert_eq!(overscrolled, Some(expected));

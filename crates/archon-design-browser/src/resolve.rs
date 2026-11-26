@@ -165,7 +165,7 @@ impl Browser {
         // Chrome hit-tests page coordinates; the point is on the frame, which
         // scrolls and zooms. The box found is given back on the frame too.
         let layout = sh.layout().await?;
-        let (x, y) = layout.page_point(x, y);
+        let (x, y) = layout.hit_point(x, y);
         let n = sh
             .call(
                 "DOM.getNodeForLocation",

@@ -66,17 +66,22 @@ async fn serve_page() -> u16 {
             .replace("width:1600px", "width:auto")
             .replace("left:400px", "left:40px"),
     );
+    // Right to left: scrolled sideways, Chrome puts the view left of x = 0.
+    let rtl = Bytes::from(
+        PAGE.replace("ROWS", &rows)
+            .replace("<html>", "<html dir=rtl>"),
+    );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
         while let Ok((socket, _)) = listener.accept().await {
-            let (wide, narrow) = (wide.clone(), narrow.clone());
+            let (wide, narrow, rtl) = (wide.clone(), narrow.clone(), rtl.clone());
             tokio::spawn(async move {
                 let service = hyper::service::service_fn(move |request: Request<Incoming>| {
-                    let html = if request.uri().path() == "/narrow" {
-                        narrow.clone()
-                    } else {
-                        wide.clone()
+                    let html = match request.uri().path() {
+                        "/narrow" => narrow.clone(),
+                        "/rtl" => rtl.clone(),
+                        _ => wide.clone(),
                     };
                     let page = Response::builder()
                         .header("content-type", "text/html")
@@ -388,5 +393,29 @@ async fn a_zoomed_out_phone_is_cropped_where_the_frame_shows() {
 
     // The crops leave the operator's view as it was.
     assert!(settled_frame(&b, "zoomed-out-after").await == before);
+    b.close().await.unwrap();
+}
+
+/// A right-to-left page scrolled sideways reports a negative offset; the
+/// frame was shot from x = 0 and showed the wrong part of the page.
+#[tokio::test]
+async fn a_right_to_left_page_scrolled_sideways_is_framed_as_chrome_shows_it() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((b, url)) = open(DESKTOP, &root.path().join("rtl")).await else {
+        return;
+    };
+    b.navigate(&format!("{url}rtl")).await.unwrap();
+    let _ = b
+        .wait_network_idle(Duration::from_millis(300), Duration::from_secs(10))
+        .await;
+    let start = settled_frame(&b, "rtl-start").await;
+    b.input(&[wheel(100.0, 400.0, -350.0, 0.0)]).await.unwrap();
+    let sideways = settled_frame(&b, "rtl-sideways").await;
+    differ(&sideways, &start, "rtl sideways");
+    // The header is as wide as the body, at the page's right: now only the
+    // view's right part shows it; the bands run on under its left part.
+    assert!(element_at(&b, 700.0, 10.0).await.contains("header"));
+    assert_eq!(element_at(&b, 100.0, 10.0).await, "html");
+    assert_eq!(element_at(&b, 100.0, 300.0).await, "div#b0");
     b.close().await.unwrap();
 }

@@ -17,8 +17,7 @@
   than the screen is shown zoomed out as Chromium shows it, element boxes and
   crops on that zoomed-out page match the frame instead of its top-left
   corner, and comment-mode picks on a scrolled page find the element under the
-  pointer. PageUp,
-  PageDown, Space, the arrows, Home and End now scroll the app, wheel line and
+  pointer, right-to-left pages scrolled sideways included. PageUp, PageDown, Space, the arrows, Home and End now scroll the app, wheel line and
   page steps and trackpad fractions are converted to the app's pixels, and
   frames come ten a second while you scroll.
 - Fast scrolling no longer floods archond with input or shows a red "at most

@@ -296,7 +296,11 @@ fn place_tier(
     (policy, restricted): (&ModelPolicy, bool),
     catalog: &ModelCatalog,
 ) -> Option<WorkerChoice> {
-    let whole = !restricted && catalog.candidates().any(|m| m.tier == Some(tier));
+    // Aether tiers no opt-in model, so only another provider's makes a whole tier.
+    let whole = !restricted
+        && catalog
+            .candidates()
+            .any(|m| m.tier == Some(tier) && !crate::opt_in::is_opt_in(&m.model.provider));
     if whole {
         return Some(WorkerChoice::of_tier(tier, effort));
     }
@@ -348,6 +352,39 @@ mod tests {
             policy.describe(),
             "each worker on codex/terra at effort low or the balanced tier at effort medium, \
              at most 2 at once"
+        );
+    }
+
+    #[test]
+    fn an_open_worker_tier_is_handed_to_aether_only_beside_another_provider() {
+        let entry = |model: &str, tier| crate::model_tier::CatalogModel {
+            model: model.parse().unwrap(),
+            tier: Some(tier),
+            is_default: false,
+        };
+        let open = ModelPolicy::default();
+        let alone = ModelCatalog::new(vec![
+            entry("antigravity/gemini-4-carbon", Tier::Balanced),
+            entry("p/strong", Tier::Strong),
+        ]);
+        let narrowed = balanced_default().within(&open, &alone, None);
+        assert_eq!(
+            narrowed.policy.workers,
+            [pinned_at("p/strong", Effort::Low)],
+            "an Antigravity-only tier is not offered: {narrowed:?}"
+        );
+        let mixed = ModelCatalog::new(vec![
+            entry("antigravity/gemini-4-carbon", Tier::Balanced),
+            entry("p/balanced", Tier::Balanced),
+        ]);
+        let narrowed = balanced_default().within(&open, &mixed, None);
+        assert!(
+            narrowed
+                .policy
+                .workers
+                .iter()
+                .all(|w| w.model.is_none() && w.tier == Some(Tier::Balanced)),
+            "Aether resolves the tier among its own tiered models: {narrowed:?}"
         );
     }
 

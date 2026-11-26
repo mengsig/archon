@@ -44,6 +44,20 @@ header{position:sticky;top:0;height:60px;background:#c00;color:#fff;z-index:2}\
 <div id=b4 class=band style=background:#a0a></div><div id=b5 class=band style=background:#555></div>\
 <div id=panel>ROWS</div><div id=badge></div></body></html>";
 
+/// A phone page with a fixed top bar. WIDE is empty, or one unbroken line
+/// that makes the page wider than the phone: what a long typed word does.
+const FIXED: &str = "<!doctype html><html><head>\
+<meta name=viewport content=\"width=device-width,initial-scale=1\">\
+<style>body{margin:0;font:16px sans-serif}\
+#topbar{position:fixed;top:0;left:0;right:0;height:56px;background:#c00;z-index:2}\
+main{padding-top:56px}.band{height:300px}</style></head>\
+<body><header id=topbar>Top bar</header><main>WIDE\
+<div id=b0 class=band style=background:#0a0></div><div id=b1 class=band style=background:#00a></div>\
+<div id=b2 class=band style=background:#aa0></div><div id=b3 class=band style=background:#0aa></div>\
+<div id=b4 class=band style=background:#a0a></div><div id=b5 class=band style=background:#555></div>\
+</main></body></html>";
+const WIDE_LINE: &str = "<p id=wide>abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz</p>";
+
 #[derive(Debug)]
 struct Loopback;
 
@@ -71,16 +85,22 @@ async fn serve_page() -> u16 {
         PAGE.replace("ROWS", &rows)
             .replace("<html>", "<html dir=rtl>"),
     );
+    let fixed = Bytes::from(FIXED.replace("WIDE", ""));
+    let fixed_wide = Bytes::from(FIXED.replace("WIDE", WIDE_LINE));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
         while let Ok((socket, _)) = listener.accept().await {
-            let (wide, narrow, rtl) = (wide.clone(), narrow.clone(), rtl.clone());
+            let pages = (wide.clone(), narrow.clone(), rtl.clone());
+            let (wide, narrow, rtl) = pages;
+            let (fixed, fixed_wide) = (fixed.clone(), fixed_wide.clone());
             tokio::spawn(async move {
                 let service = hyper::service::service_fn(move |request: Request<Incoming>| {
                     let html = match request.uri().path() {
                         "/narrow" => narrow.clone(),
                         "/rtl" => rtl.clone(),
+                        "/fixed" => fixed.clone(),
+                        "/fixed-wide" => fixed_wide.clone(),
                         _ => wide.clone(),
                     };
                     let page = Response::builder()
@@ -472,5 +492,220 @@ async fn a_swipe_in_batches_survives_a_lifted_finger_and_the_next_one_scrolls() 
         before,
         "the next swipe scrolled the page"
     );
+    b.close().await.unwrap();
+}
+
+fn finger(action: TouchAction, y: f64) -> Input {
+    Input::Touch {
+        action,
+        points: vec![TouchPoint { x: 200.0, y, id: 0 }],
+    }
+}
+
+/// Load `path` on the phone, resting, with the fixed bar's box at its start.
+async fn fixed_bar_page(b: &Browser, url: &str, path: &str) -> ClipRect {
+    b.navigate(&format!("{url}{path}")).await.unwrap();
+    let _ = b
+        .wait_network_idle(Duration::from_millis(300), Duration::from_secs(10))
+        .await;
+    settled_frame(b, path).await;
+    let bar = b.resolve_selector("#topbar", None).await.unwrap();
+    let bar = bar.expect("the page has its fixed bar");
+    assert_eq!(
+        (bar.y, bar.h),
+        (0.0, 56.0),
+        "the bar starts at the top: {bar:?}"
+    );
+    assert!(element_at(b, 10.0, 10.0).await.contains("topbar"));
+    bar
+}
+
+/// The fixed bar's box and what is drawn at the view's top-left corner.
+async fn bar_sample(b: &Browser) -> (ClipRect, String) {
+    let bar = b.resolve_selector("#topbar", None).await.unwrap();
+    (
+        bar.expect("the fixed bar stays on the page"),
+        element_at(b, 10.0, 10.0).await,
+    )
+}
+
+/// A phone page that fits the phone keeps its fixed bar at the view's top
+/// at every step of a swipe, batch by batch, and through the wheel.
+#[tokio::test]
+async fn a_phone_page_that_fits_keeps_its_fixed_bar_at_every_step_of_a_scroll() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((b, url)) = open(PHONE, &root.path().join("fixed")).await else {
+        return;
+    };
+    let bar = fixed_bar_page(&b, &url, "fixed").await;
+    assert_eq!(bar.w, f64::from(PHONE.width), "the page fits the phone");
+    let mut steps = 0;
+    for round in 0..4 {
+        let moves = (1..=10).map(|i| finger(TouchAction::Move, 700.0 - f64::from(i) * 30.0));
+        let swipe = std::iter::once(finger(TouchAction::Start, 700.0))
+            .chain(moves)
+            .chain(std::iter::once(finger(TouchAction::End, 400.0)));
+        for step in swipe {
+            b.input(&[step]).await.unwrap();
+            let (bar, top) = bar_sample(&b).await;
+            assert_eq!(
+                (bar.y, bar.w),
+                (0.0, f64::from(PHONE.width)),
+                "round {round}: {bar:?}"
+            );
+            assert!(
+                top.contains("topbar"),
+                "round {round}: {top} is drawn over the bar"
+            );
+            steps += 1;
+        }
+        keep(
+            &format!("fixed-swipe-{round}.jpg"),
+            &settled_frame(&b, "fixed-swipe").await,
+        );
+    }
+    for _ in 0..4 {
+        b.input(&[wheel(200.0, 400.0, 0.0, 200.0)]).await.unwrap();
+        let (bar, top) = bar_sample(&b).await;
+        assert_eq!(bar.y, 0.0, "the wheel: {bar:?}");
+        assert!(
+            top.contains("topbar"),
+            "the wheel: {top} is drawn over the bar"
+        );
+        steps += 1;
+    }
+    assert_ne!(
+        element_at(&b, 10.0, 300.0).await,
+        "div#b0",
+        "the page scrolled"
+    );
+    assert_eq!(steps, 52, "every step was sampled");
+    b.close().await.unwrap();
+}
+
+/// A phone page wider than the phone lays out as Chrome on Android lays it
+/// out: fixed bars sit in a layout viewport widened to the page, so a scroll
+/// moves the view inside it and the bar off the top. Archon adds nothing.
+#[tokio::test]
+async fn a_phone_page_wider_than_the_phone_scrolls_its_fixed_bar_as_chrome_android_does() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((b, url)) = open(PHONE, &root.path().join("fixed-wide")).await else {
+        return;
+    };
+    let bar = fixed_bar_page(&b, &url, "fixed-wide").await;
+    assert!(
+        bar.w > f64::from(PHONE.width) * 1.5,
+        "the bar spans the widened layout: {bar:?}"
+    );
+    let zoom = b.capture(None, 1.0).await.unwrap().capture.screenshot_scale;
+    assert_eq!(zoom, 1.0, "initial-scale=1 is kept, not zoomed out");
+    // The layout viewport keeps the phone's shape at the page's width.
+    let room = f64::from(PHONE.height) * bar.w / f64::from(PHONE.width) - f64::from(PHONE.height);
+    let mut lowest: f64 = 0.0;
+    for round in 0..4 {
+        let mut swipe = vec![finger(TouchAction::Start, 700.0)];
+        swipe.extend((1..=10).map(|i| finger(TouchAction::Move, 700.0 - f64::from(i) * 30.0)));
+        swipe.push(finger(TouchAction::End, 400.0));
+        b.input(&swipe).await.unwrap();
+        keep(
+            &format!("fixed-wide-swipe-{round}.jpg"),
+            &settled_frame(&b, "fixed-wide-swipe").await,
+        );
+        let (moved, _) = bar_sample(&b).await;
+        assert!(
+            moved.y <= lowest,
+            "round {round}: the bar went back down: {moved:?}"
+        );
+        assert!(
+            moved.y >= -room - 1.0,
+            "round {round}: past the layout viewport: {moved:?}"
+        );
+        lowest = moved.y;
+    }
+    assert!(
+        (lowest + room).abs() <= 1.0,
+        "the view reached the layout viewport's foot: {lowest} of {room}"
+    );
+    assert!(
+        !element_at(&b, 10.0, 10.0).await.contains("topbar"),
+        "the bar left the view"
+    );
+    // Chrome may put the view back where it was; the layout itself is as at first.
+    b.reload().await.unwrap();
+    let _ = b
+        .wait_network_idle(Duration::from_millis(300), Duration::from_secs(10))
+        .await;
+    settled_frame(&b, "fixed-wide-reloaded").await;
+    let (again, _) = bar_sample(&b).await;
+    assert_eq!(
+        (again.x, again.w, again.h),
+        (bar.x, bar.w, bar.h),
+        "after a reload: {again:?}"
+    );
+    b.close().await.unwrap();
+}
+
+const TABLET: Viewport = Viewport {
+    width: 834,
+    height: 1112,
+    touch: true,
+    dpr: 1.0,
+};
+
+/// Size changes 60 ms apart while the stream runs, ending on each size. A
+/// resize during a stream shot left Chrome drawing the old size, and every
+/// later frame was withheld: the preview stayed on "Switching…".
+#[tokio::test]
+async fn quick_size_changes_while_streaming_end_on_the_last_size() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((b, url)) = open(DESKTOP, &root.path().join("rapid")).await else {
+        return;
+    };
+    b.navigate(&format!("{url}narrow")).await.unwrap();
+    let _ = b
+        .wait_network_idle(Duration::from_millis(300), Duration::from_secs(10))
+        .await;
+    let relay = b.start_screencast().await.unwrap();
+    let mut frames = relay.subscribe();
+    let bursts: [&[Viewport]; 6] = [
+        &[PHONE, DESKTOP, TABLET, PHONE],
+        &[DESKTOP, TABLET, PHONE, DESKTOP],
+        &[TABLET, PHONE, DESKTOP, TABLET],
+        &[PHONE, DESKTOP, TABLET, PHONE, DESKTOP, TABLET],
+        &[TABLET, DESKTOP, PHONE],
+        &[PHONE, TABLET, DESKTOP],
+    ];
+    for (n, burst) in bursts.iter().enumerate() {
+        for v in burst.iter() {
+            // A shot of the view is in flight as the size changes, as a stream shot often is.
+            let (shot, resized) = tokio::join!(b.viewport_screenshot(), async {
+                tokio::task::yield_now().await;
+                b.set_viewport(*v).await
+            });
+            shot.unwrap();
+            resized.unwrap();
+            tokio::time::sleep(Duration::from_millis(60)).await;
+        }
+        let last = *burst.last().unwrap();
+        let start = Instant::now();
+        let at_last =
+            |f: &archon_design_browser::Frame| (f.width, f.height) == (last.width, last.height);
+        loop {
+            let left = Duration::from_secs(3).saturating_sub(start.elapsed());
+            let got = tokio::time::timeout(left, frames.next()).await;
+            let frame =
+                got.unwrap_or_else(|_| panic!("burst {n}: no frame at its last size in 3 s"));
+            let frame = frame.expect("the stream runs");
+            frames.ack(frame.seq);
+            if at_last(&frame) {
+                break;
+            }
+        }
+        assert_eq!(
+            b.capture(None, 1.0).await.unwrap().width,
+            last.width,
+            "burst {n}"
+        );
+    }
     b.close().await.unwrap();
 }

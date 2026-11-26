@@ -34,6 +34,8 @@ use crate::{
 };
 
 pub(crate) const CALL_TIMEOUT: Duration = Duration::from_secs(15);
+/// Stream shots at a stale size before the viewport is set again (about a second).
+const STALE_SHOTS_BEFORE_RESIZE: u32 = 4;
 /// JPEG qualities a stream frame is tried at, best first, to fit the budget.
 const STREAM_QUALITIES: [u8; 3] = [70, 40, 20];
 /// Longest dialog message shown.
@@ -95,8 +97,10 @@ struct State {
     poll: Option<JoinHandle<()>>,
     /// When input was last dispatched: frames come faster for a while after it.
     last_input: Option<Instant>,
-    /// A JavaScript dialog is open on the page.
-    dialog_open: bool,
+    /// The JavaScript dialog open on the page, as the operator is shown it.
+    dialog: Option<BrowserEvent>,
+    /// Stream shots in a row Chrome drew at another size than the viewport.
+    stale_shots: u32,
 }
 
 #[derive(Debug)]
@@ -476,17 +480,54 @@ impl Shared {
             // Input maps through the frame's size, so every frame is the view's size.
             let drawn = jpeg_dims(&bytes);
             if drawn != Some((vp.width, vp.height)) {
+                self.drawn_stale(vp).await;
                 return Err(BrowserError::Protocol(format!(
                     "Chrome drew the view at {drawn:?}, not {}x{}",
                     vp.width, vp.height
                 )));
             }
+            self.st.lock().unwrap().stale_shots = 0;
             return Ok((bytes, vp.width, vp.height));
         }
         tracing::warn!("a preview frame was withheld: too detailed even at the lowest quality");
         Err(BrowserError::Protocol(
             "the view is too detailed for a frame even at the lowest quality".into(),
         ))
+    }
+
+    /// Chrome may keep drawing a size it was told to leave. A few such shots in
+    /// a row set the viewport again, so frames at its size come back.
+    async fn drawn_stale(&self, vp: Viewport) {
+        let stale = {
+            let mut st = self.st.lock().unwrap();
+            st.stale_shots = st.stale_shots.saturating_add(1);
+            st.stale_shots
+        };
+        if stale % STALE_SHOTS_BEFORE_RESIZE != 0 {
+            return;
+        }
+        tracing::debug!(
+            stale,
+            "Chrome kept drawing another size: setting the viewport again"
+        );
+        if let Err(error) = self.apply_metrics(vp).await {
+            tracing::debug!(%error, "setting the viewport again failed");
+        }
+    }
+
+    /// Emulate the viewport's size and mobile flag.
+    async fn apply_metrics(&self, v: Viewport) -> Result<(), BrowserError> {
+        assert!(v.width > 0 && v.height > 0, "a viewport has a size");
+        assert!(
+            v.dpr.is_finite() && v.dpr > 0.0,
+            "a viewport has a positive dpr"
+        );
+        self.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": v.width, "height": v.height, "deviceScaleFactor": v.dpr, "mobile": v.touch}),
+        )
+        .await
+        .map(|_| ())
     }
 
     async fn shoot_view(&self, quality: u8) -> Result<Vec<u8>, BrowserError> {
@@ -514,11 +555,8 @@ impl Shared {
         let params = &ev.params;
         match ev.method.as_str() {
             "Inspector.targetCrashed" => self.emit(BrowserEvent::Crashed),
-            "Page.javascriptDialogOpening" => {
-                self.st.lock().unwrap().dialog_open = true;
-                self.emit_dialog(params);
-            }
-            "Page.javascriptDialogClosed" => self.st.lock().unwrap().dialog_open = false,
+            "Page.javascriptDialogOpening" => self.emit_dialog(params),
+            "Page.javascriptDialogClosed" => self.st.lock().unwrap().dialog = None,
             "Page.fileChooserOpened" => self.on_file_chooser(params),
             "Runtime.bindingCalled" => self.on_bridge(params),
             "Page.frameNavigated" if params["frame"]["parentId"].is_null() => {
@@ -575,11 +613,13 @@ impl Shared {
         } else {
             ("The preview opened a dialog.".into(), None)
         };
-        self.emit(BrowserEvent::Dialog {
+        let dialog = BrowserEvent::Dialog {
             kind,
             message,
             default_prompt,
-        });
+        };
+        self.st.lock().unwrap().dialog = Some(dialog.clone());
+        self.emit(dialog);
     }
 
     fn on_request(&self, params: &Value) {
@@ -1056,7 +1096,8 @@ impl Browser {
                 viewport: vp,
                 poll: None,
                 last_input: None,
-                dialog_open: false,
+                dialog: None,
+                stale_shots: 0,
             }),
         });
         let event_task = tokio::spawn(handle_events(sh.clone(), rx, documents));
@@ -1133,15 +1174,13 @@ impl Browser {
     /// Resize and set touch emulation.
     pub async fn set_viewport(&self, v: Viewport) -> Result<(), BrowserError> {
         // Chrome would hold the touch call until the dialog closes, half resized.
-        if self.sh.st.lock().unwrap().dialog_open {
+        if self.sh.st.lock().unwrap().dialog.is_some() {
             return Err(BrowserError::DialogOpen);
         }
-        self.sh
-            .call(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width": v.width, "height": v.height, "deviceScaleFactor": v.dpr, "mobile": v.touch}),
-            )
-            .await?;
+        // A resize during a screenshot left Chrome drawing the old size for good:
+        // every later frame was withheld and the switch never ended.
+        let _no_shot = self.sh.shot.lock().await;
+        self.sh.apply_metrics(v).await?;
         self.sh
             .call(
                 "Emulation.setTouchEmulationEnabled",
@@ -1149,8 +1188,15 @@ impl Browser {
             )
             .await?;
         self.sh.reset_zoom().await;
-        self.sh.st.lock().unwrap().viewport = v;
+        let mut st = self.sh.st.lock().unwrap();
+        st.viewport = v;
+        st.stale_shots = 0;
         Ok(())
+    }
+
+    /// The JavaScript dialog the page has open, to show an operator who joins late.
+    pub fn open_dialog(&self) -> Option<BrowserEvent> {
+        self.sh.st.lock().unwrap().dialog.clone()
     }
 
     /// Start delivering verified viewport captures at up to four frames per second.
@@ -1269,8 +1315,8 @@ impl Browser {
         if let Some(t) = text {
             p["promptText"] = json!(t);
         }
-        // The flag clears on Chrome's closed event: the reply may come after
-        // the app has opened its next dialog.
+        // The open dialog clears on Chrome's closed event: the reply may come
+        // after the app has opened its next dialog.
         self.sh.call("Page.handleJavaScriptDialog", p).await?;
         Ok(())
     }

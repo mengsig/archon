@@ -150,7 +150,9 @@ a secret-named variable or flag (`DB_PASSWORD=…`, `PGPASSWORD=…`,
 `Authorization` header, a well-known token, and one that names a Compose
 project other than as `$COMPOSE_PROJECT_NAME`. Every `-p` after `compose`
 counts as a project name, so `run -p 8080:80` is refused too: publish ports
-in the compose file instead. A secret, or a path to one, is
+in the compose file instead. After `compose` nothing but
+`$COMPOSE_PROJECT_NAME` may be expanded (`$VAR`, `$(…)`, backticks), and a
+Compose call inside a quoted `sh -c` script is checked as well. A secret, or a path to one, is
 written as a whole variable (`$DB_PASSWORD` or `${DB_PASSWORD}`), never
 spelled out, and commands are read with the shell's quoting, so one with an
 unclosed quote is refused. The next session of the same repository tries

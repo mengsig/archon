@@ -44,6 +44,9 @@ const TOKEN_PREFIXES: [&str; 11] = [
 ];
 /// Characters that end a shell word and the command it belongs to.
 const OPERATORS: [char; 9] = [';', '&', '|', '(', ')', '`', '<', '>', '\n'];
+/// Characters that end a command in the raw reading; `(` and backticks stay
+/// inside it so an expansion after `compose` is seen there.
+const SEPARATORS: [char; 4] = [';', '&', '|', '\n'];
 /// Check a step's command: it parses as shell words, spells out no secret
 /// and names a Compose project only through [`COMPOSE_VARIABLE`].
 pub(super) fn check_command(field: &str, command: &str) -> Result<(), String> {
@@ -58,7 +61,9 @@ pub(super) fn check_command(field: &str, command: &str) -> Result<(), String> {
         return Err(refusal(field, &what));
     }
     compose_project_by_variable(field, &commands)?;
-    compose_project_by_variable(field, &raw_commands(command))
+    let raw = raw_commands(command);
+    compose_project_by_variable(field, &raw)?;
+    compose_expands_only_the_project(field, &raw)
 }
 
 /// Refuse a value spelled out in free text, read as raw words.
@@ -284,18 +289,44 @@ fn is_token(word: &str) -> bool {
         })
 }
 
-/// The command's simple commands as raw words with every quote dropped, so a
-/// Compose call inside a quoted `sh -c '…'` script is read as well.
+/// The command's simple commands as raw words with every quote and backslash
+/// dropped, so a Compose call inside a nested `sh -c '…'` script is read too.
 fn raw_commands(text: &str) -> Vec<Vec<String>> {
-    text.split(OPERATORS)
+    text.split(SEPARATORS)
         .map(|segment| {
             segment
                 .split_whitespace()
-                .map(|word| word.replace(['"', '\''], ""))
+                .map(|word| word.replace(['"', '\'', '\\'], ""))
                 .filter(|word| !word.is_empty())
                 .collect()
         })
         .collect()
+}
+
+/// The index of the word that runs Compose (`compose`, `docker-compose`,
+/// `podman-compose`, or a path to one), if the command has one.
+fn compose_position(words: &[String]) -> Option<usize> {
+    words.iter().position(|word| word.ends_with("compose"))
+}
+
+/// Deny by default: after `compose`, no word expands a variable or a command
+/// other than as the run's project, so no expansion can spell out `-p NAME`.
+fn compose_expands_only_the_project(field: &str, commands: &[Vec<String>]) -> Result<(), String> {
+    for words in commands {
+        let Some(compose) = compose_position(words) else {
+            continue;
+        };
+        let expands_else = words[compose + 1..].iter().any(|word| {
+            let value = project_option_value(word).unwrap_or(word);
+            (word.contains('$') || word.contains('`')) && !refers_to_run_project(value)
+        });
+        if expands_else {
+            return Err(format!(
+                "{field} expands a variable or command after compose; there only ${COMPOSE_VARIABLE} may be expanded, so write other values out"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A Compose project in a saved command is named only through
@@ -312,10 +343,7 @@ fn compose_project_by_variable(field: &str, commands: &[Vec<String>]) -> Result<
                 "{field} names a Compose project; write it as ${COMPOSE_VARIABLE}, which each run sets to its own name"
             ));
         }
-        let Some(compose) = words
-            .iter()
-            .position(|w| w == "compose" || w.ends_with("docker-compose"))
-        else {
+        let Some(compose) = compose_position(words) else {
             continue;
         };
         if !project_options_name_the_run(&words[compose + 1..]) {
@@ -340,12 +368,8 @@ fn project_options_name_the_run(words: &[String]) -> bool {
         let value = if word == "-p" || word == "--project-name" {
             i += 1;
             Some(words.get(i).map(String::as_str).unwrap_or_default())
-        } else if let Some(value) = word.strip_prefix("--project-name=") {
-            Some(value)
-        } else if let Some(value) = word.strip_prefix("-p") {
-            Some(value.strip_prefix('=').unwrap_or(value))
         } else {
-            None
+            project_option_value(word)
         };
         if value.is_some_and(|value| !refers_to_run_project(value)) {
             return false;
@@ -354,4 +378,14 @@ fn project_options_name_the_run(words: &[String]) -> bool {
     }
     debug_assert!(i >= words.len(), "every word after compose was read");
     true
+}
+
+/// The project a single-word option names: `-pNAME`, `-p=NAME` or
+/// `--project-name=NAME`.
+fn project_option_value(word: &str) -> Option<&str> {
+    if let Some(value) = word.strip_prefix("--project-name=") {
+        return Some(value);
+    }
+    let value = word.strip_prefix("-p")?;
+    Some(value.strip_prefix('=').unwrap_or(value))
 }

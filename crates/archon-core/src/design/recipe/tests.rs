@@ -198,6 +198,8 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "docker compose --profile web --env-file .env.dev up -d",
         "docker compose build web && docker compose run --rm web npm test",
         "sh -c 'docker compose -p \"$COMPOSE_PROJECT_NAME\" up -d'",
+        "sh -c \"docker compose -p \\\"\\$COMPOSE_PROJECT_NAME\\\" up -d\"",
+        "docker compose up -d 2>&1 | tee compose.log",
     ] {
         recipe(vec![step("stack", command)])
             .check()
@@ -227,6 +229,13 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "docker compose --project-name other up -d",
         "sh -c 'docker compose -p other up -d'",
         "docker compose -p \"$COMPOSE_PROJECT_NAME\" -p other up -d",
+        "sh -c 'docker compose -\\p other up -d'",
+        "sh -c 'docker comp\\ose -p other up -d'",
+        "P=-p; docker compose $P other up -d",
+        "docker compose $(echo -p) other up -d",
+        "docker compose `echo -p` other up -d",
+        "docker compose $'-p' other up -d",
+        "podman-compose -p other up -d",
     ] {
         let error = refused(&recipe(vec![step("stack", command)]));
         assert!(

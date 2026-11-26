@@ -1,0 +1,23 @@
+I've queued the work as item `qi_01M8AYM4BCT00JRFC4KD10W2QV` ("Implement retry_budget.py per SPEC.md with focused tests") in the `quality-retry-budget` repository. It runs through the `direct` pipeline with standard review. The repository ships locally, so the result is a local commit on a branch, not a push or PR.
+
+Acceptance criteria in the brief:
+- The documented API and behaviour in `SPEC.md` are preserved.
+- Every specified error and boundary case is handled.
+- Focused stdlib tests cover those cases, beyond the existing basic tests.
+- The full test suite is run and its result reported.
+- The commit uses the repository's configured git identity, with no tool attribution lines.
+
+I haven't read `SPEC.md` or the module myself; the worker will do that. The item finishing successfully will be the signal that the commit is ready. I'll report the outcome and the test result when it finishes.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and added 20 focused tests (23 total) in test_retry_budget.py. Committed as d9d1633 on archon/kd10w2qv-implement-retry-budget-py-per-spec-md-wi, on top of base b7eb0f1, with the repository's configured identity and no tool attribution. Before the change the suite errored 3/3 (NotImplementedError). After it, `python3 -B -m unittest` runs 23 tests, all OK. Validation covers built-in int only (bool and float rejected) and minimums, and runs before any early None return. Backoff saturates without large intermediates; Retry-After is an uncapped floor; the budget check returns None when elapsed+delay >= budget. Independent reviewer agt_01M8AYNK4NDE7HV6WGKPFHR08D (claude-haiku-5-5, medium) read the whole change against SPEC.md and passed it with no blocking findings. Follow-up, not blocking: bool rejection is only tested for attempt, elapsed_ms, base_ms and retry_after_ms; max_attempts, budget_ms and cap_ms share the same check but have no bool test. Nothing left running; no servers were started. Review: pass by agt_01M8AYNK4NDE7HV6WGKPFHR08D
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AYNK4NDE7HV6WGKPFHR08D)
+
+SHIPPED: commit d9d1633631bfad961a1b1cbba4f12e96ae42f5a5 on the run branch
+Branch `archon/kd10w2qv-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-qzljzhqb/archon-bench/work/20261126T033301Z/9dae240ecc0fd557d71f6238/quality-retry-budget holds it (2 files changed, 141 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8AYM4BCT00JRFC4KD10W2QV`; land it in `main`: `archon merge qi_01M8AYM4BCT00JRFC4KD10W2QV`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and added 20 focused tests (23 total) in test_retry_budget.py. Committed as d9d1633 on archon/kd10w2qv-implement-retry-budget-py-per-spec-md-wi, on top of base b7eb0f1, with the repository's configured identity and no tool attribution. Before the change the suite errored 3/3 (NotImplementedError). After it, `python3 -B -m unittest` runs 23 tests, all OK. Validation covers built-in int only (bool and float rejected) and minimums, and runs before any early None return. Backoff saturates without large intermediates; Retry-After is an uncapped floor; the budget check returns None when elapsed+delay >= budget. Independent reviewer agt_01M8AYNK4NDE7HV6WGKPFHR08D (claude-haiku-5-5, medium) read the whole change against SPEC.md and passed it with no blocking findings. Follow-up, not blocking: bool rejection is only tested for attempt, elapsed_ms, base_ms and retry_after_ms; max_attempts, budget_ms and cap_ms share the same check but have no bool test. Nothing left running; no servers were started. Review: pass by agt_01M8AYNK4NDE7HV6WGKPFHR08D
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AYNK4NDE7HV6WGKPFHR08D)
+
+SHIPPED: commit d9d1633631bfad961a1b1cbba4f12e96ae42f5a5 on the run branch

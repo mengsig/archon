@@ -1,0 +1,71 @@
+All four tickets are queued as separate `direct` items in the `long-backlog` repository, which holds `BACKLOG.md` and the `tasktracker` package. No `tasktracker` repository is registered separately.
+
+| Ticket | Item |
+|---|---|
+| TT-101: Reject impossible due dates | `qi_01M8AJE1XTD5A2NE7RRN22Z2WS` |
+| TT-102: RFC 4180 CSV export | `qi_01M8AJE3AZXCFHFFS6827FDVXE` |
+| TT-103: Search query syntax | `qi_01M8AJE4VGPMV4X35STJK5VMAB` |
+| TT-104: Undo | `qi_01M8AJE69P9XNC3J5W2YNYVYYV` |
+
+- **Scope:** Each brief has the ticket's full acceptance criteria, the standard-library-only rule, the test command, and a request for one commit per ticket.
+- **Review:** Each item has `standard` review. None of the tickets touch security, concurrency, migrations, public APIs or CI, so `strict` isn't needed.
+- **Shipping:** The repository ships `local`, so each item commits on its own local branch and nothing is pushed. Merging is yours to request.
+- **Parallelism:** The four tickets are independent and touch separate modules, so they run in parallel with no `depends_on`.
+
+I haven't read or run the code myself, and I won't until the items report back. I'll relay the outcomes and test results when they finish.
+
+Done: TT-102: RFC 4180 CSV export. TT-102 done. Commit 652239dd1466b0d0bf23bd1a0510b0d3f3273560 (tree 13e012f45fb6016aadd4388b5e529fa3a655a905) on archon/827fdvxe-tt-102-rfc-4180-csv-export. to_csv now produces RFC 4180 CSV: fields with comma, double quote, CR or LF are quoted with embedded quotes doubled, and every line including the header ends in CRLF. Changed tasktracker/export.py and tests/test_basic.py only. Checks: unittest suite 7/7 OK; py_compile OK. Review: one reviewer (agt_01M8AJF30XFBPWR4GK0QZ789ES) passed the branch head with no blocking findings; the non-blocking note is that tests do not cover a double quote inside a tag, which the code handles. Left open: nothing blocking. The reviewer's claude process (pid 2616690) was handed to me still running; it stops when this run ends. No services were started. Pushing and PR are left to Archon.
+
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJF30XFBPWR4GK0QZ789ES)
+
+SHIPPED: commit 652239dd1466b0d0bf23bd1a0510b0d3f3273560 on the run branch
+Branch `archon/827fdvxe-tt-102-rfc-4180-csv-export` in /home/mengsig/.local/share/archon-bench/rerun-165/r-izk6yqon/archon-bench/work/20261125T235951Z/d801be8e002f239228499f54/long-backlog holds it (2 files changed, 49 insertions(+), 5 deletions(-)). Review: `archon diff qi_01M8AJE3AZXCFHFFS6827FDVXE`; land it in `main`: `archon merge qi_01M8AJE3AZXCFHFFS6827FDVXE`.
+
+Done: TT-101: Reject impossible due dates. TT-101 done in one commit, 15f6271 (tree 3dd703f8c6ce59c9866a9fd57505e40ae57c332e), on archon/rn22z2ws-tt-101-reject-impossible-due-dates, committed under the repo's configured identity (mengsig). parse_due now raises InvalidDate (a ValueError subclass, message contains the original text) for impossible calendar dates, unsupported forms, -Nd / unsigned offsets and out-of-range offsets. +Nd and +0d are relative to today; today/tomorrow still work; matching is case-insensitive and trims whitespace. Full check `python3 -m unittest discover -s tests -t .` passes all 12 tests (the 4 original plus 8 new in tests/test_dates.py). Review agt_01M8AJF8DYEJW0SPC4M4SZPRCD: pass, no blocking findings. Non-blocking notes: the [0-9] regexes now reject Unicode digits the old code accepted, and the reviewer's test-run __pycache__ was removed. Nothing left running; the reviewer's leftover process had already exited. Not done: no pushes, no PR, no changes to other tickets. Before: 2026-02-30 became 2026-02-28. Now: InvalidDate. Review: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJF8DYEJW0SPC4M4SZPRCD)
+
+SHIPPED: commit 15f6271ed7eb713c00edcff1ae530890362f4b62 on the run branch
+Branch `archon/rn22z2ws-tt-101-reject-impossible-due-dates` in /home/mengsig/.local/share/archon-bench/rerun-165/r-izk6yqon/archon-bench/work/20261125T235951Z/d801be8e002f239228499f54/long-backlog holds it (2 files changed, 78 insertions(+), 9 deletions(-)). Review: `archon diff qi_01M8AJE1XTD5A2NE7RRN22Z2WS`; land it in `main`: `archon merge qi_01M8AJE1XTD5A2NE7RRN22Z2WS`.
+
+Done: TT-103: Search query syntax. Implemented TT-103 (search query syntax) in commit cb90161 on archon/tjk5vmab-tt-103-search-query-syntax, on top of main eb77674 (base eb776740). Changed tasktracker/search.py and added tests/test_search.py. Behaviour: whitespace-split terms with double-quoted phrases; all terms AND-ed; bare words/phrases match titles case-insensitively; tag:NAME exact and case-insensitive; status:open/done; unknown fields, unknown statuses, empty tag:/status: values and unterminated quotes raise QueryError. Blank query matches all, input order kept. Checks: `python3 -m unittest discover -s tests -t .` gives 18 tests OK (before: 4 OK). Before/after on sample queries: "fix login" [] -> match; tag:work [] -> match; foo:bar [] silently -> QueryError. Review: reviewer agt_01M8AJFWX8J7TM018J6CDBCGZ9 passed head cb90161 with no blocking findings. Open non-blocking follow-ups: a quote in the middle of a term is stripped (x"y z" -> "xy z"), unspecified and untested; title matching uses str.lower() rather than casefold(). Nothing pushed; no processes started. Untracked __pycache__ dirs left uncommitted.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJFWX8J7TM018J6CDBCGZ9)
+
+SHIPPED: commit cb90161ab787a95d9cc2098d3813c1ecbff028e1 on the run branch
+Branch `archon/tjk5vmab-tt-103-search-query-syntax` in /home/mengsig/.local/share/archon-bench/rerun-165/r-izk6yqon/archon-bench/work/20261125T235951Z/d801be8e002f239228499f54/long-backlog holds it (2 files changed, 170 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8AJE4VGPMV4X35STJK5VMAB`; land it in `main`: `archon merge qi_01M8AJE4VGPMV4X35STJK5VMAB`.
+
+Done: TT-104: Undo. TT-104 (Undo) is implemented on archon/2ynyvyyv-tt-104-undo as one commit, 06c9366 (tree 2786b58). TaskStore records each successful add, complete and delete. undo() reverts the most recent unundone entry, LIFO across the three kinds. Undoing an add removes the task, undoing a complete restores the previous status, and undoing a delete restores a copy of the task under the same id. Ids come from a counter that undo never decrements. With nothing to undo, undo() raises NothingToUndo, and failed operations are not recorded. Checks: `python3 -m unittest discover -s tests -t .` passes 11 tests (4 existing, 7 new in tests/test_undo.py). Review: reviewer agt_01M8AJGDXRXX7T3F8D34RKPPRQ passed head 06c9366 with non-blocking follow-ups only. Open follow-ups: a delete-undo test with a non-None due date, and a failed-op test that checks the next undo target. Assumption: undoing a complete on an already-done task restores DONE rather than forcing OPEN. Nothing is pushed and no processes are running. The first reviewer (agt_01M8AJFH99P1E07JVMZ5W2DKJ6) returned no readable verdict and was replaced per the operator's instruction.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJGDXRXX7T3F8D34RKPPRQ)
+
+SHIPPED: commit 06c936666b52e5faef6769eba4c4190242521c78 on the run branch
+Branch `archon/2ynyvyyv-tt-104-undo` in /home/mengsig/.local/share/archon-bench/rerun-165/r-izk6yqon/archon-bench/work/20261125T235951Z/d801be8e002f239228499f54/long-backlog holds it (2 files changed, 109 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8AJE69P9XNC3J5W2YNYVYYV`; land it in `main`: `archon merge qi_01M8AJE69P9XNC3J5W2YNYVYYV`.
+
+TT-104 (Undo) is implemented on archon/2ynyvyyv-tt-104-undo as one commit, 06c9366 (tree 2786b58). TaskStore records each successful add, complete and delete. undo() reverts the most recent unundone entry, LIFO across the three kinds. Undoing an add removes the task, undoing a complete restores the previous status, and undoing a delete restores a copy of the task under the same id. Ids come from a counter that undo never decrements. With nothing to undo, undo() raises NothingToUndo, and failed operations are not recorded. Checks: `python3 -m unittest discover -s tests -t .` passes 11 tests (4 existing, 7 new in tests/test_undo.py). Review: reviewer agt_01M8AJGDXRXX7T3F8D34RKPPRQ passed head 06c9366 with non-blocking follow-ups only. Open follow-ups: a delete-undo test with a non-None due date, and a failed-op test that checks the next undo target. Assumption: undoing a complete on an already-done task restores DONE rather than forcing OPEN. Nothing is pushed and no processes are running. The first reviewer (agt_01M8AJFH99P1E07JVMZ5W2DKJ6) returned no readable verdict and was replaced per the operator's instruction.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJGDXRXX7T3F8D34RKPPRQ)
+
+SHIPPED: commit 06c936666b52e5faef6769eba4c4190242521c78 on the run branch
+
+Implemented TT-103 (search query syntax) in commit cb90161 on archon/tjk5vmab-tt-103-search-query-syntax, on top of main eb77674 (base eb776740). Changed tasktracker/search.py and added tests/test_search.py. Behaviour: whitespace-split terms with double-quoted phrases; all terms AND-ed; bare words/phrases match titles case-insensitively; tag:NAME exact and case-insensitive; status:open/done; unknown fields, unknown statuses, empty tag:/status: values and unterminated quotes raise QueryError. Blank query matches all, input order kept. Checks: `python3 -m unittest discover -s tests -t .` gives 18 tests OK (before: 4 OK). Before/after on sample queries: "fix login" [] -> match; tag:work [] -> match; foo:bar [] silently -> QueryError. Review: reviewer agt_01M8AJFWX8J7TM018J6CDBCGZ9 passed head cb90161 with no blocking findings. Open non-blocking follow-ups: a quote in the middle of a term is stripped (x"y z" -> "xy z"), unspecified and untested; title matching uses str.lower() rather than casefold(). Nothing pushed; no processes started. Untracked __pycache__ dirs left uncommitted.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJFWX8J7TM018J6CDBCGZ9)
+
+SHIPPED: commit cb90161ab787a95d9cc2098d3813c1ecbff028e1 on the run branch
+
+TT-102 done. Commit 652239dd1466b0d0bf23bd1a0510b0d3f3273560 (tree 13e012f45fb6016aadd4388b5e529fa3a655a905) on archon/827fdvxe-tt-102-rfc-4180-csv-export. to_csv now produces RFC 4180 CSV: fields with comma, double quote, CR or LF are quoted with embedded quotes doubled, and every line including the header ends in CRLF. Changed tasktracker/export.py and tests/test_basic.py only. Checks: unittest suite 7/7 OK; py_compile OK. Review: one reviewer (agt_01M8AJF30XFBPWR4GK0QZ789ES) passed the branch head with no blocking findings; the non-blocking note is that tests do not cover a double quote inside a tag, which the code handles. Left open: nothing blocking. The reviewer's claude process (pid 2616690) was handed to me still running; it stops when this run ends. No services were started. Pushing and PR are left to Archon.
+
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJF30XFBPWR4GK0QZ789ES)
+
+SHIPPED: commit 652239dd1466b0d0bf23bd1a0510b0d3f3273560 on the run branch
+
+TT-101 done in one commit, 15f6271 (tree 3dd703f8c6ce59c9866a9fd57505e40ae57c332e), on archon/rn22z2ws-tt-101-reject-impossible-due-dates, committed under the repo's configured identity (mengsig). parse_due now raises InvalidDate (a ValueError subclass, message contains the original text) for impossible calendar dates, unsupported forms, -Nd / unsigned offsets and out-of-range offsets. +Nd and +0d are relative to today; today/tomorrow still work; matching is case-insensitive and trims whitespace. Full check `python3 -m unittest discover -s tests -t .` passes all 12 tests (the 4 original plus 8 new in tests/test_dates.py). Review agt_01M8AJF8DYEJW0SPC4M4SZPRCD: pass, no blocking findings. Non-blocking notes: the [0-9] regexes now reject Unicode digits the old code accepted, and the reviewer's test-run __pycache__ was removed. Nothing left running; the reviewer's leftover process had already exited. Not done: no pushes, no PR, no changes to other tickets. Before: 2026-02-30 became 2026-02-28. Now: InvalidDate. Review: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AJF8DYEJW0SPC4M4SZPRCD)
+
+SHIPPED: commit 15f6271ed7eb713c00edcff1ae530890362f4b62 on the run branch

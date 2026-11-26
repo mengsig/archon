@@ -1,0 +1,32 @@
+{
+  "stamp": "20261126T044203Z",
+  "started_at": "2026-11-26T04:42:03.348871736Z",
+  "finished_at": "2026-11-26T04:43:35.096803381Z",
+  "archon_commit": "421720e67fa55670e84ed89458b289e91c363f0a",
+  "versions": {
+    "aetherd": "1.4.3",
+    "archon": "archon 1.6.4"
+  },
+  "models": {
+    "archon": "claude-code/claude-haiku-5-5"
+  },
+  "effort": "medium",
+  "arms": [
+    "archon"
+  ],
+  "tasks": [
+    "review-seeded-bug"
+  ],
+  "trials": 1,
+  "parallel": 1,
+  "timeout_factor": 1.0,
+  "max_usd": 5.0,
+  "max_trials": 100,
+  "planned": 1,
+  "completed": 1,
+  "skipped": 0,
+  "spent_usd": 0.01134694,
+  "spent_bound": "exact",
+  "unpriced_trials": 0,
+  "stopped_reason": null
+}

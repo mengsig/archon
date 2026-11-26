@@ -1,0 +1,308 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8AS30WTB91EF8SFKJGJ3CTB",
+      "repo": "repo_01M8AS2Q5A6AMGC6G9FNHEG4P8",
+      "pipeline": "direct",
+      "title": "Implement safe_extract.py per SPEC.md with focused tests",
+      "brief": "Operator request (verbatim): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nRepository: quality-safe-extract. Read SPEC.md at the repository root and implement safe_extract.py exactly to it: keep the documented public API and signatures, raise every error the spec names under the conditions it names, and cover each boundary case the spec lists. Extend the existing test suite with focused tests for each specified error and boundary case; do not just rely on the existing basic tests. Use only the Python standard library. Keep functions under 60 lines, validate inputs at the boundary, never swallow exceptions, and keep path-handling safe (no path traversal, no symlink escape) if the spec implies it. Run the test suite and make it pass. Commit the work with a clear message; do not add any tool or AI attribution lines to the commit.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "safe-extract",
+        "operator-request"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8AS30WTB91EF8SFKJGJ3CTB",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-26T01:56:27.677156117Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-26T01:56:27.711177202Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-26T01:56:27.677156117Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "review:strict"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8AS30YJBJY2PMPSQFZHT6ZR",
+        "summary": "Implemented safe_extract.extract per SPEC.md on branch archon/kjgj3ctb-implement-safe-extract-py-per-spec-md-wi, with 44 stdlib unittest tests. Head 659429b (tree 7b08bbb), two commits on main base 045aa39: a0528d9 (implementation and tests) and 659429b (regression tests for unexpected OSError propagation and late batch collisions). The whole batch is validated before any filesystem write: list-only batch, (name, bytes) tuples, relative POSIX names with no empty, '.', '..', backslash, colon or NUL components, no duplicates or file/directory collisions, and a real non-symlink root with no symlink or existing target below it. Only then are parents created and files written with O_EXCL. Check run on the final tree: `python3 -B -W error -m unittest` gives 44 tests OK. Review: three whole-change reviews ran. Reviewers 1 and 3 passed a0528d9. Reviewer 2 failed a0528d9 on a missing test for propagated OS errors; the fix is 659429b, and a delta reviewer passed it. Open non-blocking follow-ups: a root reached through a symlinked ancestor is accepted, which the spec arguably allows; os.path.abspath normalizes '..' in the root lexically; case-insensitive filesystems can hit FileExistsError mid-batch; overlong components can fail mid-write, since rollback is out of scope; and the NUL-rejection test covers only top-level names. Nothing was started as a server. Left running: three claude -p child processes (2036695, 2038255, 2045053) belong to completed reviewer agents, not to me; they stop when the run ends.\nreview: pass via reviewers agt_01M8AS7M9HXKZV033R8WK3B6YT, agt_01M8AS7TYY6AMFZ6830Z4TQCMR, agt_01M8AS81WJYNKXMJDPMCAMTYZM (whole-change, fail then fixed), agt_01M8ASAVGJJ3ZW2GESKXBABXJ1 (delta on 659429b).\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AS7M9HXKZV033R8WK3B6YT), claude-code/claude-haiku-5-5 (agent agt_01M8AS7TYY6AMFZ6830Z4TQCMR), claude-code/claude-haiku-5-5 (agent agt_01M8AS81WJYNKXMJDPMCAMTYZM), claude-code/claude-haiku-5-5 (agent agt_01M8ASAVGJJ3ZW2GESKXBABXJ1)\n\nSHIPPED: commit 659429be77f23a8ddba3305315868d589f4471af on the run branch"
+      },
+      "created_at": "2026-11-26T01:56:27.674206044Z",
+      "updated_at": "2026-11-26T02:01:29.770559537Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8AS30YJBJY2PMPSQFZHT6ZR",
+        "item": "qi_01M8AS30WTB91EF8SFKJGJ3CTB",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8AS315F7FMJ24B4NYYXN8P9",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-vtf40b_o/archon-bench/work/20261126T015617Z/2a123d9b65f62568edfec9bc/.archon/data/worktrees/quality-safe-extract/qi_01M8AS30WTB91EF8SFKJGJ3CTB",
+        "branch": "archon/kjgj3ctb-implement-safe-extract-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract per SPEC.md on branch archon/kjgj3ctb-implement-safe-extract-py-per-spec-md-wi, with 44 stdlib unittest tests. Head 659429b (tree 7b08bbb), two commits on main base 045aa39: a0528d9 (implementation and tests) and 659429b (regression tests for unexpected OSError propagation and late batch collisions). The whole batch is validated before any filesystem write: list-only batch, (name, bytes) tuples, relative POSIX names with no empty, '.', '..', backslash, colon or NUL components, no duplicates or file/directory collisions, and a real non-symlink root with no symlink or existing target below it. Only then are parents created and files written with O_EXCL. Check run on the final tree: `python3 -B -W error -m unittest` gives 44 tests OK. Review: three whole-change reviews ran. Reviewers 1 and 3 passed a0528d9. Reviewer 2 failed a0528d9 on a missing test for propagated OS errors; the fix is 659429b, and a delta reviewer passed it. Open non-blocking follow-ups: a root reached through a symlinked ancestor is accepted, which the spec arguably allows; os.path.abspath normalizes '..' in the root lexically; case-insensitive filesystems can hit FileExistsError mid-batch; overlong components can fail mid-write, since rollback is out of scope; and the NUL-rejection test covers only top-level names. Nothing was started as a server. Left running: three claude -p child processes (2036695, 2038255, 2045053) belong to completed reviewer agents, not to me; they stop when the run ends.\nreview: pass via reviewers agt_01M8AS7M9HXKZV033R8WK3B6YT, agt_01M8AS7TYY6AMFZ6830Z4TQCMR, agt_01M8AS81WJYNKXMJDPMCAMTYZM (whole-change, fail then fixed), agt_01M8ASAVGJJ3ZW2GESKXBABXJ1 (delta on 659429b).\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AS7M9HXKZV033R8WK3B6YT), claude-code/claude-haiku-5-5 (agent agt_01M8AS7TYY6AMFZ6830Z4TQCMR), claude-code/claude-haiku-5-5 (agent agt_01M8AS81WJYNKXMJDPMCAMTYZM), claude-code/claude-haiku-5-5 (agent agt_01M8ASAVGJJ3ZW2GESKXBABXJ1)\n\nSHIPPED: commit 659429be77f23a8ddba3305315868d589f4471af on the run branch"
+        },
+        "cost_usd": 0.10526299,
+        "started_at": "2026-11-26T01:56:27.893395094Z",
+        "finished_at": "2026-11-26T02:01:29.770559537Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8AS314SAH8ET0Q6V0CHX28P",
+        "run": "prun_01M8AS30YJBJY2PMPSQFZHT6ZR",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8AS316N6CZEQ2GFKSRNM0PK",
+        "aether_task": "tsk_01M8AS316NZ9QDWEMPD3SZMK0T",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "verdict_note": "missing_verdict_line",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented safe_extract.extract per SPEC.md on branch archon/kjgj3ctb-implement-safe-extract-py-per-spec-md-wi, with 44 stdlib unittest tests. Head 659429b (tree 7b08bbb), two commits on main base 045aa39: a0528d9 (implementation and tests) and 659429b (regression tests for unexpected OSError propagation and late batch collisions). The whole batch is validated before any filesystem write: list-only batch, (name, bytes) tuples, relative POSIX names with no empty, '.', '..', backslash, colon or NUL components, no duplicates or file/directory collisions, and a real non-symlink root with no symlink or existing target below it. Only then are parents created and files written with O_EXCL. Check run on the final tree: `python3 -B -W error -m unittest` gives 44 tests OK. Review: three whole-change reviews ran. Reviewers 1 and 3 passed a0528d9. Reviewer 2 failed a0528d9 on a missing test for propagated OS errors; the fix is 659429b, and a delta reviewer passed it. Open non-blocking follow-ups: a root reached through a symlinked ancestor is accepted, which the spec arguably allows; os.path.abspath normalizes '..' in the root lexically; case-insensitive filesystems can hit FileExistsError mid-batch; overlong components can fail mid-write, since rollback is out of scope; and the NUL-rejection test covers only top-level names. Nothing was started as a server. Left running: three claude -p child processes (2036695, 2038255, 2045053) belong to completed reviewer agents, not to me; they stop when the run ends.\nreview: pass via reviewers agt_01M8AS7M9HXKZV033R8WK3B6YT, agt_01M8AS7TYY6AMFZ6830Z4TQCMR, agt_01M8AS81WJYNKXMJDPMCAMTYZM (whole-change, fail then fixed), agt_01M8ASAVGJJ3ZW2GESKXBABXJ1 (delta on 659429b).",
+        "structured": {
+          "checks": [
+            "python3 -B -W error -m unittest (44 tests, OK, on tree 7b08bbb3f4559c757214c4a80b06ebe363f28d4f)"
+          ],
+          "commit": "659429be77f23a8ddba3305315868d589f4471af",
+          "evidence": [
+            {
+              "after": "Ran 44 tests in 0.009s\n\nOK",
+              "before": "raise NotImplementedError (safe_extract.py at 045aa39)",
+              "caption": "Before: the stub raises NotImplementedError; after: the full suite passes on the final head",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "659429be77f23a8ddba3305315868d589f4471af",
+          "pr": {
+            "body": "Approach: extract() validates the list, the root (real non-symlink directory), each entry (tuple of (str, bytes), relative POSIX name with no empty, '.', '..', backslash, colon or NUL component, valid UTF-8), duplicate names and file/directory collisions in the batch, and filesystem targets (each existing ancestor a real directory, target absent, no symlink followed). Only then are missing parents created and files written with O_EXCL (no overwrite, no link following). Key files: safe_extract.py, test_safe_extract.py. Checks: python3 -B -W error -m unittest, 44 OK. Assumptions: entries must be tuples (lists rejected); data must be bytes (bytearray rejected); names are not normalized. Limits: no rollback on OS errors (spec scope); case-insensitive collisions and overlong components can still fail mid-write; a symlinked ancestor above root is allowed.",
+            "rubric_note": "risk high: security-sensitive filesystem write validation, new module with no callers",
+            "summary": "made safe extraction happen: extract(entries, root) validates the whole batch, then writes regular files. now rejects every spec error before any write. before: NotImplementedError stub, now: 44 passing tests covering each error and boundary case.",
+            "title": "Implement safe_extract.extract per SPEC.md with focused tests"
+          },
+          "review": {
+            "reviewed_head": "659429be77f23a8ddba3305315868d589f4471af",
+            "reviewer_agents": [
+              "agt_01M8AS7M9HXKZV033R8WK3B6YT",
+              "agt_01M8AS7TYY6AMFZ6830Z4TQCMR",
+              "agt_01M8AS81WJYNKXMJDPMCAMTYZM",
+              "agt_01M8ASAVGJJ3ZW2GESKXBABXJ1"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8AS7M9HXKZV033R8WK3B6YT",
+                "base": "045aa39790dc6e0921ce47aafcb14a2ba4cdee3b",
+                "findings": 5,
+                "head": "a0528d956fb8fcf2a0eaa9845a2b3d923b231ff5",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8AS7TYY6AMFZ6830Z4TQCMR",
+                "base": "045aa39790dc6e0921ce47aafcb14a2ba4cdee3b",
+                "findings": 3,
+                "head": "a0528d956fb8fcf2a0eaa9845a2b3d923b231ff5",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8AS81WJYNKXMJDPMCAMTYZM",
+                "base": "045aa39790dc6e0921ce47aafcb14a2ba4cdee3b",
+                "findings": 7,
+                "head": "a0528d956fb8fcf2a0eaa9845a2b3d923b231ff5",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8ASAVGJJ3ZW2GESKXBABXJ1",
+                "base": "a0528d956fb8fcf2a0eaa9845a2b3d923b231ff5",
+                "findings": 1,
+                "head": "659429be77f23a8ddba3305315868d589f4471af",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8AS7M9HXKZV033R8WK3B6YT",
+              "agt_01M8AS7TYY6AMFZ6830Z4TQCMR",
+              "agt_01M8AS81WJYNKXMJDPMCAMTYZM",
+              "agt_01M8ASAVGJJ3ZW2GESKXBABXJ1"
+            ],
+            "verdict": "pass"
+          },
+          "risk": {
+            "level": "high",
+            "why": "Security-sensitive path validation that gates all writes (traversal, symlink, overwrite rules). Only safe_extract.py and test_safe_extract.py change; the module has no callers. All three whole-change reviewers and the delta reviewer kept high."
+          },
+          "tree": "7b08bbb3f4559c757214c4a80b06ebe363f28d4f"
+        },
+        "cost_usd": 0.10526299,
+        "started_at": "2026-11-26T01:56:27.929360845Z",
+        "finished_at": "2026-11-26T02:01:24.929484910Z"
+      }
+    ],
+    "spent_usd": 0.10526299,
+    "gates": [],
+    "delegations": {
+      "stg_01M8AS314SAH8ET0Q6V0CHX28P": {
+        "direct_usd": 0.05285973000000001,
+        "delegated_usd": 0.05240325999999999,
+        "agents": [
+          {
+            "agent": "agt_01M8AS7M9HXKZV033R8WK3B6YT",
+            "parent": "agt_01M8AS316N6CZEQ2GFKSRNM0PK",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0113698
+          },
+          {
+            "agent": "agt_01M8AS7TYY6AMFZ6830Z4TQCMR",
+            "parent": "agt_01M8AS316N6CZEQ2GFKSRNM0PK",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01708274
+          },
+          {
+            "agent": "agt_01M8AS81WJYNKXMJDPMCAMTYZM",
+            "parent": "agt_01M8AS316N6CZEQ2GFKSRNM0PK",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01576332
+          },
+          {
+            "agent": "agt_01M8ASAVGJJ3ZW2GESKXBABXJ1",
+            "parent": "agt_01M8AS316N6CZEQ2GFKSRNM0PK",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.008187400000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-26T01:56:27.677156117Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-26T01:56:27.711177202Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-26T01:56:27.677156117Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

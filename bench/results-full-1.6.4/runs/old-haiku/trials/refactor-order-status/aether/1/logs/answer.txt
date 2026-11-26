@@ -14,6 +14,6 @@ The `OrderStatus` refactor is committed as `5df26f7` on `main`. `cargo test` pas
 **Decisions to review**
 - **`report::status_counts` now returns `Vec<(OrderStatus, usize)>`** instead of `Vec<(String, usize)>`. This is a public signature change. The printed output is identical. If callers depend on the `String` type, say so and I'll switch it back.
 - **I left out the `Co-Authored-By` trailer** from the commit. CLAUDE.md says not to attribute commits to Claude, and it takes precedence over the attribution reminder.
-- **The commit uses the repo's configured git identity**, `mengsig` with `marcus.engsig@tii.ae`. That email is not the `mengsig@icloud.com` address you gave me. If you want the commit under the iCloud address, the author needs amending.
+- **The commit uses the repo's configured git identity**, `mengsig` with `[redacted-email]`. That email is not the `[redacted-email]` address you gave me. If you want the commit under the iCloud address, the author needs amending.
 - **The `"lost"` input in one test** is an invalid status, not one of the four names, so I kept it as a literal.
 - **Toolchain:** `cargo` is not on the default PATH here, so I ran it from `~/.cargo/bin`.

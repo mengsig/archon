@@ -80,9 +80,9 @@ class ReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
             source = Path(directory) / 'source'
             target = Path(directory) / 'target'
-            email = b'person@example.invalid'
+            email = b'someone@' + b'example-mail.test'
             source.write_bytes(b'answer ' + email)
-            collect.copy_sanitized(source, target, email)
+            collect.copy_sanitized(source, target)
             self.assertEqual(source.read_bytes(), b'answer ' + email)
             self.assertEqual(target.read_bytes(), b'answer [redacted-email]')
 

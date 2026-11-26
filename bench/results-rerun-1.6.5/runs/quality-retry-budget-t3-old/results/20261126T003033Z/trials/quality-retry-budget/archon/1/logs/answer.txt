@@ -1,0 +1,23 @@
+I've queued the work as item `qi_01M8AM65YJ424ZRAMD2CY6M121` on the `quality-retry-budget` repository, using the `direct` pipeline. It is not done yet.
+
+- **What the item does:** one agent reads `SPEC.md`, implements `retry_budget.py` against every documented API signature, behaviour and error case, adds focused standard-library tests for each error and boundary case, and commits on the current branch.
+- **Review:** `standard` review, since the module is small but its errors and boundaries are easy to get subtly wrong.
+- **Shipping:** the repository ships `local`, so the result is a local commit, not a pull request or push.
+- **Effort:** I first asked for `high` effort, but the configured maximum is `medium`, so the item runs at `medium` on a balanced-tier model. Raising the ceiling needs the operator to change the setting. I have not done that.
+
+I haven't read `SPEC.md` or touched the repository myself; the item's agent does that. I'll report back when it finishes.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay per SPEC.md in retry_budget.py with focused tests in test_retry_budget.py. Both were already committed at f930309 on archon/2cy6m121-implement-retry-budget-py-per-spec-md-wi, and I found no defects, so no code changed in this pass. The implementation validates every argument as a built-in int before any early return, returns None at the attempt limit or when elapsed+delay reaches the budget, computes capped backoff without large powers, and applies Retry-After as an uncapped floor. Check run: `python3 -m unittest -v test_retry_budget` from the worktree gave Ran 27 tests, OK. The tree is clean, with __pycache__ removed. Reviewer agt_01M8AM9PTA4JRV7HB9WENXWDC8 read the whole change from base 3a371136 to head f930309 and passed it with no findings, after reading SPEC.md and rerunning the suite. Nothing is left open. The run shares this worktree and does not push.
+REVIEW: pass (agt_01M8AM9PTA4JRV7HB9WENXWDC8)
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AM9PTA4JRV7HB9WENXWDC8)
+
+SHIPPED: commit f9303099683aa8a8e0eaef831004393fe02b80ad on the run branch
+Branch `archon/2cy6m121-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-c342us42/archon-bench/work/20261126T003033Z/cead716db089093520bc7280/quality-retry-budget holds it (2 files changed, 156 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8AM65YJ424ZRAMD2CY6M121`; land it in `main`: `archon merge qi_01M8AM65YJ424ZRAMD2CY6M121`.
+
+Implemented retry_delay per SPEC.md in retry_budget.py with focused tests in test_retry_budget.py. Both were already committed at f930309 on archon/2cy6m121-implement-retry-budget-py-per-spec-md-wi, and I found no defects, so no code changed in this pass. The implementation validates every argument as a built-in int before any early return, returns None at the attempt limit or when elapsed+delay reaches the budget, computes capped backoff without large powers, and applies Retry-After as an uncapped floor. Check run: `python3 -m unittest -v test_retry_budget` from the worktree gave Ran 27 tests, OK. The tree is clean, with __pycache__ removed. Reviewer agt_01M8AM9PTA4JRV7HB9WENXWDC8 read the whole change from base 3a371136 to head f930309 and passed it with no findings, after reading SPEC.md and rerunning the suite. Nothing is left open. The run shares this worktree and does not push.
+REVIEW: pass (agt_01M8AM9PTA4JRV7HB9WENXWDC8)
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AM9PTA4JRV7HB9WENXWDC8)
+
+SHIPPED: commit f9303099683aa8a8e0eaef831004393fe02b80ad on the run branch

@@ -1,0 +1,38 @@
+The rate limiter work is queued as item `qi_01M89XXVM4FMR74QXE866RPD9A` on the `feature-token-bucket` repository. I haven't edited the code myself, since the orchestrator doesn't change repositories.
+
+**What the agent is told:** implement `SPEC.md` exactly in `ratelimit.py`, covering its error cases and edge cases, and add tests for those beyond the basics in `test_ratelimit.py`. Use only the standard library and commit on the item's branch.
+
+**Choices I made:**
+- **Pipeline `direct`:** one author builds and checks it, which fits a single self-contained module.
+- **Review `standard`:** the spec's edge cases are where a slip could hide, so I took one reviewer rather than none.
+- **Model:** balanced tier at medium effort.
+- **Shipping:** the repository ships `local`, so the work is committed on a local branch and not pushed or opened as a PR.
+- **Notification:** tagged `notify`, so you hear when it finishes, not only on failure.
+
+I haven't seen the spec or the existing stubs, so I can't yet say how hard the edge cases are. I'll report the outcome when the item finishes.
+
+Done: Implement rate limiter in ratelimit.py per SPEC.md. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (stdlib only) and added 16 tests for the spec's error and edge cases. Committed as 8bbf045 on archon/866rpd9a-implement-rate-limiter-in-ratelimit-py-p, on top of base 02e227f; no push. Checks: `python3 -m unittest -v test_ratelimit` gives 19 tests, OK (before: the 3 existing tests errored with NotImplementedError); py_compile passes. No linter is installed here, so lint was not run. Review: one reviewer (agt_01M89Y043CQMYQS5T73C5QQ7Y7, claude-haiku-5-5, medium) passed head 8bbf045 with no blocking findings, risk medium. Open follow-up (non-blocking): NaN is accepted for capacity, refill_per_sec and n; try_acquire(nan) returns True and corrupts the token count. Suggested fix: reject non-finite values with math.isfinite and add tests. Not applied, to keep the reviewed head unchanged. Nothing was started that is still running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89Y043CQMYQS5T73C5QQ7Y7)
+
+SHIPPED: commit 8bbf0453b3b65b569ff002f16bdf53019a99ec3d on the run branch
+Branch `archon/866rpd9a-implement-rate-limiter-in-ratelimit-py-p` in /home/mengsig/.local/share/archon-bench/rerun-165/r-8zgbvc1y/archon-bench/work/20261125T180135Z/80f4da7db3122aa4cf1c0338/feature-token-bucket holds it (2 files changed, 205 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M89XXVM4FMR74QXE866RPD9A`; land it in `main`: `archon merge qi_01M89XXVM4FMR74QXE866RPD9A`.
+
+Done: Reject non-finite values in rate limiter constructors and try_acquire. Rejected NaN and infinity for capacity, refill_per_sec and n in ratelimit.py, with ValueError and the same messages style as the existing checks. Added 4 tests in test_ratelimit.py. Commit deb0e1396a413692f8a7d6169081f38368213dd5 on archon/866rpd9a-implement-rate-limiter-in-ratelimit-py-p, tree 86b60f8b88619315cc14cd181cbac72d0e904117. Before: try_acquire(nan) returned True and corrupted the token count. Now: 23 tests pass (19 before); 7 new tests fail on the original code. Whole-branch review from 02e227f passed with no blocking findings; a delta review from 8bbf045 also passed. Left open, non-blocking: huge finite int n raises OverflowError instead of ValueError; max_keys not type-checked; no test for KeyedLimiter with -inf. SPEC.md unchanged, per the brief. Nothing left running from this stage except the untracked __pycache__ in the worktree, which is not committed. Review: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89Y4A8G3Z21M8ZY968462NQ), claude-code/claude-haiku-5-5 (agent agt_01M89Y308RQK1P0YA5E56XV0GV)
+
+SHIPPED: commit deb0e1396a413692f8a7d6169081f38368213dd5 on the run branch
+Branch `archon/866rpd9a-implement-rate-limiter-in-ratelimit-py-p` in /home/mengsig/.local/share/archon-bench/rerun-165/r-8zgbvc1y/archon-bench/work/20261125T180135Z/80f4da7db3122aa4cf1c0338/feature-token-bucket holds it (2 files changed, 247 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M89Y1S6T6VJ8SQFV4FSRZMY9`; land it in `main`: `archon merge qi_01M89Y1S6T6VJ8SQFV4FSRZMY9`.
+
+Rejected NaN and infinity for capacity, refill_per_sec and n in ratelimit.py, with ValueError and the same messages style as the existing checks. Added 4 tests in test_ratelimit.py. Commit deb0e1396a413692f8a7d6169081f38368213dd5 on archon/866rpd9a-implement-rate-limiter-in-ratelimit-py-p, tree 86b60f8b88619315cc14cd181cbac72d0e904117. Before: try_acquire(nan) returned True and corrupted the token count. Now: 23 tests pass (19 before); 7 new tests fail on the original code. Whole-branch review from 02e227f passed with no blocking findings; a delta review from 8bbf045 also passed. Left open, non-blocking: huge finite int n raises OverflowError instead of ValueError; max_keys not type-checked; no test for KeyedLimiter with -inf. SPEC.md unchanged, per the brief. Nothing left running from this stage except the untracked __pycache__ in the worktree, which is not committed. Review: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89Y4A8G3Z21M8ZY968462NQ), claude-code/claude-haiku-5-5 (agent agt_01M89Y308RQK1P0YA5E56XV0GV)
+
+SHIPPED: commit deb0e1396a413692f8a7d6169081f38368213dd5 on the run branch
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (stdlib only) and added 16 tests for the spec's error and edge cases. Committed as 8bbf045 on archon/866rpd9a-implement-rate-limiter-in-ratelimit-py-p, on top of base 02e227f; no push. Checks: `python3 -m unittest -v test_ratelimit` gives 19 tests, OK (before: the 3 existing tests errored with NotImplementedError); py_compile passes. No linter is installed here, so lint was not run. Review: one reviewer (agt_01M89Y043CQMYQS5T73C5QQ7Y7, claude-haiku-5-5, medium) passed head 8bbf045 with no blocking findings, risk medium. Open follow-up (non-blocking): NaN is accepted for capacity, refill_per_sec and n; try_acquire(nan) returns True and corrupts the token count. Suggested fix: reject non-finite values with math.isfinite and add tests. Not applied, to keep the reviewed head unchanged. Nothing was started that is still running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89Y043CQMYQS5T73C5QQ7Y7)
+
+SHIPPED: commit 8bbf0453b3b65b569ff002f16bdf53019a99ec3d on the run branch

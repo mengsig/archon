@@ -1,0 +1,42 @@
+The most serious problem is an authentication bypass in `verify`: a token with an empty signature is accepted for any payload. Do not ship this tomorrow. I changed nothing.
+
+**Scope caveat:** no repository named `session-lib` is registered. The only registered repo is `review-seeded-bug` (its `package.json` says `session-lib`, version 3.0.0-rc.1). I reviewed `src/tokens.js` there, at the mirror's base commit. If your rewrite isn't in that commit, these findings may not match the version you're shipping.
+
+## Findings
+
+**1. Critical: `src/tokens.js`, `verify()`, line 27: empty signature forges any token**
+- `expected.startsWith(signature)` is a prefix check, and an empty string is a prefix of everything. `'body.'.split('.')` gives `signature === ''`, which passes the `undefined` check.
+- Reproduced: `verify(base64url('{"user":"root","exp":9e15}') + '.', SECRET)` returns `{ user: 'root', exp: 9e15 }`, with no knowledge of the secret.
+- Fix: compare the full MAC with `crypto.timingSafeEqual` on equal-length buffers, and return null if the lengths differ.
+
+**2. High: `verify()`, line 27: the comparison is a non-constant-time prefix match**
+- Even with a non-empty signature, a prefix check is wrong. An attacker who knows the correct first character of the MAC for a chosen body can guess one character at a time, about 64 tries per character. That makes an online forgery practical.
+- This is the same fix as finding 1.
+
+**3. High: `verify()`, lines 24 and 28: unhandled exceptions and unvalidated payloads**
+- Once the signature check is bypassed, `JSON.parse` runs on attacker-controlled bytes. A body of `{bad` throws `SyntaxError` out of `verify`. A body of `null` makes `payload.exp` throw a `TypeError` (confirmed).
+- A verifier should return null for a bad token, not throw. Validate that the payload is a plain object before reading `exp`.
+- The fix for finding 1 removes this path for forged tokens, but parsing should still happen only after a verified signature, and it should be guarded.
+
+**4. Medium: `verify()`, line 24: extra dot-separated segments are accepted**
+- `token.split('.')` ignores everything after the second segment. `validToken + '.garbage'` verifies (confirmed with an explicit `now`).
+- Fix: require exactly two segments, e.g. `const parts = token.split('.'); if (parts.length !== 2) return null;`.
+
+**5. Medium: `verify()`, line 26: no secret validation, unlike `sign()`**
+- `sign()` enforces `secret.length >= 32`, but `verify()` accepts any secret. A token signed with `''` verifies with `''` (confirmed). If a misconfigured deployment loads an empty secret at verify time, everything is forgeable.
+- A missing secret (`undefined`) makes `createHmac` throw. Validate the secret the same way in both functions.
+
+**6. Low: `sign()`, line 16: `ttlSeconds` is not validated**
+- A NaN or Infinity TTL serializes `exp` to `null`, so the token is issued but never verifies (confirmed). The failure is silent at issue time.
+- Fix: check that `ttlSeconds` is a positive finite number.
+
+**7. Low: `test/tokens.test.js`: the tests miss the real failure modes**
+- The tampered-payload test uses a mismatched body with the valid signature, so it passes even though the verifier is broken. Nothing covers an empty signature, a prefix signature, extra segments, malformed JSON, or the empty-secret case.
+- Add a test for each of those, and for timing-safe comparison if you keep it.
+
+## Not a problem
+- Expiry is checked against `exp`, which is signed, and `sign()` sets `exp` after spreading the claims, so callers can't override it.
+- `iat` is not enforced on verify. That is acceptable unless you need `nbf` or clock-skew checks.
+
+## Recommendation
+Do not ship until findings 1–3 are fixed and tests for them pass. Findings 4–5 should also go in, since they are small. I can queue a fix item for the registered repo if you want one, with a strict review. Reply with that and I'll queue it.

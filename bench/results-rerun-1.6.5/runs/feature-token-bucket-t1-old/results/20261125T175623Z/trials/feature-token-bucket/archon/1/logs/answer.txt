@@ -1,0 +1,48 @@
+Queued qi_01M89XME2TAGYJ4SG842NZ0DN2: implement the rate limiter per SPEC.md in ratelimit.py (feature-token-bucket repo), stdlib only, spec error and edge cases covered, one direct item with standard review. It commits locally (ship: local), so nothing is pushed.
+
+I queued the rate limiter as one item, `qi_01M89XME2TAGYJ4SG842NZ0DN2`, on the `feature-token-bucket` repository. I did not edit the repository myself.
+
+- **Pipeline:** `direct`, one agent that implements, checks and commits. It is a single module, so no split was needed.
+- **Review:** `standard`. The spec's error and edge cases are the main risk, so one reviewer pass is worth it.
+- **Brief:** Your request verbatim, plus acceptance criteria. Every spec behaviour, error case and edge case must be implemented exactly as written. Where the spec is silent, the agent must state its assumption rather than invent behaviour. The module must use only the standard library, and the existing tests must pass with new tests for the error and edge cases.
+- **Shipping:** The repository ships locally, so the work is committed but not pushed.
+
+I'll report the outcome when the item finishes. I haven't read `SPEC.md` or `ratelimit.py`, so I can't yet say whether the spec has gaps that would need your decision.
+
+Done: Implement rate limiter per SPEC.md in ratelimit.py. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, using only the standard library (time, collections), and added 16 tests to test_ratelimit.py. All 19 tests pass (the 3 original ones plus 16 new ones). Before the change, the 3 original tests errored on the NotImplementedError stubs.
+
+A whole-change review failed on one blocking item: NaN max_keys passed the `< 1` check and only failed later as an AssertionError. The fix (`not max_keys >= 1`) and a NaN test are in commit 248b3d0. A delta review of that commit passed.
+
+Assumptions where SPEC.md is silent: NaN capacity, refill_per_sec, max_keys and n are rejected as invalid. Non-integer max_keys (e.g. 2.5) is accepted, so the limit is effectively ceil(max_keys); this is not spec'd. Tokens are floats and wait_time returns (n - tokens) / refill_per_sec, so a caller sleeping exactly that long may hit a float rounding miss on the next try_acquire; no guard was added.
+
+Left running: three reviewer `claude -p` processes (pids 388388, 392719, 394703) were started by the reviewer agents, not by me. I did not kill them; they stop when this run ends or can be stopped with kill <pid>. I started no servers.
+
+Untracked __pycache__ was removed from the worktree; the tree is clean.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89XQ8RYA30ZWDNARWWTX3TJ), claude-code/claude-haiku-5-5 (agent agt_01M89XTCXTQ0HYDNS93PTZ64DM)
+
+SHIPPED: commit 248b3d064a13142040cc8f2446742c7349279fd3 on the run branch
+Branch `archon/42nz0dn2-implement-rate-limiter-per-spec-md-in-ra` in /home/mengsig/.local/share/archon-bench/rerun-165/r-mkossb3v/archon-bench/work/20261125T175623Z/8b3a1f1bfbeebd385b005579/feature-token-bucket holds it (2 files changed, 207 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M89XME2TAGYJ4SG842NZ0DN2`; land it in `main`: `archon merge qi_01M89XME2TAGYJ4SG842NZ0DN2`.
+
+Rate limiter done and committed locally as 248b3d064a13142040cc8f2446742c7349279fd3 (not pushed; ship is local). TokenBucket and KeyedLimiter are in ratelimit.py, stdlib only. All 19 tests pass: the 3 original plus 16 new. A review found NaN max_keys slipping past the < 1 check; fixed in 248b3d0 with a test, and the delta review passed. Cost $0.06.
+
+Spec gaps, assumed rather than decided:
+- NaN capacity, refill_per_sec, max_keys and n are rejected as invalid.
+- Non-integer max_keys such as 2.5 is accepted and behaves as ceil(max_keys). Say if you want it rejected instead.
+- wait_time returns (n - tokens) / refill_per_sec. A caller who sleeps exactly that long can still miss on the next try_acquire from float rounding. No guard was added.
+
+Three reviewer `claude -p` processes (pids 388388, 392719, 394703) are still running. They stop when the run ends, or you can kill them.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, using only the standard library (time, collections), and added 16 tests to test_ratelimit.py. All 19 tests pass (the 3 original ones plus 16 new ones). Before the change, the 3 original tests errored on the NotImplementedError stubs.
+
+A whole-change review failed on one blocking item: NaN max_keys passed the `< 1` check and only failed later as an AssertionError. The fix (`not max_keys >= 1`) and a NaN test are in commit 248b3d0. A delta review of that commit passed.
+
+Assumptions where SPEC.md is silent: NaN capacity, refill_per_sec, max_keys and n are rejected as invalid. Non-integer max_keys (e.g. 2.5) is accepted, so the limit is effectively ceil(max_keys); this is not spec'd. Tokens are floats and wait_time returns (n - tokens) / refill_per_sec, so a caller sleeping exactly that long may hit a float rounding miss on the next try_acquire; no guard was added.
+
+Left running: three reviewer `claude -p` processes (pids 388388, 392719, 394703) were started by the reviewer agents, not by me. I did not kill them; they stop when this run ends or can be stopped with kill <pid>. I started no servers.
+
+Untracked __pycache__ was removed from the worktree; the tree is clean.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M89XQ8RYA30ZWDNARWWTX3TJ), claude-code/claude-haiku-5-5 (agent agt_01M89XTCXTQ0HYDNS93PTZ64DM)
+
+SHIPPED: commit 248b3d064a13142040cc8f2446742c7349279fd3 on the run branch

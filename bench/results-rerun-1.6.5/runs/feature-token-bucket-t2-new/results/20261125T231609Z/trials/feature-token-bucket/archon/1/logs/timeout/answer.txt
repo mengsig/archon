@@ -1,0 +1,14 @@
+I've queued the rate limiter as item `qi_01M8AFXX4YE2JDXC0B28YXZ1D5` on `feature-token-bucket`. I haven't touched the code myself, per the orchestrator rules.
+
+- **Pipeline:** `direct`, one author, with standard review.
+- **Brief:** implement `SPEC.md` exactly, including its error and edge cases. Also add tests for those cases, since the existing tests only cover the basics. Standard library only.
+- **Commit:** the repo ships `local`, so the work will be committed on the item's branch and not pushed. The brief asks for the repo's configured git user and the `Co-Authored-By: Claude Haiku 5.5` trailer. It also asks that the commit not carry any other AI attribution.
+- **Idempotency key:** `ratelimit-spec-impl-2026-11-26`, so a repeat enqueue won't create a duplicate.
+
+I'll report back when the item finishes or if it fails.
+
+Failed: Implement rate limiter per SPEC.md in ratelimit.py — implement: ESCALATE: the review of stage implement (attempt 1) failed 4 rounds, the last at head 6e0e56b, each a commit a reviewer failed with a blocking finding, so Archon stopped it instead of another round. Full detail: archon queue show qi_01M8AFXX4YE2JDXC0B28YXZ1D5 --full
+
+Rate limiter item failed review 4 times on float-precision contract bugs (wait_time vs try_acquire round-trip, and a too-loose token tolerance). I re-queued it once at the same model and effort, with the four open findings written into the brief. Two decisions: (1) I omitted the Co-Authored-By trailer from the commit, because CLAUDE.md forbids AI attribution and the stage contract says the same. Add it yourself if you want it. (2) I could not raise effort to x_high, because the configured model policy caps effort at medium and only Haiku is allowed. Raising [models] max_effort is an operator setting if you want a stronger retry.
+
+Cancelled: Implement rate limiter per SPEC.md in ratelimit.py. archon-bench: trial timeout

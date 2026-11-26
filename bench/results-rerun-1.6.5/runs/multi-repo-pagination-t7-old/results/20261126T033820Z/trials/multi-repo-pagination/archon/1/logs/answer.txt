@@ -1,0 +1,55 @@
+I've queued the pagination work as one initiative with two items, so nothing is edited directly from here.
+
+- **`inventory-api`** (`qi_01M8AYY66D75AAVE5W04GQW0YV`): adaptive pipeline, strict review because the change touches a public API. It adds `limit` and `cursor` to `GET /items`, returns `{"items", "next_cursor"}`, returns 400 with `{"error"}` for bad input, updates the README, and keeps `python3 -m unittest` passing.
+- **`inventory-client`** (`qi_01M8AYY6787KEH0N5N4NE9W5SR`): direct pipeline, standard review. `listItems` follows `next_cursor` until it is null or absent, sends no cursor on the first request, updates the README, and keeps `npm test` passing.
+
+Both repos use local shipping, so each change is committed on a local branch and not pushed. The client tests use a fake transport, so I didn't make that item wait for the API. The initiative contract fixes the response shape and error format so the two stay in step.
+
+I'll report back when both items finish.
+
+Done: Make listItems follow next_cursor. Made listItems follow next_cursor in inventory-client. It now requests /items with no cursor first, then sends each response's next_cursor back unchanged until it is null or absent, and resolves to all items in order. It rejects on a failed page, a response without an items array, or a repeated cursor on the immediately previous page. Tests with a fake transport cover multi-page, single-page, absent next_cursor, cursor pass-through, a failing later page, and a repeated cursor. README documents the pagination. Before the change, 4 of the new tests fail on the original client.js; after it, npm test passes 9/9 on commit 2250eec. Committed locally as 2250eec on archon/4ne9w5sr-make-listitems-follow-next-cursor, not pushed. Independent reviewer (agt_01M8AYZR3EGK3JB93GYZF679C1) passed the change with no blocking findings. Open follow-up (non-blocking): the repeated-cursor guard only catches a cursor equal to the previous one, so a longer cycle (A→B→A) would still loop. A seen-set would close that; not done here. Nothing is running: no servers or stacks were started.
+Review: pass by agt_01M8AYZR3EGK3JB93GYZF679C1 on 2250eec.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AYZR3EGK3JB93GYZF679C1)
+
+SHIPPED: commit 2250eec6f7953c5b228b50588fb0ba3902686d50 on the run branch
+Branch `archon/4ne9w5sr-make-listitems-follow-next-cursor` in /home/mengsig/.local/share/archon-bench/rerun-165/r-py5t50pv/archon-bench/work/20261126T033820Z/a697aa28ebe63852154d0113/inventory-client holds it (3 files changed, 79 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8AYY6787KEH0N5N4NE9W5SR`; land it in `main`: `archon merge qi_01M8AYY6787KEH0N5N4NE9W5SR`.
+
+Failed: Add cursor pagination to GET /items — build: stage build failed: the review this pipeline declares is not on record: reviewer agt_01M8AZ35VA3JJMZ5E60PAYRFP9 it passes but its summary's final VERDICT: line or JSON verdict does not, text after the JSON verdict opening it takes it back,… Full detail: archon queue show qi_01M8AYY66D75AAVE5W04GQW0YV --full
+
+Initiative finished; coordinated result queued.
+
+Done: inventory-client: detect longer next_cursor cycles in listItems. Added seen-set cursor cycle detection to listItems on branch archon/b0kghek0-inventory-client-detect-longer-next-curs. The branch held only main, so I first cherry-picked the pagination commit 2250eec from archon/4ne9w5sr-… (commit 4b3c461), then committed the change as 34cd8ad. Before: the repeat check only caught a next_cursor equal to the previous one, so a cycle A→B→A kept requesting forever (my probe hit its 7-request cap). After: every sent cursor goes into a Set and a repeat is rejected with "repeated cursor"; the same probe stops after 3 requests. Added a two-value cycle test (A→B→A) asserting rejection and the exact request sequence. README updated to describe cycles. npm test: 10 pass, 0 fail, on head 34cd8ad (tree 85a4ab10956c2996bafaf59bc50e6a7e7d6c770c). The repo has no build or linter. Review: one reviewer (agt_01M8AZC43EK8RX0YKY9M947MNQ, haiku, effort low) passed the whole change with no blocking findings. Open follow-up (non-blocking): the README does not mention the new error when a response has no items array. Nothing was pushed and no processes were started. REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AZC43EK8RX0YKY9M947MNQ)
+
+SHIPPED: commit 34cd8add7dbae461fbdd84a2f13f961a7c14781b on the run branch
+Branch `archon/b0kghek0-inventory-client-detect-longer-next-curs` in /home/mengsig/.local/share/archon-bench/rerun-165/r-py5t50pv/archon-bench/work/20261126T033820Z/a697aa28ebe63852154d0113/inventory-client holds it (3 files changed, 95 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8AZAN8JFN2Z0V9GB0KGHEK0`; land it in `main`: `archon merge qi_01M8AZAN8JFN2Z0V9GB0KGHEK0`.
+
+Done: Add cursor pagination to GET /items. Cursor pagination for GET /items is complete on the existing commit 0ca8195 (base bfadb99), reused as instructed; no code changed in this pass. Checks: `python3 -m unittest` in the worktree gave 10 tests, OK. Three whole-change reviewers (claude-code/claude-haiku-5-5, medium) each returned PASS on head 0ca8195804601f779f88efa2e4164c1290ae9b74, base bfadb993d8b6bfd66ea0eb9fece42ad91cc0bc73: agt_01M8AZB20Y3CY8TYPZ711QP2DT, agt_01M8AZB836PG0Q8XFSAMVWV02E, agt_01M8AZBE8P9B5RW4ZZNWGV4KVP. No blocking findings. Non-blocking follow-ups left open: an over-4300-digit limit/cursor returns 400 with Python's int-conversion message; no direct tests for limit 1/100 boundaries, cursor past last id, or non-ASCII digit rejection; cursor is the raw numeric id although the README calls it opaque; a non-dict query raises AttributeError instead of 400. Worktree is clean; nothing pushed. Reviewer processes left by completed children are finished and will be stopped at run end.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AZB20Y3CY8TYPZ711QP2DT), claude-code/claude-haiku-5-5 (agent agt_01M8AZB836PG0Q8XFSAMVWV02E), claude-code/claude-haiku-5-5 (agent agt_01M8AZBE8P9B5RW4ZZNWGV4KVP)
+
+SHIPPED: commit 0ca8195804601f779f88efa2e4164c1290ae9b74 on the run branch
+Branch `archon/04gqw0yv-add-cursor-pagination-to-get-items` in /home/mengsig/.local/share/archon-bench/rerun-165/r-py5t50pv/archon-bench/work/20261126T033820Z/a697aa28ebe63852154d0113/inventory-api holds it (3 files changed, 95 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M8AYY66D75AAVE5W04GQW0YV`; land it in `main`: `archon merge qi_01M8AYY66D75AAVE5W04GQW0YV`.
+
+Initiative finished; coordinated result queued.
+
+Added seen-set cursor cycle detection to listItems on branch archon/b0kghek0-inventory-client-detect-longer-next-curs. The branch held only main, so I first cherry-picked the pagination commit 2250eec from archon/4ne9w5sr-… (commit 4b3c461), then committed the change as 34cd8ad. Before: the repeat check only caught a next_cursor equal to the previous one, so a cycle A→B→A kept requesting forever (my probe hit its 7-request cap). After: every sent cursor goes into a Set and a repeat is rejected with "repeated cursor"; the same probe stops after 3 requests. Added a two-value cycle test (A→B→A) asserting rejection and the exact request sequence. README updated to describe cycles. npm test: 10 pass, 0 fail, on head 34cd8ad (tree 85a4ab10956c2996bafaf59bc50e6a7e7d6c770c). The repo has no build or linter. Review: one reviewer (agt_01M8AZC43EK8RX0YKY9M947MNQ, haiku, effort low) passed the whole change with no blocking findings. Open follow-up (non-blocking): the README does not mention the new error when a response has no items array. Nothing was pushed and no processes were started. REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AZC43EK8RX0YKY9M947MNQ)
+
+SHIPPED: commit 34cd8add7dbae461fbdd84a2f13f961a7c14781b on the run branch
+
+Made listItems follow next_cursor in inventory-client. It now requests /items with no cursor first, then sends each response's next_cursor back unchanged until it is null or absent, and resolves to all items in order. It rejects on a failed page, a response without an items array, or a repeated cursor on the immediately previous page. Tests with a fake transport cover multi-page, single-page, absent next_cursor, cursor pass-through, a failing later page, and a repeated cursor. README documents the pagination. Before the change, 4 of the new tests fail on the original client.js; after it, npm test passes 9/9 on commit 2250eec. Committed locally as 2250eec on archon/4ne9w5sr-make-listitems-follow-next-cursor, not pushed. Independent reviewer (agt_01M8AYZR3EGK3JB93GYZF679C1) passed the change with no blocking findings. Open follow-up (non-blocking): the repeated-cursor guard only catches a cursor equal to the previous one, so a longer cycle (A→B→A) would still loop. A seen-set would close that; not done here. Nothing is running: no servers or stacks were started.
+Review: pass by agt_01M8AYZR3EGK3JB93GYZF679C1 on 2250eec.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AYZR3EGK3JB93GYZF679C1)
+
+SHIPPED: commit 2250eec6f7953c5b228b50588fb0ba3902686d50 on the run branch
+
+Cursor pagination for GET /items is complete on the existing commit 0ca8195 (base bfadb99), reused as instructed; no code changed in this pass. Checks: `python3 -m unittest` in the worktree gave 10 tests, OK. Three whole-change reviewers (claude-code/claude-haiku-5-5, medium) each returned PASS on head 0ca8195804601f779f88efa2e4164c1290ae9b74, base bfadb993d8b6bfd66ea0eb9fece42ad91cc0bc73: agt_01M8AZB20Y3CY8TYPZ711QP2DT, agt_01M8AZB836PG0Q8XFSAMVWV02E, agt_01M8AZBE8P9B5RW4ZZNWGV4KVP. No blocking findings. Non-blocking follow-ups left open: an over-4300-digit limit/cursor returns 400 with Python's int-conversion message; no direct tests for limit 1/100 boundaries, cursor past last id, or non-ASCII digit rejection; cursor is the raw numeric id although the README calls it opaque; a non-dict query raises AttributeError instead of 400. Worktree is clean; nothing pushed. Reviewer processes left by completed children are finished and will be stopped at run end.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AZB20Y3CY8TYPZ711QP2DT), claude-code/claude-haiku-5-5 (agent agt_01M8AZB836PG0Q8XFSAMVWV02E), claude-code/claude-haiku-5-5 (agent agt_01M8AZBE8P9B5RW4ZZNWGV4KVP)
+
+SHIPPED: commit 0ca8195804601f779f88efa2e4164c1290ae9b74 on the run branch

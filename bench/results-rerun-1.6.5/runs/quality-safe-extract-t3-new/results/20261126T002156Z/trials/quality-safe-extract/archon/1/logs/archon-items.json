@@ -1,0 +1,532 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8AKPAQ01E0H9DD1731N1HBA",
+      "repo": "repo_01M8AKNZ25DZWV2W6Z9CEH1XEF",
+      "pipeline": "direct",
+      "title": "Implement safe_extract.py per SPEC.md with focused tests",
+      "brief": "Operator request (verbatim): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nRead SPEC.md in the repository root first. Implement every behaviour, error and boundary case it specifies, preserving the documented API exactly. Extend test_safe_extract.py with focused tests for each error and boundary case in the spec; keep the existing tests passing. Use only the Python standard library. Keep functions under 60 lines and add meaningful input-validation assertions at the boundary. Commit the work in the repository on the item's branch.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "safe-extract",
+        "operator-request"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8AKPAQ01E0H9DD1731N1HBA",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-26T00:22:08.882192419Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-26T00:22:08.884383706Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-26T00:22:08.882192419Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "review:strict"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8AKPAR99GQED6M63C6XR8AN",
+        "summary": "Implemented safe_extract.extract per SPEC.md with focused tests on branch archon/731n1hba-implement-safe-extract-py-per-spec-md-wi. Commits: 1604e6d (implementation and tests), 47998ae (fix: symlink root written with a trailing slash or '/.' was accepted; now checked on the normalized path, with tests), 1a7face (each symlink-root spelling tested with its own link). Head 1a7faceaa5d19d4f0e647b669deb32431913a288, tree 1a69bdcc7ad94d27f2096271aa9b0850af3ed957. Check: python3 -m unittest test_safe_extract, 39 tests OK on the final head (the stub had 2 erroring tests before). Review: spec and security whole-change readers failed on the symlink-root bypass, now fixed; a final whole-change reviewer passed the head; delta reviewers passed 1604e6d..47998ae and 47998ae..1a7face. Left open (non-blocking): root spelled 'link/..' is accepted, since ancestor symlinks are not specified; case-insensitive filesystem collisions are not checked; a mid-batch OSError leaves partial output (rollback is out of scope per spec). Nothing was pushed; no processes were started by me; reviewer processes are those of completed child agents.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AKRYCZZ4GYBB1TTHYQKTMA), claude-code/claude-haiku-5-5 (agent agt_01M8AKS3S370PTRC2FKC5ZZQYE), claude-code/claude-haiku-5-5 (agent agt_01M8AM00H39B28MQ8MG9B5H8F9), claude-code/claude-haiku-5-5 (agent agt_01M8AKW4NYH8BPKR46S39M875D), claude-code/claude-haiku-5-5 (agent agt_01M8AKYHZTR1TEDQ9HC9PFM2GW)\n\nSHIPPED: commit 1a7faceaa5d19d4f0e647b669deb32431913a288 on the run branch"
+      },
+      "created_at": "2026-11-26T00:22:08.864788819Z",
+      "updated_at": "2026-11-26T00:29:05.657574200Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8AKPAR99GQED6M63C6XR8AN",
+        "item": "qi_01M8AKPAQ01E0H9DD1731N1HBA",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8AKPAY2TF2RVWHSFNNFNDAX",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-jm9ih3_w/archon-bench/work/20261126T002156Z/763d31df7bc97489531c9a38/.archon/data/worktrees/quality-safe-extract/qi_01M8AKPAQ01E0H9DD1731N1HBA",
+        "branch": "archon/731n1hba-implement-safe-extract-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract per SPEC.md with focused tests on branch archon/731n1hba-implement-safe-extract-py-per-spec-md-wi. Commits: 1604e6d (implementation and tests), 47998ae (fix: symlink root written with a trailing slash or '/.' was accepted; now checked on the normalized path, with tests), 1a7face (each symlink-root spelling tested with its own link). Head 1a7faceaa5d19d4f0e647b669deb32431913a288, tree 1a69bdcc7ad94d27f2096271aa9b0850af3ed957. Check: python3 -m unittest test_safe_extract, 39 tests OK on the final head (the stub had 2 erroring tests before). Review: spec and security whole-change readers failed on the symlink-root bypass, now fixed; a final whole-change reviewer passed the head; delta reviewers passed 1604e6d..47998ae and 47998ae..1a7face. Left open (non-blocking): root spelled 'link/..' is accepted, since ancestor symlinks are not specified; case-insensitive filesystem collisions are not checked; a mid-batch OSError leaves partial output (rollback is out of scope per spec). Nothing was pushed; no processes were started by me; reviewer processes are those of completed child agents.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AKRYCZZ4GYBB1TTHYQKTMA), claude-code/claude-haiku-5-5 (agent agt_01M8AKS3S370PTRC2FKC5ZZQYE), claude-code/claude-haiku-5-5 (agent agt_01M8AM00H39B28MQ8MG9B5H8F9), claude-code/claude-haiku-5-5 (agent agt_01M8AKW4NYH8BPKR46S39M875D), claude-code/claude-haiku-5-5 (agent agt_01M8AKYHZTR1TEDQ9HC9PFM2GW)\n\nSHIPPED: commit 1a7faceaa5d19d4f0e647b669deb32431913a288 on the run branch"
+        },
+        "cost_usd": 0.17048476,
+        "started_at": "2026-11-26T00:22:09.046534090Z",
+        "finished_at": "2026-11-26T00:29:05.657574200Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0",
+        "run": "prun_01M8AKPAR99GQED6M63C6XR8AN",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8AKPAY96GCS6A7NQX2YCV5J",
+        "aether_task": "tsk_01M8AKPAY9D6C5Z8VA4QPAAKBE",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented safe_extract.extract per SPEC.md with focused tests on branch archon/731n1hba-implement-safe-extract-py-per-spec-md-wi. Commits: 1604e6d (implementation and tests), 47998ae (fix: symlink root written with a trailing slash or '/.' was accepted; now checked on the normalized path, with tests), 1a7face (each symlink-root spelling tested with its own link). Head 1a7faceaa5d19d4f0e647b669deb32431913a288, tree 1a69bdcc7ad94d27f2096271aa9b0850af3ed957. Check: python3 -m unittest test_safe_extract, 39 tests OK on the final head (the stub had 2 erroring tests before). Review: spec and security whole-change readers failed on the symlink-root bypass, now fixed; a final whole-change reviewer passed the head; delta reviewers passed 1604e6d..47998ae and 47998ae..1a7face. Left open (non-blocking): root spelled 'link/..' is accepted, since ancestor symlinks are not specified; case-insensitive filesystem collisions are not checked; a mid-batch OSError leaves partial output (rollback is out of scope per spec). Nothing was pushed; no processes were started by me; reviewer processes are those of completed child agents.",
+        "structured": {
+          "checks": [
+            "PYTHONDONTWRITEBYTECODE=1 timeout 120s python3 -m unittest test_safe_extract (39 tests, OK)",
+            "python3 -m py_compile safe_extract.py test_safe_extract.py (OK)"
+          ],
+          "commit": "1a7faceaa5d19d4f0e647b669deb32431913a288",
+          "evidence": [
+            {
+              "caption": "Final unittest run on head 1a7face",
+              "kind": "output",
+              "text": "Ran 39 tests in 0.008s\n\nOK"
+            }
+          ],
+          "local_commit": "1a7faceaa5d19d4f0e647b669deb32431913a288",
+          "pr": {
+            "body": "Approach: extract() validates the entire batch before creating anything: list type, entry shape and types, name rules, duplicate and file/directory collisions, root (existing real directory, no symlink, normalized path), each path component below root (no symlinks, dangling included, ancestors are directories), and target absence. Then creates parents and writes exact bytes with exclusive create. Files: safe_extract.py, test_safe_extract.py. Review fix: root symlink check now lstats the normalized Path(root), closing a bypass via 'link/' and 'link/.'. Checks: unittest 39/39 OK. Assumptions and limits: exact (case-sensitive) name comparison; no rollback on mid-batch I/O error (spec: out of scope); symlinked ancestors above root are not checked; 'link/..' spelling is accepted as caller-named path; symlink-component tests cover only top-level links.",
+            "summary": "Made safe extraction of regular-file batches work per SPEC.md. Now validates the whole batch (shape, names, duplicates, collisions, root, symlinks, existing targets) before any write. Before: NotImplementedError stub, 2 tests failing. Now: 39 tests pass, symlink-root bypass closed.",
+            "title": "Implement safe_extract.extract per SPEC.md with focused tests"
+          },
+          "review": {
+            "reviewed_head": "1a7faceaa5d19d4f0e647b669deb32431913a288",
+            "reviewer_agents": [
+              "agt_01M8AKRYCZZ4GYBB1TTHYQKTMA",
+              "agt_01M8AKS3S370PTRC2FKC5ZZQYE",
+              "agt_01M8AM00H39B28MQ8MG9B5H8F9",
+              "agt_01M8AKW4NYH8BPKR46S39M875D",
+              "agt_01M8AKYHZTR1TEDQ9HC9PFM2GW"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8AKRYCZZ4GYBB1TTHYQKTMA",
+                "base": "51a3e1cbc198b3f7d9af6880405467c9536ed0db",
+                "findings": 2,
+                "head": "1604e6dd06a1451896a1c03376975e0e0358b82b",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8AKS3S370PTRC2FKC5ZZQYE",
+                "base": "51a3e1cbc198b3f7d9af6880405467c9536ed0db",
+                "findings": 4,
+                "head": "1604e6dd06a1451896a1c03376975e0e0358b82b",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8AM00H39B28MQ8MG9B5H8F9",
+                "base": "51a3e1cbc198b3f7d9af6880405467c9536ed0db",
+                "findings": 2,
+                "head": "1a7faceaa5d19d4f0e647b669deb32431913a288",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8AKW4NYH8BPKR46S39M875D",
+                "base": "1604e6dd06a1451896a1c03376975e0e0358b82b",
+                "findings": 2,
+                "head": "47998ae2bd6d6ca14aa55446da1f30f1e676021e",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8AKYHZTR1TEDQ9HC9PFM2GW",
+                "base": "47998ae2bd6d6ca14aa55446da1f30f1e676021e",
+                "findings": 0,
+                "head": "1a7faceaa5d19d4f0e647b669deb32431913a288",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8AKRYCZZ4GYBB1TTHYQKTMA",
+              "agt_01M8AKS3S370PTRC2FKC5ZZQYE",
+              "agt_01M8AM00H39B28MQ8MG9B5H8F9",
+              "agt_01M8AKW4NYH8BPKR46S39M875D",
+              "agt_01M8AKYHZTR1TEDQ9HC9PFM2GW"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8AKRYCZZ4GYBB1TTHYQKTMA:1": {
+                "blocking": true,
+                "description": "Root symlink check uses os.lstat on the raw root argument, but writes use Path(root). Trailing-slash or '/.' string forms pass the S_ISLNK check and writes go through the symlink. at safe_extract.py:26",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                },
+                "id": "agt_01M8AKRYCZZ4GYBB1TTHYQKTMA:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                }
+              },
+              "agt_01M8AKRYCZZ4GYBB1TTHYQKTMA:2": {
+                "blocking": true,
+                "description": "No test covers the string root symlink forms 'link/' and 'link/.'. Only the plain 'link' and Path('link') forms are tested, which is why the bypass above is not caught. at test_safe_extract.py:148",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                },
+                "id": "agt_01M8AKRYCZZ4GYBB1TTHYQKTMA:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                }
+              },
+              "agt_01M8AKS3S370PTRC2FKC5ZZQYE:1": {
+                "blocking": true,
+                "description": "Symlink root is accepted when the path has a trailing slash or a '/.' suffix. os.lstat(root) follows the final symlink in those forms, so the S_ISLNK check never fires. Writes then land in the link target. at safe_extract.py:23",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                },
+                "id": "agt_01M8AKS3S370PTRC2FKC5ZZQYE:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                }
+              },
+              "agt_01M8AKS3S370PTRC2FKC5ZZQYE:2": {
+                "blocking": false,
+                "description": "On case-insensitive or Unicode-normalizing filesystems (macOS, Windows), batch names that differ only by case or normalization ('A' and 'a') pass the in-batch duplicate check. The second open(..., 'xb') then raises FileExistsError after earlier entries were already written. Not verified here; the case is plausible. Consider a casefold-based collision check or documenting the limit. at safe_extract",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                },
+                "id": "agt_01M8AKS3S370PTRC2FKC5ZZQYE:2",
+                "resolved_in": null
+              },
+              "agt_01M8AKS3S370PTRC2FKC5ZZQYE:3": {
+                "blocking": false,
+                "description": "Mid-write OSError (for example ENAMETOOLONG on a long component, ENOSPC, or EACCES on a later file) propagates visibly but leaves a partial batch on disk. The spec puts rollback out of scope, so this is a documented limitation, not a blocking bug. Consider stating it in the docstring. at safe_extract.py:107",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                },
+                "id": "agt_01M8AKS3S370PTRC2FKC5ZZQYE:3",
+                "resolved_in": null
+              },
+              "agt_01M8AKS3S370PTRC2FKC5ZZQYE:4": {
+                "blocking": false,
+                "description": "The symlink-root test only covers the bare path. It does not cover a trailing-slash or '/.' form, which is how the blocking bypass slipped through. Add these cases with the fix. at test_safe_extract.py:148",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                },
+                "id": "agt_01M8AKS3S370PTRC2FKC5ZZQYE:4",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                }
+              },
+              "agt_01M8AKW4NYH8BPKR46S39M875D:1": {
+                "blocking": false,
+                "description": "Root spelled 'link/..' (a symlink to root, then '..') is still accepted. The final component '..' is not a symlink, so the check passes, and entries are written to the resolved parent of the link (base/a), not into root. Pre-existing and outside the four findings; the spec does not say whether ancestors of root may be symlinks. Decide whether to reject '..' in root or document that ancestors are t",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                },
+                "id": "agt_01M8AKW4NYH8BPKR46S39M875D:1",
+                "resolved_in": null
+              },
+              "agt_01M8AKW4NYH8BPKR46S39M875D:2": {
+                "blocking": false,
+                "description": "test_symlink_root_with_trailing_slash_or_dot_is_rejected shares one root across subtests. On the old code only the first spelling reports a failure; the later ones fail with 'target already exists' and pass spuriously. Give each spelling a fresh root and symlink so every spelling is tested independently. at test_safe_extract.py:155",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                },
+                "id": "agt_01M8AKW4NYH8BPKR46S39M875D:2",
+                "resolved_in": null
+              },
+              "agt_01M8AM00H39B28MQ8MG9B5H8F9:1": {
+                "blocking": false,
+                "description": "Symlink-component rejection is only tested for a top-level link (link/x). No test covers a symlink at depth >1 (e.g. d/link/x with d a real directory), though SPEC requires no existing component below root to be a symlink. The implementation handles it (probed: rejected, nothing created outside root), so this is a coverage gap, not a defect. at test_safe_extract.py:225",
+                "found_in": {
+                  "number": 3,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                },
+                "id": "agt_01M8AM00H39B28MQ8MG9B5H8F9:1",
+                "resolved_in": null
+              },
+              "agt_01M8AM00H39B28MQ8MG9B5H8F9:2": {
+                "blocking": false,
+                "description": "Only the final root component is checked for symlinks; a root reached through a symlinked ancestor is accepted. SPEC's 'real directory' wording is ambiguous on this, and it is not treated as a blocking defect here. at safe_extract.py:27",
+                "found_in": {
+                  "number": 3,
+                  "stage": "stg_01M8AKPAXDGN8RDWP6YT4C6JM0"
+                },
+                "id": "agt_01M8AM00H39B28MQ8MG9B5H8F9:2",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "1604e6dd06a1451896a1c03376975e0e0358b82b",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8AKRYCZZ4GYBB1TTHYQKTMA",
+                    "base": "51a3e1cbc198b3f7d9af6880405467c9536ed0db",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8AKRYCZZ4GYBB1TTHYQKTMA:1",
+                      "agt_01M8AKRYCZZ4GYBB1TTHYQKTMA:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": true,
+                    "verdict": "fail"
+                  },
+                  {
+                    "agent": "agt_01M8AKS3S370PTRC2FKC5ZZQYE",
+                    "base": "51a3e1cbc198b3f7d9af6880405467c9536ed0db",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M8AKS3S370PTRC2FKC5ZZQYE:1",
+                      "agt_01M8AKS3S370PTRC2FKC5ZZQYE:2",
+                      "agt_01M8AKS3S370PTRC2FKC5ZZQYE:3",
+                      "agt_01M8AKS3S370PTRC2FKC5ZZQYE:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "47998ae2bd6d6ca14aa55446da1f30f1e676021e",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8AKW4NYH8BPKR46S39M875D",
+                    "base": "1604e6dd06a1451896a1c03376975e0e0358b82b",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8AKW4NYH8BPKR46S39M875D:1",
+                      "agt_01M8AKW4NYH8BPKR46S39M875D:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "pass"
+                  }
+                ]
+              },
+              {
+                "head": "1a7faceaa5d19d4f0e647b669deb32431913a288",
+                "number": 3,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8AKYHZTR1TEDQ9HC9PFM2GW",
+                    "base": "47998ae2bd6d6ca14aa55446da1f30f1e676021e",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8AM00H39B28MQ8MG9B5H8F9",
+                    "base": "51a3e1cbc198b3f7d9af6880405467c9536ed0db",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8AM00H39B28MQ8MG9B5H8F9:1",
+                      "agt_01M8AM00H39B28MQ8MG9B5H8F9:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": "agt_01M8AM00H39B28MQ8MG9B5H8F9",
+            "why": "Security-sensitive filesystem writes from untrusted names under a caller root; symlink, traversal and overwrite checks form the boundary. Reviewer agt_01M8AM00H39B28MQ8MG9B5H8F9 confirmed high."
+          },
+          "tree": "1a69bdcc7ad94d27f2096271aa9b0850af3ed957"
+        },
+        "cost_usd": 0.17048476,
+        "started_at": "2026-11-26T00:22:09.068827221Z",
+        "finished_at": "2026-11-26T00:29:02.293076575Z"
+      }
+    ],
+    "spent_usd": 0.17048476,
+    "gates": [],
+    "delegations": {
+      "stg_01M8AKPAXDGN8RDWP6YT4C6JM0": {
+        "direct_usd": 0.08518921,
+        "delegated_usd": 0.08529555,
+        "agents": [
+          {
+            "agent": "agt_01M8AKRYCZZ4GYBB1TTHYQKTMA",
+            "parent": "agt_01M8AKPAY96GCS6A7NQX2YCV5J",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01276929
+          },
+          {
+            "agent": "agt_01M8AKS3S370PTRC2FKC5ZZQYE",
+            "parent": "agt_01M8AKPAY96GCS6A7NQX2YCV5J",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.013734260000000002
+          },
+          {
+            "agent": "agt_01M8AKS9AVBKVE4ACSPVWFSZWC",
+            "parent": "agt_01M8AKPAY96GCS6A7NQX2YCV5J",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01781212
+          },
+          {
+            "agent": "agt_01M8AKW4NYH8BPKR46S39M875D",
+            "parent": "agt_01M8AKPAY96GCS6A7NQX2YCV5J",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.016705869999999998
+          },
+          {
+            "agent": "agt_01M8AKYHZTR1TEDQ9HC9PFM2GW",
+            "parent": "agt_01M8AKPAY96GCS6A7NQX2YCV5J",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "low",
+            "cost_usd": 0.006017010000000001
+          },
+          {
+            "agent": "agt_01M8AM00H39B28MQ8MG9B5H8F9",
+            "parent": "agt_01M8AKPAY96GCS6A7NQX2YCV5J",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.018257
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-26T00:22:08.882192419Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-26T00:22:08.884383706Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-26T00:22:08.882192419Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

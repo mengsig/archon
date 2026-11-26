@@ -1,0 +1,10 @@
+[2m2026-11-25T17:50:38.366217Z[0m [32m INFO[0m [2marchon_queue::store::outcomes::reclassify[0m[2m:[0m lesson scores follow the migrated classes [3mruns[0m[2m=[0m0 [3mlessons[0m[2m=[0m0
+[2m2026-11-25T17:50:38.366240Z[0m [32m INFO[0m [2marchon_queue::store::outcomes::reclassify[0m[2m:[0m outcome failure classes migrated from stage records [3mrows[0m[2m=[0m0 [3mrecomputed[0m[2m=[0m0 [3mlegacy_163[0m[2m=[0m0
+[2m2026-11-25T17:50:38.366275Z[0m [32m INFO[0m [2marchon_queue::store::outcomes::reclassify[0m[2m:[0m reviewed pull requests frozen into their outcomes [3moutcomes[0m[2m=[0m0 [3mfrozen[0m[2m=[0m0
+[2m2026-11-25T17:50:38.383229Z[0m [32m INFO[0m [2marchon_daemon::server[0m[2m:[0m listening [3msocket[0m[2m=[0m/home/mengsig/.local/share/archon-bench/rerun-165/r-lmvsys04/archon-bench/run/c.sock
+[2m2026-11-25T17:50:38.425996Z[0m [32m INFO[0m [2marchon_aether::client[0m[2m:[0m connected to aetherd [3mdaemon[0m[2m=[0m1.4.3 [3minstance[0m[2m=[0m01M89X9DRTCTAKETP0F0W2VZMT [3mprotocol[0m[2m=[0m26
+[2m2026-11-25T17:50:38.453518Z[0m [32m INFO[0m [2marchon_daemon::supervisor[0m[2m:[0m orchestrator created [3magent[0m[2m=[0magt_01M89X9EVKVV7D9CCQ9KCNE6RD [3mgeneration[0m[2m=[0m1 [3mdelegation[0m[2m=[0mtrue [3mgithub[0m[2m=[0mfalse
+[2m2026-11-25T17:50:38.621999Z[0m [32m INFO[0m [2marchon_daemon::executor::repo_identity[0m[2m:[0m repository git identity recorded [3mrepo[0m[2m=[0mreview-seeded-bug [3mcaptured[0m[2m=[0mSome(RepoIdentity { name: "mengsig", email: "[redacted-email]", emails: ["[redacted-email]"] })
+[2m2026-11-25T17:50:38.622044Z[0m [32m INFO[0m [2marchon_daemon::handlers::repos[0m[2m:[0m repository registered [3mrepo[0m[2m=[0mreview-seeded-bug [3mpath[0m[2m=[0m/home/mengsig/.local/share/archon-bench/rerun-165/r-lmvsys04/archon-bench/work/20261125T175038Z/1c99ae2e1b90e787e00b49bd/review-seeded-bug
+[2m2026-11-25T17:52:03.722346Z[0m [32m INFO[0m [2marchon_daemon::server[0m[2m:[0m shutdown requested
+[2m2026-11-25T17:52:03.722731Z[0m [32m INFO[0m [2marchon_daemon[0m[2m:[0m archond stopped

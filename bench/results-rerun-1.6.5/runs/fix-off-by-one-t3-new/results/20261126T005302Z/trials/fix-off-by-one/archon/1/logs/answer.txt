@@ -1,0 +1,18 @@
+I've queued the fix as item `qi_01M8ANF6JVVW1J21VPPFX7CJC4` on the `fix-off-by-one` repository. It runs through the `direct` pipeline with standard review.
+
+I haven't read or changed `window.py` or the tests. Archon's agent will find the bug, fix it without touching the tests, run `python3 -m unittest`, and commit on the item's local branch. Nothing is pushed, since the repo ships locally.
+
+I'll report the outcome when the item finishes. If it fails, I'll pull the stage details before deciding on a retry.
+
+Done: Fix window.py bug so python3 -m unittest passes. Fixed the off-by-one in window.py sliding_windows: the window count was len(items) - size and is now len(items) - size + 1, so the last window is included. python3 -m unittest passes (3 tests; 2 failed before). Edge cases ([] with size 1, size > len, size == len, single element) were checked with ad-hoc assertions. No test files changed. Committed as 4c57f722707958a8c6fd7f5d5990dc773a2fd8c3 (tree 86fa2570260a2e082a57848f99c47518a99b485c) on archon/pfx7cjc4-fix-window-py-bug-so-python3-m-unittest; not pushed. Review: reviewer agt_01M8ANG33HGG7TNVNVHKBYRM6V passed the branch head with no findings. The reviewer's leftover process (PID 145783) was stopped. Nothing is left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ANG33HGG7TNVNVHKBYRM6V)
+
+SHIPPED: commit 4c57f722707958a8c6fd7f5d5990dc773a2fd8c3 on the run branch
+Branch `archon/pfx7cjc4-fix-window-py-bug-so-python3-m-unittest` in /home/mengsig/.local/share/archon-bench/rerun-165/r-x96nrg2c/archon-bench/work/20261126T005302Z/df92ea9b9edad311a43b59f8/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M8ANF6JVVW1J21VPPFX7CJC4`; land it in `main`: `archon merge qi_01M8ANF6JVVW1J21VPPFX7CJC4`.
+
+Fixed the off-by-one in window.py sliding_windows: the window count was len(items) - size and is now len(items) - size + 1, so the last window is included. python3 -m unittest passes (3 tests; 2 failed before). Edge cases ([] with size 1, size > len, size == len, single element) were checked with ad-hoc assertions. No test files changed. Committed as 4c57f722707958a8c6fd7f5d5990dc773a2fd8c3 (tree 86fa2570260a2e082a57848f99c47518a99b485c) on archon/pfx7cjc4-fix-window-py-bug-so-python3-m-unittest; not pushed. Review: reviewer agt_01M8ANG33HGG7TNVNVHKBYRM6V passed the branch head with no findings. The reviewer's leftover process (PID 145783) was stopped. Nothing is left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ANG33HGG7TNVNVHKBYRM6V)
+
+SHIPPED: commit 4c57f722707958a8c6fd7f5d5990dc773a2fd8c3 on the run branch

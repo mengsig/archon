@@ -1,0 +1,20 @@
+I've queued the implementation as item `qi_01M8B0E24SBE0Q2CW7YP8S12YC` in the `quality-retry-budget` repository. It uses the `direct` pipeline with standard review at balanced tier, medium effort.
+
+The brief passes your request and the requirements to the agent: implement every API and error case in `SPEC.md`, extend the tests to cover the boundaries, use only the standard library, run the tests, and commit locally without pushing. The result will be a local commit on a branch, since the repository ships local.
+
+I did not write the code myself, because orchestration rules keep repository changes with queued agents. I'll report the outcome when the item finishes.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md (pure, stdlib only): argument validation as built-in ints before any early return, attempt-limit check, saturating capped exponential backoff, uncapped Retry-After floor, and strict budget check. Extended test_retry_budget.py from 3 to 30 tests covering validation, attempt limit, backoff, Retry-After and budget boundaries; the original 3 tests are kept. Verified with `python3 -B -m unittest` on the final head: 30 tests OK, before this change 3 tests errored on the NotImplementedError stub. Committed locally on archon/yp8s12yc-implement-retry-budget-py-per-spec-md-wi as 4f27a05; nothing pushed. Not done: the request asked for a Co-Authored-By line, but the stage contract forbids model attribution in commit messages, so I followed the contract and omitted it. Non-blocking review follow-ups: the `assert delay >= 0` in retry_budget.py is redundant with validation, and there is no explicit test for negative attempt/max_attempts (covered by shared validation path). Nothing is left running.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B0FJCZWMC196W9G1WF886J)
+
+SHIPPED: commit 4f27a0512dd30c8cea8834aee0f1d5f855c9cdff on the run branch
+Branch `archon/yp8s12yc-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-m4_vdb9y/archon-bench/work/20261126T040431Z/543f4156a0ec8b7af88c4cdf/quality-retry-budget holds it (2 files changed, 187 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8B0E24SBE0Q2CW7YP8S12YC`; land it in `main`: `archon merge qi_01M8B0E24SBE0Q2CW7YP8S12YC`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md (pure, stdlib only): argument validation as built-in ints before any early return, attempt-limit check, saturating capped exponential backoff, uncapped Retry-After floor, and strict budget check. Extended test_retry_budget.py from 3 to 30 tests covering validation, attempt limit, backoff, Retry-After and budget boundaries; the original 3 tests are kept. Verified with `python3 -B -m unittest` on the final head: 30 tests OK, before this change 3 tests errored on the NotImplementedError stub. Committed locally on archon/yp8s12yc-implement-retry-budget-py-per-spec-md-wi as 4f27a05; nothing pushed. Not done: the request asked for a Co-Authored-By line, but the stage contract forbids model attribution in commit messages, so I followed the contract and omitted it. Non-blocking review follow-ups: the `assert delay >= 0` in retry_budget.py is redundant with validation, and there is no explicit test for negative attempt/max_attempts (covered by shared validation path). Nothing is left running.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B0FJCZWMC196W9G1WF886J)
+
+SHIPPED: commit 4f27a0512dd30c8cea8834aee0f1d5f855c9cdff on the run branch

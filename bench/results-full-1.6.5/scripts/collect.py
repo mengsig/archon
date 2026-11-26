@@ -1,17 +1,16 @@
 """Copy the trial evidence needed to reproduce the report."""
 import json
-import shutil
 import sqlite3
-import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+import redact  # noqa: E402
 
-def copy_sanitized(source, destination, email):
-    assert source.is_file() and email
-    data = source.read_bytes().replace(email, b'[redacted-email]')
-    assert email not in data
-    destination.write_bytes(data)
+
+def copy_sanitized(source, destination):
+    assert source.is_file()
+    destination.write_bytes(redact.redact_bytes(source.read_bytes()))
 
 
 def collect_run(source, destination):
@@ -20,21 +19,20 @@ def collect_run(source, destination):
     assert len(stamps) == 1, f'expected one result stamp in {source}'
     stamp = stamps[0]
     if destination.exists():
-        assert (destination / 'start.json').read_bytes() == (source / 'start.json').read_bytes(), 'existing run differs'
+        expected = redact.redact_bytes((source / 'start.json').read_bytes())
+        assert (destination / 'start.json').read_bytes() == expected, 'existing run differs'
     destination.mkdir(parents=True, exist_ok=True)
-    email = subprocess.check_output(['git', 'config', 'user.email']).strip()
-    assert email, 'configured git email is required for redaction'
-    copy_sanitized(source / 'start.json', destination / 'start.json', email)
+    copy_sanitized(source / 'start.json', destination / 'start.json')
     for name in ('run.json', 'results.jsonl', 'summary.md'):
         path = stamp / name
         if path.is_file():
-            copy_sanitized(path, destination / name, email)
+            copy_sanitized(path, destination / name)
     assert (destination / 'run.json').is_file() and (destination / 'results.jsonl').is_file()
     for name in ('answer.txt', 'archon-items.json', 'grade.stdout', 'grade.stderr', '*.result.patch'):
         for path in (stamp / 'trials').rglob(name):
             target = destination / path.relative_to(stamp)
             target.parent.mkdir(parents=True, exist_ok=True)
-            copy_sanitized(path, target, email)
+            copy_sanitized(path, target)
 
 
 def database_spend(run_dir):
@@ -73,7 +71,7 @@ def main():
     for model in ('luna', 'haiku', 'haiku-serial'):
         guard = source / f'{model}-guard.log'
         assert guard.is_file(), f'missing {model} guard log'
-        shutil.copy2(guard, destination / guard.name)
+        copy_sanitized(guard, destination / guard.name)
 
 
 if __name__ == '__main__':

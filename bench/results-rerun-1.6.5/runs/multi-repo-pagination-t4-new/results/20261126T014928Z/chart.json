@@ -1,0 +1,222 @@
+{
+  "manifest": {
+    "stamp": "20261126T014928Z",
+    "started_at": "2026-11-26T01:49:28.909488989Z",
+    "finished_at": "2026-11-26T01:53:45.961261060Z",
+    "archon_commit": "421720e67fa55670e84ed89458b289e91c363f0a",
+    "versions": {
+      "aetherd": "1.4.3",
+      "archon": "archon 1.6.5"
+    },
+    "models": {
+      "archon": "claude-code/claude-haiku-5-5"
+    },
+    "effort": "medium",
+    "arms": [
+      "archon"
+    ],
+    "tasks": [
+      "multi-repo-pagination"
+    ],
+    "trials": 1,
+    "parallel": 1,
+    "timeout_factor": 1.0,
+    "max_usd": 5.0,
+    "max_trials": 100,
+    "planned": 1,
+    "completed": 1,
+    "skipped": 0,
+    "spent_usd": 0.13935999000000002,
+    "spent_bound": "floor",
+    "unpriced_trials": 0,
+    "stopped_reason": null
+  },
+  "k": 1,
+  "arms": [
+    {
+      "arm": "archon",
+      "model": "claude-code/claude-haiku-5-5",
+      "trials": 1,
+      "successes": 1,
+      "infra": 0,
+      "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
+      "success_rate": 1.0,
+      "pass_at_1": 1.0,
+      "pass_at_k": 1.0,
+      "score": {
+        "n": 1,
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "wall_secs": {
+        "n": 1,
+        "mean": 210.229514618,
+        "stdev": 0.0
+      },
+      "input_tokens": {
+        "n": 1,
+        "mean": 3680276.0,
+        "stdev": 0.0
+      },
+      "output_tokens": {
+        "n": 1,
+        "mean": 79341.0,
+        "stdev": 0.0
+      },
+      "cost_usd": {
+        "n": 1,
+        "mean": 0.13935999000000002,
+        "stdev": 0.0
+      },
+      "cost_bound": "floor",
+      "operator_messages": {
+        "n": 1,
+        "mean": 4.0,
+        "stdev": 0.0
+      }
+    }
+  ],
+  "tasks": {
+    "multi-repo-pagination": [
+      {
+        "arm": "archon",
+        "model": "claude-code/claude-haiku-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 210.229514618,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 3680276.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 79341.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.13935999000000002,
+          "stdev": 0.0
+        },
+        "cost_bound": "floor",
+        "operator_messages": {
+          "n": 1,
+          "mean": 4.0,
+          "stdev": 0.0
+        }
+      }
+    ]
+  },
+  "infra": [],
+  "pipelines": {
+    "adaptive": {
+      "arm": "archon",
+      "model": "claude-code/claude-haiku-5-5",
+      "trials": 1,
+      "successes": 1,
+      "infra": 0,
+      "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
+      "success_rate": 1.0,
+      "pass_at_1": 1.0,
+      "pass_at_k": 1.0,
+      "score": {
+        "n": 1,
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "wall_secs": {
+        "n": 1,
+        "mean": 210.229514618,
+        "stdev": 0.0
+      },
+      "input_tokens": {
+        "n": 1,
+        "mean": 3680276.0,
+        "stdev": 0.0
+      },
+      "output_tokens": {
+        "n": 1,
+        "mean": 79341.0,
+        "stdev": 0.0
+      },
+      "cost_usd": {
+        "n": 1,
+        "mean": 0.13935999000000002,
+        "stdev": 0.0
+      },
+      "cost_bound": "floor",
+      "operator_messages": {
+        "n": 1,
+        "mean": 4.0,
+        "stdev": 0.0
+      }
+    }
+  },
+  "reviews": {
+    "strict": {
+      "arm": "archon",
+      "model": "claude-code/claude-haiku-5-5",
+      "trials": 1,
+      "successes": 1,
+      "infra": 0,
+      "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
+      "success_rate": 1.0,
+      "pass_at_1": 1.0,
+      "pass_at_k": 1.0,
+      "score": {
+        "n": 1,
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "wall_secs": {
+        "n": 1,
+        "mean": 210.229514618,
+        "stdev": 0.0
+      },
+      "input_tokens": {
+        "n": 1,
+        "mean": 3680276.0,
+        "stdev": 0.0
+      },
+      "output_tokens": {
+        "n": 1,
+        "mean": 79341.0,
+        "stdev": 0.0
+      },
+      "cost_usd": {
+        "n": 1,
+        "mean": 0.13935999000000002,
+        "stdev": 0.0
+      },
+      "cost_bound": "floor",
+      "operator_messages": {
+        "n": 1,
+        "mean": 4.0,
+        "stdev": 0.0
+      }
+    }
+  }
+}

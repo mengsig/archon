@@ -1,0 +1,16 @@
+{
+  "task": "feature-token-bucket",
+  "trial": 2,
+  "arm": "old",
+  "version": "1.6.4",
+  "load1_at_start": 3.5986328125,
+  "load5_at_start": 3.9951171875,
+  "hashes": {
+    "archon": "c82005af40e2aed8fe2dae7d10d96d29b38228d5af2268c5f671ef965cf65f5c",
+    "aether": "3a795ff2a718e8c227ac66ad6bbefd2cfe1838bfcbf77b37eac10e56ca3cc923",
+    "archon-bench": "bb1e7d7113065da6fa529b70f5f0f48bdc1b48fa2e3a1e59a123a46c962a8f3f"
+  },
+  "start": "2026-11-25T23:11:02.146894+00:00",
+  "exit": 0,
+  "end": "2026-11-25T23:15:07.088511+00:00"
+}

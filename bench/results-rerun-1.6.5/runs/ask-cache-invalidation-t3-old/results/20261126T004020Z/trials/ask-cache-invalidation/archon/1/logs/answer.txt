@@ -1,0 +1,20 @@
+**Root cause: `updatePrice` invalidates only the product cache entry, and category listings are cached separately with a 600-second TTL that nothing clears.** I read the code only; nothing was changed. I read the repository mirror at `repos/ask-cache-invalidation` (package name `catalog-service`, base commit `e176fee`).
+
+**The code path**
+
+1. A price change goes through `updatePrice` in `src/pricing.js:6-13`. It writes the new price to the store, then runs `catalog.cache.delete(productKey(sku))` at line 11. That removes only `product:<sku>`.
+2. The product page calls `Catalog.product()` (`src/catalog.js:12-20`). Its cache entry was just deleted, so it reads the store and gets the new price. That is why the product page updates immediately.
+3. Category pages call `Catalog.listing()` (`src/catalog.js:22-33`). It caches whole page rows, `{sku, name, priceCents}`, under `listing:<category>:<page>`, and `priceCents` is copied into that cached row. No code path deletes these keys when a price changes.
+4. The listing TTL is `LISTING_TTL_SECONDS: 600` (`src/config.js:7`), which is the roughly ten minutes support sees. Its comment says listings are cached separately because they are expensive to build. The product TTL is 3600 seconds, but it doesn't matter here because the product entry is deleted on every price change.
+
+So the delay is not a bug in the TTL mechanics. The listing cache holds a second copy of `priceCents` that is never invalidated, and the write path only knows about one of the two copies. The existing test (`test/catalog.test.js`) checks only `product()` after `updatePrice`, so it would not catch this.
+
+**Caveat:** `TtlCache` is an in-process `Map`, and `updatePrice` clears only the cache of the `Catalog` instance it is given. If the service runs as several instances, each has its own cache, and a price change can be stale on the others for up to an hour (product) or ten minutes (listings). The repository does not show the deployment topology, so I can't confirm this from the code.
+
+**Fix options**
+
+- **A. Invalidate the affected listing pages on write (smallest change).** In `updatePrice`, look up the product's category, count the products in it, and delete `listing:<category>:<p>` for each page. This needs the category and page count, so the write path depends more on listing internals. It also only works within one process, so it doesn't solve the multi-instance case.
+- **B. Stop caching price in listings (recommended).** Cache only the SKU order per page. When rendering, resolve each SKU's price through `this.product(sku)`, which already has invalidation. That leaves one source of truth for price, and the product cache's invalidation covers category pages automatically. The cost is up to 24 product-cache lookups per page, which are cheap hash-map reads in-process. Tests should check that a listing shows the new price right after `updatePrice`.
+- **C. Lower `LISTING_TTL_SECONDS`.** This is only a mitigation. It shortens the window but keeps the inconsistency and adds listing rebuild load.
+
+I recommend B. If the service runs multiple instances, the cache itself needs a shared store or a broadcast invalidation, and that would be a separate change. If you want B implemented, I can queue it as a `direct` item with `review: standard`. It touches shared cache and read-path code, so I would not use `none`.

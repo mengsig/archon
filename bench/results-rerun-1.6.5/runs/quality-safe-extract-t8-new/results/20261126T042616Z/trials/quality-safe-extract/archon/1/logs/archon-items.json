@@ -1,0 +1,596 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8B1NQHRRB3CMY86YRZ8S3GX",
+      "repo": "repo_01M8B1NBANNBYH7JR883KC50BC",
+      "pipeline": "adaptive",
+      "title": "Implement safe_extract.py per SPEC.md with focused tests",
+      "brief": "Operator request (verbatim): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nGoal: make safe_extract.py match SPEC.md exactly. Keep the documented public API unchanged. Handle every error and boundary case the spec names, and fail visibly with the specified exception types (no silent fallbacks). Add focused tests covering each specified error and boundary case, beyond the existing basic tests. Use only the Python standard library. Keep functions under 60 lines, with clear explicit control flow and meaningful input validation at the boundary. Commit the work on the local branch with a clear message.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "safe-extract",
+        "notify"
+      ],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8B1NQHRRB3CMY86YRZ8S3GX",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-26T04:26:29.308063021Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-26T04:26:29.308063021Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-26T04:26:29.308063021Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8B1NQKJ4WSAK81ZE4QJ4099",
+        "summary": "Implemented safe_extract.extract per SPEC.md and added 27 stdlib unittest tests (the 2 original basics kept). Branch archon/yrz8s3gx-implement-safe-extract-py-per-spec-md-wi: commit 5b3637b (implementation and tests), then 6db42cf (fixes for the review's blocking findings, with Review-Fix trailers). HEAD 6db42cffce264ed049db3619d51c0716b2558a81, tree c5f8cc719163e7f9e69c3431f786c3b07c7f6ab1. Verification: `python3 -m unittest` in the worktree, 27 tests OK. Review: three whole-change reviewers read 5b3637b and returned FAIL (agt_01M8B1R4SP4GNVMXKR75KSVMT2, agt_01M8B1RF6AGBHVEY5TEFN4JR5N, agt_01M8B1RA1F1B4QRCHC0KS6MY98). Their blocking findings (root under a regular file raised NotADirectoryError; empty-string root wrote into cwd; empty batch with invalid root untested) were fixed in 6db42cf. One delta reviewer (agt_01M8B1XR1KPKPWMCQXKAMFXW5Z) read 5b3637b..6db42cf and passed it; it confirmed the blocking fixes and found no new blocking issue. Open non-blocking follow-ups: over-long names and roots raise OSError (ENAMETOOLONG) rather than ValueError; symlinks above the root itself are not checked (documented by the spec's letter, not in the docstring); NUL and lone-surrogate rejection lack isolated tests; the redundant symlink branches; the exclusive-create ('xb') path has no isolated test; and the 300-char test depends on NAME_MAX 255. Workers: none. Nothing is left running; the untracked .archon/ report directory is not committed.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B1R4SP4GNVMXKR75KSVMT2), claude-code/claude-haiku-5-5 (agent agt_01M8B1RF6AGBHVEY5TEFN4JR5N), claude-code/claude-haiku-5-5 (agent agt_01M8B1RA1F1B4QRCHC0KS6MY98), claude-code/claude-haiku-5-5 (agent agt_01M8B1XR1KPKPWMCQXKAMFXW5Z)\n\nSHIPPED: commit 6db42cffce264ed049db3619d51c0716b2558a81 on the run branch"
+      },
+      "created_at": "2026-11-26T04:26:29.304575529Z",
+      "updated_at": "2026-11-26T04:32:31.650191641Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8B1NQKJ4WSAK81ZE4QJ4099",
+        "item": "qi_01M8B1NQHRRB3CMY86YRZ8S3GX",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M8B1NQS79H1JZ0KVXG1EZ052",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-9qn0c41p/archon-bench/work/20261126T042616Z/555d5637206359bdb8073caf/.archon/data/worktrees/quality-safe-extract/qi_01M8B1NQHRRB3CMY86YRZ8S3GX",
+        "branch": "archon/yrz8s3gx-implement-safe-extract-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract per SPEC.md and added 27 stdlib unittest tests (the 2 original basics kept). Branch archon/yrz8s3gx-implement-safe-extract-py-per-spec-md-wi: commit 5b3637b (implementation and tests), then 6db42cf (fixes for the review's blocking findings, with Review-Fix trailers). HEAD 6db42cffce264ed049db3619d51c0716b2558a81, tree c5f8cc719163e7f9e69c3431f786c3b07c7f6ab1. Verification: `python3 -m unittest` in the worktree, 27 tests OK. Review: three whole-change reviewers read 5b3637b and returned FAIL (agt_01M8B1R4SP4GNVMXKR75KSVMT2, agt_01M8B1RF6AGBHVEY5TEFN4JR5N, agt_01M8B1RA1F1B4QRCHC0KS6MY98). Their blocking findings (root under a regular file raised NotADirectoryError; empty-string root wrote into cwd; empty batch with invalid root untested) were fixed in 6db42cf. One delta reviewer (agt_01M8B1XR1KPKPWMCQXKAMFXW5Z) read 5b3637b..6db42cf and passed it; it confirmed the blocking fixes and found no new blocking issue. Open non-blocking follow-ups: over-long names and roots raise OSError (ENAMETOOLONG) rather than ValueError; symlinks above the root itself are not checked (documented by the spec's letter, not in the docstring); NUL and lone-surrogate rejection lack isolated tests; the redundant symlink branches; the exclusive-create ('xb') path has no isolated test; and the 300-char test depends on NAME_MAX 255. Workers: none. Nothing is left running; the untracked .archon/ report directory is not committed.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B1R4SP4GNVMXKR75KSVMT2), claude-code/claude-haiku-5-5 (agent agt_01M8B1RF6AGBHVEY5TEFN4JR5N), claude-code/claude-haiku-5-5 (agent agt_01M8B1RA1F1B4QRCHC0KS6MY98), claude-code/claude-haiku-5-5 (agent agt_01M8B1XR1KPKPWMCQXKAMFXW5Z)\n\nSHIPPED: commit 6db42cffce264ed049db3619d51c0716b2558a81 on the run branch"
+        },
+        "cost_usd": 0.1274916,
+        "started_at": "2026-11-26T04:26:29.517576115Z",
+        "finished_at": "2026-11-26T04:32:31.650191641Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B",
+        "run": "prun_01M8B1NQKJ4WSAK81ZE4QJ4099",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8B1NQSKCSYRXA11F9CTTFAG",
+        "aether_task": "tsk_01M8B1NQSKCSYRXA11F9CTTFAH",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; the plan pins medium",
+        "summary": "Implemented safe_extract.extract per SPEC.md and added 27 stdlib unittest tests (the 2 original basics kept). Branch archon/yrz8s3gx-implement-safe-extract-py-per-spec-md-wi: commit 5b3637b (implementation and tests), then 6db42cf (fixes for the review's blocking findings, with Review-Fix trailers). HEAD 6db42cffce264ed049db3619d51c0716b2558a81, tree c5f8cc719163e7f9e69c3431f786c3b07c7f6ab1. Verification: `python3 -m unittest` in the worktree, 27 tests OK. Review: three whole-change reviewers read 5b3637b and returned FAIL (agt_01M8B1R4SP4GNVMXKR75KSVMT2, agt_01M8B1RF6AGBHVEY5TEFN4JR5N, agt_01M8B1RA1F1B4QRCHC0KS6MY98). Their blocking findings (root under a regular file raised NotADirectoryError; empty-string root wrote into cwd; empty batch with invalid root untested) were fixed in 6db42cf. One delta reviewer (agt_01M8B1XR1KPKPWMCQXKAMFXW5Z) read 5b3637b..6db42cf and passed it; it confirmed the blocking fixes and found no new blocking issue. Open non-blocking follow-ups: over-long names and roots raise OSError (ENAMETOOLONG) rather than ValueError; symlinks above the root itself are not checked (documented by the spec's letter, not in the docstring); NUL and lone-surrogate rejection lack isolated tests; the redundant symlink branches; the exclusive-create ('xb') path has no isolated test; and the 300-char test depends on NAME_MAX 255. Workers: none. Nothing is left running; the untracked .archon/ report directory is not committed.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest (in worktree at 6db42cf): Ran 27 tests, OK"
+          ],
+          "commit": "6db42cffce264ed049db3619d51c0716b2558a81",
+          "evidence": {
+            "none": "New module with no prior behaviour and no visible change; verified by unit tests (27 OK on 6db42cf)."
+          },
+          "local_commit": "6db42cffce264ed049db3619d51c0716b2558a81",
+          "pr": {
+            "body": "Approach: extract() validates the full batch (entry shape, names, in-batch collisions), then the root (existing real directory, not symlink, empty string rejected, non-directory ancestor mapped to ValueError), then every target (no symlinked or non-directory ancestor, no existing target). Only then does it create parents and write with exclusive open('xb'). Files: safe_extract.py, test_safe_extract.py. Checks: python3 -m unittest, 27 OK. Review: 3 whole-change reads of 5b3637b failed; blocking findings fixed in 6db42cf; delta review 5b3637b..6db42cf passed. Follow-ups (non-blocking): over-long names/roots raise OSError (ENAMETOOLONG), not ValueError; ancestors of the root are not symlink-checked (spec letter); NUL and lone-surrogate checks lack isolated tests; redundant symlink branches; no isolated test for xb exclusive create; the 300-char I/O test assumes NAME_MAX 255. Assumptions: concurrent filesystem changes out of scope per SPEC; str/Path are the only accepted root types; entries must be tuples.",
+            "summary": "Made extract(entries, root) work per SPEC.md. Now: whole batch validated before any write; invalid names, roots, collisions and existing targets raise ValueError with nothing written. Before: NotImplementedError stub.",
+            "title": "feat: implement safe_extract per SPEC"
+          },
+          "review": {
+            "reviewed_head": "6db42cffce264ed049db3619d51c0716b2558a81",
+            "reviewer_agents": [
+              "agt_01M8B1R4SP4GNVMXKR75KSVMT2",
+              "agt_01M8B1RF6AGBHVEY5TEFN4JR5N",
+              "agt_01M8B1RA1F1B4QRCHC0KS6MY98",
+              "agt_01M8B1XR1KPKPWMCQXKAMFXW5Z"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8B1R4SP4GNVMXKR75KSVMT2",
+                "base": "ec5eae3fd5d695957adbe08c3791a72e73d82d0c",
+                "findings": 3,
+                "head": "5b3637bbb609acf2b16863243893dab0d005f4c9",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8B1RF6AGBHVEY5TEFN4JR5N",
+                "base": "ec5eae3fd5d695957adbe08c3791a72e73d82d0c",
+                "findings": 5,
+                "head": "5b3637bbb609acf2b16863243893dab0d005f4c9",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8B1RA1F1B4QRCHC0KS6MY98",
+                "base": "ec5eae3fd5d695957adbe08c3791a72e73d82d0c",
+                "findings": 8,
+                "head": "5b3637bbb609acf2b16863243893dab0d005f4c9",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8B1XR1KPKPWMCQXKAMFXW5Z",
+                "base": "5b3637bbb609acf2b16863243893dab0d005f4c9",
+                "findings": 7,
+                "head": "6db42cffce264ed049db3619d51c0716b2558a81",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8B1R4SP4GNVMXKR75KSVMT2",
+              "agt_01M8B1RF6AGBHVEY5TEFN4JR5N",
+              "agt_01M8B1RA1F1B4QRCHC0KS6MY98",
+              "agt_01M8B1XR1KPKPWMCQXKAMFXW5Z"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8B1R4SP4GNVMXKR75KSVMT2:1": {
+                "blocking": true,
+                "description": "_validate_root calls _lstat_or_none, which only catches FileNotFoundError. A root whose path runs through a regular file (e.g. <dir>/plain/sub, where plain is a file) raises NotADirectoryError (ENOTDIR), not ValueError. Confirmed by an experiment in a temp copy. at safe_extract.py:68 (remedy: In _validate_root, convert OSError from the root lstat (at least ENOTDIR) into ValueError with context, e.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1R4SP4GNVMXKR75KSVMT2:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                }
+              },
+              "agt_01M8B1R4SP4GNVMXKR75KSVMT2:2": {
+                "blocking": false,
+                "description": "A name longer than the filesystem limit (e.g. 'a'*300) makes lstat raise OSError(ENAMETOOLONG) during validation, not ValueError. SPEC defines no length rule, so this is an unspecified case; it does happen before any write. at safe_extract.py:90 (remedy: Optionally map ENAMETOOLONG from the name check to ValueError, or document that OS-level name errors propagate as OSError. Either is acceptable u",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1R4SP4GNVMXKR75KSVMT2:2",
+                "resolved_in": null
+              },
+              "agt_01M8B1R4SP4GNVMXKR75KSVMT2:3": {
+                "blocking": false,
+                "description": "test_nested_files and test_empty_batch create temp dirs with dir='.', so they depend on the current working directory and write into the repo while running. at test_safe_extract.py:23 (remedy: Use the self.base temp directory from TempRootTestCase instead of dir='.'.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1R4SP4GNVMXKR75KSVMT2:3",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                }
+              },
+              "agt_01M8B1RA1F1B4QRCHC0KS6MY98:1": {
+                "blocking": true,
+                "description": "An empty-string root is accepted: Path('') is '.', so the existing cwd passes validation and files are written into the process's working directory. at safe_extract.py:67 (remedy: Reject an empty str root in _validate_root (e.g. if isinstance(root, str) and not root: raise ValueError), and add a test that extract([('a', b'x')], '') raises ValueError and leaves cwd unchanged.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1RA1F1B4QRCHC0KS6MY98:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                }
+              },
+              "agt_01M8B1RA1F1B4QRCHC0KS6MY98:2": {
+                "blocking": true,
+                "description": "No test covers an empty batch with an invalid root. SPEC says empty batches succeed with [] only after root validation. Mutant that returns [] before _validate_root survives the suite. at test_safe_extract.py:30 (remedy: Add a test that extract([], missing_path) and extract([], plain_file_path) raise ValueError.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1RA1F1B4QRCHC0KS6MY98:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                }
+              },
+              "agt_01M8B1RA1F1B4QRCHC0KS6MY98:3": {
+                "blocking": false,
+                "description": "ExtractBasics tests create temp dirs with dir='.', so they depend on the cwd being writable and write into whatever directory the runner was started from. at test_safe_extract.py:23 (remedy: Use self.root (from TempRootTestCase) instead of tempfile.TemporaryDirectory(dir='.') in these two tests.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1RA1F1B4QRCHC0KS6MY98:3",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                }
+              },
+              "agt_01M8B1RA1F1B4QRCHC0KS6MY98:4": {
+                "blocking": false,
+                "description": "The explicit NUL check and the os.fsencode check (lines 48-51) are not isolated by any test. Removing either one still yields ValueError, because os.lstat raises ValueError for NUL and UnicodeEncodeError is a ValueError subclass. at safe_extract.py:42 (remedy: Add a case for a lone surrogate ('\\ud800') and assert the ValueError message names the rule. Optionally assert the message for NUL, so the ",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1RA1F1B4QRCHC0KS6MY98:4",
+                "resolved_in": null
+              },
+              "agt_01M8B1RA1F1B4QRCHC0KS6MY98:5": {
+                "blocking": false,
+                "description": "The symlink branches in _validate_root (71-72) and _check_target (86-87) are redundant: lstat never reports S_IFDIR for a link, so the S_ISDIR check rejects links too. Test test_dangling_symlink_ancestor_rejected passes via the not-a-directory branch, so it does not isolate the symlink check. at safe_extract.py:86 (remedy: Either drop the redundant branches and keep one clear check, or keep them w",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1RA1F1B4QRCHC0KS6MY98:5",
+                "resolved_in": null
+              },
+              "agt_01M8B1RA1F1B4QRCHC0KS6MY98:6": {
+                "blocking": false,
+                "description": "The only assert in the module (is_relative_to) is decorative because names are already validated. The rest of the module uses explicit ValueError raises, which is correct for the public boundary. at safe_extract.py:97 (remedy: Either keep it as a documented invariant or remove it. Do not add decorative asserts to meet a quota.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1RA1F1B4QRCHC0KS6MY98:6",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                }
+              },
+              "agt_01M8B1RA1F1B4QRCHC0KS6MY98:7": {
+                "blocking": false,
+                "description": "Mode 'xb' (exclusive create) is not isolated by any test. Changing it to 'wb' leaves the suite green, because pre-write validation catches the existing target first. at safe_extract.py:99 (remedy: Optionally add a test that stubs the pre-check so the open('xb') path is the one that refuses to overwrite.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1RA1F1B4QRCHC0KS6MY98:7",
+                "resolved_in": null
+              },
+              "agt_01M8B1RA1F1B4QRCHC0KS6MY98:8": {
+                "blocking": false,
+                "description": "test_unexpected_io_error_propagates uses a 300-character name. The error comes from the validation-phase lstat, not the write phase, and the test relies on NAME_MAX being 255. at test_safe_extract.py:181 (remedy: Keep it but document what it covers, or add a write-phase error test (e.g. a target directory made read-only, skipped when running as root).)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1RA1F1B4QRCHC0KS6MY98:8",
+                "resolved_in": null
+              },
+              "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:1": {
+                "blocking": true,
+                "description": "_validate_root calls _lstat_or_none, which only maps FileNotFoundError to None. A root whose path runs through a regular file (e.g. <file>/sub) raises NotADirectoryError (OSError) instead of ValueError. Reproduced: extract([('a', b'x')], base/'afile'/'sub') -> NotADirectoryError. at safe_extract.py:68 (remedy: In _validate_root, treat NotADirectoryError from the root lstat as an invalid root and r",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                }
+              },
+              "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:2": {
+                "blocking": false,
+                "description": "An empty string root is accepted: Path('') normalizes to '.', so extract(entries, '') writes into the process working directory. The spec says root must name an existing directory, and '' names none. at safe_extract.py:66 (remedy: Reject str roots that are empty (or that strip to empty) with ValueError before constructing Path, and add a test.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                }
+              },
+              "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:3": {
+                "blocking": false,
+                "description": "The 'escapes root' guard is an assert in the production write path. It is stripped under python -O, and it duplicates validation already done in _validate_name. at safe_extract.py:97 (remedy: Either drop it or convert it to an explicit ValueError/RuntimeError check, so the guard survives -O.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:3",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                }
+              },
+              "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:4": {
+                "blocking": false,
+                "description": "Ancestors of the root itself are not checked for symlinks (for example root = '<symlink-dir>/sub'). SPEC only constrains the root final component and components below root, so this matches the letter of the spec, but it is worth an explicit decision. at safe_extract.py:23 (remedy: Document in the module docstring that only the root itself and components below it are checked, or check the full root",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:4",
+                "resolved_in": null
+              },
+              "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:5": {
+                "blocking": false,
+                "description": "Several tests use tempfile.TemporaryDirectory(dir='.'), which creates temporary directories inside the current working directory (the repository) rather than a system temp location, and skips the TempRootTestCase setup. at test_safe_extract.py:23 (remedy: Use TempRootTestCase (self.base) or a default TemporaryDirectory for these tests.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:5",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                }
+              },
+              "agt_01M8B1XR1KPKPWMCQXKAMFXW5Z:7": {
+                "blocking": false,
+                "description": "A root whose final name exceeds NAME_MAX (e.g. 'r'*300) still raises OSError(ENAMETOOLONG) from the root lstat instead of ValueError. The fix covers ENOTDIR for root but not this sibling case. Probed in a temp copy. at safe_extract.py:71 (remedy: Catch OSError(ENAMETOOLONG) in _validate_root alongside NotADirectoryError and raise ValueError, or accept as follow-up with the item 2 decision.)",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B"
+                },
+                "id": "agt_01M8B1XR1KPKPWMCQXKAMFXW5Z:7",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "5b3637bbb609acf2b16863243893dab0d005f4c9",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8B1R4SP4GNVMXKR75KSVMT2",
+                    "base": "ec5eae3fd5d695957adbe08c3791a72e73d82d0c",
+                    "finding_count": 3,
+                    "finding_ids": [
+                      "agt_01M8B1R4SP4GNVMXKR75KSVMT2:1",
+                      "agt_01M8B1R4SP4GNVMXKR75KSVMT2:2",
+                      "agt_01M8B1R4SP4GNVMXKR75KSVMT2:3"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  },
+                  {
+                    "agent": "agt_01M8B1RA1F1B4QRCHC0KS6MY98",
+                    "base": "ec5eae3fd5d695957adbe08c3791a72e73d82d0c",
+                    "finding_count": 8,
+                    "finding_ids": [
+                      "agt_01M8B1RA1F1B4QRCHC0KS6MY98:1",
+                      "agt_01M8B1RA1F1B4QRCHC0KS6MY98:2",
+                      "agt_01M8B1RA1F1B4QRCHC0KS6MY98:3",
+                      "agt_01M8B1RA1F1B4QRCHC0KS6MY98:4",
+                      "agt_01M8B1RA1F1B4QRCHC0KS6MY98:5",
+                      "agt_01M8B1RA1F1B4QRCHC0KS6MY98:6",
+                      "agt_01M8B1RA1F1B4QRCHC0KS6MY98:7",
+                      "agt_01M8B1RA1F1B4QRCHC0KS6MY98:8"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  },
+                  {
+                    "agent": "agt_01M8B1RF6AGBHVEY5TEFN4JR5N",
+                    "base": "ec5eae3fd5d695957adbe08c3791a72e73d82d0c",
+                    "finding_count": 5,
+                    "finding_ids": [
+                      "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:1",
+                      "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:2",
+                      "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:3",
+                      "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:4",
+                      "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:5"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "6db42cffce264ed049db3619d51c0716b2558a81",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8B1XR1KPKPWMCQXKAMFXW5Z",
+                    "base": "5b3637bbb609acf2b16863243893dab0d005f4c9",
+                    "finding_count": 7,
+                    "finding_ids": [
+                      "agt_01M8B1R4SP4GNVMXKR75KSVMT2:2",
+                      "agt_01M8B1RF6AGBHVEY5TEFN4JR5N:4",
+                      "agt_01M8B1RA1F1B4QRCHC0KS6MY98:4",
+                      "agt_01M8B1RA1F1B4QRCHC0KS6MY98:5",
+                      "agt_01M8B1RA1F1B4QRCHC0KS6MY98:7",
+                      "agt_01M8B1RA1F1B4QRCHC0KS6MY98:8",
+                      "agt_01M8B1XR1KPKPWMCQXKAMFXW5Z:7"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Filesystem writes from caller-supplied names and roots, with symlink, traversal and overwrite protection. Reviewers confirmed high. Only behaviour change is new code; no existing callers."
+          },
+          "tree": "c5f8cc719163e7f9e69c3431f786c3b07c7f6ab1"
+        },
+        "cost_usd": 0.12749159999999998,
+        "started_at": "2026-11-26T04:26:29.531145314Z",
+        "finished_at": "2026-11-26T04:32:27.879101828Z"
+      }
+    ],
+    "spent_usd": 0.1274916,
+    "gates": [],
+    "delegations": {
+      "stg_01M8B1NQRVS6WQ8W4Q1JVHB34B": {
+        "direct_usd": 0.044985170000000005,
+        "delegated_usd": 0.08250642999999999,
+        "agents": [
+          {
+            "agent": "agt_01M8B1R4SP4GNVMXKR75KSVMT2",
+            "parent": "agt_01M8B1NQSKCSYRXA11F9CTTFAG",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.015327250000000002
+          },
+          {
+            "agent": "agt_01M8B1RA1F1B4QRCHC0KS6MY98",
+            "parent": "agt_01M8B1NQSKCSYRXA11F9CTTFAG",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.030708979999999997
+          },
+          {
+            "agent": "agt_01M8B1RF6AGBHVEY5TEFN4JR5N",
+            "parent": "agt_01M8B1NQSKCSYRXA11F9CTTFAG",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.016911609999999997
+          },
+          {
+            "agent": "agt_01M8B1XR1KPKPWMCQXKAMFXW5Z",
+            "parent": "agt_01M8B1NQSKCSYRXA11F9CTTFAG",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.019558589999999997
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-26T04:26:29.308063021Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-26T04:26:29.308063021Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-26T04:26:29.308063021Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

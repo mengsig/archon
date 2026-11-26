@@ -1,0 +1,392 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8B0K1VR6NB0HE7J11PQRXQQ",
+      "repo": "repo_01M8B0JNMNDA8HJXDTQ2EKRR2N",
+      "pipeline": "direct",
+      "title": "Implement retry_budget.py per SPEC.md with focused tests",
+      "brief": "Operator request: implement `retry_budget.py` according to `SPEC.md` in the repository root. Preserve the documented API exactly, handle every specified error and boundary case, and add focused tests to `test_retry_budget.py`. The existing tests cover basics only; extend them to cover the specified error paths and boundaries. Use the Python standard library only. Keep functions under 60 lines, validate inputs at the boundary, never swallow errors, and keep comments minimal. Commit the work on the branch with a clear message, using the repository's configured git identity and ending the commit message with the trailer `Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>`. Do not add any other attribution lines.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8B0K1VR6NB0HE7J11PQRXQQ",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-26T04:07:33.003855269Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-26T04:07:33.003855269Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-26T04:07:33.003855269Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Small self-contained stdlib module with a written spec; medium effort suffices, with standard review for error-path coverage."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8B0K1X5JG9TZTGJ42FJTZA7",
+        "summary": "No code change this attempt: the branch commit f0ae8b6a4c55036bb830b5c76f36d74d668dd113 (tree f286dc6d350531c9b67fdf0bb966ae97830b405d, base d92a8da8d1370e571a932dbeb13d6b16e21eb2b3) stands and ships as is. retry_delay in retry_budget.py implements SPEC.md: validation first, attempt limit, saturating backoff, uncapped Retry-After floor, strict budget check. test_retry_budget.py has 19 tests. Checks on the final head: `python3 -m unittest -v test_retry_budget` 19/19 OK; py_compile OK; pyflakes not installed, so no lint ran. Review: agt_01M8B0Q13VKX7ET5V468S6TZ1D read the whole change and passed it with no blocking findings. The earlier reviewer agt_01M8B0NX426EJ3N9PHTX411F0J returned no readable verdict and is not named. Left open (non-blocking): retry_delay has one assert where guidance asks for two, since the spec mandates ValueError for validation. Both reviewer processes were stopped. Nothing is left running. The worktree is clean apart from the removed __pycache__.\n\nREVIEW: pass by agt_01M8B0Q13VKX7ET5V468S6TZ1D on f0ae8b6a4c55036bb830b5c76f36d74d668dd113\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B0Q13VKX7ET5V468S6TZ1D)\n\nSHIPPED: commit f0ae8b6a4c55036bb830b5c76f36d74d668dd113 on the run branch"
+      },
+      "created_at": "2026-11-26T04:07:32.984656673Z",
+      "updated_at": "2026-11-26T04:10:29.034223438Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8B0K1X5JG9TZTGJ42FJTZA7",
+        "item": "qi_01M8B0K1VR6NB0HE7J11PQRXQQ",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8B0K225W6XEGED1MD2MANQM",
+        "workspace": "/home/mengsig/.local/share/archon-bench/rerun-165/r-9ipdqdlh/archon-bench/work/20261126T040720Z/0310c4bfa1b30adca3bbf3e0/.archon/data/worktrees/quality-retry-budget/qi_01M8B0K1VR6NB0HE7J11PQRXQQ",
+        "branch": "archon/11pqrxqq-implement-retry-budget-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "No code change this attempt: the branch commit f0ae8b6a4c55036bb830b5c76f36d74d668dd113 (tree f286dc6d350531c9b67fdf0bb966ae97830b405d, base d92a8da8d1370e571a932dbeb13d6b16e21eb2b3) stands and ships as is. retry_delay in retry_budget.py implements SPEC.md: validation first, attempt limit, saturating backoff, uncapped Retry-After floor, strict budget check. test_retry_budget.py has 19 tests. Checks on the final head: `python3 -m unittest -v test_retry_budget` 19/19 OK; py_compile OK; pyflakes not installed, so no lint ran. Review: agt_01M8B0Q13VKX7ET5V468S6TZ1D read the whole change and passed it with no blocking findings. The earlier reviewer agt_01M8B0NX426EJ3N9PHTX411F0J returned no readable verdict and is not named. Left open (non-blocking): retry_delay has one assert where guidance asks for two, since the spec mandates ValueError for validation. Both reviewer processes were stopped. Nothing is left running. The worktree is clean apart from the removed __pycache__.\n\nREVIEW: pass by agt_01M8B0Q13VKX7ET5V468S6TZ1D on f0ae8b6a4c55036bb830b5c76f36d74d668dd113\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8B0Q13VKX7ET5V468S6TZ1D)\n\nSHIPPED: commit f0ae8b6a4c55036bb830b5c76f36d74d668dd113 on the run branch"
+        },
+        "cost_usd": 0.0558104,
+        "started_at": "2026-11-26T04:07:33.160543648Z",
+        "finished_at": "2026-11-26T04:10:29.034223438Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8B0K21XWYK933B4567ZQMPZ",
+        "run": "prun_01M8B0K1X5JG9TZTGJ42FJTZA7",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8B0K231RDQB63MC3FTK23QX",
+        "aether_task": "tsk_01M8B0K231RDQB63MC3FTK23QY",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "Implemented retry_delay per SPEC.md in retry_budget.py and extended test_retry_budget.py. Commit f0ae8b6a4c55036bb830b5c76f36d74d668dd113 on archon/11pqrxqq-implement-retry-budget-py-per-spec-md-wi (base d92a8da); tree f286dc6d350531c9b67fdf0bb966ae97830b405d. Validation runs first (built-in int, minimum bounds, ValueError), then the attempt limit, saturating backoff via a bit_length-bounded exponent, the Retry-After floor (not capped), and the strict budget check. Tests: 19 unittest cases, all pass on the final head (`python3 -m unittest -v test_retry_budget`); py_compile passes; pyflakes is not installed here so no lint ran. Before: the stub raised NotImplementedError. Review: agent agt_01M8B0MDAEYQYWGCNZMZ7KPJYD (medium effort, whole change) returned pass with no blocking findings. Open follow-up (non-blocking): retry_delay has one assert while repo guidance asks for two per function; the spec mandates ValueError for validation, so I did not add one. Process note: the reviewer's claude -p process (pid 3043144) was left running after it completed; the runtime stops it when this stage ends. Deviation: the operator asked for a Co-Authored-By trailer, but the stage contract forbids model or tool attribution in commit messages, so the commit has none. Commit author is the configured mengsig identity.\n\nREVIEW: pass by agt_01M8B0MDAEYQYWGCNZMZ7KPJYD on f0ae8b6a4c55036bb830b5c76f36d74d668dd113",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v test_retry_budget (19 tests, OK)",
+            "python3 -m py_compile retry_budget.py test_retry_budget.py (ok)"
+          ],
+          "commit": "f0ae8b6a4c55036bb830b5c76f36d74d668dd113",
+          "evidence": {
+            "none": "Pure function and unit tests with no visible or measurable output; the test run is the decisive evidence."
+          },
+          "pr": {
+            "body": "Approach: validate all arguments first (built-in int, minimum bounds, ValueError), then the attempt limit, then backoff min(cap, base<<min(attempt-1, cap.bit_length())) which avoids a huge power of two, then the Retry-After floor (not capped), then the strict budget check (None if elapsed+delay >= budget). Key files: retry_budget.py, test_retry_budget.py. Checks: 19 unittest cases pass; py_compile passes; pyflakes not installed, no lint run. Assumptions: a non-int value of any type raises ValueError per SPEC. Follow-up: retry_delay has one assert, while repo guidance asks for two; not added because the spec mandates ValueError for validation.",
+            "summary": "Made retry_delay work per SPEC.md. Now validates inputs and returns backoff, Retry-After floor and budget-limited delays. Before: stub raised NotImplementedError; now: correct delays or None with boundary tests.",
+            "title": "Implement retry_delay per SPEC.md with boundary tests"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8B0MDAEYQYWGCNZMZ7KPJYD:1": {
+                "blocking": false,
+                "description": "retry_delay has one assert while the repo guidance asks for at least two meaningful assertions per non-trivial function; the spec mandates ValueError for validation, so this is a style gap rather than a defect. at retry_budget.py:41",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B0K21XWYK933B4567ZQMPZ"
+                },
+                "id": "agt_01M8B0MDAEYQYWGCNZMZ7KPJYD:1",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "f0ae8b6a4c55036bb830b5c76f36d74d668dd113",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8B0MDAEYQYWGCNZMZ7KPJYD",
+                    "base": "d92a8da8d1370e571a932dbeb13d6b16e21eb2b3",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8B0MDAEYQYWGCNZMZ7KPJYD:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "New pure function plus tests in two files; no concurrency, security or persistence; behaviour goes from NotImplementedError to implemented. Reviewer agreed at medium."
+          },
+          "tree": "f286dc6d350531c9b67fdf0bb966ae97830b405d"
+        },
+        "cost_usd": 0.02664218,
+        "started_at": "2026-11-26T04:07:33.181416314Z",
+        "finished_at": "2026-11-26T04:08:48.563737287Z"
+      },
+      {
+        "id": "stg_01M8B0NBQ6TGNGYD4C3NZWZEAG",
+        "run": "prun_01M8B0K1X5JG9TZTGJ42FJTZA7",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 2,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "spent",
+        "aether_agent": "agt_01M8B0NGD3CSBA6ZAF31WB43ER",
+        "aether_task": "tsk_01M8B0NGD3VKZ98AYDY8DPX0J1",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "No code change this attempt: the branch commit f0ae8b6a4c55036bb830b5c76f36d74d668dd113 (tree f286dc6d350531c9b67fdf0bb966ae97830b405d, base d92a8da8d1370e571a932dbeb13d6b16e21eb2b3) stands and ships as is. retry_delay in retry_budget.py implements SPEC.md: validation first, attempt limit, saturating backoff, uncapped Retry-After floor, strict budget check. test_retry_budget.py has 19 tests. Checks on the final head: `python3 -m unittest -v test_retry_budget` 19/19 OK; py_compile OK; pyflakes not installed, so no lint ran. Review: agt_01M8B0Q13VKX7ET5V468S6TZ1D read the whole change and passed it with no blocking findings. The earlier reviewer agt_01M8B0NX426EJ3N9PHTX411F0J returned no readable verdict and is not named. Left open (non-blocking): retry_delay has one assert where guidance asks for two, since the spec mandates ValueError for validation. Both reviewer processes were stopped. Nothing is left running. The worktree is clean apart from the removed __pycache__.\n\nREVIEW: pass by agt_01M8B0Q13VKX7ET5V468S6TZ1D on f0ae8b6a4c55036bb830b5c76f36d74d668dd113",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v test_retry_budget",
+            "python3 -m py_compile retry_budget.py test_retry_budget.py"
+          ],
+          "commit": "f0ae8b6a4c55036bb830b5c76f36d74d668dd113",
+          "evidence": {
+            "none": "Pure function with no visible or measurable UI change; behaviour is covered by the unittest output below."
+          },
+          "local_commit": "f0ae8b6a4c55036bb830b5c76f36d74d668dd113",
+          "pr": {
+            "body": "Approach: validate all arguments first (built-in int, minimum bounds, ValueError), then attempt limit, backoff min(cap, base*2**(attempt-1)) with the exponent clamped to cap.bit_length() so huge attempts never build a large power, Retry-After as an uncapped floor, and strict budget check (elapsed+delay >= budget returns None). Key files: retry_budget.py, test_retry_budget.py. Checks: unittest 19/19 OK; py_compile OK. pyflakes not installed, so no lint ran. Assumptions: none beyond SPEC.md. Open non-blocking follow-up: retry_delay has one assert; spec mandates ValueError for validation, so it was not added as an extra assert. Commit author is the configured mengsig identity; no attribution trailer, per stage contract.",
+            "summary": "Implemented retry_delay so bounded retries can be scheduled. Before: stub raised NotImplementedError. Now: validated inputs, attempt limit, saturating backoff, Retry-After floor, strict budget check; 19 tests pass.",
+            "title": "Implement retry_delay per SPEC.md with boundary tests"
+          },
+          "review": {
+            "reviewed_head": "f0ae8b6a4c55036bb830b5c76f36d74d668dd113",
+            "reviewer_agents": [
+              "agt_01M8B0Q13VKX7ET5V468S6TZ1D"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8B0Q13VKX7ET5V468S6TZ1D",
+                "base": "d92a8da8d1370e571a932dbeb13d6b16e21eb2b3",
+                "findings": 1,
+                "head": "f0ae8b6a4c55036bb830b5c76f36d74d668dd113",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8B0Q13VKX7ET5V468S6TZ1D"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8B0MDAEYQYWGCNZMZ7KPJYD:1": {
+                "blocking": false,
+                "description": "retry_delay has one assert while the repo guidance asks for at least two meaningful assertions per non-trivial function; the spec mandates ValueError for validation, so this is a style gap rather than a defect. at retry_budget.py:41",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B0K21XWYK933B4567ZQMPZ"
+                },
+                "id": "agt_01M8B0MDAEYQYWGCNZMZ7KPJYD:1",
+                "resolved_in": null
+              },
+              "agt_01M8B0Q13VKX7ET5V468S6TZ1D:1": {
+                "blocking": false,
+                "description": "retry_delay has one assert (the delay >= 0 check), which is below the 2-per-function guidance. That check is also effectively decorative, since validated inputs make a negative delay impossible. Style gap only; the spec mandates ValueError, not asserts. at retry_budget.py:38",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8B0NBQ6TGNGYD4C3NZWZEAG"
+                },
+                "id": "agt_01M8B0Q13VKX7ET5V468S6TZ1D:1",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "f0ae8b6a4c55036bb830b5c76f36d74d668dd113",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8B0Q13VKX7ET5V468S6TZ1D",
+                    "base": "d92a8da8d1370e571a932dbeb13d6b16e21eb2b3",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8B0Q13VKX7ET5V468S6TZ1D:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "low",
+            "why": "Small pure function with no I/O, clock, or shared state; only retry_budget.py and test_retry_budget.py change. Reviewer confirmed each SPEC rule and that all 19 tests pass; boundary cases are covered by tests."
+          },
+          "tree": "f286dc6d350531c9b67fdf0bb966ae97830b405d"
+        },
+        "cost_usd": 0.02916822,
+        "started_at": "2026-11-26T04:08:48.613679978Z",
+        "finished_at": "2026-11-26T04:10:24.679073708Z"
+      }
+    ],
+    "spent_usd": 0.0558104,
+    "gates": [],
+    "delegations": {
+      "stg_01M8B0K21XWYK933B4567ZQMPZ": {
+        "direct_usd": 0.01950241,
+        "delegated_usd": 0.007139769999999999,
+        "agents": [
+          {
+            "agent": "agt_01M8B0MDAEYQYWGCNZMZ7KPJYD",
+            "parent": "agt_01M8B0K231RDQB63MC3FTK23QX",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.007139769999999999
+          }
+        ]
+      },
+      "stg_01M8B0NBQ6TGNGYD4C3NZWZEAG": {
+        "direct_usd": 0.01581579,
+        "delegated_usd": 0.013352429999999998,
+        "agents": [
+          {
+            "agent": "agt_01M8B0NX426EJ3N9PHTX411F0J",
+            "parent": "agt_01M8B0NGD3CSBA6ZAF31WB43ER",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0060513
+          },
+          {
+            "agent": "agt_01M8B0Q13VKX7ET5V468S6TZ1D",
+            "parent": "agt_01M8B0NGD3CSBA6ZAF31WB43ER",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.007301129999999999
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-26T04:07:33.003855269Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-26T04:07:33.003855269Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-26T04:07:33.003855269Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

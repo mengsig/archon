@@ -1,0 +1,161 @@
+diff --git a/README.md b/README.md
+index 1a55755..ce736c6 100644
+--- a/README.md
++++ b/README.md
+@@ -6,7 +6,21 @@ In-memory inventory service. `api.handle(request)` maps a request
+ 
+ ## Endpoints
+ 
+-- `GET /items` → `{"items": [...]}`: every item, ordered by `id`.
++- `GET /items` → `{"items": [...], "next_cursor": <string or null>}`: one page
++  of items, ordered by `id` ascending.
++  - `limit` (optional): integer from 1 to 100, default 20.
++  - `cursor` (optional): the `next_cursor` of the previous page, passed back
++    unchanged. Omit it for the first page.
++  - `next_cursor` is `null` on the last page. Otherwise, pass it as `cursor` to
++    get the next page.
++  - 400 `{"error": "limit must be an integer from 1 to 100"}` when `limit` is
++    not an integer or is outside 1..100.
++  - 400 `{"error": "invalid cursor"}` when `cursor` is not a cursor this service
++    issued.
+ - `GET /items/<id>` → the item, 404 when unknown, 400 when `id` is not a number.
+ 
++Example: `{"method": "GET", "path": "/items", "query": {"limit": "2"}}` returns
++items 1 and 2 with `"next_cursor": "2"`. Send that value as `cursor` to get
++items 3 and 4.
++
+ Run the tests with `python3 -m unittest`.
+diff --git a/api.py b/api.py
+index aba1605..4c8a1c5 100644
+--- a/api.py
++++ b/api.py
+@@ -7,6 +7,13 @@ elsewhere.
+ 
+ from data import ITEMS
+ 
++DEFAULT_LIMIT = 20
++MAX_LIMIT = 100
++
++
++class BadRequest(ValueError):
++    """A client-supplied query parameter that cannot be served."""
++
+ 
+ def handle(request):
+     if request.get("method") != "GET":
+@@ -21,8 +28,40 @@ def handle(request):
+ 
+ 
+ def list_items(query):
+-    items = sorted(ITEMS, key=lambda item: item["id"])
+-    return {"status": 200, "body": {"items": items}}
++    try:
++        limit = parse_limit(query.get("limit"))
++        after = parse_cursor(query.get("cursor"))
++    except BadRequest as exc:
++        return _error(400, str(exc))
++    remaining = sorted(
++        (item for item in ITEMS if after is None or item["id"] > after),
++        key=lambda item: item["id"],
++    )
++    page = remaining[:limit]
++    next_cursor = str(page[-1]["id"]) if len(remaining) > limit else None
++    return {"status": 200, "body": {"items": page, "next_cursor": next_cursor}}
++
++
++def parse_limit(raw):
++    if raw is None:
++        return DEFAULT_LIMIT
++    message = f"limit must be an integer from 1 to {MAX_LIMIT}"
++    if not isinstance(raw, str) or not (raw.isascii() and raw.isdigit()):
++        raise BadRequest(message)
++    limit = int(raw)
++    if not 1 <= limit <= MAX_LIMIT:
++        raise BadRequest(message)
++    return limit
++
++
++def parse_cursor(raw):
++    """Return the id of the last item already served, or None for the first page."""
++    if raw is None:
++        return None
++    known_ids = {str(item["id"]) for item in ITEMS}
++    if not isinstance(raw, str) or raw not in known_ids:
++        raise BadRequest("invalid cursor")
++    return int(raw)
+ 
+ 
+ def get_item(raw_id):
+diff --git a/test_api.py b/test_api.py
+index 55cd1fd..e2c20d3 100644
+--- a/test_api.py
++++ b/test_api.py
+@@ -25,5 +25,68 @@ class ApiTest(unittest.TestCase):
+         self.assertEqual(handle({"method": "POST", "path": "/items"})["status"], 405)
+ 
+ 
++def walk_pages(**query):
++    """Follow next_cursor from the first page to the end; return every page body."""
++    pages = []
++    cursor = None
++    while True:
++        params = dict(query, cursor=cursor) if cursor is not None else dict(query)
++        res = get("/items", **params)
++        assert res["status"] == 200, res
++        pages.append(res["body"])
++        cursor = res["body"]["next_cursor"]
++        if cursor is None:
++            return pages
++
++
++class PaginationTest(unittest.TestCase):
++    def test_default_page_size_is_20(self):
++        body = get("/items")["body"]
++        self.assertEqual(len(body["items"]), 20)
++        self.assertEqual([item["id"] for item in body["items"]][0], 1)
++        self.assertEqual(body["next_cursor"], "20")
++
++    def test_limit_bounds_are_accepted(self):
++        for limit in ("1", "100"):
++            with self.subTest(limit=limit):
++                res = get("/items", limit=limit)
++                self.assertEqual(res["status"], 200)
++                self.assertEqual(len(res["body"]["items"]), min(int(limit), 57))
++
++    def test_invalid_limit_is_400(self):
++        for limit in ("0", "101", "-1", "abc", "1.5", "", " 5", 5):
++            with self.subTest(limit=limit):
++                res = get("/items", limit=limit)
++                self.assertEqual(res["status"], 400)
++                self.assertIsInstance(res["body"]["error"], str)
++
++    def test_cursor_round_trip_follows_next_cursor(self):
++        pages = walk_pages(limit="10")
++        self.assertEqual(len(pages), 6)
++        self.assertEqual([len(p["items"]) for p in pages], [10, 10, 10, 10, 10, 7])
++        self.assertEqual(pages[1]["items"][0]["id"], 11)
++
++    def test_last_page_has_null_next_cursor(self):
++        pages = walk_pages(limit="10")
++        self.assertIsNone(pages[-1]["next_cursor"])
++        for page in pages[:-1]:
++            self.assertIsNotNone(page["next_cursor"])
++        exact = get("/items", limit="57")["body"]
++        self.assertIsNone(exact["next_cursor"])
++
++    def test_every_item_returned_exactly_once(self):
++        for limit in ("1", "7", "20", "100"):
++            with self.subTest(limit=limit):
++                ids = [item["id"] for page in walk_pages(limit=limit) for item in page["items"]]
++                self.assertEqual(ids, list(range(1, 58)))
++
++    def test_invalid_cursor_is_400(self):
++        for cursor in ("abc", "999", "0", "", "01", 20):
++            with self.subTest(cursor=cursor):
++                res = get("/items", cursor=cursor)
++                self.assertEqual(res["status"], 400)
++                self.assertEqual(res["body"], {"error": "invalid cursor"})
++
++
+ if __name__ == "__main__":
+     unittest.main()

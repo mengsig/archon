@@ -1,0 +1,38 @@
+I've queued the rate limiter as item `qi_01M8AFMH3SKPCBY8Z46N4T58ZG` on the `feature-token-bucket` repository. I did not edit the code myself.
+
+- **Pipeline:** `direct`, one agent that implements, checks and commits. The spec is one small module with no concurrency, so it does not need `adaptive` or `swarm`.
+- **Review:** `standard`, one reviewer. It is a standalone module, so the risk is modest.
+- **Model:** balanced tier, medium effort.
+- **Brief:** it follows `SPEC.md` exactly, including the error and edge cases. The agent should also add tests for those cases, since the existing tests only cover basics. It must use the standard library only, and it must commit when done.
+
+The spec's clock rule (a backwards clock changes nothing until it passes the latest time seen) and the `KeyedLimiter` `max_keys` bound are called out in the brief as examples of edge cases to honour.
+
+The repository ships locally (`ship: local`), so the commit lands on a local branch and nothing is pushed. I'll report back when the item finishes.
+
+Done: Implement rate limiter per SPEC.md in ratelimit.py. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, replacing the NotImplementedError stubs (before: every method raised; now: all spec behaviour implemented, stdlib only). Commit 1811cb5 on archon/6n4t58zg-implement-rate-limiter-per-spec-md-in-ra, tree 2dcd8d5dcc29c797adeb998f027a2ccd6c74315d. Added 19 tests to test_ratelimit.py covering parameter and request validation (no key created or tokens consumed on a rejected call), clock regression (no credit until the latest seen time is passed), fractional refill capped at capacity, wait_time and available, and KeyedLimiter max_keys validation, LRU eviction with try_acquire and wait_time counting as use, and evicted keys returning full. Check run: `python3 -m unittest test_ratelimit` -> Ran 22 tests, OK (the 3 original tests included). Reviewer agt_01M8AFPG7QD6MX0G0RNFAXSNFS (claude-haiku-5-5, medium) read base 6ebf1b3 to head 1811cb5 and returned pass with no blocking findings. Open follow-ups (non-blocking, from review): (1) _bucket_for evicts the LRU key before constructing the new bucket, so a failed construction (e.g. NaN clock) drops a tracked key; fix by constructing before popping. (2) no test that a rejected try_acquire(n) with insufficient tokens consumes nothing. (3) no test that wait_time leaves tokens unchanged when tokens are available. Nothing is running; no services were started.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AFPG7QD6MX0G0RNFAXSNFS)
+
+SHIPPED: commit 1811cb5370c09f6b20766c98c2aacc7d742499d9 on the run branch
+Branch `archon/6n4t58zg-implement-rate-limiter-per-spec-md-in-ra` in /home/mengsig/.local/share/archon-bench/rerun-165/r-w1dkcp5c/archon-bench/work/20261125T231103Z/c2f109d9d3a31a248ab6cd03/feature-token-bucket holds it (2 files changed, 245 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8AFMH3SKPCBY8Z46N4T58ZG`; land it in `main`: `archon merge qi_01M8AFMH3SKPCBY8Z46N4…
+
+Done: Rate limiter follow-ups: construct before evicting; add two missing tests. Fixed KeyedLimiter._bucket_for to construct the new TokenBucket before evicting the LRU key, so a failed construction (non-finite clock) no longer drops a tracked key. Added three tests in test_ratelimit.py: failed construction keeps tracked keys; a rejected try_acquire(n) consumes nothing; wait_time leaves tokens unchanged when available. Committed d079fa3 on archon/6n4t58zg-implement-rate-limiter-per-spec-md-in-ra (not pushed). Checks: `python3 -B -m unittest -v` before 22 OK, after 25 OK. Repro before: a failed try_acquire('b') left 0 keys (key 'a' dropped); after: 1 key ['a'] retained. No linter or build configured in the repo. Reviewer agt_01M8AFS0RV8SM1MR3XN870DYHD passed head d079fa3 with no findings. Nothing left running. Review: pass by agt_01M8AFS0RV8SM1MR3XN870DYHD.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AFS0RV8SM1MR3XN870DYHD)
+
+SHIPPED: commit d079fa30b50c32128e47cc2d0871b8f5c68dc8a8 on the run branch
+Branch `archon/6n4t58zg-implement-rate-limiter-per-spec-md-in-ra` in /home/mengsig/.local/share/archon-bench/rerun-165/r-w1dkcp5c/archon-bench/work/20261125T231103Z/c2f109d9d3a31a248ab6cd03/feature-token-bucket holds it (2 files changed, 269 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8AFR4X1NJT1GD40QDSX2EQP`; land it in `main`: `archon merge qi_01M8AFR4X1NJT1GD40QDSX2EQP`.
+
+Fixed KeyedLimiter._bucket_for to construct the new TokenBucket before evicting the LRU key, so a failed construction (non-finite clock) no longer drops a tracked key. Added three tests in test_ratelimit.py: failed construction keeps tracked keys; a rejected try_acquire(n) consumes nothing; wait_time leaves tokens unchanged when available. Committed d079fa3 on archon/6n4t58zg-implement-rate-limiter-per-spec-md-in-ra (not pushed). Checks: `python3 -B -m unittest -v` before 22 OK, after 25 OK. Repro before: a failed try_acquire('b') left 0 keys (key 'a' dropped); after: 1 key ['a'] retained. No linter or build configured in the repo. Reviewer agt_01M8AFS0RV8SM1MR3XN870DYHD passed head d079fa3 with no findings. Nothing left running. Review: pass by agt_01M8AFS0RV8SM1MR3XN870DYHD.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AFS0RV8SM1MR3XN870DYHD)
+
+SHIPPED: commit d079fa30b50c32128e47cc2d0871b8f5c68dc8a8 on the run branch
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, replacing the NotImplementedError stubs (before: every method raised; now: all spec behaviour implemented, stdlib only). Commit 1811cb5 on archon/6n4t58zg-implement-rate-limiter-per-spec-md-in-ra, tree 2dcd8d5dcc29c797adeb998f027a2ccd6c74315d. Added 19 tests to test_ratelimit.py covering parameter and request validation (no key created or tokens consumed on a rejected call), clock regression (no credit until the latest seen time is passed), fractional refill capped at capacity, wait_time and available, and KeyedLimiter max_keys validation, LRU eviction with try_acquire and wait_time counting as use, and evicted keys returning full. Check run: `python3 -m unittest test_ratelimit` -> Ran 22 tests, OK (the 3 original tests included). Reviewer agt_01M8AFPG7QD6MX0G0RNFAXSNFS (claude-haiku-5-5, medium) read base 6ebf1b3 to head 1811cb5 and returned pass with no blocking findings. Open follow-ups (non-blocking, from review): (1) _bucket_for evicts the LRU key before constructing the new bucket, so a failed construction (e.g. NaN clock) drops a tracked key; fix by constructing before popping. (2) no test that a rejected try_acquire(n) with insufficient tokens consumes nothing. (3) no test that wait_time leaves tokens unchanged when tokens are available. Nothing is running; no services were started.
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AFPG7QD6MX0G0RNFAXSNFS)
+
+SHIPPED: commit 1811cb5370c09f6b20766c98c2aacc7d742499d9 on the run branch

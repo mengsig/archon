@@ -1,0 +1,35 @@
+**Verdict: do not ship `src/tokens.js` as it is.** The first finding lets anyone forge a token without the secret.
+
+I read `src/tokens.js` in the `review-seeded-bug` repo (its `package.json` name is `session-lib`; HEAD `a579091 bench fixture`), along with `src/encoding.js`, `src/index.js` and `test/tokens.test.js`. I changed no code. I ran the existing tests and a few one-line checks against the module, all read-only.
+
+**1. Critical: signature check accepts an empty or truncated signature.** `src/tokens.js:27` (`verify`)
+- `expected.startsWith(signature)` is a prefix test, not an equality test. `'abc'.split('.')` gives `signature === ''` for `"<body>."`, and `startsWith('')` is always true.
+- Concrete input: `base64url('{"user":"root","exp":9e15}') + "."`. Run against the module, `verify` returns `{ user: 'root', exp: 9000000000000000 }` with no secret.
+- A one-character signature prefix also passes (1 in 64 for a random guess, and an attacker can choose it).
+- Fix: compare the full digest with `crypto.timingSafeEqual` after a length check.
+
+**2. Medium: non-constant-time comparison.** `src/tokens.js:27`
+- `startsWith` on strings is not timing-safe. Even with finding 1 fixed, a comparison that short-circuits leaks the signature byte by byte through timing. The same `timingSafeEqual` fix covers it.
+
+**3. Medium: unauthenticated input can throw out of `verify`.** `src/tokens.js:28-29`
+- The body is parsed before the claims are checked. A body of `base64url("null") + "."` throws `TypeError: Cannot read properties of null (reading 'exp')`. A body of `base64url("{not json") + "."` throws `SyntaxError`.
+- `verify` is documented to return `null` on anything invalid, so callers that don't wrap it get a 500 or a crash on attacker input.
+- Fix: parse inside a try and return `null` on failure, and check that the payload is a non-null object. Note that this is an expected bad-input path, so it should be handled, not left to throw.
+
+**4. Medium: `verify` does not check the secret.** `src/tokens.js:22`
+- `sign` rejects secrets under 32 characters, but `verify` accepts any secret. `createHmac('sha256', '')` works, so a deployment that verifies with an empty or misconfigured secret accepts tokens anyone can mint with that empty key.
+- Fix: apply the same secret check in `verify`, or put it in a shared helper.
+
+**5. Low: time units differ from the usual convention.** `src/tokens.js:16`
+- `iat` and `exp` are in milliseconds (`exp: 1700003600000` for an hour from `1700000000000`). JWT's NumericDate convention, RFC 7519, uses seconds. A consumer that reads `exp` as seconds sees a token that never expires.
+- Confirm whether any other service reads these tokens before shipping.
+
+**6. Low: lenient token format.** `src/tokens.js:24`
+- `token.split('.')` ignores extra segments, so `"<valid token>.junk"` verifies. The signature still covers the body, so this is not exploitable by itself, but the format is not strict. Reject tokens without exactly two segments.
+- `verify` also does not reject a future `iat`.
+
+**7. Test gap: the suite misses finding 1.** `test/tokens.test.js`
+- All 4 tests pass (`node --test test/tokens.test.js`). The tampered-payload test reuses the real signature, so it never exercises an empty or truncated one. Nothing covers invalid JSON or a `null` body either.
+- Add regression tests for the empty-signature forgery and the non-object body before the fix lands.
+
+Two caveats. I read the working copy, which matches the base commit I checked, and I did not confirm that the "just rewritten" version is committed there. Also, `node --test test/` (a directory argument) fails on this Node version, so I ran the file directly.

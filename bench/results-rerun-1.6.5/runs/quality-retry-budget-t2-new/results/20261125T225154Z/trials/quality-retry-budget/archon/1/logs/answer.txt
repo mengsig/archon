@@ -1,0 +1,21 @@
+The work is queued as item `qi_01M8AEHFVC1TE1J050JV9XWYQ6`. I haven't read or changed the code myself; a stage agent will do that.
+
+- **Repository:** `quality-retry-budget`, which has `SPEC.md` and `retry_budget.py`.
+- **Pipeline:** `direct`, one agent that implements, tests and commits. I chose it because this is a single module with a spec.
+- **Review:** `standard`. The module is a shared utility, so a slip could be hidden, but it isn't security or concurrency work.
+- **Shipping:** the repository ships `local`, so the agent commits on a local branch and never pushes. That matches "commit your work" without publishing anything.
+
+The brief asks the agent to implement every specified error and boundary case, keep the existing API, extend the existing tests rather than duplicate them, use only the standard library, and get the suite passing before committing. I'll report the outcome when the item finishes.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py with 29 focused tests (validation, attempt limit, backoff saturation and boundaries, Retry-After floor, budget boundary). Commit f770f085b9c66e0b703bb224c284be2b765d5a37 on archon/jv9xwyq6-implement-retry-budget-py-per-spec-md-wi, not pushed. Checks: python3 -m unittest -v test_retry_budget (PYTHONDONTWRITEBYTECODE=1) 32 tests OK; 200000-case random cross-check against the spec formula OK. Before: stub raised NotImplementedError, 32 errors. Review: one reviewer, agt_01M8AEKZDN326ZPR9AS2NED97D, passed head f770f08 with no findings; risk medium. Nothing left running from me. The reviewer's process pid 1596315 was handed over and stops when this agent ends. Open: none.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AEKZDN326ZPR9AS2NED97D)
+
+SHIPPED: commit f770f085b9c66e0b703bb224c284be2b765d5a37 on the run branch
+Branch `archon/jv9xwyq6-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-e8h4sftz/archon-bench/work/20261125T225154Z/e34986d18392a422884925e8/quality-retry-budget holds it (2 files changed, 176 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8AEHFVC1TE1J050JV9XWYQ6`; land it in `main`: `archon merge qi_01M8AEHFVC1TE1J050JV9XWYQ6`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py with 29 focused tests (validation, attempt limit, backoff saturation and boundaries, Retry-After floor, budget boundary). Commit f770f085b9c66e0b703bb224c284be2b765d5a37 on archon/jv9xwyq6-implement-retry-budget-py-per-spec-md-wi, not pushed. Checks: python3 -m unittest -v test_retry_budget (PYTHONDONTWRITEBYTECODE=1) 32 tests OK; 200000-case random cross-check against the spec formula OK. Before: stub raised NotImplementedError, 32 errors. Review: one reviewer, agt_01M8AEKZDN326ZPR9AS2NED97D, passed head f770f08 with no findings; risk medium. Nothing left running from me. The reviewer's process pid 1596315 was handed over and stops when this agent ends. Open: none.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AEKZDN326ZPR9AS2NED97D)
+
+SHIPPED: commit f770f085b9c66e0b703bb224c284be2b765d5a37 on the run branch

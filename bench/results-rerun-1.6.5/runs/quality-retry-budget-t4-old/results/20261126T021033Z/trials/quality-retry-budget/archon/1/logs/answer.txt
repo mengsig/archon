@@ -1,0 +1,23 @@
+I queued the work as one item, `qi_01M8ASXA6CB12SRVYTSHEQQ3X7`, on the `quality-retry-budget` repository. I did not edit the code myself; the item is running through the `direct` pipeline.
+
+- **Scope:** implement `retry_budget.py` to match `SPEC.md`, keep every documented API, cover each specified error and boundary case, add focused stdlib tests, and commit on the local branch. The brief also says not to push.
+- **Review:** `standard`, since this is a small shared module.
+- **Model:** balanced tier at medium effort.
+- **Ship mode:** the repository is set to `ship local`, so the commit stays local and nothing is pushed.
+
+I'll report the outcome when the item finishes.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and added 28 focused tests in test_retry_budget.py, committed as efb9378 on archon/sheqq3x7-implement-retry-budget-py-per-spec-md-wi (not pushed). Validation runs first and raises ValueError for non-int, bool, float or subclass values and for out-of-range values. It then handles the attempt limit, the backoff min(cap, base*2**(attempt-1)) with saturation that avoids large powers, the uncapped retry_after floor, and the strict budget check. Before: the three existing tests errored with NotImplementedError. After: `python3 -I -m unittest` runs 31 tests, all OK, stdlib only. Assumptions (recorded in the commit message): "built-in int" means type(x) is int; a delay ending exactly at budget_ms is refused. Nothing left open; no servers or processes were started. Review: the reviewer returned pass with one non-blocking style nit (_validate_args has no assertions of its own).
+REVIEW: pass by agt_01M8ASYY81WFX9H1H3FTY52PZB
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ASYY81WFX9H1H3FTY52PZB)
+
+SHIPPED: commit efb937893601e8df9b8890f587d466a3cc709e3d on the run branch
+Branch `archon/sheqq3x7-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-1f38fqb8/archon-bench/work/20261126T021033Z/63ce86dd97a63f4562095c8f/quality-retry-budget holds it (2 files changed, 190 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8ASXA6CB12SRVYTSHEQQ3X7`; land it in `main`: `archon merge qi_01M8ASXA6CB12SRVYTSHEQQ3X7`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and added 28 focused tests in test_retry_budget.py, committed as efb9378 on archon/sheqq3x7-implement-retry-budget-py-per-spec-md-wi (not pushed). Validation runs first and raises ValueError for non-int, bool, float or subclass values and for out-of-range values. It then handles the attempt limit, the backoff min(cap, base*2**(attempt-1)) with saturation that avoids large powers, the uncapped retry_after floor, and the strict budget check. Before: the three existing tests errored with NotImplementedError. After: `python3 -I -m unittest` runs 31 tests, all OK, stdlib only. Assumptions (recorded in the commit message): "built-in int" means type(x) is int; a delay ending exactly at budget_ms is refused. Nothing left open; no servers or processes were started. Review: the reviewer returned pass with one non-blocking style nit (_validate_args has no assertions of its own).
+REVIEW: pass by agt_01M8ASYY81WFX9H1H3FTY52PZB
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8ASYY81WFX9H1H3FTY52PZB)
+
+SHIPPED: commit efb937893601e8df9b8890f587d466a3cc709e3d on the run branch

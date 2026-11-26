@@ -1,0 +1,153 @@
+======================================================================
+ERROR: test_bucket_refills_over_time (test_ratelimit.BasicTest.test_bucket_refills_over_time)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit.py", line 24, in test_bucket_refills_over_time
+    bucket = TokenBucket(2, 2.0, clock=clock)
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_bucket_starts_full_and_drains (test_ratelimit.BasicTest.test_bucket_starts_full_and_drains)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit.py", line 17, in test_bucket_starts_full_and_drains
+    bucket = TokenBucket(3, 1.0, clock=clock)
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_keys_are_independent (test_ratelimit.BasicTest.test_keys_are_independent)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit.py", line 30, in test_keys_are_independent
+    limiter = KeyedLimiter(1, 1.0, clock=FakeClock())
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 22, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_hashable_keys (test_ratelimit_spec.KeyedLimiterSpec.test_hashable_keys)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit_spec.py", line 94, in test_hashable_keys
+    limiter = KeyedLimiter(2, 1.0, clock=self.clock)
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 22, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_construction (test_ratelimit_spec.KeyedLimiterSpec.test_invalid_construction)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit_spec.py", line 70, in test_invalid_construction
+    KeyedLimiter(1, 1, max_keys=0, clock=self.clock)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 22, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_lru_eviction (test_ratelimit_spec.KeyedLimiterSpec.test_lru_eviction)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit_spec.py", line 75, in test_lru_eviction
+    limiter = KeyedLimiter(1, 0.001, max_keys=2, clock=self.clock)
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 22, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_wait_time_counts_as_use (test_ratelimit_spec.KeyedLimiterSpec.test_wait_time_counts_as_use)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit_spec.py", line 85, in test_wait_time_counts_as_use
+    limiter = KeyedLimiter(1, 1.0, max_keys=2, clock=self.clock)
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 22, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_clock_going_backwards_is_harmless (test_ratelimit_spec.TokenBucketSpec.test_clock_going_backwards_is_harmless)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit_spec.py", line 17, in setUp
+    self.bucket = TokenBucket(4, 2.0, clock=self.clock)
+                  ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_default_clock_works (test_ratelimit_spec.TokenBucketSpec.test_default_clock_works)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit_spec.py", line 17, in setUp
+    self.bucket = TokenBucket(4, 2.0, clock=self.clock)
+                  ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_failed_acquire_consumes_nothing (test_ratelimit_spec.TokenBucketSpec.test_failed_acquire_consumes_nothing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit_spec.py", line 17, in setUp
+    self.bucket = TokenBucket(4, 2.0, clock=self.clock)
+                  ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_construction (test_ratelimit_spec.TokenBucketSpec.test_invalid_construction)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit_spec.py", line 17, in setUp
+    self.bucket = TokenBucket(4, 2.0, clock=self.clock)
+                  ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_requests (test_ratelimit_spec.TokenBucketSpec.test_invalid_requests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit_spec.py", line 17, in setUp
+    self.bucket = TokenBucket(4, 2.0, clock=self.clock)
+                  ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_refill_is_continuous_and_capped (test_ratelimit_spec.TokenBucketSpec.test_refill_is_continuous_and_capped)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit_spec.py", line 17, in setUp
+    self.bucket = TokenBucket(4, 2.0, clock=self.clock)
+                  ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_wait_time (test_ratelimit_spec.TokenBucketSpec.test_wait_time)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/test_ratelimit_spec.py", line 17, in setUp
+    self.bucket = TokenBucket(4, 2.0, clock=self.clock)
+                  ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/rerun-165/r-ythrt2_q/archon-bench/work/20261125T231609Z/26a2107a71ea8502caa1b291/feature-token-bucket/ratelimit.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+----------------------------------------------------------------------
+Ran 14 tests in 0.002s
+
+FAILED (errors=14)
+expect_tests: python3 exited 1

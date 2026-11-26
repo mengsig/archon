@@ -10,7 +10,7 @@ What changed:
 Decisions to review:
 - status_counts now returns Vec<(OrderStatus, usize)> instead of Vec<(String, usize)>. This is a public signature change. Callers get a compile error rather than a silent change, and Display output is identical. Say if you want the String version back.
 - I did not add the CLAUDE.md-style assertions to the touched functions. Adding them would be a behaviour change beyond this refactor.
-- The commit has no Co-Authored-By or generated-by line, because CLAUDE.md forbids attribution. It uses the repo's configured identity (mengsig / marcus.engsig@tii.ae), which I did not change.
+- The commit has no Co-Authored-By or generated-by line, because CLAUDE.md forbids attribution. It uses the repo's configured identity (mengsig / [redacted-email]), which I did not change.
 - cargo is at ~/.cargo/bin, not on the default PATH. I added it for this session only.
 - The baseline tree was not rustfmt-clean either, so I did not run cargo fmt over the crate.
 
@@ -25,6 +25,6 @@ Decisions for you to review:
 
 - **Public signature change:** `status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. Callers that treat the result as a string will fail to compile. Printed output is identical. I can restore the `String` version if you'd rather keep the signature.
 - **No new assertions:** I didn't add the per-function assertions from CLAUDE.md, since they would change behaviour beyond this refactor.
-- **No attribution line:** CLAUDE.md forbids attribution, so the commit has no Co-Authored-By line. It uses the repo's configured identity, `mengsig` / `marcus.engsig@tii.ae`, which I left alone.
+- **No attribution line:** CLAUDE.md forbids attribution, so the commit has no Co-Authored-By line. It uses the repo's configured identity, `mengsig` / `[redacted-email]`, which I left alone.
 - **Cargo PATH:** `cargo` isn't on the default PATH here, so I ran it from `~/.cargo/bin` for this session only.
 - **Formatting:** the original tree already fails `cargo fmt --check`, so I didn't reformat the crate.

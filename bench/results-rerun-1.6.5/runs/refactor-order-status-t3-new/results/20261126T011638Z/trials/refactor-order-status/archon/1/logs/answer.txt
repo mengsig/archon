@@ -1,0 +1,29 @@
+The refactor is queued as item `qi_01M8APTG18SCTQ42H9RSSF50RT` on the `refactor-order-status` repository. I haven't changed any code myself; the item's agent makes the change, runs `cargo test`, and commits locally.
+
+- **Pipeline:** `direct`, with standard review. The `refactor` pipeline was refused because its review level is fixed at strict.
+- **Brief:** your request verbatim, plus instructions to characterize the current report output, ordering, error messages and parsing before changing anything, to keep them identical, and to commit only with the configured git identity and no attribution lines.
+
+I'll report the outcome when the item finishes.
+
+Done: Refactor orders: OrderStatus enum replaces status strings. Repair attempt: no code changed. Branch head 78871ddb8b649d5331d9cb330cef817ded802c1a (tree a1cd97255079e324c1cbd092f6a71c7a149f3c64) carries the OrderStatus refactor committed in attempt 1; worktree clean. Checks on this head: cargo fmt --check clean; cargo clippy --all-targets -D warnings clean; cargo test passes (3 unit, 3 integration). Reviewer agt_01M8APZ83PS7G763KAG8HPDAE5 read the whole change from base 74972a908c2e9d52d93518274a5edd297610a745 and passed it with no blocking findings; behaviour matches base for report order, CSV parsing, error and refusal text. Risk is high because of the public API break (Order.status type and report::status_counts return type). Open non-blocking follow-up: tests/orders.rs:52 still checks from_line's unknown-status error with is_err() only, not its message. Nothing pushed; no processes started or left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8APZ83PS7G763KAG8HPDAE5)
+
+SHIPPED: commit 78871ddb8b649d5331d9cb330cef817ded802c1a on the run branch
+Branch `archon/rssf50rt-refactor-orders-orderstatus-enum-replace` in /home/mengsig/.local/share/archon-bench/rerun-165/r-ug9flabj/archon-bench/work/20261126T011638Z/6af34c76c07a938171b403c1/refactor-order-status holds it (7 files changed, 178 insertions(+), 44 deletions(-)). Review: `archon diff qi_01M8APTG18SCTQ42H9RSSF50RT`; land it in `main`: `archon merge qi_01M8APTG18SCTQ42H9RSSF50RT`.
+
+Freed 0.0 GiB of build output: item qi_01M8APTG18SCTQ42H9RSSF50RT ended and its cargo target directory went.
+
+OrderStatus refactor of the orders crate succeeded and is committed locally as 78871ddb8b649d5331d9cb330cef817ded802c1a on the item's run branch (not pushed, no PR; ship mode is local). cargo fmt --check, clippy -D warnings and cargo test (3 unit, 3 integration) all pass. An independent review passed it with no blocking findings; report order, CSV parsing, and error and refusal text match the base commit 74972a9.
+
+Two things to know:
+- The change breaks the public API: `Order.status` is now `OrderStatus`, and `report::status_counts` returns a different type. Callers need updating.
+- Non-blocking follow-up: tests/orders.rs:52 checks the unknown-status error from `from_line` with `is_err()` only, not its message.
+
+Nothing has been merged. Say if you want it merged or the follow-up test added.
+
+Repair attempt: no code changed. Branch head 78871ddb8b649d5331d9cb330cef817ded802c1a (tree a1cd97255079e324c1cbd092f6a71c7a149f3c64) carries the OrderStatus refactor committed in attempt 1; worktree clean. Checks on this head: cargo fmt --check clean; cargo clippy --all-targets -D warnings clean; cargo test passes (3 unit, 3 integration). Reviewer agt_01M8APZ83PS7G763KAG8HPDAE5 read the whole change from base 74972a908c2e9d52d93518274a5edd297610a745 and passed it with no blocking findings; behaviour matches base for report order, CSV parsing, error and refusal text. Risk is high because of the public API break (Order.status type and report::status_counts return type). Open non-blocking follow-up: tests/orders.rs:52 still checks from_line's unknown-status error with is_err() only, not its message. Nothing pushed; no processes started or left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8APZ83PS7G763KAG8HPDAE5)
+
+SHIPPED: commit 78871ddb8b649d5331d9cb330cef817ded802c1a on the run branch

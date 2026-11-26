@@ -1,0 +1,10 @@
+diff --git a/window.py b/window.py
+index 56168a7..47b4c59 100644
+--- a/window.py
++++ b/window.py
+@@ -2,4 +2,4 @@ def sliding_windows(items, size):
+     """Every contiguous window of `size` items, in order."""
+     if size <= 0:
+         raise ValueError("size must be positive")
+-    return [items[i : i + size] for i in range(len(items) - size)]
++    return [items[i : i + size] for i in range(len(items) - size + 1)]

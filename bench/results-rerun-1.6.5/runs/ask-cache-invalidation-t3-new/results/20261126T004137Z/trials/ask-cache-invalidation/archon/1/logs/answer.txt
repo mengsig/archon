@@ -1,0 +1,1 @@
+The investigator agent has finished, and the two processes it left running (3798767 and 3798893) had already exited, so nothing is still running from it. The root-cause report from my previous message stands unchanged.

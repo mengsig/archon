@@ -1,0 +1,21 @@
+I queued the `safe_extract.py` work as item `qi_01M8AY0RGNT1E1WSXR7SX7T4CB` in the `quality-safe-extract` repo.
+
+- **Pipeline:** `adaptive`, with strict review. Path handling is security-sensitive, so I did not use `direct`.
+- **Brief:** Your request verbatim, plus acceptance criteria. The API must stay unchanged, every error and boundary case in `SPEC.md` needs an implementation and a test, and only the standard library may be used. The work is committed, and each function stays under 60 lines.
+- **Shipping:** The repo ships locally, so the commit lands on a local branch with no PR.
+- **Notification:** The item is tagged `notify`, so I'll be woken on success or failure.
+
+I did not read `SPEC.md` or the repo myself, and I haven't checked the result yet. I'll report once the item finishes.
+
+Done: Implement safe_extract.py per SPEC.md with focused tests. ignored
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AY3HDTESAMDXCTSWCRGPRY), claude-code/claude-haiku-5-5 (agent agt_01M8AY3RY4S2BP85XWWASSN6HT), claude-code/claude-haiku-5-5 (agent agt_01M8AY9JFCYYWFHGVW16S74PRV), claude-code/claude-haiku-5-5 (agent agt_01M8AY77JJRK78TD04X4VJ69YF), claude-code/claude-haiku-5-5 (agent agt_01M8AYD0FWVE5SCE2JJ7SWD8JJ), claude-code/claude-haiku-5-5 (agent agt_01M8AYFP80PSCSWR6ERWWMTCXZ)
+
+SHIPPED: commit fb5a2232fc378388b316d471807fd50a087e449f on the run branch
+Branch `archon/7sx7t4cb-implement-safe-extract-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/rerun-165/r-pkn99uhs/archon-bench/work/20261126T032223Z/24c32afc56fbb3b482a415ae/quality-safe-extract holds it (2 files changed, 387 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8AY0RGNT1E1WSXR7SX7T4CB`; land it in `main`: `archon merge qi_01M8AY0RGNT1E1WSXR7SX7T4CB`.
+
+ignored
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8AY3HDTESAMDXCTSWCRGPRY), claude-code/claude-haiku-5-5 (agent agt_01M8AY3RY4S2BP85XWWASSN6HT), claude-code/claude-haiku-5-5 (agent agt_01M8AY9JFCYYWFHGVW16S74PRV), claude-code/claude-haiku-5-5 (agent agt_01M8AY77JJRK78TD04X4VJ69YF), claude-code/claude-haiku-5-5 (agent agt_01M8AYD0FWVE5SCE2JJ7SWD8JJ), claude-code/claude-haiku-5-5 (agent agt_01M8AYFP80PSCSWR6ERWWMTCXZ)
+
+SHIPPED: commit fb5a2232fc378388b316d471807fd50a087e449f on the run branch

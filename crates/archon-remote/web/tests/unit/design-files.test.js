@@ -63,6 +63,27 @@ test('a file both the client and the daemon refuse stays refused', () => {
   assert.match(acceptMessage('*/*', [file('a.png', 'image/png')]), /not one/);
 });
 
+test('the client matches the name the daemon sanitizes and trims like Rust', () => {
+  const file = (name, type = '') => ({ name, type });
+  assert.equal(acceptMessage('.csv', [file('report.csv ')]), null);
+  assert.equal(acceptMessage('text/csv', [file('report.csv\u00a0')]), null);
+  assert.equal(acceptMessage('.csv', [file('..report.csv')]), null);
+  assert.equal(acceptMessage('.csv', [file('C:\\tmp\\a.csv')]), null);
+  const cutInTheExtension = `${'a'.repeat(118)}.csv`;
+  assert.match(acceptMessage('.csv', [file(cutInTheExtension)]), /not one/);
+  assert.equal(acceptMessage('.csv', [file(`${'a'.repeat(116)}.csv`)]), null);
+  assert.equal(acceptMessage('.csv', [file(`${'é'.repeat(58)}.csv`)]), null);
+  assert.match(acceptMessage('.csv', [file(`${'é'.repeat(59)}.csv`)]), /not one/);
+  assert.match(acceptMessage('.csv', [file('a.csv\ufeff')]), /not one/);
+});
+
+test('a byte order mark is not whitespace, as in Rust', () => {
+  const file = (name, type = '') => ({ name, type });
+  assert.match(acceptMessage('\ufeff.csv', [file('a.csv')]), /not one/);
+  assert.equal(acceptMessage('\u00a0.csv', [file('a.csv')]), null);
+  assert.match(acceptMessage('text/csv', [file('x', '\ufefftext/csv')]), /not one/);
+});
+
 test('a new tab note stays until the operator goes back or reloads', () => {
   let state = initialState('item');
   state = reduce(state, { type: 'event', event: { event: 'new_tab', message: 'The app opened a new tab.' } });

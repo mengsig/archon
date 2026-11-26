@@ -9,7 +9,8 @@ export function fileLimitMessage(files) {
   return null;
 }
 
-// Mirrors crates/archon-daemon/src/design/accept.rs; the daemon stays the authority.
+// Mirrors crates/archon-daemon/src/design/accept.rs. The daemon is the authority: this check
+// only refuses early with a clear message and must never be stricter than the daemon.
 const MIME_BY_EXTENSION = new Map(Object.entries({
   png: 'image/png',
   jpg: 'image/jpeg',
@@ -51,7 +52,35 @@ const MIME_BY_EXTENSION = new Map(Object.entries({
   mov: 'video/quicktime',
 }));
 
+const MAX_FILE_NAME_BYTES = 120;
+const RUST_WHITESPACE = '\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const RUST_TRIM_START = new RegExp(`^[${RUST_WHITESPACE}]+`);
+const RUST_TRIM_END = new RegExp(`[${RUST_WHITESPACE}]+$`);
+
+// Rust's str::trim; String.prototype.trim also strips U+FEFF, which Rust keeps.
+const rustTrim = (text) => text.replace(RUST_TRIM_START, '').replace(RUST_TRIM_END, '');
+
 const asciiLower = (text) => text.replace(/[A-Z]/g, (c) => c.toLowerCase());
+
+const utf8Length = (c) => c.codePointAt(0) < 0x80 ? 1 : c.codePointAt(0) < 0x800 ? 2 : c.codePointAt(0) < 0x10000 ? 3 : 4;
+const isControl = (c) => /^[\u0000-\u001f\u007f-\u009f]$/.test(c);
+
+// Mirrors archon-design-browser sanitize::file_name, which the daemon applies before matching.
+function sanitizedName(raw) {
+  const last = String(raw ?? '').split(/[/\\]/).pop();
+  let name = '';
+  let bytes = 0;
+  for (const c of last) {
+    if (isControl(c)) continue;
+    const kept = '<>:"|?*'.includes(c) ? '_' : c;
+    const width = utf8Length(kept);
+    if (bytes + width > MAX_FILE_NAME_BYTES) break;
+    name += kept;
+    bytes += width;
+  }
+  const trimmed = rustTrim(rustTrim(name).replace(/^\.+/, ''));
+  return trimmed || 'file';
+}
 
 function mimeOf(name) {
   const dot = name.lastIndexOf('.');
@@ -60,7 +89,7 @@ function mimeOf(name) {
 }
 
 function declaredType(raw) {
-  const bare = String(raw ?? '').split(';')[0].trim();
+  const bare = rustTrim(String(raw ?? '').split(';')[0]);
   const parts = bare.split('/');
   const isToken = (s) => /^[\x21-\x7e]+$/.test(s);
   const valid = bare.length <= 255 && parts.length === 2 && isToken(parts[0]) && isToken(parts[1]);
@@ -72,17 +101,18 @@ function mimeMatches(token, mime) {
 }
 
 function tokenAllows(token, file) {
+  const fileName = sanitizedName(file.name);
   if (token.startsWith('.')) {
-    const name = asciiLower(file.name);
+    const name = asciiLower(fileName);
     return name.length > token.length && name.endsWith(token);
   }
-  const mimes = [declaredType(file.type), mimeOf(file.name)].filter(Boolean);
+  const mimes = [declaredType(file.type), mimeOf(fileName)].filter(Boolean);
   return mimes.some((mime) => mimeMatches(token, mime));
 }
 
 // The input's accept attribute applies to what the operator picks or drops.
 export function acceptMessage(accept, files) {
-  const tokens = String(accept ?? '').split(',').map((t) => asciiLower(t.trim())).filter(Boolean);
+  const tokens = String(accept ?? '').split(',').map((t) => asciiLower(rustTrim(t))).filter(Boolean);
   if (!tokens.length || files.every((file) => tokens.some((token) => tokenAllows(token, file)))) return null;
   return `That file type is not one the app accepts here (${tokens.join(', ')}).`;
 }

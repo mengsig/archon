@@ -82,12 +82,9 @@ function pickerOptions(options, answer) {
   return h('div', { class: 'confirm' }, rows);
 }
 
-export async function showClipboard(text) {
-  try {
-    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
-    await navigator.clipboard.writeText(text);
-    toast('Copied from the app');
-  } catch (error) { clipboardSheet(text); }
+// The page can report any text, so it reaches the clipboard only when the operator presses Copy.
+export function showClipboard(text) {
+  clipboardSheet(text);
 }
 
 function clipboardSheet(text) {

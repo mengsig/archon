@@ -1472,6 +1472,80 @@ mod stream {
         panic!("timed out waiting for {what}");
     }
 
+    /// The operator's file reaches the page's input from the session's private
+    /// directory under a safe name; observers cannot send one, and a relaunch
+    /// removes it and closes the chooser.
+    #[tokio::test]
+    async fn an_operator_file_reaches_the_chooser_and_a_relaunch_removes_it() {
+        let f = Fixture::new().await;
+        let (mut rx, task) = subscribe(&f, 1);
+        until("initial feed", || {
+            f.factory.browser(0).calls(|c| c.screencasts_started == 1)
+        })
+        .await;
+        f.factory.browser(0).open_file_chooser(7, false);
+        let chooser = loop {
+            if let DesignEvent::FileChooser {
+                id,
+                multiple,
+                accept,
+            } = event(&mut rx).await
+            {
+                assert!(!multiple);
+                assert_eq!(accept, ".edi");
+                break id;
+            }
+        };
+        let part = || Request::DesignFilePart {
+            session: f.session.clone(),
+            transfer: "t1".into(),
+            file: 0,
+            name: "../../C:\\stow\\BAPLIE.edi".into(),
+            size: 4,
+            offset: 0,
+            data: "VU5CKw==".into(),
+        };
+        f.observer(part())
+            .await
+            .expect_err("observers send no files");
+        f.operator(part())
+            .await
+            .expect("the operator's part is kept");
+        let uploads =
+            f.h.ctx
+                .paths
+                .data_dir
+                .join("design/profiles")
+                .join(f.session.as_str())
+                .join("uploads");
+        let kept = uploads.join("t1/0/BAPLIE.edi");
+        assert_eq!(std::fs::read(&kept).unwrap(), b"UNB+");
+        f.operator(Request::DesignFileSet {
+            session: f.session.clone(),
+            chooser,
+            transfer: Some("t1".into()),
+        })
+        .await
+        .expect("the files are set");
+        let set = f.factory.browser(0).calls(|c| c.files_set.clone());
+        assert_eq!(set, [(7, vec![kept])]);
+
+        f.factory.browser(0).open_file_chooser(8, false);
+        f.factory.browser(0).crash();
+        until("a relaunch that removes the operator's files", || {
+            f.factory.launched() == 2 && !uploads.exists()
+        })
+        .await;
+        f.operator(Request::DesignFileSet {
+            session: f.session.clone(),
+            chooser: chooser + 1,
+            transfer: None,
+        })
+        .await
+        .expect_err("a chooser from the old browser is gone");
+        task.abort();
+    }
+
     #[tokio::test]
     async fn a_relaunched_browser_advances_the_open_stream_sequence() {
         let f = Fixture::new().await;

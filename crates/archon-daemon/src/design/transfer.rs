@@ -114,7 +114,17 @@ impl DesignService {
         session: &DesignSessionId,
         part: Part<'_>,
     ) -> Result<Reply, ArchonError> {
-        let (rt, _) = self.live_runtime(ctx, session).await?;
+        let (rt, browser) = self.live_runtime(ctx, session).await?;
+        // Stopping removes the profile under the gate: no part may land after it.
+        let _gate = rt.gate.lock().await;
+        if !rt
+            .browser()
+            .is_some_and(|current| Arc::ptr_eq(&current, &browser))
+        {
+            return Err(ArchonError::Unavailable(
+                "the preview restarted; choose the files again".into(),
+            ));
+        }
         let root = self.profile_dir(session).join("uploads");
         rt.files.lock().await.write_part(&root, part).await?;
         Ok(Reply::DesignDone)

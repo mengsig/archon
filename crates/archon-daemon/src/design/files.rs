@@ -21,7 +21,7 @@ pub(crate) const MAX_PART_BYTES: usize = 512 * 1024;
 /// Most transfers one session stages.
 const MAX_TRANSFERS: usize = 64;
 /// Downloads offered at once; older ones are forgotten.
-const MAX_DOWNLOADS: usize = 32;
+const MAX_DOWNLOADS: usize = 16;
 
 const MIB: u64 = 1024 * 1024;
 
@@ -84,6 +84,18 @@ pub(crate) fn valid_transfer(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
+/// Delete a download no longer offered, so a page cannot fill the disk.
+fn forget_download(path: &Path) {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        // The profile, and the file with it, is still removed when the preview stops.
+        Err(error) => {
+            tracing::warn!(%error, path = %path.display(), "an old download was not deleted")
+        }
+    }
+}
+
 /// The decoded part, refused before decoding when it cannot fit.
 pub(crate) fn decode_part(data: &str) -> Result<Vec<u8>, ArchonError> {
     use base64::Engine;
@@ -96,10 +108,13 @@ pub(crate) fn decode_part(data: &str) -> Result<Vec<u8>, ArchonError> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|error| invalid(format!("a file part is not base64: {error}")))?;
-    assert!(
-        bytes.len() <= MAX_PART_BYTES,
-        "the encoded cap bounds the decoded part"
-    );
+    // The encoded cap still lets one byte too many decode.
+    if bytes.len() > MAX_PART_BYTES {
+        return Err(invalid(format!(
+            "a file part is larger than {} KiB",
+            MAX_PART_BYTES / 1024
+        )));
+    }
     Ok(bytes)
 }
 
@@ -258,7 +273,8 @@ impl Transfers {
         );
         self.next_download += 1;
         if self.downloads.len() >= MAX_DOWNLOADS {
-            self.downloads.remove(0);
+            let oldest = self.downloads.remove(0);
+            forget_download(&oldest.path);
         }
         let id = self.next_download;
         self.downloads.push(Download {
@@ -430,6 +446,11 @@ mod tests {
         assert!(over.unwrap_err().to_string().contains("256 MiB at most"));
         assert!(decode_part(&"A".repeat(MAX_PART_BYTES / 3 * 4 + 8)).is_err());
         assert_eq!(decode_part("eHk=").unwrap(), b"xy");
+        let one_byte_over = "A".repeat(MAX_PART_BYTES.div_ceil(3) * 4);
+        assert!(
+            decode_part(&one_byte_over).is_err(),
+            "a part one byte over is refused, not a panic"
+        );
     }
 
     #[test]
@@ -471,5 +492,6 @@ mod tests {
             transfers.read_download(id, 0).await.is_err(),
             "the oldest is forgotten"
         );
+        assert!(!path.exists(), "a forgotten download is deleted");
     }
 }

@@ -33,6 +33,8 @@ pub struct Calls {
     pub screencasts_stopped: u32,
     pub closed: bool,
     pub terminated: bool,
+    /// Files set on a file input, by its node.
+    pub files_set: Vec<(i64, Vec<PathBuf>)>,
 }
 
 /// One scripted browser.
@@ -78,6 +80,15 @@ impl FakeBrowser {
         let _ = self
             .events
             .send(adb::BrowserEvent::ContainmentStopped { reason });
+    }
+
+    /// The page opened a file chooser for input `node`.
+    pub fn open_file_chooser(&self, node: i64, multiple: bool) {
+        let _ = self.events.send(adb::BrowserEvent::FileChooser {
+            node,
+            multiple,
+            accept: ".edi".into(),
+        });
     }
 
     /// Push a frame to the screencast.
@@ -167,6 +178,14 @@ impl PreviewBrowser for FakeBrowser {
     }
     async fn set_viewport(&self, viewport: adb::Viewport) -> Result<(), adb::BrowserError> {
         self.calls.lock().unwrap().viewports.push(viewport);
+        Ok(())
+    }
+    async fn set_files(&self, node: i64, files: &[PathBuf]) -> Result<(), adb::BrowserError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .files_set
+            .push((node, files.to_vec()));
         Ok(())
     }
     async fn input(&self, events: &[adb::Input]) -> Result<(), adb::BrowserError> {

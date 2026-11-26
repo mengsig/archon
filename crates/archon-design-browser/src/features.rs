@@ -15,8 +15,8 @@ use crate::{Browser, BrowserError, BrowserEvent};
 
 /// Largest download offered to the operator; a bigger one is cancelled.
 pub const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
-/// Most downloads tracked at once.
-const MAX_DOWNLOADS: usize = 64;
+/// Most downloads under way at once; another is cancelled.
+const MAX_DOWNLOADS: usize = 8;
 
 /// Downloads Chromium is writing, by its GUID.
 #[derive(Debug, Default)]
@@ -37,11 +37,7 @@ impl Shared {
             return;
         };
         if method == "Browser.downloadWillBegin" {
-            let name = file_name(params["suggestedFilename"].as_str().unwrap_or_default());
-            let mut downloads = self.downloads.lock().unwrap();
-            if downloads.names.len() < MAX_DOWNLOADS {
-                downloads.names.insert(guid.to_owned(), name);
-            }
+            self.download_began(guid, params);
             return;
         }
         let received = params["receivedBytes"].as_f64().unwrap_or(0.0);
@@ -52,6 +48,10 @@ impl Shared {
             return;
         }
         let Some(name) = self.downloads.lock().unwrap().names.remove(guid) else {
+            // Untracked downloads were cancelled as they began; this is a second guard.
+            if too_big {
+                self.cancel_download(guid);
+            }
             return;
         };
         let event = match (state, too_big) {
@@ -69,6 +69,31 @@ impl Shared {
             },
         };
         self.emit(event);
+    }
+
+    /// Track a new download, or cancel it when as many are under way as allowed.
+    fn download_began(self: &Arc<Self>, guid: &str, params: &Value) {
+        let name = file_name(params["suggestedFilename"].as_str().unwrap_or_default());
+        let tracked = {
+            let mut downloads = self.downloads.lock().unwrap();
+            let room = downloads.names.len() < MAX_DOWNLOADS;
+            if room {
+                downloads.names.insert(guid.to_owned(), name.clone());
+            }
+            assert!(
+                downloads.names.len() <= MAX_DOWNLOADS,
+                "downloads stay bounded"
+            );
+            room
+        };
+        if tracked {
+            return;
+        }
+        self.cancel_download(guid);
+        self.emit(BrowserEvent::DownloadFailed {
+            name,
+            reason: format!("{MAX_DOWNLOADS} downloads were already under way"),
+        });
     }
 
     fn finished_download(&self, guid: &str, name: String) -> BrowserEvent {
@@ -311,5 +336,56 @@ impl Browser {
             .call("Page.navigateToHistoryEntry", json!({"entryId": id}))
             .await?;
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::fake_browser;
+
+    async fn cancelled(log: &crate::testutil::Log, guid: &str) -> bool {
+        for _ in 0..100 {
+            let found = log
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(m, p)| m == "Browser.cancelDownload" && p["guid"] == guid);
+            if found {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    /// A page starting more downloads than are tracked cannot slip one past
+    /// the size check: the extra one is cancelled as it begins.
+    #[tokio::test]
+    async fn downloads_past_the_tracking_limit_are_cancelled() {
+        let (b, log) = fake_browser(|_, _| None).await;
+        let mut events = b.events();
+        for i in 0..=MAX_DOWNLOADS {
+            let begin = json!({"guid": format!("g{i}"), "suggestedFilename": "r.csv"});
+            b.sh.on_download("Browser.downloadWillBegin", &begin);
+        }
+        let extra = format!("g{MAX_DOWNLOADS}");
+        assert!(
+            cancelled(&log, &extra).await,
+            "the extra download is cancelled"
+        );
+        let Ok(BrowserEvent::DownloadFailed { name, reason }) = events.try_recv() else {
+            panic!("the operator hears of the cancelled download");
+        };
+        assert_eq!(name, "r.csv");
+        assert!(reason.contains("already under way"), "{reason}");
+
+        let oversized = json!({"guid": "stray", "state": "inProgress",
+            "receivedBytes": (MAX_DOWNLOAD_BYTES + 1) as f64, "totalBytes": 0.0});
+        b.sh.on_download("Browser.downloadProgress", &oversized);
+        assert!(
+            cancelled(&log, "stray").await,
+            "an untracked oversized one is cancelled"
+        );
     }
 }

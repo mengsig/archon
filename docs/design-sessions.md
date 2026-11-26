@@ -482,8 +482,9 @@ once only.
 `alert`, `confirm` and `prompt` dialogs show their text with its line breaks,
 a prompt's suggested answer and their action buttons in Archon, and wait for
 your answer. A suggested answer longer than 16 KiB, the most an answer can
-be, shows only its start, and the dialog says so; check it before pressing
-OK. A dialog
+be, shows only its start, and one with characters other than line breaks and
+tabs that cannot be shown (such as a carriage return) shows without them. In
+both cases the dialog says so; check the answer before pressing OK. A dialog
 from a page outside the preview's origin shows "The preview opened a dialog."
 without its text.
 

@@ -38,8 +38,8 @@ pub(crate) const CALL_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_DIALOG_MESSAGE_BYTES: usize = 8 * 1024;
 /// Longest prompt answer, suggested or sent: the daemon's answer cap.
 pub(crate) const MAX_DIALOG_ANSWER_BYTES: usize = 16 * 1024;
-/// Said under a prompt whose suggested answer was cut to fit.
-const PROMPT_CUT_NOTE: &str = "\n\n(The app's suggested answer is longer than 16 KiB; only its start is shown, so check it before pressing OK.)";
+/// Said under a prompt whose suggested answer had to be changed to be shown.
+const PROMPT_CUT_NOTE: &str = "\n\n(The app's suggested answer is longer than 16 KiB or holds characters the preview cannot show, so it is shown changed. Check it before pressing OK.)";
 /// Stream frames: four a second at rest, ten (the relay's most) while the
 /// operator scrolls or types, so a scroll is followed and its end shown soon.
 const IDLE_FRAME_INTERVAL: Duration = Duration::from_millis(250);
@@ -2130,5 +2130,12 @@ mod dialog_tests {
         let (message, default) = prompt(&b, &huge);
         assert!(message.ends_with(PROMPT_CUT_NOTE), "{message}");
         assert_eq!(default.map(|d| d.len()), Some(MAX_DIALOG_ANSWER_BYTES));
+
+        let (message, default) = prompt(&b, "first\r\nsecond");
+        assert!(
+            message.ends_with(PROMPT_CUT_NOTE),
+            "a changed answer is never silent"
+        );
+        assert_eq!(default.as_deref(), Some("first\nsecond"));
     }
 }

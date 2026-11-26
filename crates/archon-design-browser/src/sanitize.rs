@@ -13,23 +13,25 @@ pub fn clean(s: &str) -> String {
 
 /// Page text meant to be read whole, such as a dialog's: line breaks and tabs
 /// stay, other control characters go, and at most `max_bytes` are kept.
-/// Returns the text and whether any of it was cut.
+/// Returns the text and whether it differs from the page's in any way.
 pub fn page_text(s: &str, max_bytes: usize) -> (String, bool) {
     assert!(max_bytes >= 4, "a cap holds at least one character");
     let mut text = String::new();
-    let mut cut = false;
-    for c in s
-        .chars()
-        .filter(|c| matches!(c, '\n' | '\t') || !c.is_control())
-    {
+    let mut altered = false;
+    for c in s.chars() {
+        if c.is_control() && !matches!(c, '\n' | '\t') {
+            altered = true;
+            continue;
+        }
         if text.len() + c.len_utf8() > max_bytes {
-            cut = true;
+            altered = true;
             break;
         }
         text.push(c);
     }
     assert!(text.len() <= max_bytes, "the text fits its cap");
-    (text, cut)
+    assert!(altered || text == s, "unaltered text is the page's own");
+    (text, altered)
 }
 
 /// Longest file name kept, in bytes.
@@ -89,7 +91,12 @@ mod tests {
 
     #[test]
     fn page_text_keeps_lines_and_says_when_it_cuts() {
-        assert_eq!(page_text("a\nb\tc\u{7}", 64), ("a\nb\tc".into(), false));
+        assert_eq!(page_text("a\nb\tc", 64), ("a\nb\tc".into(), false));
+        assert_eq!(
+            page_text("a\r\nb", 64),
+            ("a\nb".into(), true),
+            "a dropped CR is an alteration"
+        );
         let long = "é".repeat(300);
         let (kept, cut) = page_text(&long, 401);
         assert!(cut);

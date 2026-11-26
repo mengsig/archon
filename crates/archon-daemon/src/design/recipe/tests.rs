@@ -54,11 +54,16 @@ fn an_invalid_or_secret_recipe_is_never_stored() {
     let mut store = Store::open_in_memory().unwrap();
     let repo = RepoId::new();
     let item = QueueItemId::new();
-    let mut secret = step("web", None, None);
-    secret.command = "DB_PASSWORD=hunter2hunter2 npm start".into();
-    let error = save(&mut store, &repo, &item, recipe(vec![secret])).unwrap_err();
-    assert!(matches!(error, ArchonError::Invalid(_)), "{error:?}");
-    assert!(!error.to_string().contains("hunter2"), "{error}");
+    for command in [
+        "DB_PASSWORD=hunter2hunter2 npm start",
+        "curl -uadmin:hunter2 http://127.0.0.1:8000/",
+    ] {
+        let mut secret = step("web", None, None);
+        secret.command = command.into();
+        let error = save(&mut store, &repo, &item, recipe(vec![secret])).unwrap_err();
+        assert!(matches!(error, ArchonError::Invalid(_)), "{error:?}");
+        assert!(!error.to_string().contains("hunter2"), "{error}");
+    }
     assert!(save(&mut store, &repo, &item, recipe(vec![])).is_err());
     assert_eq!(load(&store, &repo).unwrap(), None);
     let key = archon_queue::store::keys::design_recipe(&repo);

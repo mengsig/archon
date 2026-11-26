@@ -47,6 +47,15 @@ const OPERATORS: [char; 9] = [';', '&', '|', '(', ')', '`', '<', '>', '\n'];
 /// Characters that end a command in the raw reading; `(` and backticks stay
 /// inside it so an expansion after `compose` is seen there.
 const SEPARATORS: [char; 4] = [';', '&', '|', '\n'];
+/// Compose options whose value, separate or after `=`, is a file, a profile
+/// or a directory: a double-quoted expansion there cannot become an option.
+const VALUE_OPTIONS: [&str; 5] = [
+    "-f",
+    "--file",
+    "--profile",
+    "--env-file",
+    "--project-directory",
+];
 /// How deep scripts nested in words, as in `sh -c "sh -c '…'"`, are read.
 const MAX_NESTING: usize = 8;
 /// Check a step's command: it parses as shell words, spells out no secret
@@ -57,34 +66,38 @@ pub(super) fn check_command(field: &str, command: &str) -> Result<(), String> {
     let parsed: Vec<&str> = commands
         .iter()
         .flatten()
-        .flat_map(|word| word.split_whitespace())
+        .flat_map(|word| word.text.split_whitespace())
         .collect();
     if let Some(what) = secret_form(&parsed) {
         return Err(refusal(field, &what));
     }
     let mut readings = nested_commands(field, &commands)?;
     readings.extend(commands);
-    readings.extend(raw_commands(command));
-    compose_project_by_variable(field, &readings)?;
-    compose_expands_only_the_project(field, &readings)
+    let mut texts: Vec<Vec<String>> = readings
+        .iter()
+        .map(|words| words.iter().map(|word| word.text.clone()).collect())
+        .collect();
+    texts.extend(raw_commands(command));
+    compose_project_by_variable(field, &texts)?;
+    compose_expands_safely(field, &readings)
 }
 
 /// The commands of scripts nested in words, as in `sh -c '…'`, read with the
 /// shell's quoting; a nested script naming Compose that cannot be read is refused.
-fn nested_commands(field: &str, commands: &[Vec<String>]) -> Result<Vec<Vec<String>>, String> {
+fn nested_commands(field: &str, commands: &[Vec<Word>]) -> Result<Vec<Vec<Word>>, String> {
     let unreadable = || {
         format!(
             "{field} runs Compose in a nested script whose quoting cannot be read; make it parse and name the project only as ${COMPOSE_VARIABLE}"
         )
     };
     let mut nested = Vec::new();
-    let mut level: Vec<String> = commands.iter().flatten().cloned().collect();
+    let mut level: Vec<String> = commands.iter().flatten().map(|w| w.text.clone()).collect();
     for _ in 0..MAX_NESTING {
         let mut next = Vec::new();
         for word in level.iter().filter(|word| may_be_script(word)) {
             match shell_commands(word) {
                 Ok(inner) => {
-                    next.extend(inner.iter().flatten().cloned());
+                    next.extend(inner.iter().flatten().map(|w| w.text.clone()));
                     nested.extend(inner);
                 }
                 Err(_) if word.contains("compose") => return Err(unreadable()),
@@ -144,24 +157,58 @@ enum Quote {
     Double,
 }
 
+/// A shell word as its own level reads it, and how that level reads the
+/// `$` and backticks in it.
+#[derive(Clone, Default)]
+struct Word {
+    text: String,
+    /// Expanded outside quotes, so the value is split into more words.
+    splits: bool,
+    /// Expanded inside double quotes, so the value stays one word.
+    quoted: bool,
+    /// Kept literal by quotes or a backslash, so a script re-reading the word
+    /// would expand it.
+    literal: bool,
+}
+
+impl Word {
+    fn expands(&self) -> bool {
+        self.splits || self.quoted
+    }
+}
+
+/// Add `c`, read under `quote`, to the word; an escaped character is read as
+/// if single-quoted.
+fn push(word: &mut Option<Word>, c: char, quote: Quote) {
+    let word = word.get_or_insert_default();
+    if matches!(c, '$' | '`') {
+        match quote {
+            Quote::None => word.splits = true,
+            Quote::Double => word.quoted = true,
+            Quote::Single => word.literal = true,
+        }
+    }
+    word.text.push(c);
+}
+
 /// The command's simple commands, each a list of words, read with the
 /// shell's quotes and backslashes; an unclosed quote is an error.
-fn shell_commands(text: &str) -> Result<Vec<Vec<String>>, String> {
+fn shell_commands(text: &str) -> Result<Vec<Vec<Word>>, String> {
     let mut commands = Vec::new();
     let mut words = Vec::new();
-    let mut word: Option<String> = None;
+    let mut word: Option<Word> = None;
     let mut quote = Quote::None;
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         match (quote, c) {
             (Quote::Single, '\'') | (Quote::Double, '"') => quote = Quote::None,
-            (Quote::Single, c) => word.get_or_insert_default().push(c),
+            (Quote::Single, c) => push(&mut word, c, Quote::Single),
             (Quote::Double | Quote::None, '\\') if chars.next_if_eq(&'\n').is_some() => {}
-            (Quote::Double, '\\') => {
-                let escaped = chars.next_if(|n| matches!(n, '"' | '\\' | '$' | '`'));
-                word.get_or_insert_default().push(escaped.unwrap_or('\\'));
-            }
-            (Quote::Double, c) => word.get_or_insert_default().push(c),
+            (Quote::Double, '\\') => match chars.next_if(|n| matches!(n, '"' | '\\' | '$' | '`')) {
+                Some(escaped) => push(&mut word, escaped, Quote::Single),
+                None => push(&mut word, '\\', Quote::Double),
+            },
+            (Quote::Double, c) => push(&mut word, c, Quote::Double),
             (Quote::None, '\'' | '"') => {
                 quote = if c == '"' {
                     Quote::Double
@@ -170,16 +217,18 @@ fn shell_commands(text: &str) -> Result<Vec<Vec<String>>, String> {
                 };
                 word.get_or_insert_default();
             }
-            (Quote::None, '\\') => word
-                .get_or_insert_default()
-                .push(chars.next().unwrap_or('\\')),
+            (Quote::None, '\\') => push(&mut word, chars.next().unwrap_or('\\'), Quote::Single),
             (Quote::None, c) if c.is_whitespace() || OPERATORS.contains(&c) => {
+                if c == '`' {
+                    // The substitution's output joins this command as more words.
+                    word.get_or_insert_default().splits = true;
+                }
                 words.extend(word.take());
                 if OPERATORS.contains(&c) && !words.is_empty() {
                     commands.push(std::mem::take(&mut words));
                 }
             }
-            (Quote::None, c) => word.get_or_insert_default().push(c),
+            (Quote::None, c) => push(&mut word, c, Quote::None),
         }
     }
     if quote != Quote::None {
@@ -230,16 +279,27 @@ fn secret_form(words: &[&str]) -> Option<String> {
             .any(|w| programs.iter().any(|p| w.rsplit('/').next() == Some(*p)))
     };
     let takes_user = runs(&["curl", "wget", "http", "https"]);
+    // The short option that takes `user:password`: curl's -u, HTTPie's -a.
+    let user_letter = (runs(&["curl"]), 'u');
+    let auth_letter = (runs(&["http", "https"]), 'a');
     let takes_compact_password = runs(&["mysql", "mysqladmin", "mysqldump", "mariadb"]);
     for (i, word) in words.iter().enumerate() {
         if let Some(what) = secret_option(words, i) {
             return Some(what);
         }
         if takes_user
-            && matches!(*word, "-u" | "--user")
+            && *word == "--user"
             && words.get(i + 1).is_some_and(|next| user_password(next))
         {
-            return Some(format!("{word} user:password"));
+            return Some("--user user:password".into());
+        }
+        let short_user = [user_letter, auth_letter]
+            .into_iter()
+            .any(|(runs, letter)| {
+                runs && short_option_value(words, i, letter).is_some_and(user_password)
+            });
+        if short_user {
+            return Some("a short option's user:password".into());
         }
         let compact = word.strip_prefix("-p").filter(|p| !p.is_empty());
         if takes_compact_password && compact.is_some_and(|password| !is_reference(password)) {
@@ -276,6 +336,21 @@ fn secret_option(words: &[&str], i: usize) -> Option<String> {
         .get(i + 1)
         .is_some_and(|next| !next.starts_with('-') && !is_reference(next));
     (names_a_secret(flag, '-') && spelled_out).then(|| format!("--{flag} …"))
+}
+
+/// The value of short option `letter` at `words[i]`, alone (`-u VALUE`) or in
+/// a cluster (`-uVALUE`, `-suVALUE`, `-su VALUE`).
+fn short_option_value<'a>(words: &[&'a str], i: usize, letter: char) -> Option<&'a str> {
+    let cluster = words[i].strip_prefix('-').filter(|c| !c.starts_with('-'))?;
+    let (flags, value) = cluster.split_once(letter)?;
+    if !flags.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    if value.is_empty() {
+        words.get(i + 1).copied()
+    } else {
+        Some(value)
+    }
 }
 
 /// `user:password` with the password spelled out.
@@ -370,28 +445,77 @@ fn joined_lines(text: &str) -> String {
 
 /// The index of the word that runs Compose (`compose`, `docker-compose`,
 /// `podman-compose`, or a path to one), if the command has one.
-fn compose_position(words: &[String]) -> Option<usize> {
-    words.iter().position(|word| word.ends_with("compose"))
+fn compose_position<W: AsRef<str>>(words: &[W]) -> Option<usize> {
+    words
+        .iter()
+        .position(|word| word.as_ref().ends_with("compose"))
 }
 
-/// Deny by default: after `compose`, no word expands a variable or a command
-/// other than as the run's project, so no expansion can spell out `-p NAME`.
-fn compose_expands_only_the_project(field: &str, commands: &[Vec<String>]) -> Result<(), String> {
+impl AsRef<str> for Word {
+    fn as_ref(&self) -> &str {
+        &self.text
+    }
+}
+
+/// Deny by default: after `compose`, a word expands only as the run's project
+/// or as the double-quoted value of a [`VALUE_OPTIONS`] option, and no outer
+/// shell expands into a nested Compose script, so none can spell out `-p NAME`.
+fn compose_expands_safely(field: &str, commands: &[Vec<Word>]) -> Result<(), String> {
     for words in commands {
+        let into_script = words
+            .iter()
+            .any(|w| w.expands() && w.text.contains("compose") && may_be_script(&w.text));
+        if into_script {
+            return Err(format!(
+                "{field} expands a variable into a nested script that runs Compose; single-quote the script so only it expands ${COMPOSE_VARIABLE}"
+            ));
+        }
         let Some(compose) = compose_position(words) else {
             continue;
         };
-        let expands_else = words[compose + 1..].iter().any(|word| {
-            let value = project_option_value(word).unwrap_or(word);
-            (word.contains('$') || word.contains('`')) && !refers_to_run_project(value)
-        });
-        if expands_else {
+        let after = &words[compose..];
+        if (1..after.len()).any(|i| !expands_safely(after, i)) {
             return Err(format!(
-                "{field} expands a variable or command after compose; there only ${COMPOSE_VARIABLE} may be expanded, so write other values out"
+                "{field} expands a variable or command after compose; there only ${COMPOSE_VARIABLE} and a double-quoted value of {} may be expanded, as in --profile \"$NAME\"",
+                VALUE_OPTIONS.join(", ")
             ));
         }
     }
     Ok(())
+}
+
+/// `words[i]`, after `compose` at 0, expands nothing, names the run's project,
+/// or is a double-quoted value that a [`VALUE_OPTIONS`] option consumes.
+fn expands_safely(words: &[Word], i: usize) -> bool {
+    assert!(i > 0 && i < words.len(), "a word after compose");
+    let word = &words[i];
+    if !word.expands() && !word.literal {
+        return true;
+    }
+    if refers_to_run_project(project_option_value(&word.text).unwrap_or(&word.text)) {
+        return true;
+    }
+    if !word.quoted || word.splits || word.literal {
+        return false;
+    }
+    let attached = word
+        .text
+        .split_once('=')
+        .is_some_and(|(option, _)| VALUE_OPTIONS.contains(&option));
+    attached || takes_the_next_word(words, i - 1)
+}
+
+/// `words[j]` is a [`VALUE_OPTIONS`] option that Compose reads as an option,
+/// as it follows `compose` or a word that is no option, so it takes the next word.
+fn takes_the_next_word(words: &[Word], j: usize) -> bool {
+    let Some(previous) = j.checked_sub(1).map(|p| &words[p]) else {
+        return false;
+    };
+    let option = &words[j];
+    let plain = !option.expands() && !option.literal;
+    plain
+        && VALUE_OPTIONS.contains(&option.text.as_str())
+        && (j == 1 || !previous.text.starts_with('-'))
 }
 
 /// A Compose project in a saved command is named only through

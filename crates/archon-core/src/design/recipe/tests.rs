@@ -138,6 +138,11 @@ fn spelled_out_secrets_are_refused_and_never_echoed() {
         "PASSWORD=$(echo hunter2) ./serve",
         "DATABASE_URL=postgres://app:hu/nter2@127.0.0.1:5432/app ./serve",
         "./serve \"--api-key=hunter2\"",
+        "curl -uadmin:hunter2 http://127.0.0.1:8000/",
+        "curl -suadmin:hunter2 http://127.0.0.1:8000/",
+        "curl -su admin:hunter2 http://127.0.0.1:8000/",
+        "http -a admin:hunter2 127.0.0.1:8000/",
+        "https -aadmin:hunter2 127.0.0.1:8443/",
     ] {
         let error = refused(&recipe(vec![step("web", command)]));
         assert!(error.contains("secret"), "{command}: {error}");
@@ -174,6 +179,9 @@ fn references_and_ordinary_words_are_not_secrets() {
         "curl \"http://[::1]/@vite/client\"",
         "curl http://127.0.0.1:5173/@fs/web/src/main.ts",
         "./serve --title \"the app's page\"",
+        "curl -sSfu \"$API_USER:$API_PASS\" http://127.0.0.1:8000/health",
+        "curl -sSf -H 'User-Agent: archon' http://127.0.0.1:8000/health",
+        "http -a \"$API_USER:$API_PASS\" 127.0.0.1:8000/",
     ] {
         recipe(vec![step("web", command)])
             .check()
@@ -204,6 +212,11 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "docker compose build web \\\n  && docker compose up -d",
         "sh -c 'docker compose \\\n -p \"$COMPOSE_PROJECT_NAME\" up -d'",
         "docker compose -f 'compose dev.yml' up -d",
+        "docker compose --profile \"$COMPOSE_PROFILE\" up -d",
+        "docker compose --env-file \"$ENV_FILE\" up -d",
+        "docker compose -f \"$COMPOSE_FILE\" --profile=\"$PROFILE\" up -d",
+        "docker compose -p \"$COMPOSE_PROJECT_NAME\" --env-file \"${ENV_FILE:-.env}\" up -d",
+        "sh -c 'docker compose --profile \"$COMPOSE_PROFILE\" up -d'",
     ] {
         recipe(vec![step("stack", command)])
             .check()
@@ -247,6 +260,16 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "sh -c 'docker compose up \\; -p other'",
         "sh -c \"sh -c 'docker compose up \\\";\\\" -p other'\"",
         "sh -c 'docker compose -f \"x.yml -p other up'",
+        "docker compose --profile $PROFILE up -d",
+        "docker compose --profile=$PROFILE up -d",
+        "docker compose up -d \"$SERVICE\"",
+        "docker compose --profile --env-file \"$X\" up -d",
+        "docker compose -d --profile \"$X\" up",
+        "eval docker compose --profile '$X' up -d",
+        "sh -c \"docker compose --profile $X up -d\"",
+        "sh -c 'docker compose --profile '$X' up -d'",
+        "docker compose --profile \"`echo x`\" `echo -p` other up -d",
+        "x=`docker compose -p other up -d`",
     ] {
         let error = refused(&recipe(vec![step("stack", command)]));
         assert!(

@@ -146,3 +146,52 @@ async fn only_the_operator_clears_a_recipe_and_only_the_agent_reads_it() {
         .await;
     assert!(stranger.is_err(), "only the session's agent reads it");
 }
+
+/// Runs an older `design_preview` with `older`, held in its stack check
+/// while `meanwhile` runs, and returns its outcome.
+async fn overtaken_by<F: std::future::Future<Output = ()>>(
+    f: &Fixture,
+    older: PreviewRecipe,
+    meanwhile: F,
+) -> Result<Reply, ArchonError> {
+    let (reached, resume) = f.factory.pause_next_stack_check();
+    let (outcome, ()) = tokio::join!(preview_with(f, older), async {
+        reached.await.expect("the older preview checks its stack");
+        meanwhile.await;
+        resume.send(()).expect("the older preview waits");
+    });
+    outcome
+}
+
+#[tokio::test]
+async fn a_preview_overtaken_while_it_checks_saves_nothing() {
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        let f = Fixture::new().await;
+        preview_with(&f, stack())
+            .await
+            .expect("the first recipe is saved");
+        let mut older = stack();
+        older.notes = Some("older".into());
+        let clear = async {
+            settings(&f, Request::ClearDesignRecipe { repo: repo() }).await;
+        };
+        let error = overtaken_by(&f, older.clone(), clear).await.unwrap_err();
+        assert!(error.to_string().contains("replaced or cleared"), "{error}");
+        let view = settings(&f, Request::Settings { repo: Some(repo()) }).await;
+        assert!(view.design_recipe.is_none(), "the clear stands");
+
+        let mut newer = stack();
+        newer.notes = Some("newer".into());
+        let newer_preview = async {
+            preview_with(&f, newer.clone())
+                .await
+                .expect("the newer preview");
+        };
+        let error = overtaken_by(&f, older, newer_preview).await.unwrap_err();
+        assert!(error.to_string().contains("replaced or cleared"), "{error}");
+        let view = settings(&f, Request::Settings { repo: Some(repo()) }).await;
+        assert_eq!(view.design_recipe.expect("saved").recipe, newer);
+    })
+    .await
+    .expect("bounded overtaking test");
+}

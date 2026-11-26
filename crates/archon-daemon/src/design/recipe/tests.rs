@@ -165,6 +165,55 @@ fn a_relative_location_resolves_against_the_page() {
         redirect_target(base, "http://localhost:1/"),
         "http://localhost:1/"
     );
+    let same_page = "http://127.0.0.1:5173/app/page?x=1";
+    assert_eq!(
+        redirect_target(base, "?ready=1"),
+        "http://127.0.0.1:5173/app/page?ready=1"
+    );
+    assert_eq!(redirect_target(base, "#top"), same_page);
+    assert_eq!(redirect_target(base, ""), same_page);
+}
+
+/// Writes `answer` to every connection, then closes it.
+async fn answering(answer: Vec<u8>) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).await;
+            let _ = socket.write_all(&answer).await;
+        }
+    });
+    port
+}
+
+#[tokio::test]
+async fn only_a_whole_final_answer_counts() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let check = |port: u16| async move {
+            check_stack(&format!("http://127.0.0.1:{port}/"), None)
+                .await
+                .map_err(|e| e.to_string())
+        };
+        let hints = b"HTTP/1.1 103 Early Hints\r\nLink: </a.css>\r\n\r\nHTTP/1.1 500 X\r\n\r\n";
+        let error = check(answering(hints.to_vec()).await).await.unwrap_err();
+        assert!(error.contains("answered HTTP 500"), "{error}");
+        let hints_then_ok = b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n\r\n";
+        check(answering(hints_then_ok.to_vec()).await)
+            .await
+            .unwrap();
+        let cut_off = b"HTTP/1.1 302 Found\r\n".to_vec();
+        let error = check(answering(cut_off).await).await.unwrap_err();
+        assert!(error.contains("before its answer's head ended"), "{error}");
+        let mut oversized = b"HTTP/1.1 302 Found\r\n".to_vec();
+        oversized.extend(format!("X-Pad: {}\r\n", "a".repeat(MAX_HEAD)).bytes());
+        oversized.extend(b"Location: /broken\r\n\r\n");
+        let error = check(answering(oversized).await).await.unwrap_err();
+        assert!(error.contains("response head over"), "{error}");
+    })
+    .await
+    .expect("bounded stack check");
 }
 
 /// A loopback port nothing listens on.

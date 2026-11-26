@@ -117,7 +117,8 @@ impl DesignService {
     }
 
     /// Point the preview at `url` once its server is the worktree's and the
-    /// stack answers. `recipe` is saved first, so a failed save exposes nothing.
+    /// stack answers. `recipe` is saved first, so a failed save exposes nothing,
+    /// and a request overtaken while it checked changes nothing.
     pub(crate) async fn design_preview(
         &self,
         ctx: &DaemonContext,
@@ -130,6 +131,14 @@ impl DesignService {
             recipe.check().map_err(ArchonError::Invalid)?;
         }
         let session = self.agent_session(ctx, caller).await?;
+        let seen = match &recipe {
+            Some(_) => {
+                let repo = super::recipe::repo_of(ctx, &session.item).await?;
+                let row = super::recipe::stored_row(&*ctx.store.lock().await, &repo)?;
+                Some((repo, row))
+            }
+            None => None,
+        };
         let wt = self.worktree_of(ctx, &session).await?;
         self.factory().verify_server(&wt.worktree, &url).await?;
         self.factory().check_stack(&url, recipe.as_ref()).await?;
@@ -139,9 +148,14 @@ impl DesignService {
         if !matches!(current.state, SessionState::Starting | SessionState::Live) {
             return Err(super::finishing());
         }
-        if let Some(recipe) = recipe {
-            let repo = super::recipe::repo_of(ctx, &session.item).await?;
+        if current.preview_url != session.preview_url {
+            return Err(overtaken("another design_preview finished"));
+        }
+        if let (Some(recipe), Some((repo, row))) = (recipe, seen) {
             let mut store = ctx.store.lock().await;
+            if super::recipe::stored_row(&store, &repo)? != row {
+                return Err(overtaken("the saved recipe was replaced or cleared"));
+            }
             super::recipe::save(&mut store, &repo, &session.item, recipe)?;
             tracing::info!(%repo, item = %session.item, "design: the preview recipe was saved");
         }
@@ -803,4 +817,12 @@ fn thread(from: ReplyAuthor, text: String) -> ThreadEntry {
         from,
         text,
     }
+}
+
+/// A `design_preview` that something else overtook while its stack was checked.
+fn overtaken(what: &str) -> ArchonError {
+    ArchonError::Invalid(format!(
+        "{what} while this design_preview checked the stack, so nothing was previewed or saved; \
+         call design_preview again if this page and recipe are still the ones to show"
+    ))
 }

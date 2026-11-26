@@ -24,6 +24,8 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_HEAD: usize = 16 * 1024;
 /// Redirects followed before a check gives up.
 const MAX_REDIRECTS: usize = 5;
+/// Informational (1xx) answers skipped before the final one.
+const MAX_INFORMATIONAL: usize = 5;
 
 /// The recipe saved for `repo`; a row that no longer parses is an error,
 /// so a broken record is seen rather than silently rediscovered over.
@@ -60,6 +62,12 @@ pub(crate) fn save(
     store.kv_set(&archon_queue::store::keys::design_recipe(repo), &raw)?;
     debug_assert_eq!(load(store, repo)?.as_ref(), Some(&saved));
     Ok(saved)
+}
+
+/// The stored row of `repo`'s recipe, as it is, to tell whether a save or a
+/// clear came in between.
+pub(super) fn stored_row(store: &Store, repo: &RepoId) -> Result<Option<String>, ArchonError> {
+    store.kv_get(&archon_queue::store::keys::design_recipe(repo))
 }
 
 /// Forget `repo`'s recipe; true when there was one.
@@ -147,8 +155,9 @@ async fn final_status(url: &str) -> Result<u16, String> {
     Err(format!("redirects more than {MAX_REDIRECTS} times"))
 }
 
-/// `location` resolved against the loopback `base`: absolute, scheme-relative,
-/// absolute-path or relative to the base's directory.
+/// `location` resolved against the loopback `base` as RFC 3986 does:
+/// absolute, scheme-relative, absolute-path, query or fragment only, or
+/// relative to the base's directory.
 fn redirect_target(base: &str, location: &str) -> String {
     assert!(base.starts_with("http://"), "a checked loopback URL");
     if location.contains("://") {
@@ -163,6 +172,12 @@ fn redirect_target(base: &str, location: &str) -> String {
         return format!("{origin}{location}");
     }
     let path = target.split(['?', '#']).next().unwrap_or("/");
+    if location.starts_with('?') {
+        return format!("{origin}{path}{location}");
+    }
+    if location.is_empty() || location.starts_with('#') {
+        return format!("{origin}{target}");
+    }
     let directory = &path[..=path.rfind('/').unwrap_or(0)];
     debug_assert!(directory.starts_with('/'), "an absolute directory");
     format!("{origin}{directory}{location}")
@@ -208,26 +223,55 @@ async fn response_head(url: &str) -> Result<(u16, Option<String>), String> {
     Ok((status, location))
 }
 
-/// The response up to its blank line, or as much as [`MAX_HEAD`] allows.
+/// The final response's head, past any informational (1xx) ones; a head
+/// that is cut off or longer than [`MAX_HEAD`] is no answer.
 async fn read_head(stream: &mut TcpStream) -> Result<String, String> {
-    let mut head = Vec::with_capacity(512);
+    let mut data = Vec::with_capacity(512);
+    for _ in 0..=MAX_INFORMATIONAL {
+        let end = next_head_end(stream, &mut data).await?;
+        let head = String::from_utf8_lossy(&data[..end]).into_owned();
+        let status = status_code(head.lines().next().unwrap_or_default())?;
+        if !(100..200).contains(&status) {
+            return Ok(head);
+        }
+        data.drain(..end);
+    }
+    Err(format!(
+        "sent more than {MAX_INFORMATIONAL} informational answers"
+    ))
+}
+
+/// Read until `data` holds a whole head, and return where it ends.
+async fn next_head_end(stream: &mut TcpStream, data: &mut Vec<u8>) -> Result<usize, String> {
     let mut buf = [0u8; 1024];
-    let not_http = |head: &[u8]| head.contains(&b'\n') && !head.starts_with(b"HTTP/");
-    while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.len() <= MAX_HEAD && !not_http(&head) {
+    loop {
+        let end = data
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .map(|at| at + 4);
+        if end.unwrap_or(data.len()) > MAX_HEAD {
+            return Err(format!("sent a response head over {MAX_HEAD} bytes"));
+        }
+        if let Some(end) = end {
+            debug_assert!(end <= data.len(), "the head ends inside the data");
+            return Ok(end);
+        }
+        if data.contains(&b'\n') && !data.starts_with(b"HTTP/") {
+            return Err("did not answer with HTTP".to_owned());
+        }
         let read = stream
             .read(&mut buf)
             .await
             .map_err(|e| format!("broke off its answer ({e})"))?;
         if read == 0 {
-            break;
+            return Err(if data.is_empty() || data.starts_with(b"HTTP/") {
+                "closed the connection before its answer's head ended".to_owned()
+            } else {
+                "did not answer with HTTP".to_owned()
+            });
         }
-        head.extend_from_slice(&buf[..read]);
+        data.extend_from_slice(&buf[..read]);
     }
-    debug_assert!(
-        head.len() <= MAX_HEAD + buf.len(),
-        "reading stops past the limit"
-    );
-    Ok(String::from_utf8_lossy(&head).into_owned())
 }
 
 /// The status code of a response's first line.

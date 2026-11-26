@@ -133,11 +133,11 @@ answers. If part of the stack does not come up it previews none of it and
 tells the orchestrator which step failed, with its command and error. archond
 checks again before it shows anything: the process serving the port must run
 in the item's worktree under a recorded PID or its process group, the page
-must answer below HTTP 500 after following at most five loopback redirects,
-and every service step of the recipe must answer at its `ready` URL, or
-accept connections on its `port`. When a recipe has more than one service,
-each must name one of them; a single dev server is checked through the page. Otherwise `design_preview`
-is refused with every failure named, for example "the preview stack is not
+must give a whole final answer below HTTP 500, past informational answers and
+at most five loopback redirects, and every service step of the recipe must
+answer the same way at its `ready` URL, or accept connections on its `port`.
+When a recipe has more than one service, each must name one of them; a single
+dev server is checked through the page. Otherwise `design_preview` is refused with every failure named, for example "the preview stack is not
 up, so nothing was previewed or saved: step api: http://127.0.0.1:8000/health
 does not answer".
 
@@ -147,7 +147,9 @@ commands in start order, which keep running and which run once, the
 directory, port and readiness URL of each, and the names of the environment
 variables they need. archond saves it for the repository only when all its
 checks pass, replacing the last one, in Archon's own state, never in the
-repository. It never holds a value: archond refuses a recipe that spells out
+repository. A `design_preview` that another preview or a clear overtakes
+while it checks the stack changes nothing and is refused, so an older
+request never undoes a newer recipe or your clear. It never holds a value: archond refuses a recipe that spells out
 a secret-named variable or flag (`DB_PASSWORD=…`, `PGPASSWORD=…`,
 `--api-key …`), a password in a URL or a `user:password` pair, an
 `Authorization` header, a well-known token, and one that names a Compose

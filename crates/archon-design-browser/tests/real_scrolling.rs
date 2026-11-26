@@ -419,3 +419,58 @@ async fn a_right_to_left_page_scrolled_sideways_is_framed_as_chrome_shows_it() {
     assert_eq!(element_at(&b, 100.0, 300.0).await, "div#b0");
     b.close().await.unwrap();
 }
+
+/// The phone preview's red "Must send a TouchStart first" toasts: a swipe
+/// comes as many batches while the stream runs, and Chrome lifts the finger
+/// on a zoom reset, or a lost batch cancels it. Nothing of that is an error,
+/// and the next swipe scrolls.
+#[tokio::test]
+async fn a_swipe_in_batches_survives_a_lifted_finger_and_the_next_one_scrolls() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((b, url)) = open(PHONE, &root.path().join("batches")).await else {
+        return;
+    };
+    b.navigate(&format!("{url}narrow")).await.unwrap();
+    let _ = b
+        .wait_network_idle(Duration::from_millis(300), Duration::from_secs(10))
+        .await;
+    let _stream = b.start_screencast().await.unwrap();
+    let finger = |action, y: f64| Input::Touch {
+        action,
+        points: vec![TouchPoint { x: 200.0, y, id: 3 }],
+    };
+    b.input(&[finger(TouchAction::Start, 700.0)]).await.unwrap();
+    b.input(&[finger(TouchAction::Move, 650.0)]).await.unwrap();
+    // A crop resets the page zoom, which lifts the finger in Chrome.
+    let crop = ClipRect {
+        x: 0.0,
+        y: 0.0,
+        w: 100.0,
+        h: 100.0,
+    };
+    b.capture(Some(crop), 2.0).await.unwrap();
+    b.input(&[finger(TouchAction::Move, 600.0)]).await.unwrap();
+    b.input_lost();
+    b.input(&[finger(TouchAction::Move, 550.0)]).await.unwrap();
+    b.input(&[finger(TouchAction::Cancel, 550.0)])
+        .await
+        .unwrap();
+    let before = element_at(&b, 100.0, 300.0).await;
+    assert!(["div#b0", "div#b1"].contains(&before.as_str()), "{before}");
+    let mut swipe = vec![finger(TouchAction::Start, 700.0)];
+    for i in 1..=10 {
+        swipe.push(finger(TouchAction::Move, 700.0 - f64::from(i) * 50.0));
+    }
+    swipe.push(finger(TouchAction::End, 200.0));
+    for event in &swipe {
+        b.input(std::slice::from_ref(event)).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    settled_frame(&b, "phone-batched-swipe").await;
+    assert_ne!(
+        element_at(&b, 100.0, 300.0).await,
+        before,
+        "the next swipe scrolled the page"
+    );
+    b.close().await.unwrap();
+}

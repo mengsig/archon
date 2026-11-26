@@ -12,6 +12,11 @@ pub(crate) fn no_answer() -> Value {
     json!({"<no answer>": true})
 }
 
+/// A scripted answer that makes the peer refuse the call with `message`, as Chrome does.
+pub(crate) fn refusal(message: &str) -> Value {
+    json!({"<refused>": message})
+}
+
 /// What a peer says to a method its test did not script: an unscrolled page, or `{}`.
 fn unscripted(method: &str) -> Value {
     match method {
@@ -83,8 +88,13 @@ async fn fake_browser_with(
                 if result == no_answer() {
                     continue;
                 }
-                let mut out =
-                    serde_json::to_vec(&json!({"id": msg["id"], "result": result})).unwrap();
+                let reply = match result.get("<refused>") {
+                    Some(message) => {
+                        json!({"id": msg["id"], "error": {"code": -32602, "message": message}})
+                    }
+                    None => json!({"id": msg["id"], "result": result}),
+                };
+                let mut out = serde_json::to_vec(&reply).unwrap();
                 out.push(0);
                 if method == "Target.setDiscoverTargets" {
                     let mut ev = serde_json::to_vec(&json!({"method": "Target.targetCreated", "params": {"targetInfo": {"targetId": "T1", "type": "page", "url": "about:blank"}}})).unwrap();

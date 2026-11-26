@@ -440,15 +440,47 @@ impl Shared {
     }
 
     async fn poll_frame(&self) -> Result<(), BrowserError> {
-        let (picture, epoch) = self.verified_read(self.capture_picture(None, 1.0)).await?;
+        let ((jpeg, width, height), epoch) = self.verified_read(self.stream_picture()).await?;
         let _confirmed = match (&self.containment, epoch) {
             (Some(guard), Some(epoch)) => Some(guard.confirm(epoch)?),
             (None, None) => None,
             _ => unreachable!("verified read returned a mismatched document epoch"),
         };
-        self.relay
-            .push(picture.bytes, picture.width, picture.height);
+        self.relay.push(jpeg, width, height);
         Ok(())
+    }
+
+    /// A stream frame: Chrome's own picture of the view, with no clip. A
+    /// clipped shot makes Chrome redraw the page at the clip while a scroll
+    /// runs on, so sticky bars were drawn shifted down or not at all.
+    async fn stream_picture(&self) -> Result<(Vec<u8>, u32, u32), BrowserError> {
+        let _one_at_a_time = self.shot.lock().await;
+        let vp = self.viewport();
+        assert!(vp.width > 0 && vp.height > 0, "a viewport has a size");
+        let mut bytes = self.shoot_view(70).await?;
+        if bytes.len() > MAX_IMAGE_BYTES {
+            bytes = self.shoot_view(40).await?;
+        }
+        // Input maps through the frame's size, so every frame is the view's size.
+        if bytes.len() <= MAX_IMAGE_BYTES && jpeg_dims(&bytes) == Some((vp.width, vp.height)) {
+            return Ok((bytes, vp.width, vp.height));
+        }
+        // Too detailed for the budget, or drawn at another device scale:
+        // shot through a clip, which can scale it down.
+        let layout = self.layout().await?;
+        let picture = self.capture_area(None, &layout, 1.0).await?;
+        debug_assert!(picture.bytes.len() <= MAX_IMAGE_BYTES);
+        Ok((picture.bytes, picture.width, picture.height))
+    }
+
+    async fn shoot_view(&self, quality: u8) -> Result<Vec<u8>, BrowserError> {
+        let r = self
+            .call(
+                "Page.captureScreenshot",
+                json!({"format": "jpeg", "quality": quality, "captureBeyondViewport": false}),
+            )
+            .await?;
+        b64(r["data"].as_str().unwrap_or_default())
     }
 
     /// Returns true when the loop should stop.
@@ -1119,13 +1151,7 @@ impl Browser {
         let sh = &self.sh;
         let shot = async {
             let _one_at_a_time = sh.shot.lock().await;
-            let r = sh
-                .call(
-                    "Page.captureScreenshot",
-                    json!({"format": "jpeg", "quality": 70, "captureBeyondViewport": false}),
-                )
-                .await?;
-            b64(r["data"].as_str().unwrap_or_default())
+            sh.shoot_view(70).await
         };
         sh.disclose(shot).await
     }
@@ -1778,6 +1804,82 @@ mod capture_tests {
             (Some(950.0), Some(50.0))
         );
         assert_eq!((cropped.capture.x, cropped.capture.h), (40, 50));
+    }
+
+    /// A JPEG header naming its size, as `jpeg_dims` reads it.
+    fn jpeg_sized(width: u32, height: u32) -> String {
+        let (w, h) = (width as u16, height as u16);
+        let mut bytes = vec![0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08];
+        bytes.extend(h.to_be_bytes());
+        bytes.extend(w.to_be_bytes());
+        bytes.extend([0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01]);
+        bytes.extend([0xFF, 0xD9]);
+        B64.encode(bytes)
+    }
+
+    fn stream_shots(log: &crate::testutil::Log) -> Vec<Value> {
+        log.lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, _)| m == "Page.captureScreenshot")
+            .map(|(_, p)| p.clone())
+            .collect()
+    }
+
+    /// The operator's "top bar comes down": a clipped stream shot made Chrome
+    /// redraw the page at the clip while a scroll ran on, shifting sticky bars.
+    #[tokio::test]
+    async fn stream_frames_are_chromes_own_view_with_no_clip() {
+        let (b, log) = fake_browser(|m, _| match m {
+            "Page.captureScreenshot" => Some(json!({"data": jpeg_sized(1280, 800)})),
+            "Page.getLayoutMetrics" => Some(json!({
+                "cssVisualViewport": {"pageX": 0.0, "pageY": 450.0, "scale": 1.0},
+            })),
+            _ => None,
+        })
+        .await;
+        let vp = b.sh.viewport();
+        assert_eq!((vp.width, vp.height), (1280, 800), "the fake's view");
+        let mut frames = b.start_screencast().await.unwrap().subscribe();
+        let frame = tokio::time::timeout(Duration::from_secs(5), frames.next())
+            .await
+            .expect("a frame within 5 s")
+            .expect("the relay is open");
+        assert_eq!((frame.width, frame.height), (1280, 800));
+        let shots = stream_shots(&log);
+        assert!(!shots.is_empty());
+        assert!(
+            shots.iter().all(|p| p.get("clip").is_none()),
+            "a stream frame is never clipped: {shots:?}"
+        );
+        b.stop_screencast().await.unwrap();
+    }
+
+    /// A shot Chrome drew at another size than the view is not streamed as
+    /// is: input maps through the frame's size. It is shot clipped to the view.
+    #[tokio::test]
+    async fn a_stream_shot_of_another_size_is_redrawn_at_the_views() {
+        let (b, log) = fake_browser(|m, p| match m {
+            "Page.captureScreenshot" if p.get("clip").is_none() => {
+                Some(json!({"data": jpeg_sized(2560, 1600)}))
+            }
+            "Page.captureScreenshot" => Some(json!({"data": jpeg_sized(1280, 800)})),
+            "Page.getLayoutMetrics" => Some(json!({
+                "cssVisualViewport": {"pageX": 0.0, "pageY": 0.0, "scale": 1.0},
+            })),
+            _ => None,
+        })
+        .await;
+        let mut frames = b.start_screencast().await.unwrap().subscribe();
+        let frame = tokio::time::timeout(Duration::from_secs(5), frames.next())
+            .await
+            .expect("a frame within 5 s")
+            .expect("the relay is open");
+        assert_eq!((frame.width, frame.height), (1280, 800));
+        let shots = stream_shots(&log);
+        assert!(shots.len() >= 2, "{shots:?}");
+        assert!(shots[0].get("clip").is_none() && shots[1]["clip"]["scale"] == json!(1.0));
+        b.stop_screencast().await.unwrap();
     }
 
     /// Comment-mode picks hit nothing on a scrolled page: Chrome's hit test

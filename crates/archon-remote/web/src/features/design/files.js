@@ -9,11 +9,73 @@ export function fileLimitMessage(files) {
   return null;
 }
 
+// Mirrors crates/archon-daemon/src/design/accept.rs; the daemon stays the authority.
+const MIME_BY_EXTENSION = new Map(Object.entries({
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  avif: 'image/avif',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  heic: 'image/heic',
+  txt: 'text/plain',
+  csv: 'text/csv',
+  tsv: 'text/tab-separated-values',
+  json: 'application/json',
+  xml: 'application/xml',
+  html: 'text/html',
+  md: 'text/markdown',
+  pdf: 'application/pdf',
+  rtf: 'application/rtf',
+  doc: 'application/msword',
+  xls: 'application/vnd.ms-excel',
+  ppt: 'application/vnd.ms-powerpoint',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  odt: 'application/vnd.oasis.opendocument.text',
+  ods: 'application/vnd.oasis.opendocument.spreadsheet',
+  zip: 'application/zip',
+  gz: 'application/gzip',
+  tar: 'application/x-tar',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+}));
+
+function mimeOf(name) {
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return null;
+  return MIME_BY_EXTENSION.get(name.slice(dot + 1).toLowerCase()) ?? null;
+}
+
+function declaredType(raw) {
+  const bare = String(raw ?? '').split(';')[0].trim();
+  const parts = bare.split('/');
+  const isToken = (s) => /^[\x21-\x7e]+$/.test(s);
+  const valid = bare.length <= 255 && parts.length === 2 && isToken(parts[0]) && isToken(parts[1]);
+  return valid ? bare.toLowerCase() : '';
+}
+
+function mimeMatches(token, mime) {
+  return token.endsWith('/*') ? mime.split('/')[0] === token.slice(0, -2) : mime === token;
+}
+
 function tokenAllows(token, file) {
-  if (token.startsWith('.')) return file.name.toLowerCase().endsWith(token) && file.name.length > token.length;
-  const type = (file.type ?? '').toLowerCase();
-  if (!type) return false;
-  return token.endsWith('/*') ? type.startsWith(token.slice(0, -1)) : type === token;
+  if (token.startsWith('.')) {
+    const name = file.name.toLowerCase();
+    return name.length > token.length && name.endsWith(token);
+  }
+  const mimes = [declaredType(file.type), mimeOf(file.name)].filter(Boolean);
+  return mimes.some((mime) => mimeMatches(token, mime));
 }
 
 // The input's accept attribute applies to what the operator picks or drops.

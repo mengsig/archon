@@ -38,9 +38,27 @@ test('the accept attribute is enforced on names and types', () => {
   assert.match(acceptMessage('.txt', [file('a.txt'), file('b.exe')]), /not one the app accepts/);
   assert.match(acceptMessage('.txt', [file('.txt')]), /not one/);
   assert.equal(acceptMessage('text/csv', [file('x', 'text/csv')]), null);
-  assert.match(acceptMessage('text/csv', [file('x.csv', 'text/plain')]), /not one/);
+  assert.match(acceptMessage('text/csv', [file('x.txt', 'text/plain')]), /not one/);
   assert.equal(acceptMessage('image/*', [file('p.png', 'image/png')]), null);
   assert.match(acceptMessage('image/*', [file('a.mp3', 'audio/mpeg')]), /not one/);
+});
+
+test('a type from the extension stands in for an empty or mismatched File.type', () => {
+  const file = (name, type = '') => ({ name, type });
+  assert.equal(acceptMessage('image/*', [file('logo.PNG')]), null);
+  assert.equal(acceptMessage('image/png', [file('logo.png', '')]), null);
+  assert.equal(acceptMessage('text/csv', [file('plan.csv', 'application/vnd.ms-excel')]), null);
+  assert.equal(acceptMessage('application/vnd.ms-excel', [file('plan.csv', 'application/vnd.ms-excel')]), null);
+  assert.equal(acceptMessage('image/*', [file('scan.raw', 'image/x-raw; charset=x')]), null);
+});
+
+test('a file both the client and the daemon refuse stays refused', () => {
+  const file = (name, type = '') => ({ name, type });
+  assert.match(acceptMessage('image/*', [file('song.mp3')]), /not one/);
+  assert.match(acceptMessage('image/png', [file('unknown.xyz')]), /not one/);
+  assert.match(acceptMessage('image/png', [file('noext', 'bogus')]), /not one/);
+  assert.match(acceptMessage('text/csv', [file('.csv')]), /not one/);
+  assert.match(acceptMessage('*/*', [file('a.png', 'image/png')]), /not one/);
 });
 
 test('a new tab note stays until the operator goes back or reloads', () => {

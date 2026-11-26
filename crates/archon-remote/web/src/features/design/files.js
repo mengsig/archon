@@ -51,10 +51,12 @@ const MIME_BY_EXTENSION = new Map(Object.entries({
   mov: 'video/quicktime',
 }));
 
+const asciiLower = (text) => text.replace(/[A-Z]/g, (c) => c.toLowerCase());
+
 function mimeOf(name) {
   const dot = name.lastIndexOf('.');
   if (dot <= 0) return null;
-  return MIME_BY_EXTENSION.get(name.slice(dot + 1).toLowerCase()) ?? null;
+  return MIME_BY_EXTENSION.get(asciiLower(name.slice(dot + 1))) ?? null;
 }
 
 function declaredType(raw) {
@@ -62,7 +64,7 @@ function declaredType(raw) {
   const parts = bare.split('/');
   const isToken = (s) => /^[\x21-\x7e]+$/.test(s);
   const valid = bare.length <= 255 && parts.length === 2 && isToken(parts[0]) && isToken(parts[1]);
-  return valid ? bare.toLowerCase() : '';
+  return valid ? asciiLower(bare) : '';
 }
 
 function mimeMatches(token, mime) {
@@ -71,7 +73,7 @@ function mimeMatches(token, mime) {
 
 function tokenAllows(token, file) {
   if (token.startsWith('.')) {
-    const name = file.name.toLowerCase();
+    const name = asciiLower(file.name);
     return name.length > token.length && name.endsWith(token);
   }
   const mimes = [declaredType(file.type), mimeOf(file.name)].filter(Boolean);
@@ -80,7 +82,7 @@ function tokenAllows(token, file) {
 
 // The input's accept attribute applies to what the operator picks or drops.
 export function acceptMessage(accept, files) {
-  const tokens = String(accept ?? '').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+  const tokens = String(accept ?? '').split(',').map((t) => asciiLower(t.trim())).filter(Boolean);
   if (!tokens.length || files.every((file) => tokens.some((token) => tokenAllows(token, file)))) return null;
   return `That file type is not one the app accepts here (${tokens.join(', ')}).`;
 }

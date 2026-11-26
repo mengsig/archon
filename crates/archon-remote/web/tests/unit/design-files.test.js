@@ -58,6 +58,8 @@ test('a file both the client and the daemon refuse stays refused', () => {
   assert.match(acceptMessage('image/png', [file('unknown.xyz')]), /not one/);
   assert.match(acceptMessage('image/png', [file('noext', 'bogus')]), /not one/);
   assert.match(acceptMessage('text/csv', [file('.csv')]), /not one/);
+  assert.match(acceptMessage('.k', [file('x.\u212a')]), /not one/);
+  assert.match(acceptMessage('.\u212a', [file('x.k')]), /not one/);
   assert.match(acceptMessage('*/*', [file('a.png', 'image/png')]), /not one/);
 });
 

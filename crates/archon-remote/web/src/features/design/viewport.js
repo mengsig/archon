@@ -1,8 +1,4 @@
 // The preview's size preset, changed one request at a time per session.
-// `confirmed` is what archond last acknowledged (or the frames show, after a switch
-// was given up), `pending` the request in flight and `queued` the newest choice waiting
-// for it; `settles` counts answered requests, so a view asked for before one was
-// answered is known to be stale.
 
 const PRESETS = new Set(['desktop', 'tablet', 'phone']);
 
@@ -14,6 +10,8 @@ function assertNamed(preset) {
   if (typeof preset !== 'string' || !preset) throw new TypeError(`a viewport preset is a name, not ${preset}`);
 }
 
+// `confirmed`: archond's last acknowledged preset (the frames' after a given-up switch); `pending`: the
+// request in flight; `queued`: the newest choice; `settles`: answers so far, so a stale view is known.
 export function initialViewport(preset = 'desktop', settles = 0) {
   assertNamed(preset);
   if (!Number.isInteger(settles) || settles < 0) throw new RangeError(`bad settle count ${settles}`);

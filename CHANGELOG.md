@@ -14,8 +14,10 @@
   clip is in page coordinates and Archon gave it the visible area's, so a
   sticky header was drawn a third of the way down under an empty band. Frames
   and crops are now taken where the page is scrolled to, a phone page wider
-  than the screen is shown zoomed out as Chromium shows it, and comment-mode
-  picks on a scrolled page find the element under the pointer. PageUp,
+  than the screen is shown zoomed out as Chromium shows it, element boxes and
+  crops on that zoomed-out page match the frame instead of its top-left
+  corner, and comment-mode picks on a scrolled page find the element under the
+  pointer. PageUp,
   PageDown, Space, the arrows, Home and End now scroll the app, wheel line and
   page steps and trackpad fractions are converted to the app's pixels, and
   frames come ten a second while you scroll.

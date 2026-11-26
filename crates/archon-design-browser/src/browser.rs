@@ -337,11 +337,8 @@ impl Shared {
         // One screenshot at a time: the stream's polling loop (scale 1) must
         // not race a final picture (scale 2). See `Shared::shot`.
         let _one_at_a_time = self.shot.lock().await;
-        // Crops are taken on the unzoomed page the operator saw, and leave it
-        // unzoomed for the stream. A full-view shot (each stream frame) zooms nothing.
-        if clip.is_some() {
-            self.reset_zoom().await;
-        }
+        // A crop is mapped through the view the operator saw, zoom included.
+        // Chrome zooms onto its clip, so the page is put back for the stream after.
         let picture = match self.layout().await {
             Ok(layout) => self.capture_area(clip, &layout, dpr).await,
             Err(error) => Err(error),
@@ -369,7 +366,7 @@ impl Shared {
     ) -> Result<Picture, BrowserError> {
         let vp = self.viewport();
         let (clip, dpr) = match clip {
-            Some(seen) => (whole_pixels(layout.page_clip(seen)), dpr),
+            Some(seen) => layout.crop_clip(seen, dpr),
             None => layout.view_clip(vp, dpr),
         };
         if !(clip.w >= 1.0 && clip.h >= 1.0) {
@@ -1266,9 +1263,10 @@ impl Browser {
 }
 
 /// The page as `Page.getLayoutMetrics` describes it. Every clip Archon holds
-/// (the whole view, an element box, a drawn region) is relative to what is
-/// visible, but `Page.captureScreenshot` clips in page coordinates: a scrolled
-/// page shot at (0, 0) showed its top, so a sticky header was drawn far down.
+/// (the whole view, an element box, a drawn region) is on the frame: relative
+/// to what is visible and drawn at its zoom. `Page.captureScreenshot` clips in
+/// page coordinates: a scrolled page shot at (0, 0) showed its top, so a
+/// sticky header was drawn far down.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PageLayout {
     /// The visible area's top-left corner in page CSS px.
@@ -1306,10 +1304,9 @@ impl PageLayout {
             (Some(w), Some(h)) if w >= 1.0 && h >= 1.0 => Some((w, h)),
             _ => None,
         };
-        let zoom = match visual.get("scale") {
-            None => 1.0,
-            Some(scale) => scale.as_f64().filter(|z| z.is_finite() && *z > 0.0)?,
-        };
+        let zoom = visual["scale"]
+            .as_f64()
+            .filter(|z| z.is_finite() && *z > 0.0)?;
         Some(Self {
             scroll: (offset("pageX")?, offset("pageY")?),
             size,
@@ -1324,8 +1321,8 @@ impl PageLayout {
         let view = self.on_page(ClipRect {
             x: 0.0,
             y: 0.0,
-            w: f64::from(vp.width) / self.zoom,
-            h: f64::from(vp.height) / self.zoom,
+            w: f64::from(vp.width),
+            h: f64::from(vp.height),
         });
         if self.zoom == 1.0 {
             return (whole_pixels(view), dpr);
@@ -1334,18 +1331,20 @@ impl PageLayout {
         (view, dpr * self.zoom)
     }
 
-    /// `seen`, a rectangle of the visible area, in page coordinates.
+    /// `seen`, a rectangle of the frame, in page coordinates.
     pub(crate) fn on_page(&self, seen: ClipRect) -> ClipRect {
         assert!(
             seen.x.is_finite() && seen.y.is_finite() && seen.w >= 0.0 && seen.h >= 0.0,
             "a capture area is a finite, nonnegative rectangle: {seen:?}"
         );
+        let (x, y) = self.page_point(seen.x, seen.y);
         let page = ClipRect {
-            x: seen.x + self.scroll.0,
-            y: seen.y + self.scroll.1,
-            ..seen
+            x,
+            y,
+            w: seen.w / self.zoom,
+            h: seen.h / self.zoom,
         };
-        debug_assert!(page.x >= seen.x && page.y >= seen.y);
+        debug_assert!(page.w.is_finite() && page.h.is_finite());
         page
     }
 
@@ -1357,15 +1356,34 @@ impl PageLayout {
         point
     }
 
-    /// A crop of the visible area as a page clip, cut to the page's edges.
-    pub(crate) fn page_clip(&self, seen: ClipRect) -> ClipRect {
+    /// A crop of the frame as a page clip cut to the page's edges, and the
+    /// screenshot scale that draws it at its size on the frame times `dpr`.
+    pub(crate) fn crop_clip(&self, seen: ClipRect, dpr: f64) -> (ClipRect, f64) {
+        assert!(dpr.is_finite() && dpr > 0.0, "a crop's scale is positive");
         let page = self.on_page(seen);
         let clipped = match self.size {
             Some((w, h)) => clamp_to_page(page, w, h),
             None => page,
         };
-        debug_assert!(clipped.w <= seen.w && clipped.h <= seen.h);
-        clipped
+        debug_assert!(clipped.w <= page.w && clipped.h <= page.h);
+        (whole_pixels(clipped), dpr * self.zoom)
+    }
+
+    /// An element box from `DOM.getBoxModel`, in CSS px from the visible
+    /// area's corner at scale 1, as the frame shows it.
+    pub(crate) fn on_frame(&self, css: ClipRect) -> ClipRect {
+        assert!(
+            css.x.is_finite() && css.y.is_finite() && css.w >= 0.0 && css.h >= 0.0,
+            "an element box is a finite, nonnegative rectangle: {css:?}"
+        );
+        let seen = ClipRect {
+            x: css.x * self.zoom,
+            y: css.y * self.zoom,
+            w: css.w * self.zoom,
+            h: css.h * self.zoom,
+        };
+        debug_assert!(seen.w.is_finite() && seen.h.is_finite());
+        seen
     }
 }
 
@@ -1490,8 +1508,8 @@ mod capture_tests {
 
     // T-U10
     /// F3: a clipped capture under touch emulation left the phone preview
-    /// zoomed onto the clip. Every capture, preset change and reload puts the
-    /// page back at scale 1, before the shot and after it.
+    /// zoomed onto the clip. Every crop, preset change and reload puts the
+    /// page back at its first scale; a crop after its shot, in the view seen.
     #[tokio::test]
     async fn captures_presets_and_reloads_reset_the_page_zoom() {
         let (b, log) = fake_browser(|m, _| {
@@ -1519,11 +1537,7 @@ mod capture_tests {
         };
         assert_eq!(
             methods(&log),
-            [
-                "Emulation.resetPageScaleFactor",
-                "Page.captureScreenshot",
-                "Emulation.resetPageScaleFactor"
-            ]
+            ["Page.captureScreenshot", "Emulation.resetPageScaleFactor"]
         );
         log.lock().unwrap().clear();
         b.capture(None, 1.0).await.unwrap();
@@ -1558,7 +1572,7 @@ mod capture_tests {
         let (b, log) = fake_browser(|m, _| match m {
             "Page.captureScreenshot" => Some(json!({"data": jpeg_of(64)})),
             "Page.getLayoutMetrics" => Some(json!({
-                "cssVisualViewport": {"pageX": 30.0, "pageY": 450.0},
+                "cssVisualViewport": {"pageX": 30.0, "pageY": 450.0, "scale": 1.0},
                 "cssContentSize": {"width": 1000.0, "height": 1000.0},
             })),
             _ => None,
@@ -1621,6 +1635,93 @@ mod capture_tests {
         );
     }
 
+    /// A phone shows a wide page zoomed out to a quarter: a region drawn on
+    /// the frame was shot at its frame size from the page's top-left corner.
+    #[tokio::test]
+    async fn a_zoomed_page_is_cropped_and_measured_as_the_frame_shows_it() {
+        let (b, log) = fake_browser(|m, _| match m {
+            "Page.captureScreenshot" => Some(json!({"data": jpeg_of(64)})),
+            "Page.getLayoutMetrics" => Some(json!({
+                "cssVisualViewport": {"pageX": 0.0, "pageY": 100.0, "scale": 0.25},
+                "cssContentSize": {"width": 1560.0, "height": 4000.0},
+            })),
+            "DOM.getDocument" => Some(json!({"root": {"nodeId": 1}})),
+            "DOM.querySelectorAll" => Some(json!({"nodeIds": [7]})),
+            "DOM.getBoxModel" => {
+                Some(json!({"model": {"border": [0, 960, 1600, 960, 1600, 1260, 0, 1260]}}))
+            }
+            _ => None,
+        })
+        .await;
+        let region = ClipRect {
+            x: 0.0,
+            y: 300.0,
+            w: 195.0,
+            h: 100.0,
+        };
+        let crop = b.capture(Some(region), 2.0).await.unwrap();
+        let clip = log
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(m, _)| m == "Page.captureScreenshot")
+            .map(|(_, p)| p["clip"].clone())
+            .expect("a screenshot");
+        assert_eq!(
+            (clip["x"].as_f64(), clip["y"].as_f64()),
+            (Some(0.0), Some(1300.0))
+        );
+        assert_eq!(
+            (
+                clip["width"].as_f64(),
+                clip["height"].as_f64(),
+                clip["scale"].as_f64()
+            ),
+            (Some(780.0), Some(400.0), Some(0.5)),
+            "drawn at the region's frame size times the dpr"
+        );
+        assert_eq!((crop.capture.y, crop.capture.h), (1300, 400));
+        let found = b.resolve_selector("#b3", None).await.unwrap();
+        let expected = ClipRect {
+            x: 0.0,
+            y: 240.0,
+            w: 400.0,
+            h: 75.0,
+        };
+        assert_eq!(found, Some(expected), "a box is given on the frame");
+    }
+
+    /// Without its scale a layout could crop and hit-test a zoomed page at the
+    /// wrong place, so neither is tried.
+    #[tokio::test]
+    async fn a_layout_without_its_scale_gives_no_crop_and_no_pick() {
+        let (b, log) = fake_browser(|m, _| match m {
+            "Page.captureScreenshot" => Some(json!({"data": jpeg_of(64)})),
+            "Page.getLayoutMetrics" => {
+                Some(json!({"cssVisualViewport": {"pageX": 0.0, "pageY": 0.0}}))
+            }
+            _ => None,
+        })
+        .await;
+        let region = ClipRect {
+            x: 0.0,
+            y: 0.0,
+            w: 50.0,
+            h: 50.0,
+        };
+        let crop = b.capture(Some(region), 2.0).await;
+        assert!(matches!(crop, Err(BrowserError::Protocol(_))), "{crop:?}");
+        let pick = b.resolve(10.0, 10.0, 0).await;
+        assert!(matches!(pick, Err(BrowserError::Protocol(_))), "{pick:?}");
+        let sent: Vec<String> = log.lock().unwrap().iter().map(|(m, _)| m.clone()).collect();
+        assert!(
+            !sent
+                .iter()
+                .any(|m| m == "Page.captureScreenshot" || m == "DOM.getNodeForLocation"),
+            "{sent:?}"
+        );
+    }
+
     #[test]
     fn a_zoomed_view_is_shot_whole_at_its_page_scale() {
         let layout = PageLayout {
@@ -1654,8 +1755,14 @@ mod capture_tests {
         assert_eq!(PageLayout::from_metrics(&odd), None);
         let flat = json!({"cssVisualViewport": {"pageX": 0.0, "pageY": 0.0, "scale": 0.0}});
         assert_eq!(PageLayout::from_metrics(&flat), None);
+        let unscaled = json!({"cssVisualViewport": {"pageX": 0.0, "pageY": 0.0}});
+        assert_eq!(
+            PageLayout::from_metrics(&unscaled),
+            None,
+            "a zoom is not guessed"
+        );
         let overscrolled = PageLayout::from_metrics(&json!({
-            "cssVisualViewport": {"pageX": -4.0, "pageY": 12.0},
+            "cssVisualViewport": {"pageX": -4.0, "pageY": 12.0, "scale": 1.0},
             "cssContentSize": {"width": 0.0, "height": 10.0},
         }));
         let expected = PageLayout {

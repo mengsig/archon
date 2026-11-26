@@ -130,9 +130,11 @@ Home and End scroll the page when nothing editable in the app has focus.
 
 Each frame is the part of the page that is on screen, as Chromium itself draws
 it: sticky and fixed headers stay where the app puts them, and a phone page
-wider than the screen is shown zoomed out, as a phone shows it. Frames come
-ten a second while you scroll or type and four a second at rest, so the frame
-after a scroll stops is a fresh picture of where it stopped.
+wider than the screen is shown zoomed out, as a phone shows it. Comment picks,
+element boxes and regions you draw are all measured on that frame, zoom
+included, so a crop shows what you saw. Frames come ten a second while you
+scroll or type and four a second at rest, so the frame after a scroll stops
+is a fresh picture of where it stopped.
 
 Input goes to archond one request at a time, and archond ends each within
 about 20 seconds and runs one at a time per session, so input runs in the

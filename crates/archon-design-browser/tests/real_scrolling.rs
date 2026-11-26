@@ -12,8 +12,8 @@ use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream};
 
 use archon_design_browser::{
-    Browser, BrowserError, Input, KeyAction, LaunchSpec, MouseAction, MouseButton, TouchAction,
-    TouchPoint, UpstreamGuard, Viewport, find_browser,
+    Browser, BrowserError, ClipRect, Input, KeyAction, LaunchSpec, MouseAction, MouseButton,
+    TouchAction, TouchPoint, UpstreamGuard, Viewport, find_browser,
 };
 
 const DESKTOP: Viewport = Viewport {
@@ -312,5 +312,81 @@ async fn a_touch_swipe_scrolls_a_phone_preview_and_the_settled_frame_is_chromes(
         "the page scrolled"
     );
     assert!(element_at(&b, 10.0, 10.0).await.contains("header"));
+    b.close().await.unwrap();
+}
+
+/// A phone shows the wide page zoomed out. A region drawn on its frame and an
+/// element's box were cropped as if the page were at scale 1: from its corner.
+#[tokio::test]
+async fn a_zoomed_out_phone_is_cropped_where_the_frame_shows() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((b, _)) = open(PHONE, &root.path().join("zoom")).await else {
+        return;
+    };
+    let before = settled_frame(&b, "zoomed-out").await;
+    let frame = b.capture(None, 1.0).await.unwrap();
+    let zoom = frame.capture.screenshot_scale;
+    assert!(zoom < 0.5, "the wide page is shown zoomed out: {zoom}");
+    assert_eq!((frame.width, frame.height), (PHONE.width, PHONE.height));
+
+    // The fourth band starts 960 px down the page, at 960 × zoom on the frame.
+    let band = b.resolve(100.0, 300.0, 0).await.unwrap();
+    assert_eq!(band.selector.as_deref(), Some("div#b3"));
+    assert!(band.y <= 300.0 && 300.0 <= band.y + band.h, "{band:?}");
+    assert!((band.y - 960.0 * zoom).abs() < 1.0 && (band.h - 300.0 * zoom).abs() < 1.0);
+    let element = ClipRect {
+        x: band.x,
+        y: band.y,
+        w: band.w,
+        h: band.h,
+    };
+    let shot = b.capture(Some(element), 1.0).await.unwrap();
+    assert_eq!(
+        (shot.capture.y, shot.capture.h),
+        (960, 300),
+        "{:?}",
+        shot.capture
+    );
+    assert!(
+        (f64::from(shot.height) - band.h).abs() <= 1.0,
+        "{}",
+        shot.height
+    );
+
+    let region = ClipRect {
+        x: 0.0,
+        y: 300.0,
+        w: 195.0,
+        h: 100.0,
+    };
+    let crop = b.capture(Some(region), 1.0).await.unwrap();
+    let page = (region.y / zoom, region.w / zoom, region.h / zoom);
+    let area = (crop.capture.y, crop.capture.w, crop.capture.h);
+    assert_eq!(area, (page.0 as u32, page.1 as u32, page.2 as u32));
+    assert_eq!(crop.capture.screenshot_scale, zoom);
+    assert!(crop.width.abs_diff(195) <= 1 && crop.height.abs_diff(100) <= 1);
+
+    // Two patches of that band look alike and one of the band above does not;
+    // shot from the page's corner, all three were the first band.
+    let patch = |x, y| ClipRect {
+        x,
+        y,
+        w: 100.0,
+        h: 50.0,
+    };
+    let one = b.capture(Some(patch(0.0, 250.0)), 1.0).await.unwrap();
+    let other = b.capture(Some(patch(250.0, 255.0)), 1.0).await.unwrap();
+    let above = b.capture(Some(patch(0.0, 180.0)), 1.0).await.unwrap();
+    let same = b
+        .pictures_match((one.mime, &one.bytes), (other.mime, &other.bytes))
+        .await;
+    assert!(same.unwrap(), "two patches of one band");
+    let alike = b
+        .pictures_match((one.mime, &one.bytes), (above.mime, &above.bytes))
+        .await;
+    assert!(!alike.unwrap(), "a patch of the band above");
+
+    // The crops leave the operator's view as it was.
+    assert!(settled_frame(&b, "zoomed-out-after").await == before);
     b.close().await.unwrap();
 }

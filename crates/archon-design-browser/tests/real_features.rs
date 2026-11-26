@@ -217,6 +217,10 @@ async fn a_file_chooser_takes_the_operators_files_and_a_drop_delivers_them() {
         .unwrap();
     wait_location(&browser, "/?files=BAPLIE.edi%3A11").await;
 
+    // A drop onto the file input is checked against its accept; elsewhere is not.
+    let on_input = browser.accept_at(60.0, 25.0).await.unwrap();
+    assert_eq!(on_input.as_deref(), Some(".edi,.csv"));
+    assert_eq!(browser.accept_at(60.0, 290.0).await.unwrap(), None);
     browser.drop_files(60.0, 290.0, &[file]).await.unwrap();
     wait_location(&browser, "/?dropped=BAPLIE.edi%3A11").await;
     assert_eq!(browser.containment_reason(), None);

@@ -9,6 +9,20 @@ export function fileLimitMessage(files) {
   return null;
 }
 
+function tokenAllows(token, file) {
+  if (token.startsWith('.')) return file.name.toLowerCase().endsWith(token) && file.name.length > token.length;
+  const type = (file.type ?? '').toLowerCase();
+  if (!type) return false;
+  return token.endsWith('/*') ? type.startsWith(token.slice(0, -1)) : type === token;
+}
+
+// The input's accept attribute applies to what the operator picks or drops.
+export function acceptMessage(accept, files) {
+  const tokens = String(accept ?? '').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+  if (!tokens.length || files.every((file) => tokens.some((token) => tokenAllows(token, file)))) return null;
+  return `That file type is not one the app accepts here (${tokens.join(', ')}).`;
+}
+
 export function chunkOffsets(size) {
   if (!Number.isSafeInteger(size) || size < 0 || size > FILE_LIMIT) throw new RangeError('invalid file size');
   return Array.from({ length: Math.max(1, Math.ceil(size / CHUNK_SIZE)) }, (_, index) => index * CHUNK_SIZE);

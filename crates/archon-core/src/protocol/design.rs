@@ -435,6 +435,12 @@ pub enum DesignEvent {
         /// The message.
         message: String,
     },
+    /// The app opened a new tab; the preview followed it. The note stays until
+    /// the operator goes back or reloads.
+    NewTab {
+        /// The note to show.
+        message: String,
+    },
     /// The session ended.
     Ended {
         /// Why.

@@ -106,7 +106,7 @@ export function mountDesign(view, ctx) {
     title, onBack: back,
     onPreset: (preset) => setPreset(preset),
     onReload: () => reload(),
-    onPreviewBack: () => ctx.design.goBack(session()).catch(refuse),
+    onPreviewBack: () => { dispatch({ type: 'new_tab_dismissed' }); ctx.design.goBack(session()).catch(refuse); },
     onFinish: () => reviewing((hooks) => startFinish(ctx, state, hooks)),
     onReview: () => reviewing((hooks) => resumeFinish(ctx, state, hooks)),
     onBackToEditing: async () => {
@@ -269,7 +269,7 @@ export function mountDesign(view, ctx) {
     presetSent = `${session()}|${preset}`;
     try { await ctx.design.viewport(session(), preset); } catch (e) { refuse(e); }
   }
-  function reload() { ctx.design.reload(session()).catch(refuse); }
+  function reload() { dispatch({ type: 'new_tab_dismissed' }); ctx.design.reload(session()).catch(refuse); }
 
   // Taps resolve against the streamed size; until it matches the preset, say so instead of the daemon's "outside the preview".
   function waitingForSize() {

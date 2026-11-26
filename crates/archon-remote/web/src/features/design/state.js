@@ -6,7 +6,7 @@ export function initialState(item) {
   return {
     item, loaded: false, observer: null, view: null, session: null, notes: [], browser: { status: 'idle' },
     degraded: false, noteVersion: 0, frame: null, selection: null, blocked: [], progress: '',
-    dialog: null, browserEvents: [], toasts: [], ended: null, connection: 'open', mode: 'interact', preset: 'desktop', refresh: false, error: null,
+    dialog: null, browserEvents: [], toasts: [], newTab: null, ended: null, connection: 'open', mode: 'interact', preset: 'desktop', refresh: false, error: null,
     previewCommit: null, path: null, finishBlocker: null, imagesUsed: 0, imagesMax: 0, deadline: null,
     itemState: null,
   };
@@ -47,7 +47,7 @@ export function reduce(state, action) {
         preset: v.session?.viewport_preset ?? state.preset, finishBlocker: v.finish_blocker ?? null,
         imagesUsed: v.images_used ?? 0, imagesMax: v.images_max ?? 0, deadline: v.stage_deadline ?? null, refresh: false, error: null,
         ended: v.session && v.session.state === 'ended' ? (v.session.end_reason ?? 'ended') : null,
-        ...(fresh ? { frame: null, selection: null, progress: '', previewCommit: null, blocked: [], mode: 'interact', toasts: [...state.toasts, 'A new design session started'] } : {}),
+        ...(fresh ? { frame: null, selection: null, progress: '', previewCommit: null, blocked: [], mode: 'interact', newTab: null, toasts: [...state.toasts, 'A new design session started'] } : {}),
       };
     }
     case 'summary':
@@ -67,6 +67,8 @@ export function reduce(state, action) {
       return { ...state, preset: action.preset };
     case 'selection':
       return { ...state, selection: action.selection };
+    case 'new_tab_dismissed':
+      return { ...state, newTab: null };
     case 'toasts_taken':
       return { ...state, toasts: [] };
     case 'browser_events_taken':
@@ -106,9 +108,11 @@ function reduceEvent(state, e) {
       return { ...state, dialog: { kind: e.kind, message: e.message, defaultPrompt: e.default_prompt ?? null } };
     case 'toast':
       return { ...state, toasts: [...state.toasts, e.message] };
+    case 'new_tab':
+      return { ...state, newTab: e.message, toasts: [...state.toasts, e.message] };
     case 'ended':
       // A bare "ended" (a gone refusal) must not wipe a reason already known; ask the daemon for the real one.
-      return { ...state, ended: specific(e.reason) ?? state.ended ?? 'ended', refresh: state.refresh || (!specific(e.reason) && !state.ended), session: state.session ? { ...state.session, state: 'ended' } : state.session };
+      return { ...state, newTab: null, ended: specific(e.reason) ?? state.ended ?? 'ended', refresh: state.refresh || (!specific(e.reason) && !state.ended), session: state.session ? { ...state.session, state: 'ended' } : state.session };
     default:
       return state;
   }

@@ -34,11 +34,12 @@ struct Staged {
 }
 
 /// The file chooser the page has open.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Chooser {
     pub id: u64,
     pub node: i64,
     pub multiple: bool,
+    pub accept: String,
 }
 
 #[derive(Debug, Clone)]
@@ -159,26 +160,31 @@ async fn create_private_dir(dir: &Path) -> Result<(), ArchonError> {
 
 impl Transfers {
     /// The page opened a file chooser; it replaces any earlier one.
-    pub(crate) fn open_chooser(&mut self, node: i64, multiple: bool) -> u64 {
+    pub(crate) fn open_chooser(&mut self, node: i64, multiple: bool, accept: String) -> u64 {
         self.next_chooser += 1;
         self.chooser = Some(Chooser {
             id: self.next_chooser,
             node,
             multiple,
+            accept,
         });
         assert!(self.next_chooser > 0, "chooser ids start at 1");
         self.next_chooser
     }
 
+    /// Chooser `id` while it stays open; refused when another one is open now.
+    pub(crate) fn peek_chooser(&self, id: u64) -> Result<&Chooser, ArchonError> {
+        self.chooser
+            .as_ref()
+            .filter(|chooser| chooser.id == id)
+            .ok_or_else(|| invalid("that file chooser is no longer open in the app"))
+    }
+
     /// Close chooser `id`; refused when another one is open now.
     pub(crate) fn take_chooser(&mut self, id: u64) -> Result<Chooser, ArchonError> {
-        match self.chooser {
-            Some(chooser) if chooser.id == id => {
-                self.chooser = None;
-                Ok(chooser)
-            }
-            _ => Err(invalid("that file chooser is no longer open in the app")),
-        }
+        self.peek_chooser(id)?;
+        let chooser = self.chooser.take();
+        Ok(chooser.expect("the chooser was just found open"))
     }
 
     /// Write one part under `root`, the session's private uploads directory.
@@ -242,6 +248,10 @@ impl Transfers {
             .await
             .map_err(|error| ArchonError::io("opening an upload", error))?;
         file.write_all(part.data)
+            .await
+            .map_err(|error| ArchonError::io("writing an upload", error))?;
+        // A tokio file hands its write to a thread; dropping it does not wait.
+        file.flush()
             .await
             .map_err(|error| ArchonError::io("writing an upload", error))?;
         staged.written += part.data.len() as u64;
@@ -456,8 +466,8 @@ mod tests {
     #[test]
     fn only_the_open_chooser_is_answered() {
         let mut transfers = Transfers::default();
-        let first = transfers.open_chooser(7, false);
-        let second = transfers.open_chooser(8, true);
+        let first = transfers.open_chooser(7, false, String::new());
+        let second = transfers.open_chooser(8, true, String::new());
         assert!(transfers.take_chooser(first).is_err());
         assert_eq!(transfers.take_chooser(second).unwrap().node, 8);
         assert!(

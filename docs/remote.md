@@ -307,6 +307,8 @@ Events on a `design` subscription, each a frame with `event` naming its kind:
 `session {state, degraded, preview_path, commit, browser, note_version}`,
 `note {…}` (a note view), `blocked_hosts {hosts}`, `agent_progress {line}`,
 `dialog {kind, message, default_prompt}`, `toast {message}`,
+`new_tab {message}` (the app opened a new tab and the preview followed it; the
+client keeps the note until the operator goes back or reloads),
 `file_chooser {id, multiple, accept}`, `download {id, name, size}`,
 `picker {id, control, value, min, max, step, options}` (each option
 `{label, value, selected, disabled, group}`), `clipboard {text}` and

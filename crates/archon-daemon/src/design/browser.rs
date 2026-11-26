@@ -100,6 +100,11 @@ pub trait PreviewBrowser: Send + Sync {
             "this preview cannot take files".into(),
         ))
     }
+    /// The `accept` of the file input at a point, in CSS px; `None` when
+    /// the point is not on a file input.
+    async fn accept_at(&self, _x: f64, _y: f64) -> Result<Option<String>, adb::BrowserError> {
+        Ok(None)
+    }
     /// Answer the page's native picker; true when the page took the answer.
     async fn answer_picker(
         &self,
@@ -369,6 +374,9 @@ impl PreviewBrowser for Real {
     }
     async fn drop_files(&self, x: f64, y: f64, files: &[PathBuf]) -> Result<(), adb::BrowserError> {
         self.get()?.drop_files(x, y, files).await
+    }
+    async fn accept_at(&self, x: f64, y: f64) -> Result<Option<String>, adb::BrowserError> {
+        self.get()?.accept_at(x, y).await
     }
     async fn answer_picker(&self, id: u64, value: Option<&str>) -> Result<bool, adb::BrowserError> {
         self.get()?.answer_picker(id, value).await

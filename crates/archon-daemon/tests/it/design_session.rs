@@ -1572,6 +1572,159 @@ mod stream {
         task.abort();
     }
 
+    async fn stage_file(f: &Fixture, transfer: &str, name: &str) {
+        f.operator(Request::DesignFilePart {
+            session: f.session.clone(),
+            transfer: transfer.into(),
+            file: 0,
+            name: name.into(),
+            size: 4,
+            offset: 0,
+            data: "VU5CKw==".into(),
+        })
+        .await
+        .expect("the part is kept");
+    }
+
+    /// A file the input's `accept` does not allow is refused, the chooser
+    /// stays open, and an allowed file then goes through.
+    #[tokio::test]
+    async fn a_file_of_a_type_the_input_refuses_keeps_the_chooser_open() {
+        let f = Fixture::new().await;
+        let (mut rx, task) = subscribe(&f, 1);
+        until("initial feed", || {
+            f.factory.browser(0).calls(|c| c.screencasts_started == 1)
+        })
+        .await;
+        f.factory
+            .browser(0)
+            .open_file_chooser_accepting(7, false, ".txt,.csv");
+        let chooser = loop {
+            if let DesignEvent::FileChooser { id, .. } = event(&mut rx).await {
+                break id;
+            }
+        };
+        let set = |transfer: &str| Request::DesignFileSet {
+            session: f.session.clone(),
+            chooser,
+            transfer: Some(transfer.into()),
+        };
+        stage_file(&f, "bad", "evil.exe").await;
+        let refused = f.operator(set("bad")).await.unwrap_err().to_string();
+        assert!(
+            refused.contains("That file type is not one the app accepts here (.txt, .csv)."),
+            "{refused}"
+        );
+        assert!(f.factory.browser(0).calls(|c| c.files_set.is_empty()));
+        stage_file(&f, "good", "PLAN.CSV").await;
+        f.operator(set("good"))
+            .await
+            .expect("the chooser is still open for an allowed file");
+        assert_eq!(f.factory.browser(0).calls(|c| c.files_set.len()), 1);
+        task.abort();
+    }
+
+    /// A drop onto a file input is held to its `accept`; a drop elsewhere is not.
+    #[tokio::test]
+    async fn a_dropped_file_of_a_type_the_input_refuses_is_not_delivered() {
+        let f = Fixture::new().await;
+        let (_rx, task) = subscribe(&f, 1);
+        until("initial feed", || {
+            f.factory.browser(0).calls(|c| c.screencasts_started == 1)
+        })
+        .await;
+        let drop = |transfer: &str| Request::DesignFileDrop {
+            session: f.session.clone(),
+            transfer: transfer.into(),
+            x: 20.0,
+            y: 30.0,
+        };
+        stage_file(&f, "anywhere", "evil.exe").await;
+        f.operator(drop("anywhere"))
+            .await
+            .expect("a drop off any file input is the page's to judge");
+        f.factory.browser(0).drop_on_input_accepting(".txt,.csv");
+        stage_file(&f, "bad", "evil.exe").await;
+        let refused = f.operator(drop("bad")).await.unwrap_err().to_string();
+        assert!(
+            refused.contains("That file type is not one the app accepts here (.txt, .csv)."),
+            "{refused}"
+        );
+        stage_file(&f, "good", "plan.txt").await;
+        f.operator(drop("good"))
+            .await
+            .expect("an allowed file drops");
+        let dropped = f.factory.browser(0).calls(|c| c.drops.len());
+        assert_eq!(dropped, 2, "the refused drop never reached the page");
+        task.abort();
+    }
+
+    /// Asking for one file with two staged keeps the chooser open too.
+    #[tokio::test]
+    async fn too_many_files_for_the_chooser_keep_it_open() {
+        let f = Fixture::new().await;
+        let (mut rx, task) = subscribe(&f, 1);
+        until("initial feed", || {
+            f.factory.browser(0).calls(|c| c.screencasts_started == 1)
+        })
+        .await;
+        f.factory.browser(0).open_file_chooser(7, false);
+        let chooser = loop {
+            if let DesignEvent::FileChooser { id, .. } = event(&mut rx).await {
+                break id;
+            }
+        };
+        for file in 0..2 {
+            f.operator(Request::DesignFilePart {
+                session: f.session.clone(),
+                transfer: "two".into(),
+                file,
+                name: format!("a{file}.edi"),
+                size: 4,
+                offset: 0,
+                data: "VU5CKw==".into(),
+            })
+            .await
+            .unwrap();
+        }
+        let set = |transfer: &str| Request::DesignFileSet {
+            session: f.session.clone(),
+            chooser,
+            transfer: Some(transfer.into()),
+        };
+        f.operator(set("two")).await.expect_err("one file only");
+        stage_file(&f, "one", "a.edi").await;
+        f.operator(set("one"))
+            .await
+            .expect("the chooser stayed open");
+        task.abort();
+    }
+
+    /// A new tab is its own event, so the operator's note can stay.
+    #[tokio::test]
+    async fn a_new_tab_is_reported_as_a_note_not_a_toast() {
+        let f = Fixture::new().await;
+        let (mut rx, task) = subscribe(&f, 1);
+        until("initial feed", || {
+            f.factory.browser(0).calls(|c| c.screencasts_started == 1)
+        })
+        .await;
+        f.factory.browser(0).open_new_tab("/next");
+        loop {
+            match event(&mut rx).await {
+                DesignEvent::NewTab { message } => {
+                    assert!(message.contains("the preview followed it"), "{message}");
+                    break;
+                }
+                DesignEvent::Toast { message } => {
+                    assert!(!message.contains("new tab"), "{message}");
+                }
+                _ => {}
+            }
+        }
+        task.abort();
+    }
+
     #[tokio::test]
     async fn a_relaunched_browser_advances_the_open_stream_sequence() {
         let f = Fixture::new().await;

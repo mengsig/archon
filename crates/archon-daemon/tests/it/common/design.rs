@@ -35,6 +35,8 @@ pub struct Calls {
     pub terminated: bool,
     /// Files set on a file input, by its node.
     pub files_set: Vec<(i64, Vec<PathBuf>)>,
+    /// Files dropped on the page.
+    pub drops: Vec<Vec<PathBuf>>,
 }
 
 /// One scripted browser.
@@ -50,6 +52,8 @@ pub struct FakeBrowser {
     /// No selector matches anything on the page.
     no_elements: Mutex<bool>,
     load_error: Mutex<Option<adb::BrowserError>>,
+    /// The `accept` of the file input under any drop point, if one is there.
+    drop_accept: Mutex<Option<String>>,
     pid: u32,
 }
 
@@ -65,6 +69,7 @@ impl FakeBrowser {
             pictures: Mutex::default(),
             no_elements: Mutex::default(),
             load_error: Mutex::default(),
+            drop_accept: Mutex::default(),
             pid,
         }
     }
@@ -84,11 +89,23 @@ impl FakeBrowser {
 
     /// The page opened a file chooser for input `node`.
     pub fn open_file_chooser(&self, node: i64, multiple: bool) {
+        self.open_file_chooser_accepting(node, multiple, ".edi");
+    }
+
+    /// The page opened a file chooser whose input accepts `accept`.
+    pub fn open_file_chooser_accepting(&self, node: i64, multiple: bool, accept: &str) {
         let _ = self.events.send(adb::BrowserEvent::FileChooser {
             node,
             multiple,
-            accept: ".edi".into(),
+            accept: accept.into(),
         });
+    }
+
+    /// The page opened a new tab for `url`.
+    pub fn open_new_tab(&self, url: &str) {
+        let _ = self
+            .events
+            .send(adb::BrowserEvent::NewTab { url: url.into() });
     }
 
     /// Push a frame to the screencast.
@@ -129,6 +146,11 @@ impl FakeBrowser {
 
     fn op(&self, what: impl Into<String>) {
         self.calls.lock().unwrap().ops.push(what.into());
+    }
+
+    /// Drops land on a file input that accepts `accept`.
+    pub fn drop_on_input_accepting(&self, accept: &str) {
+        *self.drop_accept.lock().unwrap() = Some(accept.into());
     }
 
     pub fn set_rss(&self, bytes: u64) {
@@ -179,6 +201,13 @@ impl PreviewBrowser for FakeBrowser {
     async fn set_viewport(&self, viewport: adb::Viewport) -> Result<(), adb::BrowserError> {
         self.calls.lock().unwrap().viewports.push(viewport);
         Ok(())
+    }
+    async fn drop_files(&self, _: f64, _: f64, files: &[PathBuf]) -> Result<(), adb::BrowserError> {
+        self.calls.lock().unwrap().drops.push(files.to_vec());
+        Ok(())
+    }
+    async fn accept_at(&self, _: f64, _: f64) -> Result<Option<String>, adb::BrowserError> {
+        Ok(self.drop_accept.lock().unwrap().clone())
     }
     async fn set_files(&self, node: i64, files: &[PathBuf]) -> Result<(), adb::BrowserError> {
         self.calls

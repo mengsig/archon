@@ -473,7 +473,7 @@ once only.
 | "That file is too big for the preview (64 MiB at most)." / "Those files are too big for the preview (256 MiB total at most)." / "Choose at most 32 files for the preview." | The chosen files are over a limit; nothing was sent. See Limits. |
 | "this preview session already holds 240 MiB of files; it takes 256 MiB at most" | Files sent earlier in this session count too. They are freed when the preview restarts. |
 | "The app's download of report.csv was not kept: it is larger than 64 MiB." | Chromium stopped the download. Smaller downloads are offered. |
-| "The app opened a new tab. It is shown here; press Back to return." | A link or `window.open` meant for a new tab opened in the preview. |
+| "The app opened a new tab; the preview followed it. Press Back to return." | A link or `window.open` meant for a new tab opened in the preview. |
 | "There is no earlier page in the preview." | **Back** has nowhere to go. |
 | "worktree moved after Finish: expected 3f9c2a1; restore it and complete again" | A commit was made after you confirmed. The agent must reset to the finish commit and complete again. |
 | "choose live when creating the item" | `proposal` cannot change to or from `live` later. |

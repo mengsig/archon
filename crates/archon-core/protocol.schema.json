@@ -6048,6 +6048,24 @@
           "type": "object"
         },
         {
+          "description": "The app opened a new tab; the preview followed it. The note stays until\nthe operator goes back or reloads.",
+          "properties": {
+            "event": {
+              "const": "new_tab",
+              "type": "string"
+            },
+            "message": {
+              "description": "The note to show.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The session ended.",
           "properties": {
             "event": {

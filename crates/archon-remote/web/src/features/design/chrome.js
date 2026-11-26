@@ -158,7 +158,7 @@ export function buildStatusBar() {
       const line = statusLine(state);
       text.textContent = [commit, line].filter(Boolean).join(' · ');
       const sel = state.selection?.label;
-      frameText.textContent = `Preview of ${path || 'the app'}${sel ? `, selected: ${sel}` : ''}`;
+      frameText.textContent = `Preview of ${path || 'the app'}${sel ? `, selected: ${sel}` : ''}${state.newTab ? `. ${state.newTab}` : ''}`;
       hosts.hidden = state.blocked.length === 0;
       if (state.blocked.length) {
         hosts.querySelector('summary').textContent = `${state.blocked.length} blocked host${state.blocked.length === 1 ? '' : 's'}`;

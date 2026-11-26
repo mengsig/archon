@@ -249,16 +249,27 @@ impl Shared {
         let described = self
             .call("DOM.describeNode", json!({"backendNodeId": node}))
             .await?;
-        let attributes = described["node"]["attributes"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        let accept = attributes
-            .chunks(2)
-            .find(|pair| pair[0] == "accept")
-            .and_then(|pair| pair.get(1)?.as_str().map(clean))
-            .unwrap_or_default();
-        Ok(accept)
+        Ok(node_attribute(&described, "accept").unwrap_or_default())
+    }
+
+    /// The `accept` of the file input under frame point `(x, y)`, if that is one.
+    async fn file_input_accept_at(&self, x: f64, y: f64) -> Result<Option<String>, BrowserError> {
+        let (x, y) = self.layout().await?.hit_point(x, y);
+        let hit = self
+            .call(
+                "DOM.getNodeForLocation",
+                json!({"x": x.round() as i64, "y": y.round() as i64}),
+            )
+            .await?;
+        let Some(node) = hit["backendNodeId"].as_i64() else {
+            return Ok(None);
+        };
+        let described = self
+            .call("DOM.describeNode", json!({"backendNodeId": node}))
+            .await?;
+        let is_file_input = described["node"]["nodeName"] == "INPUT"
+            && node_attribute(&described, "type").is_some_and(|t| t.eq_ignore_ascii_case("file"));
+        Ok(is_file_input.then(|| node_attribute(&described, "accept").unwrap_or_default()))
     }
 
     /// The page bridge called its binding.
@@ -345,7 +356,23 @@ fn path_strings(files: &[PathBuf]) -> Result<Vec<String>, BrowserError> {
         .collect()
 }
 
+/// Attribute `name` of a `DOM.describeNode` reply, cleaned for display.
+fn node_attribute(described: &Value, name: &str) -> Option<String> {
+    let attributes = described["node"]["attributes"].as_array()?;
+    attributes
+        .chunks(2)
+        .find(|pair| pair[0] == name)
+        .and_then(|pair| pair.get(1)?.as_str().map(clean))
+}
+
 impl Browser {
+    /// The `accept` of the file input at `(x, y)` in CSS px; `None` when the
+    /// point is not on one.
+    pub async fn accept_at(&self, x: f64, y: f64) -> Result<Option<String>, BrowserError> {
+        assert!(x.is_finite() && y.is_finite(), "a drop point is finite");
+        self.sh.disclose(self.sh.file_input_accept_at(x, y)).await
+    }
+
     /// Set the chosen files on the file input whose chooser opened.
     pub async fn set_files(&self, node: i64, files: &[PathBuf]) -> Result<(), BrowserError> {
         let files = path_strings(files)?;

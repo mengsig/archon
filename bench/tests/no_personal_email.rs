@@ -19,10 +19,6 @@ fn is_local(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"._%+-".contains(&byte)
 }
 
-fn is_domain(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.'
-}
-
 fn is_kept(address: &str) -> bool {
     let address = address.to_ascii_lowercase();
     let (local, domain) = address.split_once('@').expect("address has an at sign");
@@ -34,14 +30,34 @@ fn is_kept(address: &str) -> bool {
             .any(|kept| domain == *kept || domain.ends_with(&format!(".{kept}")))
 }
 
-fn has_tld_label(domain: &[u8]) -> bool {
-    let starts_well = domain
-        .first()
-        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'-');
-    starts_well
-        && domain
-            .windows(3)
-            .any(|w| w[0] == b'.' && w[1].is_ascii_alphabetic() && w[2].is_ascii_alphabetic())
+/// Length of the domain at the start of `text`: dot-separated labels of
+/// `[A-Za-z0-9-]`, the last one starting with two letters (longest match).
+fn domain_len(text: &[u8]) -> usize {
+    let is_label = |b: &u8| b.is_ascii_alphanumeric() || *b == b'-';
+    let mut longest = 0;
+    let mut pos = 0;
+    let mut index = 0;
+    loop {
+        let label = text[pos..].iter().take_while(|b| is_label(b)).count();
+        if label == 0 {
+            break;
+        }
+        let starts_alpha = text[pos..pos + label]
+            .iter()
+            .take(2)
+            .all(u8::is_ascii_alphabetic)
+            && label >= 2;
+        if index > 0 && starts_alpha {
+            longest = pos + label;
+        }
+        pos += label;
+        index += 1;
+        if text.get(pos) != Some(&b'.') {
+            break;
+        }
+        pos += 1;
+    }
+    longest
 }
 
 fn addresses_in(data: &[u8]) -> Vec<String> {
@@ -51,13 +67,10 @@ fn addresses_in(data: &[u8]) -> Vec<String> {
         while start > 0 && is_local(data[start - 1]) {
             start -= 1;
         }
-        let mut end = at + 1;
-        while end < data.len() && is_domain(data[end]) {
-            end += 1;
-        }
+        let domain = domain_len(&data[at + 1..]);
         let has_name = data[start..at].iter().any(u8::is_ascii_alphanumeric);
-        if has_name && has_tld_label(&data[at + 1..end]) {
-            found.push(String::from_utf8_lossy(&data[start..end]).into_owned());
+        if has_name && domain > 0 {
+            found.push(String::from_utf8_lossy(&data[start..at + 1 + domain]).into_owned());
         }
     }
     found
@@ -126,4 +139,12 @@ fn scanner_covers_leading_punctuation_and_trailing_digits() {
         let flagged = addresses_in(text.as_bytes());
         assert!(flagged.iter().any(|a| !is_kept(a)), "missed {text}");
     }
+}
+
+#[test]
+fn scanner_keeps_fixture_address_before_sentence_punctuation() {
+    let text = "mail p@example.com. then q@example.org, and r@example.net;";
+    let flagged = addresses_in(text.as_bytes());
+    assert_eq!(flagged, ["p@example.com", "q@example.org", "r@example.net"]);
+    assert!(flagged.iter().all(|a| is_kept(a)));
 }

@@ -167,10 +167,12 @@ def run_trial(task, trial, arm, destination, load1, load5):
     base = Path(tempfile.mkdtemp(prefix='r-', dir=SANDBOX))
     temp_root = Path(tempfile.mkdtemp(prefix='t-', dir=SANDBOX))
     proc = None
+    created = False
     try:
         root, env, _ = private_environment(base)
         hashes = install_binaries(root, env, arm, temp_root)
         destination.mkdir(parents=True)
+        created = True
         record = {'task': task, 'trial': trial, 'arm': arm, 'version': VERSION[arm], 'load1_at_start': load1, 'load5_at_start': load5,
                   'hashes': hashes, 'start': datetime.datetime.now(datetime.timezone.utc).isoformat()}
         with (destination / 'aether.log').open('w') as log:
@@ -188,14 +190,20 @@ def run_trial(task, trial, arm, destination, load1, load5):
             stop_daemon(proc, root, env)
             shutil.copytree(root / 'a-data', destination / 'aether-data',
                             ignore=shutil.ignore_patterns('t', 'bin', 'aether.build-cache'))
-        (destination / 'start.json').write_text(json.dumps(record, indent=2))
-        return record
-    finally:
-        if proc is not None:
-            stop_daemon(proc, root, env)
         redact(destination)
-        shutil.rmtree(base, ignore_errors=True)
-        shutil.rmtree(temp_root, ignore_errors=True)
+        (destination / 'start.json').write_bytes(email_redaction.redact_bytes(json.dumps(record, indent=2).encode()))
+        return record
+    except BaseException:
+        if created:
+            shutil.rmtree(destination, ignore_errors=True)
+        raise
+    finally:
+        try:
+            if proc is not None:
+                stop_daemon(proc, root, env)
+        finally:
+            shutil.rmtree(base, ignore_errors=True)
+            shutil.rmtree(temp_root, ignore_errors=True)
 
 
 def redact(directory):

@@ -22,7 +22,11 @@ class RedactTests(unittest.TestCase):
 
     def test_leading_punctuation_and_trailing_digits_are_redacted(self):
         self.assertEqual(redact.redact_bytes(b'_' + PERSONAL), b'[redacted-email]')
-        self.assertEqual(redact.redact_bytes(b'+' + PERSONAL + b'1'), b'[redacted-email]1')
+        self.assertEqual(redact.redact_bytes(b'+' + PERSONAL + b'1'), b'[redacted-email]')
+
+    def test_fixture_address_before_sentence_punctuation_is_kept(self):
+        text = b'mail p@example.com. then q@example.org, and r@example.net;'
+        self.assertEqual(redact.redact_bytes(text), text)
 
     def test_text_without_address_is_unchanged(self):
         self.assertEqual(redact.redact_bytes(b'user@ and @handle'), b'user@ and @handle')

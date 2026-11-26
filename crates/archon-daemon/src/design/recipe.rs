@@ -16,8 +16,10 @@ use tokio::net::TcpStream;
 use super::DesignService;
 use crate::context::DaemonContext;
 
-/// One check's connect, request and status line together.
-const CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+/// One check's connect, request and status line together. All run at once,
+/// inside archon-mcp's 15 s `CALL_BUDGET` with the socket check; the agent's
+/// own check warms a dev server that compiles the page on its first request.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(8);
 /// A status line is far shorter; more is not an HTTP answer.
 const MAX_STATUS_LINE: usize = 1024;
 
@@ -81,20 +83,26 @@ pub(crate) async fn check_stack(
     url: &str,
     recipe: Option<&PreviewRecipe>,
 ) -> Result<(), ArchonError> {
-    let mut failures = Vec::new();
-    if let Err(problem) = answers(url).await {
-        failures.push(format!("the preview page {url} {problem}"));
-    }
-    for step in recipe.map(|r| r.steps.as_slice()).unwrap_or_default() {
+    let steps = recipe.map(|r| r.steps.as_slice()).unwrap_or_default();
+    let page = async {
+        answers(url)
+            .await
+            .map_err(|problem| format!("the preview page {url} {problem}"))
+    };
+    let checks = steps.iter().map(|step| async move {
         let outcome = match (&step.ready, step.port) {
             (Some(ready), _) => answers(ready).await.map_err(|p| format!("{ready} {p}")),
             (None, Some(port)) => listens(port).await,
             (None, None) => Ok(()),
         };
-        if let Err(problem) = outcome {
-            failures.push(format!("step {}: {problem}", step.name));
-        }
-    }
+        outcome.map_err(|problem| format!("step {}: {problem}", step.name))
+    });
+    let (page, steps_done) = tokio::join!(page, futures_util::future::join_all(checks));
+    assert_eq!(steps_done.len(), steps.len(), "one outcome per step");
+    let failures: Vec<String> = std::iter::once(page)
+        .chain(steps_done)
+        .filter_map(Result::err)
+        .collect();
     if failures.is_empty() {
         return Ok(());
     }
@@ -109,7 +117,7 @@ pub(crate) async fn check_stack(
 async fn answers(url: &str) -> Result<(), String> {
     match tokio::time::timeout(CHECK_TIMEOUT, status_of(url)).await {
         Err(_) => Err(format!(
-            "gave no answer within {}s",
+            "gave no answer within {}s (load it once yourself first if it compiles on demand)",
             CHECK_TIMEOUT.as_secs()
         )),
         Ok(Err(problem)) => Err(problem),
@@ -181,7 +189,10 @@ async fn listens(port: u16) -> Result<(), String> {
     match tokio::time::timeout(CHECK_TIMEOUT, TcpStream::connect(&addresses[..])).await {
         Ok(Ok(_)) => Ok(()),
         Ok(Err(e)) => Err(format!("nothing listens on loopback port {port} ({e})")),
-        Err(_) => Err(format!("loopback port {port} did not accept within 5s")),
+        Err(_) => Err(format!(
+            "loopback port {port} did not accept within {}s",
+            CHECK_TIMEOUT.as_secs()
+        )),
     }
 }
 

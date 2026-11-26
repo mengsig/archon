@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased (1.6.7)
+
+### Added
+
+- A live design session's agent brings up whatever the preview needs on its
+  own: it tries the repository's saved preview recipe, then its documented
+  preview or dev route, then infers the stack, and starts the backends and
+  databases the page calls, each process recorded for the reaper and each
+  Compose stack under a project of its own, `archon-<item>`. `design_preview`
+  checks that the page and every step's readiness URL or port answer, and
+  names what does not. It takes the stack's `recipe` (commands, order, ports,
+  readiness checks and env var names, never values) and saves it per
+  repository in Archon's state for the next session. The new `design_recipe`
+  tool reads it; `archon settings --repo NAME` shows it and
+  `--clear-design-recipe` forgets it. New requests: `design_recipe` and
+  `clear_design_recipe`.
+
 ## Unreleased
 
 ### Added

@@ -10,7 +10,7 @@ Choices to review:
 - `tests/orders.rs` is unchanged and still contains the lowercase status strings, since those tests check the rendered output.
 - I added no `debug_assert`s; the enum enforces the invariants at the type level.
 - `cargo` lives in `~/.cargo/bin`, which is not on the default PATH in this shell.
-- The commit uses the repo's configured git identity, `mengsig <marcus.engsig@tii.ae>`. That email differs from the `mengsig@icloud.com` in your account context, so check it if you expected the other one.
+- The commit uses the repo's configured git identity, `mengsig <[redacted-email]>`. That email differs from the `[redacted-email]` in your account context, so check it if you expected the other one.
 
 The status refactor is committed as `eb78848` on `main`. `cargo test` passes: the 3 existing integration tests plus 3 new unit tests in `status.rs`. Clippy is clean.
 
@@ -24,4 +24,4 @@ Decisions for you to review:
 - **Test literals:** `tests/orders.rs` still contains the lowercase status strings, since those tests check the rendered output.
 - **Assertions:** I added no `debug_assert`s, since the enum already enforces the invariants at the type level.
 - **Toolchain:** `cargo` is in `~/.cargo/bin`, which is not on the default PATH in this shell.
-- **Commit identity:** the commit uses the repo's configured identity, `mengsig <marcus.engsig@tii.ae>`. Your account email is `mengsig@icloud.com`, so check which one you wanted.
+- **Commit identity:** the commit uses the repo's configured identity, `mengsig <[redacted-email]>`. Your account email is `[redacted-email]`, so check which one you wanted.

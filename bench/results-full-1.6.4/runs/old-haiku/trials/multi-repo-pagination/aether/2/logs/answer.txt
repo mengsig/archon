@@ -14,7 +14,7 @@ Both repos now have cursor pagination on `GET /items` and a client that follows 
 **READMEs:** both document the new response shape, the parameters, and the client's paging behaviour.
 
 **Decisions to check:**
-- Commits use the repos' configured identity, `mengsig <marcus.engsig@tii.ae>`. That email differs from the one in your account context, so change it if you want a different author.
+- Commits use the repos' configured identity, `mengsig <[redacted-email]>`. That email differs from the one in your account context, so change it if you want a different author.
 - I didn't add a `Co-Authored-By` line, because your CLAUDE.md says not to put Claude attribution in commits.
 - The client doesn't send `limit`, so it uses the server default of 20. That means 3 requests for the current 57 items. Say if you want it to request a bigger page.
 - I did not bump the client's `package.json` version (1.4.0) for this behaviour change.

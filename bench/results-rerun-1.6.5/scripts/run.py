@@ -11,6 +11,9 @@ import tempfile
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+import redact as email_redaction  # noqa: E402
+
 WORK = Path.cwd()
 RERUN = WORK / '.archon/reports/rerun'
 OUT = WORK / 'bench/results-rerun-1.6.5/runs'
@@ -164,7 +167,7 @@ def run_trial(task, trial, arm, destination, load1, load5):
     temp_root = Path(tempfile.mkdtemp(prefix='t-', dir=SANDBOX))
     proc = None
     try:
-        root, env, email = private_environment(base)
+        root, env, _ = private_environment(base)
         hashes = install_binaries(root, env, arm, temp_root)
         destination.mkdir(parents=True)
         record = {'task': task, 'trial': trial, 'arm': arm, 'version': VERSION[arm], 'load1_at_start': load1, 'load5_at_start': load5,
@@ -184,7 +187,7 @@ def run_trial(task, trial, arm, destination, load1, load5):
             stop_daemon(proc, root, env)
             shutil.copytree(root / 'a-data', destination / 'aether-data',
                             ignore=shutil.ignore_patterns('t', 'bin', 'aether.build-cache'))
-        redact(destination, email.encode())
+        redact(destination)
         (destination / 'start.json').write_text(json.dumps(record, indent=2))
         return record
     finally:
@@ -194,13 +197,13 @@ def run_trial(task, trial, arm, destination, load1, load5):
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
-def redact(directory, email):
-    assert email
+def redact(directory):
     for path in directory.rglob('*'):
         if path.is_file() and path.suffix in {'.log', '.jsonl', '.json', '.txt', '.md', '.stdout', '.stderr', '.patch'}:
             data = path.read_bytes()
-            if email in data:
-                path.write_bytes(data.replace(email, b'[redacted-email]'))
+            redacted = email_redaction.redact_bytes(data)
+            if redacted != data:
+                path.write_bytes(redacted)
 
 
 def trial_cost(destination):

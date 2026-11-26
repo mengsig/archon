@@ -86,6 +86,66 @@ fn a_corrupt_row_is_reported_not_ignored() {
     assert!(matches!(load(&store, &repo), Err(ArchonError::Corrupt(_))));
 }
 
+#[test]
+fn a_failed_revision_bump_saves_and_clears_nothing() {
+    let mut store = Store::open_in_memory().unwrap();
+    let repo = RepoId::new();
+    let item = QueueItemId::new();
+    let kept = save(
+        &mut store,
+        &repo,
+        &item,
+        recipe(vec![step("web", None, None)]),
+    )
+    .unwrap();
+    let key = archon_queue::store::keys::design_recipe(&repo);
+    let revision_key = archon_queue::store::keys::design_recipe_revision(&repo);
+    let row = store.kv_get(&key).unwrap();
+    for broken in ["not a number", &u64::MAX.to_string()] {
+        store.kv_set(&revision_key, broken).unwrap();
+        let replacement = recipe(vec![step("api", Some(8000), None)]);
+        let saved = save(&mut store, &repo, &item, replacement);
+        assert!(matches!(saved, Err(ArchonError::Corrupt(_))), "{saved:?}");
+        let cleared = clear(&mut store, &repo);
+        assert!(
+            matches!(cleared, Err(ArchonError::Corrupt(_))),
+            "{cleared:?}"
+        );
+        assert_eq!(
+            store.kv_get(&key).unwrap(),
+            row,
+            "the recipe row is untouched"
+        );
+        assert_eq!(load(&store, &repo).unwrap(), Some(kept.clone()));
+        let revision = store.kv_get(&revision_key).unwrap();
+        assert_eq!(
+            revision.as_deref(),
+            Some(broken),
+            "the revision is untouched"
+        );
+    }
+}
+
+#[test]
+fn every_save_and_clear_moves_the_revision_once() {
+    let mut store = Store::open_in_memory().unwrap();
+    let repo = RepoId::new();
+    let item = QueueItemId::new();
+    assert_eq!(revision(&store, &repo).unwrap(), 0);
+    assert!(!clear(&mut store, &repo).unwrap(), "nothing to clear");
+    assert_eq!(revision(&store, &repo).unwrap(), 1, "an empty clear counts");
+    save(
+        &mut store,
+        &repo,
+        &item,
+        recipe(vec![step("web", None, None)]),
+    )
+    .unwrap();
+    assert_eq!(revision(&store, &repo).unwrap(), 2);
+    assert!(clear(&mut store, &repo).unwrap());
+    assert_eq!(revision(&store, &repo).unwrap(), 3);
+}
+
 /// Serves `status` to every connection on a loopback port.
 async fn serving(status: u16) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

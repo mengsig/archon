@@ -59,9 +59,16 @@ pub(crate) fn save(
         item: item.clone(),
     };
     let raw = serde_json::to_string(&saved)?;
-    store.kv_set(&archon_queue::store::keys::design_recipe(repo), &raw)?;
-    bump_revision(store, repo)?;
+    let next = next_revision(store, repo)?.to_string();
+    let key = archon_queue::store::keys::design_recipe(repo);
+    let revision_key = archon_queue::store::keys::design_recipe_revision(repo);
+    store.kv_update(&[(&key, &raw), (&revision_key, &next)], &[])?;
     debug_assert_eq!(load(store, repo)?.as_ref(), Some(&saved));
+    debug_assert_eq!(
+        revision(store, repo)?.to_string(),
+        next,
+        "the revision moved on"
+    );
     Ok(saved)
 }
 
@@ -79,14 +86,15 @@ pub(super) fn revision(store: &Store, repo: &RepoId) -> Result<u64, ArchonError>
     })
 }
 
-fn bump_revision(store: &mut Store, repo: &RepoId) -> Result<(), ArchonError> {
-    let next = revision(store, repo)?.checked_add(1).ok_or_else(|| {
+/// The revision a save or clear of `repo`'s recipe writes, read before
+/// either touches the store so a failure leaves both rows as they were.
+fn next_revision(store: &Store, repo: &RepoId) -> Result<u64, ArchonError> {
+    let current = revision(store, repo)?;
+    let next = current.checked_add(1).ok_or_else(|| {
         ArchonError::Corrupt(format!("the design recipe revision of {repo} is full"))
     })?;
-    let key = archon_queue::store::keys::design_recipe_revision(repo);
-    store.kv_set(&key, &next.to_string())?;
-    debug_assert_eq!(revision(store, repo)?, next, "the revision moved on");
-    Ok(())
+    debug_assert!(next > current, "the revision only moves on");
+    Ok(next)
 }
 
 /// Forget `repo`'s recipe; true when there was one. Even clearing nothing
@@ -94,9 +102,11 @@ fn bump_revision(store: &mut Store, repo: &RepoId) -> Result<(), ArchonError> {
 pub(crate) fn clear(store: &mut Store, repo: &RepoId) -> Result<bool, ArchonError> {
     let key = archon_queue::store::keys::design_recipe(repo);
     let existed = store.kv_get(&key)?.is_some();
-    store.kv_delete(&key)?;
-    bump_revision(store, repo)?;
+    let next = next_revision(store, repo)?;
+    let revision_key = archon_queue::store::keys::design_recipe_revision(repo);
+    store.kv_update(&[(&revision_key, &next.to_string())], &[&key])?;
     debug_assert!(store.kv_get(&key)?.is_none(), "the recipe is gone");
+    debug_assert_eq!(revision(store, repo)?, next, "the revision moved on");
     Ok(existed)
 }
 

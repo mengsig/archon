@@ -3,7 +3,9 @@
 import re
 
 PLACEHOLDER = b'[redacted-email]'
-EMAIL = re.compile(rb'(?<![A-Za-z0-9._%+-])(?=[._%+-]*[A-Za-z0-9])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2}[A-Za-z0-9-]*')
+EMAIL = re.compile(rb'(?<![A-Za-z0-9._%+-])(?=[._%+-]*[A-Za-z0-9])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2}[A-Za-z0-9-]*'
+                   # Not a longer domain, and not an SSH git URL such as git@host:org/repo.
+                   rb'(?![A-Za-z0-9-]|\.[A-Za-z0-9-]|:[A-Za-z0-9._~/-])')
 KEPT_DOMAINS = (b'users.noreply.github.com', b'example.com',
                 b'example.invalid', b'example.test', b'example.org', b'example.net')
 

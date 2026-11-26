@@ -68,11 +68,26 @@ fn addresses_in(data: &[u8]) -> Vec<String> {
         }
         let domain = domain_len(&data[at + 1..]);
         let has_name = data[start..at].iter().any(u8::is_ascii_alphanumeric);
-        if has_name && domain > 0 {
+        let ssh_path = matches!(data.get(at + 1 + domain), Some(b':'))
+            && data
+                .get(at + 2 + domain)
+                .is_some_and(|b| b.is_ascii_alphanumeric() || b"._~/-".contains(b));
+        if has_name && domain > 0 && !ssh_path {
             found.push(String::from_utf8_lossy(&data[start..at + 1 + domain]).into_owned());
         }
     }
     found
+}
+
+/// Counts personal addresses in the raw bytes and with NULs stripped, so
+/// ASCII text stored as UTF-16 is caught too.
+fn personal_count_any_encoding(data: &[u8]) -> usize {
+    let stripped: Vec<u8> = data.iter().copied().filter(|b| *b != 0).collect();
+    [data, stripped.as_slice()]
+        .iter()
+        .flat_map(|bytes| addresses_in(bytes))
+        .filter(|a| !is_kept(a))
+        .count()
 }
 
 fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) {
@@ -122,10 +137,7 @@ fn committed_bench_files_contain_no_personal_email_address() {
         .iter()
         .filter_map(|path| {
             let data = std::fs::read(path).unwrap();
-            let bad = addresses_in(&data)
-                .into_iter()
-                .filter(|a| !is_kept(a))
-                .count();
+            let bad = personal_count_any_encoding(&data);
             (bad > 0).then(|| format!("{} ({bad} address(es))", path.display()))
         })
         .collect();
@@ -152,4 +164,21 @@ fn scanner_keeps_fixture_address_before_sentence_punctuation() {
     let flagged = addresses_in(text.as_bytes());
     assert_eq!(flagged, ["p@example.com", "q@example.org", "r@example.net"]);
     assert!(flagged.iter().all(|a| is_kept(a)));
+}
+
+#[test]
+fn scanner_keeps_ssh_git_url_but_flags_adjacent_personal_address() {
+    let personal = format!("{}@{}", "someone", "example-mail.test");
+    let text = format!("git@github.com:org/repo.git {personal}: hello");
+    let flagged = addresses_in(text.as_bytes());
+    assert_eq!(flagged, [personal]);
+}
+
+#[test]
+fn scanner_catches_utf16_encoded_address() {
+    let personal = format!("{}@{}", "someone", "example-mail.test");
+    let utf16: Vec<u8> = personal.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    assert!(addresses_in(&utf16).is_empty(), "raw bytes should hide it");
+    assert_eq!(personal_count_any_encoding(&utf16), 1);
+    assert_eq!(personal_count_any_encoding(b"clean text"), 0);
 }

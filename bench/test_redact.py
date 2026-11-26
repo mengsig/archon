@@ -24,6 +24,16 @@ class RedactTests(unittest.TestCase):
         address = b'someone@' + b'anthropic.com'
         self.assertEqual(redact.redact_bytes(address), redact.PLACEHOLDER)
 
+    def test_ssh_git_url_is_kept_next_to_a_personal_address(self):
+        url = b'git@github.com:org/repo.git'
+        data = url + b' and ' + PERSONAL + b' and git@host.example.test:a/b'
+        self.assertEqual(redact.redact_bytes(data),
+                         url + b' and [redacted-email] and git@host.example.test:a/b')
+        self.assertEqual(redact.personal_addresses(data), [PERSONAL])
+
+    def test_address_before_a_colon_and_space_is_still_redacted(self):
+        self.assertEqual(redact.redact_bytes(PERSONAL + b': hello'), b'[redacted-email]: hello')
+
     def test_leading_punctuation_and_trailing_digits_are_redacted(self):
         self.assertEqual(redact.redact_bytes(b'_' + PERSONAL), b'[redacted-email]')
         self.assertEqual(redact.redact_bytes(b'+' + PERSONAL + b'1'), b'[redacted-email]')

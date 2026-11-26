@@ -20,6 +20,10 @@ class RedactTests(unittest.TestCase):
         kept = b'noreply@anthropic.com 1+a@users.noreply.github.com x@example.com archon@openai.com'
         self.assertEqual(redact.redact_bytes(kept), kept)
 
+    def test_personal_address_at_a_vendor_domain_is_replaced(self):
+        address = b'someone@' + b'anthropic.com'
+        self.assertEqual(redact.redact_bytes(address), redact.PLACEHOLDER)
+
     def test_leading_punctuation_and_trailing_digits_are_redacted(self):
         self.assertEqual(redact.redact_bytes(b'_' + PERSONAL), b'[redacted-email]')
         self.assertEqual(redact.redact_bytes(b'+' + PERSONAL + b'1'), b'[redacted-email]')

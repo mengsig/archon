@@ -4,7 +4,7 @@ import re
 
 PLACEHOLDER = b'[redacted-email]'
 EMAIL = re.compile(rb'(?<![A-Za-z0-9._%+-])(?=[._%+-]*[A-Za-z0-9])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2}[A-Za-z0-9-]*')
-KEPT_DOMAINS = (b'anthropic.com', b'users.noreply.github.com', b'example.com',
+KEPT_DOMAINS = (b'users.noreply.github.com', b'example.com',
                 b'example.invalid', b'example.test', b'example.org', b'example.net')
 
 

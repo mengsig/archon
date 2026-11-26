@@ -3,8 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-const KEPT_DOMAINS: [&str; 7] = [
-    "anthropic.com",
+const KEPT_DOMAINS: [&str; 6] = [
     "users.noreply.github.com",
     "example.com",
     "example.invalid",
@@ -101,6 +100,12 @@ fn scanner_flags_personal_but_not_noreply_or_fixture_addresses() {
         flagged.iter().filter(|a| !is_kept(a)).collect::<Vec<_>>(),
         vec![&personal]
     );
+}
+
+#[test]
+fn scanner_flags_personal_address_at_a_vendor_domain() {
+    let vendor = format!("{}@{}", "someone", "anthropic.com");
+    assert!(!is_kept(&vendor));
 }
 
 #[test]

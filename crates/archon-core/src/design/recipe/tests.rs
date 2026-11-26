@@ -190,14 +190,14 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME scripts/dev-stack",
         "tar -p -cf out.tar web",
         "docker compose -f compose.yml -p \"$COMPOSE_PROJECT_NAME\" up -d",
-        "docker compose -f compose.yml run -p 8080:80 web",
         "docker compose -p$COMPOSE_PROJECT_NAME up -d",
+        "docker compose -p\"$COMPOSE_PROJECT_NAME\" up -d",
         "docker compose -f 'compose dev.yml' -p \"$COMPOSE_PROJECT_NAME\" up -d",
         "docker compose up -d && psql -h 127.0.0.1 -p 5432 app",
-        "docker compose exec db psql -p 5432 app",
         "docker compose --dry-run up -d",
         "docker compose --profile web --env-file .env.dev up -d",
-        "docker compose --profile=build run -p 8080:80 web",
+        "docker compose build web && docker compose run --rm web npm test",
+        "sh -c 'docker compose -p \"$COMPOSE_PROJECT_NAME\" up -d'",
     ] {
         recipe(vec![step("stack", command)])
             .check()
@@ -222,10 +222,31 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "docker compose --env-file up -p other up -d",
         "docker compose --a-new-option run -p other up -d",
         "docker compose --dry-run -p other up -d",
+        "docker compose -fcompose.yml -p other up -d",
+        "docker compose up -d -p other",
+        "docker compose --project-name other up -d",
+        "sh -c 'docker compose -p other up -d'",
+        "docker compose -p \"$COMPOSE_PROJECT_NAME\" -p other up -d",
     ] {
         let error = refused(&recipe(vec![step("stack", command)]));
         assert!(
             error.contains("$COMPOSE_PROJECT_NAME"),
+            "{command}: {error}"
+        );
+    }
+}
+
+#[test]
+fn a_published_port_is_refused_with_a_hint() {
+    for command in [
+        "docker compose run -p 8080:80 web",
+        "docker compose -f compose.yml run -p 8080:80 web",
+        "docker compose exec db psql -p 5432 app",
+    ] {
+        let error = refused(&recipe(vec![step("stack", command)]));
+        assert!(
+            error.contains("$COMPOSE_PROJECT_NAME")
+                && error.contains("publish ports in the compose file"),
             "{command}: {error}"
         );
     }

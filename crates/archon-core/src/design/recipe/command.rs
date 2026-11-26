@@ -44,19 +44,6 @@ const TOKEN_PREFIXES: [&str; 11] = [
 ];
 /// Characters that end a shell word and the command it belongs to.
 const OPERATORS: [char; 9] = [';', '&', '|', '(', ')', '`', '<', '>', '\n'];
-/// Compose's global options that take no value; any other option before
-/// the subcommand is read as taking one, so its value is never the subcommand.
-const COMPOSE_FLAGS: [&str; 8] = [
-    "--dry-run",
-    "--compatibility",
-    "--all-resources",
-    "--verbose",
-    "-h",
-    "--help",
-    "-v",
-    "--version",
-];
-
 /// Check a step's command: it parses as shell words, spells out no secret
 /// and names a Compose project only through [`COMPOSE_VARIABLE`].
 pub(super) fn check_command(field: &str, command: &str) -> Result<(), String> {
@@ -70,7 +57,8 @@ pub(super) fn check_command(field: &str, command: &str) -> Result<(), String> {
     if let Some(what) = secret_form(&parsed) {
         return Err(refusal(field, &what));
     }
-    compose_project_by_variable(field, &commands)
+    compose_project_by_variable(field, &commands)?;
+    compose_project_by_variable(field, &raw_commands(command))
 }
 
 /// Refuse a value spelled out in free text, read as raw words.
@@ -296,53 +284,74 @@ fn is_token(word: &str) -> bool {
         })
 }
 
+/// The command's simple commands as raw words with every quote dropped, so a
+/// Compose call inside a quoted `sh -c '…'` script is read as well.
+fn raw_commands(text: &str) -> Vec<Vec<String>> {
+    text.split(OPERATORS)
+        .map(|segment| {
+            segment
+                .split_whitespace()
+                .map(|word| word.replace(['"', '\''], ""))
+                .filter(|word| !word.is_empty())
+                .collect()
+        })
+        .collect()
+}
+
 /// A Compose project in a saved command is named only through
 /// `$COMPOSE_PROJECT_NAME`, which each run sets to its own unique name.
 fn compose_project_by_variable(field: &str, commands: &[Vec<String>]) -> Result<(), String> {
-    let refers = |value: &str| {
-        value == format!("${COMPOSE_VARIABLE}") || value == format!("${{{COMPOSE_VARIABLE}}}")
-    };
     let assignment = format!("{COMPOSE_VARIABLE}=");
     for words in commands {
-        let assigned = words.iter().filter_map(|w| w.strip_prefix(&assignment));
-        let named_by_option = words
+        let foreign_assignment = words
             .iter()
-            .enumerate()
-            .filter(|(_, w)| *w == "compose" || w.ends_with("docker-compose"))
-            .flat_map(|(i, _)| compose_project_options(&words[i + 1..]));
-        if assigned.chain(named_by_option).any(|value| !refers(value)) {
+            .filter_map(|w| w.strip_prefix(&assignment))
+            .any(|value| !refers_to_run_project(value));
+        if foreign_assignment {
             return Err(format!(
                 "{field} names a Compose project; write it as ${COMPOSE_VARIABLE}, which each run sets to its own name"
+            ));
+        }
+        let Some(compose) = words
+            .iter()
+            .position(|w| w == "compose" || w.ends_with("docker-compose"))
+        else {
+            continue;
+        };
+        if !project_options_name_the_run(&words[compose + 1..]) {
+            return Err(format!(
+                "{field} passes Compose a -p or --project-name other than ${COMPOSE_VARIABLE}, which each run sets to its own name; publish ports in the compose file rather than with `run -p`"
             ));
         }
     }
     Ok(())
 }
 
-/// The project names Compose's global options give, read up to the
-/// subcommand: `-p NAME`, `-pNAME`, `-p=NAME` and `--project-name[=]NAME`.
-/// Other options consume their value first, as in `--profile build -p NAME`.
-fn compose_project_options(options: &[String]) -> Vec<&str> {
-    let mut names = Vec::new();
+fn refers_to_run_project(value: &str) -> bool {
+    value == format!("${COMPOSE_VARIABLE}") || value == format!("${{{COMPOSE_VARIABLE}}}")
+}
+
+/// Deny by default: every word after `compose` that is a project option,
+/// `-p`, `-pNAME`, `-p=NAME` or `--project-name[=]NAME`, must name the run's
+/// project, wherever it stands, so no option parsing can be outflanked.
+fn project_options_name_the_run(words: &[String]) -> bool {
     let mut i = 0;
-    while let Some(word) = options.get(i).map(String::as_str) {
-        if !word.starts_with('-') {
-            break;
-        }
-        if word == "-p" || word == "--project-name" {
-            names.push(options.get(i + 1).map(String::as_str).unwrap_or_default());
+    while let Some(word) = words.get(i).map(String::as_str) {
+        let value = if word == "-p" || word == "--project-name" {
             i += 1;
+            Some(words.get(i).map(String::as_str).unwrap_or_default())
         } else if let Some(value) = word.strip_prefix("--project-name=") {
-            names.push(value);
-        } else if let Some(value) = word.strip_prefix("-p")
-            && !word.starts_with("--")
-        {
-            names.push(value.strip_prefix('=').unwrap_or(value));
-        } else if !word.contains('=') && !COMPOSE_FLAGS.contains(&word) {
-            i += 1;
+            Some(value)
+        } else if let Some(value) = word.strip_prefix("-p") {
+            Some(value.strip_prefix('=').unwrap_or(value))
+        } else {
+            None
+        };
+        if value.is_some_and(|value| !refers_to_run_project(value)) {
+            return false;
         }
         i += 1;
     }
-    debug_assert!(i <= options.len() + 1, "the scan stays within the options");
-    names
+    debug_assert!(i >= words.len(), "every word after compose was read");
+    true
 }

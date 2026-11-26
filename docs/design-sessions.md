@@ -148,7 +148,9 @@ repository. It never holds a value: archond refuses a recipe that spells out
 a secret-named variable or flag (`DB_PASSWORD=…`, `PGPASSWORD=…`,
 `--api-key …`), a password in a URL or a `user:password` pair, an
 `Authorization` header, a well-known token, and one that names a Compose
-project other than as `$COMPOSE_PROJECT_NAME`. A secret, or a path to one, is
+project other than as `$COMPOSE_PROJECT_NAME`. Every `-p` after `compose`
+counts as a project name, so `run -p 8080:80` is refused too: publish ports
+in the compose file instead. A secret, or a path to one, is
 written as a whole variable (`$DB_PASSWORD` or `${DB_PASSWORD}`), never
 spelled out, and commands are read with the shell's quoting, so one with an
 unclosed quote is refused. The next session of the same repository tries

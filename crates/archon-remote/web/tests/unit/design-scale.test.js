@@ -37,3 +37,11 @@ test('two fingers either pinch or scroll', () => {
   assert.equal(clampZoom(9), 4);
   assert.equal(clampZoom(0.2), 1);
 });
+
+test('wheel deltas become app pixels: screen pixels follow the scale, lines and pages do not', async () => {
+  const { wheelDeltas, WHEEL_LINE_PX } = await import('../../src/features/design/scale.js');
+  assert.deepEqual(wheelDeltas({ deltaMode: 0, deltaX: 0.4, deltaY: 50 }, 0.5, 900), { dx: 0.8, dy: 100 }, 'a trackpad keeps its fractions');
+  assert.deepEqual(wheelDeltas({ deltaMode: 1, deltaX: 0, deltaY: 3 }, 0.5, 900), { dx: 0, dy: 3 * WHEEL_LINE_PX });
+  assert.deepEqual(wheelDeltas({ deltaMode: 2, deltaX: 0, deltaY: -1 }, 2, 900), { dx: 0, dy: -900 });
+  assert.throws(() => wheelDeltas({ deltaMode: 0, deltaY: 1 }, 0, 900), RangeError);
+});

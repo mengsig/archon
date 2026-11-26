@@ -41,6 +41,7 @@ pub(super) fn extract(
                     viewport: None,
                     theme: None,
                     state: None,
+                    capture: None,
                 });
                 index += 1;
                 format!("{hash}.{extension}")

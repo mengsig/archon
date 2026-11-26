@@ -3,14 +3,14 @@
 // turns gestures into input events, hover reads, picks and regions.
 import { h } from '../../ui/dom.js';
 import { keyEvent } from './keymap.js';
-import { mouseEvent, wheelEvent, touchEvent, modifiersOf } from './input.js';
-import { toApp, effectiveScale, fitScale, boxToScreen, normalizeDrag, classifyTwoFinger, clampZoom, nudgeBox, centredBox } from './scale.js';
+import { mouseEvent, wheelEvent, touchEvent, textEvent, modifiersOf } from './input.js';
+import { toApp, effectiveScale, fitScale, boxToScreen, normalizeDrag, classifyTwoFinger, clampZoom, nudgeBox, centredBox, wheelDeltas, round } from './scale.js';
 import { createSwitchGate } from './switching.js';
 
 const DRAG_PX = 6;
 const HOVER_MS = 100; // 10 reads a second
 
-export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCapture, onPin, onZoomChange = () => {} }) {
+export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCapture, onPin, onDrop, onZoomChange = () => {} }) {
   const canvas = h('canvas', { class: 'design-canvas', width: '390', height: '844' });
   const ctx2d = canvas.getContext('2d');
   const hover = h('div', { class: 'design-sel is-hover', hidden: true }, h('span', { class: 'design-sel-label' }));
@@ -97,13 +97,28 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
   const resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(() => bounds()) : null;
   resizeObserver?.observe(desk);
 
+  const hasFiles = (e) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+  layer.addEventListener('dragover', (e) => {
+    if (getMode() !== 'interact' || !hasFiles(e)) return;
+    e.preventDefault();
+    framebox.classList.add('is-file-drop');
+  });
+  layer.addEventListener('dragleave', (e) => { if (!layer.contains(e.relatedTarget)) framebox.classList.remove('is-file-drop'); });
+  layer.addEventListener('drop', (e) => {
+    framebox.classList.remove('is-file-drop');
+    if (getMode() !== 'interact' || !hasFiles(e)) return;
+    e.preventDefault();
+    onDrop?.(Array.from(e.dataTransfer.files), point(e));
+  });
+
   // ---- mouse and pen ----
   layer.addEventListener('contextmenu', (e) => e.preventDefault());
   layer.addEventListener('wheel', (e) => {
     if (getMode() !== 'interact') return;
     e.preventDefault();
-    const p = point(e);
-    onInput(wheelEvent(p, Math.round(e.deltaX), Math.round(e.deltaY), modifiersOf(e)));
+    const { dx, dy } = wheelDeltas(e, scale(), frame.h);
+    if (dx === 0 && dy === 0) return;
+    onInput(wheelEvent(point(e), dx, dy, modifiersOf(e)));
   }, { passive: false });
 
   layer.addEventListener('pointerdown', (e) => {
@@ -192,7 +207,7 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
       } else {
         const rect = canvas.getBoundingClientRect();
         const centre = toApp((next[0].x + next[1].x) / 2, (next[0].y + next[1].y) / 2, rect, frame);
-        onInput(wheelEvent(centre, Math.round(-g.dx / scale()), Math.round(-g.dy / scale()), 0));
+        onInput(wheelEvent(centre, round(-g.dx / scale()), round(-g.dy / scale()), 0));
       }
     } else if (touches.size === 1) onInput(touchEvent('move', [...touches.values()]));
   }
@@ -216,6 +231,7 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
   layer.addEventListener('keydown', (e) => {
     const mode = getMode();
     if (mode === 'interact' && capturing) {
+      if (e.isComposing || e.key === 'Process' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v')) return;
       if (e.key === 'Escape') { capturing = false; onCapture(false); e.preventDefault(); e.stopPropagation(); return; }
       const ev = keyEvent('down', e);
       if (ev) { e.preventDefault(); onInput(ev); }
@@ -239,9 +255,16 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
   });
   layer.addEventListener('keyup', (e) => {
     if (getMode() === 'interact' && capturing) {
+      if (e.isComposing || e.key === 'Process' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v')) return;
       const ev = keyEvent('up', e);
       if (ev) { e.preventDefault(); onInput(ev); }
     }
+  });
+  layer.addEventListener('paste', (e) => {
+    if (getMode() !== 'interact' || !capturing) return;
+    e.preventDefault();
+    const text = e.clipboardData?.getData('text/plain');
+    if (text) onInput(textEvent(text));
   });
   layer.addEventListener('blur', () => { if (capturing) { capturing = false; onCapture(false); } });
 

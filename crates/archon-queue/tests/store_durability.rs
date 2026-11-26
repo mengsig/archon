@@ -259,7 +259,7 @@ fn migrations_apply_once_and_a_newer_store_is_refused() {
         schema_versions(&path),
         vec![
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26, 27, 28, 29, 30, 31
+            25, 26, 27, 28, 29, 30, 31, 32
         ]
     );
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -333,7 +333,7 @@ fn concurrent_first_opens_migrate_once() {
         schema_versions(&path),
         vec![
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26, 27, 28, 29, 30, 31
+            25, 26, 27, 28, 29, 30, 31, 32
         ]
     );
 }
@@ -627,7 +627,7 @@ fn v9_keeps_an_earlier_provider_reported_total_as_the_floor() {
     drop(conn);
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(schema_versions(&path).last(), Some(&31));
+    assert_eq!(schema_versions(&path).last(), Some(&32));
     for n in [1, 2] {
         let settled = SpendRow {
             cost_complete: Some(true),
@@ -1193,7 +1193,7 @@ fn a_store_at_next_v26_upgrades_to_v27_and_keeps_its_data() {
     drop(conn);
 
     let store = Store::open(&path).unwrap();
-    assert_eq!(schema_versions(&path).last(), Some(&31));
+    assert_eq!(schema_versions(&path).last(), Some(&32));
     assert_eq!(all_items(&store).len(), items.len());
     let conn = rusqlite::Connection::open(&path).unwrap();
     let index: i64 = conn

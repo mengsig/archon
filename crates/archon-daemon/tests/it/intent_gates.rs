@@ -327,6 +327,7 @@ async fn only_an_image_the_operator_attached_makes_an_inbox_ledger() {
         viewport: None,
         theme: None,
         state: None,
+        capture: None,
         ..context.clone()
     };
     operator_said(&h, 7, &ledger.operator_words, &[]).await;

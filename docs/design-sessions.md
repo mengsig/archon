@@ -15,9 +15,10 @@ ever reaches your browser: only pictures and JSON.
 
 ## Contents
 
-- [Turning it on](#turning-it-on)
+- [Configuration](#configuration)
 - [Starting a session](#starting-a-session)
 - [Using the design screen](#using-the-design-screen)
+- [Files, downloads and other browser features](#files-downloads-and-other-browser-features)
 - [Notes and their statuses](#notes-and-their-statuses)
 - [Compare, Undo and Revise](#compare-undo-and-revise)
 - [Follow-ups, references and the tree](#follow-ups-references-and-the-tree)
@@ -29,9 +30,11 @@ ever reaches your browser: only pictures and JSON.
 - [Security](#security)
 - [Troubleshooting](#troubleshooting)
 
-## Turning it on
+## Configuration
 
-Design sessions are off by default. In `config.toml`:
+Design sessions are on by default and start only for items with `proposal = live`.
+To turn them off, set `enabled = false` under `[design]` in `config.toml`.
+The defaults and other options are:
 
 ```toml
 [design]
@@ -116,6 +119,94 @@ receive**. It shows exactly what will be sent and nothing else from the page:
 
 With both switches off the note is text only. Send with Enter, or Ctrl+Enter
 for a multi-line note.
+
+### Scrolling the preview
+
+In **Interact** mode the preview scrolls like a browser tab: the mouse wheel
+and trackpad (smooth, momentum and sideways), dragging a scrollbar, and on
+Tablet and Phone a one-finger swipe. The wheel scrolls whatever is under the
+pointer, so an inner panel with its own scrollbar scrolls and the page does
+not. Once you have clicked into the frame, PageUp, PageDown, Space, the arrows,
+Home and End scroll the page when nothing editable in the app has focus.
+
+Each frame is the part of the page that is on screen, as Chromium itself draws
+it: sticky and fixed headers stay where the app puts them, and a phone page
+wider than the screen is shown zoomed out, as a phone shows it. Comment picks,
+element boxes and regions you draw are all measured on that frame, zoom
+included, so a crop shows what you saw. Frames come ten a second while you
+scroll or type and four a second at rest, so the frame after a scroll stops
+is a fresh picture of where it stopped.
+
+Input goes to archond one request at a time, and archond ends each within
+about 20 seconds and runs one at a time per session, so input runs in the
+order you gave it. While a request is on its way, the next wheel ticks at the
+same point and in the same direction are added up and only the latest pointer
+position is kept; no scroll distance and no click or key is lost. Input archond turns away because
+it is busy is sent again, in order; if it cannot be sent for about two seconds
+it is dropped. When the preview falls behind, the status line under the frame
+says "Catching up with the preview…" until it catches up; nothing pops up. A
+web app connection keeps at most 16 requests in flight, archond's limit, and
+holds any more until a reply comes. Input is never held: it goes at once, for
+archond to run or turn away.
+
+archond alone keeps track of what is held down in the preview: a key, button
+or finger counts as down once it is sent, and as up only once Chromium answers
+its release. When an input request fails, times out or is turned away (not
+ready, past the rate or the in-flight limit), it may have carried a release, so
+archond lets go of everything held before the next request runs, or within
+about three seconds if none comes. It does the same when a page's stream
+ends: closing or reloading the page, a reconnect, or opening another session
+drops any input the page still had queued. Input it had already sent that
+runs after the end makes archond let go again once it has run. Each release
+has its own two-second deadline; one Chromium leaves unanswered is sent again
+later.
+Closing the session closes its browser, which lets go of everything with it. A press that
+spans requests that all succeed, such as a drag, stays held unless one of these
+lets go of it first: a failed, timed-out or refused request, or the end of a
+page's stream (including another page's, a reload or a reconnect).
+
+## Files, downloads and other browser features
+
+The preview is a headless Chromium, so the things a desktop browser would draw
+itself are handed to you instead:
+
+- **File pickers.** When the app opens a file chooser, your device's own
+  picker opens, with the input's `accept` and `multiple`. The files go to
+  archond in parts and are set on the input; **Cancel** leaves it empty.
+  Dropping files on the preview drops them on the page at that point.
+- **Downloads.** A file the app downloads is offered to your device with its
+  name and size; **Save** fetches it.
+- **Dialogs.** `alert`, `confirm` and `prompt` show their text and wait for
+  your answer. Nothing answers them for you.
+- **New tabs.** `target="_blank"` links, `window.open`, middle- or
+  modifier-clicked links and forms with a target open in the preview's one
+  tab. A note says so; **Back** next to **Reload** returns to the page before.
+- **Native controls.** A single `<select>` and `date`, `time`,
+  `datetime-local`, `month`, `week` and `color` inputs open a sheet on your
+  device; your choice is set on the control and fires its `input` and
+  `change` events.
+- **Clipboard.** Text the app copies (a copy or cut, or
+  `navigator.clipboard.writeText`) is shown on your device with a **Copy**
+  button; it reaches your clipboard only when you press it.
+  Pasting into the preview types the pasted text.
+- **Keys.** Ctrl and, on a Mac, Cmd shortcuts reach the app; Cmd+A, C, X, V,
+  Z and Shift+Z run the matching editing command. Use **Type text** for
+  input methods such as Chinese, Japanese or Korean.
+- Right-click, hover and text selection reach the page as in a tab: the
+  page's `contextmenu`, `mouseover` and selection events fire.
+
+Not possible in the preview:
+
+- A `<select>` or picker inside an iframe opens nothing; set it with the
+  keyboard (focus it, then the arrow keys).
+- `window.open()` with no address, used to write a pop-up's content, stays on
+  the page and says so.
+- Chromium's own right-click menu is not drawn.
+
+Only the operator's paired devices can send or fetch files; observers are
+refused. Each session keeps files in its own private directory in the
+browser profile, under names reduced to a safe last component (no path the
+device sends is used), and deletes it when the preview stops or restarts.
 
 ## Notes and their statuses
 
@@ -283,6 +374,26 @@ in-between pictures are never part of it and never sent to a later model.
 Review and acceptance then check the shipped UI against these pictures and
 your words.
 
+Each picture in the ledger records how the preview browser took it: the
+viewport the page was laid out at, the page's device scale factor and mobile
+emulation, which also turns touch input on (1 and off for the desktop
+preview; a replay must set both, or `pointer: coarse` pages lay out
+otherwise), the area shown (the whole
+viewport or a region), the screenshot's own clip scale (2 for the final
+pictures, less if the size budget lowered it) and its size in pixels.
+Pictures never include the design overlay. The clip scale is not the page's
+device scale factor: a page laid out at a factor of 2 can match CSS
+resolution queries the preview did not, and lay out differently in a picture
+of the same size.
+
+The build is told to take its own picture the same way and to copy the
+reference's capture into its result. Acceptance refuses a result that
+declares another capture, or a built picture of another pixel size, before
+any judge compares the two. Archon cannot see how a built picture was taken,
+so a judge who sees a pair taken differently anyway (another crop, zoom,
+viewport or overlay) fails it as a capture mismatch rather than as a gap in
+the build.
+
 The page shown at the gate is a decision page. At the top are a summary (how
 many notes changed the app, the checks the agent reported, what approving
 does) and the answers. Each note then has a card: your words, what you
@@ -328,8 +439,8 @@ Use the web app through the same pairing as for the rest of Archon
 and notes live in a bottom sheet with three heights (peek, half, full). The bar
 at the bottom has Use, Comment, Region and Notes, each a 44 px tap target.
 There is no hover, so tap an element and use **Wider** and **Narrower**. Pinch
-zooms the picture locally and is not sent to the app; a two-finger drag scrolls
-the app. The composer opens above the keyboard. Tablets (640 to 1023 px) get
+zooms the picture locally and is not sent to the app; a one-finger swipe in
+**Use** mode or a two-finger drag scrolls the app. The composer opens above the keyboard. Tablets (640 to 1023 px) get
 the same layout with notes in a side drawer.
 
 Notes you type while disconnected are kept on the device and sent on reconnect,
@@ -343,6 +454,9 @@ once only.
 | "Chromium's sandbox is unavailable on this host" | Fix as `archon doctor` says, or set `browser_sandbox = "off"` knowingly. |
 | "Preview down" / "The app stopped responding. The agent has been told and is restarting it." | The dev server died or hangs: it did not answer an HTTP request within about two seconds (checked every few seconds). Wait, or use **Reload** and **Tell agent again**. The label clears when the app answers again. |
 | "Reconnecting…" | The connection dropped; notes are kept and sent on reconnect. |
+| "Catching up with the preview…" (status line under the frame) | You scroll or move faster than archond answers, or it turned input away for a moment. Input is merged and sent again as replies come; nothing is lost and the line clears by itself. |
+| "The preview stopped answering; some input may not have reached it." | Chromium took over 8 seconds to take a batch of input, or the preview was not ready within 10. archond dropped the rest of the batch and lets go of any key, button or finger left down before the next input, or within a few seconds. Check the frame and repeat what did not happen; **Reload** if it stays stuck. |
+| "The preview fell behind; some input was skipped." | archond stayed too busy for about two seconds, or so much input piled up that some of it was not sent. archond lets go of anything left down, as above. Check the frame and repeat what did not happen. |
 | "Queued for a preview slot" | `max_sessions` browsers are running. Your notes still reach the agent. |
 | "The code history changed in a way Archon can't track; its edits may still show; add a note if something should change" (note **Failed: history changed**) | The agent made two commits, a merge, a reset below the base, or reported the wrong commit. Archon leaves the worktree as it is and moves on. |
 | "Can't undo automatically, later changes touch the same code; …" | See Undo. |
@@ -356,20 +470,31 @@ once only.
 | "The agent is wrapping up. Approve, Ask for changes and Reject appear here in a moment." | You confirmed; the approval question opens once the agent has stopped the app. |
 | "Reviewed in an earlier session; kept as it was" | A note from before an "Ask for changes". Its picture was confirmed then and goes into the approval as it is; it is not captured or confirmed again. |
 | "A design session is running. Only the operator's devices see the live preview." | You are on an observer device. |
-| "File pickers aren't available in the preview yet" | The app opened a file picker. Downloads are denied. Opening a new window ends the preview. |
+| "That file is too big for the preview (64 MiB at most)." / "Those files are too big for the preview (256 MiB total at most)." / "Choose at most 32 files for the preview." | The chosen files are over a limit; nothing was sent. See Limits. |
+| "this preview session already holds 240 MiB of files; it takes 256 MiB at most" | Files sent earlier in this session count too. They are freed when the preview restarts. |
+| "The app's download of report.csv was not kept: it is larger than 64 MiB." | Chromium stopped the download. Smaller downloads are offered. |
+| "The app opened a new tab. It is shown here; press Back to return." | A link or `window.open` meant for a new tab opened in the preview. |
+| "There is no earlier page in the preview." | **Back** has nowhere to go. |
 | "worktree moved after Finish: expected 3f9c2a1; restore it and complete again" | A commit was made after you confirmed. The agent must reset to the finish commit and complete again. |
 | "choose live when creating the item" | `proposal` cannot change to or from `live` later. |
 | "design sessions turned off" | `[design] enabled` is false; the stage fails. |
 
-`alert`, `confirm` and `prompt` dialogs show their type and action buttons in Archon. Their page-provided
-text and suggested answers stay inside Chromium.
+`alert`, `confirm` and `prompt` dialogs show their text with its line breaks,
+a prompt's suggested answer and their action buttons in Archon, and wait for
+your answer. A suggested answer longer than 16 KiB, the most an answer can
+be, shows only its start, and one with characters other than line breaks and
+tabs that cannot be shown (such as a carriage return) shows without them. In
+both cases the dialog says so; check the answer before pressing OK. A dialog
+from a page outside the preview's origin shows "The preview opened a dialog."
+without its text.
 
 ## Limits
 
 - At most `max_sessions` live browsers (default 2).
-- The live preview captures up to 4 verified frames per second. Each request
-  carries up to 64 input events. The daemon accepts 60 input requests and 10
-  resolves a second.
+- The live preview captures up to 4 verified frames per second at rest and up
+  to 10 for 1.5 seconds after input. Each request carries up to 64 input
+  events. The daemon accepts 60 input requests and 10 resolves a second, and
+  16 requests in flight on one connection; the web app stays within all three.
 - Notes up to 4,000 characters, replies up to 2,000; 200 notes per session, including follow-ups. Each
   item can keep up to 200 MiB of pictures and sketches. Equal encoded
   images count once. New sketches count separately for each capture.
@@ -386,13 +511,26 @@ text and suggested answers stay inside Chromium.
 - With 128 reference images allowed per item, the screen warns 8 before the
   cap on active visual notes.
 - At most 4 subscriptions per connection, shared with feeds.
+- Files for the page: at most 64 MiB each, 32 per chooser or drop, and
+  256 MiB per preview session in total, counted until the preview restarts
+  or the session ends.
+  A file name keeps at most 120 bytes.
+- Downloads: at most 64 MiB each and 8 under way at once; others are
+  cancelled. The last 16 are kept for your device and older ones deleted.
+  A page that sends download events faster than archond reads them ends the
+  preview, so none escapes these limits.
+- Dialogs: a message shows up to 8 KiB, a prompt's suggested answer and your
+  answer up to 16 KiB.
+- A native dropdown lists at most 500 options; copied text keeps its first
+  65,536 characters.
 
 ## Security
 
 Live design is opt-in. The preview runs the item’s own dev server in a fresh
 temporary Chromium profile with no saved credentials or extensions. The
-daemon clears the child environment, uses a private debugging pipe, denies
-downloads and sensitive permissions, and deletes the profile on close.
+daemon clears the child environment, uses a private debugging pipe, keeps
+downloads and the operator's files in private directories of the profile,
+denies sensitive permissions, and deletes the profile on close.
 Chromium’s platform sandbox is on by default. The daemon samples browser
 process-group resident memory about every three seconds. Usage can rise
 above either watchdog threshold between samples.

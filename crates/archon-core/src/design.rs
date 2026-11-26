@@ -458,6 +458,9 @@ pub struct DesignAsset {
     pub note: Option<String>,
     /// The commit it was taken at.
     pub commit: Option<String>,
+    /// How the preview browser took it; none for an upload or sketch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture: Option<crate::intent::ImageCapture>,
     /// When it was stored.
     pub created_at: DateTime<Utc>,
 }

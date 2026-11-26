@@ -21,12 +21,13 @@ export function deadlineText(deadline, now = Date.now()) {
   return mins >= 60 ? `Stage ends in ${Math.floor(mins / 60)} h ${mins % 60} min` : `Stage ends in ${mins} min`;
 }
 
-export function buildTopBar({ title, onBack, onPreset, onReload, onFinish, onReview, onBackToEditing }) {
+export function buildTopBar({ title, onBack, onPreset, onReload, onPreviewBack, onFinish, onReview, onBackToEditing }) {
   const name = h('h1', { class: 'design-title', tabindex: '-1', text: title });
   const dot = h('span', { class: 'design-dot' });
   const dotText = h('span', { class: 'design-dot-text' });
   const badge = h('span', { class: 'chip tone-amber design-badge', hidden: true }, icon('alert', { size: 14 }), h('span', { class: 'chip-text', text: 'Unsandboxed preview' }));
   const presets = segmented({ label: 'Device size', options: [{ value: 'desktop', label: 'Desktop' }, { value: 'tablet', label: 'Tablet' }, { value: 'phone', label: 'Phone' }], value: 'desktop', onChange: onPreset });
+  const previewBack = h('button', { class: 'button button-plain button-small', type: 'button', onclick: onPreviewBack }, 'Back');
   const reload = h('button', { class: 'icon-button', type: 'button', 'aria-label': 'Reload preview (Shift+R)', onclick: onReload }, icon('reload', { size: 20 }));
   const deadline = h('span', { class: 'design-deadline' });
   const finish = h('button', { class: 'button button-primary button-small', type: 'button', onclick: onFinish }, icon('flag', { size: 16 }), ' Finish');
@@ -36,7 +37,7 @@ export function buildTopBar({ title, onBack, onPreset, onReload, onFinish, onRev
   const switching = h('span', { class: 'design-switching', role: 'status', hidden: true });
   const el = h('header', { class: 'design-top' },
     h('button', { class: 'nav-back', type: 'button', 'aria-label': 'Back', onclick: onBack }, icon('back', { size: 22 }), h('span', { text: 'Back' })),
-    name, h('span', { class: 'design-state' }, dot, dotText), badge, presets, switching, reload, deadline, finish, review, backToEditing, blocked);
+    name, h('span', { class: 'design-state' }, dot, dotText), badge, presets, switching, previewBack, reload, deadline, finish, review, backToEditing, blocked);
   return {
     element: el, title: name,
     update(state, { operator, reviewOpen = false }) {
@@ -56,7 +57,7 @@ export function buildTopBar({ title, onBack, onPreset, onReload, onFinish, onRev
       switching.textContent = pending && state.frame ? `Switching to ${presetName(state.preset)}…` : '';
       switching.hidden = !switching.textContent;
       const live = operator && state.session && (state.session.state === 'live' || state.session.state === 'finishing');
-      presets.hidden = reload.hidden = !live;
+      presets.hidden = reload.hidden = previewBack.hidden = !live;
       deadline.textContent = live ? deadlineText(state.deadline) : '';
       const finishing = state.session?.state === 'finishing';
       finish.hidden = !(operator && state.session && state.session.state === 'live');
@@ -140,10 +141,17 @@ export function buildStatusBar() {
   const live = h('p', { class: 'sr-only', role: 'status', 'aria-live': 'polite' });
   const frameText = h('p', { class: 'design-frame-text' });
   const hosts = h('details', { class: 'design-hosts', hidden: true }, h('summary', { text: '' }), h('ul', { class: 'plain-list' }));
-  const el = h('footer', { class: 'design-status' }, frameText, text, hosts, live);
+  // One quiet line for the preview falling behind; it replaces, never stacks.
+  const busy = h('p', { class: 'design-busy', role: 'status', hidden: true });
+  const el = h('footer', { class: 'design-status' }, frameText, text, busy, hosts, live);
   let lastLive = '';
   return {
     element: el, frameText,
+    setBusy(message) {
+      const shown = message || '';
+      if (busy.textContent !== shown) busy.textContent = shown;
+      busy.hidden = !shown;
+    },
     update(state, { path }) {
       const sha = state.previewCommit ?? state.session?.finish_head;
       const commit = sha ? `preview at ${sha.slice(0, 7)}` : '';

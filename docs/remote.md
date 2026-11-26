@@ -286,6 +286,10 @@ which are logged at debug and counted per session in the end-of-session log.
 | `design_viewport {session, preset}` / `design_reload {session}` | Viewport preset, reload. |
 | `design_upload {session, media_type, data, name?, sketch?, base?, blank}` | Stores a picture (base64 `data`) as a pending asset. |
 | `design_tell_agent {session}` / `design_dialog_answer {session, accept, text?}` | Tell the agent again that the preview is down; answer the page's JavaScript dialog. |
+| `design_file_part {session, transfer, file, name, size, offset, data}` | One part (base64 `data`, at most 512 KiB) of a file for the page, parts in order. `transfer` is the client's id (1 to 40 of `A-Z a-z 0-9 - _`), `file` its index. At most 64 MiB a file, 32 files a transfer and 256 MiB a session. Only `name`'s last component is kept, made safe. |
+| `design_file_set {session, chooser, transfer?}` / `design_file_drop {session, transfer, x, y}` | Set a transfer's files on the page's open file chooser (the `id` of a `file_chooser` event), or cancel it with no `transfer`; or drop them on the page at a point. |
+| `design_download {session, id, offset}` | Replies `design_download {id, name, size, offset, data}` with up to 512 KiB of a `download` event's file. |
+| `design_picker_answer {session, id, value?}` / `design_go_back {session}` | Answer a `picker` event (a select's option `value`, or a date, time or colour), or cancel it with no `value`; go back one page in the preview. |
 | `design_note_add {session, client_key, text, asset?, send_picture, details_text?}` | Adds a note; a repeated `client_key` returns the same note. Text up to 4,000 characters. |
 | `design_note_edit`, `design_note_cancel {item, id}` | Queued notes of the current session. |
 | `design_note_reply {item, id, text}` | Answers a note that needs a reply; up to 2,000 characters. |
@@ -302,7 +306,10 @@ Events on a `design` subscription, each a frame with `event` naming its kind:
 `frame {seq, jpeg_b64, w, h, at}`, `selection {box, label}`,
 `session {state, degraded, preview_path, commit, browser, note_version}`,
 `note {…}` (a note view), `blocked_hosts {hosts}`, `agent_progress {line}`,
-`dialog {kind, message, default_prompt}`, `toast {message}` and
+`dialog {kind, message, default_prompt}`, `toast {message}`,
+`file_chooser {id, multiple, accept}`, `download {id, name, size}`,
+`picker {id, control, value, min, max, step, options}` (each option
+`{label, value, selected, disabled, group}`), `clipboard {text}` and
 `ended {reason}`. Every frame or reply is at most 768 KiB as JSON, which stays
 under the 1 MiB message limit.
 

@@ -45,6 +45,12 @@ pub trait PreviewBrowser: Send + Sync {
     async fn reload(&self) -> Result<(), adb::BrowserError>;
     async fn set_viewport(&self, viewport: adb::Viewport) -> Result<(), adb::BrowserError>;
     async fn input(&self, events: &[adb::Input]) -> Result<(), adb::BrowserError>;
+    /// A batch failed or was refused before it ran: whatever it would have let
+    /// go is released before the next batch, or by [`Self::reconcile_input`].
+    fn input_lost(&self);
+    /// The idle cleanup after a lost batch: let go of everything still held.
+    /// True when nothing a lost batch may have left is held any more.
+    async fn reconcile_input(&self) -> bool;
     async fn start_screencast(&self) -> Result<Box<dyn FrameFeed>, adb::BrowserError>;
     async fn stop_screencast(&self) -> Result<(), adb::BrowserError>;
     async fn capture(
@@ -77,6 +83,39 @@ pub trait PreviewBrowser: Send + Sync {
         accept: bool,
         text: Option<String>,
     ) -> Result<(), adb::BrowserError>;
+    /// Set files on the file input whose chooser the page opened.
+    async fn set_files(&self, _node: i64, _files: &[PathBuf]) -> Result<(), adb::BrowserError> {
+        Err(adb::BrowserError::Protocol(
+            "this preview cannot take files".into(),
+        ))
+    }
+    /// Drop files on the page at a point, in CSS px.
+    async fn drop_files(
+        &self,
+        _x: f64,
+        _y: f64,
+        _files: &[PathBuf],
+    ) -> Result<(), adb::BrowserError> {
+        Err(adb::BrowserError::Protocol(
+            "this preview cannot take files".into(),
+        ))
+    }
+    /// Answer the page's native picker; true when the page took the answer.
+    async fn answer_picker(
+        &self,
+        _id: u64,
+        _value: Option<&str>,
+    ) -> Result<bool, adb::BrowserError> {
+        Err(adb::BrowserError::Protocol(
+            "this preview has no pickers".into(),
+        ))
+    }
+    /// Back one page; false when there is none.
+    async fn go_back(&self) -> Result<bool, adb::BrowserError> {
+        Err(adb::BrowserError::Protocol(
+            "this preview has no history".into(),
+        ))
+    }
     /// Reload, wait until the page has loaded, then until it has settled (no
     /// request in flight, no pixel still moving). `false` when `max` passed.
     async fn reload_settled(&self, max: Duration) -> Result<bool, adb::BrowserError> {
@@ -248,6 +287,18 @@ impl PreviewBrowser for Real {
     async fn input(&self, events: &[adb::Input]) -> Result<(), adb::BrowserError> {
         self.get()?.input(events).await
     }
+    fn input_lost(&self) {
+        // A closed browser took everything it held with it.
+        if let Ok(browser) = self.get() {
+            browser.input_lost();
+        }
+    }
+    async fn reconcile_input(&self) -> bool {
+        match self.get() {
+            Ok(browser) => browser.reconcile_input().await,
+            Err(_) => true,
+        }
+    }
     async fn start_screencast(&self) -> Result<Box<dyn FrameFeed>, adb::BrowserError> {
         let relay = self.get()?.start_screencast().await?;
         let feed = RealFeed(relay.subscribe());
@@ -312,6 +363,18 @@ impl PreviewBrowser for Real {
         text: Option<String>,
     ) -> Result<(), adb::BrowserError> {
         self.get()?.answer_dialog(accept, text).await
+    }
+    async fn set_files(&self, node: i64, files: &[PathBuf]) -> Result<(), adb::BrowserError> {
+        self.get()?.set_files(node, files).await
+    }
+    async fn drop_files(&self, x: f64, y: f64, files: &[PathBuf]) -> Result<(), adb::BrowserError> {
+        self.get()?.drop_files(x, y, files).await
+    }
+    async fn answer_picker(&self, id: u64, value: Option<&str>) -> Result<bool, adb::BrowserError> {
+        self.get()?.answer_picker(id, value).await
+    }
+    async fn go_back(&self) -> Result<bool, adb::BrowserError> {
+        self.get()?.go_back().await
     }
     async fn reload_settled(&self, max: Duration) -> Result<bool, adb::BrowserError> {
         self.get()?.reload_settled(max).await
@@ -388,6 +451,8 @@ pub(crate) struct Runtime {
     /// Serializes launch, relaunch and close.
     pub gate: tokio::sync::Mutex<()>,
     pub delivery: tokio::sync::Mutex<()>,
+    /// Uploads, the open file chooser and downloads of the running browser.
+    pub files: tokio::sync::Mutex<super::files::Transfers>,
 }
 
 /// A reserved slot; releasing it on drop covers every error path.
@@ -444,6 +509,8 @@ pub(crate) struct RtState {
     pub launching: bool,
     /// Health probes missed in a row; one slow answer is not "down".
     pub probe_misses: u32,
+    /// Streams of this runtime that have ended: see [`AdmittedInput`].
+    streams_ended: u64,
 }
 
 impl Default for RtState {
@@ -468,6 +535,50 @@ impl Default for RtState {
             resolve_window: (now, 0),
             launching: false,
             probe_misses: 0,
+            streams_ended: 0,
+        }
+    }
+}
+
+/// An input request read off a connection, held until it ends. One read
+/// before a stream ended may press after that end let go, so it lets go again.
+pub struct AdmittedInput {
+    service: Arc<DesignService>,
+    session: DesignSessionId,
+    /// The session's runtime when it was read, and its streams ended by then.
+    seen: Option<(Arc<Runtime>, u64)>,
+}
+
+impl std::fmt::Debug for AdmittedInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdmittedInput")
+            .field("session", &self.session)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for AdmittedInput {
+    fn drop(&mut self) {
+        let Some(now) = self.service.existing_runtime(&self.session) else {
+            return;
+        };
+        let browser = {
+            let st = now.st();
+            let ended_since = match &self.seen {
+                Some((then, ended)) if Arc::ptr_eq(then, &now) => {
+                    debug_assert!(st.streams_ended >= *ended, "stream ends only add up");
+                    st.streams_ended > *ended
+                }
+                // Made after this was read: each stream it ended came later.
+                _ => st.streams_ended > 0,
+            };
+            if !ended_since {
+                return;
+            }
+            st.browser.clone()
+        };
+        if let Some(browser) = browser {
+            browser.input_lost();
         }
     }
 }
@@ -480,6 +591,7 @@ impl Runtime {
             state: std::sync::Mutex::new(RtState::default()),
             gate: tokio::sync::Mutex::new(()),
             delivery: tokio::sync::Mutex::new(()),
+            files: tokio::sync::Mutex::default(),
         }
     }
 
@@ -764,6 +876,8 @@ impl DesignService {
         let binary = factory.binary(self.cfg.browser.as_deref())?;
         let root = self.profile_dir(&row.id);
         let profile = root.join(ulid::Ulid::generate().to_string());
+        // The new browser starts with no uploads: removing the root deletes them.
+        *rt.files.lock().await = super::files::Transfers::default();
         match std::fs::remove_dir_all(&root) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
                 return Err(adb::BrowserError::Launch(format!(
@@ -901,13 +1015,37 @@ impl DesignService {
             .map_or(0, |rt| rt.st().subscribers)
     }
 
+    /// Note an input request for `session` as read, before the connection
+    /// reads on; dropped once it ends, after any press it made.
+    pub fn input_admitted(self: &Arc<Self>, session: &DesignSessionId) -> AdmittedInput {
+        let seen = self.existing_runtime(session).map(|rt| {
+            let ended = rt.st().streams_ended;
+            (rt, ended)
+        });
+        AdmittedInput {
+            service: Arc::clone(self),
+            session: session.clone(),
+            seen,
+        }
+    }
+
+    /// A stream ended: its page closed, reset or lost its connection, and any
+    /// input it still had queued, a release among it, will not come.
     pub(crate) fn subscriber_left(&self, session: &DesignSessionId) {
-        if let Some(rt) = self.existing_runtime(session) {
+        let Some(rt) = self.existing_runtime(session) else {
+            return;
+        };
+        let browser = {
             let mut st = rt.st();
             st.subscribers = st.subscribers.saturating_sub(1);
             if st.subscribers == 0 {
                 st.last_sub_gone = Some(Instant::now());
             }
+            st.streams_ended = st.streams_ended.saturating_add(1);
+            st.browser.clone()
+        };
+        if let Some(browser) = browser {
+            browser.input_lost();
         }
     }
 
@@ -942,6 +1080,7 @@ impl DesignService {
             tracing::info!(%session, reason, "design: browser stopped");
         }
         self.remove_profile(session);
+        *rt.files.lock().await = super::files::Transfers::default();
         let mut lat = counters.latencies_ms.clone();
         lat.sort_unstable();
         let pct = |p: usize| {
@@ -1099,10 +1238,15 @@ async fn report_browser_event(
             let message = "A pop-up was closed.".to_owned();
             let _ = rt.events.send(DesignEvent::Toast { message });
         }
-        adb::BrowserEvent::FileChooserRefused => {
-            let _ = rt.events.send(DesignEvent::Toast {
-                message: "File pickers aren't available in the preview yet".into(),
-            });
+        adb::BrowserEvent::FileChooser { .. }
+        | adb::BrowserEvent::Downloaded { .. }
+        | adb::BrowserEvent::DownloadFailed { .. }
+        | adb::BrowserEvent::Picker(_)
+        | adb::BrowserEvent::Copied { .. }
+        | adb::BrowserEvent::NewTab { .. } => {
+            let event = super::transfer::report(rt, event).await;
+            let event = event.expect("every file, picker and tab event has a stream event");
+            let _ = rt.events.send(event);
         }
         adb::BrowserEvent::NavigationFailed { .. } => {
             ctx.design.record_health(ctx, session, true).await;
@@ -1206,6 +1350,10 @@ impl DesignService {
                     feeder.abort();
                 }
             }
+        }
+        // A lost batch's held input is let go within a tick, even if no batch follows.
+        if !browser.reconcile_input().await {
+            tracing::debug!(%session, "held preview input is still owed a release");
         }
         let rss = browser.rss_bytes();
         if memory_limit_reached(rss, &mut rt.st().rss_over_since, Instant::now()) {

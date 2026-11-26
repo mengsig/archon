@@ -47,6 +47,7 @@ pub(crate) struct Cdp {
     next_id: AtomicU64,
     events: broadcast::Sender<CdpEvent>,
     documents: broadcast::Sender<CdpEvent>,
+    downloads: broadcast::Sender<CdpEvent>,
     tasks: Vec<JoinHandle<()>>,
     containment: Arc<OnceLock<Arc<Containment>>>,
 }
@@ -67,6 +68,8 @@ impl Cdp {
         let pending: Pending = Arc::new(Mutex::new(Some(HashMap::new())));
         let (events, _) = broadcast::channel(64);
         let (documents, _) = broadcast::channel(64);
+        // Its reader never waits, so losing a download event means a flood: the preview stops.
+        let (downloads, _) = broadcast::channel(1024);
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
 
         let wtask = tokio::spawn(async move {
@@ -80,20 +83,15 @@ impl Cdp {
         });
 
         let p = pending.clone();
-        let ev = events.clone();
-        let document_events = documents.clone();
+        let channels = Channels {
+            events: events.clone(),
+            documents: documents.clone(),
+            downloads: downloads.clone(),
+        };
         let containment = Arc::new(OnceLock::<Arc<Containment>>::new());
         let reader_containment = containment.clone();
         let rtask = tokio::spawn(async move {
-            let result = read_messages(
-                reader,
-                max_frame,
-                &p,
-                &ev,
-                &document_events,
-                &reader_containment,
-            )
-            .await;
+            let result = read_messages(reader, max_frame, &p, &channels, &reader_containment).await;
             if let Some(guard) = reader_containment.get()
                 && matches!(&result, Err(BrowserError::Protocol(_)))
             {
@@ -106,7 +104,7 @@ impl Cdp {
             } else {
                 fail_all(&p, || BrowserError::Closed);
             }
-            let _ = ev.send(CdpEvent {
+            let _ = channels.events.send(CdpEvent {
                 method: CLOSED_EVENT.into(),
                 params: Value::Null,
                 session_id: None,
@@ -119,6 +117,7 @@ impl Cdp {
             next_id: AtomicU64::new(1),
             events,
             documents,
+            downloads,
             tasks: vec![wtask, rtask],
             containment,
         }
@@ -134,6 +133,11 @@ impl Cdp {
 
     pub(crate) fn subscribe_documents(&self) -> broadcast::Receiver<CdpEvent> {
         self.documents.subscribe()
+    }
+
+    /// Browser-level download events, kept apart so a busy page cannot crowd them out.
+    pub(crate) fn subscribe_downloads(&self) -> broadcast::Receiver<CdpEvent> {
+        self.downloads.subscribe()
     }
 
     pub(crate) async fn call(
@@ -192,12 +196,18 @@ impl Drop for Cdp {
     }
 }
 
+/// Where the reader sends each kind of event.
+struct Channels {
+    events: broadcast::Sender<CdpEvent>,
+    documents: broadcast::Sender<CdpEvent>,
+    downloads: broadcast::Sender<CdpEvent>,
+}
+
 async fn read_messages<R: AsyncRead + Unpin>(
     mut reader: R,
     max_frame: usize,
     pending: &Pending,
-    events: &broadcast::Sender<CdpEvent>,
-    documents: &broadcast::Sender<CdpEvent>,
+    channels: &Channels,
     containment: &OnceLock<Arc<Containment>>,
 ) -> Result<(), BrowserError> {
     let mut partial = Vec::new();
@@ -225,21 +235,14 @@ async fn read_messages<R: AsyncRead + Unpin>(
             }
             if partial.is_empty() {
                 if !frame.is_empty() {
-                    handle_frame(
-                        frame,
-                        pending,
-                        events,
-                        documents,
-                        containment.get().map(Arc::as_ref),
-                    )?;
+                    handle_frame(frame, pending, channels, containment.get().map(Arc::as_ref))?;
                 }
             } else {
                 partial.extend_from_slice(frame);
                 handle_frame(
                     &partial,
                     pending,
-                    events,
-                    documents,
+                    channels,
                     containment.get().map(Arc::as_ref),
                 )?;
                 partial.clear();
@@ -256,8 +259,7 @@ async fn read_messages<R: AsyncRead + Unpin>(
 fn handle_frame(
     frame: &[u8],
     pending: &Pending,
-    events: &broadcast::Sender<CdpEvent>,
-    documents: &broadcast::Sender<CdpEvent>,
+    channels: &Channels,
     containment: Option<&Containment>,
 ) -> Result<(), BrowserError> {
     let mut v: serde_json::Map<String, Value> = serde_json::from_slice(frame)
@@ -292,8 +294,13 @@ fn handle_frame(
         containment.observe(&event)?;
     }
     let destination = match event.method.as_str() {
-        "Fetch.requestPaused" | "Page.frameNavigated" | "Page.navigatedWithinDocument" => documents,
-        _ => events,
+        "Fetch.requestPaused" | "Page.frameNavigated" | "Page.navigatedWithinDocument" => {
+            &channels.documents
+        }
+        "Browser.downloadWillBegin" | "Browser.downloadProgress" if event.session_id.is_none() => {
+            &channels.downloads
+        }
+        _ => &channels.events,
     };
     let _ = destination.send(event);
     Ok(())
@@ -337,6 +344,36 @@ mod tests {
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
         assert!(cdp.pending.lock().unwrap().as_ref().unwrap().is_empty());
+    }
+
+    /// A flood of page events cannot crowd out a download's: they have their own queue.
+    #[tokio::test]
+    async fn download_events_skip_the_shared_event_queue() {
+        let (cdp, _peer_r, mut peer_w) = pair();
+        let mut events = cdp.subscribe();
+        let mut downloads = cdp.subscribe_downloads();
+        let mut wire = Vec::new();
+        for _ in 0..100 {
+            wire.extend_from_slice(
+                br#"{"method":"Page.lifecycleEvent","sessionId":"s","params":{}}"#,
+            );
+            wire.push(0);
+        }
+        wire.extend_from_slice(br#"{"method":"Browser.downloadWillBegin","params":{"guid":"g"}}"#);
+        wire.push(0);
+        peer_w.write_all(&wire).await.unwrap();
+        let download = tokio::time::timeout(T, downloads.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(download.method, "Browser.downloadWillBegin");
+        assert!(
+            matches!(
+                events.recv().await,
+                Err(broadcast::error::RecvError::Lagged(_))
+            ),
+            "the shared queue overflowed without touching the download"
+        );
     }
 
     #[tokio::test]

@@ -24,6 +24,8 @@ pub struct Calls {
     pub reloads: u32,
     pub viewports: Vec<adb::Viewport>,
     pub inputs: usize,
+    /// Input batches the daemon reported lost: failed or refused before running.
+    pub inputs_lost: u32,
     pub captures: Vec<(Option<adb::ClipRect>, f64)>,
     /// Navigations, reloads, settles, inputs and captures, in the order asked.
     pub ops: Vec<String>,
@@ -31,6 +33,8 @@ pub struct Calls {
     pub screencasts_stopped: u32,
     pub closed: bool,
     pub terminated: bool,
+    /// Files set on a file input, by its node.
+    pub files_set: Vec<(i64, Vec<PathBuf>)>,
 }
 
 /// One scripted browser.
@@ -76,6 +80,15 @@ impl FakeBrowser {
         let _ = self
             .events
             .send(adb::BrowserEvent::ContainmentStopped { reason });
+    }
+
+    /// The page opened a file chooser for input `node`.
+    pub fn open_file_chooser(&self, node: i64, multiple: bool) {
+        let _ = self.events.send(adb::BrowserEvent::FileChooser {
+            node,
+            multiple,
+            accept: ".edi".into(),
+        });
     }
 
     /// Push a frame to the screencast.
@@ -167,10 +180,24 @@ impl PreviewBrowser for FakeBrowser {
         self.calls.lock().unwrap().viewports.push(viewport);
         Ok(())
     }
+    async fn set_files(&self, node: i64, files: &[PathBuf]) -> Result<(), adb::BrowserError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .files_set
+            .push((node, files.to_vec()));
+        Ok(())
+    }
     async fn input(&self, events: &[adb::Input]) -> Result<(), adb::BrowserError> {
         self.calls.lock().unwrap().inputs += events.len();
         self.op(format!("input {}", events.len()));
         Ok(())
+    }
+    fn input_lost(&self) {
+        self.calls.lock().unwrap().inputs_lost += 1;
+    }
+    async fn reconcile_input(&self) -> bool {
+        true
     }
     async fn start_screencast(&self) -> Result<Box<dyn FrameFeed>, adb::BrowserError> {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -190,17 +217,45 @@ impl PreviewBrowser for FakeBrowser {
     ) -> Result<adb::Picture, adb::BrowserError> {
         self.calls.lock().unwrap().captures.push((clip, dpr));
         self.op("capture");
+        let page = self.calls.lock().unwrap().viewports.last().copied();
+        let page = page.unwrap_or(adb::Viewport {
+            width: 1440,
+            height: 900,
+            touch: false,
+            dpr: 1.0,
+        });
+        let clip = clip.unwrap_or(adb::ClipRect {
+            x: 0.0,
+            y: 0.0,
+            w: f64::from(page.width),
+            h: f64::from(page.height),
+        });
+        let (w, h) = ((clip.w as u32).max(1), (clip.h as u32).max(1));
+        // Unscripted, the picture has the size Chrome would give it.
+        let scaled = |n: u32| (f64::from(n) * dpr).round() as u16;
         let bytes = self
             .pictures
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or_else(|| jpeg(16, 16));
+            .unwrap_or_else(|| jpeg(scaled(w), scaled(h)));
+        let (width, height) = adb::jpeg_dims(&bytes).unwrap_or((16, 16));
         Ok(adb::Picture {
             mime: "image/jpeg",
             bytes,
-            width: 16,
-            height: 16,
+            width,
+            height,
+            capture: adb::PictureCapture {
+                viewport_w: page.width,
+                viewport_h: page.height,
+                device_scale_factor: page.dpr,
+                mobile: page.touch,
+                x: clip.x.max(0.0) as u32,
+                y: clip.y.max(0.0) as u32,
+                w,
+                h,
+                screenshot_scale: dpr,
+            },
         })
     }
     async fn resolve(

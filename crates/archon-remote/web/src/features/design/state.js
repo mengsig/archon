@@ -6,7 +6,7 @@ export function initialState(item) {
   return {
     item, loaded: false, observer: null, view: null, session: null, notes: [], browser: { status: 'idle' },
     degraded: false, noteVersion: 0, frame: null, selection: null, blocked: [], progress: '',
-    dialog: null, toasts: [], ended: null, connection: 'open', mode: 'interact', preset: 'desktop', refresh: false, error: null,
+    dialog: null, browserEvents: [], toasts: [], ended: null, connection: 'open', mode: 'interact', preset: 'desktop', refresh: false, error: null,
     previewCommit: null, path: null, finishBlocker: null, imagesUsed: 0, imagesMax: 0, deadline: null,
     itemState: null,
   };
@@ -69,6 +69,8 @@ export function reduce(state, action) {
       return { ...state, selection: action.selection };
     case 'toasts_taken':
       return { ...state, toasts: [] };
+    case 'browser_events_taken':
+      return { ...state, browserEvents: [] };
     case 'dialog_closed':
       return { ...state, dialog: null };
     case 'event':
@@ -98,6 +100,8 @@ function reduceEvent(state, e) {
       return { ...state, blocked: e.hosts ?? [] };
     case 'agent_progress':
       return { ...state, progress: e.line };
+    case 'file_chooser': case 'download': case 'picker': case 'clipboard':
+      return { ...state, browserEvents: [...state.browserEvents, e] };
     case 'dialog':
       return { ...state, dialog: { kind: e.kind, message: e.message, defaultPrompt: e.default_prompt ?? null } };
     case 'toast':

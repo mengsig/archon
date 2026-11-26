@@ -496,7 +496,18 @@ selected requirement: {id, status: implemented|blocked|deviation, evidence,
 visual_pairs: []}; its contract shows the exact shape. Every visual requirement needs
 one pair per reference: {reference: <image id>, built: <workspace image path>,
 viewport: {width,height}, theme, state}. Match the approved viewport, theme and
-state. Evidence must exist, and images must remain unchanged through acceptance.
+state. Where a reference records its `capture`, take the built image the same way
+and copy that `capture` into the pair unchanged: emulate the page at the recorded
+`viewport`, `device_scale_factor` and `mobile`, with touch emulation on exactly when
+`mobile` is (Emulation.setTouchEmulationEnabled, Playwright hasTouch), then take Chromium's
+Page.captureScreenshot of the recorded `area` at clip scale `screenshot_scale`, with
+no overlay. A larger page device scale factor in place of the clip scale can change
+the layout. Archon refuses a pair declaring another capture, or a built image of
+another pixel size, but it cannot see how an image was taken: a judge who sees that
+a pair was still taken differently (another crop, zoom, viewport, text scale,
+overlay or browser chrome) fails it with a reason beginning `capture mismatch:`
+that names what differs, not as a gap in the build. Evidence must exist, and images
+must remain unchanged through acceptance.
 Blocked requirements fail the build.
 
 A deviation needs a reason and the reference | proposed pair. Ask using
@@ -543,12 +554,14 @@ pub(in crate::executor) fn results_owed(
         })
         .collect();
     let shape = serde_json::to_string_pretty(&serde_json::json!({"requirement_results": entries}))?;
-    let context = if images.is_some() {
-        " Take each built image at the `viewport`, `theme` and `state` shown \
-         (its reference's) and keep those values as they are: the gate refuses a pair taken \
-         in other conditions. A `null` theme or state means the reference records none."
-    } else {
-        ""
+    let context = match images {
+        Some(images) => format!(
+            " Take each built image at the `viewport`, `theme` and `state` shown \
+             (its reference's) and keep those values as they are: the gate refuses a pair taken \
+             in other conditions. A `null` theme or state means the reference records none.{}",
+            captures_owed(selected, images)
+        ),
+        None => String::new(),
     };
     let text = format!(
         "\n## Requirement results this stage owes\n\nThis stage reports the requirement results \
@@ -563,6 +576,32 @@ pub(in crate::executor) fn results_owed(
     assert!(selected.iter().all(|r| text.contains(&r.id)));
     assert!(text.contains("\"requirement_results\""));
     Ok(text)
+}
+
+/// How each selected reference was taken, for the builder to take its picture
+/// the same way; empty when none records it.
+fn captures_owed(
+    selected: &[&archon_core::intent::Requirement],
+    images: &[ReferenceImage],
+) -> String {
+    let lines: Vec<String> = selected
+        .iter()
+        .flat_map(|r| r.images.iter())
+        .filter_map(|id| images.iter().find(|i| &i.id == id))
+        .filter_map(|image| {
+            let capture = image.capture.as_ref()?;
+            Some(format!("\n- `{}`: {}.", image.id, capture.describe()))
+        })
+        .collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!(
+        " Take each built image below exactly as its reference was taken, with nothing of \
+         Archon's design preview drawn over it, and keep the pair's `capture` as shown; the gate \
+         refuses another capture, or a built image of another pixel size:{}",
+        lines.concat()
+    )
 }
 
 fn result_pair(id: &str, image: Option<&ReferenceImage>) -> serde_json::Value {
@@ -581,10 +620,14 @@ fn result_pair(id: &str, image: Option<&ReferenceImage>) -> serde_json::Value {
         }
         None => (serde_json::json!("<theme>"), serde_json::json!("<state>")),
     };
-    serde_json::json!({
+    let mut pair = serde_json::json!({
         "reference": id, "built": "<workspace path of the built image>",
         "viewport": viewport, "theme": theme, "state": state,
-    })
+    });
+    if let Some(capture) = image.and_then(|i| i.capture.as_ref()) {
+        pair["capture"] = serde_json::json!(capture);
+    }
+    pair
 }
 
 fn materialize(
@@ -682,6 +725,74 @@ mod tests {
 
     fn names(pool: &[&CatalogModel]) -> Vec<String> {
         pool.iter().map(|m| m.model.to_string()).collect()
+    }
+
+    /// The builder is told how each reference was taken, so it takes its own
+    /// picture alike: S4's builder read "1440x900" as the image's pixels.
+    #[test]
+    fn the_results_owed_name_each_reference_s_capture() {
+        use archon_core::intent::{
+            CaptureArea, CaptureMethod, ImageCapture, Requirement, RequirementKind, Viewport,
+        };
+        let size = Viewport {
+            width: 1440,
+            height: 900,
+        };
+        let image = ReferenceImage {
+            id: "D3-final".into(),
+            path: "D3-final.jpg".into(),
+            sha256: "a".repeat(64),
+            viewport: Some(size),
+            theme: None,
+            state: None,
+            capture: Some(ImageCapture {
+                method: CaptureMethod::PageScreenshot,
+                viewport: size,
+                device_scale_factor: 1.0,
+                mobile: false,
+                area: CaptureArea {
+                    x: 0,
+                    y: 0,
+                    width: 1440,
+                    height: 900,
+                },
+                screenshot_scale: 2.0,
+                pixels: Viewport {
+                    width: 2880,
+                    height: 1800,
+                },
+            }),
+        };
+        let requirement = Requirement {
+            id: "D3".into(),
+            text: "Change the heading".into(),
+            kind: RequirementKind::Visual,
+            images: vec!["D3-final".into()],
+            owner: "operator".into(),
+        };
+        let owed = results_owed(&[&requirement], Some(std::slice::from_ref(&image))).unwrap();
+        assert!(
+            owed.contains("`D3-final`: a Chromium page screenshot"),
+            "{owed}"
+        );
+        assert!(
+            owed.contains("deviceScaleFactor 1 and mobile false"),
+            "{owed}"
+        );
+        assert!(owed.contains("scale: 2}"), "{owed}");
+        assert!(owed.contains("so the image is 2880x1800 pixels"), "{owed}");
+        let (_, shape) = owed.split_once("```json\n").unwrap();
+        let shape: serde_json::Value =
+            serde_json::from_str(shape.trim_end().trim_end_matches("```")).unwrap();
+        let pair = &shape["requirement_results"][0]["visual_pairs"][0];
+        assert_eq!(pair["capture"], serde_json::json!(image.capture));
+        let unrecorded = ReferenceImage {
+            capture: None,
+            ..image
+        };
+        let owed = results_owed(&[&requirement], Some(&[unrecorded])).unwrap();
+        assert!(!owed.contains("deviceScaleFactor"), "{owed}");
+        assert!(!owed.contains("\"capture\""), "{owed}");
     }
 
     #[test]

@@ -901,9 +901,13 @@ const V30: &str = ""; // Column-aware DDL lives in migrate_design_iterations.
 /// Version 31: separate capture metadata from picture contents.
 const V31: &str = include_str!("schema/design_asset_metadata.sql");
 
+/// Version 32: how the preview browser took a picture (viewport, area and
+/// scale), which a live design's ledger hands to acceptance. Additive.
+const V32: &str = "ALTER TABLE design_assets ADD COLUMN capture_json TEXT;";
+
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32,
 ];
 // Later migrations must preserve the tables read by V24 reclassification.
 const _: () = assert!(RECLASSIFY_VERSION <= MIGRATIONS.len());
@@ -1531,7 +1535,7 @@ mod tests {
         let conn = Connection::open(&path).unwrap();
         let applied = applied_versions(&conn);
         assert_eq!(&applied[..30], applied_v30.as_slice());
-        assert_eq!(applied.last().unwrap().0, 31);
+        assert_eq!(applied.last().unwrap().0, MIGRATIONS.len() as i64);
         assert!(
             conn.query_row(
                 "SELECT EXISTS(SELECT 1 FROM design_assets a JOIN design_notes n ON n.item = a.item

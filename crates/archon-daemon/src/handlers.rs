@@ -468,6 +468,12 @@ pub(crate) async fn route(
         | Request::DesignReload { .. }
         | Request::DesignTellAgent { .. }
         | Request::DesignDialogAnswer { .. }
+        | Request::DesignFilePart { .. }
+        | Request::DesignFileSet { .. }
+        | Request::DesignFileDrop { .. }
+        | Request::DesignDownload { .. }
+        | Request::DesignPickerAnswer { .. }
+        | Request::DesignGoBack { .. }
         | Request::DesignNoteAdd { .. }
         | Request::DesignNoteEdit { .. }
         | Request::DesignNoteCancel { .. }

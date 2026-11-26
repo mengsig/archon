@@ -834,6 +834,48 @@
       ],
       "type": "object"
     },
+    "CaptureArea": {
+      "description": "A rectangle of the page in whole CSS pixels, from its top-left corner.",
+      "properties": {
+        "height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "x": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "y": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "CaptureMethod": {
+      "description": "How a picture was taken.",
+      "oneOf": [
+        {
+          "const": "page_screenshot",
+          "description": "The browser's own screenshot of the page (Chromium's\n`Page.captureScreenshot`): no browser chrome, toolbar or design overlay.",
+          "type": "string"
+        }
+      ]
+    },
     "CarriedReview": {
       "description": "A review that covers a later head than the commit it passed: every commit\nsince merges in only what the pull request's base holds.",
       "properties": {
@@ -4130,6 +4172,190 @@
           "type": "object"
         },
         {
+          "description": "One part of a file the operator chose for the page: base64 `data`\nof at most 512 KiB at `offset`, parts in order, `size` the whole file's.",
+          "properties": {
+            "cmd": {
+              "const": "design_file_part",
+              "type": "string"
+            },
+            "data": {
+              "type": "string"
+            },
+            "file": {
+              "description": "The file's index in the transfer.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "offset": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "size": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "transfer": {
+              "description": "The client's id for this set of files.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "transfer",
+            "file",
+            "name",
+            "size",
+            "offset",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Set a transfer's files on the page's open file chooser; no\n`transfer` cancels the chooser.",
+          "properties": {
+            "chooser": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "cmd": {
+              "const": "design_file_set",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "transfer": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "chooser"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Drop a transfer's files on the page at a point, in CSS px.",
+          "properties": {
+            "cmd": {
+              "const": "design_file_drop",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "transfer": {
+              "type": "string"
+            },
+            "x": {
+              "format": "double",
+              "type": "number"
+            },
+            "y": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "transfer",
+            "x",
+            "y"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Read part of a file the page downloaded, from `offset`.",
+          "properties": {
+            "cmd": {
+              "const": "design_download",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "offset": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "id",
+            "offset"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Answer the page's native picker; no `value` cancels it.",
+          "properties": {
+            "cmd": {
+              "const": "design_picker_answer",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "value": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Go back one page in the preview's history.",
+          "properties": {
+            "cmd": {
+              "const": "design_go_back",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Add a note to the session's queue.",
           "properties": {
             "asset": {
@@ -5665,6 +5891,145 @@
           "type": "object"
         },
         {
+          "description": "The page opened a file chooser: answered with `design_file_set`.",
+          "properties": {
+            "accept": {
+              "description": "The input's `accept` attribute.",
+              "type": "string"
+            },
+            "event": {
+              "const": "file_chooser",
+              "type": "string"
+            },
+            "id": {
+              "description": "The chooser's id.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "multiple": {
+              "description": "More than one file may be chosen.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "event",
+            "id",
+            "multiple",
+            "accept"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The page downloaded a file: read with `design_download`.",
+          "properties": {
+            "event": {
+              "const": "download",
+              "type": "string"
+            },
+            "id": {
+              "description": "The download's id.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "description": "Its file name.",
+              "type": "string"
+            },
+            "size": {
+              "description": "Its size in bytes.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "id",
+            "name",
+            "size"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The page opened a native dropdown or date, time or colour picker:\nanswered with `design_picker_answer`.",
+          "properties": {
+            "control": {
+              "description": "`select`, `date`, `time`, `datetime-local`, `month`, `week` or `color`.",
+              "type": "string"
+            },
+            "event": {
+              "const": "picker",
+              "type": "string"
+            },
+            "id": {
+              "description": "The picker's id.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max": {
+              "description": "The input's `max`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "min": {
+              "description": "The input's `min`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "options": {
+              "description": "A dropdown's options.",
+              "items": {
+                "$ref": "#/$defs/DesignPickerOption"
+              },
+              "type": "array"
+            },
+            "step": {
+              "description": "The input's `step`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "value": {
+              "description": "The current value; a dropdown's selected option's `value`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "id",
+            "control",
+            "value",
+            "options"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The page copied text.",
+          "properties": {
+            "event": {
+              "const": "clipboard",
+              "type": "string"
+            },
+            "text": {
+              "description": "The text.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
           "description": "A short message for the operator.",
           "properties": {
             "event": {
@@ -6012,6 +6377,39 @@
         "updated_at",
         "read_only",
         "active"
+      ],
+      "type": "object"
+    },
+    "DesignPickerOption": {
+      "description": "One option of a native dropdown the page opened.",
+      "properties": {
+        "disabled": {
+          "description": "Cannot be chosen.",
+          "type": "boolean"
+        },
+        "group": {
+          "description": "Its group's label, or empty.",
+          "type": "string"
+        },
+        "label": {
+          "description": "The text shown.",
+          "type": "string"
+        },
+        "selected": {
+          "description": "Selected now.",
+          "type": "boolean"
+        },
+        "value": {
+          "description": "What the answer names.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "value",
+        "selected",
+        "disabled",
+        "group"
       ],
       "type": "object"
     },
@@ -8086,6 +8484,50 @@
       "required": [
         "media_type",
         "data"
+      ],
+      "type": "object"
+    },
+    "ImageCapture": {
+      "description": "The conditions a reference picture was taken in: the page's emulation, the\narea shown, and the screenshot's own output scale, which is not the page's.",
+      "properties": {
+        "area": {
+          "$ref": "#/$defs/CaptureArea",
+          "description": "What the picture shows: the whole viewport, or a region of the page."
+        },
+        "device_scale_factor": {
+          "description": "The page's emulated device pixel ratio, which CSS resolution queries,\n`srcset` and `window.devicePixelRatio` see.",
+          "format": "double",
+          "type": "number"
+        },
+        "method": {
+          "$ref": "#/$defs/CaptureMethod"
+        },
+        "mobile": {
+          "description": "Whether the page was emulated as a mobile device with touch input: the\npreview sets both from this one bit, so a replay must too.",
+          "type": "boolean"
+        },
+        "pixels": {
+          "$ref": "#/$defs/Viewport",
+          "description": "The picture's size in device pixels."
+        },
+        "screenshot_scale": {
+          "description": "The screenshot's `clip.scale`: device pixels per CSS px in the image.",
+          "format": "double",
+          "type": "number"
+        },
+        "viewport": {
+          "$ref": "#/$defs/Viewport",
+          "description": "The CSS viewport the page was laid out at."
+        }
+      },
+      "required": [
+        "method",
+        "viewport",
+        "device_scale_factor",
+        "mobile",
+        "area",
+        "screenshot_scale",
+        "pixels"
       ],
       "type": "object"
     },
@@ -13512,6 +13954,17 @@
     },
     "ReferenceImage": {
       "properties": {
+        "capture": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageCapture"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How Archon took the picture (a live design's), for a built picture\nto be taken the same way; none for an image the operator supplied."
+        },
         "id": {
           "type": "string"
         },
@@ -15237,6 +15690,53 @@
           },
           "required": [
             "reply"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Part of a file the page downloaded: base64 `data` from `offset`.",
+          "properties": {
+            "data": {
+              "properties": {
+                "data": {
+                  "type": "string"
+                },
+                "id": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "offset": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "size": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "size",
+                "offset",
+                "data"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "design_download",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
           ],
           "type": "object"
         },
@@ -18375,6 +18875,190 @@
             "cmd",
             "session",
             "accept"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One part of a file the operator chose for the page: base64 `data`\nof at most 512 KiB at `offset`, parts in order, `size` the whole file's.",
+          "properties": {
+            "cmd": {
+              "const": "design_file_part",
+              "type": "string"
+            },
+            "data": {
+              "type": "string"
+            },
+            "file": {
+              "description": "The file's index in the transfer.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "offset": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "size": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "transfer": {
+              "description": "The client's id for this set of files.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "transfer",
+            "file",
+            "name",
+            "size",
+            "offset",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Set a transfer's files on the page's open file chooser; no\n`transfer` cancels the chooser.",
+          "properties": {
+            "chooser": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "cmd": {
+              "const": "design_file_set",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "transfer": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "chooser"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Drop a transfer's files on the page at a point, in CSS px.",
+          "properties": {
+            "cmd": {
+              "const": "design_file_drop",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "transfer": {
+              "type": "string"
+            },
+            "x": {
+              "format": "double",
+              "type": "number"
+            },
+            "y": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "transfer",
+            "x",
+            "y"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Read part of a file the page downloaded, from `offset`.",
+          "properties": {
+            "cmd": {
+              "const": "design_download",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "offset": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "id",
+            "offset"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Answer the page's native picker; no `value` cancels it.",
+          "properties": {
+            "cmd": {
+              "const": "design_picker_answer",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            },
+            "value": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Go back one page in the preview's history.",
+          "properties": {
+            "cmd": {
+              "const": "design_go_back",
+              "type": "string"
+            },
+            "session": {
+              "$ref": "#/$defs/DesignSessionId"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
           ],
           "type": "object"
         },

@@ -4,10 +4,14 @@
 //! `--remote-debugging-pipe` only. This crate launches it, speaks CDP, relays screencast frames
 //! with backpressure, captures size-budgeted pictures and describes the element under a point.
 
+mod bridge;
 mod browser;
 mod cdp;
 mod containment;
 mod error;
+mod features;
+mod input;
+mod keys;
 mod launch;
 mod origin;
 mod proxy;
@@ -20,14 +24,17 @@ mod testutil;
 
 use std::collections::BTreeMap;
 
+pub use bridge::{PickerOption, PickerRequest};
 pub use browser::Browser;
 pub use error::BrowserError;
+pub use features::{KEPT_DOWNLOADS, MAX_DOWNLOAD_BYTES};
 pub use launch::{
     LaunchSpec, doctor_line, find_browser, kill_if_matches, launch_env, process_start_time,
     sweep_profiles,
 };
 pub use proxy::UpstreamGuard;
 pub use relay::{FrameRelay, FrameSubscriber};
+pub use sanitize::{MAX_FILE_NAME_BYTES, file_name};
 
 /// Largest encoded picture or frame (a base64 JSON frame then stays under 768 KiB).
 pub const MAX_IMAGE_BYTES: usize = 560 * 1024;
@@ -174,7 +181,7 @@ pub struct ClipRect {
 }
 
 /// A captured picture, at most [`MAX_IMAGE_BYTES`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Picture {
     /// MIME type.
     pub mime: &'static str,
@@ -184,6 +191,32 @@ pub struct Picture {
     pub width: u32,
     /// Pixel height.
     pub height: u32,
+    /// How it was taken, so the same picture can be taken of a build.
+    pub capture: PictureCapture,
+}
+
+/// How a picture was taken: the page's emulation, the area it shows in whole
+/// CSS px, and the screenshot's own output scale, which is not the page's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PictureCapture {
+    /// Viewport width.
+    pub viewport_w: u32,
+    /// Viewport height.
+    pub viewport_h: u32,
+    /// The page's emulated device pixel ratio (`deviceScaleFactor`).
+    pub device_scale_factor: f64,
+    /// Whether the page was emulated as a mobile device with touch input.
+    pub mobile: bool,
+    /// Left, from the page's left edge.
+    pub x: u32,
+    /// Top, from the page's top edge.
+    pub y: u32,
+    /// Width.
+    pub w: u32,
+    /// Height.
+    pub h: u32,
+    /// `Page.captureScreenshot`'s `clip.scale`, after the byte budget.
+    pub screenshot_scale: f64,
 }
 
 /// One screencast frame.
@@ -255,8 +288,43 @@ pub enum BrowserEvent {
         /// Its URL.
         url: String,
     },
-    /// A file chooser was refused.
-    FileChooserRefused,
+    /// A file input opened its chooser and waits for `set_files`.
+    FileChooser {
+        /// The input's backend node.
+        node: i64,
+        /// More than one file may be chosen.
+        multiple: bool,
+        /// The input's `accept` attribute.
+        accept: String,
+    },
+    /// A download finished in the private downloads directory.
+    Downloaded {
+        /// Sanitised suggested file name.
+        name: String,
+        /// Where Chromium saved it.
+        path: std::path::PathBuf,
+        /// Its size.
+        bytes: u64,
+    },
+    /// A download was cancelled, failed or was too big.
+    DownloadFailed {
+        /// Sanitised suggested file name.
+        name: String,
+        /// Why, for the operator.
+        reason: String,
+    },
+    /// The page opened a native picker a headless browser cannot draw.
+    Picker(PickerRequest),
+    /// The page copied text.
+    Copied {
+        /// The text.
+        text: String,
+    },
+    /// A link or `window.open` meant for a new tab opened in the preview instead.
+    NewTab {
+        /// Its URL.
+        url: String,
+    },
     /// The main document failed to load.
     NavigationFailed {
         /// URL.
@@ -272,7 +340,7 @@ pub enum BrowserEvent {
 }
 
 /// Dimensions of a JPEG from its first start-of-frame marker.
-pub(crate) fn jpeg_dims(b: &[u8]) -> Option<(u32, u32)> {
+pub fn jpeg_dims(b: &[u8]) -> Option<(u32, u32)> {
     let mut i = 2;
     if b.get(..2)? != [0xFF, 0xD8] {
         return None;

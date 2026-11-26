@@ -390,6 +390,7 @@ impl DesignService {
                     width: picture.width,
                     height: picture.height,
                     sketch: None,
+                    capture: Some(super::assets::capture_of(picture)),
                 },
             )
             .await?

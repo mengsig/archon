@@ -7,6 +7,7 @@
 mod assets;
 mod browser;
 mod delivery;
+mod files;
 mod finish;
 mod iterations;
 mod notes;
@@ -16,6 +17,7 @@ mod reports;
 mod requests;
 mod server_origin;
 mod state;
+mod transfer;
 mod undo;
 
 use std::collections::HashMap;
@@ -35,8 +37,9 @@ use archon_core::id::QueueItemId;
 use archon_core::protocol::{DesignEvent, DesignNoteView, WelcomeDevice};
 use archon_queue::Store;
 
+pub(crate) use self::assets::dimensions;
 pub use self::browser::{
-    BrowserFactory, BrowserRegistration, FrameFeed, PreviewBrowser, RealFactory,
+    AdmittedInput, BrowserFactory, BrowserRegistration, FrameFeed, PreviewBrowser, RealFactory,
 };
 pub(crate) use self::delivery::sweep;
 pub use self::recovery::recover;

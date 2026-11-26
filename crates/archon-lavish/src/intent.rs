@@ -165,6 +165,7 @@ mod tests {
                 viewport: None,
                 theme: None,
                 state: None,
+                capture: None,
             }],
             requirements: vec![Requirement {
                 id: "R1".into(),

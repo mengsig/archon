@@ -5,6 +5,12 @@ that needs more than `archon update --yes` changes. The update command
 itself is in [install.md](install.md#updating), and every release's changes
 are in the [changelog](../CHANGELOG.md).
 
+## Live design sessions in 1.6.6
+
+Live design sessions are enabled by default from 1.6.6. Only items with
+`proposal = live` run a design stage. Set `[design] enabled = false` in the
+host configuration to turn sessions off; an existing explicit false is kept.
+
 ## Live design sessions in 1.6.5
 
 Store migrations V29 through V31 follow V28. V31 preserves existing picture IDs and

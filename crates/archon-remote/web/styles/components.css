@@ -521,7 +521,7 @@ select.input {
 /* The submit stays in view while the fields scroll under it. */
 .sheet-actions { position: sticky; bottom: calc(-1 * (var(--safe-bottom) + var(--space-5))); z-index: 1; margin-inline: calc(-1 * var(--space-5)); padding: var(--space-3) var(--space-5) calc(var(--safe-bottom) + var(--space-5)); margin-bottom: calc(-1 * (var(--safe-bottom) + var(--space-5))); background: var(--surface); box-shadow: 0 -1px 0 var(--separator); }
 .confirm { display: grid; gap: var(--space-3); padding-top: var(--space-1); }
-.confirm-message { color: var(--text-2); font-size: 16px; margin-bottom: var(--space-2); }
+.confirm-message { color: var(--text-2); font-size: 16px; margin-bottom: var(--space-2); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 50vh; overflow-y: auto; }
 
 @media (min-width: 760px) {
   .sheet-layer { align-items: center; }

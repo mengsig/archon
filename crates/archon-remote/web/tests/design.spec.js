@@ -724,6 +724,48 @@ test.describe('phone S3 and touch', () => {
   });
 });
 
+test.describe('scrolling', () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test('a fast wheel on a slow preview never floods it, loses no distance and shows no red error', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      const canvas = page.locator('.design-canvas');
+      await expect(canvas).toBeVisible();
+      await expect(page.getByText('Live', { exact: true }).first()).toBeVisible();
+      const state = harness.daemon.state;
+      state.inputDelayMs = 800;
+      const rect = await canvas.boundingBox();
+      const scale = rect.width / (await canvas.evaluate((c) => c.width));
+      await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      for (let i = 0; i < 60; i += 1) await page.mouse.wheel(0, 50);
+      const inputs = () => state.requests.filter((r) => r.cmd === 'design_input' && !r.refused);
+      const scrolled = () => inputs().flatMap((r) => r.events).filter((e) => e.type === 'wheel').reduce((sum, e) => sum + e.dy, 0);
+      await expect(page.locator('.design-busy')).toHaveText('Catching up with the preview…');
+      // Each tick is rounded to 0.1 app px; the rest of the distance arrives.
+      await expect.poll(scrolled, { timeout: 15_000 }).toBeGreaterThan(60 * 50 / scale - 60 * 0.05);
+      expect(scrolled()).toBeLessThan(60 * 50 / scale + 60 * 0.05);
+      expect(state.maxInputsInFlight).toBe(1);
+      expect(inputs().length).toBeLessThan(30);
+      await expect(page.locator('.design-busy')).toBeHidden();
+
+      // archond's own in-flight refusal is backpressure: one quiet line, never a red toast,
+      // and the refused input goes again until it is taken.
+      const before = scrolled();
+      state.inputDelayMs = 0;
+      state.refuseInputs = 3;
+      for (let i = 0; i < 3; i += 1) { await page.mouse.wheel(0, 50); await page.waitForTimeout(40); }
+      await expect(page.locator('.design-busy')).toBeVisible();
+      await expect(page.locator('.design-busy')).toHaveCount(1);
+      await page.screenshot({ path: `${EVIDENCE}/design-scroll-backpressure.png` });
+      await expect.poll(() => scrolled() - before).toBeGreaterThan(3 * 50 / scale - 3 * 0.05);
+      expect(state.refuseInputs).toBe(0);
+      await expect(page.locator('.design-busy')).toBeHidden();
+      await expect(page.locator('.toast-red')).toHaveCount(0);
+    } finally { await harness.stop(); }
+  });
+});
+
 // ---- design iterations: follow-ups, references, the tree, viewing and continuing ----
 
 // D3 → D7 → D9 (D9 refers to D5); D5 with D6 set aside (undone by D11) and D8 working; D10 queued on the page.

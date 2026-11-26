@@ -17,6 +17,23 @@ use crate::{Browser, BrowserError, BrowserEvent};
 pub const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
 /// Most downloads under way at once; another is cancelled.
 const MAX_DOWNLOADS: usize = 8;
+const DROP_GROUP: &str = "archon-drop";
+/// Longest `accept` checked; a longer one is refused. Real ones are far shorter.
+const MAX_ACCEPT_BYTES: usize = 4096;
+/// The file input a drop goes to: the target itself, a label's control, or the
+/// one file input in the nearest container below `body` that holds one.
+const GOVERNING_INPUT_JS: &str = "function () {
+  const isFile = (el) => el instanceof HTMLInputElement && el.type === 'file';
+  let el = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;
+  for (; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+    if (isFile(el)) return el.accept;
+    if (el instanceof HTMLLabelElement && el.control && isFile(el.control)) return el.control.accept;
+    const inside = el.querySelectorAll('input[type=file]');
+    if (inside.length === 1) return inside[0].accept;
+    if (inside.length > 1) return null;
+  }
+  return null;
+}";
 /// Finished downloads kept on disk; older ones are deleted.
 pub const KEPT_DOWNLOADS: usize = 16;
 
@@ -240,7 +257,12 @@ impl Shared {
                     multiple,
                     accept,
                 }),
-                Err(error) => tracing::debug!(%error, "a file chooser was not offered"),
+                Err(error) => {
+                    tracing::warn!(%error, "a file chooser was not offered");
+                    sh.emit(BrowserEvent::FileChooserFailed {
+                        reason: error.to_string(),
+                    });
+                }
             }
         });
     }
@@ -249,16 +271,46 @@ impl Shared {
         let described = self
             .call("DOM.describeNode", json!({"backendNodeId": node}))
             .await?;
-        let attributes = described["node"]["attributes"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        let accept = attributes
-            .chunks(2)
-            .find(|pair| pair[0] == "accept")
-            .and_then(|pair| pair.get(1)?.as_str().map(clean))
-            .unwrap_or_default();
-        Ok(accept)
+        node_attribute(&described, "accept").map_or_else(|| Ok(String::new()), accept_value)
+    }
+
+    /// The `accept` of the file input a drop at frame point `(x, y)` goes to,
+    /// if one does: see `GOVERNING_INPUT_JS`.
+    async fn file_input_accept_at(&self, x: f64, y: f64) -> Result<Option<String>, BrowserError> {
+        let (x, y) = self.layout().await?.hit_point(x, y);
+        let hit = self
+            .call(
+                "DOM.getNodeForLocation",
+                json!({"x": x.round() as i64, "y": y.round() as i64}),
+            )
+            .await?;
+        let Some(node) = hit["backendNodeId"].as_i64() else {
+            return Ok(None);
+        };
+        let resolved = self
+            .call(
+                "DOM.resolveNode",
+                json!({"backendNodeId": node, "objectGroup": DROP_GROUP}),
+            )
+            .await?;
+        let object = resolved["object"]["objectId"]
+            .as_str()
+            .ok_or_else(|| BrowserError::Protocol("the drop target has no object".into()))?
+            .to_owned();
+        let found = self
+            .call(
+                "Runtime.callFunctionOn",
+                json!({"objectId": object, "functionDeclaration": GOVERNING_INPUT_JS, "returnByValue": true}),
+            )
+            .await;
+        // Only frees the page's handles; the answer stands either way.
+        let _ = self
+            .call(
+                "Runtime.releaseObjectGroup",
+                json!({"objectGroup": DROP_GROUP}),
+            )
+            .await;
+        governing_accept(&found?)
     }
 
     /// The page bridge called its binding.
@@ -345,7 +397,71 @@ fn path_strings(files: &[PathBuf]) -> Result<Vec<String>, BrowserError> {
         .collect()
 }
 
+/// The answer of `GOVERNING_INPUT_JS`: only text or an explicit null counts;
+/// a lookup that threw or answered anything else withholds the drop.
+fn governing_accept(found: &Value) -> Result<Option<String>, BrowserError> {
+    if let Some(details) = found.get("exceptionDetails") {
+        let text = clean(details["text"].as_str().unwrap_or("an exception"));
+        return Err(BrowserError::Protocol(format!(
+            "the file input under the drop could not be read: {text}"
+        )));
+    }
+    let result = &found["result"];
+    match (result["type"].as_str(), result.get("value")) {
+        (Some("string"), Some(Value::String(accept))) => accept_value(accept).map(Some),
+        (Some("object"), Some(Value::Null)) if result["subtype"] == "null" => Ok(None),
+        _ => Err(BrowserError::Protocol(format!(
+            "the file input under the drop read as {result}"
+        ))),
+    }
+}
+
+/// Attribute `name` of a `DOM.describeNode` reply, as the page wrote it.
+fn node_attribute<'a>(described: &'a Value, name: &str) -> Option<&'a str> {
+    let attributes = described["node"]["attributes"].as_array()?;
+    attributes
+        .chunks(2)
+        .find(|pair| pair[0] == name)
+        .and_then(|pair| pair.get(1)?.as_str())
+}
+
+/// An input's `accept` for matching: its types without control characters or
+/// blanks. One longer than `MAX_ACCEPT_BYTES` is refused whole: a cut list would refuse
+/// the types it lost, and no list would take every file.
+fn accept_value(raw: &str) -> Result<String, BrowserError> {
+    let clean: String = raw.chars().filter(|c| !c.is_control()).collect();
+    let types: Vec<&str> = clean
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect();
+    let kept = types.join(",");
+    if kept.len() > MAX_ACCEPT_BYTES {
+        return Err(BrowserError::AcceptTooLong {
+            bytes: kept.len(),
+            max: MAX_ACCEPT_BYTES,
+        });
+    }
+    assert_eq!(
+        kept.is_empty(),
+        types.is_empty(),
+        "a page's types are never all dropped"
+    );
+    assert!(
+        !kept.starts_with(',') && !kept.ends_with(','),
+        "no blank type is kept"
+    );
+    Ok(kept)
+}
+
 impl Browser {
+    /// The `accept` of the file input at `(x, y)` in CSS px; `None` when the
+    /// point is not on one.
+    pub async fn accept_at(&self, x: f64, y: f64) -> Result<Option<String>, BrowserError> {
+        assert!(x.is_finite() && y.is_finite(), "a drop point is finite");
+        self.sh.disclose(self.sh.file_input_accept_at(x, y)).await
+    }
+
     /// Set the chosen files on the file input whose chooser opened.
     pub async fn set_files(&self, node: i64, files: &[PathBuf]) -> Result<(), BrowserError> {
         let files = path_strings(files)?;
@@ -395,6 +511,7 @@ impl Browser {
     }
 
     /// Go back one entry in the page's history; `false` when there is none.
+    /// The blank page the browser starts on is not one to return to.
     pub async fn go_back(&self) -> Result<bool, BrowserError> {
         let history = self.sh.call("Page.getNavigationHistory", json!({})).await?;
         let current = history["currentIndex"].as_u64().unwrap_or(0) as usize;
@@ -407,6 +524,9 @@ impl Browser {
             return Ok(false);
         };
         let url = entry["url"].as_str().unwrap_or_default();
+        if url == "about:blank" {
+            return Ok(false);
+        }
         if !self.sh.allows_navigation(url) {
             return Err(BrowserError::Navigation {
                 url: clean(url),
@@ -441,6 +561,80 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         false
+    }
+
+    const OFFICE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
+    #[test]
+    fn an_accept_is_kept_whole_for_matching() {
+        let value = |raw: &str| accept_value(raw).unwrap();
+        assert!(OFFICE.len() > crate::sanitize::MAX_CHARS);
+        assert_eq!(value(OFFICE), OFFICE);
+        assert_eq!(value(".csv,\n.txt"), ".csv,.txt");
+        assert_eq!(value(" , "), "", "no types is no filter, as in the browser");
+        let padded = format!("{},.pdf, ", " ".repeat(MAX_ACCEPT_BYTES));
+        assert_eq!(value(&padded), ".pdf", "blanks are not types");
+        let full = format!(".{}", "x".repeat(MAX_ACCEPT_BYTES - 1));
+        assert_eq!(
+            value(&full).len(),
+            MAX_ACCEPT_BYTES,
+            "the cap itself is kept"
+        );
+    }
+
+    /// Past the cap nothing is cut or opened: the accept is refused, for the chooser and a drop.
+    #[test]
+    fn an_oversized_accept_is_refused_not_cut() {
+        let long = vec![".csv"; 2000].join(",");
+        let refused = accept_value(&long).unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                BrowserError::AcceptTooLong {
+                    bytes: 9999,
+                    max: MAX_ACCEPT_BYTES
+                }
+            ),
+            "{refused:?}"
+        );
+        assert!(refused.to_string().contains("too many types"), "{refused}");
+        let one = format!(",{}", "x".repeat(MAX_ACCEPT_BYTES + 1));
+        assert!(accept_value(&one).is_err(), "one type over the cap");
+        let drop = json!({"result": {"type": "string", "value": long}});
+        assert!(governing_accept(&drop).is_err(), "the drop is withheld");
+    }
+
+    /// A drop lookup the page made throw must not skip the accept check.
+    #[tokio::test]
+    async fn a_drop_lookup_that_throws_withholds_the_drop() {
+        let (b, _log) = fake_browser(|m, _| match m {
+            "DOM.getNodeForLocation" => Some(json!({"backendNodeId": 5})),
+            "DOM.resolveNode" => Some(json!({"object": {"objectId": "o1"}})),
+            "Runtime.callFunctionOn" => Some(json!({
+                "result": {"type": "object"},
+                "exceptionDetails": {"text": "Uncaught TypeError"},
+            })),
+            _ => None,
+        })
+        .await;
+        let refused = b.accept_at(10.0, 10.0).await.unwrap_err();
+        assert!(
+            refused.to_string().contains("could not be read"),
+            "{refused}"
+        );
+        let odd = json!({"result": {"type": "number", "value": 3}});
+        assert!(governing_accept(&odd).is_err());
+        let none = json!({"result": {"type": "object", "subtype": "null", "value": null}});
+        assert_eq!(governing_accept(&none).unwrap(), None);
+        let undefined = json!({"result": {"type": "undefined"}});
+        assert!(
+            governing_accept(&undefined).is_err(),
+            "undefined is not null"
+        );
+        assert!(
+            governing_accept(&json!({})).is_err(),
+            "no result is not null"
+        );
     }
 
     /// Finished downloads stay bounded on disk even when nobody hears of them.
@@ -498,5 +692,25 @@ mod tests {
             cancelled(&log, "stray").await,
             "an untracked oversized one is cancelled"
         );
+    }
+
+    /// The blank page the browser starts on is not a page to go back to.
+    #[tokio::test]
+    async fn back_to_the_starting_blank_page_is_a_quiet_no_op() {
+        let (b, log) = fake_browser(|method, _| {
+            (method == "Page.getNavigationHistory").then(|| {
+                json!({"currentIndex": 1, "entries": [
+                    {"id": 1, "url": "about:blank"},
+                    {"id": 2, "url": "http://127.0.0.1/"}]})
+            })
+        })
+        .await;
+        assert!(!b.go_back().await.unwrap());
+        let navigated = log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(m, _)| m == "Page.navigateToHistoryEntry");
+        assert!(!navigated, "no history entry was visited");
     }
 }

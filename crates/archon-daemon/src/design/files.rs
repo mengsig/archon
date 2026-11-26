@@ -28,17 +28,20 @@ const MIB: u64 = 1024 * 1024;
 #[derive(Debug)]
 struct Staged {
     name: String,
+    /// Normalised by `accept::media_type`; empty when the client gave none.
+    media_type: String,
     path: PathBuf,
     size: u64,
     written: u64,
 }
 
 /// The file chooser the page has open.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Chooser {
     pub id: u64,
     pub node: i64,
     pub multiple: bool,
+    pub accept: String,
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +59,8 @@ pub(crate) struct Part<'a> {
     pub file: u32,
     pub name: &'a str,
     pub size: u64,
+    /// The type the operator's browser gave; read from a file's first part.
+    pub media_type: &'a str,
     pub offset: u64,
     pub data: &'a [u8],
 }
@@ -159,26 +164,31 @@ async fn create_private_dir(dir: &Path) -> Result<(), ArchonError> {
 
 impl Transfers {
     /// The page opened a file chooser; it replaces any earlier one.
-    pub(crate) fn open_chooser(&mut self, node: i64, multiple: bool) -> u64 {
+    pub(crate) fn open_chooser(&mut self, node: i64, multiple: bool, accept: String) -> u64 {
         self.next_chooser += 1;
         self.chooser = Some(Chooser {
             id: self.next_chooser,
             node,
             multiple,
+            accept,
         });
         assert!(self.next_chooser > 0, "chooser ids start at 1");
         self.next_chooser
     }
 
+    /// Chooser `id` while it stays open; refused when another one is open now.
+    pub(crate) fn peek_chooser(&self, id: u64) -> Result<&Chooser, ArchonError> {
+        self.chooser
+            .as_ref()
+            .filter(|chooser| chooser.id == id)
+            .ok_or_else(|| invalid("that file chooser is no longer open in the app"))
+    }
+
     /// Close chooser `id`; refused when another one is open now.
     pub(crate) fn take_chooser(&mut self, id: u64) -> Result<Chooser, ArchonError> {
-        match self.chooser {
-            Some(chooser) if chooser.id == id => {
-                self.chooser = None;
-                Ok(chooser)
-            }
-            _ => Err(invalid("that file chooser is no longer open in the app")),
-        }
+        self.peek_chooser(id)?;
+        let chooser = self.chooser.take();
+        Ok(chooser.expect("the chooser was just found open"))
     }
 
     /// Write one part under `root`, the session's private uploads directory.
@@ -220,6 +230,7 @@ impl Transfers {
             self.total += part.size;
             files.push(Staged {
                 name,
+                media_type: super::accept::media_type(part.media_type),
                 path,
                 size: part.size,
                 written: 0,
@@ -244,6 +255,10 @@ impl Transfers {
         file.write_all(part.data)
             .await
             .map_err(|error| ArchonError::io("writing an upload", error))?;
+        // A tokio file hands its write to a thread; dropping it does not wait.
+        file.flush()
+            .await
+            .map_err(|error| ArchonError::io("writing an upload", error))?;
         staged.written += part.data.len() as u64;
         assert!(
             staged.written <= staged.size,
@@ -263,6 +278,22 @@ impl Transfers {
             return Err(invalid(format!("{} was not sent in full", partial.name)));
         }
         Ok(files.iter().map(|f| f.path.clone()).collect())
+    }
+
+    /// Refuse `transfer`'s files when the input's `accept` does not allow one.
+    pub(crate) fn check_accept(&self, transfer: &str, accept: &str) -> Result<(), ArchonError> {
+        let files = self
+            .staged
+            .get(transfer)
+            .ok_or_else(|| invalid("no files were sent for that transfer"))?;
+        let picked: Vec<_> = files
+            .iter()
+            .map(|f| super::accept::Picked {
+                name: &f.name,
+                media_type: &f.media_type,
+            })
+            .collect();
+        super::accept::check(accept, &picked)
     }
 
     /// Offer a finished download; the oldest is forgotten past the cap.
@@ -333,6 +364,7 @@ mod tests {
             file,
             name,
             size,
+            media_type: "",
             offset,
             data,
         }
@@ -456,8 +488,8 @@ mod tests {
     #[test]
     fn only_the_open_chooser_is_answered() {
         let mut transfers = Transfers::default();
-        let first = transfers.open_chooser(7, false);
-        let second = transfers.open_chooser(8, true);
+        let first = transfers.open_chooser(7, false, String::new());
+        let second = transfers.open_chooser(8, true, String::new());
         assert!(transfers.take_chooser(first).is_err());
         assert_eq!(transfers.take_chooser(second).unwrap().node, 8);
         assert!(

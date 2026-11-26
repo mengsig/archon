@@ -10,6 +10,9 @@ are in the [changelog](../CHANGELOG.md).
 Live design sessions are enabled by default from 1.6.6. Only items with
 `proposal = live` run a design stage. Set `[design] enabled = false` in the
 host configuration to turn sessions off; an existing explicit false is kept.
+Store migration V32 adds how each design picture was taken; pictures taken
+before it keep only their viewport. Back up the stopped daemon's database
+before upgrading if you need a downgrade path.
 
 ## Live design sessions in 1.6.5
 
@@ -24,11 +27,11 @@ iteration history. The web handshake still negotiates back to 23.
 
 ## From 1.5.x to 1.6.x
 
-Archon 1.6.5 requires Aether 1.4.3 or later. Upgrade an older Aether with
+Archon 1.6.6 requires Aether 1.4.3 or later. Upgrade an older Aether with
 `aether update --version v1.4.3` and restart aetherd, then run
-`archon update --yes --version v1.6.5`. Upgrade Aether first: the update
-from 1.6.4 runs 1.6.4's own Aether step, which does not pin 1.4.3.
-Confirmed updates run by 1.6.5 select Aether 1.4.3 only for an older
+`archon update --yes --version v1.6.6`. Upgrade Aether first: an update
+from 1.6.4 or earlier runs that release's own Aether step, which does not
+pin 1.4.3. Confirmed updates run by 1.6.5 or later select Aether 1.4.3 only for an older
 installation; at 1.4.3 or later they use
 Aether's normal update, without pinning it to an older release. Keep a backup before the first daemon start: approved intent
 adds persistent requirement and clarification records. Existing queue items

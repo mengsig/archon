@@ -25,7 +25,7 @@ pub(crate) fn new_tab_message(url: &str) -> String {
     if url.is_empty() {
         "The app tried to open an empty pop-up window. The preview shows one tab, so it stayed on this page.".into()
     } else {
-        "The app opened a new tab. It is shown here; press Back to return.".into()
+        "The app opened a new tab; the preview followed it. Press Back to return.".into()
     }
 }
 
@@ -37,7 +37,11 @@ pub(crate) async fn report(rt: &Runtime, event: adb::BrowserEvent) -> Option<Des
             multiple,
             accept,
         } => {
-            let id = rt.files.lock().await.open_chooser(node, multiple);
+            let id = rt
+                .files
+                .lock()
+                .await
+                .open_chooser(node, multiple, accept.clone());
             DesignEvent::FileChooser {
                 id,
                 multiple,
@@ -50,18 +54,28 @@ pub(crate) async fn report(rt: &Runtime, event: adb::BrowserEvent) -> Option<Des
                 .lock()
                 .await
                 .add_download(name.clone(), path, bytes);
+            tracing::info!(%name, bytes, id, "design: download kept");
             DesignEvent::Download {
                 id,
                 name,
                 size: bytes,
             }
         }
-        adb::BrowserEvent::DownloadFailed { name, reason } => DesignEvent::Toast {
-            message: format!("The app's download of {name} was not kept: {reason}."),
+        adb::BrowserEvent::FileChooserFailed { reason } => DesignEvent::Toast {
+            message: format!("The app's file chooser could not be offered: {reason}."),
         },
+        adb::BrowserEvent::DownloadFailed { name, reason } => {
+            tracing::warn!(%name, %reason, "design: download refused");
+            DesignEvent::Toast {
+                message: format!("The app's download of {name} was not kept: {reason}."),
+            }
+        }
         adb::BrowserEvent::Picker(picker) => picker_event(picker),
         adb::BrowserEvent::Copied { text } => DesignEvent::Clipboard { text },
-        adb::BrowserEvent::NewTab { url } => DesignEvent::Toast {
+        adb::BrowserEvent::NewTab { url } if url.is_empty() => DesignEvent::Toast {
+            message: new_tab_message(&url),
+        },
+        adb::BrowserEvent::NewTab { url } => DesignEvent::NewTab {
             message: new_tab_message(&url),
         },
         _ => return None,
@@ -141,15 +155,19 @@ impl DesignService {
         let (rt, browser) = self.live_runtime(ctx, session).await?;
         let (open, paths) = {
             let mut transfers = rt.files.lock().await;
-            let paths = transfer.map(|t| transfers.files(t)).transpose()?;
+            let open = transfers.peek_chooser(chooser)?.clone();
+            let Some(transfer) = transfer else {
+                transfers.take_chooser(chooser)?;
+                return Ok(Reply::DesignDone);
+            };
+            let paths = transfers.files(transfer)?;
+            if !open.multiple && paths.len() > 1 {
+                return Err(ArchonError::Invalid("the app takes one file here".into()));
+            }
+            transfers.check_accept(transfer, &open.accept)?;
             (transfers.take_chooser(chooser)?, paths)
         };
-        let Some(paths) = paths else {
-            return Ok(Reply::DesignDone);
-        };
-        if !open.multiple && paths.len() > 1 {
-            return Err(ArchonError::Invalid("the app takes one file here".into()));
-        }
+        assert_eq!(open.id, chooser, "the chooser taken is the one answered");
         browser
             .set_files(open.node, &paths)
             .await
@@ -174,6 +192,9 @@ impl DesignService {
         }
         let (rt, browser) = self.live_runtime(ctx, session).await?;
         let paths = rt.files.lock().await.files(transfer)?;
+        if let Some(accept) = browser.accept_at(x, y).await.map_err(unavailable)? {
+            rt.files.lock().await.check_accept(transfer, &accept)?;
+        }
         browser
             .drop_files(x, y, &paths)
             .await
@@ -239,11 +260,9 @@ impl DesignService {
         ctx: &DaemonContext,
         session: &DesignSessionId,
     ) -> Result<Reply, ArchonError> {
-        let (rt, browser) = self.live_runtime(ctx, session).await?;
-        if !browser.go_back().await.map_err(unavailable)? {
-            let message = "There is no earlier page in the preview.".to_owned();
-            let _ = rt.events.send(DesignEvent::Toast { message });
-        }
+        let (_, browser) = self.live_runtime(ctx, session).await?;
+        let went_back = browser.go_back().await.map_err(unavailable)?;
+        tracing::debug!(went_back, "design: preview back");
         Ok(Reply::DesignDone)
     }
 }

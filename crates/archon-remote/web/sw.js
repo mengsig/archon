@@ -53,6 +53,7 @@ const SHELL = [
   `${BASE}/src/features/design/thumbs.js`,
   `${BASE}/src/features/design/tree.js`,
   `${BASE}/src/features/design/viewer.js`,
+  `${BASE}/src/features/design/viewport.js`,
   `${BASE}/src/features/design/outbox.js`,
   `${BASE}/src/features/design/overlay.js`,
   `${BASE}/src/features/design/scale.js`,

@@ -44,7 +44,16 @@ test('toasts, dialogs, progress and blocked hosts are kept for the screen', () =
   s = reduce(s, { type: 'event', event: { event: 'blocked_hosts', hosts: ['x.test'] } });
   assert.deepEqual([s.toasts, s.dialog.message, s.progress, s.blocked], [['hi'], 'Sure?', 'npm run dev', ['x.test']]);
   assert.deepEqual(reduce(s, { type: 'toasts_taken' }).toasts, []);
-  assert.equal(reduce(s, { type: 'dialog_closed' }).dialog, null);
+  assert.equal(reduce(s, { type: 'dialog_closed', dialog: s.dialog }).dialog, null);
+});
+
+test('a dialog the app opens while the last one closes is kept', () => {
+  const dialog = (message) => ({ type: 'event', event: { event: 'dialog', kind: 'alert', message, default_prompt: null } });
+  const first = reduce(loaded(), dialog('first'));
+  const second = reduce(first, dialog('second'));
+  const closed = reduce(second, { type: 'dialog_closed', dialog: first.dialog });
+  assert.equal(closed.dialog?.message, 'second');
+  assert.equal(reduce(closed, { type: 'dialog_closed', dialog: closed.dialog }).dialog, null);
 });
 
 test('every sec 7.3 state shows its text', () => {

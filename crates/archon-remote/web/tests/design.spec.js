@@ -39,6 +39,9 @@ const buttonPixel = async (page, harness) => page.evaluate((box) => {
   return [r, g, b];
 }, await harness.appPage.locator('#cta').boundingBox());
 
+const presetRadio = (page, name) => page.getByRole('radiogroup', { name: /size/i }).getByRole('radio', { name });
+const viewportAsks = (harness) => harness.daemon.state.requests.filter((r) => r.cmd === 'design_viewport').map((r) => r.preset);
+
 test.describe('desktop', () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
@@ -274,6 +277,216 @@ test.describe('desktop', () => {
       await expect(desk).not.toHaveClass(/is-switching/);
       await expect(page.locator('.design-canvas')).toHaveCSS('visibility', 'visible');
       await expect(page.locator('.design-framebox')).not.toHaveAttribute('role', 'img');
+    } finally { await harness.stop(); }
+  });
+
+  test('a size chosen over a live picture is asked for once', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(presetRadio(page, 'Desktop')).toHaveAttribute('aria-checked', 'true');
+      await presetRadio(page, 'Tablet').click();
+      await expect(presetRadio(page, 'Tablet')).toHaveAttribute('aria-checked', 'true');
+      await page.waitForTimeout(300);
+      expect(viewportAsks(harness)).toEqual(['tablet']);
+    } finally { await harness.stop(); }
+  });
+
+  test('a refused size goes back to the last one archond applied', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await presetRadio(page, 'Tablet').click();
+      await expect(presetRadio(page, 'Tablet')).toHaveAttribute('aria-checked', 'true');
+      harness.daemon.refuseViewport('the app has a dialog open; answer it first');
+      await presetRadio(page, 'Phone').click();
+      await expect(page.getByText(/dialog open/i)).toBeVisible();
+      await expect(presetRadio(page, 'Tablet')).toHaveAttribute('aria-checked', 'true');
+      await expect(page.locator('.design-desk')).not.toHaveClass(/is-switching/);
+      expect(viewportAsks(harness)).toEqual(['tablet', 'phone']);
+    } finally { await harness.stop(); }
+  });
+
+  test('a size refused while the app shows a dialog leaves nothing switching', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(presetRadio(page, 'Desktop')).toHaveAttribute('aria-checked', 'true');
+      harness.daemon.refuseViewport('the app has a dialog open; answer it first');
+      await presetRadio(page, 'Tablet').click();
+      await expect(page.getByText(/dialog open/i)).toBeVisible();
+      await expect(presetRadio(page, 'Desktop')).toHaveAttribute('aria-checked', 'true');
+      await expect(presetRadio(page, 'Tablet')).toHaveAttribute('aria-busy', 'false');
+      await expect(page.locator('.design-desk')).not.toHaveClass(/is-switching/);
+      await expect(page.locator('.design-canvas')).toHaveCSS('visibility', 'visible');
+      await presetRadio(page, 'Tablet').click();
+      await expect(presetRadio(page, 'Tablet')).toHaveAttribute('aria-checked', 'true');
+      expect(viewportAsks(harness)).toEqual(['tablet', 'tablet']);
+    } finally { await harness.stop(); }
+  });
+
+  test('sizes chosen while one is switching: one request at a time, and the latest wins', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(presetRadio(page, 'Desktop')).toHaveAttribute('aria-checked', 'true');
+      const release = harness.daemon.holdViewport();
+      await presetRadio(page, 'Tablet').click();
+      await expect.poll(() => viewportAsks(harness)).toEqual(['tablet']);
+      await presetRadio(page, 'Desktop').click();
+      await presetRadio(page, 'Phone').click();
+      await page.waitForTimeout(300);
+      expect(viewportAsks(harness), 'nothing more while Tablet is unanswered').toEqual(['tablet']);
+      release();
+      await expect.poll(() => harness.daemon.state.viewportsAnswered).toBe(2);
+      expect(viewportAsks(harness), 'Desktop was replaced before it was sent').toEqual(['tablet', 'phone']);
+      expect(harness.daemon.state.sessionPatch.viewport_preset).toBe('phone');
+      await expect(presetRadio(page, 'Phone')).toHaveAttribute('aria-checked', 'true');
+      // Phone is what the screen holds as confirmed: a refused change goes back to it.
+      harness.daemon.refuseViewport('the app has a dialog open; answer it first');
+      await presetRadio(page, 'Desktop').click();
+      await expect(page.getByText(/dialog open/i)).toBeVisible();
+      await expect(presetRadio(page, 'Phone')).toHaveAttribute('aria-checked', 'true');
+      await expect(page.locator('.design-desk')).not.toHaveClass(/is-switching/);
+    } finally { await harness.stop(); }
+  });
+
+  test('overlapping sizes both refused go back to the one archond confirmed', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(presetRadio(page, 'Desktop')).toHaveAttribute('aria-checked', 'true');
+      const refusal = 'the app has a dialog open; answer it first';
+      const release = harness.daemon.holdViewport({ refuse: refusal });
+      harness.daemon.refuseViewport(refusal);
+      await presetRadio(page, 'Tablet').click();
+      await expect.poll(() => viewportAsks(harness)).toEqual(['tablet']);
+      await presetRadio(page, 'Phone').click();
+      await expect(presetRadio(page, 'Phone')).toHaveAttribute('aria-busy', 'true');
+      release();
+      await expect.poll(() => harness.daemon.state.viewportsAnswered).toBe(2);
+      expect(viewportAsks(harness)).toEqual(['tablet', 'phone']);
+      await expect(presetRadio(page, 'Desktop')).toHaveAttribute('aria-checked', 'true');
+      await expect(presetRadio(page, 'Phone')).toHaveAttribute('aria-busy', 'false');
+      await expect(page.locator('.design-desk')).not.toHaveClass(/is-switching/);
+    } finally { await harness.stop(); }
+  });
+
+  test('a view asked for before a resize does not undo it', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(presetRadio(page, 'Desktop')).toHaveAttribute('aria-checked', 'true');
+      // A refresh goes out while the session is still on Desktop, and its answer comes late.
+      harness.daemon.state.notes.unshift(seedNote({ id: 'D7', text: 'the late view arrived', before_asset: null, after_asset: null }));
+      harness.daemon.state.version += 1;
+      const late = harness.daemon.holdView();
+      const gets = () => harness.daemon.state.requests.filter((r) => r.cmd === 'design_get').length;
+      const before = gets();
+      harness.daemon.pushSession({});
+      await expect.poll(gets).toBe(before + 1);
+      await presetRadio(page, 'Tablet').click();
+      // The Tablet answer goes out on the socket before the late view, so the screen has it first.
+      await expect.poll(() => harness.daemon.state.viewportsAnswered).toBe(1);
+      late.release();
+      await late.delivered;
+      await expect(page.getByText('the late view arrived')).toBeVisible();
+      await expect(presetRadio(page, 'Tablet')).toHaveAttribute('aria-checked', 'true');
+      // Tablet stayed confirmed: a refused change goes back to it, not to the late view's Desktop.
+      harness.daemon.refuseViewport('the app has a dialog open; answer it first');
+      await presetRadio(page, 'Phone').click();
+      await expect(page.getByText(/dialog open/i)).toBeVisible();
+      await expect(presetRadio(page, 'Tablet')).toHaveAttribute('aria-checked', 'true');
+      await expect(page.locator('.design-desk')).not.toHaveClass(/is-switching/);
+      expect(viewportAsks(harness)).toEqual(['tablet', 'phone']);
+    } finally { await harness.stop(); }
+  });
+
+  test('bursts of quick size clicks end on the last click, and the buttons never move', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(presetRadio(page, 'Desktop')).toHaveAttribute('aria-checked', 'true');
+      const names = ['Desktop', 'Tablet', 'Phone'];
+      const boxes = () => Promise.all(names.map((name) => presetRadio(page, name).boundingBox()));
+      const still = await boxes();
+      const at = Object.fromEntries(names.map((name, i) => [name, { x: still[i].x + still[i].width / 2, y: still[i].y + still[i].height / 2 }]));
+      const bursts = [['Tablet', 'Phone', 'Desktop'], ['Phone', 'Desktop', 'Tablet', 'Phone'], ['Desktop', 'Tablet', 'Phone', 'Desktop', 'Tablet'],
+        ['Phone', 'Tablet', 'Desktop', 'Phone', 'Tablet', 'Desktop'], ['Desktop', 'Phone', 'Tablet', 'Phone']];
+      for (const burst of bursts) {
+        // Clicks at where the buttons were, as fast as a hand goes: a moved button takes the wrong one.
+        for (const name of burst) await page.mouse.click(at[name].x, at[name].y);
+        expect(await boxes(), `the buttons stay put through ${burst}`).toEqual(still);
+        const last = burst.at(-1);
+        await expect(presetRadio(page, last)).toHaveAttribute('aria-checked', 'true');
+        await expect(page.locator('.design-desk')).not.toHaveClass(/is-switching/);
+        await expect(page.locator('.design-switching')).toHaveText('');
+        await expect.poll(() => harness.daemon.state.viewportsAnswered).toBe(viewportAsks(harness).length);
+        expect(viewportAsks(harness).at(-1)).toBe(last.toLowerCase());
+        expect(harness.daemon.state.sessionPatch.viewport_preset).toBe(last.toLowerCase());
+      }
+      await expect(page.locator('.toast'), 'no request errors').toHaveCount(0);
+    } finally { await harness.stop(); }
+  });
+
+  test('the stage keeps its place when the operator clicks and scrolls on it', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      const canvas = page.locator('.design-canvas');
+      await expect(canvas).toBeVisible();
+      const desk = page.locator('.design-desk');
+      const before = await canvas.boundingBox();
+      const fits = () => desk.evaluate((d) => ({ y: d.scrollHeight - d.clientHeight, x: d.scrollWidth - d.clientWidth }));
+      expect(await fits(), 'the fitted stage leaves the desk nothing to scroll').toEqual({ x: 0, y: 0 });
+      await page.mouse.click(before.x + before.width / 2, before.y + before.height / 2);
+      await page.mouse.wheel(0, 400);
+      await page.locator('.design-layer').focus();
+      await page.waitForTimeout(300);
+      expect(await canvas.boundingBox()).toEqual(before);
+      expect(await desk.evaluate((d) => [d.scrollTop, d.scrollLeft])).toEqual([0, 0]);
+    } finally { await harness.stop(); }
+  });
+
+  test('the same dialog opened again as soon as it is answered is shown and answered too, even after a double click', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      const sheet = page.getByRole('dialog', { name: 'The app says (alert)' });
+      const answers = () => harness.daemon.state.requests.filter((r) => r.cmd === 'design_dialog_answer').map((r) => r.accept);
+      harness.daemon.openDialogs([{ message: 'Saved' }, { message: 'Saved' }]);
+      await expect(sheet).toBeVisible();
+      await sheet.getByRole('button', { name: 'OK' }).dblclick();
+      // The app's second alert, the same text, comes while the first sheet closes.
+      await expect.poll(answers).toEqual([true]);
+      await page.waitForTimeout(500);
+      expect(answers(), 'the closing sheet answers once: a second click answers nothing').toEqual([true]);
+      await expect(sheet, 'the second alert is up').toHaveCount(1);
+      await sheet.getByRole('button', { name: 'OK' }).click();
+      await expect.poll(answers).toEqual([true, true]);
+      await page.waitForTimeout(500);
+      await expect(sheet).toHaveCount(0);
+      expect(harness.daemon.state.dialog).toBeNull();
+    } finally { await harness.stop(); }
+  });
+
+  test('an app dialog left open while the operator was away is shown again, once', async ({ browser, page }) => {
+    const harness = await open(browser, page);
+    try {
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      const sheet = page.getByRole('dialog', { name: 'The app says (alert)' });
+      harness.daemon.openDialog({ message: 'Unsaved changes' });
+      await expect(sheet).toBeVisible();
+      // The operator's browser went away and came back.
+      await page.reload();
+      await expect(sheet).toBeVisible();
+      await expect(sheet).toContainText('Unsaved changes');
+      // The network drops with the sheet still up: archond shows the same dialog again.
+      const subscribes = () => harness.daemon.state.requests.filter((r) => r.cmd === 'subscribe_design').length;
+      const joined = subscribes();
+      harness.daemon.dropSockets();
+      await expect.poll(subscribes).toBeGreaterThan(joined);
+      await page.waitForTimeout(300);
+      await expect(sheet).toHaveCount(1);
+      await sheet.getByRole('button', { name: 'OK' }).click();
+      await page.waitForTimeout(300);
+      await expect(sheet, 'one answer closes it: no copy comes up behind it').toHaveCount(0);
+      expect(harness.daemon.state.requests.filter((r) => r.cmd === 'design_dialog_answer').map((r) => r.accept)).toEqual([true]);
+      await page.reload();
+      await expect(page.locator('.design-canvas')).toBeVisible();
+      await expect(sheet).toHaveCount(0);
     } finally { await harness.stop(); }
   });
 

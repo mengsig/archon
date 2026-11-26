@@ -58,13 +58,25 @@ pub(crate) fn command(e: &Input) -> (&'static str, Value) {
             key_params(*action, key, code, text.as_deref(), *modifiers),
         ),
         Input::Text { text } => ("Input.insertText", json!({"text": text})),
-        Input::Touch { action, points } => (
-            "Input.dispatchTouchEvent",
-            json!({
-                "type": match action { TouchAction::Start => "touchStart", TouchAction::Move => "touchMove", TouchAction::End => "touchEnd", TouchAction::Cancel => "touchCancel" },
-                "touchPoints": points.iter().map(|p| json!({"x": p.x, "y": p.y, "id": p.id})).collect::<Vec<_>>(),
-            }),
-        ),
+        Input::Touch { action, points } => {
+            // Chrome lifts every finger on an end or cancel and refuses one that names any.
+            let lifts = matches!(action, TouchAction::End | TouchAction::Cancel);
+            let points: Vec<Value> = if lifts {
+                Vec::new()
+            } else {
+                points
+                    .iter()
+                    .map(|p| json!({"x": p.x, "y": p.y, "id": p.id}))
+                    .collect()
+            };
+            (
+                "Input.dispatchTouchEvent",
+                json!({
+                    "type": match action { TouchAction::Start => "touchStart", TouchAction::Move => "touchMove", TouchAction::End => "touchEnd", TouchAction::Cancel => "touchCancel" },
+                    "touchPoints": points,
+                }),
+            )
+        }
     }
 }
 
@@ -211,6 +223,11 @@ impl Held {
         );
     }
 
+    /// Chrome already let go of the touch on its own.
+    pub(crate) fn touch_ended(&mut self) {
+        self.touching = false;
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.buttons.is_empty() && self.keys.is_empty() && !self.touching
     }
@@ -263,10 +280,7 @@ impl Browser {
         }
         let dispatch = async {
             for e in events {
-                held.pressing(e);
-                let (method, params) = command(e);
-                sh.call(method, params).await?;
-                held.acknowledged(e);
+                dispatch(sh, &mut held, e).await?;
             }
             Ok(())
         };
@@ -310,6 +324,71 @@ impl Browser {
     }
 }
 
+/// Chrome's refusal of a touch move, end or cancel when it holds no touch.
+const NO_TOUCH_BEGUN: &str = "Must send a TouchStart first to start a new touch.";
+
+/// Chrome refused `e` because it had already ended the touch: a reload, a
+/// navigation or a zoom reset lifts every finger without telling anyone.
+fn touch_already_ended(e: &Input, error: &BrowserError) -> bool {
+    let continues = matches!(
+        e,
+        Input::Touch {
+            action: TouchAction::Move | TouchAction::End | TouchAction::Cancel,
+            ..
+        }
+    );
+    continues && matches!(error, BrowserError::Protocol(message) if message == NO_TOUCH_BEGUN)
+}
+
+/// Send `e` as a well-formed touch sequence: a start first lets go of a touch
+/// still held, and the rest of a touch that already ended is dropped.
+async fn dispatch(sh: &Shared, held: &mut Held, e: &Input) -> Result<(), BrowserError> {
+    if let Input::Touch { action, .. } = e {
+        let continues = *action != TouchAction::Start;
+        if continues && !held.touching {
+            return Ok(());
+        }
+        if !continues && held.touching {
+            send(
+                sh,
+                held,
+                &Input::Touch {
+                    action: TouchAction::Cancel,
+                    points: Vec::new(),
+                },
+            )
+            .await?;
+        }
+    }
+    send(sh, held, e).await?;
+    debug_assert!(
+        !matches!(
+            e,
+            Input::Touch {
+                action: TouchAction::End | TouchAction::Cancel,
+                ..
+            }
+        ) || !held.touching,
+        "a touch that ended is not held"
+    );
+    Ok(())
+}
+
+/// Dispatch one event, counting what it presses as held until Chrome answers.
+async fn send(sh: &Shared, held: &mut Held, e: &Input) -> Result<(), BrowserError> {
+    held.pressing(e);
+    let (method, params) = command(e);
+    match sh.call(method, params).await {
+        Ok(_) => held.acknowledged(e),
+        Err(error) if touch_already_ended(e, &error) => {
+            tracing::debug!("the preview's touch had already ended; the rest of it is dropped");
+            held.touch_ended();
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+
 /// Marks input lost when dropped before `done`: a batch that fails, times out
 /// or is cancelled (its request dropped mid-dispatch) may have left a press held.
 struct LostUnlessDone<'a> {
@@ -336,7 +415,12 @@ async fn release_held(sh: &Arc<Shared>, held: &mut Held) -> bool {
         sent.spawn(async move {
             let (method, params) = command(&release);
             let answer = tokio::time::timeout(RELEASE_DEADLINE, sh.call(method, params)).await;
-            (release, matches!(answer, Ok(Ok(_))))
+            let released = match &answer {
+                Ok(Ok(_)) => true,
+                Ok(Err(error)) => touch_already_ended(&release, error),
+                Err(_) => false,
+            };
+            (release, released)
         });
     }
     let mut unanswered = 0usize;
@@ -366,7 +450,7 @@ async fn release_held(sh: &Arc<Shared>, held: &mut Held) -> bool {
 mod tests {
     use super::*;
     use crate::TouchPoint;
-    use crate::testutil::{Log, fake_browser, no_answer};
+    use crate::testutil::{Log, fake_browser, no_answer, refusal};
 
     fn mouse(action: MouseAction, button: MouseButton) -> Input {
         Input::Mouse {
@@ -616,5 +700,140 @@ mod tests {
             ["mousePressed left", "mouseMoved left"]
         );
         assert_eq!(b.sh.input.lock().await.buttons, [MouseButton::Left]);
+    }
+
+    /// Chrome's own touch rules: one touch at a time, begun by a start; an end
+    /// or cancel names no finger. What breaks a rule is refused as Chrome does.
+    fn chrome_touch(touching: &std::sync::Mutex<bool>, p: &Value) -> Option<Value> {
+        let mut touching = touching.lock().unwrap();
+        let points = p["touchPoints"].as_array().map_or(0, Vec::len);
+        match p["type"].as_str() {
+            Some("touchStart") => *touching = true,
+            Some("touchCancel") if points > 0 => {
+                return Some(refusal("TouchCancel must not have any touch points."));
+            }
+            Some(_) if !*touching => return Some(refusal(NO_TOUCH_BEGUN)),
+            Some("touchEnd" | "touchCancel") => *touching = false,
+            _ => {}
+        }
+        None
+    }
+
+    fn finger(action: TouchAction, y: f64) -> Input {
+        Input::Touch {
+            action,
+            points: vec![TouchPoint { x: 50.0, y, id: 7 }],
+        }
+    }
+
+    /// The phone preview's red toasts: after one lost batch, the next batch's
+    /// release cancelled the swipe under way and each later move was refused.
+    #[tokio::test]
+    async fn a_swipe_cut_short_by_a_lost_batch_raises_no_error() {
+        let chrome = Arc::new(std::sync::Mutex::new(false));
+        let touching = chrome.clone();
+        let (b, log) = fake_browser(move |m, p| {
+            (m == "Input.dispatchTouchEvent")
+                .then(|| chrome_touch(&touching, p))
+                .flatten()
+        })
+        .await;
+        b.input(&[finger(TouchAction::Start, 700.0)]).await.unwrap();
+        b.input_lost();
+        let next = log.lock().unwrap().len();
+        for y in [650.0, 600.0, 550.0] {
+            b.input(&[finger(TouchAction::Move, y)])
+                .await
+                .expect("the rest of a cancelled swipe is dropped, not refused");
+        }
+        b.input(&[finger(TouchAction::End, 550.0)]).await.unwrap();
+        assert_eq!(sent_since(&log, next), ["touchCancel"]);
+        // The next swipe goes through whole.
+        let swipe = [
+            finger(TouchAction::Start, 700.0),
+            finger(TouchAction::Move, 600.0),
+            finger(TouchAction::End, 600.0),
+        ];
+        b.input(&swipe).await.expect("a new swipe is well formed");
+        assert!(b.sh.input.lock().await.is_empty());
+        assert!(!*chrome.lock().unwrap(), "Chrome holds no touch");
+    }
+
+    /// A reload or zoom reset lifts the finger in Chrome; the swipe's later
+    /// moves were refused with "Must send a TouchStart first".
+    #[tokio::test]
+    async fn a_touch_chrome_already_ended_is_dropped_quietly() {
+        let chrome = Arc::new(std::sync::Mutex::new(false));
+        let touching = chrome.clone();
+        let (b, log) = fake_browser(move |m, p| {
+            (m == "Input.dispatchTouchEvent")
+                .then(|| chrome_touch(&touching, p))
+                .flatten()
+        })
+        .await;
+        b.input(&[finger(TouchAction::Start, 700.0)]).await.unwrap();
+        *chrome.lock().unwrap() = false;
+        let next = log.lock().unwrap().len();
+        let rest = [
+            finger(TouchAction::Move, 650.0),
+            finger(TouchAction::Move, 600.0),
+            finger(TouchAction::End, 600.0),
+        ];
+        b.input(&rest)
+            .await
+            .expect("Chrome ending the touch is no error");
+        assert_eq!(
+            sent_since(&log, next),
+            ["touchMove"],
+            "one refusal, then dropped"
+        );
+        assert!(b.sh.input.lock().await.is_empty());
+        assert!(b.reconcile_input().await, "nothing is owed");
+    }
+
+    /// An end or cancel names no finger (pointercancel sent the finger and
+    /// Chrome refused it), and a start while a touch is held lets go of it first.
+    #[tokio::test]
+    async fn touch_sequences_are_well_formed() {
+        let chrome = Arc::new(std::sync::Mutex::new(false));
+        let touching = chrome.clone();
+        let (b, log) = fake_browser(move |m, p| {
+            (m == "Input.dispatchTouchEvent")
+                .then(|| chrome_touch(&touching, p))
+                .flatten()
+        })
+        .await;
+        let cancelled = [
+            finger(TouchAction::Start, 700.0),
+            finger(TouchAction::Cancel, 690.0),
+        ];
+        b.input(&cancelled)
+            .await
+            .expect("a cancel naming its finger is sent bare");
+        let twice = [
+            finger(TouchAction::Start, 700.0),
+            finger(TouchAction::Start, 500.0),
+            finger(TouchAction::End, 500.0),
+        ];
+        b.input(&twice).await.unwrap();
+        assert_eq!(
+            sent_since(&log, 0),
+            [
+                "touchStart",
+                "touchCancel",
+                "touchStart",
+                "touchCancel",
+                "touchStart",
+                "touchEnd"
+            ]
+        );
+        let lifts = log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, p)| matches!(p["type"].as_str(), Some("touchEnd" | "touchCancel")))
+            .all(|(_, p)| p["touchPoints"] == json!([]));
+        assert!(lifts, "an end or cancel names no finger");
+        assert!(!*chrome.lock().unwrap());
     }
 }

@@ -4,6 +4,7 @@
 //! kept agent, archond's own commit checks and undo, and the finish capture
 //! the proposal gate's ledger is built from.
 
+mod accept;
 mod assets;
 mod browser;
 mod delivery;

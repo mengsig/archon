@@ -7,7 +7,9 @@ import { toast } from '../../ui/toast.js';
 import { designErrorText, isBackpressure, isLostInput } from '../../core/design.js';
 import { initialState, reduce, isLive, currentPath, followsNewSession, presetMismatch, pointerBlockedText, PRESET_SIZE } from './state.js';
 import { createDesignStream } from './stream.js';
+import { nextRequest } from './viewport.js';
 import { createStage } from './overlay.js';
+import { SWITCH_LIMIT_MS } from './switching.js';
 import { fileLimitMessage, uploadFiles } from './files.js';
 import { showFileChooser, showDownload, showPicker, showClipboard } from './browser-prompts.js';
 import { BEHIND, createBehindLine } from './behind.js';
@@ -26,6 +28,9 @@ import { startFinish, resumeFinish, ledgerPanel } from './finish.js';
 import { openSketch } from './sketch.js';
 import { sheetAfterCancel, readScroll, restoreScroll } from './sheet-state.js';
 import { buildTopBar, buildModeBar, buildBottomBar, buildPhasePanel, buildStatusBar, openShortcuts } from './chrome.js';
+
+// Messages the app's own events raise (a refused download) stay long enough to read.
+const STREAM_TOAST_MS = 8000;
 
 const PHONE_PX = 640;
 const WIDE_PX = 1024;
@@ -51,7 +56,6 @@ export function mountDesign(view, ctx) {
   let tickets = 0;
   let viewCurrent = false;
   let autoPreset = false;
-  let presetSent = null; // `${session}|${preset}` of the last preset request, so a mismatch re-sends once
   let follower = null; // the poll that waits for the item's next session
   const outbox = createNoteOutbox({ item });
   let sendingNotes = 0;
@@ -66,7 +70,7 @@ export function mountDesign(view, ctx) {
   const title = ctx.store.get().summaries?.find((s) => s.id === item)?.title ?? 'Design';
   const dispatch = (action) => {
     state = reduce(state, action);
-    if (state.toasts.length) { for (const t of state.toasts) toast(t); state = reduce(state, { type: 'toasts_taken' }); }
+    if (state.toasts.length) { for (const t of state.toasts) toast(t, { ms: STREAM_TOAST_MS }); state = reduce(state, { type: 'toasts_taken' }); }
     if (state.refresh) { state = { ...state, refresh: false }; stream.refresh(); }
     if (state.dialog) showDialog();
     if (state.browserEvents.length) {
@@ -106,7 +110,7 @@ export function mountDesign(view, ctx) {
     title, onBack: back,
     onPreset: (preset) => setPreset(preset),
     onReload: () => reload(),
-    onPreviewBack: () => ctx.design.goBack(session()).catch(refuse),
+    onPreviewBack: () => { dispatch({ type: 'new_tab_dismissed' }); ctx.design.goBack(session()).catch(refuse); },
     onFinish: () => reviewing((hooks) => startFinish(ctx, state, hooks)),
     onReview: () => reviewing((hooks) => resumeFinish(ctx, state, hooks)),
     onBackToEditing: async () => {
@@ -264,12 +268,35 @@ export function mountDesign(view, ctx) {
     if (mode === 'region') stage.startKeyboardRegion();
     root.dataset.mode = mode;
   }
-  async function setPreset(preset) {
-    dispatch({ type: 'preset', preset });
-    presetSent = `${session()}|${preset}`;
-    try { await ctx.design.viewport(session(), preset); } catch (e) { refuse(e); }
+  function setPreset(preset) { dispatch({ type: 'preset', preset }); }
+  // One preset request per session at a time; a newer choice waits for its answer.
+  // Neither step changes the chosen preset, so neither needs a render.
+  function syncViewport() {
+    const id = session();
+    if (!operator || !id) return;
+    if (state.session.state === 'live') state = reduce(state, { type: 'preset_resend' });
+    const preset = nextRequest(state.viewport);
+    if (!preset) return;
+    state = reduce(state, { type: 'preset_sending', session: id, preset });
+    sendViewport(id, preset);
   }
-  function reload() { ctx.design.reload(session()).catch(refuse); }
+  async function sendViewport(id, preset) {
+    let ok = true;
+    let error = null;
+    try { await ctx.design.viewport(id, preset); } catch (err) { ok = false; error = err; }
+    // Refused (the app's dialog is open, say): the preview stays at the size archond confirmed.
+    dispatch({ type: 'preset_settled', session: id, preset, ok });
+    if (!ok && session() === id) refuse(error);
+  }
+  // A size archond confirmed that the frames do not reach in time is asked for
+  // again, then given up with a toast: "Switching…" never stays.
+  let stallTimer = null;
+  function watchSwitch(stuck) {
+    if (!stuck) { clearTimeout(stallTimer); stallTimer = null; return; }
+    if (stallTimer !== null) return;
+    stallTimer = setTimeout(() => { stallTimer = null; dispatch({ type: 'preset_stalled' }); }, SWITCH_LIMIT_MS);
+  }
+  function reload() { dispatch({ type: 'new_tab_dismissed' }); ctx.design.reload(session()).catch(refuse); }
 
   // Taps resolve against the streamed size; until it matches the preset, say so instead of the daemon's "outside the preview".
   function waitingForSize() {
@@ -485,19 +512,56 @@ export function mountDesign(view, ctx) {
     const d = state.dialog;
     const input = d.kind === 'prompt' ? promptInput(d.defaultPrompt ?? '') : null;
     let accepted = false;
-    const answer = (accept) => { accepted = true; ctx.design.dialogAnswer(session(), accept, accept && input ? input.value : null).catch(refuse); sheet.close(); };
+    const answer = (accept) => {
+      // One answer per sheet: its buttons still take clicks while it closes.
+      if (accepted) return;
+      accepted = true;
+      const text = accept && input ? input.value : null;
+      // Done now: the app may open the same dialog again before this sheet has closed.
+      dispatch({ type: 'dialog_closed', dialog: d });
+      ctx.design.dialogAnswer(session(), accept, text).catch(refuse);
+      sheet.close();
+    };
     const content = h('div', { class: 'confirm' }, h('p', { class: 'confirm-message', text: d.message }), input,
       h('button', { class: 'button button-primary button-block', type: 'button', onclick: () => answer(true) }, 'OK'),
       d.kind === 'alert' ? null : h('button', { class: 'button button-plain button-block', type: 'button', onclick: () => answer(false) }, 'Cancel'));
     const sheet = openSheet({ title: `The app says (${d.kind})`, content, onClose: () => {
       dialogOpen = false;
       if (!accepted && session()) ctx.design.dialogAnswer(session(), false, null).catch(() => {});
-      dispatch({ type: 'dialog_closed' });
+      dispatch({ type: 'dialog_closed', dialog: d });
     } });
   }
 
   // ---- render ----
   const previewPath = () => currentPath(state);
+  // The stage shows while the preview runs, dimmed while it is down or
+  // reconnecting, with no picture at the old size while it switches size.
+  function renderStage(p, live) {
+    const showStage = live && (p.kind === 'live' || p.kind === 'finishing' || p.kind === 'preview_down' || p.kind === 'reconnecting');
+    stage.element.hidden = !showStage;
+    stage.layer.setAttribute('aria-label', status.frameText.textContent);
+    stage.element.classList.toggle('is-dim', p.kind === 'preview_down' || p.kind === 'reconnecting');
+    const switching = (p.kind === 'live' || p.kind === 'finishing') && presetMismatch(state);
+    stage.setSwitching(showStage && switching ? PRESET_SIZE[state.preset] : null, pointerBlockedText(state));
+    watchSwitch(operator && p.kind === 'live' && switching && !nextRequest(state.viewport) && !state.viewport.pending);
+    return showStage;
+  }
+  // Notes or the version tree; the tabs between them only with iterations on.
+  function renderTabs(iter) {
+    tabs.hidden = !iter;
+    const treeTab = iter && tab === 'tree';
+    for (const b of tabButtons) { const on = b.dataset.tab === (treeTab ? 'tree' : 'notes'); b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
+    if (iter) {
+      notes.element.setAttribute('role', 'tabpanel');
+      notes.element.setAttribute('aria-labelledby', 'design-tab-notes');
+    } else {
+      notes.element.removeAttribute('role');
+      notes.element.setAttribute('aria-labelledby', 'design-notes-title');
+    }
+    notes.element.hidden = treeTab;
+    tree.element.hidden = !treeTab;
+    return treeTab;
+  }
   function render() {
     const features = ctx.store.get().designEnabled || ctx.store.get().connection.state !== 'open';
     const p = phase.update(state, { operator, features, continued });
@@ -511,29 +575,11 @@ export function mountDesign(view, ctx) {
     bottom.element.hidden = atEnd;
     bottom.update(state.mode);
     status.update(state, { path: previewPath() });
-    const showStage = live && (p.kind === 'live' || p.kind === 'finishing' || p.kind === 'preview_down' || p.kind === 'reconnecting');
-    stage.element.hidden = !showStage;
-    stage.layer.setAttribute('aria-label', status.frameText.textContent);
-    stage.element.classList.toggle('is-dim', p.kind === 'preview_down' || p.kind === 'reconnecting');
-    // A picture at the old size is not shown while the preview switches size;
-    // with the preview down or reconnecting the dimmed last picture says so.
-    const switching = (p.kind === 'live' || p.kind === 'finishing') && presetMismatch(state);
-    stage.setSwitching(showStage && switching ? PRESET_SIZE[state.preset] : null, pointerBlockedText(state));
+    const showStage = renderStage(p, live);
     typeForm.hidden = !(showStage && state.mode === 'interact');
     side.hidden = !operator || !state.session;
     const iter = iterations() && operator;
-    tabs.hidden = !iter;
-    const treeTab = iter && tab === 'tree';
-    for (const b of tabButtons) { const on = b.dataset.tab === (treeTab ? 'tree' : 'notes'); b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
-    if (iter) {
-      notes.element.setAttribute('role', 'tabpanel');
-      notes.element.setAttribute('aria-labelledby', 'design-tab-notes');
-    } else {
-      notes.element.removeAttribute('role');
-      notes.element.setAttribute('aria-labelledby', 'design-notes-title');
-    }
-    notes.element.hidden = treeTab;
-    tree.element.hidden = !treeTab;
+    const treeTab = renderTabs(iter);
     composer.setRefsEnabled(iterations());
     if (viewing && !state.notes.some((n) => n.id === viewing)) viewing = null;
     const shown = iter && viewing ? state.notes.find((n) => n.id === viewing) : null;
@@ -558,11 +604,8 @@ export function mountDesign(view, ctx) {
     root.dataset.mode = state.mode;
     const waiting = renderDrafts();
     if (operator) flushOutbox(waiting);
-    // The daemon may not have applied the preset the session says it has: a frame at another size re-sends it, once.
-    if (operator && state.session?.state === 'live' && presetMismatch(state) && presetSent !== `${session()}|${state.preset}`) {
-      presetSent = `${session()}|${state.preset}`;
-      ctx.design.viewport(session(), state.preset).catch(refuse);
-    }
+    // Sends a chosen preset, or once re-sends the confirmed one a frame at another size contradicts.
+    syncViewport();
     syncFollower();
     // A phone starts on the Phone preset, once.
     if (!autoPreset && layout === 'phone' && operator && state.session?.state === 'live') {
@@ -609,10 +652,11 @@ export function mountDesign(view, ctx) {
 
   const stream = createDesignStream({
     ctx, item,
-    onView: (kind, data) => {
+    onView: (kind, data, stamp) => {
       viewCurrent = true;
-      dispatch(kind === 'design_state' ? { type: 'view', view: data } : { type: 'summary', summary: data });
+      dispatch(kind === 'design_state' ? { type: 'view', view: data, stamp } : { type: 'summary', summary: data });
     },
+    stamp: () => state.viewport.settles,
     onEvent: (e) => dispatch(e.type === 'connection' ? e : { type: 'event', event: e }),
     onFrame: (bitmap, meta) => stage.draw(bitmap, meta),
     onReset: () => {
@@ -663,6 +707,6 @@ export function mountDesign(view, ctx) {
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', fit);
     vv?.removeEventListener('resize', onViewport);
-    clearInterval(clock); clearTimeout(follower); clearTimeout(answeredTimer); follower = null; offFeatures(); offConn(); offItem();
+    clearInterval(clock); clearTimeout(follower); clearTimeout(answeredTimer); clearTimeout(stallTimer); follower = null; offFeatures(); offConn(); offItem();
   };
 }

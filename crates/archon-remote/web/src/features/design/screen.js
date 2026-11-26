@@ -29,6 +29,9 @@ import { openSketch } from './sketch.js';
 import { sheetAfterCancel, readScroll, restoreScroll } from './sheet-state.js';
 import { buildTopBar, buildModeBar, buildBottomBar, buildPhasePanel, buildStatusBar, openShortcuts } from './chrome.js';
 
+// Messages the app's own events raise (a refused download) stay long enough to read.
+const STREAM_TOAST_MS = 8000;
+
 const PHONE_PX = 640;
 const WIDE_PX = 1024;
 const SHEET_HEIGHTS = ['peek', 'half', 'full'];
@@ -67,7 +70,7 @@ export function mountDesign(view, ctx) {
   const title = ctx.store.get().summaries?.find((s) => s.id === item)?.title ?? 'Design';
   const dispatch = (action) => {
     state = reduce(state, action);
-    if (state.toasts.length) { for (const t of state.toasts) toast(t); state = reduce(state, { type: 'toasts_taken' }); }
+    if (state.toasts.length) { for (const t of state.toasts) toast(t, { ms: STREAM_TOAST_MS }); state = reduce(state, { type: 'toasts_taken' }); }
     if (state.refresh) { state = { ...state, refresh: false }; stream.refresh(); }
     if (state.dialog) showDialog();
     if (state.browserEvents.length) {

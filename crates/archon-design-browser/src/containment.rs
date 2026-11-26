@@ -423,4 +423,40 @@ mod tests {
             Some("Chromium could not verify a subframe storage origin")
         );
     }
+
+    #[test]
+    fn main_frame_navigation_to_unsupported_schemes_still_stops_the_preview() {
+        for url in [
+            "file:///etc/passwd",
+            "chrome://settings",
+            "javascript:alert(1)",
+            "data:text/html,x",
+            "about:blank",
+        ] {
+            let guard = preview_guard();
+            guard.state.lock().unwrap().main_frame = Some("main".into());
+            let params = json!({"url": url, "frameId": "main"});
+            assert!(
+                matches!(
+                    guard.check_navigation_start(&params),
+                    Err(BrowserError::Containment(_))
+                ),
+                "{url} must stop the preview"
+            );
+            assert_eq!(
+                guard.reason(),
+                Some("a main-frame document tried to navigate to an unsupported URL scheme")
+            );
+        }
+    }
+
+    #[test]
+    fn the_starting_blank_page_and_preview_pages_may_be_navigated_to() {
+        let guard = preview_guard();
+        let blank = json!({"url": "about:blank", "frameId": "main"});
+        guard.check_navigation_start(&blank).unwrap();
+        let page = json!({"url": "http://127.0.0.1:3000/next", "frameId": "main"});
+        guard.check_navigation_start(&page).unwrap();
+        assert!(guard.reason().is_none());
+    }
 }

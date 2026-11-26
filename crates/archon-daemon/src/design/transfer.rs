@@ -54,6 +54,7 @@ pub(crate) async fn report(rt: &Runtime, event: adb::BrowserEvent) -> Option<Des
                 .lock()
                 .await
                 .add_download(name.clone(), path, bytes);
+            tracing::info!(%name, bytes, id, "design: download kept");
             DesignEvent::Download {
                 id,
                 name,
@@ -63,9 +64,12 @@ pub(crate) async fn report(rt: &Runtime, event: adb::BrowserEvent) -> Option<Des
         adb::BrowserEvent::FileChooserFailed { reason } => DesignEvent::Toast {
             message: format!("The app's file chooser could not be offered: {reason}."),
         },
-        adb::BrowserEvent::DownloadFailed { name, reason } => DesignEvent::Toast {
-            message: format!("The app's download of {name} was not kept: {reason}."),
-        },
+        adb::BrowserEvent::DownloadFailed { name, reason } => {
+            tracing::warn!(%name, %reason, "design: download refused");
+            DesignEvent::Toast {
+                message: format!("The app's download of {name} was not kept: {reason}."),
+            }
+        }
         adb::BrowserEvent::Picker(picker) => picker_event(picker),
         adb::BrowserEvent::Copied { text } => DesignEvent::Clipboard { text },
         adb::BrowserEvent::NewTab { url } if url.is_empty() => DesignEvent::Toast {
@@ -256,11 +260,9 @@ impl DesignService {
         ctx: &DaemonContext,
         session: &DesignSessionId,
     ) -> Result<Reply, ArchonError> {
-        let (rt, browser) = self.live_runtime(ctx, session).await?;
-        if !browser.go_back().await.map_err(unavailable)? {
-            let message = "There is no earlier page in the preview.".to_owned();
-            let _ = rt.events.send(DesignEvent::Toast { message });
-        }
+        let (_, browser) = self.live_runtime(ctx, session).await?;
+        let went_back = browser.go_back().await.map_err(unavailable)?;
+        tracing::debug!(went_back, "design: preview back");
         Ok(Reply::DesignDone)
     }
 }

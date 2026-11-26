@@ -53,3 +53,9 @@ test('a new tab note stays until the operator goes back or reloads', () => {
   assert.equal(reduce(state, { type: 'new_tab_dismissed' }).newTab, null);
   assert.equal(reduce(state, { type: 'event', event: { event: 'ended', reason: 'done' } }).newTab, null);
 });
+
+test('a refused download reaches the operator as a toast naming the file and the limit', () => {
+  const message = "The app's download of stowage.bin was not kept: it is larger than 64 MiB.";
+  const state = reduce(initialState('item'), { type: 'event', event: { event: 'toast', message } });
+  assert.deepEqual(state.toasts, [message]);
+});

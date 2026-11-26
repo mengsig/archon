@@ -63,6 +63,13 @@ const PLAIN: &str =
 const NO_BAR: &str = "<style>#topbar{visibility:hidden}</style>";
 const WIDE_LINE: &str = "<p id=wide>abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz</p>";
 
+/// A phone page whose only scroller is a horizontal strip resting at its left end.
+const STRIP: &str = "<!doctype html><html><head>\
+<meta name=viewport content=\"width=device-width,initial-scale=1\">\
+<style>body{margin:0}#strip{margin-top:100px;height:200px;overflow-x:auto;white-space:nowrap}\
+#strip div{display:inline-block;width:300px;height:180px;background:#0a0}</style></head>\
+<body><div id=strip><div></div><div></div><div></div></div></body></html>";
+
 #[derive(Debug)]
 struct Loopback;
 
@@ -106,6 +113,7 @@ async fn serve_page() -> u16 {
                     let html = match request.uri().path() {
                         "/narrow" => narrow.clone(),
                         "/rtl" => rtl.clone(),
+                        "/strip" => Bytes::from(STRIP),
                         "/fixed" => fixed.clone(),
                         "/fixed-wide" => fixed_wide.clone(),
                         "/fixed-bare" => fixed_bare.clone(),
@@ -782,5 +790,34 @@ async fn quick_size_changes_while_streaming_end_on_the_last_size() {
             "burst {n}"
         );
     }
+    b.close().await.unwrap();
+}
+
+/// Chromium's overscroll history navigation answered a rightward swipe on a
+/// scroller already at its left end by going back to about:blank, which stopped the preview.
+#[tokio::test]
+async fn a_rightward_swipe_at_the_left_edge_leaves_the_preview_running() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((b, url)) = open(PHONE, &root.path().join("edge-swipe")).await else {
+        return;
+    };
+    b.navigate(&format!("{url}strip")).await.unwrap();
+    let _ = b
+        .wait_network_idle(Duration::from_millis(300), Duration::from_secs(10))
+        .await;
+    let finger = |action, x| Input::Touch {
+        action,
+        points: vec![TouchPoint { x, y: 200.0, id: 0 }],
+    };
+    for _ in 0..3 {
+        let mut swipe = vec![finger(TouchAction::Start, 40.0)];
+        swipe.extend((1..=10).map(|i| finger(TouchAction::Move, 40.0 + f64::from(i) * 30.0)));
+        swipe.push(finger(TouchAction::End, 340.0));
+        b.input(&swipe).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    assert_eq!(b.containment_reason(), None);
+    let at = b.current_location().await.unwrap();
+    assert!(at.ends_with("/strip"), "{at:?}");
     b.close().await.unwrap();
 }

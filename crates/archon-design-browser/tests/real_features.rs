@@ -17,6 +17,8 @@ use archon_design_browser::{
     UpstreamGuard, Viewport, find_browser,
 };
 
+/// Past the 64 MiB the preview offers.
+const BIG_DOWNLOAD_BYTES: usize = 70 * 1024 * 1024;
 const CSV: &str = "bay,row,tier\n01,02,82\n";
 /// An accept longer than a display string, matched whole.
 const OFFICE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -40,6 +42,7 @@ const PAGE: &str = "<!doctype html><body style='margin:0;font:14px sans-serif'>
 <label for=f style='top:380px'>Choose a stowage file</label>
 <button id=two style='top:10px;left:260px'>Two alerts</button>
 <input id=deck type=file accept='image/*,OFFICE,application/vnd.oasis.opendocument.text' style='top:60px;left:260px'>
+<a id=big href='/big' download style='top:160px;left:260px'>Big download</a>
 <input id=huge type=file accept='HUGE' style='top:110px;left:260px'>
 <script>
 const report = (key, value) => history.replaceState({}, '', '?' + key + '=' + encodeURIComponent(value));
@@ -67,6 +70,7 @@ impl UpstreamGuard for Loopback {
 fn respond(path: &str) -> Response<Full<Bytes>> {
     let (kind, body, attachment) = match path {
         "/report" => ("text/csv", CSV.to_owned(), true),
+        "/big" => ("application/octet-stream", String::new(), true),
         "/second" => ("text/html", "<body>Second page</body>".to_owned(), false),
         _ => {
             let page = PAGE
@@ -79,10 +83,19 @@ fn respond(path: &str) -> Response<Full<Bytes>> {
     if attachment {
         response = response.header(
             "content-disposition",
-            "attachment; filename=\"lashing.csv\"",
+            if path == "/big" {
+                "attachment; filename=\"stowage.bin\""
+            } else {
+                "attachment; filename=\"lashing.csv\""
+            },
         );
     }
-    response.body(Full::new(Bytes::from(body))).unwrap()
+    let body = if path == "/big" {
+        Bytes::from(vec![b'x'; BIG_DOWNLOAD_BYTES])
+    } else {
+        Bytes::from(body)
+    };
+    response.body(Full::new(body)).unwrap()
 }
 
 async fn serve() -> u16 {
@@ -325,6 +338,29 @@ async fn a_download_is_kept_for_the_operator() {
 }
 
 #[tokio::test]
+async fn an_oversized_download_is_refused_by_name() {
+    let Some(Fixture {
+        browser,
+        mut events,
+        ..
+    }) = open().await
+    else {
+        return;
+    };
+    click(&browser, 300.0, 175.0).await;
+    let (name, reason) = next_event(&mut events, |event| match event {
+        BrowserEvent::DownloadFailed { name, reason } => Some((name, reason)),
+        BrowserEvent::Downloaded { .. } => panic!("an oversized download was kept"),
+        _ => None,
+    })
+    .await;
+    assert_eq!(name, "stowage.bin");
+    assert!(reason.contains("64 MiB"), "{reason}");
+    assert_eq!(browser.containment_reason(), None);
+    browser.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn a_confirm_dialog_shows_its_text_and_takes_the_operators_answer() {
     let Some(Fixture {
         browser,
@@ -460,5 +496,16 @@ async fn a_native_select_is_answered_by_the_operator() {
         !browser.answer_picker(picker.id, Some("1")).await.unwrap(),
         "an answer is used once"
     );
+    browser.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn back_with_nothing_earlier_is_quiet() {
+    let Some(Fixture { browser, .. }) = open().await else {
+        return;
+    };
+    assert!(!browser.go_back().await.unwrap());
+    assert!(browser.current_location().await.unwrap() == "/");
+    assert_eq!(browser.containment_reason(), None);
     browser.close().await.unwrap();
 }

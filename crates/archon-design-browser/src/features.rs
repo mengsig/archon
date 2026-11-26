@@ -511,6 +511,7 @@ impl Browser {
     }
 
     /// Go back one entry in the page's history; `false` when there is none.
+    /// The blank page the browser starts on is not one to return to.
     pub async fn go_back(&self) -> Result<bool, BrowserError> {
         let history = self.sh.call("Page.getNavigationHistory", json!({})).await?;
         let current = history["currentIndex"].as_u64().unwrap_or(0) as usize;
@@ -523,6 +524,9 @@ impl Browser {
             return Ok(false);
         };
         let url = entry["url"].as_str().unwrap_or_default();
+        if url == "about:blank" {
+            return Ok(false);
+        }
         if !self.sh.allows_navigation(url) {
             return Err(BrowserError::Navigation {
                 url: clean(url),
@@ -688,5 +692,25 @@ mod tests {
             cancelled(&log, "stray").await,
             "an untracked oversized one is cancelled"
         );
+    }
+
+    /// The blank page the browser starts on is not a page to go back to.
+    #[tokio::test]
+    async fn back_to_the_starting_blank_page_is_a_quiet_no_op() {
+        let (b, log) = fake_browser(|method, _| {
+            (method == "Page.getNavigationHistory").then(|| {
+                json!({"currentIndex": 1, "entries": [
+                    {"id": 1, "url": "about:blank"},
+                    {"id": 2, "url": "http://127.0.0.1/"}]})
+            })
+        })
+        .await;
+        assert!(!b.go_back().await.unwrap());
+        let navigated = log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(m, _)| m == "Page.navigateToHistoryEntry");
+        assert!(!navigated, "no history entry was visited");
     }
 }

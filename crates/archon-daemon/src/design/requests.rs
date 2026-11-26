@@ -179,6 +179,33 @@ fn unavailable(e: adb::BrowserError) -> ArchonError {
     ArchonError::Unavailable(format!("the preview browser: {e}"))
 }
 
+/// Not behind the item lock: the click that opened the dialog holds it until
+/// the dialog is answered, so an answer waiting there settled only at the deadline.
+async fn answer_dialog(
+    ctx: &DaemonContext,
+    session: &archon_core::design::DesignSessionId,
+    accept: bool,
+    text: Option<String>,
+) -> Result<Reply, ArchonError> {
+    if text.as_ref().is_some_and(|value| value.len() > 16 * 1024) {
+        return Err(ArchonError::Invalid("dialog text exceeds 16 KiB".into()));
+    }
+    let row = ctx.design.current(ctx, session).await?;
+    if row.state == archon_core::design::SessionState::Confirmed {
+        return Err(super::finishing());
+    }
+    let browser = ctx
+        .design
+        .existing_runtime(&row.id)
+        .and_then(|rt| rt.browser())
+        .ok_or_else(|| ArchonError::Unavailable("there is no preview browser".into()))?;
+    browser
+        .answer_dialog(accept, text)
+        .await
+        .map_err(unavailable)?;
+    Ok(Reply::DesignDone)
+}
+
 pub(crate) async fn handle(
     ctx: &DaemonContext,
     client: ClientKind,
@@ -207,7 +234,6 @@ pub(crate) async fn handle(
     let preview_session = match &request {
         Request::DesignInput { session, .. }
         | Request::DesignReload { session }
-        | Request::DesignDialogAnswer { session, .. }
         | Request::DesignFileSet { session, .. }
         | Request::DesignFileDrop { session, .. }
         | Request::DesignPickerAnswer { session, .. }
@@ -270,27 +296,14 @@ pub(crate) async fn handle(
             session,
             accept,
             text,
-        } => {
-            if text.as_ref().is_some_and(|value| value.len() > 16 * 1024) {
-                return Err(ArchonError::Invalid("dialog text exceeds 16 KiB".into()));
-            }
-            let row = service.current(ctx, &session).await?;
-            let browser = service
-                .existing_runtime(&row.id)
-                .and_then(|rt| rt.browser())
-                .ok_or_else(|| ArchonError::Unavailable("there is no preview browser".into()))?;
-            browser
-                .answer_dialog(accept, text)
-                .await
-                .map_err(unavailable)?;
-            Ok(Reply::DesignDone)
-        }
+        } => answer_dialog(ctx, &session, accept, text).await,
         Request::DesignFilePart {
             session,
             transfer,
             file,
             name,
             size,
+            media_type,
             offset,
             data,
         } => {
@@ -300,6 +313,7 @@ pub(crate) async fn handle(
                 file,
                 name: &name,
                 size,
+                media_type: media_type.as_deref().unwrap_or_default(),
                 offset,
                 data: &data,
             };

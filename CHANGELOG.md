@@ -19,6 +19,17 @@
 
 ## Unreleased
 
+## 1.6.6
+
+Released 2026-11-26.
+
+Archon 1.6.6 fixes and completes the live design preview, turns live
+design sessions on by default, and still requires **Aether 1.4.3**. Store
+schema 32 adds how each design picture was taken; pictures taken before it
+keep only their viewport. From 1.6.5, `archon update --yes` is enough; from
+an earlier release, update Aether first with `aether update --version v1.4.3`
+and restart aetherd.
+
 ### Added
 
 - The live design preview hands what a headless browser cannot show to the
@@ -33,19 +44,20 @@
   can be copied out with one press, and pasting types into the app. Only paired operator devices may
   send or fetch files; observers are refused. New requests:
   `design_file_part`, `design_file_set`, `design_file_drop`,
-  `design_download`, `design_picker_answer` and `design_go_back`.
+  `design_download`, `design_picker_answer` and `design_go_back` (#505).
 
 ### Changed
 
 - Live design sessions are enabled by default. Only items with `proposal = live`
-  start a design stage; set `[design] enabled = false` to turn sessions off.
+  start a design stage; set `[design] enabled = false` to turn sessions off
+  (#503).
 
 ### Fixed
 
 - JavaScript dialogs in the design preview show the page's message and a
   prompt's suggested answer, and still wait for the operator's answer. A page
   opening a new tab or window no longer ends the preview. On a Mac, Cmd+A, C,
-  X, V, Z and Shift+Z now run their editing command in the app.
+  X, V, Z and Shift+Z now run their editing command in the app (#505).
 - Scrolling in the live design preview works like a browser tab. A scrolled
   page's frame showed the top of the document instead: Chromium's screenshot
   clip is in page coordinates and Archon gave it the visible area's, so a
@@ -56,7 +68,7 @@
   corner, and comment-mode picks on a scrolled page find the element under the
   pointer, right-to-left pages scrolled sideways included. PageUp, PageDown, Space, the arrows, Home and End now scroll the app, wheel line and
   page steps and trackpad fractions are converted to the app's pixels, and
-  frames come ten a second while you scroll.
+  frames come ten a second while you scroll (#504).
 - Fast scrolling no longer floods archond with input or shows a red "at most
   16 requests may be in flight" error. Input goes one request at a time, and
   archond ends each within about 20 seconds, so it runs in order; meanwhile
@@ -65,14 +77,66 @@
   The web app holds any request but input past archond's in-flight limit
   until a reply comes, and a request that never gets a reply frees its place
   after 30 seconds. A preview that falls behind shows one quiet status line
-  instead of toasts.
+  instead of toasts (#504).
 - A key, mouse button or finger can no longer stay stuck down in the design
   preview. archond alone tracks what is held (a press once sent, a release
   once Chromium answers it); after any input request that fails, times out or
   is turned away, or once a page's stream ends with input still queued (and
   again after any input it had already sent runs), it lets go of everything
   held before the next request, or within about three seconds if none comes,
-  each release with its own deadline.
+  each release with its own deadline (#504).
+- Swiping on the phone preview scrolls the app instead of raising red
+  "Must send a TouchStart first" errors. Chromium lifts the finger on a zoom
+  reset, and a lost input request let go of it too, so every later move of
+  that swipe was refused and counted as lost input, which cancelled the next
+  swipe as well. archond now drops a move or end for a finger no longer down,
+  treats an end Chromium already made as done, cancels a finger still held
+  before a new touch starts, and sends ends and cancels without points as
+  Chromium requires.
+- The sticky header no longer jumps down or vanishes in preview frames while
+  a page scrolls, on desktop and phone. A clipped screenshot made Chromium
+  redraw the page at the clip while the scroll ran on; stream frames are now
+  Chromium's own picture of the view, at a lower quality when a view is too
+  detailed for the frame budget, never clipped.
+- A file of a type the page's file input does not accept is refused, picked
+  or dropped, with "That file type is not one the app accepts here (.txt,
+  .csv)." The prompt stays open for another pick, as it does for a file that
+  is too big or for a second file where the input takes one. A drop is
+  held to the input it goes to: the one dropped on, a label's, or the one
+  file input in the drop zone holding it. `accept` extensions, compound ones
+  such as `.tar.gz` included, match without regard to case; MIME types and
+  `image/*` style wildcards match the type the operator's browser gives the
+  file, which `design_file_part` now carries as `media_type`. An `accept` is
+  matched whole, past the 200 characters other page text is cut to; one over
+  4 KiB is refused rather than cut, and the chooser says why.
+- Answering a confirm, prompt or alert in the preview takes effect at once.
+  The answer waited behind the click that opened the dialog, which waits for
+  the answer, so it settled only at the 8-second input deadline. A dialog
+  the app opens right after another is shown too, and a dialog still open
+  when the operator's browser comes back or reconnects is shown again, once,
+  instead of leaving the preview frozen. Switching the preview's
+  size while a dialog is open says to answer it first and keeps the size it
+  has, instead of a red "Browser call timed out:
+  Emulation.setTouchEmulationEnabled" after 15 seconds with the preview half
+  resized.
+- The web app sends one preview size change per session at a time: a newer
+  choice waits for the answer and replaces any older one still waiting. A
+  refused change goes back to the size archond last confirmed and ends the
+  switching state, and a view asked for before a change was answered no
+  longer undoes it. Quick clicks on Desktop, Tablet and Phone end on the last
+  one: the size buttons no longer move under the pointer (the "Switching to…"
+  label kept no room and a chosen size's bold text widened its button), and a
+  resize no longer overlaps a stream frame's screenshot, after which Chromium
+  kept drawing the old size and every frame was withheld. A size archond
+  confirmed that the frames still do not show after 8 seconds is asked for
+  once more and then given up with a message, so "Switching…" always ends.
+  The preview no longer shifts about 12 px after a click or scroll: it was
+  fitted to the desk with its padding, so the desk could scroll.
+- Phone previews follow Chromium's mobile layout: a page wider than the phone
+  zooms out, and its fixed bars move with the visual viewport as on a device.
+- When the app opens a new tab, the preview's status line says the preview
+  followed it and that **Back** returns, until the operator goes back or
+  reloads. The design subscription has a new `new_tab {message}` event.
 - A live design whose layout did not change no longer fails intent
   acceptance with a "layout gap". The ledger recorded only the CSS viewport
   of a picture shot at clip scale 2, so a 1440×900 reference was a 2880×1800
@@ -85,9 +149,10 @@
   capture, or a built picture of another pixel size, before judging, and a
   judge reports a pair still taken differently as a capture mismatch. Store
   schema 32 adds the capture to design pictures; pictures taken before it
-  keep only their viewport.
-
-- Report Aether releases below the required minimum in doctor, status, update and the installer.
+  keep only their viewport (#502).
+- `archon doctor`, `archon status`, `archon update` and the installer report
+  an installed Aether older than the required release (1.4.3) as unsupported,
+  instead of accepting it because its protocol is compatible (#501).
 
 ## 1.6.5
 

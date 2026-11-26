@@ -4187,6 +4187,13 @@
               "minimum": 0,
               "type": "integer"
             },
+            "media_type": {
+              "description": "The type the operator's browser gives the file, such as `text/csv`,\nmatched against a MIME `accept`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "name": {
               "type": "string"
             },
@@ -6090,6 +6097,24 @@
             },
             "message": {
               "description": "The message.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The app opened a new tab; the preview followed it. The note stays until\nthe operator goes back or reloads.",
+          "properties": {
+            "event": {
+              "const": "new_tab",
+              "type": "string"
+            },
+            "message": {
+              "description": "The note to show.",
               "type": "string"
             }
           },
@@ -19027,6 +19052,13 @@
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "media_type": {
+              "description": "The type the operator's browser gives the file, such as `text/csv`,\nmatched against a MIME `accept`.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "name": {
               "type": "string"

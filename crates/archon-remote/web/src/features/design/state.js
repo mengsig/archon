@@ -1,12 +1,13 @@
 // The design screen's state as a pure reducer, and what the state means for
 // the screen: which of the sec 7.3 states shows, and how a note reads.
 import { DROP_OFFERED_AFTER_MINUTES } from '../../core/design.js';
+import { initialViewport, chosenPreset, choose, resend, sending, settled, stalled, fromView } from './viewport.js';
 
 export function initialState(item) {
   return {
     item, loaded: false, observer: null, view: null, session: null, notes: [], browser: { status: 'idle' },
     degraded: false, noteVersion: 0, frame: null, selection: null, blocked: [], progress: '',
-    dialog: null, browserEvents: [], toasts: [], ended: null, connection: 'open', mode: 'interact', preset: 'desktop', refresh: false, error: null,
+    dialog: null, browserEvents: [], toasts: [], newTab: null, ended: null, connection: 'open', mode: 'interact', preset: 'desktop', viewport: initialViewport(), refresh: false, error: null,
     previewCommit: null, path: null, finishBlocker: null, imagesUsed: 0, imagesMax: 0, deadline: null,
     itemState: null,
   };
@@ -30,6 +31,36 @@ export function upsertNote(notes, note) {
   return [...rest, note].sort(byNumber);
 }
 
+// `preset` is always the chosen one of `viewport`, for everything that shows it.
+function withViewport(state, viewport) {
+  return { ...state, viewport, preset: chosenPreset(viewport) };
+}
+
+// Frames stayed at another size than archond confirmed: ask again, then give up visibly.
+function stalledSwitch(state) {
+  if (!presetMismatch(state) || !state.session?.id) return state;
+  const shown = confirmedPreset(state.frame);
+  const { vp, gaveUp } = stalled(state.viewport, state.session.id, shown);
+  if (vp === state.viewport) return state;
+  const next = withViewport(state, vp);
+  if (!gaveUp) return next;
+  const message = `The preview did not switch to ${presetName(state.preset)}, so it stays at ${presetName(shown)}. Pick a size to try again.`;
+  return { ...next, toasts: [...next.toasts, message] };
+}
+
+// A first or new session starts from its own preset; otherwise the view's counts only if current.
+function viewportOfView(state, action, fresh) {
+  const preset = action.view.session?.viewport_preset;
+  if (!state.session || fresh) return initialViewport(preset ?? 'desktop', state.viewport.settles);
+  return fromView(state.viewport, preset, action.stamp);
+}
+
+// Frames prove a size other than the one archond confirmed, and nothing is on its way.
+export function needsResend(state) {
+  const vp = state.viewport;
+  return Boolean(state.frame) && !vp.pending && !vp.queued && confirmedPreset(state.frame) !== vp.confirmed;
+}
+
 export function reduce(state, action) {
   switch (action.type) {
     case 'view': {
@@ -41,13 +72,14 @@ export function reduce(state, action) {
       }
       // A different session id is a new session: nothing of the old picture or selection carries over.
       const fresh = Boolean(state.session && v.session && v.session.id !== state.session.id);
+      const viewport = viewportOfView(state, action, fresh);
       return {
         ...state, loaded: true, observer: null, view: v, session: v.session ?? null, notes: [...(v.notes ?? [])].sort(byNumber),
         browser: v.browser ?? state.browser, degraded: Boolean(v.session?.degraded), noteVersion: v.session?.note_version ?? 0, path: pathOf(v.session?.preview_url) ?? state.path,
-        preset: v.session?.viewport_preset ?? state.preset, finishBlocker: v.finish_blocker ?? null,
+        viewport, preset: chosenPreset(viewport), finishBlocker: v.finish_blocker ?? null,
         imagesUsed: v.images_used ?? 0, imagesMax: v.images_max ?? 0, deadline: v.stage_deadline ?? null, refresh: false, error: null,
         ended: v.session && v.session.state === 'ended' ? (v.session.end_reason ?? 'ended') : null,
-        ...(fresh ? { frame: null, selection: null, progress: '', previewCommit: null, blocked: [], mode: 'interact', toasts: [...state.toasts, 'A new design session started'] } : {}),
+        ...(fresh ? { frame: null, selection: null, progress: '', previewCommit: null, blocked: [], mode: 'interact', newTab: null, toasts: [...state.toasts, 'A new design session started'] } : {}),
       };
     }
     case 'summary':
@@ -64,15 +96,26 @@ export function reduce(state, action) {
     case 'mode':
       return { ...state, mode: action.mode, selection: action.mode === 'comment' || action.mode === 'region' ? state.selection : null };
     case 'preset':
-      return { ...state, preset: action.preset };
+      return withViewport(state, choose(state.viewport, action.preset));
+    case 'preset_resend':
+      return needsResend(state) ? withViewport(state, resend(state.viewport, state.session?.id)) : state;
+    case 'preset_sending':
+      return withViewport(state, sending(state.viewport, action.session, action.preset));
+    case 'preset_settled':
+      return withViewport(state, settled(state.viewport, action));
+    case 'preset_stalled':
+      return stalledSwitch(state);
     case 'selection':
       return { ...state, selection: action.selection };
+    case 'new_tab_dismissed':
+      return { ...state, newTab: null };
     case 'toasts_taken':
       return { ...state, toasts: [] };
     case 'browser_events_taken':
       return { ...state, browserEvents: [] };
     case 'dialog_closed':
-      return { ...state, dialog: null };
+      // Only the dialog that closed: the app may already have opened the next.
+      return state.dialog === action.dialog ? { ...state, dialog: null } : state;
     case 'event':
       return reduceEvent(state, action.event);
     default:
@@ -102,13 +145,20 @@ function reduceEvent(state, e) {
       return { ...state, progress: e.line };
     case 'file_chooser': case 'download': case 'picker': case 'clipboard':
       return { ...state, browserEvents: [...state.browserEvents, e] };
-    case 'dialog':
-      return { ...state, dialog: { kind: e.kind, message: e.message, defaultPrompt: e.default_prompt ?? null } };
+    case 'dialog': {
+      const dialog = { kind: e.kind, message: e.message, defaultPrompt: e.default_prompt ?? null };
+      // archond shows a still-open dialog again to a stream that rejoins: one sheet for it.
+      const shown = state.dialog;
+      const same = shown && shown.kind === dialog.kind && shown.message === dialog.message && shown.defaultPrompt === dialog.defaultPrompt;
+      return same ? state : { ...state, dialog };
+    }
     case 'toast':
       return { ...state, toasts: [...state.toasts, e.message] };
+    case 'new_tab':
+      return { ...state, newTab: e.message, toasts: [...state.toasts, e.message] };
     case 'ended':
       // A bare "ended" (a gone refusal) must not wipe a reason already known; ask the daemon for the real one.
-      return { ...state, ended: specific(e.reason) ?? state.ended ?? 'ended', refresh: state.refresh || (!specific(e.reason) && !state.ended), session: state.session ? { ...state.session, state: 'ended' } : state.session };
+      return { ...state, newTab: null, ended: specific(e.reason) ?? state.ended ?? 'ended', refresh: state.refresh || (!specific(e.reason) && !state.ended), session: state.session ? { ...state.session, state: 'ended' } : state.session };
     default:
       return state;
   }

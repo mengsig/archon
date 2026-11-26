@@ -297,6 +297,11 @@ pub enum BrowserEvent {
         /// The input's `accept` attribute.
         accept: String,
     },
+    /// A file input opened its chooser, but it could not be offered.
+    FileChooserFailed {
+        /// Why, for the operator.
+        reason: String,
+    },
     /// A download finished in the private downloads directory.
     Downloaded {
         /// Sanitised suggested file name.

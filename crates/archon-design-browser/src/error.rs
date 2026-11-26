@@ -30,6 +30,17 @@ pub enum BrowserError {
     /// The page could not be verified for this read.
     #[error("preview document changed or is not ready")]
     DisclosureUnavailable,
+    /// A file input's `accept` is longer than the preview checks; it is refused, never cut.
+    #[error("the file input accepts too many types to check ({bytes} bytes; at most {max})")]
+    AcceptTooLong {
+        /// Its length without blanks and control characters.
+        bytes: usize,
+        /// The longest checked.
+        max: usize,
+    },
+    /// The page's dialog is open, and Chrome holds the call until it is answered.
+    #[error("the app has a dialog open; answer it first")]
+    DialogOpen,
     /// A call took too long.
     #[error("browser call timed out: {0}")]
     Timeout(String),

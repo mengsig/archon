@@ -90,8 +90,16 @@ export function createStage({ getMode, onInput, onHover, onPick, onRegion, onCap
     if (kbRegion) place(regionBox, kbRegion);
   }
 
+  // The desk's content box: a stage fitted to its padding box overflowed by the
+  // padding, so the desk scrolled and the stage moved after a click.
   function bounds() {
-    avail = { w: desk.clientWidth, h: desk.clientHeight };
+    // A desk taken off the page has no computed style; it lays nothing out.
+    if (!desk.isConnected) return;
+    const style = getComputedStyle(desk);
+    const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    const padY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+    if (!Number.isFinite(padX) || !Number.isFinite(padY)) throw new Error(`the desk's padding is unreadable: ${padX}, ${padY}`);
+    avail = { w: Math.max(0, desk.clientWidth - padX), h: Math.max(0, desk.clientHeight - padY) };
     layout();
   }
   const resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(() => bounds()) : null;

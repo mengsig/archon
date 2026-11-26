@@ -195,7 +195,9 @@ Home and End scroll the page when nothing editable in the app has focus.
 
 Each frame is the part of the page that is on screen, as Chromium itself draws
 it: sticky and fixed headers stay where the app puts them, and a phone page
-wider than the screen is shown zoomed out, as a phone shows it. Comment picks,
+wider than the screen is shown zoomed out, as a phone shows it. Phone previews
+follow Chromium's mobile layout, so on a page wider than the phone fixed bars
+move with the visual viewport as they do on a device. Comment picks,
 element boxes and regions you draw are all measured on that frame, zoom
 included, so a crop shows what you saw. Frames come ten a second while you
 scroll or type and four a second at rest, so the frame after a scroll stops
@@ -537,7 +539,7 @@ once only.
 | "That file is too big for the preview (64 MiB at most)." / "Those files are too big for the preview (256 MiB total at most)." / "Choose at most 32 files for the preview." | The chosen files are over a limit; nothing was sent. See Limits. |
 | "this preview session already holds 240 MiB of files; it takes 256 MiB at most" | Files sent earlier in this session count too. They are freed when the preview restarts. |
 | "The app's download of report.csv was not kept: it is larger than 64 MiB." | Chromium stopped the download. Smaller downloads are offered. |
-| "The app opened a new tab. It is shown here; press Back to return." | A link or `window.open` meant for a new tab opened in the preview. |
+| "The app opened a new tab; the preview followed it. Press Back to return." | A link or `window.open` meant for a new tab opened in the preview. |
 | "There is no earlier page in the preview." | **Back** has nowhere to go. |
 | "worktree moved after Finish: expected 3f9c2a1; restore it and complete again" | A commit was made after you confirmed. The agent must reset to the finish commit and complete again. |
 | "choose live when creating the item" | `proposal` cannot change to or from `live` later. |
@@ -550,7 +552,13 @@ be, shows only its start, and one with characters other than line breaks and
 tabs that cannot be shown (such as a carriage return) shows without them. In
 both cases the dialog says so; check the answer before pressing OK. A dialog
 from a page outside the preview's origin shows "The preview opened a dialog."
-without its text.
+without its text. A dialog still open when you come back to the preview, or
+when the connection returns, is shown again.
+
+The preview's size changes one request at a time, and the last size you click
+is the one it ends on. If the frames have not reached a size archond applied
+after 8 seconds, it is asked for once more; if they still have not, the preview
+stays at the size it shows and says so, so "Switching to…" never stays.
 
 ## Limits
 

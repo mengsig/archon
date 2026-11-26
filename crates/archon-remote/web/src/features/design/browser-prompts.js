@@ -1,7 +1,7 @@
 import { h } from '../../ui/dom.js';
 import { openSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
-import { fileLimitMessage, formatSize, uploadFiles } from './files.js';
+import { acceptMessage, fileLimitMessage, formatSize, uploadFiles } from './files.js';
 
 const button = (label, onclick) => h('button', { class: 'button button-plain button-block', type: 'button', onclick }, label);
 
@@ -17,7 +17,7 @@ export function showFileChooser(design, session, event, refuse) {
   input.addEventListener('change', async () => {
     const files = Array.from(input.files);
     if (!files.length) { sheet.close(); return; }
-    const problem = fileLimitMessage(files);
+    const problem = fileLimitMessage(files) ?? acceptMessage(event.accept, files);
     if (problem) { toast(problem, { tone: 'amber' }); input.value = ''; return; }
     choose.disabled = true;
     try {

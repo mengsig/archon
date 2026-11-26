@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+
+- The live design preview hands what a headless browser cannot show to the
+  operator's device. A file chooser opens the device's own picker with the
+  input's `accept` and `multiple`, and files can be dropped on the page.
+  Files go to a private directory of the session's browser profile under safe
+  names, and are deleted when the preview stops or restarts. The limits are
+  64 MiB a file, 32 files at a time and 256 MiB a session. Downloads, up to
+  64 MiB each, are offered to save. Native dropdowns and date, time, month,
+  week and colour inputs open a sheet. Links and `window.open` meant for a
+  new tab open in the preview, with **Back** to return. Text the app copies
+  can be copied out with one press, and pasting types into the app. Only paired operator devices may
+  send or fetch files; observers are refused. New requests:
+  `design_file_part`, `design_file_set`, `design_file_drop`,
+  `design_download`, `design_picker_answer` and `design_go_back`.
+
 ### Changed
 
 - Live design sessions are enabled by default. Only items with `proposal = live`
@@ -9,6 +25,10 @@
 
 ### Fixed
 
+- JavaScript dialogs in the design preview show the page's message and a
+  prompt's suggested answer, and still wait for the operator's answer. A page
+  opening a new tab or window no longer ends the preview. On a Mac, Cmd+A, C,
+  X, V, Z and Shift+Z now run their editing command in the app.
 - Scrolling in the live design preview works like a browser tab. A scrolled
   page's frame showed the top of the document instead: Chromium's screenshot
   clip is in page coordinates and Archon gave it the visible area's, so a

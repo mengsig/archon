@@ -27,6 +27,22 @@ pub(crate) struct Downloads {
     kept: VecDeque<PathBuf>,
 }
 
+/// Delete download `guid`'s file in `dir`, if it is there.
+fn delete_download(dir: &Path, guid: &str) {
+    assert!(valid_guid(guid), "only a checked GUID names a file");
+    let path = dir.join(guid);
+    assert!(
+        path.parent() == Some(dir),
+        "a download stays in its directory"
+    );
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        // The profile, and the file with it, is still removed when the preview stops.
+        Err(error) => tracing::warn!(%error, "an untracked download was not deleted"),
+    }
+}
+
 /// Download events in order. A lost one could let a download escape its
 /// limits, so losing any stops the preview.
 pub(crate) async fn handle_downloads(
@@ -74,9 +90,13 @@ impl Shared {
             return;
         }
         let Some(name) = self.downloads.lock().unwrap().names.remove(guid) else {
-            // Untracked downloads were cancelled as they began; this is a second guard.
+            // Untracked downloads were cancelled as they began; one that
+            // finished before its cancel landed is deleted, never kept.
             if too_big {
                 self.cancel_download(guid);
+            }
+            if state == "completed" {
+                self.delete_untracked(guid);
             }
             return;
         };
@@ -171,6 +191,12 @@ impl Shared {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             // The profile, and the file with it, is still removed when the preview stops.
             Err(error) => tracing::warn!(%error, "an old download was not deleted"),
+        }
+    }
+
+    fn delete_untracked(&self, guid: &str) {
+        if let Some(dir) = &self.downloads_dir {
+            delete_download(dir, guid);
         }
     }
 
@@ -426,6 +452,17 @@ mod tests {
         }
         assert!(!paths[0].exists(), "the oldest is deleted");
         assert!(paths[1..].iter().all(|p| p.exists()), "the rest are kept");
+    }
+
+    /// A download that finished before its cancel landed is not left behind.
+    #[test]
+    fn an_untracked_finished_download_is_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("g9");
+        std::fs::write(&file, b"x").unwrap();
+        delete_download(dir.path(), "g9");
+        assert!(!file.exists());
+        delete_download(dir.path(), "g9");
     }
 
     /// A page starting more downloads than are tracked cannot slip one past

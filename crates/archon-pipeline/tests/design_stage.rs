@@ -139,7 +139,10 @@ fn the_design_prompt_names_the_run_compose_project_and_the_recipe() {
         ".archon/services/<name>.pid",
         "127.0.0.1",
     ] {
-        assert!(prompt.contains(needle), "the design prompt misses {needle:?}");
+        assert!(
+            prompt.contains(needle),
+            "the design prompt misses {needle:?}"
+        );
     }
 }
 

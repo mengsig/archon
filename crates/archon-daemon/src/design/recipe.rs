@@ -8,7 +8,7 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::design::recipe::{PreviewRecipe, SavedRecipe};
 use archon_core::error::ArchonError;
 use archon_core::id::{QueueItemId, RepoId};
-use archon_core::protocol::{RepoRef, Reply};
+use archon_core::protocol::{Reply, RepoRef};
 use archon_queue::store::Store;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -30,7 +30,9 @@ pub(crate) fn load(store: &Store, repo: &RepoId) -> Result<Option<SavedRecipe>, 
         return Ok(None);
     };
     let saved: SavedRecipe = serde_json::from_str(&raw).map_err(|e| {
-        ArchonError::Corrupt(format!("the saved design recipe of {repo} is unreadable: {e}"))
+        ArchonError::Corrupt(format!(
+            "the saved design recipe of {repo} is unreadable: {e}"
+        ))
     })?;
     saved.recipe.check().map_err(|e| {
         ArchonError::Corrupt(format!("the saved design recipe of {repo} is invalid: {e}"))

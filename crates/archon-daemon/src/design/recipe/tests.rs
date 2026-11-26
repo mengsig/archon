@@ -28,7 +28,13 @@ fn a_recipe_is_saved_read_replaced_and_cleared_per_repository() {
     let (repo, other) = (RepoId::new(), RepoId::new());
     let item = QueueItemId::new();
     assert_eq!(load(&store, &repo).unwrap(), None);
-    let first = save(&mut store, &repo, &item, recipe(vec![step("web", None, None)])).unwrap();
+    let first = save(
+        &mut store,
+        &repo,
+        &item,
+        recipe(vec![step("web", None, None)]),
+    )
+    .unwrap();
     assert_eq!(load(&store, &repo).unwrap(), Some(first.clone()));
     assert_eq!(load(&store, &other).unwrap(), None, "kept per repository");
     let updated = recipe(vec![step("db", Some(5432), None), step("web", None, None)]);
@@ -37,7 +43,10 @@ fn a_recipe_is_saved_read_replaced_and_cleared_per_repository() {
     assert_ne!(first.recipe, second.recipe);
     assert!(clear(&mut store, &repo).unwrap());
     assert_eq!(load(&store, &repo).unwrap(), None);
-    assert!(!clear(&mut store, &repo).unwrap(), "clearing twice is harmless");
+    assert!(
+        !clear(&mut store, &repo).unwrap(),
+        "clearing twice is harmless"
+    );
 }
 
 #[test]
@@ -53,7 +62,11 @@ fn an_invalid_or_secret_recipe_is_never_stored() {
     assert!(save(&mut store, &repo, &item, recipe(vec![])).is_err());
     assert_eq!(load(&store, &repo).unwrap(), None);
     let key = archon_queue::store::keys::design_recipe(&repo);
-    assert_eq!(store.kv_get(&key).unwrap(), None, "nothing reached the store");
+    assert_eq!(
+        store.kv_get(&key).unwrap(),
+        None,
+        "nothing reached the store"
+    );
 }
 
 #[test]
@@ -115,10 +128,16 @@ async fn a_half_started_stack_names_every_failure() {
             step("web", None, None),
         ]);
         let error = check_stack(&url, Some(&r)).await.unwrap_err().to_string();
-        assert!(error.contains("answered HTTP 502, a server error"), "{error}");
+        assert!(
+            error.contains("answered HTTP 502, a server error"),
+            "{error}"
+        );
         assert!(error.contains("step api: http://127.0.0.1:"), "{error}");
         assert!(error.contains(&format!("step db: nothing listens on loopback port {down}")));
-        assert!(!error.contains("step web"), "a step without checks is not probed");
+        assert!(
+            !error.contains("step web"),
+            "a step without checks is not probed"
+        );
     })
     .await
     .expect("bounded stack check");
@@ -137,7 +156,10 @@ async fn a_server_that_is_not_http_is_refused() {
         let error = check_stack(&format!("http://127.0.0.1:{port}/"), None)
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("did not answer with HTTP"), "{error}");
+        assert!(
+            error.to_string().contains("did not answer with HTTP"),
+            "{error}"
+        );
     })
     .await
     .expect("bounded stack check");

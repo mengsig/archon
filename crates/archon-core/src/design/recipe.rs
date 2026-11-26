@@ -298,7 +298,9 @@ fn names_a_secret(name: &str, separator: char) -> bool {
     let upper = name.to_ascii_uppercase();
     let segments: Vec<&str> = upper.split(separator).collect();
     segments.iter().any(|s| SECRET_WORDS.contains(s))
-        && !segments.iter().any(|s| matches!(*s, "FILE" | "PATH" | "DIR"))
+        && !segments
+            .iter()
+            .any(|s| matches!(*s, "FILE" | "PATH" | "DIR"))
 }
 
 /// Refuse a value spelled out for a secret-named variable or flag, a password

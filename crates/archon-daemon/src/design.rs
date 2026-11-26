@@ -43,10 +43,10 @@ pub use self::browser::{
     AdmittedInput, BrowserFactory, BrowserRegistration, FrameFeed, PreviewBrowser, RealFactory,
 };
 pub(crate) use self::delivery::sweep;
+pub(crate) use self::recipe::{clear_for as clear_recipe, load as load_recipe};
 pub use self::recovery::recover;
 pub use self::relay::stream;
 pub(crate) use self::requests::handle;
-pub(crate) use self::recipe::{clear_for as clear_recipe, load as load_recipe};
 
 use crate::context::DaemonContext;
 use crate::worktree::design_git::{self, NoteGit};

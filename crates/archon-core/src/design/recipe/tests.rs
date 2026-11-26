@@ -102,7 +102,10 @@ fn env_holds_names_and_never_values() {
     r.env = vec!["API_TOKEN=abc123".into()];
     let error = refused(&r);
     assert!(error.contains("names only"), "{error}");
-    assert!(!error.contains("abc123"), "the value is never echoed: {error}");
+    assert!(
+        !error.contains("abc123"),
+        "the value is never echoed: {error}"
+    );
     r.env = vec!["1BAD".into()];
     assert!(refused(&r).contains("not a variable name"));
     r.env = vec!["A".into(), "A".into()];
@@ -170,7 +173,10 @@ fn compose_projects_are_named_only_through_the_run_variable() {
         "COMPOSE_PROJECT_NAME=ccso-dev scripts/dev-stack",
     ] {
         let error = refused(&recipe(vec![step("stack", command)]));
-        assert!(error.contains("$COMPOSE_PROJECT_NAME"), "{command}: {error}");
+        assert!(
+            error.contains("$COMPOSE_PROJECT_NAME"),
+            "{command}: {error}"
+        );
     }
 }
 
@@ -184,7 +190,10 @@ fn a_saved_recipe_says_when_and_by_whom() {
         item: QueueItemId::new(),
     };
     let text = saved.describe();
-    assert!(text.starts_with("saved 2026-11-26 10:00 UTC by item qi_"), "{text}");
+    assert!(
+        text.starts_with("saved 2026-11-26 10:00 UTC by item qi_"),
+        "{text}"
+    );
     assert!(text.contains("1. web (service): npm start"));
     let json = serde_json::to_value(&saved).unwrap();
     assert_eq!(serde_json::from_value::<SavedRecipe>(json).unwrap(), saved);

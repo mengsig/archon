@@ -65,13 +65,26 @@ async fn a_recipe_saved_by_one_session_is_read_shown_and_cleared() {
     assert!(agent_reads(&f).await.contains("No preview recipe is saved"));
     preview_with(&f, stack()).await.expect("the stack answers");
     let checked = f.factory.checked_recipes.lock().unwrap().clone();
-    assert_eq!(checked.last(), Some(&Some(stack())), "the recipe's checks ran");
+    assert_eq!(
+        checked.last(),
+        Some(&Some(stack())),
+        "the recipe's checks ran"
+    );
     let text = agent_reads(&f).await;
-    assert!(text.contains("1. backend (service): scripts/dev-preview-stack"), "{text}");
-    assert!(text.contains("\"source\":\"docs/dev-preview.md\""), "{text}");
+    assert!(
+        text.contains("1. backend (service): scripts/dev-preview-stack"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\"source\":\"docs/dev-preview.md\""),
+        "{text}"
+    );
 
     let view = settings(&f, Request::Settings { repo: Some(repo()) }).await;
-    let saved = view.design_recipe.clone().expect("settings show the recipe");
+    let saved = view
+        .design_recipe
+        .clone()
+        .expect("settings show the recipe");
     assert_eq!(saved.recipe, stack());
     assert_eq!(saved.item, f.item);
     assert!(view.describe().contains("design preview recipe: saved"));
@@ -80,7 +93,11 @@ async fn a_recipe_saved_by_one_session_is_read_shown_and_cleared() {
 
     let cleared = settings(&f, Request::ClearDesignRecipe { repo: repo() }).await;
     assert!(cleared.design_recipe.is_none());
-    assert!(cleared.describe().contains("design preview recipe: none saved"));
+    assert!(
+        cleared
+            .describe()
+            .contains("design preview recipe: none saved")
+    );
     assert!(agent_reads(&f).await.contains("No preview recipe is saved"));
 }
 
@@ -92,7 +109,10 @@ async fn a_half_started_stack_is_refused_and_saves_nothing() {
     let refused = preview_with(&f, stack()).await.unwrap_err();
     assert!(refused.to_string().contains("step backend"), "{refused}");
     let view = settings(&f, Request::Settings { repo: Some(repo()) }).await;
-    assert!(view.design_recipe.is_none(), "nothing saved for a failed stack");
+    assert!(
+        view.design_recipe.is_none(),
+        "nothing saved for a failed stack"
+    );
 }
 
 #[tokio::test]
@@ -104,7 +124,10 @@ async fn a_recipe_with_a_secret_value_is_refused_before_anything_runs() {
     let refused = preview_with(&f, leaky).await.unwrap_err();
     assert!(matches!(refused, ArchonError::Invalid(_)), "{refused:?}");
     assert!(!refused.to_string().contains("hunter2"));
-    assert_eq!(f.factory.checked_recipes.lock().unwrap().len(), checks_before);
+    assert_eq!(
+        f.factory.checked_recipes.lock().unwrap().len(),
+        checks_before
+    );
     let view = settings(&f, Request::Settings { repo: Some(repo()) }).await;
     assert!(view.design_recipe.is_none());
 }

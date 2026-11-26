@@ -54,7 +54,9 @@ pub async fn run(repo: Option<String>, change: Change, json: bool) -> anyhow::Re
     let mut text = describe(&view, reset);
     if cleared {
         let scope = view.repo.as_deref().unwrap_or_default();
-        text = format!("Cleared the saved design preview recipe of {scope}; the next live session discovers the stack again.\n{text}");
+        text = format!(
+            "Cleared the saved design preview recipe of {scope}; the next live session discovers the stack again.\n{text}"
+        );
     }
     emit(json, || to_json(&view), &text)?;
     Ok(ExitCode::SUCCESS)

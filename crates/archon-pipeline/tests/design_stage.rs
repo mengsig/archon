@@ -89,11 +89,57 @@ fn design_rules_state_the_contract() {
         "finish",
         "complete_task",
         "untrusted",
+        "design_recipe",
+        "documented",
+        "package.json",
+        "Procfile",
+        "Compose files",
+        "not only the frontend",
+        "a simple app with one dev server needs only that server",
+        "bound to 127.0.0.1",
+        "one file per process",
+        "COMPOSE_PROJECT_NAME=archon-<item>",
+        "Never stop, restart or change any other Compose project",
+        "loads without a server error",
+        "preview none of it",
+        "never values or secrets",
+        "saves the recipe",
     ] {
         assert!(
             DESIGN_RULES.to_lowercase().contains(&needle.to_lowercase()),
             "missing {needle:?}"
         );
+    }
+}
+
+/// A recipe comes first, the repository's own route next and inference
+/// last; checks and the saved recipe come before the preview they guard.
+#[test]
+fn design_rules_order_discovery_before_verification_and_preview() {
+    let at = |needle: &str| {
+        DESIGN_RULES
+            .find(needle)
+            .unwrap_or_else(|| panic!("missing {needle:?}"))
+    };
+    assert!(at("First call `design_recipe`") < at("documented"));
+    assert!(at("documented") < at("infer it from the stack"));
+    assert!(at("infer it from the stack") < at("Before `design_preview`, check"));
+    assert!(at("Before `design_preview`, check") < at("Then call `design_preview`"));
+    assert!(at("Then call `design_preview`") < at("wait_for"));
+}
+
+#[test]
+fn the_design_prompt_names_the_run_compose_project_and_the_recipe() {
+    let out = augment(&spec(), &knobs(ProposalMode::Live)).unwrap();
+    let prompt = &out.prompts[&out.file.stages[0].prompt];
+    for needle in [
+        "design_recipe",
+        "archon-{{item.id}}",
+        "`recipe`",
+        ".archon/services/<name>.pid",
+        "127.0.0.1",
+    ] {
+        assert!(prompt.contains(needle), "the design prompt misses {needle:?}");
     }
 }
 

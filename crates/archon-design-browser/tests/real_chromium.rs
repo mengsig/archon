@@ -594,7 +594,9 @@ async fn a_phone_picture_is_taken_with_touch_and_records_it_as_mobile() {
         touch,
         dpr: 1.0,
     };
-    let body = "<html><head><style>body{margin:0}#card{width:140px;height:80px;background:#0a0}\
+    // At device width: a phone page without it is laid out at 980px and zoomed out.
+    let body = "<html><head><meta name=viewport content=\"width=device-width\">\
+        <style>body{margin:0}#card{width:140px;height:80px;background:#0a0}\
         @media (pointer: coarse){#card{width:340px}}</style></head>\
         <body><div id=\"card\"></div></body></html>";
     let page = serve(move |_| page_body(body)).await;

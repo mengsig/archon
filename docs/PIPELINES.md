@@ -1409,8 +1409,8 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   three where the level asks for three. Follow-ups (non-blocking findings)
   are listed in the `pr.body` and left. A re-review confirms the previous
   round's open findings by ID and reviews the new delta. A delta reviewer
-  fails only on a defect in its commits or an open finding unfixed; a new
-  finding in code a pass already read is non-blocking. At three failed rounds, finish committing fixes for every
+  fails only on a defect in the commits it reads, or an open finding left
+  unfixed: a new finding in code a pass already read is `"blocking": false`. At three failed rounds, finish committing fixes for every
   open blocker with `Review-Fix: <id>` trailers and wait for Archon to request
   one final confirmation. Large finding lists are linked from the handoff.
   Missing fixes, a failed confirmation, or early completion escalates. A

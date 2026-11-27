@@ -316,7 +316,9 @@ async fn committed_fixes_get_one_confirmation_and_ship_in_the_same_run() {
         "{note}"
     );
     assert!(
-        note.contains("Fail only on a defect in the fixes or an open finding unfixed"),
+        note.contains(
+            "fails only on a defect in the commits it reads, or an open finding left unfixed"
+        ),
         "{note}"
     );
     assert!(
@@ -618,8 +620,9 @@ async fn a_fresh_lead_on_the_same_branch_gets_the_complete_oversized_findings() 
     let objective = request.objective.split_whitespace().collect::<Vec<_>>();
     let objective = objective.join(" ");
     assert!(
-        objective.contains("Fail only on a defect in the new commits or an open finding unfixed")
-            && objective.contains("a pass already read is `\"blocking\": false`"),
+        objective.contains(
+            "fails only on a defect in the commits it reads, or an open finding left unfixed",
+        ) && objective.contains("a pass already read is `\"blocking\": false`"),
         "{objective}"
     );
     let handed = full_handoff(&workspace, &request.objective);

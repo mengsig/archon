@@ -253,9 +253,11 @@ async fn count(
     if rounds_of(&tally.fails) >= REVIEW_ROUND_CAP {
         return capped(ctx, stage, lead, (trigger, &beneath), &mut tally).await;
     }
-    if trigger.reviewer().is_some() && !tally.reports.is_empty() {
+    if let Some(reviewer) = trigger.reviewer()
+        && !tally.reports.is_empty()
+    {
         let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
-        if let Some(refusal) = tell_findings(ctx, stage, lead, &records).await?
+        if let Some(refusal) = tell_findings(ctx, stage, (lead, reviewer), &records).await?
             && !lead_finished(ctx, stage, lead).await?
         {
             let reason = format!(
@@ -582,9 +584,10 @@ fn capped_reason(
 async fn tell_findings(
     ctx: &DaemonContext,
     stage: &StageRun,
-    lead: &AetherAgentId,
+    (lead, reviewer): (&AetherAgentId, &AetherAgentId),
     records: &Rounds<'_>,
 ) -> Result<Option<String>, ArchonError> {
+    assert_ne!(lead, reviewer, "a lead does not review itself");
     // A pass whose findings are all follow-ups owes no further review, so it
     // gets no note: one would read as an order to fix them and review again.
     let findings = records.last_open_blockers();
@@ -599,7 +602,10 @@ async fn tell_findings(
     let note = format!(
         "These blocking findings are open. For the next review, give the reviewer this list or its file path. Ask for each ID's disposition and a review of the new delta. Non-blocking findings are follow-ups for your result and need no further review.\n\n{list}"
     );
-    tell_note(ctx, stage, lead, "review-findings", &note).await
+    // Keyed by the reviewer too: a later review that leaves the same blockers
+    // open sends the same list, which Aether would otherwise drop as a replay.
+    let purpose = format!("review-findings:{reviewer}");
+    tell_note(ctx, stage, lead, &purpose, &note).await
 }
 
 async fn tell_note(
@@ -621,7 +627,7 @@ pub(super) async fn tell(
 ) -> Result<Option<String>, ArchonError> {
     assert!(!note.is_empty());
     assert!(!key.is_empty());
-    match ctx.backend.send_message(lead, note, key).await {
+    match ctx.backend.send_note(lead, note, key).await {
         Ok(()) => Ok(None),
         Err(error) if crate::executor::resume::unanswered(&error) || error.is_store() => Err(error),
         Err(refusal) => Ok(Some(refusal.to_string())),

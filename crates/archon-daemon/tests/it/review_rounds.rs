@@ -533,13 +533,23 @@ async fn a_new_blocker_from_an_existing_parallel_reviewer_still_stops_the_stage(
     assert_eq!(confirmation_notes(&review.h), 0);
 }
 
+/// The findings notes delivered, each checked to be Archon's own trigger:
+/// a message would reach the lead labelled an operator instruction.
 fn findings_notes(h: &Harness) -> Vec<String> {
-    h.backend
-        .messages()
+    let findings = |note: &String| note.starts_with("These blocking findings are open");
+    let messages = h.backend.messages().into_iter().map(|(_, note)| note);
+    let notes: Vec<String> = h
+        .backend
+        .notes()
         .into_iter()
-        .filter(|(_, note)| note.starts_with("These blocking findings are open"))
         .map(|(_, note)| note)
-        .collect()
+        .collect();
+    assert_eq!(
+        messages.filter(findings).count(),
+        notes.iter().filter(|note| findings(note)).count(),
+        "every findings note is sent as Archon's"
+    );
+    notes.into_iter().filter(findings).collect()
 }
 
 /// Only open blockers start another review. A pass whose findings are all
@@ -576,6 +586,42 @@ async fn follow_up_findings_start_no_further_review() {
         "a follow-up-only pass is told nothing"
     );
     assert_eq!(h.running().await[0].id, lead.id, "the lead keeps its turn");
+}
+
+/// A later review that leaves a blocker open sends the same list again. Its
+/// note is keyed by that reviewer, so it is delivered, and a replay is not.
+#[tokio::test]
+async fn a_later_review_leaving_a_blocker_open_tells_the_lead_again() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([
+        {"title": "missing null check", "blocking": true},
+        {"title": "rename the helper", "blocking": false}
+    ]);
+    let failed = fail(&h, &lead, &first["commit"], None, findings);
+    let blocker = format!("{}:1", failed.agent.as_ref().unwrap());
+    handle(&h, &failed).await;
+
+    let second = change(&workspace);
+    let verdict = json!({
+        "verdict": "pass", "head": second["commit"], "base": first["commit"],
+        "findings": [{"title": "tidy the docs", "blocking": false}]
+    });
+    let passed = reporter(&h, &lead, verdict);
+    handle(&h, &passed).await;
+    let notes = findings_notes(&h);
+    assert_eq!(
+        notes.len(),
+        2,
+        "the open blocker is listed again: {notes:?}"
+    );
+    assert_eq!(notes[0], notes[1], "the same list");
+    assert!(notes[1].contains(&blocker), "{}", notes[1]);
+    handle(&h, &passed).await;
+    assert_eq!(findings_notes(&h).len(), 2, "a replay sends nothing new");
 }
 
 fn confirmation_notes(h: &Harness) -> usize {

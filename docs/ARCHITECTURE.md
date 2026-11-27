@@ -174,6 +174,7 @@ Aether restarted, which triggers reconciliation (§16).
 | Operator → orchestrator | `send_message {to, content, idempotency_key}` | Key = feed item id. |
 | Team roster | `send_message {to, content, idempotency_key}` | Key = `roster:<stage run>:v<version>`; §13.1. |
 | Wake orchestrator with Archon news | `trigger {agent, source:"archon", payload, idempotency_key}` | Payload schema in §5.4. |
+| Review note to a stage lead | `trigger {agent, source:"archon", payload:{note}, idempotency_key}` | §8.7. A trigger, not `send_message`, so Aether never labels Archon's note an operator instruction. |
 | Answer an `ask_user` | `reply_to_question {to, question_seq, content}` | Used when the question came from Aether's `ask_user`. |
 | Read results | `get_task {id}` | `TaskStatus::{Completed{result:{summary,artifacts,structured}}, Failed{error,structured}, Cancelled{reason}}`. |
 | Inspect agents | `get_agent {id}`, `list_agents {query}` | Supervisor and reconciliation. |
@@ -2767,7 +2768,12 @@ escalated lead. Archon does not edit the brief for it: the orchestrator's
 open findings and the delta review. When a review leaves a blocking finding
 open, archond sends the lead the open blocking findings and their IDs for the
 next review; a pass whose findings are all follow-ups gets no note, since it
-owes no further review. In each re-review the lead includes the
+owes no further review. The note is keyed by the stage run, the reviewer
+that settled and the list, so a later review leaving the same blockers open
+is told again and a replay is not. Every review note goes as Archon's
+trigger, never `send_message`: Aether labels a message from Archon's socket
+an authenticated operator instruction, and the fleet pump would record it
+as the operator's words in that inbox. In each re-review the lead includes the
 open findings and their IDs. A reviewer returns the IDs of confirmed fixes in
 `resolved_findings` and uses `findings[].id` for a finding still open. Any
 real blocker the reviewer discovers fails, including outside the delta.

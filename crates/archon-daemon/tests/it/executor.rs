@@ -4240,6 +4240,7 @@ async fn an_unreadable_reviewer_result_goes_back_to_the_lead_once() {
     );
     let messages = h.backend.messages();
     assert_eq!(messages.len(), 1, "{messages:?}");
+    assert_eq!(h.backend.notes(), messages, "sent as Archon's note");
     let (to, note) = &messages[0];
     assert_eq!(to, &lead_id);
     assert!(

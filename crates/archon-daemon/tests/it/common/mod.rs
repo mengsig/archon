@@ -906,6 +906,8 @@ struct FakeState {
     delivered: Vec<(String, AetherAgentId, String)>,
     /// Every `send_message` call's key, including repeats and refused ones.
     message_calls: Vec<String>,
+    /// The keys of deliveries sent as Archon's notes, not as messages.
+    note_keys: BTreeSet<String>,
     /// The images each keyed message carried (the latest call's).
     attachments: BTreeMap<String, Vec<archon_core::attachment::ImageAttachment>>,
     message_failures: VecDeque<ArchonError>,
@@ -1391,6 +1393,17 @@ impl FakeBackend {
     /// Every `send_message` call's idempotency key, including repeats.
     pub fn message_calls(&self) -> Vec<String> {
         self.state().message_calls.clone()
+    }
+
+    /// Deliveries sent with `send_note`, as Archon's triggers: recipient, text.
+    pub fn notes(&self) -> Vec<(AetherAgentId, String)> {
+        let state = self.state();
+        state
+            .delivered
+            .iter()
+            .filter(|(key, ..)| state.note_keys.contains(key))
+            .map(|(_, to, content)| (to.clone(), content.clone()))
+            .collect()
     }
 
     /// The held stage agent's turn ended: it is `completed` in Aether.
@@ -2058,6 +2071,18 @@ impl AgentBackend for FakeBackend {
     ) -> Result<(), ArchonError> {
         self.send_message_with_attachments(to, content, idempotency_key, &[])
             .await
+    }
+
+    /// Delivered like a message, so `messages()` lists it, and marked a note.
+    async fn send_note(
+        &self,
+        to: &AetherAgentId,
+        note: &str,
+        idempotency_key: &str,
+    ) -> Result<(), ArchonError> {
+        self.send_message(to, note, idempotency_key).await?;
+        self.state().note_keys.insert(idempotency_key.to_owned());
+        Ok(())
     }
 
     async fn send_message_with_attachments(

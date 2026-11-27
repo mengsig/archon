@@ -123,7 +123,7 @@ async fn tell(
     let key = format!("archon:restate:{}:{reviewer}", stage.id);
     match ctx
         .backend
-        .send_message(lead, &note(reviewer, why), &key)
+        .send_note(lead, &note(reviewer, why), &key)
         .await
     {
         Ok(()) => {

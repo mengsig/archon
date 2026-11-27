@@ -252,11 +252,10 @@ impl DesignService {
                 tracing::warn!(%error, %session, "design: the watched preview did not start");
                 // The open screen would wait on "Starting" with no word of why.
                 let message = format!("The preview did not start: {error}. Reload to try again.");
-                let _ = arc
-                    .design
-                    .runtime(&session)
-                    .events
-                    .send(archon_core::protocol::DesignEvent::Toast { message });
+                let toast = archon_core::protocol::DesignEvent::Toast { message };
+                if arc.design.runtime(&session).events.send(toast).is_err() {
+                    tracing::debug!(%session, "design: no screen is left to tell");
+                }
             }
         });
     }

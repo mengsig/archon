@@ -123,25 +123,21 @@ impl PreviewRecipe {
     }
 
     /// [`Self::check`], plus what a recipe `design_preview` reports must hold:
-    /// a step whose port is picked each run gives this run's `port` or
-    /// `ready` for Archon to check, and does not pin that port in its command.
+    /// a step's port and ready URL agree, and a step whose port is picked each
+    /// run gives this run's port for Archon to check and does not pin it.
     pub fn check_reported(&self) -> Result<(), String> {
         self.check()?;
-        for step in self.steps.iter().filter(|s| s.port_pick.is_some()) {
-            // The stack check asks the ready URL when there is one, else the port.
-            let Some(port) = step.ready.as_deref().and_then(url_port).or(step.port) else {
+        for step in &self.steps {
+            let checked = checked_port(step)?;
+            if step.port_pick.is_none() {
+                continue;
+            }
+            let Some(port) = checked else {
                 return Err(format!(
                     "step {} picks its port each run, so it needs this run's port or ready URL",
                     step.name
                 ));
             };
-            if let Some(given) = step.port.filter(|given| *given != port) {
-                return Err(format!(
-                    "step {} gives port {given} but its ready URL is on {port}; \
-                     give this run's port once",
-                    step.name
-                ));
-            }
             if pins_number(&step.command, port) {
                 return Err(format!(
                     "step {} pins this run's port {port} in its command; let it pick a free port \
@@ -351,6 +347,32 @@ fn bounded_line(field: &str, text: &str, max: usize) -> Result<(), String> {
         return Err(format!("{field} must be one line"));
     }
     Ok(())
+}
+
+/// The port the stack check reaches `step` on: its ready URL's when it has
+/// one, else its port. A port that disagrees with the URL would go unchecked.
+fn checked_port(step: &RecipeStep) -> Result<Option<u16>, String> {
+    let Some(ready) = step.ready.as_deref() else {
+        return Ok(step.port);
+    };
+    let Some(port) = url_port(ready) else {
+        return Err(format!(
+            "step {} ready URL {ready} names no port the check can reach",
+            step.name
+        ));
+    };
+    if let Some(given) = step.port.filter(|given| *given != port) {
+        return Err(format!(
+            "step {} gives port {given} but its ready URL is on {port}; \
+             give this run's port once",
+            step.name
+        ));
+    }
+    debug_assert!(
+        step.port.is_none_or(|given| given == port),
+        "one port per step"
+    );
+    Ok(Some(port))
 }
 
 /// `text` holds `port` as a number of its own, not inside a longer one.

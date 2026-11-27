@@ -446,3 +446,25 @@ fn a_picked_port_is_the_one_the_ready_url_checks() {
     let error = recipe(vec![web]).check_reported().unwrap_err();
     assert!(error.contains("pins this run's port 80"), "{error}");
 }
+
+/// The stack check reaches a step on its ready URL when it has one, so a
+/// port beside it must be that one, whether or not the port is picked.
+#[test]
+fn a_reported_port_agrees_with_the_ready_url_the_check_asks() {
+    let mut api = step("api", "uvicorn app:app --port 8000");
+    api.port = Some(8001);
+    api.ready = Some("http://127.0.0.1:8000/health".into());
+    let mut web = step("web", "npm run dev");
+    web.port = Some(5173);
+    let mut stack = recipe(vec![api, web]);
+    stack.check().unwrap();
+    let error = stack.check_reported().unwrap_err();
+    assert!(
+        error.contains("step api gives port 8001 but its ready URL is on 8000"),
+        "{error}"
+    );
+    stack.steps[0].port = Some(8000);
+    stack.check_reported().unwrap();
+    assert_eq!(checked_port(&stack.steps[0]), Ok(Some(8000)));
+    assert_eq!(checked_port(&stack.steps[1]), Ok(Some(5173)));
+}

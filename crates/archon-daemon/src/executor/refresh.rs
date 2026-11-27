@@ -399,7 +399,7 @@ async fn reviewed_tip(
 /// names, when archond shipped it and its review gate `verified` that very
 /// commit and tree. `None` when an agent ran a ship stage, archond verified no
 /// review of the run (a stage's own claim counts for nothing), or records disagree.
-fn handed_in(
+pub(super) fn handed_in(
     stages: &[archon_core::run::StageRun],
     verified: Option<&archon_queue::RunReview>,
 ) -> Option<(String, String)> {

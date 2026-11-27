@@ -168,11 +168,7 @@ fn shipped(store: &Store, id: &QueueItemId) -> Result<Shipped, ArchonError> {
     };
     assert!(is_commit_id(&head), "checked by delivered");
     let mut reviewed = item.autonomy.review != ReviewLevel::None;
-    let fixed = match pr_url.starts_with(LOCAL_REF_PREFIX) {
-        true => fixed_head(store, &item.id, &run, &pr_url)?,
-        false => None,
-    };
-    let head = match fixed {
+    let head = match fixed_head(store, &item.id, &run, &pr_url)? {
         Some(fixed) => {
             reviewed &= fixed.reviewed;
             fixed.head
@@ -290,43 +286,50 @@ struct Fixed {
     reviewed: bool,
 }
 
-/// The local commit the newest succeeded restack fix, refresh or `onto` item
-/// of `owner` recorded on the branch `delivery` names, when it finished after
-/// `run`, the owner's own delivering run: the branch has ended there since.
-/// It counts as reviewed only when every such later delivery was.
+/// The commit a succeeded restack fix, refresh or `onto` item of `owner`
+/// delivered into `delivery` (a local branch or the pull request) after `run`,
+/// the owner's own delivering run. Locally it is the newest, reviewed only when
+/// every such delivery was. A pull request takes the last of the unbroken run
+/// of proven ones; what follows is the carried review's to cover (`carry`).
 fn fixed_head(
     store: &Store,
     owner: &QueueItemId,
     run: &PipelineRunId,
     delivery: &str,
 ) -> Result<Option<Fixed>, ArchonError> {
-    assert!(delivery.starts_with(LOCAL_REF_PREFIX), "a local delivery");
+    assert!(
+        !delivery.is_empty(),
+        "a delivery names its branch or pull request"
+    );
     let own = store.run(run)?;
     let delivered_at = own.finished_at.unwrap_or(own.started_at);
-    let mut newest: Option<(archon_core::Timestamp, String)> = None;
-    let mut reviewed = true;
+    let mut later = Vec::new();
     for id in store.stack_fixes_of(owner)? {
         let fix = store.item(&id)?;
         assert_ne!(&fix.id, owner, "a fix works on another item's branch");
-        let Some((finished, head)) = later_delivery(store, &fix, delivery, delivered_at)? else {
-            continue;
-        };
-        reviewed &= fix.autonomy.review != ReviewLevel::None;
-        if newest.as_ref().is_none_or(|(at, _)| finished > *at) {
-            newest = Some((finished, head));
-        }
+        later.extend(later_delivery(store, &fix, delivery, delivered_at)?);
     }
-    Ok(newest.map(|(_, head)| Fixed { head, reviewed }))
+    later.sort_by_key(|(finished, _, _)| *finished);
+    if delivery.starts_with(LOCAL_REF_PREFIX) {
+        let reviewed = later.iter().all(|(_, _, proven)| *proven);
+        return Ok(later.pop().map(|(_, head, _)| Fixed { head, reviewed }));
+    }
+    let chain = later.into_iter().take_while(|(_, _, proven)| *proven);
+    Ok(chain.last().map(|(_, head, _)| Fixed {
+        head,
+        reviewed: true,
+    }))
 }
 
-/// When the succeeded `fix` finished and the local commit it recorded on the
-/// branch `delivery` names, if it finished after `delivered_at`.
+/// When the succeeded `fix` finished, the commit it delivered into
+/// `delivery` (its pull request or local branch), and whether archond shipped
+/// that commit with a review it verified, if it finished after `delivered_at`.
 fn later_delivery(
     store: &Store,
     fix: &QueueItem,
     delivery: &str,
     delivered_at: archon_core::Timestamp,
-) -> Result<Option<(archon_core::Timestamp, String)>, ArchonError> {
+) -> Result<Option<(archon_core::Timestamp, String, bool)>, ArchonError> {
     let QueueState::Succeeded { run, .. } = &fix.state else {
         return Ok(None);
     };
@@ -334,11 +337,23 @@ fn later_delivery(
         return Ok(None);
     };
     let stages = store.stage_runs(run)?;
-    let Some((url, head)) = local_delivery(store, run, &stages) else {
+    let found = match delivery.starts_with(LOCAL_REF_PREFIX) {
+        true => local_delivery(store, run, &stages),
+        false => delivered(&stages),
+    };
+    let Some((url, head)) = found else {
         return Ok(None);
     };
-    assert!(is_commit_id(&head), "checked by local_delivery");
-    Ok((url == delivery && finished > delivered_at).then_some((finished, head)))
+    assert!(is_commit_id(&head), "checked by the delivery's reader");
+    if url != delivery || finished <= delivered_at {
+        return Ok(None);
+    }
+    // The review setting proves nothing: a ship agent may skip the review.
+    let verified = store.run_review(run)?;
+    let handed_in = super::refresh::handed_in(&stages, verified.as_ref());
+    let proven = fix.autonomy.review != ReviewLevel::None
+        && handed_in.is_some_and(|(commit, _)| commit == head);
+    Ok(Some((finished, head, proven)))
 }
 
 /// `(pull request, commit)` from the stage that recorded the delivery.

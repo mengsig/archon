@@ -24,6 +24,16 @@ restart aetherd.
 - The required Aether release is 1.4.4 (`archon doctor`, `archon update` and
   the installer).
 
+### Fixed
+
+- A backlog split into sibling items that edit the same files now delivers
+  whole. The orchestrator chains such items with `depends_on` or keeps them as
+  one item; a merge refused because a sibling landed first (a conflicting pull
+  request, or a local base that moved) names `refresh_item` instead of a retry
+  that reran the stale branch; and a pull request whose reviewed refresh
+  resolved the conflict merges at the refreshed head, as a local branch already
+  did, instead of being refused as "moved since it was reviewed".
+
 ## 1.6.6
 
 Released 2026-11-26.

@@ -102,7 +102,9 @@ your choices.
 
 **Stacking.** An item that `depends_on` an unmerged one of its repository
 stacks on its branch and pull request. Queue a chain at once; wait for no
-merge.
+merge. Items editing the same files are one item or a chain, never
+siblings. A merge refused for a conflict or a moved base takes
+`refresh_item`, never `retry_item`, then the merge again.
 
 **Initiatives.** A change across repositories is one `enqueue_initiative`
 (`update_initiative` amends its contract). Act on `initiative_finished`, not

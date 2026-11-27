@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Archon 1.6.7 requires **Aether 1.4.4**, the release with the Antigravity
+(`agy`) engine. Update Aether first with `aether update --version v1.4.4` and
+restart aetherd.
+
 ### Added
 
 - A live design session's agent brings up whatever the preview needs on its
@@ -16,6 +20,22 @@
   tool reads it; `archon settings --repo NAME` shows it and
   `--clear-design-recipe` forgets it. New requests: `design_recipe` and
   `clear_design_recipe`.
+
+- Google models through the Antigravity CLI: the `antigravity` provider and
+  `antigravity/gemini-4-hydrogen`, `gemini-4-neon`, `gemini-4-carbon`,
+  `gemini-4-argon` and `gemini-3.8-flash`. Archon places them in tiers, which
+  Aether leaves unset: Flash is `fast`, Carbon and Argon `balanced`, Neon and
+  Hydrogen `strong`. They are opt-in: Archon picks them only when a
+  `model_plan` or `[models] allow` names them, never by default, as a fallback
+  or by learned routing, and an unnamed `provider_weights` entry weighs at most
+  1. Secondary routes such as `antigravity/claude-opus-5-5` serve Archon's own
+  picks only while the vendor's own provider lists no model. See
+  [Antigravity](docs/configuration.md#antigravity-google-models).
+
+### Changed
+
+- The required Aether release is 1.4.4 (`archon doctor`, `archon update` and
+  the installer).
 
 ## 1.6.6
 

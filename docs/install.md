@@ -81,14 +81,14 @@ aether schema | grep -E '^  "(min_)?protocol_version"'
 
 Update an Aether that is too old with `aether update`.
 
-Archon 1.6.6 requires **Aether 1.4.3**, including its worker policy
-and reference attachment support. The installer selects Aether `v1.4.3`
+Archon 1.6.7 requires **Aether 1.4.4**, including its worker policy,
+reference attachment support and the Antigravity engine. The installer selects Aether `v1.4.4`
 when no `aether` is installed; it preserves an existing installation.
-Upgrade an older existing Aether with `aether update --version v1.4.3`
-and restart aetherd before using Archon 1.6.6.
+Upgrade an older existing Aether with `aether update --version v1.4.4`
+and restart aetherd before using Archon 1.6.7.
 A confirmed `archon update` run by Archon 1.6.5 or later pins Aether to
-`v1.4.3` only when the installed Aether is older. An update from 1.6.4 or
-earlier runs that release's own Aether step, so upgrade Aether first as above. At 1.4.3 or later it runs `aether update --yes`, allowing
+the required release only when the installed Aether is older. An update from 1.6.4 or
+earlier runs that release's own Aether step, so upgrade Aether first as above. At the required release or later it runs `aether update --yes`, allowing
 future releases without forcing a downgrade;
 `--check`, `--requirements`, `--no-restart` and a declined question leave
 Aether as it is. Check the installed release with `aether --version`.

@@ -195,17 +195,17 @@ mod tests {
     fn minimum_release_is_checked_even_when_protocols_overlap() {
         let needed = Requirement::own();
         let mut aether = Served {
-            version: "aether 1.4.2".into(),
+            version: "aether 1.4.3".into(),
             min: 17,
             max: 26,
         };
         let (ok, line) = verdict("archon 1.6.5", needed.clone(), Some(&aether));
         assert!(
-            !ok && line.contains("1.4.2") && line.contains("1.4.3"),
+            !ok && line.contains("1.4.3") && line.contains("1.4.4"),
             "{line}"
         );
         assert!(line.contains("aether update"));
-        aether.version = "aether 1.4.3".into();
+        aether.version = "aether 1.4.4".into();
         assert!(verdict("archon 1.6.5", needed, Some(&aether)).0);
     }
 

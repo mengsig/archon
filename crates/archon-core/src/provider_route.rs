@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use crate::Timestamp;
 use crate::model_tier::{ModelCatalog, Tier};
+use crate::opt_in::{OPT_IN_WEIGHT, is_opt_in};
 use crate::policy::ModelPolicy;
 use crate::quota::QuotaView;
 
@@ -28,8 +29,16 @@ impl ProviderWeights {
         Self { table, default }
     }
 
+    /// The table's weight; else `default`, at most [`OPT_IN_WEIGHT`] for an
+    /// opt-in provider, which routes only once the policy names its models.
     pub fn weight(&self, provider: &str) -> u32 {
-        self.table.get(provider).copied().unwrap_or(self.default)
+        if let Some(weight) = self.table.get(provider) {
+            return *weight;
+        }
+        match is_opt_in(provider) {
+            true => self.default.min(OPT_IN_WEIGHT),
+            false => self.default,
+        }
     }
 }
 

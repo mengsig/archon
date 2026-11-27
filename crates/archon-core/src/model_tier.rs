@@ -1,6 +1,7 @@
-//! Capability tiers. Aether's catalog is the one place that maps a model to
-//! a tier; Archon never ranks models itself, it resolves a tier to a model
-//! from that catalog, within the model policy (ARCHITECTURE §7.4).
+//! Capability tiers. Aether's catalog maps a model to a tier; Archon ranks
+//! only the models Aether leaves untiered on an opt-in provider
+//! ([`crate::opt_in`]), and resolves a tier to a model from that catalog,
+//! within the model policy (ARCHITECTURE §7.4).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -134,10 +135,15 @@ impl Default for ModelCatalog {
 impl ModelCatalog {
     pub fn new(models: Vec<CatalogModel>) -> Self {
         let mut seen = BTreeSet::new();
-        let models = models
+        let models: Vec<CatalogModel> = models
             .into_iter()
             .filter(|m| seen.insert(m.model.clone()))
+            .map(|mut m| {
+                m.tier = m.tier.or_else(|| crate::opt_in::placed_tier(&m.model));
+                m
+            })
             .collect();
+        debug_assert_eq!(models.len(), seen.len(), "each model is listed once");
         Self {
             models,
             aliases: BTreeMap::new(),
@@ -309,7 +315,8 @@ impl ModelCatalog {
     }
 
     /// Models that can serve a pick between `floor` and `requested` on
-    /// `provider` under `policy`. A superseded one stays unless a successor
+    /// `provider` under `policy`; an opt-in provider's only when the policy
+    /// names the model, since internal callers name providers too. A superseded one stays unless a successor
     /// on its own provider serves the same pick, at the floor where it did.
     pub fn tier_candidates<'a, 'p>(
         &'a self,
@@ -326,6 +333,7 @@ impl ModelCatalog {
                 && m.tier.is_some_and(|t| t <= requested)
                 && provider.is_none_or(|p| m.model.provider == p)
                 && policy.permits_model(&m.model)
+                && self.picks_unasked(&m.model, policy)
         };
         self.models.iter().filter(move |entry| {
             let meets_floor = entry.tier >= Some(floor);
@@ -375,7 +383,11 @@ impl ModelCatalog {
         let on = |p: &str| candidates.iter().any(|m| m.model.provider == p);
         let chosen_provider = match prefer.filter(|p| on(p)) {
             Some(p) => Some(p),
-            None => candidates.iter().map(|m| m.model.provider.as_str()).min(),
+            // An opt-in provider comes last, whatever its name.
+            None => candidates
+                .iter()
+                .map(|m| m.model.provider.as_str())
+                .min_by_key(|p| (crate::opt_in::is_opt_in(p), *p)),
         };
         let Some(chosen_provider) = chosen_provider else {
             return Err(self.unresolvable(requested, provider, policy));

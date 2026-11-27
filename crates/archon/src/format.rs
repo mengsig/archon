@@ -972,10 +972,10 @@ pub(crate) mod tests {
             protocol_version: 26,
             instance_id: "test".into(),
         };
-        let old = aether_link(&link("1.4.2"));
-        assert!(old.contains("1.4.2") && old.contains("1.4.3"), "{old}");
+        let old = aether_link(&link("1.4.3"));
+        assert!(old.contains("1.4.3") && old.contains("1.4.4"), "{old}");
         assert!(old.contains("aether update"), "{old}");
-        let current = aether_link(&link("1.4.3"));
+        let current = aether_link(&link("1.4.4"));
         assert!(current.contains("connected"), "{current}");
         assert!(!current.contains("below required"), "{current}");
     }

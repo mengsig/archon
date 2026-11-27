@@ -243,7 +243,7 @@ fn own_and_other_volumes(docker: &FakeDocker, own: &str) {
 
 /// When Compose cannot take the own project down, as when its files need a
 /// script's variables, its checked containers are stopped as any other's,
-/// the volumes labelled for it removed, and the failure told.
+/// its anonymous and labelled volumes removed, and the failure told.
 #[tokio::test]
 async fn an_own_project_compose_cannot_take_down_is_stopped_and_told() {
     let docker = FakeDocker::new();
@@ -261,7 +261,7 @@ async fn an_own_project_compose_cannot_take_down_is_stopped_and_told() {
     let volume_rm = format!("volume rm {own}_pgdata");
     assert_eq!(
         removals[1..],
-        ["stop a1", "rm a1", volume_rm.as_str()],
+        ["stop a1", "rm -v a1", volume_rm.as_str()],
         "{:?}",
         docker.calls()
     );
@@ -290,7 +290,12 @@ async fn a_partial_compose_down_stops_only_the_containers_it_left() {
         .unwrap();
     let removals = docker.removals();
     assert!(removals[0].starts_with("compose "), "{removals:?}");
-    assert_eq!(removals[1..], ["stop a2", "rm a2"], "{:?}", docker.calls());
+    assert_eq!(
+        removals[1..],
+        ["stop a2", "rm -v a2"],
+        "{:?}",
+        docker.calls()
+    );
     let notes = harness.system_notes().await;
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(
@@ -560,7 +565,7 @@ async fn cancelling_an_item_removes_its_own_projects_volumes() {
     let volume_rm = format!("volume rm {own}_pgdata");
     assert_eq!(
         removals[1..],
-        ["stop a1 a2", "rm a1 a2", volume_rm.as_str()],
+        ["stop a1 a2", "rm -v a1 a2", volume_rm.as_str()],
         "{:?}",
         docker.calls()
     );

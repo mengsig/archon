@@ -279,11 +279,12 @@ async fn stop_project(
     docker
         .run(&[&["stop"], &args[..]].concat(), STOP_TIMEOUT)
         .await?;
-    remove_stopped(docker, project, &ids).await
+    remove_stopped(docker, project, &ids, false).await
 }
 
 /// Stop and remove those containers checked in `verified` that a failed
-/// `compose down` left, then `project`'s networks once none is left.
+/// `compose down` left, with their anonymous volumes, then `project`'s
+/// networks once none is left.
 async fn stop_left(
     docker: &Docker<'_>,
     project: &str,
@@ -303,7 +304,7 @@ async fn stop_left(
             .run(&[&["stop"], &args[..]].concat(), STOP_TIMEOUT)
             .await?;
     }
-    remove_stopped(docker, project, &ids).await
+    remove_stopped(docker, project, &ids, true).await
 }
 
 /// `docker compose down --volumes` for the item's own `project`, from the
@@ -382,18 +383,20 @@ async fn remove_own_volumes(docker: &Docker<'_>, project: &str) -> Result<(), Ar
 }
 
 /// Remove those of `stopped` still there (a `run --rm` one removes itself
-/// once stopped), then `project`'s networks if none of its containers is left.
+/// once stopped), with their anonymous volumes when `anonymous`, then
+/// `project`'s networks if none of its containers is left.
 async fn remove_stopped(
     docker: &Docker<'_>,
     project: &str,
     stopped: &BTreeSet<String>,
+    anonymous: bool,
 ) -> Result<(), ArchonError> {
     let present = container_ids(&docker.list(Some(project)).await?);
     let ids: Vec<&str> = stopped.intersection(&present).map(String::as_str).collect();
     if !ids.is_empty() {
-        docker
-            .run(&[&["rm"], &ids[..]].concat(), LIST_TIMEOUT)
-            .await?;
+        // `rm -v` removes only the containers' anonymous volumes, never a named one.
+        let rm: &[&str] = if anonymous { &["rm", "-v"] } else { &["rm"] };
+        docker.run(&[rm, &ids[..]].concat(), LIST_TIMEOUT).await?;
     }
     if !container_ids(&docker.list(Some(project)).await?).is_empty() {
         tracing::info!(%project, "other containers of the compose project remain; its networks are kept");

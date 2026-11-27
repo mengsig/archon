@@ -27,8 +27,9 @@ restart aetherd.
 ### Fixed
 
 - Stage leads no longer stall or loop in review, the cause of the 1.6.5 and
-  1.6.6 bench timeouts. A pass whose findings are all non-blocking gets no
-  findings note, which leads read as an order to fix them and review again.
+  1.6.6 bench timeouts. The findings note now lists only open blocking
+  findings and is not sent when none is open, so follow-ups no longer read as
+  an order to fix them and review again.
   Review notes reach the lead as Archon's own trigger, no longer labelled an
   authenticated operator instruction. The note about an unreadable reviewer
   result no longer interrupts the lead, which left Codex leads parked on

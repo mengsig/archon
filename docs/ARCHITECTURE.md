@@ -2767,8 +2767,10 @@ escalated lead. Archon does not edit the brief for it: the orchestrator's
 `brief_append` on the non-fresh `retry_item` gives the new lead the head, the
 open findings and the delta review. When a review leaves a blocking finding
 open, archond sends the lead the open blocking findings and their IDs for the
-next review; a pass whose findings are all follow-ups gets no note, since it
-owes no further review. Only the settle of a reviewer whose verdict was read
+next review. The note lists only blocking findings, never follow-ups, and
+none is sent when no blocking finding is open, from this review or an earlier
+one: a pass that leaves an earlier blocker open is told again. Only the
+settle of a reviewer whose verdict was read
 sends one; another child settling, a helper or an unreadable reviewer, does
 not. The note is keyed by the stage run, that reviewer and the list, so a
 later review leaving the same blockers open is told again. The note each

@@ -621,8 +621,8 @@ async fn tell_findings(
 }
 
 /// The note on the blockers the last round left open, `None` when none are,
-/// or the refusal to write their handoff. A pass whose findings are all
-/// follow-ups owes no further review: a note would read as an order to.
+/// or the refusal to write their handoff. Follow-ups alone owe no further
+/// review, so they are never listed: a note would read as an order to.
 async fn findings_note(
     ctx: &DaemonContext,
     stage: &StageRun,

@@ -317,32 +317,34 @@ async fn a_refresh_merges_the_new_base_into_the_same_branch_and_pull_request() {
     assert!(again.contains("nothing to refresh"), "{again}");
 }
 
-/// A sibling's change to the same file lands on GitHub's base first, so the
-/// pull request conflicts: its merge is refused naming `refresh_item`, not a
-/// retry, and once the refresh resolves the conflict into the same pull
-/// request the merge goes through at the refreshed head.
-#[tokio::test]
-async fn a_pull_request_a_sibling_conflicts_with_merges_once_refreshed() {
-    use archon_core::merge::{MergeRequest, MergeState};
-    let green = json!([{"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}]);
-    let merge = |owner: &QueueItem| Request::MergeItem {
+fn green_checks() -> Value {
+    json!([{"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}])
+}
+
+/// The merge `archon merge` of `owner` asks for and its outcome.
+async fn merge_owner(h: &Harness, owner: &QueueItem) -> archon_core::merge::MergeRequest {
+    let merge = Request::MergeItem {
         item: owner.id.clone(),
         ignore_checks: false,
         chat: false,
     };
-    let merged = |reply: Result<Reply, ArchonError>| -> MergeRequest {
-        match reply {
-            Ok(Reply::Merge(merge)) => *merge,
-            other => panic!("a merge request: {other:?}"),
-        }
-    };
-    let (h, gh) = delivering().await;
-    let (owner, run) = shipped(&h, "the change").await;
-    let stale = git(&h.repo, &["rev-parse", &run.branch]);
-    let sibling = advance_origin(&h, "change.txt", "the sibling's wording\n");
+    match h.cli(merge).await {
+        Ok(Reply::Merge(merge)) => *merge,
+        other => panic!("a merge request: {other:?}"),
+    }
+}
 
-    gh.show(&stale, "CONFLICTING", green.clone());
-    let refused = merged(h.cli(merge(&owner)).await);
+/// A sibling's change to `change.txt` lands on GitHub's base after `owner`
+/// shipped, so its pull request conflicts and its merge is refused naming
+/// `refresh_item`; the reviewed refresh then resolves the conflict into the
+/// same pull request. Returns the owner, the refresh and the refreshed head.
+async fn refreshed_over_a_sibling(h: &Harness, gh: &FakeGh) -> (QueueItem, QueueItem, String) {
+    use archon_core::merge::MergeState;
+    let (owner, run) = shipped(h, "the change").await;
+    let stale = git(&h.repo, &["rev-parse", &run.branch]);
+    let sibling = advance_origin(h, "change.txt", "the sibling's wording\n");
+    gh.show(&stale, "CONFLICTING", green_checks());
+    let refused = merge_owner(h, &owner).await;
     let MergeState::Refused { reason } = &refused.state else {
         panic!("refused: {refused:?}")
     };
@@ -352,27 +354,66 @@ async fn a_pull_request_a_sibling_conflicts_with_merges_once_refreshed() {
     );
     assert!(!gh.merged(), "nothing merged while it conflicts");
 
-    let fix = refresh(&h, &owner).await.expect("queued");
+    let fix = refresh(h, &owner).await.expect("queued");
     h.dispatch().await;
     let fixing = h.run(&fix.id).await;
     assert_eq!(fixing.branch, run.branch, "the same branch");
     let before = git(&fixing.workspace, &["rev-parse", "HEAD"]);
     merge_by_hand(&fixing.workspace, &sibling, "change.txt", "both wordings\n");
-    settle_reviewed(&h, Some(&before)).await;
+    settle_reviewed(h, Some(&before)).await;
     let state = h.state(&fix.id).await;
     assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
     let head = git(&h.repo, &["rev-parse", &run.branch]);
     git(&h.repo, &["merge-base", "--is-ancestor", &sibling, &head]);
     assert_eq!(gh.count("pr create"), 1, "the same pull request");
+    gh.show(&head, "MERGEABLE", green_checks());
+    (owner, fix, head)
+}
 
-    gh.show(&head, "MERGEABLE", green);
-    let landed = merged(h.cli(merge(&owner)).await);
+/// Sibling items of a backlog edit the same file: once the later one's
+/// reviewed refresh resolves the conflict, its pull request merges at the
+/// refreshed head, not refused as moved since its own review.
+#[tokio::test]
+async fn a_pull_request_a_sibling_conflicts_with_merges_once_refreshed() {
+    use archon_core::merge::MergeState;
+    let (h, gh) = delivering().await;
+    let (owner, _, head) = refreshed_over_a_sibling(&h, &gh).await;
+    let landed = merge_owner(&h, &owner).await;
     assert!(
         matches!(landed.state, MergeState::Merged { .. }),
         "{landed:?}"
     );
     assert_eq!(landed.head, head, "the refreshed head, not the stale one");
     assert!(gh.merged());
+}
+
+/// A refresh's head stands for the owner's review only when archond verified
+/// a review of that very commit: its review setting alone proves nothing.
+#[tokio::test]
+async fn a_refreshed_head_no_verified_review_passed_is_not_merged() {
+    use archon_core::merge::MergeState;
+    let (h, gh) = delivering().await;
+    let (owner, fix, head) = refreshed_over_a_sibling(&h, &gh).await;
+    let fixing = h.run(&fix.id).await;
+    let key = format!("run_review:{}", fixing.id);
+    let mut store = h.ctx.store.lock().await;
+    assert!(
+        store.run_review(&fixing.id).unwrap().is_some(),
+        "archond verified it"
+    );
+    store.kv_delete(&key).unwrap();
+    drop(store);
+
+    let refused = merge_owner(&h, &owner).await;
+    let MergeState::Refused { reason } = &refused.state else {
+        panic!("refused: {refused:?}")
+    };
+    assert_ne!(
+        refused.head, head,
+        "held to the owner's own review: {refused:?}"
+    );
+    assert!(reason.contains("does not carry over"), "{reason}");
+    assert!(!gh.merged(), "nothing unreviewed merged");
 }
 
 #[tokio::test]

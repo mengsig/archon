@@ -290,8 +290,8 @@ struct Fixed {
 /// `owner` delivered into `delivery` (a local branch or the pull request),
 /// when it finished after `run`, the owner's own delivering run: the branch
 /// has ended there since. Locally it counts as reviewed only when every such
-/// later delivery was. A pull request takes only reviewed fixes: a clean
-/// merge after one is the carried review's to cover (`carry`).
+/// later delivery was. A pull request takes it only then: otherwise its head
+/// is the carried review's to cover from the owner's (`carry`).
 fn fixed_head(
     store: &Store,
     owner: &QueueItemId,
@@ -310,29 +310,30 @@ fn fixed_head(
     for id in store.stack_fixes_of(owner)? {
         let fix = store.item(&id)?;
         assert_ne!(&fix.id, owner, "a fix works on another item's branch");
-        if !local && fix.autonomy.review == ReviewLevel::None {
-            continue;
-        }
-        let Some((finished, head)) = later_delivery(store, &fix, delivery, delivered_at)? else {
+        let Some((finished, head, proven)) = later_delivery(store, &fix, delivery, delivered_at)?
+        else {
             continue;
         };
-        reviewed &= fix.autonomy.review != ReviewLevel::None;
+        reviewed &= proven;
         if newest.as_ref().is_none_or(|(at, _)| finished > *at) {
             newest = Some((finished, head));
         }
     }
+    if !local && !reviewed {
+        return Ok(None);
+    }
     Ok(newest.map(|(_, head)| Fixed { head, reviewed }))
 }
 
-/// When the succeeded `fix` finished and the commit it delivered into
-/// `delivery`, its pull request or local branch, if it finished after
-/// `delivered_at`.
+/// When the succeeded `fix` finished, the commit it delivered into
+/// `delivery` (its pull request or local branch), and whether archond shipped
+/// that commit with a review it verified, if it finished after `delivered_at`.
 fn later_delivery(
     store: &Store,
     fix: &QueueItem,
     delivery: &str,
     delivered_at: archon_core::Timestamp,
-) -> Result<Option<(archon_core::Timestamp, String)>, ArchonError> {
+) -> Result<Option<(archon_core::Timestamp, String, bool)>, ArchonError> {
     let QueueState::Succeeded { run, .. } = &fix.state else {
         return Ok(None);
     };
@@ -348,7 +349,15 @@ fn later_delivery(
         return Ok(None);
     };
     assert!(is_commit_id(&head), "checked by the delivery's reader");
-    Ok((url == delivery && finished > delivered_at).then_some((finished, head)))
+    if url != delivery || finished <= delivered_at {
+        return Ok(None);
+    }
+    // The review setting proves nothing: a ship agent may skip the review.
+    let verified = store.run_review(run)?;
+    let handed_in = super::refresh::handed_in(&stages, verified.as_ref());
+    let proven = fix.autonomy.review != ReviewLevel::None
+        && handed_in.is_some_and(|(commit, _)| commit == head);
+    Ok(Some((finished, head, proven)))
 }
 
 /// `(pull request, commit)` from the stage that recorded the delivery.

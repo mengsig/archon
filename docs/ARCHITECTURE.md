@@ -2772,7 +2772,9 @@ none is sent when no blocking finding is open, from this review or an earlier
 one: a pass that leaves an earlier blocker open is told again. A blocker
 counts as resolved as the gate counts it: a read on the branch resolved it,
 and every read on the branch still listing it is at a strict ancestor of
-that read's head, whatever order the reviewers came in. Only the
+that read's head, whatever order the reviewers came in. A fail continues an
+earlier ID only from a head that descends from that ID's origin; otherwise it
+keeps its own. Only the
 settle of a reviewer whose verdict was read sends one; another child
 settling, a helper or an unreadable reviewer, does not. A verdict is read
 only once Aether lists its reviewer completed, which it does seconds after

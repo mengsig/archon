@@ -14,8 +14,8 @@ use archon_pipeline::review::{ReviewFinding, Verdict};
 use serde::{Deserialize, Serialize};
 
 use super::confirm::{self, Confirmation, Eligibility, Status};
-use super::handoff;
 use super::record::{self, Finding, Report, Rounds};
+use super::{blockers, handoff};
 use super::{result_of, verdict_in};
 use crate::context::DaemonContext;
 
@@ -630,8 +630,8 @@ async fn findings_note(
 ) -> Result<Result<Option<String>, String>, ArchonError> {
     assert!(!tally.reports.is_empty(), "a note follows a read verdict");
     let workspace = ctx.store.lock().await.run(&stage.run)?.workspace;
-    let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
-    let findings = records.open_blockers_by_ancestry(&workspace)?;
+    let open = blockers::open_blockers(&workspace, &tally.reports, &tally.prior_findings)?;
+    let findings: Vec<(&str, &str)> = open.iter().map(|(id, text)| (id.as_str(), *text)).collect();
     if findings.is_empty() {
         return Ok(Ok(None));
     }

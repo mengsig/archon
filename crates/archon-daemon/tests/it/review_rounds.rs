@@ -815,6 +815,47 @@ async fn a_resolution_on_a_diverged_head_leaves_the_blocker_open() {
     assert!(last.contains(&blocker), "the blocker stays open: {last}");
 }
 
+/// A fail continues an earlier ID only from an ancestor head, as the gate
+/// names it. One on a diverged head keeps its own ID, so resolving only the
+/// earlier ID after the merge leaves that one open.
+#[tokio::test]
+async fn a_continuation_from_a_diverged_head_keeps_its_own_id() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let root = change(&workspace);
+    let ours = change(&workspace);
+    let findings = json!([{"title": "missing null check", "blocking": true}]);
+    let first = fail(&h, &lead, &ours["commit"], Some(&root["commit"]), findings);
+    let original = format!("{}:1", first.agent.as_ref().unwrap());
+    handle(&h, &first).await;
+
+    let side = diverged_commit(&workspace, root["commit"].as_str().unwrap());
+    git(&workspace, &["merge", "--no-edit", "--quiet", &side]);
+    let merged = git(&workspace, &["rev-parse", "HEAD"]).trim().to_owned();
+    let claimed = json!([{"title": "side path skips the check", "blocking": true, "id": original}]);
+    let second = fail(&h, &lead, &json!(side), Some(&root["commit"]), claimed);
+    let own = format!("{}:1", second.agent.as_ref().unwrap());
+    let verdict = json!({
+        "verdict": "pass", "head": merged, "base": root["commit"],
+        "resolved_findings": [original], "findings": []
+    });
+    let resolution = reporter(&h, &lead, verdict);
+    handle(&h, &second).await;
+    handle(&h, &resolution).await;
+    let notes = findings_notes(&h);
+    let last = notes.last().unwrap();
+    assert!(
+        last.contains(&own),
+        "the diverged fail's own ID stays open: {last}"
+    );
+    assert!(
+        !last.contains(&format!("{original}:")),
+        "the original is resolved: {last}"
+    );
+}
+
 /// A commit on `from` beside the branch, returned to the branch after.
 fn diverged_commit(workspace: &Path, from: &str) -> String {
     let branch = git(workspace, &["rev-parse", "--abbrev-ref", "HEAD"]);

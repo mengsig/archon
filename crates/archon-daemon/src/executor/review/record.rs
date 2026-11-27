@@ -208,10 +208,12 @@ impl<'a> Rounds<'a> {
             .collect()
     }
 
-    pub fn last_open(&self) -> Vec<(&str, &str)> {
+    /// The blocking findings still open after the last round: the fixes a
+    /// delta review owes. Follow-ups are left out, so they start no round.
+    pub fn last_open_blockers(&self) -> Vec<(&str, &str)> {
         self.rounds
             .last()
-            .map_or_else(Vec::new, |round| round.open_findings(false))
+            .map_or_else(Vec::new, |round| round.open_findings(true))
     }
 
     fn at_head(&self, head: &str) -> Option<&Round<'_>> {

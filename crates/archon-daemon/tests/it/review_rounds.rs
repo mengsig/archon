@@ -533,6 +533,51 @@ async fn a_new_blocker_from_an_existing_parallel_reviewer_still_stops_the_stage(
     assert_eq!(confirmation_notes(&review.h), 0);
 }
 
+fn findings_notes(h: &Harness) -> Vec<String> {
+    h.backend
+        .messages()
+        .into_iter()
+        .filter(|(_, note)| note.starts_with("These blocking findings are open"))
+        .map(|(_, note)| note)
+        .collect()
+}
+
+/// Only open blockers start another review. A pass whose findings are all
+/// follow-ups gets no note: the lead looped on such notes until it timed out.
+#[tokio::test]
+async fn follow_up_findings_start_no_further_review() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([
+        {"title": "missing null check", "blocking": true},
+        {"title": "rename the helper", "blocking": false}
+    ]);
+    let failed = fail(&h, &lead, &first["commit"], None, findings);
+    let blocker = format!("{}:1", failed.agent.as_ref().unwrap());
+    handle(&h, &failed).await;
+    let notes = findings_notes(&h);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains(&blocker), "{}", notes[0]);
+    assert!(!notes[0].contains("rename the helper"), "{}", notes[0]);
+
+    let second = change(&workspace);
+    let verdict = json!({
+        "verdict": "pass", "head": second["commit"], "base": first["commit"],
+        "resolved_findings": [blocker],
+        "findings": [{"title": "tidy the docs", "blocking": false}]
+    });
+    handle(&h, &reporter(&h, &lead, verdict)).await;
+    assert_eq!(
+        findings_notes(&h).len(),
+        1,
+        "a follow-up-only pass is told nothing"
+    );
+    assert_eq!(h.running().await[0].id, lead.id, "the lead keeps its turn");
+}
+
 fn confirmation_notes(h: &Harness) -> usize {
     h.backend
         .messages()
@@ -767,12 +812,12 @@ async fn an_upgraded_tally_restores_already_counted_findings_and_their_ordinals(
     let notes = h.backend.messages();
     let note = &notes.last().unwrap().1;
     assert!(
-        note.contains(&format!("{reviewer}:1: a follow-up")),
-        "{note}"
+        !note.contains(&format!("{reviewer}:1")),
+        "a follow-up starts no review: {note}"
     );
     assert!(
         note.contains(&format!("{reviewer}:2: older blocker")),
-        "{note}"
+        "the blocker keeps its ordinal: {note}"
     );
     handle(&h, &second).await;
     assert_eq!(

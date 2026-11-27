@@ -2764,7 +2764,10 @@ cannot wake a lead whose run ended (`wake` and `restart` need a live parent,
 and the run node is retired with the run), so a retry never resumes the
 escalated lead. Archon does not edit the brief for it: the orchestrator's
 `brief_append` on the non-fresh `retry_item` gives the new lead the head, the
-open findings and the delta review. In each re-review the lead includes the
+open findings and the delta review. When a review leaves a blocking finding
+open, archond sends the lead the open blocking findings and their IDs for the
+next review; a pass whose findings are all follow-ups gets no note, since it
+owes no further review. In each re-review the lead includes the
 open findings and their IDs. A reviewer returns the IDs of confirmed fixes in
 `resolved_findings` and uses `findings[].id` for a finding still open. Any
 real blocker the reviewer discovers fails, including outside the delta.
@@ -2777,13 +2780,15 @@ its first round resolved the preceding round's findings.
 A child of a live, owing lead delegated with role `reviewer` that
 completes with no verdict the gate reads (`executor/review/restate.rs`) is
 told to the lead at once: archond records the reviewer under
-`review_restate:<stage run>`, interrupts the lead's turn (a Luna lead calls
-`complete_task` seconds after its reviewer settles) and sends one note keyed
+`review_restate:<stage run>` and sends one note keyed
 `archon:restate:<stage run>:<reviewer>` with the reason and the result shape
-for a replacement reviewer. A replayed event resends only the keyed note; a
-stage attempt gets at most `MAX_NOTES` (two) and a resumed one, never
-interrupted (§6.7), none. The note reads nothing as a verdict: the gate
-judges the record unchanged. When
+for a replacement reviewer. The note reaches a running turn at its next model
+call. It does not interrupt the turn: on codex an interrupted turn could end
+with the note read and the lead parked for mail that never came, until the
+item's deadline. A lead that completes first meets the record precheck, which
+refuses the same reviewer. A replayed event resends only the keyed note; a
+stage attempt gets at most `MAX_NOTES` (two) and a resumed one (§6.7) none.
+The note reads nothing as a verdict: the gate judges the record unchanged. When
 the same result is the ship record (§8.7), the branch head must hold the
 record's `tree`, the tree delivery later checks: what ships is what was read.
 

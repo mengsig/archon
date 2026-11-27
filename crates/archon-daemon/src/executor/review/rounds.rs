@@ -585,7 +585,9 @@ async fn tell_findings(
     lead: &AetherAgentId,
     records: &Rounds<'_>,
 ) -> Result<Option<String>, ArchonError> {
-    let findings = records.last_open();
+    // A pass whose findings are all follow-ups owes no further review, so it
+    // gets no note: one would read as an order to fix them and review again.
+    let findings = records.last_open_blockers();
     if findings.is_empty() || stage.only_reviews == Some(true) {
         return Ok(None);
     }
@@ -595,7 +597,7 @@ async fn tell_findings(
         Err(error) => return Ok(Some(error.to_string())),
     };
     let note = format!(
-        "For the next review, give the reviewer this list or its file path. Ask for each ID's disposition and a review of the new delta.\n\n{list}"
+        "These blocking findings are open. For the next review, give the reviewer this list or its file path. Ask for each ID's disposition and a review of the new delta. Non-blocking findings are follow-ups for your result and need no further review.\n\n{list}"
     );
     tell_note(ctx, stage, lead, "review-findings", &note).await
 }

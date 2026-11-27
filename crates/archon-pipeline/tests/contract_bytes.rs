@@ -18,11 +18,12 @@ const EXPERIMENTS: &str = "/experiments";
 const POLICY: &str = "any model the policy allows";
 
 /// Byte budgets, a little above what the built-ins weigh today. A work
-/// stage's carries the tree-check rule and the foreground-check rule.
-const PLAIN_BUDGET: usize = 3_650;
+/// stage's carries the tree-check rule and the foreground-check rule. Both
+/// grew 100 B when the contract said the Aether parent never replies.
+const PLAIN_BUDGET: usize = 3_750;
 /// 3,550 before the verdict section asked for each finding's `blocking` mark,
 /// 3,800 before it asked for `submit_verdict` ahead of `complete_task`.
-const REVIEW_BUDGET: usize = 4_050;
+const REVIEW_BUDGET: usize = 4_150;
 const RECORD_BUDGET: usize = 1_550;
 /// What asking a record holder to submit its result for precheck adds.
 const RECORD_PRECHECK_BUDGET: usize = 275;
@@ -45,8 +46,9 @@ const STRICT_SCENARIO_BUDGET: usize = 850;
 /// the `blocking` mark and the review-only lead's verdict section, 156,000
 /// before every verdict section asked for `submit_verdict`, 157,000 before a
 /// strict stage's rule named what its `fail` needs to re-run setup, 157,500
-/// before the review holders' reviewer-count rule, 157,800 before record prechecks.
-const TOTAL_BUDGET: usize = 159_400;
+/// before the review holders' reviewer-count rule, 157,800 before record prechecks,
+/// 159,400 before the run-node rule.
+const TOTAL_BUDGET: usize = 162_100;
 
 /// One built-in stage's fixed input, in bytes.
 struct Cost {

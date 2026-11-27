@@ -2,11 +2,13 @@
 //! and its lead used to learn that only from the refusal of its own record,
 //! after the work was done, so the whole stage was repaired. Aether cannot ask
 //! a finished agent again, so archond tells the live lead the moment such a
-//! reviewer settles: its running turn is interrupted (it may be about to
-//! complete) and one note says why the result does not count and the exact
-//! shape its replacement must return. Each reviewer is named once, and at
-//! most [`MAX_NOTES`] per stage attempt; nothing is read as a verdict that
-//! the gate would not read, which still judges the lead's record unchanged.
+//! reviewer settles: one note says why the result does not count and the
+//! exact shape its replacement must return. The note reaches a running turn
+//! at its next model call; the turn is not interrupted, because an engine can
+//! end the interrupted turn with the note read and leave the lead waiting for
+//! mail that never comes. Each reviewer is named once, and at most
+//! [`MAX_NOTES`] per stage attempt; nothing is read as a verdict that the
+//! gate would not read, which still judges the lead's record unchanged.
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
@@ -64,7 +66,7 @@ async fn owing_stage(
     lead: &AetherAgentId,
 ) -> Result<Option<StageRun>, ArchonError> {
     let stage = ctx.store.lock().await.stage_run_by_agent(lead)?;
-    // A resumed attempt settles on its turn's last word, so it is never interrupted (§6.7).
+    // A resumed attempt settles on its turn's last word, so it is sent no note (§6.7).
     let Some(stage) = stage.filter(|s| !s.state.is_terminal() && s.aether_task.is_some()) else {
         return Ok(None);
     };
@@ -94,10 +96,9 @@ fn settled_reviewer<'a>(
     (settled && child.role.eq_ignore_ascii_case(REVIEWER_ROLE)).then_some(child)
 }
 
-/// Interrupt `lead`'s turn and send it the note on `reviewer`, unless it was
-/// told about it already or about [`MAX_NOTES`] others. The reviewer is
-/// recorded first, so a repeated event resends the keyed note, which Aether
-/// delivers once, and never interrupts the turn that note started.
+/// Send `lead` the note on `reviewer`, unless it was told about it already
+/// or about [`MAX_NOTES`] others. The reviewer is recorded first, so a
+/// repeated event resends the keyed note, which Aether delivers once.
 async fn tell(
     ctx: &DaemonContext,
     stage: &StageRun,
@@ -114,7 +115,6 @@ async fn tell(
     if !repeat {
         told.push(reviewer.to_string());
         save(ctx, &stage.id, &told).await?;
-        interrupt(ctx, stage, lead).await?;
     }
     assert!(
         told.len() <= MAX_NOTES,
@@ -134,28 +134,6 @@ async fn tell(
         // The lead ended meanwhile: its record meets the gate as before.
         Err(refusal) => {
             tracing::warn!(stage = %stage.id, %lead, %refusal, "unreadable-reviewer note not delivered");
-            Ok(())
-        }
-    }
-}
-
-/// End `lead`'s running turn, which may be about to complete with the
-/// unreadable review, so the note starts its next one. A lead waiting for
-/// other reviewers is in no turn and takes the note when it wakes.
-async fn interrupt(
-    ctx: &DaemonContext,
-    stage: &StageRun,
-    lead: &AetherAgentId,
-) -> Result<(), ArchonError> {
-    match ctx.backend.interrupt(lead).await {
-        Ok(was_running) => {
-            tracing::debug!(stage = %stage.id, %lead, was_running, "turn interrupted for an unreadable reviewer");
-            Ok(())
-        }
-        Err(error) if error.is_store() => Err(error),
-        // The note still reaches the lead at its next model call or turn.
-        Err(error) => {
-            tracing::info!(stage = %stage.id, %lead, %error, "interrupt for an unreadable reviewer not taken");
             Ok(())
         }
     }

@@ -2,53 +2,67 @@
 
 ## Unreleased
 
-Archon 1.6.7 requires **Aether 1.4.4**, the release with the Antigravity
-(`agy`) engine. Update Aether first with `aether update --version v1.4.4` and
-restart aetherd.
+## 1.6.7
+
+Released 2026-11-27.
+
+Archon 1.6.7 adds Google models through the Antigravity CLI, as an opt-in
+provider, and lets a live design session start any repository's preview
+stack and remember how. It requires **Aether 1.4.4**, the release with the
+Antigravity (`agy`) engine. Update Aether first with
+`aether update --version v1.4.4` and restart aetherd, then run
+`archon update --yes`. There is no store migration.
 
 ### Added
 
-- A live design session's agent brings up whatever the preview needs on its
-  own: it tries the repository's saved preview recipe, then its documented
-  preview or dev route, then infers the stack, and starts the backends and
-  databases the page calls, each process recorded for the reaper and each
-  Compose stack under a project of its own, `archon-<item>`. `design_preview`
+- Design sessions start the preview stack of any repository. The design
+  agent tries the repository's saved preview recipe first, then its
+  documented preview or dev route, then infers the stack, and starts the
+  backends and databases the page calls. Each process is recorded so it is
+  stopped with the session, and each Compose stack runs under a project of
+  its own, `archon-<item>`. Before the preview is shown, `design_preview`
   checks that the page and every step's readiness URL or port answer, and
-  names what does not. It takes the stack's `recipe` (commands, order, ports,
-  readiness checks and env var names, never values) and saves it per
-  repository in Archon's state for the next session. The new `design_recipe`
-  tool reads it; `archon settings --repo NAME` shows it and
-  `--clear-design-recipe` forgets it. New requests: `design_recipe` and
-  `clear_design_recipe`. A port that differs per run is saved as how to pick
-  it (`port_pick`: `"free"` or `{"env": "NAME"}`), never one run's number.
-  Teardown takes the item's own project `archon-<item>`, unique to its runs,
-  down with `docker compose down --remove-orphans` from the files it
-  started from; when Compose cannot read those files (a repo script's
-  variables unset) its containers are removed with their anonymous volumes.
-  Then, also when its containers were already gone, the networks and
-  volumes labelled `com.docker.compose.project=archon-<item>` are removed.
-  Compose's `down --volumes` is never used, as it removes a declared volume
-  by its configured name whoever's it is. Every other project and external
-  volume keeps its volumes. The agent sets a
-  script's own project and state knobs (such as `DEV_PREVIEW_PROJECT`, `DEV_PREVIEW_HOME`) to the
-  run's, never deletes state it did not create, and asks the operator about
-  a failed dependency install instead of working around it.
-
+  names what does not. The agent sets a script's own project and state knobs
+  (such as `DEV_PREVIEW_PROJECT`, `DEV_PREVIEW_HOME`) to the run's, never
+  deletes state it did not create, and asks the operator about a failed
+  dependency install instead of working around it (#509).
+- The session remembers how: the working stack is saved per repository as a
+  recipe (commands, order, ports, readiness checks and env var names, never
+  values) for the next session. A port that differs per run is saved as how
+  to pick it (`port_pick`: `"free"` or `{"env": "NAME"}`), never one run's
+  number. The new `design_recipe` tool reads it; `archon settings --repo
+  NAME` shows it and `--clear-design-recipe` forgets it. New requests:
+  `design_recipe` and `clear_design_recipe` (#509).
 - Google models through the Antigravity CLI: the `antigravity` provider and
   `antigravity/gemini-4-hydrogen`, `gemini-4-neon`, `gemini-4-carbon`,
-  `gemini-4-argon` and `gemini-3.8-flash`. Archon places them in tiers, which
-  Aether leaves unset: Flash is `fast`, Carbon and Argon `balanced`, Neon and
-  Hydrogen `strong`. They are opt-in: Archon picks them only when a
-  `model_plan` or `[models] allow` names them, never by default, as a fallback
-  or by learned routing, and an unnamed `provider_weights` entry weighs at most
-  1. Secondary routes such as `antigravity/claude-opus-5-5` serve Archon's own
-  picks only while the vendor's own provider lists no model. See
-  [Antigravity](docs/configuration.md#antigravity-google-models).
+  `gemini-4-argon` and `gemini-3.8-flash`. The provider is opt-in: Archon
+  picks its models only when a `model_plan` or `[models] allow` names them,
+  never by default, as a fallback or by learned routing, and an unnamed
+  `provider_weights` entry weighs at most 1. Archon places them in tiers,
+  which Aether leaves unset: Flash is `fast`, Carbon and Argon `balanced`,
+  Neon and Hydrogen `strong`. The model's original provider stays preferred:
+  a secondary route such as `antigravity/claude-opus-5-5` serves Archon's own
+  picks only while the vendor's own provider lists no model. It needs Aether
+  1.4.4 and a signed-in `agy`. See
+  [Antigravity](docs/configuration.md#antigravity-google-models) (#508).
 
 ### Changed
 
 - The required Aether release is 1.4.4 (`archon doctor`, `archon update` and
-  the installer).
+  the installer) (#508).
+
+### Fixed
+
+- Tearing down a design session's Compose stack removes only what belongs to
+  the run. It takes the item's own project `archon-<item>` down with plain
+  `docker compose down --remove-orphans` from the files it started from; when
+  Compose cannot read those files (a repo script's variables unset), the
+  project's containers are removed with their anonymous volumes. Then, also
+  when its containers were already gone, only the networks and volumes
+  labelled `com.docker.compose.project=archon-<item>` are removed. Compose's
+  `down --volumes` is never used, as it removes a declared volume by its
+  configured name whoever's it is: every other project and external volume
+  keeps its volumes (#509).
 
 ## 1.6.6
 

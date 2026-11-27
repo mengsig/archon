@@ -22,6 +22,8 @@ use crate::context::DaemonContext;
 /// Finding lines an escalation lists before it points to the reviewers' results.
 const MAX_LISTED: usize = 20;
 
+const _: () = assert!(REVIEW_CAP_WAIT_MINUTES > 0, "a capped lead gets time to answer");
+
 /// A stage whose review failed [`REVIEW_ROUND_CAP`] rounds: archond stops it,
 /// or settles its completion, with `reason`, an `ESCALATE:` failure that ends its run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -367,7 +369,6 @@ fn lead_wait_over(
     lead: &AetherAgentId,
     now: archon_core::Timestamp,
 ) -> Option<String> {
-    assert!(REVIEW_CAP_WAIT_MINUTES > 0, "the lead gets time to answer");
     let since = tally.lead_wait?;
     let waited = now.signed_duration_since(since);
     if waited < chrono::Duration::minutes(REVIEW_CAP_WAIT_MINUTES) {

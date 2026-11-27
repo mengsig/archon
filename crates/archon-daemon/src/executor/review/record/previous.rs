@@ -131,7 +131,7 @@ pub(in crate::executor) fn prior_handoff(
             "The last review read `{head}`. Review the new delta if that head is still an ancestor.\n"
         ));
     }
-    let rule = "Return confirmed fixes as IDs in `resolved_findings`. Keep the `id` on each finding still open. Any real blocker found anywhere fails.";
+    let rule = "Return confirmed fixes as IDs in `resolved_findings`. Keep the `id` on each finding still open. Fail only on a defect in the new commits or an open finding unfixed: a new finding in code a pass already read is `\"blocking\": false`.";
     if delegates_review {
         objective.push_str(
             "Give the next reviewer this list or its file path and the instructions below.\n",

@@ -50,6 +50,13 @@ Antigravity (`agy`) engine. Update Aether first with
 
 - The required Aether release is 1.4.4 (`archon doctor`, `archon update` and
   the installer) (#508).
+- Review rounds again follow the 1.6.4 rule for delta reviews: a delta
+  reviewer fails only on a defect in the commits it reads or an open finding
+  left unfixed, and a new finding in code a passing review already read is
+  non-blocking. A fail no longer follows from any blocker anywhere, so a fix
+  round no longer reopens code that already passed. Finding IDs,
+  `Review-Fix` trailers, `resolved_findings`, carried-forward omissions and
+  the final confirmation after three rounds are unchanged.
 
 ### Fixed
 

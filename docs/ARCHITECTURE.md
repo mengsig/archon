@@ -2766,8 +2766,9 @@ escalated lead. Archon does not edit the brief for it: the orchestrator's
 `brief_append` on the non-fresh `retry_item` gives the new lead the head, the
 open findings and the delta review. In each re-review the lead includes the
 open findings and their IDs. A reviewer returns the IDs of confirmed fixes in
-`resolved_findings` and uses `findings[].id` for a finding still open. Any
-real blocker the reviewer discovers fails, including outside the delta.
+`resolved_findings` and uses `findings[].id` for a finding still open. A
+delta reviewer fails only on a defect in its commits or an open finding
+unfixed; a new finding in code a pass already read is non-blocking.
 Archon assigns each new finding an ID from its reviewer agent and ordinal.
 The stage's `structured.review_rounds` records each review's verdict, model
 and finding count by round, and when each finding was discovered and resolved.

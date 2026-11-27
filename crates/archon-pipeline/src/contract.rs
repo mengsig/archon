@@ -964,8 +964,10 @@ fix and read only the delta from the last reviewed head, including after a pass.
 or rebase needs whole-change reads. List all open findings and their IDs \
 (`reviewer-agent:1-based position in findings`) in the prompt. \
 Ask for `resolved_findings` and `findings[].id` for open issues. Carry omissions forward. \
-Any real blocker anywhere fails. At 3 failed rounds, commit all fixes, then wait for \
-Archon to request one final confirmation. If you cannot commit every fix, fail.\n";
+Tell every delta reviewer to fail only on a defect in its commits or an open finding \
+unfixed: a new finding in code a pass already read is `\"blocking\": false`. At 3 failed \
+rounds, commit all fixes, then wait for Archon to request one final confirmation. If you \
+cannot commit every fix, fail.\n";
 
 /// A review-only lead's rounds: one, whose findings it records rather than fixes.
 const REVIEW_ONLY_ROUNDS_RULE: &str = "\
@@ -1568,7 +1570,9 @@ mod tests {
                 "List all open findings and their IDs",
                 "Ask for `resolved_findings` and `findings[].id` for open issues",
                 "Carry omissions forward",
-                "Any real blocker anywhere fails",
+                "Tell every delta reviewer to fail only on a defect in its commits or an open \
+                 finding unfixed",
+                "a new finding in code a pass already read is `\"blocking\": false`",
                 "If you cannot commit every fix, fail",
                 "As many as the review asks must have read the whole change",
                 "one must have passed the branch head itself",

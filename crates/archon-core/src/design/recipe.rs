@@ -128,15 +128,20 @@ impl PreviewRecipe {
     pub fn check_reported(&self) -> Result<(), String> {
         self.check()?;
         for step in self.steps.iter().filter(|s| s.port_pick.is_some()) {
-            let Some(port) = step
-                .port
-                .or_else(|| step.ready.as_deref().and_then(url_port))
-            else {
+            // The stack check asks the ready URL when there is one, else the port.
+            let Some(port) = step.ready.as_deref().and_then(url_port).or(step.port) else {
                 return Err(format!(
                     "step {} picks its port each run, so it needs this run's port or ready URL",
                     step.name
                 ));
             };
+            if let Some(given) = step.port.filter(|given| *given != port) {
+                return Err(format!(
+                    "step {} gives port {given} but its ready URL is on {port}; \
+                     give this run's port once",
+                    step.name
+                ));
+            }
             if pins_number(&step.command, port) {
                 return Err(format!(
                     "step {} pins this run's port {port} in its command; let it pick a free port \
@@ -359,11 +364,13 @@ fn pins_number(text: &str, port: u16) -> bool {
     })
 }
 
-/// The explicit port of a loopback `http://` URL.
+/// The port a loopback `http://` URL connects to, 80 when it names none.
 fn url_port(url: &str) -> Option<u16> {
     let authority = url.strip_prefix("http://")?.split(['/', '?', '#']).next()?;
-    let (_, port) = authority.rsplit_once(':')?;
-    port.parse().ok()
+    match authority.rsplit_once(':') {
+        Some((_, port)) if !port.contains(']') => port.parse().ok(),
+        _ => Some(80),
+    }
 }
 
 fn is_env_name(name: &str) -> bool {

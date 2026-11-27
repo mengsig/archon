@@ -421,3 +421,28 @@ fn a_picked_port_needs_this_runs_value_and_must_not_be_pinned() {
     longer.port_pick = Some(PortPick::Free);
     recipe(vec![longer]).check_reported().unwrap();
 }
+
+/// The port Archon checks is the ready URL's, so that is the one a command
+/// must not pin, and a step gives this run's port only once.
+#[test]
+fn a_picked_port_is_the_one_the_ready_url_checks() {
+    let mut web = step("web", "npm run dev -- --port 5173");
+    web.port = Some(36519);
+    web.ready = Some("http://127.0.0.1:5173/".into());
+    web.port_pick = Some(PortPick::Free);
+    let error = recipe(vec![web.clone()]).check_reported().unwrap_err();
+    assert!(
+        error.contains("gives port 36519 but its ready URL is on 5173"),
+        "{error}"
+    );
+    web.port = None;
+    let error = recipe(vec![web.clone()]).check_reported().unwrap_err();
+    assert!(error.contains("pins this run's port 5173"), "{error}");
+    web.command = "python -m http.server 80".into();
+    web.ready = Some("http://localhost/".into());
+    let error = recipe(vec![web.clone()]).check_reported().unwrap_err();
+    assert!(error.contains("pins this run's port 80"), "{error}");
+    web.ready = Some("http://[::1]/health".into());
+    let error = recipe(vec![web]).check_reported().unwrap_err();
+    assert!(error.contains("pins this run's port 80"), "{error}");
+}

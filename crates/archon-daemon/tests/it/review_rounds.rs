@@ -775,6 +775,59 @@ async fn a_resolution_at_a_newer_head_outranks_an_older_parallel_read() {
     );
 }
 
+/// A resolution counts only past every read that still lists the blocker. A
+/// read on a diverged head that resolves it leaves the other branch's claim
+/// open, whichever reviewer came first, as the gate holds it.
+#[tokio::test]
+async fn a_resolution_on_a_diverged_head_leaves_the_blocker_open() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([{"title": "missing null check", "blocking": true}]);
+    let failed = fail(&h, &lead, &first["commit"], None, findings);
+    let blocker = format!("{}:1", failed.agent.as_ref().unwrap());
+    handle(&h, &failed).await;
+
+    let kept = change(&workspace);
+    let resolving = diverged_commit(&workspace, first["commit"].as_str().unwrap());
+    git(&workspace, &["merge", "--no-edit", "--quiet", &resolving]);
+    let still_open =
+        json!([{"title": "null check still bypassed", "blocking": true, "id": blocker}]);
+    let continued = fail(
+        &h,
+        &lead,
+        &kept["commit"],
+        Some(&first["commit"]),
+        still_open,
+    );
+    let verdict = json!({
+        "verdict": "pass", "head": resolving, "base": first["commit"],
+        "resolved_findings": [blocker], "findings": []
+    });
+    let resolved = reporter(&h, &lead, verdict);
+    handle(&h, &continued).await;
+    handle(&h, &resolved).await;
+    let notes = findings_notes(&h);
+    assert!(notes.len() > 1, "the continued blocker is told: {notes:?}");
+    let last = notes.last().unwrap();
+    assert!(last.contains(&blocker), "the blocker stays open: {last}");
+}
+
+/// A commit on `from` beside the branch, returned to the branch after.
+fn diverged_commit(workspace: &Path, from: &str) -> String {
+    let branch = git(workspace, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    git(workspace, &["checkout", "--quiet", "--detach", from]);
+    std::fs::write(workspace.join("side.txt"), "a side change\n").expect("write");
+    git(workspace, &["add", "side.txt"]);
+    git(workspace, &["commit", "--quiet", "-m", "side change"]);
+    let commit = git(workspace, &["rev-parse", "HEAD"]).trim().to_owned();
+    git(workspace, &["checkout", "--quiet", branch.trim()]);
+    assert_eq!(commit.len(), 40, "a full commit ID");
+    commit
+}
+
 /// A new reviewer of `lead` whose task completed with `verdict` while Aether
 /// still lists it live, and the pump handling that task's event.
 async fn review_settling_live(h: &Harness, lead: &StageRun, verdict: Value) -> AetherAgentId {

@@ -1,6 +1,7 @@
 mod previous;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;
@@ -12,12 +13,15 @@ use archon_queue::Store;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::coverage::{Ancestry, History};
 use super::rounds::{load_from, same_commit};
+use crate::worktree;
+use crate::worktree::stack::is_commit_id;
 pub(super) use previous::prior_findings;
 pub(in crate::executor) use previous::prior_handoff;
 use previous::{previous, update_previous};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(super) struct Report {
     pub agent: String,
     pub model: String,
@@ -130,6 +134,16 @@ struct Review<'a> {
     next_round_resolved: Option<bool>,
     #[serde(skip)]
     reported: &'a [ReviewFinding],
+    #[serde(skip)]
+    resolved: &'a [String],
+}
+
+/// One read as the gate weighs a blocker: its head and the IDs it listed and
+/// resolved.
+struct Read<'r> {
+    head: String,
+    listed: &'r [String],
+    resolved: &'r [String],
 }
 
 impl<'a> Rounds<'a> {
@@ -208,12 +222,75 @@ impl<'a> Rounds<'a> {
             .collect()
     }
 
-    /// The blocking findings still open after the last round: the fixes a
-    /// delta review owes. Follow-ups are left out, so they start no round.
-    pub fn last_open_blockers(&self) -> Vec<(&str, &str)> {
-        self.rounds
-            .last()
-            .map_or_else(Vec::new, |round| round.open_findings(true))
+    /// The blocking findings the gate still holds open. As coverage reads it,
+    /// one is resolved only by a read on the branch whose head descends from
+    /// every read on the branch that lists it, whatever order they came in.
+    pub fn open_blockers_by_ancestry(
+        &self,
+        workspace: &Path,
+    ) -> Result<Vec<(&str, &str)>, ArchonError> {
+        let mut history = History::new(workspace);
+        let reads = self.reads_on_branch(workspace, &mut history)?;
+        let mut open = Vec::new();
+        for finding in self.findings.values().filter(|f| f.blocking) {
+            let listed = reads.iter().any(|read| read.listed.contains(&finding.id));
+            if finding.resolved_in.is_some() && !listed {
+                continue;
+            }
+            if !resolved_past_listings(&mut history, &reads, &finding.id)? {
+                open.push((finding.id.as_str(), self.description(finding)));
+            }
+        }
+        assert!(
+            open.iter()
+                .all(|(id, text)| !id.is_empty() && !text.is_empty())
+        );
+        Ok(open)
+    }
+
+    /// Every review whose head the branch holds, as a full commit ID, as
+    /// `coverage::place` sees it; an amended-away or unknown head counts for none.
+    fn reads_on_branch(
+        &self,
+        workspace: &Path,
+        history: &mut impl Ancestry,
+    ) -> Result<Vec<Read<'_>>, ArchonError> {
+        let Some(branch) = worktree::commit_id(workspace, "HEAD")? else {
+            return Ok(Vec::new());
+        };
+        let mut reads = Vec::new();
+        for round in &self.rounds {
+            let Some(named) = round.head else { continue };
+            let Some(head) = worktree::commit_id(workspace, named)? else {
+                continue;
+            };
+            if !history.holds(&head, &branch)? {
+                continue;
+            }
+            reads.extend(round.reviews.iter().map(|review| Read {
+                head: head.clone(),
+                listed: &review.finding_ids,
+                resolved: review.resolved,
+            }));
+        }
+        assert!(reads.iter().all(|read| is_commit_id(&read.head)));
+        Ok(reads)
+    }
+
+    /// The newest report's wording of `finding`, else its first.
+    fn description<'s>(&'s self, finding: &'s Finding) -> &'s str {
+        let latest = self
+            .rounds
+            .iter()
+            .rev()
+            .flat_map(|round| &round.reviews)
+            .find_map(|review| {
+                review
+                    .findings()
+                    .find(|(id, _)| *id == finding.id)
+                    .map(|(_, f)| f.description.as_str())
+            });
+        latest.unwrap_or(&finding.description)
     }
 
     fn at_head(&self, head: &str) -> Option<&Round<'_>> {
@@ -231,6 +308,43 @@ impl Review<'_> {
             .map(String::as_str)
             .zip(self.reported)
     }
+}
+
+/// Whether a read resolving `id` has every read listing it as a strict
+/// ancestor, as `coverage::reads_past_open_claims` demands.
+fn resolved_past_listings(
+    history: &mut impl Ancestry,
+    reads: &[Read],
+    id: &str,
+) -> Result<bool, ArchonError> {
+    assert!(!id.is_empty(), "a blocker has an ID");
+    for resolution in reads
+        .iter()
+        .filter(|read| read.resolved.iter().any(|r| r == id))
+    {
+        if listings_precede(history, reads, &resolution.head, id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn listings_precede(
+    history: &mut impl Ancestry,
+    reads: &[Read],
+    head: &str,
+    id: &str,
+) -> Result<bool, ArchonError> {
+    assert!(!head.is_empty(), "a resolving read names its head");
+    for listing in reads
+        .iter()
+        .filter(|read| read.listed.iter().any(|l| l == id))
+    {
+        if listing.head == head || !history.holds(&listing.head, head)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn group(reports: &[Report]) -> Vec<Vec<&Report>> {
@@ -321,6 +435,7 @@ impl<'a> Round<'a> {
                 finding_ids,
                 next_round_resolved: None,
                 reported: &report.findings,
+                resolved: &report.resolved_findings,
             });
         }
         assert!(!self.reviews.is_empty(), "a round has at least one verdict");

@@ -272,22 +272,36 @@ async fn stop_project(
     if own {
         return down_own(docker, project, verified).await;
     }
-    stop_verified(docker, project, verified).await
-}
-
-/// Stop and remove the containers checked in `verified`, then `project`'s
-/// networks once none of its containers is left.
-async fn stop_verified(
-    docker: &Docker<'_>,
-    project: &str,
-    verified: &Project,
-) -> Result<(), ArchonError> {
     let ids: BTreeSet<String> = verified.containers.keys().cloned().collect();
     assert!(!ids.is_empty(), "a selected project has a container");
     let args: Vec<&str> = ids.iter().map(String::as_str).collect();
     docker
         .run(&[&["stop"], &args[..]].concat(), STOP_TIMEOUT)
         .await?;
+    remove_stopped(docker, project, &ids).await
+}
+
+/// Stop and remove those containers checked in `verified` that a failed
+/// `compose down` left, then `project`'s networks once none is left.
+async fn stop_left(
+    docker: &Docker<'_>,
+    project: &str,
+    verified: &Project,
+) -> Result<(), ArchonError> {
+    let present = container_ids(&docker.list(Some(project)).await?);
+    let ids: BTreeSet<String> = verified
+        .containers
+        .keys()
+        .filter(|id| present.contains(*id))
+        .cloned()
+        .collect();
+    debug_assert!(ids.is_subset(&present), "only containers still there");
+    if !ids.is_empty() {
+        let args: Vec<&str> = ids.iter().map(String::as_str).collect();
+        docker
+            .run(&[&["stop"], &args[..]].concat(), STOP_TIMEOUT)
+            .await?;
+    }
     remove_stopped(docker, project, &ids).await
 }
 
@@ -324,8 +338,12 @@ async fn down_own(
     args.extend(["down", "--volumes", "--remove-orphans"]);
     if let Err(error) = docker.run(&args, STOP_TIMEOUT).await {
         tracing::warn!(%project, %error, "compose down failed; the containers are stopped and the volumes kept");
-        stop_verified(docker, project, verified).await?;
-        return Err(error);
+        return match stop_left(docker, project, verified).await {
+            Ok(()) => Err(error),
+            Err(fallback) => Err(ArchonError::Unavailable(format!(
+                "{error}; stopping its containers then failed too: {fallback}"
+            ))),
+        };
     }
     let kept = docker.volumes(project).await?;
     if !kept.is_empty() {

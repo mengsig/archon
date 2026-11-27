@@ -54,6 +54,11 @@ case "$1" in
     if [ "$2" = ls ]; then cat "$dir/networks" 2>/dev/null; fi ;;
   compose)
     if [ -e "$dir/compose.exit" ]; then
+      partial=$(cat "$dir/compose.partial" 2>/dev/null)
+      if [ -n "$partial" ]; then
+        awk -F '\t' -v id="$partial" '$1 != id' "$dir/ps" > "$dir/ps.left"
+        mv "$dir/ps.left" "$dir/ps"
+      fi
       echo "compose cannot read the project" >&2
       exit 1
     fi
@@ -247,6 +252,36 @@ async fn an_own_project_compose_cannot_take_down_is_stopped_and_told() {
     let notes = harness.system_notes().await;
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("down --volumes"), "{notes:?}");
+}
+
+/// A `compose down` that removed some containers before it failed leaves
+/// only the rest to stop, and its own error stays in the feed.
+#[tokio::test]
+async fn a_partial_compose_down_stops_only_the_containers_it_left() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let own = compose::own_project(&item);
+    docker.lists(
+        "ps",
+        &[container("a1", &own, &tree), container("a2", &own, &tree)],
+    );
+    docker.fails("compose");
+    std::fs::write(docker.dir.path().join("compose.partial"), "a1").unwrap();
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    let removals = docker.removals();
+    assert!(removals[0].starts_with("compose "), "{removals:?}");
+    assert_eq!(removals[1..], ["stop a2", "rm a2"], "{:?}", docker.calls());
+    let notes = harness.system_notes().await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("compose cannot read the project"),
+        "{notes:?}"
+    );
+    assert!(!notes[0].contains("failed too"), "{notes:?}");
 }
 
 /// A project that gained a container from elsewhere after it was listed is

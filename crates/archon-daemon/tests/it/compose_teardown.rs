@@ -59,7 +59,7 @@ case "$1" in
     fi
     if [ "$2" = ls ]; then
       project=$(echo "$*" | sed -n 's/.*label=com\.docker\.compose\.project=\([^ ]*\).*/\1/p')
-      awk -F '\t' -v p="$project" '$1 == p { print $2 }' "$dir/volumes" 2>/dev/null
+      awk -F '\t' -v p="$project" '$1 == p { print $2 "\t" $3 }' "$dir/volumes" 2>/dev/null
     fi ;;
 esac
 exit 0
@@ -189,8 +189,8 @@ async fn only_the_worktrees_own_projects_go_and_volumes_are_kept() {
 }
 
 /// S7: the item's own project, `archon-<item>`, loses the volumes Compose
-/// made for it; a volume of the same item named apart, and every other
-/// project's, pre-existing ones included, are kept.
+/// made for it under their default names; one given its own `name:`, even
+/// with the project's prefix, and every other project's are kept.
 #[tokio::test]
 async fn the_items_own_project_takes_its_volumes_with_it() {
     let docker = FakeDocker::new();
@@ -209,10 +209,11 @@ async fn the_items_own_project_takes_its_volumes_with_it() {
     docker.lists(
         "volumes",
         &[
-            format!("{own}\t{own}_pgdata"),
-            format!("{own}\tshared-pgdata"),
-            "review-1\treview-1_pgdata".to_owned(),
-            "ccso-dev-preview\tccso-dev-preview_pgdata".to_owned(),
+            format!("{own}\t{own}_pgdata\tpgdata"),
+            format!("{own}\tshared-pgdata\tcache"),
+            format!("{own}\t{own}_shared\tuploads"),
+            "review-1\treview-1_pgdata\tpgdata".to_owned(),
+            "ccso-dev-preview\tccso-dev-preview_pgdata\tpgdata".to_owned(),
         ],
     );
     compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
@@ -242,7 +243,7 @@ async fn an_own_volume_docker_keeps_is_told() {
     let tree = item_tree(&harness, &item);
     let own = compose::own_project(&item);
     docker.lists("ps", &[container("a1", &own, &tree)]);
-    docker.lists("volumes", &[format!("{own}\t{own}_pgdata")]);
+    docker.lists("volumes", &[format!("{own}\t{own}_pgdata\tpgdata")]);
     docker.fails("volume");
     compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
         .await

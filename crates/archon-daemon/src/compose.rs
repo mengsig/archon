@@ -28,6 +28,8 @@ use tokio::process::Command;
 use crate::context::DaemonContext;
 
 const PROJECT_LABEL: &str = "com.docker.compose.project";
+/// The key a Compose volume has in its file, beside its project label.
+const VOLUME_LABEL: &str = "com.docker.compose.volume";
 /// Listing answers promptly; a teardown waits for its containers to stop.
 const LIST_TIMEOUT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: Duration = Duration::from_secs(180);
@@ -323,6 +325,15 @@ async fn remove_stopped(
         .map(|_| true)
 }
 
+/// The volume name of a `volume ls` line of name and Compose key when it is
+/// the default Compose gives `project`'s volume `key`, and nothing else.
+fn default_volume_name<'a>(project: &str, line: &'a str) -> Option<&'a str> {
+    let (name, key) = line.split_once('\t')?;
+    let key = key.trim();
+    let default = !key.is_empty() && name.strip_prefix(project)?.strip_prefix('_') == Some(key);
+    default.then_some(name)
+}
+
 /// The IDs of the containers in a `docker ps` listing.
 fn container_ids(listing: &str) -> BTreeSet<String> {
     let containers = listing.lines().filter_map(Container::parse);
@@ -434,24 +445,28 @@ impl<'a> Docker<'a> {
         Ok(ids)
     }
 
-    /// The volumes Compose made for `project` under its own `<project>_`
-    /// prefix. An external volume carries no project label, and one renamed
-    /// with `name:` may be shared, so neither is among them.
+    /// The volumes Compose made for `project` under their default name,
+    /// `<project>_<key>`. An external volume carries no project label, and one
+    /// given its own `name:` may be shared, whatever it is called, so neither
+    /// is among them.
     async fn volumes(&self, project: &str) -> Result<Vec<String>, ArchonError> {
         let filter = format!("label={PROJECT_LABEL}={project}");
-        let args = ["volume", "ls", "--quiet", "--filter", &filter];
+        let format = format!("{{{{.Name}}}}\t{{{{.Label \"{VOLUME_LABEL}\"}}}}");
+        let args = ["volume", "ls", "--filter", &filter, "--format", &format];
         let listing = self.run(&args, LIST_TIMEOUT).await?;
-        let prefix = format!("{project}_");
-        let (own, renamed): (Vec<String>, Vec<String>) = listing
-            .split_whitespace()
-            .map(str::to_owned)
-            .partition(|name| name.starts_with(&prefix));
+        let lines = listing.lines().filter(|line| !line.trim().is_empty());
+        let (own, renamed): (Vec<&str>, Vec<&str>) =
+            lines.partition(|line| default_volume_name(project, line).is_some());
         if !renamed.is_empty() {
             tracing::info!(%project, ?renamed, "volumes named apart from the compose project are kept");
         }
+        let own: Vec<String> = own
+            .into_iter()
+            .filter_map(|line| default_volume_name(project, line).map(str::to_owned))
+            .collect();
         debug_assert!(
-            own.iter().all(|n| n.len() > prefix.len()),
-            "a volume has a name of its own"
+            own.iter().all(|n| n.len() > project.len() + 1),
+            "a volume has a key"
         );
         Ok(own)
     }
@@ -496,6 +511,39 @@ mod tests {
 
     fn ids(project: &Project) -> Vec<&str> {
         project.containers.keys().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn only_a_volume_under_its_default_compose_name_is_the_projects_own() {
+        let own = "archon-qi_1";
+        assert_eq!(
+            default_volume_name(own, "archon-qi_1_pgdata\tpgdata"),
+            Some("archon-qi_1_pgdata")
+        );
+        assert_eq!(
+            default_volume_name(own, "archon-qi_1_shared\tpgdata"),
+            None,
+            "renamed"
+        );
+        assert_eq!(
+            default_volume_name(own, "shared-pgdata\tpgdata"),
+            None,
+            "renamed"
+        );
+        assert_eq!(
+            default_volume_name(own, "archon-qi_1_pgdata\t"),
+            None,
+            "no key"
+        );
+        assert_eq!(
+            default_volume_name(own, "archon-qi_10_pgdata\tpgdata"),
+            None
+        );
+        assert_eq!(
+            default_volume_name(own, "archon-qi_1_pgdata"),
+            None,
+            "no key column"
+        );
     }
 
     #[test]

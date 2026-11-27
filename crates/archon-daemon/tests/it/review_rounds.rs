@@ -733,6 +733,48 @@ async fn a_verdict_read_when_its_agent_completes_is_told_then() {
     assert!(notes[1].contains(&format!("{later}:1")), "{}", notes[1]);
 }
 
+/// Parallel reviewers may read heads out of the order they were created in.
+/// The note follows commit order, as the gate does, so a resolution at the
+/// newer head stands over an older read that still listed the blocker.
+#[tokio::test]
+async fn a_resolution_at_a_newer_head_outranks_an_older_parallel_read() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([{"title": "missing null check", "blocking": true}]);
+    let failed = fail(&h, &lead, &first["commit"], None, findings);
+    let blocker = format!("{}:1", failed.agent.as_ref().unwrap());
+    handle(&h, &failed).await;
+    assert_eq!(findings_notes(&h).len(), 1, "the blocker is told once");
+
+    let second = change(&workspace);
+    let third = change(&workspace);
+    let verdict = json!({
+        "verdict": "pass", "head": third["commit"], "base": first["commit"],
+        "resolved_findings": [blocker], "findings": []
+    });
+    let newer = reporter(&h, &lead, verdict);
+    let still_open =
+        json!([{"title": "null check still bypassed", "blocking": true, "id": blocker}]);
+    let older = fail(
+        &h,
+        &lead,
+        &second["commit"],
+        Some(&first["commit"]),
+        still_open,
+    );
+    handle(&h, &newer).await;
+    handle(&h, &older).await;
+    let notes = findings_notes(&h);
+    assert_eq!(
+        notes.len(),
+        1,
+        "no note reopens a blocker resolved at a newer head: {notes:?}"
+    );
+}
+
 /// A new reviewer of `lead` whose task completed with `verdict` while Aether
 /// still lists it live, and the pump handling that task's event.
 async fn review_settling_live(h: &Harness, lead: &StageRun, verdict: Value) -> AetherAgentId {

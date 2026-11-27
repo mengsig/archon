@@ -17,7 +17,7 @@ pub(super) use previous::prior_findings;
 pub(in crate::executor) use previous::prior_handoff;
 use previous::{previous, update_previous};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Report {
     pub agent: String,
     pub model: String,

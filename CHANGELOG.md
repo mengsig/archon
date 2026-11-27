@@ -31,7 +31,9 @@ restart aetherd.
   findings and is not sent when none is open, so follow-ups no longer read as
   an order to fix them and review again. It is sent once Aether lists the
   reviewer completed, so it carries that review's own blockers rather than
-  the previous list. Review notes reach the lead as Archon's own trigger, no
+  the previous list. Parallel reviews count in commit order, as the gate
+  counts them, so an older head never reopens a blocker a newer one resolved.
+  Review notes reach the lead as Archon's own trigger, no
   longer labelled an authenticated operator instruction. The note about an
   unreadable reviewer result no longer interrupts the lead, which left Codex
   leads parked on their inbox. The contract says a lead's Aether parent, a run node, never

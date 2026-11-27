@@ -629,12 +629,13 @@ async fn findings_note(
     tally: &Tally,
 ) -> Result<Result<Option<String>, String>, ArchonError> {
     assert!(!tally.reports.is_empty(), "a note follows a read verdict");
-    let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
+    let workspace = ctx.store.lock().await.run(&stage.run)?.workspace;
+    let ordered = in_commit_order(&workspace, &tally.reports);
+    let records = Rounds::new(stage, &ordered, tally.prior_findings.clone(), 1);
     let findings = records.last_open_blockers();
     if findings.is_empty() {
         return Ok(Ok(None));
     }
-    let workspace = ctx.store.lock().await.run(&stage.run)?.workspace;
     let list = match handoff::findings(&workspace, &findings) {
         Ok(list) => list,
         Err(error) => return Ok(Err(error.to_string())),
@@ -642,6 +643,55 @@ async fn findings_note(
     Ok(Ok(Some(format!(
         "These blocking findings are open. For the next review, give the reviewer this list or its file path. Ask for each ID's disposition and a review of the new delta. Non-blocking findings are follow-ups for your result and need no further review.\n\n{list}"
     ))))
+}
+
+/// `reports` with older heads first, as the gate reads them, so a parallel
+/// reviewer of an older head never reopens what a newer head resolved.
+fn in_commit_order(workspace: &std::path::Path, reports: &[Report]) -> Vec<Report> {
+    let heads: Option<Vec<&str>> = reports.iter().map(|r| r.head.as_deref()).collect();
+    let Some(heads) = heads else {
+        return reports.to_vec();
+    };
+    let mut history = super::coverage::History::new(workspace);
+    let mut depths = Vec::with_capacity(heads.len());
+    for head in &heads {
+        match commit_depth(&mut history, head, &heads) {
+            Ok(depth) => depths.push(depth),
+            Err(error) => {
+                tracing::warn!(%error, "review heads have no known order; notes keep read order");
+                return reports.to_vec();
+            }
+        }
+    }
+    let mut order: Vec<usize> = (0..reports.len()).collect();
+    order.sort_by_key(|&index| depths[index]);
+    assert_eq!(order.len(), reports.len(), "reordering keeps every report");
+    order
+        .into_iter()
+        .map(|index| reports[index].clone())
+        .collect()
+}
+
+/// How many distinct `heads` are strict ancestors of `head`.
+fn commit_depth(
+    history: &mut super::coverage::History,
+    head: &str,
+    heads: &[&str],
+) -> Result<usize, ArchonError> {
+    assert!(!head.is_empty(), "a read verdict names its head");
+    let mut older: Vec<&str> = Vec::new();
+    for &other in heads {
+        let known = older.iter().any(|seen| same_commit(seen, other));
+        if known || same_commit(other, head) || !history.holds(other, head)? {
+            continue;
+        }
+        older.push(other);
+    }
+    assert!(
+        older.len() < heads.len(),
+        "a head is never its own ancestor"
+    );
+    Ok(older.len())
 }
 
 async fn tell_note(

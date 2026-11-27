@@ -1453,6 +1453,28 @@ impl FakeBackend {
         );
     }
 
+    /// The delegated `agent`'s task completed with `structured`, while Aether
+    /// still lists the agent live, as it does until its `agent.completed`.
+    pub fn settle_delegated_task(&self, agent: &AetherAgentId, structured: serde_json::Value) {
+        let mut state = self.state();
+        let delegated = state.delegated.iter().find(|d| d.agent == *agent);
+        let delegated = delegated.expect("a delegated agent");
+        assert_eq!(
+            delegated.state,
+            DescendantState::Live,
+            "its agent has not ended"
+        );
+        let task = delegated
+            .task
+            .clone()
+            .expect("a delegated agent has a task");
+        let outcome = StageOutcome::Completed {
+            summary: "reviewed".into(),
+            structured: Some(structured),
+        };
+        state.outcomes.insert(task, outcome);
+    }
+
     /// The model of an in-flight turn may differ from the agent's current model.
     pub fn record_review_model(&self, task: &AetherTaskId, model: &str) {
         self.state()

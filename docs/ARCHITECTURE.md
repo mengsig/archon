@@ -522,7 +522,7 @@ at-least-once, so every handler is idempotent.
 | Subscription | Query | Handles |
 | --- | --- | --- |
 | `orchestrator` | `{agent: <orchestrator>, types:["agent.message","agent.turn_completed","custom","agent.started","question.asked","agent.failed","agent.cancelled","agent.completed","agent.restarted","agent.usage_updated","inbox.delivered","inbox.consumed","compaction.completed","compaction.native"]}` | Waking conversation reads (§12), questions, supervisor, adopting an Aether restart (§16), orchestrator spend, restating the directives after a compaction (§18.5). |
-| `fleet` | `{types:["agent.created","task.completed","task.failed","task.cancelled","agent.failed","agent.cancelled","agent.completed","agent.usage_updated","question.asked","inbox.delivered","inbox.consumed"]}` | Stage completion, spend ledger, stage questions, model-policy watchdog, run-node inbox forwarding, authenticated relay provenance and unread-inbox health. An agent's end (`agent.completed`, `agent.failed`, `agent.cancelled`) also wakes the dispatcher, which stops what a settled stage agent delegated (§6.3). |
+| `fleet` | `{types:["agent.created","task.completed","task.failed","task.cancelled","agent.failed","agent.cancelled","agent.completed","agent.usage_updated","question.asked","inbox.delivered","inbox.consumed"]}` | Stage completion, spend ledger, stage questions, model-policy watchdog, run-node inbox forwarding, authenticated relay provenance and unread-inbox health. A child's `agent.completed` also counts its lead's review (§8.2, review notes). An agent's end (`agent.completed`, `agent.failed`, `agent.cancelled`) also wakes the dispatcher, which stops what a settled stage agent delegated (§6.3). |
 
 When Aether records `turn_ended_after_tool_error` for the current orchestrator,
 Archon sends one keyed trigger with the failed tool and error. A second
@@ -2770,9 +2770,11 @@ open, archond sends the lead the open blocking findings and their IDs for the
 next review. The note lists only blocking findings, never follow-ups, and
 none is sent when no blocking finding is open, from this review or an earlier
 one: a pass that leaves an earlier blocker open is told again. Only the
-settle of a reviewer whose verdict was read
-sends one; another child settling, a helper or an unreadable reviewer, does
-not. The note is keyed by the stage run, that reviewer and the list, so a
+settle of a reviewer whose verdict was read sends one; another child
+settling, a helper or an unreadable reviewer, does not. A verdict is read
+only once Aether lists its reviewer completed, which it does seconds after
+the task's `task.completed`, so a child's `agent.completed` counts the
+review again and sends the note then, with that verdict in it. The note is keyed by the stage run, that reviewer and the list, so a
 later review leaving the same blockers open is told again. The note each
 settle owes, or none, is saved in the review tally (`findings_notes`) before
 it is sent, so a replay resends exactly that note under its key and Aether

@@ -696,6 +696,81 @@ async fn a_replay_after_the_open_list_changed_sends_no_second_note() {
     assert!(notes[1].contains(&new_blocker), "{}", notes[1]);
 }
 
+/// Aether settles a reviewer's task seconds before it lists the agent
+/// completed: the note waits for `agent.completed` and lists that verdict.
+#[tokio::test]
+async fn a_verdict_read_when_its_agent_completes_is_told_then() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([{"title": "missing null check", "blocking": true}]);
+    let verdict = json!({"verdict": "fail", "head": first["commit"], "findings": findings});
+    let reviewer = review_settling_live(&h, &lead, verdict).await;
+    assert!(
+        findings_notes(&h).is_empty(),
+        "an unread verdict sends no note"
+    );
+    agent_completed(&h, &lead, &reviewer).await;
+    let notes = findings_notes(&h);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains(&format!("{reviewer}:1")), "{}", notes[0]);
+
+    let second = change(&workspace);
+    let findings = json!([{"title": "malformed record panics", "blocking": true}]);
+    let verdict = json!({"verdict": "fail", "head": second["commit"], "base": first["commit"], "findings": findings});
+    let later = review_settling_live(&h, &lead, verdict).await;
+    assert_eq!(
+        findings_notes(&h).len(),
+        1,
+        "no stale list goes under {later}"
+    );
+    agent_completed(&h, &lead, &later).await;
+    agent_completed(&h, &lead, &later).await;
+    let notes = findings_notes(&h);
+    assert_eq!(notes.len(), 2, "a replay sends no copy: {notes:?}");
+    assert!(notes[1].contains(&format!("{later}:1")), "{}", notes[1]);
+}
+
+/// A new reviewer of `lead` whose task completed with `verdict` while Aether
+/// still lists it live, and the pump handling that task's event.
+async fn review_settling_live(h: &Harness, lead: &StageRun, verdict: Value) -> AetherAgentId {
+    let reviewer = h
+        .backend
+        .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+    h.backend.settle_delegated_task(&reviewer, verdict.clone());
+    let mut event = child_event(lead, &reviewer);
+    event.kind = EventKind::TaskCompleted {
+        result: TaskResult {
+            summary: "Reviewed".into(),
+            structured: Some(verdict),
+            artifacts: Vec::new(),
+        },
+    };
+    handle(h, &event).await;
+    reviewer
+}
+
+async fn agent_completed(h: &Harness, lead: &StageRun, reviewer: &AetherAgentId) {
+    h.backend
+        .end_delegated(reviewer, archon_core::ports::DescendantState::Completed);
+    handle(h, &child_event(lead, reviewer)).await;
+}
+
+/// An `agent.completed` event of `lead`'s child `reviewer`.
+fn child_event(lead: &StageRun, reviewer: &AetherAgentId) -> AetherEvent {
+    AetherEvent {
+        seq: 1,
+        at: archon_core::now(),
+        agent: Some(reviewer.clone()),
+        task: None,
+        parent: lead.aether_agent.clone(),
+        run: None,
+        kind: EventKind::AgentCompleted,
+    }
+}
+
 fn confirmation_notes(h: &Harness) -> usize {
     h.backend
         .messages()

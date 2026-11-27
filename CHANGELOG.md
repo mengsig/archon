@@ -4,7 +4,7 @@
 
 ## 1.6.7
 
-Released 2026-11-27.
+Released 2026-11-28.
 
 Archon 1.6.7 adds Google models through the Antigravity CLI, as an opt-in
 provider, and lets a live design session start any repository's preview
@@ -70,21 +70,18 @@ Antigravity (`agy`) engine. Update Aether first with
   `down --volumes` is never used, as it removes a declared volume by its
   configured name whoever's it is: every other project and external volume
   keeps its volumes (#509).
-
-### Fixed
-
 - Stage leads no longer stall or loop in review, the cause of the 1.6.5 and
-  1.6.6 bench timeouts. The findings note now lists only open blocking
-  findings and is not sent when none is open, so follow-ups no longer read as
-  an order to fix them and review again. It is sent once Aether lists the
-  reviewer completed, so it carries that review's own blockers rather than
-  the previous list. A blocker in it counts as resolved as the gate counts
-  it, by commit ancestry, whatever order parallel reviewers came in.
-  Review notes reach the lead as Archon's own trigger, no
+  1.6.6 bench timeouts where Archon trailed plain Aether. The findings note
+  now lists only open blocking findings and is not sent when none is open, so
+  follow-ups no longer read as an order to fix them and review again. It is
+  sent once Aether lists the reviewer completed, so it carries that review's
+  own blockers rather than the previous list. A blocker in it counts as
+  resolved as the gate counts it, by commit ancestry, whatever order parallel
+  reviewers came in. Review notes reach the lead as Archon's own trigger, no
   longer labelled an authenticated operator instruction. The note about an
   unreadable reviewer result no longer interrupts the lead, which left Codex
-  leads parked on their inbox. The contract says a lead's Aether parent, a run node, never
-  replies, so leads ask with `question`.
+  leads parked on their inbox. The contract says a lead's Aether parent, a run
+  node, never replies, so leads ask with `question` (#511).
 
 ## 1.6.6
 

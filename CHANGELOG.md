@@ -22,13 +22,14 @@ restart aetherd.
   `clear_design_recipe`. A port that differs per run is saved as how to pick
   it (`port_pick`: `"free"` or `{"env": "NAME"}`), never one run's number.
   Teardown takes the item's own project `archon-<item>`, unique to its runs,
-  down with `docker compose down --volumes --remove-orphans` from the files
-  it started from, so Compose removes the volumes it declared and never an
-  external one; when Compose cannot read those files (a repo script's
+  down with `docker compose down --remove-orphans` from the files it
+  started from; when Compose cannot read those files (a repo script's
   variables unset) its containers are removed with their anonymous volumes.
   Then, also when its containers were already gone, the networks and
-  volumes still labelled for that project are removed. Every other project
-  keeps its volumes. The agent sets a
+  volumes labelled `com.docker.compose.project=archon-<item>` are removed.
+  Compose's `down --volumes` is never used, as it removes a declared volume
+  by its configured name whoever's it is. Every other project and external
+  volume keeps its volumes. The agent sets a
   script's own project and state knobs (such as `DEV_PREVIEW_PROJECT`, `DEV_PREVIEW_HOME`) to the
   run's, never deletes state it did not create, and asks the operator about
   a failed dependency install instead of working around it.

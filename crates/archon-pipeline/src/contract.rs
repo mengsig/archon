@@ -489,7 +489,18 @@ lowercase, and pass `-p \"$COMPOSE_PROJECT_NAME\"`. Never reuse an existing proj
 by name with `message_orchestrator` kind `escalation` instead of starting; where the repository's script or Compose file names its own project \
 (a top-level `name:`, `-p`, a variable such as `*_PROJECT`), set it to the same name or start \
 the services another way. Never stop, restart or change any other Compose project or container \
-on the host. Archon tears this run's project down when the run ends.\n\
+on the host. Archon tears this run's project down, with the volumes it made, when the run ends.\n\
+- Run's own names: before you run a script, find every knob it reads that names a project, \
+container, volume, port or state directory (a top-level `name:`, `-p`, variables such as \
+`*_PROJECT`, `*_HOME`, `*_DIR` or `*_DATA`, for example `DEV_PREVIEW_PROJECT` or \
+`DEV_PREVIEW_HOME`) and set each from its first run: the project to `archon-<item>`, state \
+directories under `.archon/` in the worktree. Never run it under its default, shared names. \
+Never delete, reset or reuse a volume, database or directory this run did not create, and \
+never ask the operator to: state that blocks you is not yours, so start under your own names.\n\
+- If installing a dependency fails (a package missing from its index, a private package, a \
+failed build), do not work around it by installing something else, skipping the manifest or \
+stubbing it: ask the operator with `message_orchestrator`, naming the command, the package and \
+the error, and preview nothing until they answer.\n\
 - Before `design_preview`, check that the page is served by a process started in this \
 worktree, loads without a server error, and that each backend it calls answers. If part of the \
 stack will not come up, preview none of it: send `message_orchestrator` kind `escalation` \
@@ -498,7 +509,9 @@ naming the step, its command and the error.\n\
 `recipe`: the commands in start order, each service's port or readiness URL (every service of \
 a stack with more than one needs one), and the names of \
 the env vars they need, never values or secrets, with a Compose project written as \
-`$COMPOSE_PROJECT_NAME`. Archon checks the page and each readiness URL or port, names what does \
+`$COMPOSE_PROJECT_NAME`. A port that differs per run (a free one the script picks, or one you \
+pass in a variable) gets `port_pick` (`\"free\"` or `{\"env\": \"NAME\"}`) with this run's port: \
+the recipe keeps how to pick it, never one run's number. Archon checks the page and each readiness URL or port, names what does \
 not answer, and saves the recipe for the repository only when all do. After a restart, update \
 the PID file before calling it again.\n\
 - Then call `wait_for` between notes. Notes arrive as messages; a note's fenced details \

@@ -122,10 +122,21 @@ item id in lowercase), set as `COMPOSE_PROJECT_NAME` and passed with `-p`. A
 project name a repository's script sets itself gets the same name. The agent
 never reuses an existing project's name, stopped ones included (`docker
 compose ls -a`), reports a clash by name instead of starting, and never touches another Compose
-project or container on the host, such as your own. When the run ends,
-archond tears down the projects whose containers all run from the item's
-worktree; one with any container from elsewhere is left alone, and volumes are
-kept.
+project or container on the host, such as your own. Every other knob a
+script reads that names a project, a volume or a state directory (such as
+`DEV_PREVIEW_PROJECT` or `DEV_PREVIEW_HOME`) is set to the run's own too, with
+state under `.archon/` in the worktree, so it never meets a shared stack's
+data; the agent never deletes or resets state it did not create, nor asks you
+to. When the run ends, archond tears down the projects whose containers all
+run from the item's worktree; one with any container from elsewhere is left
+alone. Volumes are kept, except those Compose made for the item's own project
+`archon-<item>` (named `archon-<item>_<volume>`), which only that item's runs
+create; Docker refuses one still in use, and the feed says so.
+
+**Dependencies.** When an install fails (a package missing from its index, a
+private package, a build error) the agent asks you, naming the command, the
+package and the error, instead of working around it, and previews nothing
+until you answer.
 
 **Verification.** Before it calls `design_preview`, the agent checks that the
 page loads without a server error and that each backend the page calls
@@ -145,7 +156,13 @@ does not answer".
 brought the stack up: where it came from (`docs/dev-preview.md`, say), the
 commands in start order, which keep running and which run once, the
 directory, port and readiness URL of each, and the names of the environment
-variables they need. archond saves it for the repository only when all its
+variables they need. A port that differs per run carries `port_pick`:
+`"free"` when the command or its script picks a free port, or
+`{"env": "PORT"}` when the command reads it from a variable the recipe lists.
+The agent gives this run's port or readiness URL beside it for the check,
+the saved recipe keeps only how to pick it, and a command that spells out
+this run's port is refused, so a replay never binds or checks one run's
+number. archond saves it for the repository only when all its
 checks pass, replacing the last one, in Archon's own state, never in the
 repository. A `design_preview` that another preview or a clear overtakes
 while it checks the stack changes nothing and is refused, so an older

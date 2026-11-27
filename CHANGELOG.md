@@ -19,7 +19,13 @@ restart aetherd.
   repository in Archon's state for the next session. The new `design_recipe`
   tool reads it; `archon settings --repo NAME` shows it and
   `--clear-design-recipe` forgets it. New requests: `design_recipe` and
-  `clear_design_recipe`.
+  `clear_design_recipe`. A port that differs per run is saved as how to pick
+  it (`port_pick`: `"free"` or `{"env": "NAME"}`), never one run's number.
+  Teardown removes the volumes Compose made for the item's own project
+  `archon-<item>`, and only those. The agent sets a script's own project and
+  state knobs (such as `DEV_PREVIEW_PROJECT`, `DEV_PREVIEW_HOME`) to the
+  run's, never deletes state it did not create, and asks the operator about
+  a failed dependency install instead of working around it.
 
 - Google models through the Antigravity CLI: the `antigravity` provider and
   `antigravity/gemini-4-hydrogen`, `gemini-4-neon`, `gemini-4-carbon`,
@@ -71,6 +77,13 @@ and restart aetherd.
   (#503).
 
 ### Fixed
+
+- A design screen open while the agent starts the app switches to the live
+  preview on its own when the dev server accepts connections late, as Vite
+  does while it compiles its first page: archond waits up to three seconds
+  for the accept before refusing the preview's connection, and a preview that
+  still does not start is told on the screen instead of waiting on
+  "Starting" until a reload.
 
 - JavaScript dialogs in the design preview show the page's message and a
   prompt's suggested answer, and still wait for the operator's answer. A page

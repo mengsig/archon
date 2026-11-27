@@ -59,6 +59,21 @@ sessions are already in the code.
      ones too, and if the name is taken, report it by name with
      `message_orchestrator` kind `escalation` instead of starting. Never
      touch another Compose project on the host.
+   - Use this run's own names from the first command. Before you run a
+     script, find every knob it reads that names a project, container,
+     volume, port or state directory (a top-level `name:`, `-p`, variables
+     such as `*_PROJECT`, `*_HOME`, `*_DIR` or `*_DATA`, for example
+     `DEV_PREVIEW_PROJECT` or `DEV_PREVIEW_HOME`) and set each: the project
+     to `archon-{{item.id}}` in lowercase, state directories under
+     `.archon/` in the worktree. Never run it under its default, shared
+     names. Never delete, reset or reuse a volume, database or directory
+     this run did not create, and never ask the operator to: state that
+     blocks you is not yours, so start under your own names instead.
+   - If installing a dependency fails (a package missing from its index, a
+     private package, a failed build), do not work around it by installing
+     something else, skipping the manifest or stubbing it. Ask the operator
+     with `message_orchestrator`, naming the command, the package and the
+     error, and preview nothing until they answer.
    - Check that the page loads from this worktree without a server error
      and that each backend it calls answers. If part of the stack will not
      come up, preview none of it: report the step, its command and the
@@ -66,8 +81,12 @@ sessions are already in the code.
 2. **Show it.** Call `design_preview` with the page's URL, for example
    `http://127.0.0.1:5173/`, and `recipe`: the steps in start order, each
    service's `port` or `ready` URL (required for every service when there
-   is more than one), and the names of the env vars they need, never values. Only `127.0.0.1`, `localhost` and `[::1]` are
-   accepted. Archon checks the page and every `ready` URL or `port`, names
+   is more than one), and the names of the env vars they need, never values. A port
+   that differs per run (a free one the script picks, or one you pass in a
+   variable) gets `port_pick`, `"free"` or `{"env": "NAME"}`, beside this
+   run's `port` or `ready`: the recipe keeps how to pick it, never one run's
+   number, so a replay cannot clash. Only `127.0.0.1`, `localhost` and
+   `[::1]` are accepted. Archon checks the page and every `ready` URL or `port`, names
    what does not answer, and saves the recipe for the next session only
    when everything does. If you restart the server, update the PID file
    before calling `design_preview` again.

@@ -107,6 +107,13 @@ fn design_rules_state_the_contract() {
         "preview none of it",
         "never values or secrets",
         "saves the recipe",
+        "`DEV_PREVIEW_PROJECT` or `DEV_PREVIEW_HOME`",
+        "Never run it under its default, shared names",
+        "Never delete, reset or reuse a volume",
+        "never ask the operator to",
+        "do not work around it",
+        "port_pick",
+        "never one run's number",
     ] {
         assert!(
             DESIGN_RULES.to_lowercase().contains(&needle.to_lowercase()),
@@ -143,6 +150,10 @@ fn the_design_prompt_names_the_run_compose_project_and_the_recipe() {
         "127.0.0.1",
         "a port a container publishes does not",
         "docker compose ls -a",
+        "DEV_PREVIEW_HOME",
+        "Never delete, reset or reuse a volume",
+        "do not work around it",
+        "port_pick",
     ] {
         assert!(
             prompt.contains(needle),

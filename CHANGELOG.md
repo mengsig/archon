@@ -22,7 +22,8 @@ restart aetherd.
   `clear_design_recipe`. A port that differs per run is saved as how to pick
   it (`port_pick`: `"free"` or `{"env": "NAME"}`), never one run's number.
   Teardown removes the volumes Compose made for the item's own project
-  `archon-<item>`, and only those. The agent sets a script's own project and
+  `archon-<item>` under their default names since the item was made, and
+  only those; one another container still mounts is kept. The agent sets a script's own project and
   state knobs (such as `DEV_PREVIEW_PROJECT`, `DEV_PREVIEW_HOME`) to the
   run's, never deletes state it did not create, and asks the operator about
   a failed dependency install instead of working around it.

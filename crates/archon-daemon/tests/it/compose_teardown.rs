@@ -62,6 +62,10 @@ case "$1" in
       echo "volume is in use" >&2
       exit 1
     fi
+    if [ "$2" = inspect ]; then
+      for v; do :; done
+      awk -F '\t' -v v="$v" '$1 == v { print $2 }' "$dir/created" 2>/dev/null
+    fi
     if [ "$2" = ls ]; then
       project=$(echo "$*" | sed -n 's/.*label=com\.docker\.compose\.project=\([^ ]*\).*/\1/p')
       awk -F '\t' -v p="$project" '$1 == p { print $2 "\t" $3 }' "$dir/volumes" 2>/dev/null
@@ -193,9 +197,15 @@ async fn only_the_worktrees_own_projects_go_and_volumes_are_kept() {
     assert!(harness.system_notes().await.is_empty());
 }
 
+/// A `created` line dating `volume` a second from now, after any test item.
+fn made_after_the_item(volume: &str) -> String {
+    let later = chrono::Utc::now() + chrono::Duration::seconds(1);
+    format!("{volume}\t{}", later.to_rfc3339())
+}
+
 /// S7: the item's own project, `archon-<item>`, loses the volumes Compose
-/// made for it under their default names; one given its own `name:`, even
-/// with the project's prefix, and every other project's are kept.
+/// made for it under their default names since the item was made; one given
+/// its own `name:`, an older one, and every other project's are kept.
 #[tokio::test]
 async fn the_items_own_project_takes_its_volumes_with_it() {
     let docker = FakeDocker::new();
@@ -211,6 +221,9 @@ async fn the_items_own_project_takes_its_volumes_with_it() {
             container("b1", "review-1", &tree),
         ],
     );
+    // A volume another project's stopped container still mounts is shared.
+    docker.lists("mounts", &[format!("{own}_shared-db\tc9")]);
+    // One made before the item existed, or with no readable time, is not its.
     docker.lists(
         "volumes",
         &[
@@ -220,10 +233,19 @@ async fn the_items_own_project_takes_its_volumes_with_it() {
             "review-1\treview-1_pgdata\tpgdata".to_owned(),
             "ccso-dev-preview\tccso-dev-preview_pgdata\tpgdata".to_owned(),
             format!("{own}\t{own}_shared-db\tshared-db"),
+            format!("{own}\t{own}_older\tolder"),
+            format!("{own}\t{own}_undated\tundated"),
         ],
     );
-    // A volume another project's stopped container still mounts is shared.
-    docker.lists("mounts", &[format!("{own}_shared-db\tc9")]);
+    docker.lists(
+        "created",
+        &[
+            made_after_the_item(&format!("{own}_pgdata")),
+            made_after_the_item(&format!("{own}_shared-db")),
+            format!("{own}_older\t2020-01-01T00:00:00Z"),
+            format!("{own}_undated\tnot a time"),
+        ],
+    );
     compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
         .await
         .unwrap();
@@ -252,6 +274,7 @@ async fn an_own_volume_docker_keeps_is_told() {
     let own = compose::own_project(&item);
     docker.lists("ps", &[container("a1", &own, &tree)]);
     docker.lists("volumes", &[format!("{own}\t{own}_pgdata\tpgdata")]);
+    docker.lists("created", &[made_after_the_item(&format!("{own}_pgdata"))]);
     docker.fails("volume");
     compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
         .await

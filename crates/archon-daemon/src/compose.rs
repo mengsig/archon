@@ -23,6 +23,7 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
+use chrono::{DateTime, Utc};
 use tokio::process::Command;
 
 use crate::context::DaemonContext;
@@ -229,9 +230,12 @@ pub async fn tear_down(
     warn_shared(&selection.shared, tree);
     let mut failures = Vec::new();
     let own = own_project(item);
+    let since = item_created(item);
     for project in selection.inside.keys() {
         tracing::info!(%project, %item, tree = %tree.display(), "tearing down a compose stack an item left");
-        if let Err(error) = stop_project(&docker, project, &trees, *project == own).await {
+        if let Err(error) =
+            stop_project(&docker, project, &trees, (*project == own).then_some(since)).await
+        {
             failures.push(format!("{project}: {error}"));
         }
     }
@@ -250,13 +254,13 @@ fn warn_shared(shared: &[String], tree: &Path) {
 
 /// List `project` again and, if each of its containers still runs from
 /// `trees`, stop and remove those containers, then its networks once none
-/// of its containers is left, and with `own_volumes` its volumes too. One
-/// that changed since is left running.
+/// of its containers is left, and with `own_since` its volumes made since
+/// then too. One that changed since is left running.
 async fn stop_project(
     docker: &Docker<'_>,
     project: &str,
     trees: &[PathBuf],
-    own_volumes: bool,
+    own_since: Option<DateTime<Utc>>,
 ) -> Result<(), ArchonError> {
     let selection = select(&docker.list(Some(project)).await?, trees);
     warn_shared(&selection.shared, &trees[0]);
@@ -274,17 +278,38 @@ async fn stop_project(
     docker
         .run(&[&["stop"], &args[..]].concat(), STOP_TIMEOUT)
         .await?;
-    if !remove_stopped(docker, project, &ids).await? || !own_volumes {
+    if !remove_stopped(docker, project, &ids).await? {
         return Ok(());
     }
-    remove_volumes(docker, project).await
+    match own_since {
+        Some(since) => remove_volumes(docker, project, since).await,
+        None => Ok(()),
+    }
 }
 
-/// Remove the volumes Compose made for `project`, once none of its
-/// containers is left; Docker refuses one still in use, and that is told.
-async fn remove_volumes(docker: &Docker<'_>, project: &str) -> Result<(), ArchonError> {
+/// When `item` was made, from its ULID; its own volumes are made after.
+fn item_created(item: &QueueItemId) -> DateTime<Utc> {
+    let ulid = item.as_str().strip_prefix("qi_");
+    let ulid = ulid.and_then(|ulid| ulid::Ulid::from_string(ulid).ok());
+    let ulid = ulid.expect("a queue item id is qi_<ULID>");
+    ulid.datetime().into()
+}
+
+/// Remove the volumes Compose made for `project` since its item was made
+/// (`since`), once none of its containers is left; Docker refuses one still
+/// in use, and that is told.
+async fn remove_volumes(
+    docker: &Docker<'_>,
+    project: &str,
+    since: DateTime<Utc>,
+) -> Result<(), ArchonError> {
     let mut volumes = Vec::new();
     for volume in docker.volumes(project).await? {
+        let created = docker.volume_created(&volume).await?;
+        if created.is_none_or(|created| created < since) {
+            tracing::info!(%project, %volume, ?created, "a volume from before the item is kept");
+            continue;
+        }
         // None of the project's containers is left, so any user is another's.
         let users = docker.volume_users(&volume).await?;
         if users.is_empty() {
@@ -456,8 +481,8 @@ impl<'a> Docker<'a> {
 
     /// The volumes Compose made for `project` under their default name,
     /// `<project>_<key>`. An external volume carries no project label, and one
-    /// given its own `name:` may be shared, whatever it is called, so neither
-    /// is among them.
+    /// given another `name:` may be shared, so neither is among them; Docker
+    /// keeps no mark of a `name:` equal to the default.
     async fn volumes(&self, project: &str) -> Result<Vec<String>, ArchonError> {
         let filter = format!("label={PROJECT_LABEL}={project}");
         let format = format!("{{{{.Name}}}}\t{{{{.Label \"{VOLUME_LABEL}\"}}}}");
@@ -478,6 +503,15 @@ impl<'a> Docker<'a> {
             "a volume has a key"
         );
         Ok(own)
+    }
+
+    /// When Docker made `volume`; `None` when it gives no readable time.
+    async fn volume_created(&self, volume: &str) -> Result<Option<DateTime<Utc>>, ArchonError> {
+        assert!(!volume.is_empty(), "a volume is named");
+        let args = ["volume", "inspect", "--format", "{{.CreatedAt}}", volume];
+        let created = self.run(&args, LIST_TIMEOUT).await?;
+        let parsed = DateTime::parse_from_rfc3339(created.trim()).ok();
+        Ok(parsed.map(|time| time.with_timezone(&Utc)))
     }
 
     /// The containers, running or stopped, that mount `volume`.

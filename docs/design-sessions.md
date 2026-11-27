@@ -130,9 +130,11 @@ data; the agent never deletes or resets state it did not create, nor asks you
 to. When the run ends, archond tears down the projects whose containers all
 run from the item's worktree; one with any container from elsewhere is left
 alone. Volumes are kept, except those Compose made for the item's own project
-`archon-<item>` under their default name `archon-<item>_<volume>`, which only
-that item's runs create; one given its own `name:` in the compose file is
-kept, so is one any other container, running or stopped, still mounts, and
+`archon-<item>` under their default name `archon-<item>_<volume>` after the
+item was made, which only that item's runs create. One given a `name:` of its
+own is kept, but Docker cannot tell a `name:` equal to that default from the
+default, so such a volume counts as the run's. One made before the item, or
+one any other container, running or stopped, still mounts, is kept, and
 Docker refuses one still in use, which the feed says.
 
 **Dependencies.** When an install fails (a package missing from its index, a

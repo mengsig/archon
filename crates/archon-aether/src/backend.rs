@@ -1006,6 +1006,21 @@ impl AgentBackend for AetherBackend {
             .await
     }
 
+    async fn send_note(
+        &self,
+        to: &AetherAgentId,
+        note: &str,
+        idempotency_key: &str,
+    ) -> Result<(), ArchonError> {
+        assert!(!note.trim().is_empty(), "a note says something");
+        assert!(!idempotency_key.is_empty(), "notes are always keyed");
+        let payload = serde_json::json!({ "note": note });
+        self.link
+            .client()?
+            .trigger(to, payload, idempotency_key)
+            .await
+    }
+
     async fn send_message_with_attachments(
         &self,
         to: &AetherAgentId,

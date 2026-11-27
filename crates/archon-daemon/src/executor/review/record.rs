@@ -96,6 +96,12 @@ pub(super) struct Finding {
     resolved_in: Option<RoundId>,
 }
 
+impl Finding {
+    pub fn is_open(&self) -> bool {
+        self.resolved_in.is_none()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RoundId {
     stage: String,
@@ -206,12 +212,6 @@ impl<'a> Rounds<'a> {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
-    }
-
-    pub fn last_open(&self) -> Vec<(&str, &str)> {
-        self.rounds
-            .last()
-            .map_or_else(Vec::new, |round| round.open_findings(false))
     }
 
     fn at_head(&self, head: &str) -> Option<&Round<'_>> {

@@ -71,6 +71,7 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
         }
         EventKind::AgentCompleted => {
             inbox_health::ended(ctx, agent).await?;
+            child_completed(ctx, event, agent).await?;
             turn_ended(ctx);
             Ok(())
         }
@@ -180,6 +181,21 @@ async fn child_settled(
         }
         _ => Ok(()),
     }
+}
+
+/// Aether lists a child completed seconds after its task's event, and only a
+/// completed child's verdict is read: the review is counted again once it is.
+async fn child_completed(
+    ctx: &DaemonContext,
+    event: &AetherEvent,
+    agent: &AetherAgentId,
+) -> Result<(), ArchonError> {
+    assert!(matches!(event.kind, EventKind::AgentCompleted));
+    let Some(lead) = &event.parent else {
+        return Ok(());
+    };
+    assert_ne!(lead, agent, "an agent is not its own parent");
+    executor::reviewer_settled(ctx, lead, agent).await
 }
 
 /// A stage agent that died without its task settling (engine crash, operator

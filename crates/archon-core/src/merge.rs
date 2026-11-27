@@ -490,7 +490,14 @@ pub fn assess(pr: &PullRequestFacts, expected: Expected<'_>) -> Result<Assessmen
     let seen = ChecksSeen::of(&pr.checks);
     match pr.mergeable.as_str() {
         "MERGEABLE" => {}
-        "CONFLICTING" => return Err("it conflicts with its base; retry the item".into()),
+        "CONFLICTING" => {
+            return Err(
+                "it conflicts with its base, which moved on since its branch was made; refresh \
+                 the item (`refresh_item`) to merge the base into its branch, then merge again: \
+                 a retry reruns the stale branch"
+                    .into(),
+            );
+        }
         _ => return Ok(Assessment::Undecided(seen)),
     }
     if !seen.all_green() && !expected.ignore_checks {
@@ -629,7 +636,9 @@ mod tests {
         assert!(with(|pr| pr.state = "CLOSED".into()).contains("is closed"));
         assert!(with(|pr| pr.state = "MERGED".into()).contains("already merged"));
         assert!(with(|pr| pr.is_draft = true).contains("draft"));
-        assert!(with(|pr| pr.mergeable = "CONFLICTING".into()).contains("conflicts"));
+        let conflicting = with(|pr| pr.mergeable = "CONFLICTING".into());
+        assert!(conflicting.contains("conflicts"), "{conflicting}");
+        assert!(conflicting.contains("`refresh_item`"), "{conflicting}");
         assert!(with(|pr| pr.mergeable = "UNKNOWN".into()).contains("ask again"));
         let refused = |reason: String| MergeState::Refused { reason };
         assert!(refused(with(|pr| pr.state = "MERGED".into())).is_nothing_to_merge());

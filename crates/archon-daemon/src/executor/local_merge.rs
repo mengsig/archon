@@ -116,8 +116,9 @@ fn not_descended(landing: Landing<'_>, base_tip: &str) -> Result<String, ArchonE
              it was not merged"
         ),
         Some(_) => format!(
-            "`{base}` moved on since `{branch}` was made, so it is not a fast-forward; run \
-             `archon queue refresh {item}` to bring the branch up to date, then merge again"
+            "`{base}` moved on since `{branch}` was made, so it is not a fast-forward; refresh \
+             the item (`refresh_item`, or `archon queue refresh {item}`) to merge the base into \
+             its branch, then merge again: a retry reruns the stale branch"
         ),
     })
 }

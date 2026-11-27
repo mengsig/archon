@@ -10,7 +10,7 @@ use archon_core::merge::{LocalReview, MergeAuthority, MergeRequest, MergeState};
 use archon_core::protocol::{EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::ShipMode;
-use common::delivery::shipped_by;
+use common::delivery::{record, shipped_by};
 use common::{Harness, REPO_NAME, git};
 
 async fn delivered_locally(h: &Harness) -> (QueueItem, String, String) {
@@ -34,6 +34,16 @@ async fn deliver_local(
     h: &Harness,
     title: &str,
     depends_on: Vec<archon_core::id::QueueItemId>,
+) -> (QueueItem, String, String) {
+    deliver_editing(h, title, depends_on, None).await
+}
+
+/// [`deliver_local`], the lead first committing `edit`'s file with its content.
+async fn deliver_editing(
+    h: &Harness,
+    title: &str,
+    depends_on: Vec<archon_core::id::QueueItemId>,
+    edit: Option<(&str, &str)>,
 ) -> (QueueItem, String, String) {
     let request = EnqueueRequest {
         intent: None,
@@ -61,6 +71,12 @@ async fn deliver_local(
     };
     h.dispatch().await;
     let stage = h.running().await.remove(0);
+    if let Some((file, content)) = edit {
+        let workspace = h.run(&item.id).await.workspace;
+        std::fs::write(workspace.join(file), content).unwrap();
+        git(&workspace, &["add", file]);
+        git(&workspace, &["commit", "--quiet", "-m", title]);
+    }
     let outcome = shipped_by(h, &stage, "Changed it", serde_json::json!({})).await;
     h.settle_running(|_| outcome.clone()).await;
     h.dispatch().await;
@@ -155,6 +171,98 @@ async fn merging_a_landed_item_again_is_news_not_a_blocker() {
         kinds.ends_with(&[NotificationKind::Outcome, NotificationKind::Outcome]),
         "the merge and the refusal are both outcomes: {kinds:?}"
     );
+}
+
+/// A backlog split into sibling items that edit one file, each forked from the
+/// same base: the first lands, the second is refused as no fast-forward with
+/// `refresh_item` (a retry would rerun the stale branch), and once its refresh
+/// resolves the conflict it lands too, so the base holds both changes.
+#[tokio::test]
+async fn sibling_items_editing_one_file_both_land_once_the_later_is_refreshed() {
+    let h = Harness::new().await;
+    set_local(&h).await;
+    let fork = git(&h.repo, &["rev-parse", "main"]);
+    let first = deliver_editing(&h, "first", Vec::new(), Some(("shared.txt", "first\n"))).await;
+    let second = deliver_editing(&h, "second", Vec::new(), Some(("shared.txt", "second\n"))).await;
+    let forks = [&first.2, &second.2].map(|head| git(&h.repo, &["merge-base", "main", head]));
+    assert_eq!(forks, [fork.clone(), fork], "siblings fork from one base");
+
+    let landed = merged(&h, &first.0).await;
+    assert!(
+        matches!(landed.state, MergeState::Merged { .. }),
+        "{landed:?}"
+    );
+    let refused = merged(&h, &second.0).await;
+    let why = refusal(&refused);
+    assert!(
+        why.contains("`refresh_item`") && why.contains("stale branch"),
+        "{why}"
+    );
+    assert_eq!(
+        git(&h.repo, &["rev-parse", "main"]),
+        first.2,
+        "only the first landed"
+    );
+
+    let refresh = Request::RefreshItem {
+        item: second.0.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        stage_timeouts: Default::default(),
+    };
+    let Ok(Reply::Item(fix)) = h.orchestrator(refresh).await else {
+        panic!("a refresh is queued");
+    };
+    h.dispatch().await;
+    let fixing = h.run(&fix.id).await;
+    assert_eq!(
+        fixing.branch, second.1,
+        "the refresh works on the same branch"
+    );
+    resolve_merge(&fixing.workspace, &first.2, "shared.txt", "first\nsecond\n");
+    let resolved = record(&fixing.workspace);
+    h.settle_running(|_| archon_core::run::StageOutcome::Completed {
+        summary: "Merged the base".into(),
+        structured: Some(resolved.clone()),
+    })
+    .await;
+    h.dispatch().await;
+    let state = h.state(&fix.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+
+    let later = merged(&h, &second.0).await;
+    assert!(
+        matches!(later.state, MergeState::Merged { .. }),
+        "{later:?}"
+    );
+    let main = git(&h.repo, &["rev-parse", "main"]);
+    git(&h.repo, &["merge-base", "--is-ancestor", &first.2, &main]);
+    let shared = std::fs::read_to_string(h.repo.join("shared.txt")).unwrap();
+    assert_eq!(shared, "first\nsecond\n", "the base holds both changes");
+}
+
+/// What a refresh agent does: merge `sha`, which conflicts on `file`, and
+/// commit `content` as the resolution.
+fn resolve_merge(tree: &std::path::Path, sha: &str, file: &str, content: &str) {
+    let merging = std::process::Command::new("git")
+        .arg("-C")
+        .arg(tree)
+        .args([
+            "-c",
+            "user.name=Archon Test",
+            "-c",
+            "user.email=test@archon.invalid",
+        ])
+        .args(["merge", "--quiet", sha])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("git runs");
+    assert!(!merging.status.success(), "the siblings conflict on {file}");
+    std::fs::write(tree.join(file), content).unwrap();
+    git(tree, &["add", file]);
+    git(tree, &["commit", "--quiet", "--no-edit"]);
+    git(tree, &["merge-base", "--is-ancestor", sha, "HEAD"]);
 }
 
 #[tokio::test]

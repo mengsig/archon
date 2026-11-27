@@ -14,6 +14,7 @@ fn stack() -> PreviewRecipe {
         run: StepRun::Service,
         port: Some(port),
         ready: Some(format!("http://127.0.0.1:{port}/")),
+        port_pick: None,
     };
     PreviewRecipe {
         source: "docs/dev-preview.md".into(),

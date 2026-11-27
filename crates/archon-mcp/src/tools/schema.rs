@@ -93,7 +93,8 @@ fn design_preview() -> ToolDefinition {
                             "dir": {"type": "string"},
                             "run": {"enum": ["service", "once"]},
                             "port": {"type": "integer", "minimum": 1, "maximum": 65535},
-                            "ready": {"type": "string", "description": "A loopback URL that answers once it is up."}
+                            "ready": {"type": "string", "description": "A loopback URL that answers once it is up."},
+                            "port_pick": {"description": "\"free\" or {\"env\":\"NAME\"}: a per-run port, with this run's port"}
                         }, "required": ["name", "command"]}},
                         "env": {"type": "array", "items": {"type": "string"}},
                         "notes": {"type": "string"}

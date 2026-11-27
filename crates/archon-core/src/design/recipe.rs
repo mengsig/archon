@@ -57,6 +57,21 @@ pub struct RecipeStep {
     /// A loopback `http://` URL that answers without a server error once the step is up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ready: Option<String>,
+    /// How a port that differs from run to run is chosen; `port` and `ready`
+    /// then hold this run's values, which the saved recipe leaves out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port_pick: Option<PortPick>,
+}
+
+/// How a step's port is chosen when it is not the same every run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PortPick {
+    /// The command, or the script it runs, picks a free port itself.
+    Free,
+    /// The command reads its port from this variable, listed in `env`, which
+    /// the session sets to a free port before it runs.
+    Env(String),
 }
 
 /// Whether a step keeps running or runs to completion.
@@ -99,11 +114,76 @@ impl PreviewRecipe {
         debug_assert_eq!(names.len(), self.steps.len(), "step names are unique");
         self.check_services_checkable()?;
         self.check_env()?;
+        self.check_port_picks()?;
         if let Some(notes) = &self.notes {
             bounded("notes", notes, MAX_NOTES)?;
             no_secret("notes", notes)?;
         }
         no_secret("source", &self.source)
+    }
+
+    /// [`Self::check`], plus what a recipe `design_preview` reports must hold:
+    /// a step whose port is picked each run gives this run's `port` or
+    /// `ready` for Archon to check, and does not pin that port in its command.
+    pub fn check_reported(&self) -> Result<(), String> {
+        self.check()?;
+        for step in self.steps.iter().filter(|s| s.port_pick.is_some()) {
+            let Some(port) = step
+                .port
+                .or_else(|| step.ready.as_deref().and_then(url_port))
+            else {
+                return Err(format!(
+                    "step {} picks its port each run, so it needs this run's port or ready URL",
+                    step.name
+                ));
+            };
+            if pins_number(&step.command, port) {
+                return Err(format!(
+                    "step {} pins this run's port {port} in its command; let it pick a free port \
+                     or read it from the variable port_pick names",
+                    step.name
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The recipe as it is kept for the next session: a picked port's value
+    /// and the readiness URL that holds it were this run's alone.
+    pub fn for_saving(mut self) -> Self {
+        for step in self.steps.iter_mut().filter(|s| s.port_pick.is_some()) {
+            step.port = None;
+            step.ready = None;
+        }
+        debug_assert!(
+            self.steps
+                .iter()
+                .all(|s| s.port_pick.is_none() || (s.port.is_none() && s.ready.is_none())),
+            "no picked port is saved"
+        );
+        self
+    }
+
+    /// A picked port's variable is a variable name the recipe lists.
+    fn check_port_picks(&self) -> Result<(), String> {
+        for step in &self.steps {
+            let Some(PortPick::Env(name)) = &step.port_pick else {
+                continue;
+            };
+            if !is_env_name(name) {
+                return Err(format!(
+                    "step {} port_pick env {name:?} is not a variable name",
+                    step.name
+                ));
+            }
+            if !self.env.contains(name) {
+                return Err(format!(
+                    "step {} reads its port from {name}, so env must list it",
+                    step.name
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// With more than one service, each names a port or a readiness URL, so
@@ -119,7 +199,7 @@ impl PreviewRecipe {
         }
         match services
             .iter()
-            .find(|s| s.port.is_none() && s.ready.is_none())
+            .find(|s| s.port.is_none() && s.ready.is_none() && s.port_pick.is_none())
         {
             Some(unchecked) => Err(format!(
                 "step {} is one of several services, so it needs a port or a ready URL Archon can check",
@@ -170,6 +250,13 @@ impl PreviewRecipe {
             }
             if let Some(ready) = &step.ready {
                 line.push_str(&format!(" ready at {ready}"));
+            }
+            match &step.port_pick {
+                Some(PortPick::Free) => line.push_str(" port: a free one it picks each run"),
+                Some(PortPick::Env(name)) => {
+                    line.push_str(&format!(" port: a free one passed in ${name} each run"));
+                }
+                None => {}
             }
             lines.push(line);
         }
@@ -259,6 +346,24 @@ fn bounded_line(field: &str, text: &str, max: usize) -> Result<(), String> {
         return Err(format!("{field} must be one line"));
     }
     Ok(())
+}
+
+/// `text` holds `port` as a number of its own, not inside a longer one.
+fn pins_number(text: &str, port: u16) -> bool {
+    let digits = port.to_string();
+    let bytes = text.as_bytes();
+    text.match_indices(&digits).any(|(at, _)| {
+        let before = at.checked_sub(1).map(|i| bytes[i]);
+        let after = bytes.get(at + digits.len()).copied();
+        !before.is_some_and(|b| b.is_ascii_digit()) && !after.is_some_and(|b| b.is_ascii_digit())
+    })
+}
+
+/// The explicit port of a loopback `http://` URL.
+fn url_port(url: &str) -> Option<u16> {
+    let authority = url.strip_prefix("http://")?.split(['/', '?', '#']).next()?;
+    let (_, port) = authority.rsplit_once(':')?;
+    port.parse().ok()
 }
 
 fn is_env_name(name: &str) -> bool {

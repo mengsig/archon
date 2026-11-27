@@ -707,7 +707,7 @@ fn design_preview(args: &mut Args) -> Result<Request, ToolError> {
     let url = archon_core::design::validate_preview_url(&args.required_text("url")?)
         .map_err(|error| args.error("url", error))?;
     let recipe = args.optional::<archon_core::design::recipe::PreviewRecipe>("recipe")?;
-    if let Some(Err(why)) = recipe.as_ref().map(|r| r.check()) {
+    if let Some(Err(why)) = recipe.as_ref().map(|r| r.check_reported()) {
         return Err(args.error("recipe", why));
     }
     Ok(Request::DesignPreview {

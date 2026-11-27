@@ -8,6 +8,7 @@ fn step(name: &str, command: &str) -> RecipeStep {
         run: StepRun::Service,
         port: None,
         ready: None,
+        port_pick: None,
     }
 }
 
@@ -353,4 +354,70 @@ fn readiness_urls_with_an_at_sign_in_the_path_are_accepted() {
     let mut web = step("web", "npm run dev");
     web.ready = Some("http://127.0.0.1:5173/@vite/client".into());
     recipe(vec![web]).check().unwrap();
+}
+
+/// S1: a script picked web port 36519 and the saved recipe pinned it, so a
+/// replay would check, or bind, a port another run may hold.
+#[test]
+fn a_port_picked_each_run_is_checked_now_and_never_saved() {
+    let mut web = step(
+        "web",
+        "DEV_PREVIEW_PROJECT=archon-<item> scripts/dev-preview-serve start",
+    );
+    web.port = Some(36519);
+    web.ready = Some("http://127.0.0.1:36519/fast-check/".into());
+    web.port_pick = Some(PortPick::Free);
+    let mut api = step(
+        "api",
+        "uvicorn app.main:app --host 127.0.0.1 --port \"$API_PORT\"",
+    );
+    api.ready = Some("http://127.0.0.1:41000/health".into());
+    api.port_pick = Some(PortPick::Env("API_PORT".into()));
+    let mut reported = recipe(vec![api, web]);
+    reported.env = vec!["API_PORT".into()];
+    reported.check_reported().unwrap();
+    let saved = reported.clone().for_saving();
+    saved.check().unwrap();
+    for step in &saved.steps {
+        assert_eq!(
+            (step.port, step.ready.as_deref()),
+            (None, None),
+            "{}",
+            step.name
+        );
+    }
+    let text = serde_json::to_string(&saved).unwrap();
+    assert!(!text.contains("36519") && !text.contains("41000"), "{text}");
+    let json = serde_json::to_value(&saved.steps[0]).unwrap();
+    assert_eq!(json["port_pick"], serde_json::json!({"env": "API_PORT"}));
+    assert!(
+        saved.describe().contains("a free one passed in $API_PORT"),
+        "{}",
+        saved.describe()
+    );
+    let fixed = recipe(vec![step("web", "npm run dev -- --port 5173")]);
+    assert_eq!(fixed.clone().for_saving(), fixed, "a fixed port is kept");
+}
+
+#[test]
+fn a_picked_port_needs_this_runs_value_and_must_not_be_pinned() {
+    let mut web = step("web", "npm run dev -- --port 36519");
+    web.port_pick = Some(PortPick::Free);
+    let error = recipe(vec![web.clone()]).check_reported().unwrap_err();
+    assert!(error.contains("needs this run's port"), "{error}");
+    web.port = Some(36519);
+    let error = recipe(vec![web.clone()]).check_reported().unwrap_err();
+    assert!(error.contains("pins this run's port 36519"), "{error}");
+    let mut env = step("web", "npm run dev -- --port \"$PORT\"");
+    env.port = Some(36519);
+    env.port_pick = Some(PortPick::Env("PORT".into()));
+    let error = recipe(vec![env.clone()]).check().unwrap_err();
+    assert!(error.contains("env must list it"), "{error}");
+    let mut listed = recipe(vec![env]);
+    listed.env = vec!["PORT".into()];
+    listed.check_reported().unwrap();
+    let mut longer = step("web", "node serve.mjs --max-old-space 136519");
+    longer.port = Some(36519);
+    longer.port_pick = Some(PortPick::Free);
+    recipe(vec![longer]).check_reported().unwrap();
 }

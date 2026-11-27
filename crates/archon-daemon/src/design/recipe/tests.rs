@@ -19,6 +19,7 @@ fn step(name: &str, port: Option<u16>, ready: Option<String>) -> RecipeStep {
         run: StepRun::Service,
         port,
         ready,
+        port_pick: None,
     }
 }
 
@@ -346,4 +347,25 @@ async fn a_server_that_is_not_http_is_refused() {
     })
     .await
     .expect("bounded stack check");
+}
+
+/// S1: the port a script picked for one run is not what the next one loads.
+#[test]
+fn a_saved_recipe_keeps_how_a_port_is_picked_not_its_value() {
+    let mut store = Store::open_in_memory().unwrap();
+    let repo = RepoId::new();
+    let mut web = step(
+        "web",
+        Some(36519),
+        Some("http://127.0.0.1:36519/fast-check/".into()),
+    );
+    web.port_pick = Some(archon_core::design::recipe::PortPick::Free);
+    save(&mut store, &repo, &QueueItemId::new(), recipe(vec![web])).unwrap();
+    let loaded = load(&store, &repo).unwrap().expect("saved");
+    let step = &loaded.recipe.steps[0];
+    assert_eq!((step.port, step.ready.as_deref()), (None, None));
+    assert_eq!(
+        step.port_pick,
+        Some(archon_core::design::recipe::PortPick::Free)
+    );
 }

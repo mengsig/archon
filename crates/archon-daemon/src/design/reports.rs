@@ -128,7 +128,7 @@ impl DesignService {
     ) -> Result<Reply, ArchonError> {
         let url = validate_preview_url(url)?;
         if let Some(recipe) = &recipe {
-            recipe.check().map_err(ArchonError::Invalid)?;
+            recipe.check_reported().map_err(ArchonError::Invalid)?;
         }
         let session = self.agent_session(ctx, caller).await?;
         let seen = match &recipe {

@@ -45,7 +45,7 @@ pub(crate) fn load(store: &Store, repo: &RepoId) -> Result<Option<SavedRecipe>, 
 }
 
 /// Replace `repo`'s recipe with `recipe`, checked again here: the store
-/// never holds one that could carry a secret value.
+/// never holds one that could carry a secret value, nor a port picked for one run.
 pub(crate) fn save(
     store: &mut Store,
     repo: &RepoId,
@@ -54,7 +54,7 @@ pub(crate) fn save(
 ) -> Result<SavedRecipe, ArchonError> {
     recipe.check().map_err(ArchonError::Invalid)?;
     let saved = SavedRecipe {
-        recipe,
+        recipe: recipe.for_saving(),
         saved_at: archon_core::now(),
         item: item.clone(),
     };

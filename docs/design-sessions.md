@@ -132,7 +132,8 @@ run from the item's worktree; one with any container from elsewhere is left
 alone. Volumes are kept, except those Compose made for the item's own project
 `archon-<item>` under their default name `archon-<item>_<volume>`, which only
 that item's runs create; one given its own `name:` in the compose file is
-kept, and Docker refuses one still in use, which the feed says.
+kept, so is one any other container, running or stopped, still mounts, and
+Docker refuses one still in use, which the feed says.
 
 **Dependencies.** When an install fails (a package missing from its index, a
 private package, a build error) the agent asks you, naming the command, the

@@ -32,6 +32,11 @@ if [ -e "$dir/block.$1" ]; then
 fi
 case "$1" in
   ps)
+    mounted=$(echo "$*" | sed -n 's/.*volume=\([^ ]*\).*/\1/p')
+    if [ -n "$mounted" ]; then
+      awk -F '\t' -v v="$mounted" '$1 == v { print $2 }' "$dir/mounts" 2>/dev/null
+      exit 0
+    fi
     project=$(echo "$*" | sed -n 's/.*label=com\.docker\.compose\.project=\([^ ]*\).*/\1/p')
     if [ -n "$project" ]; then
       awk -F '\t' -v p="$project" '$2 == p' "$dir/ps" 2>/dev/null
@@ -214,8 +219,11 @@ async fn the_items_own_project_takes_its_volumes_with_it() {
             format!("{own}\t{own}_shared\tuploads"),
             "review-1\treview-1_pgdata\tpgdata".to_owned(),
             "ccso-dev-preview\tccso-dev-preview_pgdata\tpgdata".to_owned(),
+            format!("{own}\t{own}_shared-db\tshared-db"),
         ],
     );
+    // A volume another project's stopped container still mounts is shared.
+    docker.lists("mounts", &[format!("{own}_shared-db\tc9")]);
     compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
         .await
         .unwrap();

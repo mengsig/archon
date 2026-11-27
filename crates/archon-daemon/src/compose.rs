@@ -283,7 +283,16 @@ async fn stop_project(
 /// Remove the volumes Compose made for `project`, once none of its
 /// containers is left; Docker refuses one still in use, and that is told.
 async fn remove_volumes(docker: &Docker<'_>, project: &str) -> Result<(), ArchonError> {
-    let volumes = docker.volumes(project).await?;
+    let mut volumes = Vec::new();
+    for volume in docker.volumes(project).await? {
+        // None of the project's containers is left, so any user is another's.
+        let users = docker.volume_users(&volume).await?;
+        if users.is_empty() {
+            volumes.push(volume);
+        } else {
+            tracing::info!(%project, %volume, ?users, "a volume other containers mount is kept");
+        }
+    }
     if volumes.is_empty() {
         return Ok(());
     }
@@ -469,6 +478,23 @@ impl<'a> Docker<'a> {
             "a volume has a key"
         );
         Ok(own)
+    }
+
+    /// The containers, running or stopped, that mount `volume`.
+    async fn volume_users(&self, volume: &str) -> Result<Vec<String>, ArchonError> {
+        assert!(!volume.is_empty(), "a volume is named");
+        let filter = format!("volume={volume}");
+        let args = [
+            "ps",
+            "--all",
+            "--no-trunc",
+            "--filter",
+            &filter,
+            "--format",
+            "{{.ID}}",
+        ];
+        let listing = self.run(&args, LIST_TIMEOUT).await?;
+        Ok(listing.split_whitespace().map(str::to_owned).collect())
     }
 
     /// stdout of a successful call; a failure carries stderr.

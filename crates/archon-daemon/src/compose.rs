@@ -3,7 +3,9 @@
 //! policy brings it back after every reboot, so archond stops what is left
 //! when a run ends, when a fresh retry sets the worktree aside, and before
 //! the worktree is removed. Docker cannot tell whose a volume is, as any
-//! checkout may reuse a project's name, so volumes are always kept.
+//! checkout may reuse a project's name, so volumes are kept, except those of
+//! the project named for the item itself (`archon-<item>`), which only its
+//! runs create: a design session's stack starts under that name.
 //!
 //! A project is Archon's when one of its containers' config files or
 //! working directory lies inside the worktree, also once symlinks are
@@ -184,8 +186,18 @@ fn is_within(path: &Path, root: &Path) -> bool {
     plain && path.starts_with(root)
 }
 
+/// The Compose project name a run of `item` starts its stacks under.
+pub fn own_project(item: &QueueItemId) -> String {
+    let name = format!("archon-{}", item.as_str().to_ascii_lowercase());
+    debug_assert!(
+        !name.contains(char::is_uppercase),
+        "compose names are lowercase"
+    );
+    name
+}
+
 /// Tear down the Compose projects of `item` running from `tree`, keeping
-/// their volumes. `when` completes the feed note of a failure. `Err` only
+/// their volumes unless the project is the item's own. `when` completes the feed note of a failure. `Err` only
 /// for a store failure.
 pub async fn tear_down(
     ctx: &DaemonContext,
@@ -214,9 +226,10 @@ pub async fn tear_down(
     let selection = select(&listing, &trees);
     warn_shared(&selection.shared, tree);
     let mut failures = Vec::new();
+    let own = own_project(item);
     for project in selection.inside.keys() {
         tracing::info!(%project, %item, tree = %tree.display(), "tearing down a compose stack an item left");
-        if let Err(error) = stop_project(&docker, project, &trees).await {
+        if let Err(error) = stop_project(&docker, project, &trees, *project == own).await {
             failures.push(format!("{project}: {error}"));
         }
     }
@@ -235,11 +248,13 @@ fn warn_shared(shared: &[String], tree: &Path) {
 
 /// List `project` again and, if each of its containers still runs from
 /// `trees`, stop and remove those containers, then its networks once none
-/// of its containers is left. One that changed since is left running.
+/// of its containers is left, and with `own_volumes` its volumes too. One
+/// that changed since is left running.
 async fn stop_project(
     docker: &Docker<'_>,
     project: &str,
     trees: &[PathBuf],
+    own_volumes: bool,
 ) -> Result<(), ArchonError> {
     let selection = select(&docker.list(Some(project)).await?, trees);
     warn_shared(&selection.shared, &trees[0]);
@@ -257,16 +272,35 @@ async fn stop_project(
     docker
         .run(&[&["stop"], &args[..]].concat(), STOP_TIMEOUT)
         .await?;
-    remove_stopped(docker, project, &ids).await
+    if !remove_stopped(docker, project, &ids).await? || !own_volumes {
+        return Ok(());
+    }
+    remove_volumes(docker, project).await
+}
+
+/// Remove the volumes Compose made for `project`, once none of its
+/// containers is left; Docker refuses one still in use, and that is told.
+async fn remove_volumes(docker: &Docker<'_>, project: &str) -> Result<(), ArchonError> {
+    let volumes = docker.volumes(project).await?;
+    if volumes.is_empty() {
+        return Ok(());
+    }
+    tracing::info!(%project, ?volumes, "removing the volumes of the item's own compose project");
+    let names: Vec<&str> = volumes.iter().map(String::as_str).collect();
+    docker
+        .run(&[&["volume", "rm"], &names[..]].concat(), LIST_TIMEOUT)
+        .await
+        .map(drop)
 }
 
 /// Remove those of `stopped` still there (a `run --rm` one removes itself
-/// once stopped), then `project`'s networks if none of its containers is left.
+/// once stopped), then `project`'s networks if none of its containers is
+/// left; true when none is.
 async fn remove_stopped(
     docker: &Docker<'_>,
     project: &str,
     stopped: &BTreeSet<String>,
-) -> Result<(), ArchonError> {
+) -> Result<bool, ArchonError> {
     let present = container_ids(&docker.list(Some(project)).await?);
     let ids: Vec<&str> = stopped.intersection(&present).map(String::as_str).collect();
     if !ids.is_empty() {
@@ -276,17 +310,17 @@ async fn remove_stopped(
     }
     if !container_ids(&docker.list(Some(project)).await?).is_empty() {
         tracing::info!(%project, "other containers of the compose project remain; its networks are kept");
-        return Ok(());
+        return Ok(false);
     }
     let networks = docker.networks(project).await?;
     if networks.is_empty() {
-        return Ok(());
+        return Ok(true);
     }
     let networks: Vec<&str> = networks.iter().map(String::as_str).collect();
     docker
         .run(&[&["network", "rm"], &networks[..]].concat(), LIST_TIMEOUT)
         .await
-        .map(drop)
+        .map(|_| true)
 }
 
 /// The IDs of the containers in a `docker ps` listing.
@@ -398,6 +432,28 @@ impl<'a> Docker<'a> {
             )));
         }
         Ok(ids)
+    }
+
+    /// The volumes Compose made for `project` under its own `<project>_`
+    /// prefix. An external volume carries no project label, and one renamed
+    /// with `name:` may be shared, so neither is among them.
+    async fn volumes(&self, project: &str) -> Result<Vec<String>, ArchonError> {
+        let filter = format!("label={PROJECT_LABEL}={project}");
+        let args = ["volume", "ls", "--quiet", "--filter", &filter];
+        let listing = self.run(&args, LIST_TIMEOUT).await?;
+        let prefix = format!("{project}_");
+        let (own, renamed): (Vec<String>, Vec<String>) = listing
+            .split_whitespace()
+            .map(str::to_owned)
+            .partition(|name| name.starts_with(&prefix));
+        if !renamed.is_empty() {
+            tracing::info!(%project, ?renamed, "volumes named apart from the compose project are kept");
+        }
+        debug_assert!(
+            own.iter().all(|n| n.len() > prefix.len()),
+            "a volume has a name of its own"
+        );
+        Ok(own)
     }
 
     /// stdout of a successful call; a failure carries stderr.

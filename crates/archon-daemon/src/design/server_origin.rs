@@ -11,6 +11,11 @@ use archon_core::error::ArchonError;
 use archon_design_browser::{BrowserError, UpstreamGuard};
 use tokio::net::TcpStream;
 
+/// How long a connection may wait for the server to accept it before it is refused.
+const ACCEPT_WAIT: Duration = Duration::from_secs(3);
+/// Looks at an accepted socket's owner, a few ms apart, before it is refused.
+const OWNERSHIP_CHECKS: u32 = 5;
+
 #[derive(Debug)]
 struct Service {
     worktree: PathBuf,
@@ -90,17 +95,24 @@ impl UpstreamGuard for Service {
         let root = self.worktree.clone();
         let leaders = self.leaders.clone();
         tokio::task::spawn_blocking(move || {
-            // The kernel exposes the peer's inode after the server accepts.
-            for attempt in 0..5 {
-                if let Some(inode) = peer_inode(server, client).map_err(address)?
-                    && owns_socket(&root, &leaders, inode).map_err(address)?
-                {
-                    return Ok(());
+            // The kernel exposes the peer's inode only once the server accepts, which a dev
+            // server busy compiling its first page can delay by seconds.
+            let deadline = std::time::Instant::now() + ACCEPT_WAIT;
+            let mut ownership_checks = 0;
+            while ownership_checks < OWNERSHIP_CHECKS {
+                match peer_inode(server, client).map_err(address)? {
+                    Some(inode) => {
+                        if owns_socket(&root, &leaders, inode).map_err(address)? {
+                            return Ok(());
+                        }
+                        ownership_checks += 1;
+                    }
+                    None if std::time::Instant::now() >= deadline => break,
+                    None => {}
                 }
-                if attempt < 4 {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
+                std::thread::sleep(Duration::from_millis(10));
             }
+            debug_assert!(ownership_checks <= OWNERSHIP_CHECKS, "the ownership retries are bounded");
             Err(BrowserError::Protocol("the process serving this port must run inside the item's worktree under its declared service PID or process group; a port a container publishes does not count, so serve the page from a host process".into()))
         }).await.map_err(|e| BrowserError::Protocol(format!("verify preview connection: {e}")))?
     }
@@ -238,6 +250,40 @@ mod tests {
         })
         .await
         .expect("bounded socket ownership check");
+    }
+
+    /// S2: Vite accepts late while it compiles its first page; the preview's
+    /// own connection a moment after `design_preview` was refused, so the
+    /// screen stayed on "Starting" until a reload. A late accept still passes.
+    #[tokio::test]
+    async fn a_server_that_accepts_late_still_owns_its_connection() {
+        let outcome = tokio::time::timeout(Duration::from_secs(4), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let client = TcpStream::connect(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            let late = tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                listener.accept().await.unwrap()
+            });
+            let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+            let service = Service {
+                worktree: cwd,
+                leaders: BTreeSet::from([i32::try_from(std::process::id()).unwrap()]),
+            };
+            let started = std::time::Instant::now();
+            let verified = service.verify_peer(&client).await;
+            assert!(
+                started.elapsed() >= Duration::from_millis(300),
+                "the check waited for the accept"
+            );
+            let _accepted = late.await.unwrap();
+            verified
+        })
+        .await;
+        outcome
+            .expect("bounded socket ownership check")
+            .expect("the late accept is the worktree's");
     }
 
     /// A port a container publishes belongs to docker-proxy, a process outside

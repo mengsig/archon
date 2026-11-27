@@ -26,6 +26,10 @@ restart aetherd.
 
 ### Fixed
 
+- A structured `pass` whose summary says its blocking findings are fixed,
+  resolved, closed or verified fixed (`Verdict: PASS (risk high). All five
+  blocking findings are verified fixed`) is read as a pass, not re-asked as a
+  disputed one. A blocker still open, or a `FAIL` line, still disputes it.
 - Stage leads no longer stall or loop in review, the cause of the 1.6.5 and
   1.6.6 bench timeouts. The findings note now lists only open blocking
   findings and is not sent when none is open, so follow-ups no longer read as

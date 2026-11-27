@@ -11,7 +11,7 @@ use crate::error::ArchonError;
 use crate::id::{PipelineRunId, QuestionId, QueueItemId, ReportId, StageRunId};
 use crate::model::ModelChoice;
 use crate::plan_origin::{PlanSource, SlotSizing};
-use crate::verdict_prose::reports_problem;
+use crate::verdict_prose::{reports_problem, settled_blockers};
 
 mod restatement;
 mod verdict_note;
@@ -272,8 +272,10 @@ impl Verdict {
     /// separator (`—`, `:`, `;`, `.`, `!`, ` - `, a line break): any is a choice
     /// (`PASS or FAIL`) or a condition (`PASS, pending fixes`, `PASS (if CI agrees)`).
     /// A pass whose explanation [takes it back](holds_back) is `Unknown` too.
+    /// The risk level a contract asks for (`PASS (risk high).`) qualifies nothing.
     fn leading(text: &str) -> Option<Self> {
         let (verdict, after) = Self::opening(text)?;
+        let after = without_risk_note(after);
         let head = after
             .split(['—', '–', ':', ';', '.', '!', '\n'])
             .next()
@@ -455,9 +457,9 @@ const DENIABLE: [&str; 15] = [
 ];
 
 /// Whether a pass's explanation takes it back: a [`HOLDS_PASS`] word, a
-/// [`BLOCKERS`] word nothing [denies](DENIES), a `no` before anything but a
-/// [`DENIABLE`] word, or [a reported problem](reports_problem). Any other
-/// text after a plain pass word is explanation.
+/// [`BLOCKERS`] word nothing [denies](DENIES) or [settles](settled_blockers),
+/// a `no` before anything but a [`DENIABLE`] word, or [a reported
+/// problem](reports_problem). Any other text after a plain pass word is explanation.
 fn holds_back(explanation: &str) -> bool {
     holds_back_before(explanation, "")
 }
@@ -469,14 +471,35 @@ fn holds_back_before(explanation: &str, next_line: &str) -> bool {
         .filter(|word| !word.is_empty())
         .map(str::to_lowercase)
         .collect();
+    let settled = settled_blockers(explanation);
+    assert_eq!(settled.len(), words.len(), "one mark per word");
     let among = |set: &[&str], word: &str| set.contains(&word);
     words.iter().enumerate().any(|(at, word)| {
         let before = at.checked_sub(1).map_or("", |prev| words[prev].as_str());
         let after = words.get(at + 1).map_or("", String::as_str);
-        let blocker = among(&BLOCKERS, word) && !among(&DENIES, before);
+        let blocker = among(&BLOCKERS, word) && !among(&DENIES, before) && !settled[at];
         let lacks = word == "no" && !among(&DENIABLE, after);
         among(&HOLDS_PASS, word) || blocker || lacks
     }) || reports_problem(explanation, next_line)
+}
+
+/// `after` a verdict word without the `(risk <level>)` note opening it, if one does.
+fn without_risk_note(after: &str) -> &str {
+    let Some(note) = after.trim_start().strip_prefix('(') else {
+        return after;
+    };
+    let Some((inner, rest)) = note.split_once(')') else {
+        return after;
+    };
+    let words: Vec<String> = inner
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    let is_note = matches!(words.as_slice(), [risk, level]
+        if risk == "risk" && ["low", "medium", "high"].contains(&level.as_str()));
+    debug_assert!(rest.len() < after.len(), "a note is cut from the text");
+    if is_note { rest } else { after }
 }
 
 /// Whether the summary after a pass's verdict line takes it back: anything
@@ -2055,6 +2078,28 @@ mod tests {
         assert_eq!(Verdict::extract(summary, Some(&blocked)), Verdict::Unknown);
         assert!(Verdict::pass_disputed(summary, Some(&blocked)));
         assert!(!Verdict::pass_disputed(summary, Some(&pass)));
+    }
+
+    #[test]
+    fn a_pass_that_reports_its_blockers_fixed_is_a_pass() {
+        let pass = json!({"verdict": "pass", "head": "abcdef1", "findings": []});
+        for summary in [
+            "Verdict: PASS (risk high). All five blocking findings are verified fixed…",
+            "Verdict: pass. Blockers fixed, with regression tests for each.",
+            "Verdict: pass. The two blockers were resolved.",
+            "Verdict: pass. Blocking finding closed in abcdef1.",
+        ] {
+            assert!(!Verdict::pass_disputed(summary, Some(&pass)), "{summary}");
+            assert_eq!(Verdict::extract(summary, Some(&pass)), Verdict::Pass);
+        }
+        for summary in [
+            "Verdict: PASS (risk high). Four blocking findings are fixed; one blocker remains.",
+            "Verdict: pass. One blocker is still open, the rest are fixed.",
+            "Verdict: FAIL. All five blocking findings are verified fixed.",
+        ] {
+            assert!(Verdict::pass_disputed(summary, Some(&pass)), "{summary}");
+            assert_ne!(Verdict::extract(summary, Some(&pass)), Verdict::Pass);
+        }
     }
 
     #[test]

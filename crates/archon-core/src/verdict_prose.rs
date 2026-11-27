@@ -323,3 +323,63 @@ fn follows(rest: &[&str], verbs: &[&[&str]]) -> Option<usize> {
         .any(|set| set.contains(word))
         .then_some(skipped + 1)
 }
+
+/// Where a clause ends, for [`settled_blockers`]: a blocker is closed only in its own clause.
+const CLAUSE_ENDS: [char; 11] = ['.', ';', ':', '!', '?', '—', '–', '(', ')', ',', '\n'];
+/// Words allowed between a blocker and the word that closes it (`findings are verified fixed`).
+const CLOSE_FILLERS: [&str; 18] = [
+    "finding",
+    "findings",
+    "issue",
+    "issues",
+    "is",
+    "are",
+    "was",
+    "were",
+    "have",
+    "has",
+    "been",
+    "now",
+    "all",
+    "each",
+    "both",
+    "also",
+    "verified",
+    "confirmed",
+];
+const MAX_CLOSE_FILLERS: usize = 4;
+/// Ending its clause, these close a blocker too (`all blockers verified`).
+const CHECKED: [&str; 2] = ["verified", "confirmed"];
+
+/// For each word of `explanation`, split on non-alphanumerics as a pass's explanation
+/// is read, whether it names a blocker its clause closes (`blockers were fixed`) or a test.
+pub(crate) fn settled_blockers(explanation: &str) -> Vec<bool> {
+    let mut settled = Vec::new();
+    for clause in explanation.split(CLAUSE_ENDS) {
+        let words: Vec<String> = clause
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .map(str::to_lowercase)
+            .collect();
+        let words = as_strs(&words);
+        settled.extend((0..words.len()).map(|at| closed_or_test(&words[at + 1..])));
+    }
+    settled
+}
+
+/// Whether the words after a blocker name a test (`regression tests`) or close it.
+fn closed_or_test(rest: &[&str]) -> bool {
+    if rest.first().is_some_and(|w| ["test", "tests"].contains(w)) {
+        return true;
+    }
+    let skipped = rest
+        .iter()
+        .take(MAX_CLOSE_FILLERS)
+        .take_while(|w| CLOSE_FILLERS.contains(w))
+        .count();
+    assert!(skipped <= rest.len(), "fillers lie within the clause");
+    match rest.get(skipped) {
+        Some(word) => CLOSED.contains(word) || *word == "closed",
+        None => skipped > 0 && CHECKED.contains(&rest[skipped - 1]),
+    }
+}

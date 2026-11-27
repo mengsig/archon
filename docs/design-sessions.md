@@ -136,8 +136,10 @@ the compose files and directory it started from, and Compose's own rules
 decide which volumes go: those the files declare and anonymous ones, never
 an external one. A volume still labelled for the project afterwards, one
 Docker refused as in use, is kept and named in `archond.log`. When Compose
-cannot read the files, the containers are stopped as any other project's,
-the volumes kept, and the feed says why.
+cannot read the files, as when they need variables only a repo script such
+as `dev-preview-stack` sets, the containers are stopped as any other
+project's, the volumes labelled `com.docker.compose.project=archon-<item>`
+removed, and the feed says why.
 
 **Dependencies.** When an install fails (a package missing from its index, a
 private package, a build error) the agent asks you, naming the command, the

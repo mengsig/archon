@@ -5,7 +5,8 @@
 //! the worktree is removed. Docker cannot tell whose a volume is, as any
 //! checkout may reuse a project's name, so volumes are kept, except for the
 //! project named for the item itself (`archon-<item>`), unique to its runs:
-//! `docker compose down --volumes` takes it down, and Compose decides which.
+//! `docker compose down --volumes` takes it down, and Compose decides which;
+//! when Compose cannot, the volumes labelled for that project go.
 //!
 //! A project is Archon's when one of its containers' config files or
 //! working directory lies inside the worktree, also once symlinks are
@@ -308,7 +309,8 @@ async fn stop_left(
 /// `docker compose down --volumes` for the item's own `project`, from the
 /// files and directory it started from: Compose removes the volumes it
 /// declares, never an external one. Those still labelled for it are named.
-/// When Compose cannot run, its containers are stopped as any other's.
+/// When Compose cannot run, as when the files need a script's variables,
+/// its containers are stopped as any other's and its labelled volumes removed.
 async fn down_own(
     docker: &Docker<'_>,
     project: &str,
@@ -337,11 +339,15 @@ async fn down_own(
     }
     args.extend(["down", "--volumes", "--remove-orphans"]);
     if let Err(error) = docker.run(&args, STOP_TIMEOUT).await {
-        tracing::warn!(%project, %error, "compose down failed; the containers are stopped and the volumes kept");
-        return match stop_left(docker, project, verified).await {
+        tracing::warn!(%project, %error, "compose down failed; the containers are stopped and the volumes labelled for the project removed");
+        let fallback = match stop_left(docker, project, verified).await {
+            Ok(()) => remove_own_volumes(docker, project).await,
+            Err(fallback) => Err(fallback),
+        };
+        return match fallback {
             Ok(()) => Err(error),
             Err(fallback) => Err(ArchonError::Unavailable(format!(
-                "{error}; stopping its containers then failed too: {fallback}"
+                "{error}; stopping its containers or removing its volumes then failed too: {fallback}"
             ))),
         };
     }
@@ -350,6 +356,29 @@ async fn down_own(
         tracing::info!(%project, ?kept, "volumes compose kept for the item's own project are left");
     }
     Ok(())
+}
+
+/// Remove the volumes labelled for the item's own `project` once none of its
+/// containers is left: only the item's runs start a project of that name.
+async fn remove_own_volumes(docker: &Docker<'_>, project: &str) -> Result<(), ArchonError> {
+    assert!(
+        project.starts_with("archon-qi_"),
+        "only the item's own project loses its volumes"
+    );
+    if !container_ids(&docker.list(Some(project)).await?).is_empty() {
+        tracing::info!(%project, "containers of the item's own compose project remain; its volumes are kept");
+        return Ok(());
+    }
+    let volumes = docker.volumes(project).await?;
+    if volumes.is_empty() {
+        return Ok(());
+    }
+    tracing::info!(%project, ?volumes, "removing the volumes of the item's own compose project");
+    let names: Vec<&str> = volumes.iter().map(String::as_str).collect();
+    docker
+        .run(&[&["volume", "rm"], &names[..]].concat(), LIST_TIMEOUT)
+        .await
+        .map(drop)
 }
 
 /// Remove those of `stopped` still there (a `run --rm` one removes itself
@@ -497,7 +526,14 @@ impl<'a> Docker<'a> {
         let filter = format!("label={PROJECT_LABEL}={project}");
         let args = ["volume", "ls", "--filter", &filter, "--format", "{{.Name}}"];
         let listing = self.run(&args, LIST_TIMEOUT).await?;
-        Ok(listing.split_whitespace().map(str::to_owned).collect())
+        let names: Vec<String> = listing.split_whitespace().map(str::to_owned).collect();
+        // Each goes to `docker volume rm` as an argument, so none may read as a flag.
+        if let Some(odd) = names.iter().find(|name| name.starts_with('-')) {
+            return Err(ArchonError::Unavailable(format!(
+                "docker volume ls printed {odd:?}, not a volume name"
+            )));
+        }
+        Ok(names)
     }
 
     /// stdout of a successful call; a failure carries stderr.

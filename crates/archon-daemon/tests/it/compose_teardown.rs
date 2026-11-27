@@ -104,7 +104,7 @@ impl FakeDocker {
     pub(crate) fn removals(&self) -> Vec<String> {
         let calls = self.calls();
         let removes = |c: &String| {
-            ["stop ", "rm ", "network rm ", "compose "]
+            ["stop ", "rm ", "network rm ", "volume rm ", "compose "]
                 .iter()
                 .any(|v| c.starts_with(v))
         };
@@ -232,8 +232,18 @@ async fn the_items_own_project_goes_down_with_its_volumes() {
     assert!(harness.system_notes().await.is_empty());
 }
 
-/// When Compose cannot take the own project down, its checked containers are
-/// stopped as any other's, its volumes kept, and the failure told.
+/// The volumes listing of the own project's `pgdata` and another project's.
+fn own_and_other_volumes(docker: &FakeDocker, own: &str) {
+    let volumes = [
+        format!("{own}\t{own}_pgdata"),
+        "ccso-dev-preview\tccso-dev-preview_pgdata".to_owned(),
+    ];
+    docker.lists("volumes", &volumes);
+}
+
+/// When Compose cannot take the own project down, as when its files need a
+/// script's variables, its checked containers are stopped as any other's,
+/// the volumes labelled for it removed, and the failure told.
 #[tokio::test]
 async fn an_own_project_compose_cannot_take_down_is_stopped_and_told() {
     let docker = FakeDocker::new();
@@ -242,13 +252,19 @@ async fn an_own_project_compose_cannot_take_down_is_stopped_and_told() {
     let tree = item_tree(&harness, &item);
     let own = compose::own_project(&item);
     docker.lists("ps", &[container("a1", &own, &tree)]);
+    own_and_other_volumes(&docker, &own);
     docker.fails("compose");
     compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
         .await
         .unwrap();
     let removals = docker.removals();
-    assert_eq!(removals[1..], ["stop a1", "rm a1"], "{:?}", docker.calls());
-    assert!(!docker.calls().iter().any(|c| c.starts_with("volume rm")));
+    let volume_rm = format!("volume rm {own}_pgdata");
+    assert_eq!(
+        removals[1..],
+        ["stop a1", "rm a1", volume_rm.as_str()],
+        "{:?}",
+        docker.calls()
+    );
     let notes = harness.system_notes().await;
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("down --volumes"), "{notes:?}");
@@ -293,11 +309,17 @@ async fn a_failed_fallback_after_compose_down_tells_both_errors() {
     let tree = item_tree(&harness, &item);
     let own = compose::own_project(&item);
     docker.lists("ps", &[container("a1", &own, &tree)]);
+    own_and_other_volumes(&docker, &own);
     docker.fails("compose");
     docker.fails("stop");
     compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
         .await
         .unwrap();
+    let calls = docker.calls();
+    assert!(
+        !calls.iter().any(|c| c.starts_with("volume rm")),
+        "{calls:?}"
+    );
     let notes = harness.system_notes().await;
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(
@@ -512,6 +534,35 @@ async fn ending_a_run_tears_down_its_worktrees_stacks() {
     assert!(
         !harness.ctx.collecting.contains(&item),
         "the teardown let go of the worktree"
+    );
+}
+
+/// Cancelling an item whose own project a repo script started, so that
+/// `compose down` from its files fails, still removes the project's volumes.
+#[tokio::test]
+async fn cancelling_an_item_removes_its_own_projects_volumes() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let (item, tree) = running_in(&harness).await;
+    let own = compose::own_project(&item);
+    let stack = tree.join("scripts/dev-preview");
+    docker.lists(
+        "ps",
+        &[container("a1", &own, &stack), container("a2", &own, &stack)],
+    );
+    own_and_other_volumes(&docker, &own);
+    docker.fails("compose");
+    executor::cancel_item(&harness.ctx, &item, "cancelled")
+        .await
+        .unwrap();
+    let removals = docker.removals();
+    assert!(removals[0].starts_with("compose "), "{removals:?}");
+    let volume_rm = format!("volume rm {own}_pgdata");
+    assert_eq!(
+        removals[1..],
+        ["stop a1 a2", "rm a1 a2", volume_rm.as_str()],
+        "{:?}",
+        docker.calls()
     );
 }
 

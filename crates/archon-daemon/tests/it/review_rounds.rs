@@ -624,6 +624,78 @@ async fn a_later_review_leaving_a_blocker_open_tells_the_lead_again() {
     assert_eq!(findings_notes(&h).len(), 2, "a replay sends nothing new");
 }
 
+/// Only a reviewer whose verdict was read is told the open blockers. Any
+/// other child that settles, a helper or an unreadable reviewer, sends no copy.
+#[tokio::test]
+async fn only_a_read_reviewer_settle_sends_the_findings_note() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let lead_id = lead.aether_agent.clone().unwrap();
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([{"title": "missing null check", "blocking": true}]);
+    handle(&h, &fail(&h, &lead, &first["commit"], None, findings)).await;
+    assert_eq!(findings_notes(&h).len(), 1, "the failed review is told");
+
+    let helper = h.backend.delegate_as(&lead_id, REVIEW_MODEL, "worker");
+    h.backend
+        .complete_delegated(&helper, json!({"summary": "implemented"}));
+    archon_daemon::executor::reviewer_settled(&h.ctx, &lead_id, &helper)
+        .await
+        .unwrap();
+    let unreadable = h.backend.delegate(&lead_id, REVIEW_MODEL);
+    let outcome = StageOutcome::Completed {
+        summary: "complete_task:\n  verdict: pass\n  findings: []".into(),
+        structured: None,
+    };
+    h.backend.complete_delegated_with(&unreadable, outcome);
+    archon_daemon::executor::reviewer_settled(&h.ctx, &lead_id, &unreadable)
+        .await
+        .unwrap();
+    assert_eq!(findings_notes(&h).len(), 1, "no copy for another child");
+    let restated = format!("cannot count reviewer {unreadable}");
+    assert!(
+        h.backend.notes().iter().any(|(_, n)| n.contains(&restated)),
+        "the unreadable reviewer is restated instead"
+    );
+}
+
+/// A replay of a reviewer's settle resends the note that settle owed, even
+/// when a verdict read since changed the open list: it never sends a second.
+#[tokio::test]
+async fn a_replay_after_the_open_list_changed_sends_no_second_note() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([{"title": "missing null check", "blocking": true}]);
+    let first_read = fail(&h, &lead, &first["commit"], None, findings);
+    handle(&h, &first_read).await;
+
+    let second = change(&workspace);
+    let findings = json!([{"title": "malformed record panics", "blocking": true}]);
+    let second_read = fail(
+        &h,
+        &lead,
+        &second["commit"],
+        Some(&first["commit"]),
+        findings,
+    );
+    let new_blocker = format!("{}:1", second_read.agent.as_ref().unwrap());
+    handle(&h, &first_read).await;
+    let notes = findings_notes(&h);
+    assert_eq!(notes.len(), 1, "the replay resends its own note: {notes:?}");
+    assert!(!notes[0].contains(&new_blocker), "{}", notes[0]);
+
+    handle(&h, &second_read).await;
+    handle(&h, &second_read).await;
+    let notes = findings_notes(&h);
+    assert_eq!(notes.len(), 2, "the second review is told once: {notes:?}");
+    assert!(notes[1].contains(&new_blocker), "{}", notes[1]);
+}
+
 fn confirmation_notes(h: &Harness) -> usize {
     h.backend
         .messages()

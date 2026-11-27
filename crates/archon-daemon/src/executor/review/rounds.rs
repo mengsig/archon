@@ -253,19 +253,18 @@ async fn count(
     if rounds_of(&tally.fails) >= REVIEW_ROUND_CAP {
         return capped(ctx, stage, lead, (trigger, &beneath), &mut tally).await;
     }
+    // Only a reviewer whose verdict was read is told: any other child settling
+    // would resend the open list under its own key.
     if let Some(reviewer) = trigger.reviewer()
-        && !tally.reports.is_empty()
+        && tally.reports.iter().any(|r| r.agent == reviewer.as_str())
+        && let Some(refusal) = tell_findings(ctx, stage, (lead, reviewer), &mut tally).await?
+        && !lead_finished(ctx, stage, lead).await?
     {
-        let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
-        if let Some(refusal) = tell_findings(ctx, stage, (lead, reviewer), &records).await?
-            && !lead_finished(ctx, stage, lead).await?
-        {
-            let reason = format!(
-                "{} review finding IDs could not be delivered to {lead}: {refusal}",
-                StageOutcome::ESCALATE_PREFIX
-            );
-            return stop(ctx, stage, &mut tally, reason).await.map(Some);
-        }
+        let reason = format!(
+            "{} review finding IDs could not be delivered to {lead}: {refusal}",
+            StageOutcome::ESCALATE_PREFIX
+        );
+        return stop(ctx, stage, &mut tally, reason).await.map(Some);
     }
     Ok(None)
 }
@@ -581,31 +580,68 @@ fn capped_reason(
     reason
 }
 
+/// Tell `lead` the blockers open once `reviewer`'s verdict was read. The note
+/// is saved before it is sent, so a replay of this settle resends that note
+/// under its key even when verdicts read since changed the open list.
 async fn tell_findings(
     ctx: &DaemonContext,
     stage: &StageRun,
     (lead, reviewer): (&AetherAgentId, &AetherAgentId),
-    records: &Rounds<'_>,
+    tally: &mut Tally,
 ) -> Result<Option<String>, ArchonError> {
     assert_ne!(lead, reviewer, "a lead does not review itself");
-    // A pass whose findings are all follow-ups owes no further review, so it
-    // gets no note: one would read as an order to fix them and review again.
-    let findings = records.last_open_blockers();
-    if findings.is_empty() || stage.only_reviews == Some(true) {
+    assert!(
+        tally.reports.iter().any(|r| r.agent == reviewer.as_str()),
+        "only a reviewer whose verdict was read is told"
+    );
+    if stage.only_reviews == Some(true) {
         return Ok(None);
     }
-    let workspace = ctx.store.lock().await.run(&stage.run)?.workspace;
-    let list = match handoff::findings(&workspace, &findings) {
-        Ok(list) => list,
-        Err(error) => return Ok(Some(error.to_string())),
+    let owed = match tally.findings_notes.get(reviewer.as_str()) {
+        Some(owed) => owed.clone(),
+        None => {
+            let owed = match findings_note(ctx, stage, tally).await? {
+                Ok(owed) => owed,
+                Err(refusal) => return Ok(Some(refusal)),
+            };
+            tally
+                .findings_notes
+                .insert(reviewer.to_string(), owed.clone());
+            save(ctx, &stage.id, tally).await?;
+            owed
+        }
     };
-    let note = format!(
-        "These blocking findings are open. For the next review, give the reviewer this list or its file path. Ask for each ID's disposition and a review of the new delta. Non-blocking findings are follow-ups for your result and need no further review.\n\n{list}"
-    );
+    let Some(note) = owed else {
+        return Ok(None);
+    };
     // Keyed by the reviewer too: a later review that leaves the same blockers
     // open sends the same list, which Aether would otherwise drop as a replay.
     let purpose = format!("review-findings:{reviewer}");
     tell_note(ctx, stage, lead, &purpose, &note).await
+}
+
+/// The note on the blockers the last round left open, `None` when none are,
+/// or the refusal to write their handoff. A pass whose findings are all
+/// follow-ups owes no further review: a note would read as an order to.
+async fn findings_note(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    tally: &Tally,
+) -> Result<Result<Option<String>, String>, ArchonError> {
+    assert!(!tally.reports.is_empty(), "a note follows a read verdict");
+    let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
+    let findings = records.last_open_blockers();
+    if findings.is_empty() {
+        return Ok(Ok(None));
+    }
+    let workspace = ctx.store.lock().await.run(&stage.run)?.workspace;
+    let list = match handoff::findings(&workspace, &findings) {
+        Ok(list) => list,
+        Err(error) => return Ok(Err(error.to_string())),
+    };
+    Ok(Ok(Some(format!(
+        "These blocking findings are open. For the next review, give the reviewer this list or its file path. Ask for each ID's disposition and a review of the new delta. Non-blocking findings are follow-ups for your result and need no further review.\n\n{list}"
+    ))))
 }
 
 async fn tell_note(
@@ -813,6 +849,10 @@ pub(super) struct Tally {
     pub reports: Vec<Report>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prior_findings: Vec<Finding>,
+    /// Per reviewer whose verdict was read, the findings note its settle owed
+    /// the lead, `None` for none: a replay resends exactly that note.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    findings_notes: BTreeMap<String, Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fix_wait: Option<FixWait>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1169,9 +1209,14 @@ mod tests {
             other_fails: vec![(agent(2), "bbbbbbb1".into())],
             every_fail_kept: true,
             reread: vec![agent(2)],
+            findings_notes: BTreeMap::from([
+                (agent(1), Some("- a: open".into())),
+                (agent(2), None),
+            ]),
             ..Tally::default()
         };
         let stored = serde_json::to_string(&tally).unwrap();
+        assert!(stored.contains("findings_notes"), "{stored}");
         let read: archon_core::run::TalliedFails = serde_json::from_str(&stored).unwrap();
         assert_eq!(read.reviewers(), 2, "{stored}");
         let none = serde_json::to_string(&Tally::default()).unwrap();

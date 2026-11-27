@@ -2768,9 +2768,13 @@ escalated lead. Archon does not edit the brief for it: the orchestrator's
 open findings and the delta review. When a review leaves a blocking finding
 open, archond sends the lead the open blocking findings and their IDs for the
 next review; a pass whose findings are all follow-ups gets no note, since it
-owes no further review. The note is keyed by the stage run, the reviewer
-that settled and the list, so a later review leaving the same blockers open
-is told again and a replay is not. Every review note goes as Archon's
+owes no further review. Only the settle of a reviewer whose verdict was read
+sends one; another child settling, a helper or an unreadable reviewer, does
+not. The note is keyed by the stage run, that reviewer and the list, so a
+later review leaving the same blockers open is told again. The note each
+settle owes, or none, is saved in the review tally (`findings_notes`) before
+it is sent, so a replay resends exactly that note under its key and Aether
+drops it, even when verdicts read since changed the list. Every review note goes as Archon's
 trigger, never `send_message`: Aether labels a message from Archon's socket
 an authenticated operator instruction, and the fleet pump would record it
 as the operator's words in that inbox. In each re-review the lead includes the

@@ -1062,6 +1062,45 @@ async fn the_backend_sends_attachments_and_leaves_the_frame_alone_without_them()
     assert_eq!(sent[2]["content"], "plain");
 }
 
+/// A review note goes as a keyed trigger from Archon, never a message: Aether
+/// labels a message on Archon's socket an authenticated operator instruction.
+#[tokio::test]
+async fn the_backend_sends_a_note_as_archons_trigger_and_keeps_a_refusal() {
+    use archon_core::ports::AgentBackend as _;
+    let (_dir, fake) = fake_aether().await;
+    fake.set_default("trigger", Scripted::ok());
+    fake.set_default("send_message", Scripted::reply("message_sent", json!({})));
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let note = "These blocking findings are open.\n\n- agt_x:1: missing null check";
+    backend
+        .send_note(&agent, note, "archon:review-findings:k1")
+        .await
+        .unwrap();
+    let sent = fake.received_named("trigger");
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0]["agent"], AGENT);
+    assert_eq!(sent[0]["source"], "archon");
+    assert_eq!(sent[0]["payload"], json!({ "note": note }));
+    assert_eq!(sent[0]["idempotency_key"], "archon:review-findings:k1");
+    assert!(
+        fake.received_named("send_message").is_empty(),
+        "never a message"
+    );
+
+    let completed = format!("agent {AGENT} is completed");
+    fake.script("trigger", Scripted::refuse("invalid_argument", &completed));
+    let error = backend
+        .send_note(&agent, note, "archon:review-findings:k2")
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains(&completed), "{error}");
+    assert!(
+        !error.is_store(),
+        "a refusal is Aether's, not the store's: {error}"
+    );
+}
+
 #[tokio::test]
 async fn legacy_aether_receives_design_note_text_without_attachments() {
     let image = archon_core::attachment::ImageAttachment::encode(

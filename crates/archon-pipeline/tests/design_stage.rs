@@ -114,6 +114,7 @@ fn design_rules_state_the_contract() {
         "do not work around it",
         "port_pick",
         "never one run's number",
+        "A change the task brief asks for waits for its note",
     ] {
         assert!(
             DESIGN_RULES.to_lowercase().contains(&needle.to_lowercase()),

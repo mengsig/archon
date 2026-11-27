@@ -92,7 +92,9 @@ sessions are already in the code.
    before calling `design_preview` again.
 3. **Wait for notes.** Call `wait_for` and act on the message that arrives.
    Notes come one at a time; the next one is sent only after you report this
-   one.
+   one. A change the task brief asks for waits for its note too: once the
+   preview is up, say in one `message_orchestrator` kind `info` line that
+   you make changes as the operator sends them as notes.
 4. **One note, one commit.** Change the code for the note. Make exactly one
    commit directly on the current HEAD, with the trailer `Archon-Note: D<n>`
    (the note's id) in the message, and leave the worktree clean (nothing

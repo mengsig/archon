@@ -25,8 +25,10 @@ restart aetherd.
   down with `docker compose down --volumes --remove-orphans` from the files
   it started from, so Compose removes the volumes it declared and never an
   external one; when Compose cannot read those files (a repo script's
-  variables unset), the volumes labelled for that project are removed after
-  its containers. Every other project keeps its volumes. The agent sets a
+  variables unset) its containers are removed with their anonymous volumes.
+  Then, also when its containers were already gone, the networks and
+  volumes still labelled for that project are removed. Every other project
+  keeps its volumes. The agent sets a
   script's own project and state knobs (such as `DEV_PREVIEW_PROJECT`, `DEV_PREVIEW_HOME`) to the
   run's, never deletes state it did not create, and asks the operator about
   a failed dependency install instead of working around it.

@@ -134,12 +134,13 @@ its name is unique to the item's runs, so archond takes it down with `docker
 compose --project-name archon-<item> down --volumes --remove-orphans`, from
 the compose files and directory it started from, and Compose's own rules
 decide which volumes go: those the files declare and anonymous ones, never
-an external one. A volume still labelled for the project afterwards, one
-Docker refused as in use, is kept and named in `archond.log`. When Compose
-cannot read the files, as when they need variables only a repo script such
-as `dev-preview-stack` sets, the containers are stopped as any other
-project's but with their anonymous volumes, the volumes labelled
-`com.docker.compose.project=archon-<item>` removed, and the feed says why.
+an external one. When Compose cannot read the files, as when they need
+variables only a repo script such as `dev-preview-stack` sets, the
+containers are stopped as any other project's but with their anonymous
+volumes, and the feed says why. Either way, and also when its containers
+were already gone, the networks and volumes still labelled
+`com.docker.compose.project=archon-<item>` are then removed once none of its
+containers is left; one Docker refuses as in use is told in the feed.
 
 **Dependencies.** When an install fails (a package missing from its index, a
 private package, a build error) the agent asks you, naming the command, the

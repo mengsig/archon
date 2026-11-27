@@ -165,7 +165,10 @@ async fn a_runs_compose_stack_stops_at_its_end_and_gc_keeps_its_volumes() {
     let report = gc_request(&h, Some(0), false).await;
     assert_eq!(report.removed, vec![tree.clone()], "{report:?}");
     let calls = docker.calls();
-    assert!(!calls.iter().any(|c| c.contains("volume")), "{calls:?}");
+    assert!(
+        !calls.iter().any(|c| c.starts_with("volume rm")),
+        "{calls:?}"
+    );
     assert_eq!(docker.removals(), torn, "nothing else was torn down");
 }
 

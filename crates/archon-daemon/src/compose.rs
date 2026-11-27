@@ -237,8 +237,13 @@ pub async fn tear_down(
             failures.push(format!("{project}: {error}"));
         }
     }
+    // Its containers may be gone already, removed by hand or by another tool.
+    let containerless = !selection.inside.contains_key(&own) && !selection.shared.contains(&own);
+    if containerless && let Err(error) = remove_own_leftovers(&docker, &own).await {
+        failures.push(format!("{own}: {error}"));
+    }
     assert!(
-        failures.len() <= selection.inside.len(),
+        failures.len() <= selection.inside.len() + 1,
         "one note per project"
     );
     report_failures(ctx, item, tree, when, &failures).await
@@ -309,7 +314,7 @@ async fn stop_left(
 
 /// `docker compose down --volumes` for the item's own `project`, from the
 /// files and directory it started from: Compose removes the volumes it
-/// declares, never an external one. Those still labelled for it are named.
+/// declares, never an external one; those still labelled for it go after.
 /// When Compose cannot run, as when the files need a script's variables,
 /// its containers are stopped as any other's and its labelled volumes removed.
 async fn down_own(
@@ -342,7 +347,7 @@ async fn down_own(
     if let Err(error) = docker.run(&args, STOP_TIMEOUT).await {
         tracing::warn!(%project, %error, "compose down failed; the containers are stopped and the volumes labelled for the project removed");
         let fallback = match stop_left(docker, project, verified).await {
-            Ok(()) => remove_own_volumes(docker, project).await,
+            Ok(()) => remove_own_leftovers(docker, project).await,
             Err(fallback) => Err(fallback),
         };
         return match fallback {
@@ -352,16 +357,12 @@ async fn down_own(
             ))),
         };
     }
-    let kept = docker.volumes(project).await?;
-    if !kept.is_empty() {
-        tracing::info!(%project, ?kept, "volumes compose kept for the item's own project are left");
-    }
-    Ok(())
+    remove_own_leftovers(docker, project).await
 }
 
-/// Remove the volumes labelled for the item's own `project` once none of its
-/// containers is left: only the item's runs start a project of that name.
-async fn remove_own_volumes(docker: &Docker<'_>, project: &str) -> Result<(), ArchonError> {
+/// Remove the networks and volumes labelled for the item's own `project`
+/// once none of its containers is left: only its runs start that project.
+async fn remove_own_leftovers(docker: &Docker<'_>, project: &str) -> Result<(), ArchonError> {
     assert!(
         project.starts_with("archon-qi_"),
         "only the item's own project loses its volumes"
@@ -370,6 +371,7 @@ async fn remove_own_volumes(docker: &Docker<'_>, project: &str) -> Result<(), Ar
         tracing::info!(%project, "containers of the item's own compose project remain; its volumes are kept");
         return Ok(());
     }
+    remove_networks(docker, project).await?;
     let volumes = docker.volumes(project).await?;
     if volumes.is_empty() {
         return Ok(());
@@ -402,6 +404,11 @@ async fn remove_stopped(
         tracing::info!(%project, "other containers of the compose project remain; its networks are kept");
         return Ok(());
     }
+    remove_networks(docker, project).await
+}
+
+/// Remove `project`'s networks; its containers are gone.
+async fn remove_networks(docker: &Docker<'_>, project: &str) -> Result<(), ArchonError> {
     let networks = docker.networks(project).await?;
     if networks.is_empty() {
         return Ok(());

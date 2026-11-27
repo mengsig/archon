@@ -24,6 +24,21 @@ restart aetherd.
 - The required Aether release is 1.4.4 (`archon doctor`, `archon update` and
   the installer).
 
+### Fixed
+
+- Stage leads no longer stall or loop in review, the cause of the 1.6.5 and
+  1.6.6 bench timeouts. The findings note now lists only open blocking
+  findings and is not sent when none is open, so follow-ups no longer read as
+  an order to fix them and review again. It is sent once Aether lists the
+  reviewer completed, so it carries that review's own blockers rather than
+  the previous list. A blocker in it counts as resolved as the gate counts
+  it, by commit ancestry, whatever order parallel reviewers came in.
+  Review notes reach the lead as Archon's own trigger, no
+  longer labelled an authenticated operator instruction. The note about an
+  unreadable reviewer result no longer interrupts the lead, which left Codex
+  leads parked on their inbox. The contract says a lead's Aether parent, a run node, never
+  replies, so leads ask with `question`.
+
 ## 1.6.6
 
 Released 2026-11-26.

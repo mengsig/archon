@@ -1351,6 +1351,8 @@ struct StoredTally {
     #[serde(default)]
     prior_findings: Vec<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
+    findings_notes: std::collections::BTreeMap<String, Option<String>>,
+    #[serde(default)]
     fix_wait: Option<StoredFixWait>,
     #[serde(default)]
     confirm: Option<serde_json::Map<String, serde_json::Value>>,

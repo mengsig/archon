@@ -6,6 +6,7 @@
 //! reviewer of the attempt that failed the change counts, named or not. Reads
 //! from the item's earlier runs on the branch count while it still holds their heads.
 
+mod blockers;
 mod confirm;
 mod coverage;
 mod handoff;

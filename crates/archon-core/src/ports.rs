@@ -516,6 +516,15 @@ pub trait AgentBackend: Send + Sync {
         idempotency_key: &str,
     ) -> Result<(), ArchonError>;
 
+    /// Put Archon's own `note` in `to`'s inbox as a trigger from Archon, so
+    /// Aether never labels it an operator instruction. Retry-safe per key.
+    async fn send_note(
+        &self,
+        to: &AetherAgentId,
+        note: &str,
+        idempotency_key: &str,
+    ) -> Result<(), ArchonError>;
+
     /// [`Self::send_message`] with pictures. A backend that cannot carry
     /// them sends the text with a note that a picture exists, never the
     /// picture.

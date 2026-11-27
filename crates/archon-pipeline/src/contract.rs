@@ -322,8 +322,10 @@ fn contract_header(
          reports blockers; `info`; uncapped `question` uses `clarification.fallback`. Hold \
          dependent work; continue independent work. Answer/timeout (default 30 minutes): \
          act and record. Active operator Proceed (`clarification.proceed_directive`): \
-         no wait; record for review. Never end the stage just for asking. No raw \
-         `send_message` to the orchestrator; other Archon mutations only `publish_artifact`.\n\
+         no wait; record for review. Never end the stage just for asking. Your Aether \
+         parent is a run node that never replies: never ask or `wait_for` it. \
+         No raw `send_message` to the orchestrator; other Archon mutations only \
+         `publish_artifact`.\n\
          {fan_rule}\n\
          ## Finishing\n\n\
          - When done, call Aether's `complete_task` exactly once. Its `summary` is concise \
@@ -1375,6 +1377,10 @@ mod tests {
                 "{kind:?}"
             );
             assert!(text.contains("uncapped `question`"), "{kind:?}");
+            assert!(
+                text.contains("Your Aether parent is a run node that never replies"),
+                "{kind:?}"
+            );
             assert!(
                 text.contains("Hold dependent work; continue independent work"),
                 "{kind:?}"

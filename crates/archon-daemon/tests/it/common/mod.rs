@@ -906,6 +906,8 @@ struct FakeState {
     delivered: Vec<(String, AetherAgentId, String)>,
     /// Every `send_message` call's key, including repeats and refused ones.
     message_calls: Vec<String>,
+    /// The keys of deliveries sent as Archon's notes, not as messages.
+    note_keys: BTreeSet<String>,
     /// The images each keyed message carried (the latest call's).
     attachments: BTreeMap<String, Vec<archon_core::attachment::ImageAttachment>>,
     message_failures: VecDeque<ArchonError>,
@@ -1393,6 +1395,17 @@ impl FakeBackend {
         self.state().message_calls.clone()
     }
 
+    /// Deliveries sent with `send_note`, as Archon's triggers: recipient, text.
+    pub fn notes(&self) -> Vec<(AetherAgentId, String)> {
+        let state = self.state();
+        state
+            .delivered
+            .iter()
+            .filter(|(key, ..)| state.note_keys.contains(key))
+            .map(|(_, to, content)| (to.clone(), content.clone()))
+            .collect()
+    }
+
     /// The held stage agent's turn ended: it is `completed` in Aether.
     pub fn end_turn(&self, agent: &AetherAgentId) {
         let held = self.state().in_turn.remove(agent);
@@ -1438,6 +1451,28 @@ impl FakeBackend {
                 structured: Some(structured),
             },
         );
+    }
+
+    /// The delegated `agent`'s task completed with `structured`, while Aether
+    /// still lists the agent live, as it does until its `agent.completed`.
+    pub fn settle_delegated_task(&self, agent: &AetherAgentId, structured: serde_json::Value) {
+        let mut state = self.state();
+        let delegated = state.delegated.iter().find(|d| d.agent == *agent);
+        let delegated = delegated.expect("a delegated agent");
+        assert_eq!(
+            delegated.state,
+            DescendantState::Live,
+            "its agent has not ended"
+        );
+        let task = delegated
+            .task
+            .clone()
+            .expect("a delegated agent has a task");
+        let outcome = StageOutcome::Completed {
+            summary: "reviewed".into(),
+            structured: Some(structured),
+        };
+        state.outcomes.insert(task, outcome);
     }
 
     /// The model of an in-flight turn may differ from the agent's current model.
@@ -2058,6 +2093,18 @@ impl AgentBackend for FakeBackend {
     ) -> Result<(), ArchonError> {
         self.send_message_with_attachments(to, content, idempotency_key, &[])
             .await
+    }
+
+    /// Delivered like a message, so `messages()` lists it, and marked a note.
+    async fn send_note(
+        &self,
+        to: &AetherAgentId,
+        note: &str,
+        idempotency_key: &str,
+    ) -> Result<(), ArchonError> {
+        self.send_message(to, note, idempotency_key).await?;
+        self.state().note_keys.insert(idempotency_key.to_owned());
+        Ok(())
     }
 
     async fn send_message_with_attachments(

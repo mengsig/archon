@@ -424,7 +424,7 @@ pub async fn stage_deadline_stopped(
 }
 
 /// Called by the event pump when `reviewer`, an agent `lead` delegated to, settled
-/// its task: stops the lead's stage, escalating, once its review-fix loop
+/// its task and again when Aether lists it completed: stops the lead's stage, escalating, once its review-fix loop
 /// failed [`archon_pipeline::contract::REVIEW_ROUND_CAP`] rounds, and
 /// otherwise tells the lead at once when the result is no verdict the gate reads.
 pub async fn reviewer_settled(

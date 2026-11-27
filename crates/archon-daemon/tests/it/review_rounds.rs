@@ -533,6 +533,380 @@ async fn a_new_blocker_from_an_existing_parallel_reviewer_still_stops_the_stage(
     assert_eq!(confirmation_notes(&review.h), 0);
 }
 
+/// The findings notes delivered, each checked to be Archon's own trigger:
+/// a message would reach the lead labelled an operator instruction.
+fn findings_notes(h: &Harness) -> Vec<String> {
+    let findings = |note: &String| note.starts_with("These blocking findings are open");
+    let messages = h.backend.messages().into_iter().map(|(_, note)| note);
+    let notes: Vec<String> = h
+        .backend
+        .notes()
+        .into_iter()
+        .map(|(_, note)| note)
+        .collect();
+    assert_eq!(
+        messages.filter(findings).count(),
+        notes.iter().filter(|note| findings(note)).count(),
+        "every findings note is sent as Archon's"
+    );
+    notes.into_iter().filter(findings).collect()
+}
+
+/// Only open blockers start another review. A pass whose findings are all
+/// follow-ups gets no note: the lead looped on such notes until it timed out.
+#[tokio::test]
+async fn follow_up_findings_start_no_further_review() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([
+        {"title": "missing null check", "blocking": true},
+        {"title": "rename the helper", "blocking": false}
+    ]);
+    let failed = fail(&h, &lead, &first["commit"], None, findings);
+    let blocker = format!("{}:1", failed.agent.as_ref().unwrap());
+    handle(&h, &failed).await;
+    let notes = findings_notes(&h);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains(&blocker), "{}", notes[0]);
+    assert!(!notes[0].contains("rename the helper"), "{}", notes[0]);
+
+    let second = change(&workspace);
+    let verdict = json!({
+        "verdict": "pass", "head": second["commit"], "base": first["commit"],
+        "resolved_findings": [blocker],
+        "findings": [{"title": "tidy the docs", "blocking": false}]
+    });
+    handle(&h, &reporter(&h, &lead, verdict)).await;
+    assert_eq!(
+        findings_notes(&h).len(),
+        1,
+        "a follow-up-only pass is told nothing"
+    );
+    assert_eq!(h.running().await[0].id, lead.id, "the lead keeps its turn");
+}
+
+/// A later review that leaves a blocker open sends the same list again. Its
+/// note is keyed by that reviewer, so it is delivered, and a replay is not.
+#[tokio::test]
+async fn a_later_review_leaving_a_blocker_open_tells_the_lead_again() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([
+        {"title": "missing null check", "blocking": true},
+        {"title": "rename the helper", "blocking": false}
+    ]);
+    let failed = fail(&h, &lead, &first["commit"], None, findings);
+    let blocker = format!("{}:1", failed.agent.as_ref().unwrap());
+    handle(&h, &failed).await;
+
+    let second = change(&workspace);
+    let verdict = json!({
+        "verdict": "pass", "head": second["commit"], "base": first["commit"],
+        "findings": [{"title": "tidy the docs", "blocking": false}]
+    });
+    let passed = reporter(&h, &lead, verdict);
+    handle(&h, &passed).await;
+    let notes = findings_notes(&h);
+    assert_eq!(
+        notes.len(),
+        2,
+        "the open blocker is listed again: {notes:?}"
+    );
+    assert_eq!(notes[0], notes[1], "the same list");
+    assert!(notes[1].contains(&blocker), "{}", notes[1]);
+    handle(&h, &passed).await;
+    assert_eq!(findings_notes(&h).len(), 2, "a replay sends nothing new");
+}
+
+/// Only a reviewer whose verdict was read is told the open blockers. Any
+/// other child that settles, a helper or an unreadable reviewer, sends no copy.
+#[tokio::test]
+async fn only_a_read_reviewer_settle_sends_the_findings_note() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let lead_id = lead.aether_agent.clone().unwrap();
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([{"title": "missing null check", "blocking": true}]);
+    handle(&h, &fail(&h, &lead, &first["commit"], None, findings)).await;
+    assert_eq!(findings_notes(&h).len(), 1, "the failed review is told");
+
+    let helper = h.backend.delegate_as(&lead_id, REVIEW_MODEL, "worker");
+    h.backend
+        .complete_delegated(&helper, json!({"summary": "implemented"}));
+    archon_daemon::executor::reviewer_settled(&h.ctx, &lead_id, &helper)
+        .await
+        .unwrap();
+    let unreadable = h.backend.delegate(&lead_id, REVIEW_MODEL);
+    let outcome = StageOutcome::Completed {
+        summary: "complete_task:\n  verdict: pass\n  findings: []".into(),
+        structured: None,
+    };
+    h.backend.complete_delegated_with(&unreadable, outcome);
+    archon_daemon::executor::reviewer_settled(&h.ctx, &lead_id, &unreadable)
+        .await
+        .unwrap();
+    assert_eq!(findings_notes(&h).len(), 1, "no copy for another child");
+    let restated = format!("cannot count reviewer {unreadable}");
+    assert!(
+        h.backend.notes().iter().any(|(_, n)| n.contains(&restated)),
+        "the unreadable reviewer is restated instead"
+    );
+}
+
+/// A replay of a reviewer's settle resends the note that settle owed, even
+/// when a verdict read since changed the open list: it never sends a second.
+#[tokio::test]
+async fn a_replay_after_the_open_list_changed_sends_no_second_note() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([{"title": "missing null check", "blocking": true}]);
+    let first_read = fail(&h, &lead, &first["commit"], None, findings);
+    handle(&h, &first_read).await;
+
+    let second = change(&workspace);
+    let findings = json!([{"title": "malformed record panics", "blocking": true}]);
+    let second_read = fail(
+        &h,
+        &lead,
+        &second["commit"],
+        Some(&first["commit"]),
+        findings,
+    );
+    let new_blocker = format!("{}:1", second_read.agent.as_ref().unwrap());
+    handle(&h, &first_read).await;
+    let notes = findings_notes(&h);
+    assert_eq!(notes.len(), 1, "the replay resends its own note: {notes:?}");
+    assert!(!notes[0].contains(&new_blocker), "{}", notes[0]);
+
+    handle(&h, &second_read).await;
+    handle(&h, &second_read).await;
+    let notes = findings_notes(&h);
+    assert_eq!(notes.len(), 2, "the second review is told once: {notes:?}");
+    assert!(notes[1].contains(&new_blocker), "{}", notes[1]);
+}
+
+/// Aether settles a reviewer's task seconds before it lists the agent
+/// completed: the note waits for `agent.completed` and lists that verdict.
+#[tokio::test]
+async fn a_verdict_read_when_its_agent_completes_is_told_then() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([{"title": "missing null check", "blocking": true}]);
+    let verdict = json!({"verdict": "fail", "head": first["commit"], "findings": findings});
+    let reviewer = review_settling_live(&h, &lead, verdict).await;
+    assert!(
+        findings_notes(&h).is_empty(),
+        "an unread verdict sends no note"
+    );
+    agent_completed(&h, &lead, &reviewer).await;
+    let notes = findings_notes(&h);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains(&format!("{reviewer}:1")), "{}", notes[0]);
+
+    let second = change(&workspace);
+    let findings = json!([{"title": "malformed record panics", "blocking": true}]);
+    let verdict = json!({"verdict": "fail", "head": second["commit"], "base": first["commit"], "findings": findings});
+    let later = review_settling_live(&h, &lead, verdict).await;
+    assert_eq!(
+        findings_notes(&h).len(),
+        1,
+        "no stale list goes under {later}"
+    );
+    agent_completed(&h, &lead, &later).await;
+    agent_completed(&h, &lead, &later).await;
+    let notes = findings_notes(&h);
+    assert_eq!(notes.len(), 2, "a replay sends no copy: {notes:?}");
+    assert!(notes[1].contains(&format!("{later}:1")), "{}", notes[1]);
+}
+
+/// Parallel reviewers may read heads out of the order they were created in.
+/// The note follows commit order, as the gate does, so a resolution at the
+/// newer head stands over an older read that still listed the blocker.
+#[tokio::test]
+async fn a_resolution_at_a_newer_head_outranks_an_older_parallel_read() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([{"title": "missing null check", "blocking": true}]);
+    let failed = fail(&h, &lead, &first["commit"], None, findings);
+    let blocker = format!("{}:1", failed.agent.as_ref().unwrap());
+    handle(&h, &failed).await;
+    assert_eq!(findings_notes(&h).len(), 1, "the blocker is told once");
+
+    let second = change(&workspace);
+    let third = change(&workspace);
+    let verdict = json!({
+        "verdict": "pass", "head": third["commit"], "base": first["commit"],
+        "resolved_findings": [blocker], "findings": []
+    });
+    let newer = reporter(&h, &lead, verdict);
+    let still_open =
+        json!([{"title": "null check still bypassed", "blocking": true, "id": blocker}]);
+    let older = fail(
+        &h,
+        &lead,
+        &second["commit"],
+        Some(&first["commit"]),
+        still_open,
+    );
+    handle(&h, &newer).await;
+    handle(&h, &older).await;
+    let notes = findings_notes(&h);
+    assert_eq!(
+        notes.len(),
+        1,
+        "no note reopens a blocker resolved at a newer head: {notes:?}"
+    );
+}
+
+/// A resolution counts only past every read that still lists the blocker. A
+/// read on a diverged head that resolves it leaves the other branch's claim
+/// open, whichever reviewer came first, as the gate holds it.
+#[tokio::test]
+async fn a_resolution_on_a_diverged_head_leaves_the_blocker_open() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let first = change(&workspace);
+    let findings = json!([{"title": "missing null check", "blocking": true}]);
+    let failed = fail(&h, &lead, &first["commit"], None, findings);
+    let blocker = format!("{}:1", failed.agent.as_ref().unwrap());
+    handle(&h, &failed).await;
+
+    let kept = change(&workspace);
+    let resolving = diverged_commit(&workspace, first["commit"].as_str().unwrap());
+    git(&workspace, &["merge", "--no-edit", "--quiet", &resolving]);
+    let still_open =
+        json!([{"title": "null check still bypassed", "blocking": true, "id": blocker}]);
+    let continued = fail(
+        &h,
+        &lead,
+        &kept["commit"],
+        Some(&first["commit"]),
+        still_open,
+    );
+    let verdict = json!({
+        "verdict": "pass", "head": resolving, "base": first["commit"],
+        "resolved_findings": [blocker], "findings": []
+    });
+    let resolved = reporter(&h, &lead, verdict);
+    handle(&h, &continued).await;
+    handle(&h, &resolved).await;
+    let notes = findings_notes(&h);
+    assert!(notes.len() > 1, "the continued blocker is told: {notes:?}");
+    let last = notes.last().unwrap();
+    assert!(last.contains(&blocker), "the blocker stays open: {last}");
+}
+
+/// A fail continues an earlier ID only from an ancestor head, as the gate
+/// names it. One on a diverged head keeps its own ID, so resolving only the
+/// earlier ID after the merge leaves that one open.
+#[tokio::test]
+async fn a_continuation_from_a_diverged_head_keeps_its_own_id() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let root = change(&workspace);
+    let ours = change(&workspace);
+    let findings = json!([{"title": "missing null check", "blocking": true}]);
+    let first = fail(&h, &lead, &ours["commit"], Some(&root["commit"]), findings);
+    let original = format!("{}:1", first.agent.as_ref().unwrap());
+    handle(&h, &first).await;
+
+    let side = diverged_commit(&workspace, root["commit"].as_str().unwrap());
+    git(&workspace, &["merge", "--no-edit", "--quiet", &side]);
+    let merged = git(&workspace, &["rev-parse", "HEAD"]).trim().to_owned();
+    let claimed = json!([{"title": "side path skips the check", "blocking": true, "id": original}]);
+    let second = fail(&h, &lead, &json!(side), Some(&root["commit"]), claimed);
+    let own = format!("{}:1", second.agent.as_ref().unwrap());
+    let verdict = json!({
+        "verdict": "pass", "head": merged, "base": root["commit"],
+        "resolved_findings": [original], "findings": []
+    });
+    let resolution = reporter(&h, &lead, verdict);
+    handle(&h, &second).await;
+    handle(&h, &resolution).await;
+    let notes = findings_notes(&h);
+    let last = notes.last().unwrap();
+    assert!(
+        last.contains(&own),
+        "the diverged fail's own ID stays open: {last}"
+    );
+    assert!(
+        !last.contains(&format!("{original}:")),
+        "the original is resolved: {last}"
+    );
+}
+
+/// A commit on `from` beside the branch, returned to the branch after.
+fn diverged_commit(workspace: &Path, from: &str) -> String {
+    let branch = git(workspace, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    git(workspace, &["checkout", "--quiet", "--detach", from]);
+    std::fs::write(workspace.join("side.txt"), "a side change\n").expect("write");
+    git(workspace, &["add", "side.txt"]);
+    git(workspace, &["commit", "--quiet", "-m", "side change"]);
+    let commit = git(workspace, &["rev-parse", "HEAD"]).trim().to_owned();
+    git(workspace, &["checkout", "--quiet", branch.trim()]);
+    assert_eq!(commit.len(), 40, "a full commit ID");
+    commit
+}
+
+/// A new reviewer of `lead` whose task completed with `verdict` while Aether
+/// still lists it live, and the pump handling that task's event.
+async fn review_settling_live(h: &Harness, lead: &StageRun, verdict: Value) -> AetherAgentId {
+    let reviewer = h
+        .backend
+        .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+    h.backend.settle_delegated_task(&reviewer, verdict.clone());
+    let mut event = child_event(lead, &reviewer);
+    event.kind = EventKind::TaskCompleted {
+        result: TaskResult {
+            summary: "Reviewed".into(),
+            structured: Some(verdict),
+            artifacts: Vec::new(),
+        },
+    };
+    handle(h, &event).await;
+    reviewer
+}
+
+async fn agent_completed(h: &Harness, lead: &StageRun, reviewer: &AetherAgentId) {
+    h.backend
+        .end_delegated(reviewer, archon_core::ports::DescendantState::Completed);
+    handle(h, &child_event(lead, reviewer)).await;
+}
+
+/// An `agent.completed` event of `lead`'s child `reviewer`.
+fn child_event(lead: &StageRun, reviewer: &AetherAgentId) -> AetherEvent {
+    AetherEvent {
+        seq: 1,
+        at: archon_core::now(),
+        agent: Some(reviewer.clone()),
+        task: None,
+        parent: lead.aether_agent.clone(),
+        run: None,
+        kind: EventKind::AgentCompleted,
+    }
+}
+
 fn confirmation_notes(h: &Harness) -> usize {
     h.backend
         .messages()
@@ -767,12 +1141,12 @@ async fn an_upgraded_tally_restores_already_counted_findings_and_their_ordinals(
     let notes = h.backend.messages();
     let note = &notes.last().unwrap().1;
     assert!(
-        note.contains(&format!("{reviewer}:1: a follow-up")),
-        "{note}"
+        !note.contains(&format!("{reviewer}:1")),
+        "a follow-up starts no review: {note}"
     );
     assert!(
         note.contains(&format!("{reviewer}:2: older blocker")),
-        "{note}"
+        "the blocker keeps its ordinal: {note}"
     );
     handle(&h, &second).await;
     assert_eq!(

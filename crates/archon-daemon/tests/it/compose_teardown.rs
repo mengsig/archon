@@ -284,6 +284,57 @@ async fn a_partial_compose_down_stops_only_the_containers_it_left() {
     assert!(!notes[0].contains("failed too"), "{notes:?}");
 }
 
+/// A failed `compose down` whose fallback fails too tells both errors.
+#[tokio::test]
+async fn a_failed_fallback_after_compose_down_tells_both_errors() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let own = compose::own_project(&item);
+    docker.lists("ps", &[container("a1", &own, &tree)]);
+    docker.fails("compose");
+    docker.fails("stop");
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    let notes = harness.system_notes().await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("compose cannot read the project"),
+        "{notes:?}"
+    );
+    assert!(notes[0].contains("failed too"), "{notes:?}");
+    assert!(notes[0].contains("cannot stop the containers"), "{notes:?}");
+}
+
+/// A failed `compose down` that removed every checked container leaves
+/// nothing to stop, and still tells compose's error.
+#[tokio::test]
+async fn a_failed_compose_down_that_left_nothing_stops_nothing() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let own = compose::own_project(&item);
+    docker.lists("ps", &[container("a1", &own, &tree)]);
+    docker.fails("compose");
+    std::fs::write(docker.dir.path().join("compose.partial"), "a1").unwrap();
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    let removals = docker.removals();
+    assert_eq!(removals.len(), 1, "{:?}", docker.calls());
+    assert!(removals[0].starts_with("compose "), "{removals:?}");
+    let notes = harness.system_notes().await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("compose cannot read the project"),
+        "{notes:?}"
+    );
+    assert!(!notes[0].contains("failed too"), "{notes:?}");
+}
+
 /// A project that gained a container from elsewhere after it was listed is
 /// left running: ownership is checked again just before the teardown.
 #[tokio::test]

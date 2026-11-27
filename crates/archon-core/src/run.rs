@@ -2085,7 +2085,6 @@ mod tests {
         let pass = json!({"verdict": "pass", "head": "abcdef1", "findings": []});
         for summary in [
             "Verdict: PASS (risk high). All five blocking findings are verified fixed…",
-            "Verdict: pass. Blockers fixed, with regression tests for each.",
             "Verdict: pass. The two blockers were resolved.",
             "Verdict: pass. Blocking finding closed in abcdef1.",
         ] {
@@ -2095,6 +2094,9 @@ mod tests {
         for summary in [
             "Verdict: PASS (risk high). Four blocking findings are fixed; one blocker remains.",
             "Verdict: pass. One blocker is still open, the rest are fixed.",
+            "Verdict: PASS. Blocker confirmed.",
+            "Verdict: PASS. All blockers verified.",
+            "Verdict: PASS. Blocker tests expose a vulnerability.",
             "Verdict: FAIL. All five blocking findings are verified fixed.",
         ] {
             assert!(Verdict::pass_disputed(summary, Some(&pass)), "{summary}");

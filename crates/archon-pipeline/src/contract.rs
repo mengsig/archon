@@ -906,10 +906,8 @@ before or after it.\n\n\
 - Blocking findings are correctness bugs, security or safety issues, failing or missing \
 tests for changed behaviour, and broken documented behaviour, as the brief narrows or \
 extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` or \
-`false`: only blocking ones fail. Tell each re-reviewer to give a missing or weak test \
-it finds anew `\"category\": \"test-gap\"`: the whole reads judged the tests, so Archon \
-records it as a follow-up and a fail with no other blocker passes; a defect stays \
-blocking. List the rest as follow-ups in your summary";
+`false`: only blocking ones fail. A re-reviewer marks a missing or weak test it finds \
+anew `\"category\": \"test-gap\"`: a follow-up. List the rest as follow-ups in your summary";
 
 /// Distinct heads failed with blockers before escalation or one confirmation.
 /// Parallel reviewers of one head count as one round in the stage attempt.
@@ -928,9 +926,8 @@ or rebase needs whole-change reads. List all open findings and their IDs \
 (`reviewer-agent:1-based position in findings`) in the prompt. \
 Ask for `resolved_findings` and `findings[].id` for open issues. Carry omissions forward. \
 Any real blocker anywhere fails. At 3 failed rounds, commit all fixes, then wait for \
-Archon to request one final confirmation: it sends that request by itself, or ends \
-the stage after 30 minutes with no new commit, no child of yours running and a \
-trailer or the confirmation still missing. If you cannot commit every fix, fail.\n";
+Archon to request one final confirmation, or end the stage after 30 minutes with no \
+new commit or running child. If you cannot commit every fix, fail.\n";
 
 /// A review-only lead's rounds: one, whose findings it records rather than fixes.
 const REVIEW_ONLY_ROUNDS_RULE: &str = "\
@@ -1547,10 +1544,9 @@ mod tests {
                     "At {REVIEW_ROUND_CAP} failed rounds, commit all fixes, then wait for Archon to request one final confirmation"
                 ),
                 &format!(
-                    "ends the stage after {REVIEW_CAP_WAIT_MINUTES} minutes with no new commit, no child of yours running"
+                    "or end the stage after {REVIEW_CAP_WAIT_MINUTES} minutes with no new commit or running child"
                 ),
-                "give a missing or weak test it finds anew `\"category\": \"test-gap\"`",
-                "a defect stays blocking",
+                "marks a missing or weak test it finds anew `\"category\": \"test-gap\"`: a follow-up",
             ] {
                 assert!(text.contains(said), "missing {said:?} in {text}");
             }

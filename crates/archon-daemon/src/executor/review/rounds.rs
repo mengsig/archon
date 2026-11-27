@@ -22,7 +22,10 @@ use crate::context::DaemonContext;
 /// Finding lines an escalation lists before it points to the reviewers' results.
 const MAX_LISTED: usize = 20;
 
-const _: () = assert!(REVIEW_CAP_WAIT_MINUTES > 0, "a capped lead gets time to answer");
+const _: () = assert!(
+    REVIEW_CAP_WAIT_MINUTES > 0,
+    "a capped lead gets time to answer"
+);
 
 /// A stage whose review failed [`REVIEW_ROUND_CAP`] rounds: archond stops it,
 /// or settles its completion, with `reason`, an `ESCALATE:` failure that ends its run.

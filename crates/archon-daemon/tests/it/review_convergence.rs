@@ -238,6 +238,6 @@ async fn age_lead_wait(h: &Harness, lead: &StageRun) {
     let since = archon_core::now() - chrono::Duration::minutes(minutes);
     tally["lead_wait"] = json!(since);
     let key = review_tally_key(&lead.id);
-    let store = h.ctx.store.lock().await;
+    let mut store = h.ctx.store.lock().await;
     store.kv_set(&key, &tally.to_string()).unwrap();
 }

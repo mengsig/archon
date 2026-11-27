@@ -3,7 +3,8 @@
 //! `effort_rollback/` were written by 1.6.3's code (`ARCHON_BLESS=1` there),
 //! then re-blessed for the review-carry wording (C3) and the review holder's
 //! reviewer-count, verbatim-JSON and risk wording, and for the orchestrator's
-//! retry-or-report rule. These changes apply with and without effort sizing.
+//! retry-or-report rule and its rule for items editing the same files. These
+//! changes apply with and without effort sizing.
 //! One input differs since: dispatch holds an item while the catalog lists no
 //! model, so the harness lists some, and the contracts' worker line reads as
 //! 1.6.3 worded it for such a catalog ("places none of", not "is empty").

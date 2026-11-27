@@ -286,12 +286,11 @@ struct Fixed {
     reviewed: bool,
 }
 
-/// The commit the newest succeeded restack fix, refresh or `onto` item of
-/// `owner` delivered into `delivery` (a local branch or the pull request),
-/// when it finished after `run`, the owner's own delivering run: the branch
-/// has ended there since. Locally it counts as reviewed only when every such
-/// later delivery was. A pull request takes it only then: otherwise its head
-/// is the carried review's to cover from the owner's (`carry`).
+/// The commit a succeeded restack fix, refresh or `onto` item of `owner`
+/// delivered into `delivery` (a local branch or the pull request) after `run`,
+/// the owner's own delivering run. Locally it is the newest, reviewed only when
+/// every such delivery was. A pull request takes the last of the unbroken run
+/// of proven ones; what follows is the carried review's to cover (`carry`).
 fn fixed_head(
     store: &Store,
     owner: &QueueItemId,
@@ -302,27 +301,24 @@ fn fixed_head(
         !delivery.is_empty(),
         "a delivery names its branch or pull request"
     );
-    let local = delivery.starts_with(LOCAL_REF_PREFIX);
     let own = store.run(run)?;
     let delivered_at = own.finished_at.unwrap_or(own.started_at);
-    let mut newest: Option<(archon_core::Timestamp, String)> = None;
-    let mut reviewed = true;
+    let mut later = Vec::new();
     for id in store.stack_fixes_of(owner)? {
         let fix = store.item(&id)?;
         assert_ne!(&fix.id, owner, "a fix works on another item's branch");
-        let Some((finished, head, proven)) = later_delivery(store, &fix, delivery, delivered_at)?
-        else {
-            continue;
-        };
-        reviewed &= proven;
-        if newest.as_ref().is_none_or(|(at, _)| finished > *at) {
-            newest = Some((finished, head));
-        }
+        later.extend(later_delivery(store, &fix, delivery, delivered_at)?);
     }
-    if !local && !reviewed {
-        return Ok(None);
+    later.sort_by_key(|(finished, _, _)| *finished);
+    if delivery.starts_with(LOCAL_REF_PREFIX) {
+        let reviewed = later.iter().all(|(_, _, proven)| *proven);
+        return Ok(later.pop().map(|(_, head, _)| Fixed { head, reviewed }));
     }
-    Ok(newest.map(|(_, head)| Fixed { head, reviewed }))
+    let chain = later.into_iter().take_while(|(_, _, proven)| *proven);
+    Ok(chain.last().map(|(_, head, _)| Fixed {
+        head,
+        reviewed: true,
+    }))
 }
 
 /// When the succeeded `fix` finished, the commit it delivered into

@@ -269,6 +269,10 @@ async fn stop_project(
     warn_shared(&selection.shared, &trees[0]);
     let Some(verified) = selection.inside.get(project) else {
         tracing::info!(%project, "the compose project is gone or changed since it was listed; left alone");
+        // Its last container may have gone meanwhile; this keeps all if any is left.
+        if own {
+            return remove_own_leftovers(docker, project).await;
+        }
         return Ok(());
     };
     assert!(
@@ -346,11 +350,10 @@ async fn down_own(
     args.extend(["down", "--volumes", "--remove-orphans"]);
     if let Err(error) = docker.run(&args, STOP_TIMEOUT).await {
         tracing::warn!(%project, %error, "compose down failed; the containers are stopped and the volumes labelled for the project removed");
-        let fallback = match stop_left(docker, project, verified).await {
-            Ok(()) => remove_own_leftovers(docker, project).await,
-            Err(fallback) => Err(fallback),
-        };
-        return match fallback {
+        let stopped = stop_left(docker, project, verified).await;
+        // A container it could not stop keeps the volumes; a network it could not remove does not.
+        let left = remove_own_leftovers(docker, project).await;
+        return match both(stopped, left) {
             Ok(()) => Err(error),
             Err(fallback) => Err(ArchonError::Unavailable(format!(
                 "{error}; stopping its containers or removing its volumes then failed too: {fallback}"
@@ -371,7 +374,13 @@ async fn remove_own_leftovers(docker: &Docker<'_>, project: &str) -> Result<(), 
         tracing::info!(%project, "containers of the item's own compose project remain; its volumes are kept");
         return Ok(());
     }
-    remove_networks(docker, project).await?;
+    let networks = remove_networks(docker, project).await;
+    both(networks, remove_own_volumes(docker, project).await)
+}
+
+/// Remove the volumes labelled for the item's own `project`; none of its
+/// containers is left.
+async fn remove_own_volumes(docker: &Docker<'_>, project: &str) -> Result<(), ArchonError> {
     let volumes = docker.volumes(project).await?;
     if volumes.is_empty() {
         return Ok(());
@@ -382,6 +391,18 @@ async fn remove_own_leftovers(docker: &Docker<'_>, project: &str) -> Result<(), 
         .run(&[&["volume", "rm"], &names[..]].concat(), LIST_TIMEOUT)
         .await
         .map(drop)
+}
+
+/// Both steps' outcome: each error kept, the first's before the second's.
+fn both(
+    first: Result<(), ArchonError>,
+    second: Result<(), ArchonError>,
+) -> Result<(), ArchonError> {
+    match (first, second) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(first), Err(second)) => Err(ArchonError::Unavailable(format!("{first}; {second}"))),
+    }
 }
 
 /// Remove those of `stopped` still there (a `run --rm` one removes itself

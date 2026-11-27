@@ -52,6 +52,10 @@ case "$1" in
       mv "$dir/ps.left" "$dir/ps"
     fi ;;
   network)
+    if [ "$2" = rm ] && [ -e "$dir/network.exit" ]; then
+      echo "the network has active endpoints" >&2
+      exit 1
+    fi
     if [ "$2" = ls ]; then
       project=$(echo "$*" | sed -n 's/.*label=com\.docker\.compose\.project=\([^ ]*\).*/\1/p')
       awk -F '\t' -v p="$project" '$1 == p { print $2 }' "$dir/networks" 2>/dev/null
@@ -600,6 +604,67 @@ async fn an_own_project_without_containers_loses_its_networks_and_volumes() {
         "{:?}",
         docker.calls()
     );
+}
+
+/// An own project whose last container goes between the listing and its
+/// recheck still loses its networks and volumes.
+#[tokio::test]
+async fn an_own_project_emptied_before_its_recheck_loses_its_leftovers() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let own = compose::own_project(&item);
+    docker.lists("ps", &[container("a1", &own, &tree)]);
+    docker.lists("ps.after.1", &[]);
+    docker.lists("networks", &[format!("{own}\te1")]);
+    own_and_other_volumes(&docker, &own);
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    let volume_rm = format!("volume rm {own}_pgdata");
+    assert_eq!(
+        docker.removals(),
+        ["network rm e1", volume_rm.as_str()],
+        "{:?}",
+        docker.calls()
+    );
+    assert!(harness.system_notes().await.is_empty());
+}
+
+/// A network Docker refuses to remove still lets the own project's volumes
+/// go, and its error is told.
+#[tokio::test]
+async fn a_network_that_cannot_go_still_lets_the_volumes_go() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let own = compose::own_project(&item);
+    docker.lists("ps", &[container("a1", &own, &tree)]);
+    docker.lists("networks", &[format!("{own}\te1")]);
+    own_and_other_volumes(&docker, &own);
+    docker.fails("compose");
+    docker.fails("network");
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    let removals = docker.removals();
+    let volume_rm = format!("volume rm {own}_pgdata");
+    assert_eq!(
+        removals.last().map(String::as_str),
+        Some(volume_rm.as_str()),
+        "{:?}",
+        docker.calls()
+    );
+    assert!(removals.contains(&"rm -v a1".to_owned()), "{removals:?}");
+    let notes = harness.system_notes().await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("compose cannot read the project"),
+        "{notes:?}"
+    );
+    assert!(notes[0].contains("active endpoints"), "{notes:?}");
 }
 
 /// An own project with a container left, as one from another worktree of the

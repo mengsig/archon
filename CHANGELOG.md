@@ -38,6 +38,15 @@ restart aetherd.
   unreadable reviewer result no longer interrupts the lead, which left Codex
   leads parked on their inbox. The contract says a lead's Aether parent, a run node, never
   replies, so leads ask with `question`.
+- Strict review no longer runs a stage out of time with successive fix
+  rounds. A re-review reads a missing or weak test it finds anew
+  (`"category": "test-gap"`) as a follow-up, and a re-review fail with no
+  other blocker passes; defects and open earlier IDs still block. At the
+  review-round cap, archond ends the stage itself after 30 minutes with no
+  new commit, nothing the lead delegated running and a fix trailer or the
+  confirmation still missing, rather than leave the lead waiting, and tells the lead which `Review-Fix` trailers it still owes.
+  The findings note's open blockers are now the gate's own, so a retry keeps
+  a carried blocker's one ID and only a pass that holds for the head resolves one.
 
 ## 1.6.6
 

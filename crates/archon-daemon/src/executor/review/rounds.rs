@@ -9,13 +9,13 @@ use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::ports::{Descendant, DescendantState};
 use archon_core::run::{StageOutcome, StageRun, review_tally_key};
-use archon_pipeline::contract::REVIEW_ROUND_CAP;
+use archon_pipeline::contract::{REVIEW_CAP_WAIT_MINUTES, REVIEW_ROUND_CAP};
 use archon_pipeline::review::{ReviewFinding, Verdict};
 use serde::{Deserialize, Serialize};
 
 use super::confirm::{self, Confirmation, Eligibility, Status};
+use super::handoff;
 use super::record::{self, Finding, Report, Rounds};
-use super::{blockers, handoff};
 use super::{result_of, verdict_in};
 use crate::context::DaemonContext;
 
@@ -106,11 +106,18 @@ pub(in crate::executor) async fn confirmation_reviewer_stopped(
     count(ctx, &stage, lead, Trigger::Child(reviewer)).await
 }
 
+/// Whether `stage`'s capped review waits on its lead, for fixes or for the
+/// confirmation reviewer: the sweep revisits it, so the wait always ends.
 pub(in crate::executor) fn review_fix_waiting(
     store: &archon_queue::Store,
     stage: &StageRunId,
 ) -> Result<bool, ArchonError> {
-    Ok(load_from(store, stage)?.fix_wait.is_some())
+    let tally = load_from(store, stage)?;
+    assert!(
+        tally.stopped.is_none() || tally.lead_wait.is_none(),
+        "a stopped review waits for nothing"
+    );
+    Ok(tally.fix_wait.is_some() || tally.lead_wait.is_some())
 }
 
 pub(in crate::executor) async fn revisit_fix_wait(
@@ -334,6 +341,63 @@ async fn capped(
     (trigger, beneath): (Trigger<'_>, &[Descendant]),
     tally: &mut Tally,
 ) -> Result<Option<Capped>, ArchonError> {
+    let waiting = capped_waiting(ctx, stage, lead, (trigger, beneath), tally).await?;
+    if waiting.is_some() || tally.stopped.is_some() {
+        return Ok(waiting);
+    }
+    let Some(why) = lead_wait_over(tally, beneath, lead, archon_core::now()) else {
+        return Ok(None);
+    };
+    let last = tally
+        .fails
+        .last()
+        .expect("a capped review has a failed head");
+    let records = Rounds::new(stage, &tally.reports, tally.prior_findings.clone(), 1);
+    let reported = records.reported_blockers(&last.head);
+    let reason = capped_reason(stage, &tally.fails, &reported, Some(&why));
+    stop(ctx, stage, tally, reason).await.map(Some)
+}
+
+/// Why the cap stops waiting on the lead: it has had [`REVIEW_CAP_WAIT_MINUTES`]
+/// since the cap, its last commit or the confirmation note, and no child of it
+/// still runs. `None` while one runs, the bound has not passed, or nothing is awaited.
+fn lead_wait_over(
+    tally: &Tally,
+    beneath: &[Descendant],
+    lead: &AetherAgentId,
+    now: archon_core::Timestamp,
+) -> Option<String> {
+    assert!(REVIEW_CAP_WAIT_MINUTES > 0, "the lead gets time to answer");
+    let since = tally.lead_wait?;
+    let waited = now.signed_duration_since(since);
+    if waited < chrono::Duration::minutes(REVIEW_CAP_WAIT_MINUTES) {
+        return None;
+    }
+    let working = beneath
+        .iter()
+        .any(|d| &d.parent == lead && d.state == DescendantState::Live);
+    if working {
+        return None;
+    }
+    let awaited = match &tally.confirm {
+        Some(_) => "no confirmation reviewer passed or failed the committed fixes",
+        None => "no commit carried a `Review-Fix` trailer for every capped blocker",
+    };
+    Some(format!(
+        "{awaited} within {REVIEW_CAP_WAIT_MINUTES} minutes, and nothing the lead \
+         delegated still runs, so Archon ends the stage rather than leave it waiting"
+    ))
+}
+
+/// [`capped`] before the wait bound: the stop the review reached, or `None`
+/// while it waits for fixes, a confirmation or reviewers still reading.
+async fn capped_waiting(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+    (trigger, beneath): (Trigger<'_>, &[Descendant]),
+    tally: &mut Tally,
+) -> Result<Option<Capped>, ArchonError> {
     assert!(tally.stopped.is_none());
     let rounds = rounds_of(&tally.fails);
     if tally.confirm.is_none() && rounds == REVIEW_ROUND_CAP && trigger.live() {
@@ -412,24 +476,33 @@ async fn prepare_confirmation(
             reviewers,
             delivered: None,
         });
+        tally.lead_wait.get_or_insert_with(archon_core::now);
         save(ctx, &stage.id, tally).await?;
     }
     let workspace = run.workspace.clone();
-    match Confirmation::eligible(run, &last.head, &latest).await? {
+    let missing = match Confirmation::eligible(run, &last.head, &latest).await? {
         Eligibility::NoBranch => return Ok(Prepare::Refused(None)),
         Eligibility::Ready(confirmation) => {
             tally.confirm = Some(confirmation);
             save(ctx, &stage.id, tally).await?;
             return Ok(Prepare::Ready);
         }
-        Eligibility::AwaitingFixes => {}
-    }
+        Eligibility::AwaitingFixes { missing, head } => {
+            // A new commit is the lead's progress: its bound starts again.
+            if tally.lead_wait_head.as_deref() != Some(head.as_str()) {
+                tally.lead_wait = Some(archon_core::now());
+                tally.lead_wait_head = Some(head);
+                save(ctx, &stage.id, tally).await?;
+            }
+            missing
+        }
+    };
     let wait = tally.fix_wait.as_mut().expect("joined the cap fix wait");
     let outcome = ask_for_fixes(
         ctx,
         stage,
         lead,
-        (&workspace, &latest),
+        (&workspace, &latest, &missing),
         wait.delivered.as_deref(),
     )
     .await?;
@@ -453,14 +526,27 @@ async fn ask_for_fixes(
     ctx: &DaemonContext,
     stage: &StageRun,
     lead: &AetherAgentId,
-    (workspace, findings): (&std::path::Path, &[(&str, &str)]),
+    (workspace, findings, missing): (&std::path::Path, &[(&str, &str)], &[String]),
     delivered: Option<&str>,
 ) -> Result<FixOffer, ArchonError> {
     assert!(!findings.is_empty());
     assert!(workspace.is_absolute());
+    assert!(
+        missing
+            .iter()
+            .all(|id| findings.iter().any(|(f, _)| f == id)),
+        "only a capped blocker's trailer is owed"
+    );
     let (list, file) = handoff::prepare(findings);
+    let owed = match missing {
+        [] => String::new(),
+        ids => format!(
+            " Your commits so far carry no `Review-Fix` trailer for {}: add one per ID, an empty commit will do.",
+            ids.join(", ")
+        ),
+    };
     let note = format!(
-        "The review reached the cap. Wait for existing reviewers and commit fixes for every open blocker below with `Review-Fix: <id>` trailers. Then wait for Archon's confirmation instructions. If a fix cannot be committed, fail the stage.\n\n{list}"
+        "The review reached the cap. Wait for existing reviewers and commit fixes for every open blocker below with `Review-Fix: <id>` trailers.{owed} Archon then sends the confirmation instructions by itself. If {REVIEW_CAP_WAIT_MINUTES} minutes pass with no new commit, no child of yours running and a trailer still missing, Archon ends the stage. If a fix cannot be committed, fail the stage.\n\n{list}"
     );
     let tag = handoff::digest(&note);
     if delivered == Some(tag.as_str()) {
@@ -505,7 +591,8 @@ async fn confirmation_refusal(
     let findings = records.blocking_at(&confirm.base);
     match confirm.status(lead, beneath, &tally.reports, &findings) {
         Status::Passed => {
-            if tally.fix_wait.take().is_some() {
+            let waited = tally.lead_wait.take().is_some();
+            if tally.fix_wait.take().is_some() || waited {
                 save(ctx, &stage.id, tally).await?;
             }
             return Ok(None);
@@ -519,8 +606,12 @@ async fn confirmation_refusal(
         Status::WaitingForPeers => return Ok(None),
         Status::Ready => {
             confirm.prepare_delivery(lead, beneath, &findings);
+            // The lead now owes the confirmation reviewer: its bound starts again.
+            tally.lead_wait = Some(archon_core::now());
             save(ctx, &stage.id, tally).await?;
         }
+        // Delivered once the fix wait closed: the sweep only checks the bound.
+        Status::Waiting if tally.fix_wait.is_none() => return Ok(None),
         Status::Waiting => {}
     }
     let confirm = tally
@@ -544,6 +635,8 @@ async fn stop(
     assert!(StageOutcome::ends_run(&reason));
     assert!(tally.stopped.is_none());
     tally.fix_wait = None;
+    tally.lead_wait = None;
+    tally.lead_wait_head = None;
     tally.stopped = Some(reason.clone());
     save(ctx, &stage.id, tally).await?;
     Ok(Capped {
@@ -629,9 +722,15 @@ async fn findings_note(
     tally: &Tally,
 ) -> Result<Result<Option<String>, String>, ArchonError> {
     assert!(!tally.reports.is_empty(), "a note follows a read verdict");
+    let open = match super::note_blockers(ctx, stage, &tally.reports).await? {
+        Ok(open) => open,
+        Err(why) => return Ok(Err(why)),
+    };
     let workspace = ctx.store.lock().await.run(&stage.run)?.workspace;
-    let open = blockers::open_blockers(&workspace, &tally.reports, &tally.prior_findings)?;
-    let findings: Vec<(&str, &str)> = open.iter().map(|(id, text)| (id.as_str(), *text)).collect();
+    let findings: Vec<(&str, &str)> = open
+        .iter()
+        .map(|b| (b.id.as_str(), b.description.as_str()))
+        .collect();
     if findings.is_empty() {
         return Ok(Ok(None));
     }
@@ -816,6 +915,7 @@ impl Fail {
                     description: text.clone(),
                     blocking: true,
                     id: None,
+                    category: None,
                 })
                 .collect(),
             resolved_findings: Vec::new(),
@@ -859,6 +959,13 @@ pub(super) struct Tally {
     confirm: Option<Confirmation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stopped: Option<String>,
+    /// When archond began waiting on the lead after the cap: for its fixes,
+    /// then again for its confirmation reviewer. Cleared by a pass or a stop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lead_wait: Option<archon_core::Timestamp>,
+    /// The branch head the fix wait last saw; a new one restarts `lead_wait`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lead_wait_head: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

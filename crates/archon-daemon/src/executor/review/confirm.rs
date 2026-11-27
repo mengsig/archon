@@ -29,7 +29,13 @@ pub(super) enum Status {
 
 pub(super) enum Eligibility {
     NoBranch,
-    AwaitingFixes,
+    /// The capped IDs no `Review-Fix` trailer names yet, listed only once a
+    /// commit follows the capped head (the lead is told which it still owes),
+    /// and the branch head they were looked for at.
+    AwaitingFixes {
+        missing: Vec<String>,
+        head: String,
+    },
     Ready(Confirmation),
 }
 
@@ -50,8 +56,17 @@ impl Confirmation {
         let Some((base, head, fixes)) = fixes else {
             return Ok(Eligibility::NoBranch);
         };
-        if findings.iter().any(|(id, _)| !fixes.contains(*id)) {
-            return Ok(Eligibility::AwaitingFixes);
+        let missing: Vec<String> = findings
+            .iter()
+            .filter(|(id, _)| !fixes.contains(*id))
+            .map(|(id, _)| (*id).to_owned())
+            .collect();
+        if !missing.is_empty() {
+            let committed = base != head;
+            return Ok(Eligibility::AwaitingFixes {
+                missing: missing.into_iter().filter(|_| committed).collect(),
+                head,
+            });
         }
         assert_ne!(base, head, "trailer evidence requires a later commit");
         let findings = findings

@@ -14,19 +14,19 @@ use crate::common::delivery::{change, pass_by, record};
 use crate::common::{Harness, REVIEW_MODEL, git};
 use crate::executor::adaptive_item;
 
-struct Loop {
-    h: Harness,
+pub(crate) struct Loop {
+    pub(crate) h: Harness,
     item: QueueItem,
-    lead: StageRun,
-    reports: Vec<AetherAgentId>,
-    capped_head: String,
-    fixed: Value,
-    first_id: String,
-    new_id: String,
+    pub(crate) lead: StageRun,
+    pub(crate) reports: Vec<AetherAgentId>,
+    pub(crate) capped_head: String,
+    pub(crate) fixed: Value,
+    pub(crate) first_id: String,
+    pub(crate) new_id: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Fixes {
+pub(crate) enum Fixes {
     None,
     All,
     OnlyOne,
@@ -35,7 +35,7 @@ enum Fixes {
 }
 
 impl Loop {
-    async fn at_cap(fixes: Fixes) -> Self {
+    pub(crate) async fn at_cap(fixes: Fixes) -> Self {
         let (review, third) = Self::pending_cap(fixes).await;
         handle(&review.h, &third).await;
         review
@@ -93,7 +93,7 @@ impl Loop {
         (review, third_read)
     }
 
-    async fn stage(&self) -> StageRun {
+    pub(crate) async fn stage(&self) -> StageRun {
         self.h
             .ctx
             .store
@@ -143,7 +143,7 @@ impl Loop {
     }
 }
 
-async fn finish(h: &Harness, fixed: &Value, approvals: &[AetherAgentId]) {
+pub(crate) async fn finish(h: &Harness, fixed: &Value, approvals: &[AetherAgentId]) {
     assert!(!approvals.is_empty());
     let mut built = fixed.clone();
     built["review"] = pass_by(approvals)["review"].clone();
@@ -201,7 +201,7 @@ fn commit_fixes(workspace: &Path, ids: &[&str]) {
     );
 }
 
-fn fail(
+pub(crate) fn fail(
     h: &Harness,
     lead: &StageRun,
     head: &Value,
@@ -215,7 +215,7 @@ fn fail(
     )
 }
 
-fn reporter(h: &Harness, lead: &StageRun, verdict: Value) -> AetherEvent {
+pub(crate) fn reporter(h: &Harness, lead: &StageRun, verdict: Value) -> AetherEvent {
     let parent = lead.aether_agent.clone().unwrap();
     let reviewer = h.backend.delegate(&parent, REVIEW_MODEL);
     report_event(h, lead, &reviewer, verdict)
@@ -245,7 +245,7 @@ fn report_event(
     }
 }
 
-async fn handle(h: &Harness, event: &AetherEvent) {
+pub(crate) async fn handle(h: &Harness, event: &AetherEvent) {
     tokio::time::timeout(
         std::time::Duration::from_secs(8),
         pump::handle_fleet_event(&h.ctx, event),
@@ -535,7 +535,7 @@ async fn a_new_blocker_from_an_existing_parallel_reviewer_still_stops_the_stage(
 
 /// The findings notes delivered, each checked to be Archon's own trigger:
 /// a message would reach the lead labelled an operator instruction.
-fn findings_notes(h: &Harness) -> Vec<String> {
+pub(crate) fn findings_notes(h: &Harness) -> Vec<String> {
     let findings = |note: &String| note.starts_with("These blocking findings are open");
     let messages = h.backend.messages().into_iter().map(|(_, note)| note);
     let notes: Vec<String> = h
@@ -1211,7 +1211,7 @@ async fn a_forgotten_legacy_verdict_retains_its_blocker_without_an_extra_round()
     assert_eq!(tally["reports"][0]["head"], initial["commit"]);
 }
 
-async fn read_tally(h: &Harness, lead: &StageRun) -> Value {
+pub(crate) async fn read_tally(h: &Harness, lead: &StageRun) -> Value {
     let key = review_tally_key(&lead.id);
     let store = h.ctx.store.lock().await;
     serde_json::from_str(&store.kv_get(&key).unwrap().unwrap()).unwrap()

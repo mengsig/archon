@@ -2720,13 +2720,30 @@ names the named passes and the named whole-change fails they answered, so
 a strict review whose first reads failed still names three; a review whose
 named reads make a shorter record is refused, as is one with fewer reads.
 Fewer fail the run with the reasons. Review rounds count commits with at least
-one blocking fail. A delta re-review must confirm each blocking ID before
+one blocking fail.
+
+Later rounds converge on what the first reads judged. The whole-change reads
+judge the change's tests once; a re-review, a verdict that answers earlier IDs
+in `resolved_findings` or `findings[].id`, that finds a missing or weak test
+anew marks it `"category": "test-gap"`, and Archon reads it as a follow-up
+whatever its `blocking` mark (`Verdict::read_result`). A re-review fail whose
+only blockers were such gaps reads as a pass with them as follow-ups, so a fix
+round no longer starts another because each reviewer finds one more test to
+ask for. A defect, in the change or in the fix, blocks as before, and so does
+an earlier ID still open or a gap the first whole reads listed. A delta re-review must confirm each blocking ID before
 the change ships. An explicit still-open disposition after a resolution
 requires another confirmation. At `REVIEW_ROUND_CAP` (three), the lead stays
 live while it commits fixes for all open blockers. The live-stage sweep checks for a descendant
 commit on the run branch and a `Review-Fix: <id>` trailer for every blocker.
 Once those commits exist, the lead delegates one final review of that exact
-delta. The reviewer must explicitly resolve every capped ID and pass the
+delta. The cap never leaves the lead waiting on a message that does not come:
+the sweep revisits a capped stage while it waits on the lead, and when commits
+follow the capped head without a trailer for every capped ID it tells the
+lead which IDs it still owes. After `REVIEW_CAP_WAIT_MINUTES` (30) with no
+child of the lead running, counted for the trailers from the cap or the
+lead's last commit, and for the confirmation reviewer from its instructions,
+archond ends the stage itself with the `ESCALATE:` error below, naming what
+it waited for. The reviewer must explicitly resolve every capped ID and pass the
 delta. A new or unresolved blocker ends the stage. The normal branch and
 coverage checks still apply. When a finding list is too large for an inbox
 message or a resumed objective, it is written in full to an ignored file
@@ -2769,12 +2786,13 @@ open findings and the delta review. When a review leaves a blocking finding
 open, archond sends the lead the open blocking findings and their IDs for the
 next review. The note lists only blocking findings, never follow-ups, and
 none is sent when no blocking finding is open, from this review or an earlier
-one: a pass that leaves an earlier blocker open is told again. A blocker
-counts as resolved as the gate counts it: a read on the branch resolved it,
-and every read on the branch still listing it is at a strict ancestor of
-that read's head, whatever order the reviewers came in. A fail continues an
-earlier ID only from a head that descends from that ID's origin; otherwise it
-keeps its own. Only the
+one: a pass that leaves an earlier blocker open is told again. The open set
+is the gate's own: the attempt's verdicts and the reads carried from earlier
+runs are placed on the branch and judged by the functions the gate judges
+with (`coverage::note_blockers`, `open_blockers`), so a carried blocker keeps
+its one ID across a retry, only a pass that holds for the current head
+resolves one, and ancestry, never reviewer order, decides IDs and resolutions,
+on divergent heads too. Only the
 settle of a reviewer whose verdict was read sends one; another child
 settling, a helper or an unreadable reviewer, does not. A verdict is read
 only once Aether lists its reviewer completed, which it does seconds after

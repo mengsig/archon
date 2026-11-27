@@ -45,6 +45,34 @@ impl Report {
         }
     }
 
+    /// The verdict this report keeps, as the gate reads one; `None` for a
+    /// report with no verdict or head.
+    pub fn verdict(&self) -> Option<Verdict> {
+        let (pass, head) = (self.pass?, self.head.clone()?);
+        assert!(!head.is_empty(), "a kept head names a commit");
+        let blocking_findings: Vec<String> = self
+            .findings
+            .iter()
+            .filter(|f| f.blocking)
+            .map(|f| f.description.clone())
+            .collect();
+        assert!(
+            self.finding_count
+                .is_none_or(|n| n >= blocking_findings.len()),
+            "blocking findings are among those counted"
+        );
+        Some(Verdict {
+            pass,
+            head,
+            base: self.base.clone(),
+            findings: self.finding_count,
+            blocking: self.finding_count.map(|_| blocking_findings.len()),
+            blocking_findings,
+            listed_findings: self.findings.clone(),
+            resolved_findings: self.resolved_findings.clone(),
+        })
+    }
+
     fn standalone(stage: &StageRun) -> Option<Self> {
         let agent = stage.aether_agent.as_ref()?.to_string();
         assert!(stage.attempt > 0);
@@ -94,12 +122,6 @@ pub(super) struct Finding {
     pub blocking: bool,
     found_in: RoundId,
     resolved_in: Option<RoundId>,
-}
-
-impl Finding {
-    pub fn is_open(&self) -> bool {
-        self.resolved_in.is_none()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

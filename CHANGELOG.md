@@ -21,10 +21,11 @@ restart aetherd.
   `--clear-design-recipe` forgets it. New requests: `design_recipe` and
   `clear_design_recipe`. A port that differs per run is saved as how to pick
   it (`port_pick`: `"free"` or `{"env": "NAME"}`), never one run's number.
-  Teardown removes the volumes Compose made for the item's own project
-  `archon-<item>` under their default names since the item was made, and
-  only those; one another container still mounts is kept. The agent sets a script's own project and
-  state knobs (such as `DEV_PREVIEW_PROJECT`, `DEV_PREVIEW_HOME`) to the
+  Teardown takes the item's own project `archon-<item>`, unique to its runs,
+  down with `docker compose down --volumes --remove-orphans` from the files
+  it started from, so Compose removes the volumes it declared and never an
+  external one; every other project keeps its volumes. The agent sets a
+  script's own project and state knobs (such as `DEV_PREVIEW_PROJECT`, `DEV_PREVIEW_HOME`) to the
   run's, never deletes state it did not create, and asks the operator about
   a failed dependency install instead of working around it.
 

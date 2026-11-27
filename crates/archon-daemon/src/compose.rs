@@ -3,9 +3,9 @@
 //! policy brings it back after every reboot, so archond stops what is left
 //! when a run ends, when a fresh retry sets the worktree aside, and before
 //! the worktree is removed. Docker cannot tell whose a volume is, as any
-//! checkout may reuse a project's name, so volumes are kept, except those of
-//! the project named for the item itself (`archon-<item>`), which only its
-//! runs create: a design session's stack starts under that name.
+//! checkout may reuse a project's name, so volumes are kept, except for the
+//! project named for the item itself (`archon-<item>`), unique to its runs:
+//! `docker compose down --volumes` takes it down, and Compose decides which.
 //!
 //! A project is Archon's when one of its containers' config files or
 //! working directory lies inside the worktree, also once symlinks are
@@ -23,14 +23,11 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use chrono::{DateTime, Utc};
 use tokio::process::Command;
 
 use crate::context::DaemonContext;
 
 const PROJECT_LABEL: &str = "com.docker.compose.project";
-/// The key a Compose volume has in its file, beside its project label.
-const VOLUME_LABEL: &str = "com.docker.compose.volume";
 /// Listing answers promptly; a teardown waits for its containers to stop.
 const LIST_TIMEOUT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: Duration = Duration::from_secs(180);
@@ -41,6 +38,8 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(180);
 #[derive(Debug, PartialEq, Eq)]
 pub struct Project {
     pub dir: PathBuf,
+    /// The config files Compose started it from, its first container's.
+    pub configs: Vec<PathBuf>,
     pub containers: BTreeMap<String, Vec<PathBuf>>,
 }
 
@@ -75,6 +74,7 @@ pub fn select(listing: &str, trees: &[PathBuf]) -> Selection {
             .entry(container.project.to_owned())
             .or_insert_with(|| Project {
                 dir,
+                configs: container.configs.clone(),
                 containers: BTreeMap::new(),
             });
         let places = container.places().cloned().collect();
@@ -200,8 +200,8 @@ pub fn own_project(item: &QueueItemId) -> String {
 }
 
 /// Tear down the Compose projects of `item` running from `tree`, keeping
-/// their volumes unless the project is the item's own. `when` completes the feed note of a failure. `Err` only
-/// for a store failure.
+/// their volumes unless the project is the item's own. `when` completes the
+/// feed note of a failure. `Err` only for a store failure.
 pub async fn tear_down(
     ctx: &DaemonContext,
     item: &QueueItemId,
@@ -230,12 +230,9 @@ pub async fn tear_down(
     warn_shared(&selection.shared, tree);
     let mut failures = Vec::new();
     let own = own_project(item);
-    let since = item_created(item);
     for project in selection.inside.keys() {
         tracing::info!(%project, %item, tree = %tree.display(), "tearing down a compose stack an item left");
-        if let Err(error) =
-            stop_project(&docker, project, &trees, (*project == own).then_some(since)).await
-        {
+        if let Err(error) = stop_project(&docker, project, &trees, *project == own).await {
             failures.push(format!("{project}: {error}"));
         }
     }
@@ -254,13 +251,13 @@ fn warn_shared(shared: &[String], tree: &Path) {
 
 /// List `project` again and, if each of its containers still runs from
 /// `trees`, stop and remove those containers, then its networks once none
-/// of its containers is left, and with `own_since` its volumes made since
-/// then too. One that changed since is left running.
+/// of its containers is left; the item's `own` project goes with its
+/// volumes. One that changed since is left running.
 async fn stop_project(
     docker: &Docker<'_>,
     project: &str,
     trees: &[PathBuf],
-    own_since: Option<DateTime<Utc>>,
+    own: bool,
 ) -> Result<(), ArchonError> {
     let selection = select(&docker.list(Some(project)).await?, trees);
     warn_shared(&selection.shared, &trees[0]);
@@ -272,71 +269,78 @@ async fn stop_project(
         verified.dir.is_absolute(),
         "compose records absolute directories"
     );
+    if own {
+        return down_own(docker, project, verified).await;
+    }
+    stop_verified(docker, project, verified).await
+}
+
+/// Stop and remove the containers checked in `verified`, then `project`'s
+/// networks once none of its containers is left.
+async fn stop_verified(
+    docker: &Docker<'_>,
+    project: &str,
+    verified: &Project,
+) -> Result<(), ArchonError> {
     let ids: BTreeSet<String> = verified.containers.keys().cloned().collect();
     assert!(!ids.is_empty(), "a selected project has a container");
     let args: Vec<&str> = ids.iter().map(String::as_str).collect();
     docker
         .run(&[&["stop"], &args[..]].concat(), STOP_TIMEOUT)
         .await?;
-    if !remove_stopped(docker, project, &ids).await? {
-        return Ok(());
-    }
-    match own_since {
-        Some(since) => remove_volumes(docker, project, since).await,
-        None => Ok(()),
-    }
+    remove_stopped(docker, project, &ids).await
 }
 
-/// When `item` was made, from its ULID; its own volumes are made after.
-fn item_created(item: &QueueItemId) -> DateTime<Utc> {
-    let ulid = item.as_str().strip_prefix("qi_");
-    let ulid = ulid.and_then(|ulid| ulid::Ulid::from_string(ulid).ok());
-    let ulid = ulid.expect("a queue item id is qi_<ULID>");
-    ulid.datetime().into()
-}
-
-/// Remove the volumes Compose made for `project` since its item was made
-/// (`since`), once none of its containers is left; Docker refuses one still
-/// in use, and that is told.
-async fn remove_volumes(
+/// `docker compose down --volumes` for the item's own `project`, from the
+/// files and directory it started from: Compose removes the volumes it
+/// declares, never an external one. Those still labelled for it are named.
+/// When Compose cannot run, its containers are stopped as any other's.
+async fn down_own(
     docker: &Docker<'_>,
     project: &str,
-    since: DateTime<Utc>,
+    verified: &Project,
 ) -> Result<(), ArchonError> {
-    let mut volumes = Vec::new();
-    for volume in docker.volumes(project).await? {
-        let created = docker.volume_created(&volume).await?;
-        if created.is_none_or(|created| created < since) {
-            tracing::info!(%project, %volume, ?created, "a volume from before the item is kept");
-            continue;
-        }
-        // None of the project's containers is left, so any user is another's.
-        let users = docker.volume_users(&volume).await?;
-        if users.is_empty() {
-            volumes.push(volume);
-        } else {
-            tracing::info!(%project, %volume, ?users, "a volume other containers mount is kept");
-        }
+    assert!(!project.is_empty(), "compose projects are named");
+    assert!(
+        verified.configs.iter().all(|c| c.is_absolute()),
+        "compose records absolute config files"
+    );
+    let dir = verified.dir.to_string_lossy();
+    let mut args = vec![
+        "compose",
+        "--project-name",
+        project,
+        "--project-directory",
+        &dir,
+    ];
+    let files: Vec<String> = verified
+        .configs
+        .iter()
+        .map(|c| c.to_string_lossy().into_owned())
+        .collect();
+    for file in &files {
+        args.extend(["--file", file.as_str()]);
     }
-    if volumes.is_empty() {
-        return Ok(());
+    args.extend(["down", "--volumes", "--remove-orphans"]);
+    if let Err(error) = docker.run(&args, STOP_TIMEOUT).await {
+        tracing::warn!(%project, %error, "compose down failed; the containers are stopped and the volumes kept");
+        stop_verified(docker, project, verified).await?;
+        return Err(error);
     }
-    tracing::info!(%project, ?volumes, "removing the volumes of the item's own compose project");
-    let names: Vec<&str> = volumes.iter().map(String::as_str).collect();
-    docker
-        .run(&[&["volume", "rm"], &names[..]].concat(), LIST_TIMEOUT)
-        .await
-        .map(drop)
+    let kept = docker.volumes(project).await?;
+    if !kept.is_empty() {
+        tracing::info!(%project, ?kept, "volumes compose kept for the item's own project are left");
+    }
+    Ok(())
 }
 
 /// Remove those of `stopped` still there (a `run --rm` one removes itself
-/// once stopped), then `project`'s networks if none of its containers is
-/// left; true when none is.
+/// once stopped), then `project`'s networks if none of its containers is left.
 async fn remove_stopped(
     docker: &Docker<'_>,
     project: &str,
     stopped: &BTreeSet<String>,
-) -> Result<bool, ArchonError> {
+) -> Result<(), ArchonError> {
     let present = container_ids(&docker.list(Some(project)).await?);
     let ids: Vec<&str> = stopped.intersection(&present).map(String::as_str).collect();
     if !ids.is_empty() {
@@ -346,26 +350,17 @@ async fn remove_stopped(
     }
     if !container_ids(&docker.list(Some(project)).await?).is_empty() {
         tracing::info!(%project, "other containers of the compose project remain; its networks are kept");
-        return Ok(false);
+        return Ok(());
     }
     let networks = docker.networks(project).await?;
     if networks.is_empty() {
-        return Ok(true);
+        return Ok(());
     }
     let networks: Vec<&str> = networks.iter().map(String::as_str).collect();
     docker
         .run(&[&["network", "rm"], &networks[..]].concat(), LIST_TIMEOUT)
         .await
-        .map(|_| true)
-}
-
-/// The volume name of a `volume ls` line of name and Compose key when it is
-/// the default Compose gives `project`'s volume `key`, and nothing else.
-fn default_volume_name<'a>(project: &str, line: &'a str) -> Option<&'a str> {
-    let (name, key) = line.split_once('\t')?;
-    let key = key.trim();
-    let default = !key.is_empty() && name.strip_prefix(project)?.strip_prefix('_') == Some(key);
-    default.then_some(name)
+        .map(drop)
 }
 
 /// The IDs of the containers in a `docker ps` listing.
@@ -479,54 +474,10 @@ impl<'a> Docker<'a> {
         Ok(ids)
     }
 
-    /// The volumes Compose made for `project` under their default name,
-    /// `<project>_<key>`. An external volume carries no project label, and one
-    /// given another `name:` may be shared, so neither is among them; Docker
-    /// keeps no mark of a `name:` equal to the default.
+    /// The names of the volumes labelled for `project`.
     async fn volumes(&self, project: &str) -> Result<Vec<String>, ArchonError> {
         let filter = format!("label={PROJECT_LABEL}={project}");
-        let format = format!("{{{{.Name}}}}\t{{{{.Label \"{VOLUME_LABEL}\"}}}}");
-        let args = ["volume", "ls", "--filter", &filter, "--format", &format];
-        let listing = self.run(&args, LIST_TIMEOUT).await?;
-        let lines = listing.lines().filter(|line| !line.trim().is_empty());
-        let (own, renamed): (Vec<&str>, Vec<&str>) =
-            lines.partition(|line| default_volume_name(project, line).is_some());
-        if !renamed.is_empty() {
-            tracing::info!(%project, ?renamed, "volumes named apart from the compose project are kept");
-        }
-        let own: Vec<String> = own
-            .into_iter()
-            .filter_map(|line| default_volume_name(project, line).map(str::to_owned))
-            .collect();
-        debug_assert!(
-            own.iter().all(|n| n.len() > project.len() + 1),
-            "a volume has a key"
-        );
-        Ok(own)
-    }
-
-    /// When Docker made `volume`; `None` when it gives no readable time.
-    async fn volume_created(&self, volume: &str) -> Result<Option<DateTime<Utc>>, ArchonError> {
-        assert!(!volume.is_empty(), "a volume is named");
-        let args = ["volume", "inspect", "--format", "{{.CreatedAt}}", volume];
-        let created = self.run(&args, LIST_TIMEOUT).await?;
-        let parsed = DateTime::parse_from_rfc3339(created.trim()).ok();
-        Ok(parsed.map(|time| time.with_timezone(&Utc)))
-    }
-
-    /// The containers, running or stopped, that mount `volume`.
-    async fn volume_users(&self, volume: &str) -> Result<Vec<String>, ArchonError> {
-        assert!(!volume.is_empty(), "a volume is named");
-        let filter = format!("volume={volume}");
-        let args = [
-            "ps",
-            "--all",
-            "--no-trunc",
-            "--filter",
-            &filter,
-            "--format",
-            "{{.ID}}",
-        ];
+        let args = ["volume", "ls", "--filter", &filter, "--format", "{{.Name}}"];
         let listing = self.run(&args, LIST_TIMEOUT).await?;
         Ok(listing.split_whitespace().map(str::to_owned).collect())
     }
@@ -571,39 +522,6 @@ mod tests {
 
     fn ids(project: &Project) -> Vec<&str> {
         project.containers.keys().map(String::as_str).collect()
-    }
-
-    #[test]
-    fn only_a_volume_under_its_default_compose_name_is_the_projects_own() {
-        let own = "archon-qi_1";
-        assert_eq!(
-            default_volume_name(own, "archon-qi_1_pgdata\tpgdata"),
-            Some("archon-qi_1_pgdata")
-        );
-        assert_eq!(
-            default_volume_name(own, "archon-qi_1_shared\tpgdata"),
-            None,
-            "renamed"
-        );
-        assert_eq!(
-            default_volume_name(own, "shared-pgdata\tpgdata"),
-            None,
-            "renamed"
-        );
-        assert_eq!(
-            default_volume_name(own, "archon-qi_1_pgdata\t"),
-            None,
-            "no key"
-        );
-        assert_eq!(
-            default_volume_name(own, "archon-qi_10_pgdata\tpgdata"),
-            None
-        );
-        assert_eq!(
-            default_volume_name(own, "archon-qi_1_pgdata"),
-            None,
-            "no key column"
-        );
     }
 
     #[test]

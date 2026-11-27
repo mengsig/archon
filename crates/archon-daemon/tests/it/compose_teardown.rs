@@ -32,11 +32,6 @@ if [ -e "$dir/block.$1" ]; then
 fi
 case "$1" in
   ps)
-    mounted=$(echo "$*" | sed -n 's/.*volume=\([^ ]*\).*/\1/p')
-    if [ -n "$mounted" ]; then
-      awk -F '\t' -v v="$mounted" '$1 == v { print $2 }' "$dir/mounts" 2>/dev/null
-      exit 0
-    fi
     project=$(echo "$*" | sed -n 's/.*label=com\.docker\.compose\.project=\([^ ]*\).*/\1/p')
     if [ -n "$project" ]; then
       awk -F '\t' -v p="$project" '$2 == p' "$dir/ps" 2>/dev/null
@@ -57,18 +52,18 @@ case "$1" in
     fi ;;
   network)
     if [ "$2" = ls ]; then cat "$dir/networks" 2>/dev/null; fi ;;
-  volume)
-    if [ "$2" = rm ] && [ -e "$dir/volume.exit" ]; then
-      echo "volume is in use" >&2
+  compose)
+    if [ -e "$dir/compose.exit" ]; then
+      echo "compose cannot read the project" >&2
       exit 1
     fi
-    if [ "$2" = inspect ]; then
-      for v; do :; done
-      awk -F '\t' -v v="$v" '$1 == v { print $2 }' "$dir/created" 2>/dev/null
-    fi
+    project=$(echo "$*" | sed -n 's/.*--project-name \([^ ]*\).*/\1/p')
+    awk -F '\t' -v p="$project" '$2 != p' "$dir/ps" > "$dir/ps.left"
+    mv "$dir/ps.left" "$dir/ps" ;;
+  volume)
     if [ "$2" = ls ]; then
       project=$(echo "$*" | sed -n 's/.*label=com\.docker\.compose\.project=\([^ ]*\).*/\1/p')
-      awk -F '\t' -v p="$project" '$1 == p { print $2 "\t" $3 }' "$dir/volumes" 2>/dev/null
+      awk -F '\t' -v p="$project" '$1 == p { print $2 }' "$dir/volumes" 2>/dev/null
     fi ;;
 esac
 exit 0
@@ -104,7 +99,7 @@ impl FakeDocker {
     pub(crate) fn removals(&self) -> Vec<String> {
         let calls = self.calls();
         let removes = |c: &String| {
-            ["stop ", "rm ", "network rm ", "volume rm "]
+            ["stop ", "rm ", "network rm ", "compose "]
                 .iter()
                 .any(|v| c.starts_with(v))
         };
@@ -197,17 +192,11 @@ async fn only_the_worktrees_own_projects_go_and_volumes_are_kept() {
     assert!(harness.system_notes().await.is_empty());
 }
 
-/// A `created` line dating `volume` a second from now, after any test item.
-fn made_after_the_item(volume: &str) -> String {
-    let later = chrono::Utc::now() + chrono::Duration::seconds(1);
-    format!("{volume}\t{}", later.to_rfc3339())
-}
-
-/// S7: the item's own project, `archon-<item>`, loses the volumes Compose
-/// made for it under their default names since the item was made; one given
-/// its own `name:`, an older one, and every other project's are kept.
+/// S7: the item's own project, `archon-<item>`, unique to its runs, goes
+/// with `docker compose down --volumes` from the files it started from, so
+/// Compose removes the volumes it declares; every other project keeps its.
 #[tokio::test]
-async fn the_items_own_project_takes_its_volumes_with_it() {
+async fn the_items_own_project_goes_down_with_its_volumes() {
     let docker = FakeDocker::new();
     let harness = harness_with(&docker.binary()).await;
     let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
@@ -221,67 +210,43 @@ async fn the_items_own_project_takes_its_volumes_with_it() {
             container("b1", "review-1", &tree),
         ],
     );
-    // A volume another project's stopped container still mounts is shared.
-    docker.lists("mounts", &[format!("{own}_shared-db\tc9")]);
-    // One made before the item existed, or with no readable time, is not its.
-    docker.lists(
-        "volumes",
-        &[
-            format!("{own}\t{own}_pgdata\tpgdata"),
-            format!("{own}\tshared-pgdata\tcache"),
-            format!("{own}\t{own}_shared\tuploads"),
-            "review-1\treview-1_pgdata\tpgdata".to_owned(),
-            "ccso-dev-preview\tccso-dev-preview_pgdata\tpgdata".to_owned(),
-            format!("{own}\t{own}_shared-db\tshared-db"),
-            format!("{own}\t{own}_older\tolder"),
-            format!("{own}\t{own}_undated\tundated"),
-        ],
-    );
-    docker.lists(
-        "created",
-        &[
-            made_after_the_item(&format!("{own}_pgdata")),
-            made_after_the_item(&format!("{own}_shared-db")),
-            format!("{own}_older\t2020-01-01T00:00:00Z"),
-            format!("{own}_undated\tnot a time"),
-        ],
-    );
     compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
         .await
         .unwrap();
+    let down = format!(
+        "compose --project-name {own} --project-directory {dir} --file {dir}/compose.yml \
+         --file {dir}/compose.dev.yml down --volumes --remove-orphans",
+        dir = tree.display()
+    );
     assert_eq!(
         docker.removals(),
-        [
-            "stop a1",
-            "rm a1",
-            format!("volume rm {own}_pgdata").as_str(),
-            "stop b1",
-            "rm b1"
-        ],
+        [down.as_str(), "stop b1", "rm b1"],
         "{:?}",
         docker.calls()
     );
     assert!(harness.system_notes().await.is_empty());
 }
 
-/// A volume Docker refuses to remove, one still in use, is told in the feed.
+/// When Compose cannot take the own project down, its checked containers are
+/// stopped as any other's, its volumes kept, and the failure told.
 #[tokio::test]
-async fn an_own_volume_docker_keeps_is_told() {
+async fn an_own_project_compose_cannot_take_down_is_stopped_and_told() {
     let docker = FakeDocker::new();
     let harness = harness_with(&docker.binary()).await;
     let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
     let tree = item_tree(&harness, &item);
     let own = compose::own_project(&item);
     docker.lists("ps", &[container("a1", &own, &tree)]);
-    docker.lists("volumes", &[format!("{own}\t{own}_pgdata\tpgdata")]);
-    docker.lists("created", &[made_after_the_item(&format!("{own}_pgdata"))]);
-    docker.fails("volume");
+    docker.fails("compose");
     compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
         .await
         .unwrap();
+    let removals = docker.removals();
+    assert_eq!(removals[1..], ["stop a1", "rm a1"], "{:?}", docker.calls());
+    assert!(!docker.calls().iter().any(|c| c.starts_with("volume rm")));
     let notes = harness.system_notes().await;
     assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(notes[0].contains("volume rm"), "{notes:?}");
+    assert!(notes[0].contains("down --volumes"), "{notes:?}");
 }
 
 /// A project that gained a container from elsewhere after it was listed is

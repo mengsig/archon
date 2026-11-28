@@ -6,7 +6,6 @@
 //! reviewer of the attempt that failed the change counts, named or not. Reads
 //! from the item's earlier runs on the branch count while it still holds their heads.
 
-mod blockers;
 mod confirm;
 mod coverage;
 mod handoff;
@@ -1002,6 +1001,41 @@ async fn holding(
     checked
         .await
         .map_err(|e| ArchonError::io("reviewed commits task", std::io::Error::other(e)))?
+}
+
+/// The blocking findings open for `stage`'s lead after its attempt's `reports`, judged
+/// by the gate's own rule beside the reads carried from earlier runs; `Err` says why not.
+async fn note_blockers(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    reports: &[record::Report],
+) -> Result<Result<Vec<coverage::OpenBlocker>, String>, ArchonError> {
+    let lead = stage
+        .aether_agent
+        .as_ref()
+        .expect("a reviewed stage has its lead");
+    assert!(!reports.is_empty(), "a note follows a read verdict");
+    let run = ctx.store.lock().await.run(&stage.run)?;
+    let carried = carried_reads(ctx, &run, stage, lead).await?.reads;
+    let resolved = match resolved_base(ctx, &run).await? {
+        Ok(resolved) => resolved,
+        Err(why) => return Ok(Err(why)),
+    };
+    let attempt: Vec<Read> = reports
+        .iter()
+        .filter_map(|r| Some((r.agent.clone(), r.verdict()?)))
+        .collect();
+    let workspace = run.workspace.clone();
+    let open = tokio::task::spawn_blocking(move || {
+        let base = Base {
+            branch: &resolved.branch,
+            onto_head: resolved.onto_head.as_deref(),
+            merged_from: resolved.merged_from.as_deref(),
+        };
+        coverage::note_blockers(&mut History::new(&workspace), base, &attempt, &carried)
+    });
+    open.await
+        .map_err(|e| ArchonError::io("open blockers task", std::io::Error::other(e)))?
 }
 
 /// Where `run`'s review starts: its base branch, or a reviewed pull request's trusted fork.

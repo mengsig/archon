@@ -1409,9 +1409,12 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   three where the level asks for three. Follow-ups (non-blocking findings)
   are listed in the `pr.body` and left. A re-review confirms the previous
   round's open findings by ID and reviews the new delta. A real blocker
-  anywhere fails. At three failed rounds, finish committing fixes for every
+  anywhere fails. A re-review reads a missing or weak test it finds anew,
+  marked `"category": "test-gap"`, as a follow-up, so fix rounds converge;
+  defects still block. At three failed rounds, finish committing fixes for every
   open blocker with `Review-Fix: <id>` trailers and wait for Archon to request
-  one final confirmation. Large finding lists are linked from the handoff.
+  one final confirmation; Archon sends it, or ends the stage after 30 minutes
+  with no new commit and nothing the lead delegated running. Large finding lists are linked from the handoff.
   Missing fixes, a failed confirmation, or early completion escalates. A
   retry on the same branch keeps the earlier runs' reviews while the branch
   holds their heads, so its new lead owes only the whole reads they lack and

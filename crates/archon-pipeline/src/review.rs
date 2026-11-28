@@ -73,7 +73,13 @@ pub struct ReviewFinding {
     pub description: String,
     pub blocking: bool,
     pub id: Option<String>,
+    /// The reviewer's `category`, lowercased; [`TEST_GAP`] marks a missing or weak test.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
+
+/// The `category` of a finding that is a missing or weak test, not a defect.
+pub const TEST_GAP: &str = "test-gap";
 
 impl ReviewFinding {
     /// Read finding metadata from a standalone review, even if it named no commit.
@@ -103,7 +109,16 @@ impl ReviewFinding {
             description: describe(value).unwrap_or_else(|| one_line(&value.to_string())),
             blocking: !Said::is_follow_up(value),
             id: value.get("id").and_then(finding_id).map(str::to_owned),
+            category: value
+                .get("category")
+                .and_then(Value::as_str)
+                .map(|c| c.trim().to_ascii_lowercase())
+                .filter(|c| !c.is_empty()),
         }
+    }
+
+    fn is_test_gap(&self) -> bool {
+        self.category.as_deref() == Some(TEST_GAP)
     }
 }
 
@@ -129,7 +144,48 @@ impl Verdict {
         if read.pass && taken_back {
             return Err(disputed_pass(summary));
         }
-        Ok(read)
+        Ok(read.with_new_test_gaps_as_follow_ups())
+    }
+
+    /// A re-review, which answers earlier IDs, reads a test gap it finds anew
+    /// as a follow-up; a fail left with no other blocker passes with them.
+    /// The whole reads judged the tests once, so later rounds converge, while
+    /// a defect, or an earlier ID still open, blocks as before.
+    fn with_new_test_gaps_as_follow_ups(mut self) -> Self {
+        let re_review = !self.resolved_findings.is_empty()
+            || self.listed_findings.iter().any(|f| f.id.is_some());
+        if !re_review {
+            return self;
+        }
+        let mut demoted = 0;
+        for finding in &mut self.listed_findings {
+            if finding.blocking && finding.id.is_none() && finding.is_test_gap() {
+                finding.blocking = false;
+                demoted += 1;
+            }
+        }
+        if demoted == 0 {
+            return self;
+        }
+        self.blocking_findings = self
+            .listed_findings
+            .iter()
+            .filter(|f| f.blocking)
+            .map(|f| f.description.clone())
+            .collect();
+        self.blocking = Some(self.blocking_findings.len());
+        if self.blocking_findings.is_empty() {
+            self.pass = true;
+        }
+        assert!(
+            self.blocking <= self.findings,
+            "blocking findings are among those listed"
+        );
+        assert!(
+            self.blocking_findings.len() + demoted <= self.listed_findings.len(),
+            "each demoted gap is listed beside the blockers left"
+        );
+        self
     }
 
     /// The verdict the result states, from the first form it gives one in.
@@ -1167,6 +1223,56 @@ mod tests {
             Verdict::read_result("VERDICT: FAIL", Some(&listed)).unwrap_err(),
             "its finding is unreadable: {}"
         );
+    }
+
+    /// A re-review answers earlier IDs: a test gap it finds anew is a
+    /// follow-up, and a fail with no other blocker passes with it.
+    #[test]
+    fn a_re_review_reads_a_new_test_gap_as_a_follow_up() {
+        let gap =
+            json!({"title": "No test for the timeout", "blocking": true, "category": " Test-Gap "});
+        let data = json!({
+            "verdict": "fail", "head": HEAD,
+            "resolved_findings": ["agt_prior:1"], "findings": [gap]
+        });
+        let read = Verdict::read_result("VERDICT: FAIL", Some(&data)).unwrap();
+        assert!(read.pass, "only a new gap was left");
+        assert_eq!((read.findings, read.blocking), (Some(1), Some(0)));
+        assert!(!read.listed_findings[0].blocking);
+        assert_eq!(read.listed_findings[0].category.as_deref(), Some(TEST_GAP));
+
+        let continued = json!({"title": "Other", "blocking": false, "id": "agt_prior:2"});
+        let data = json!({"verdict": "fail", "head": HEAD, "findings": [gap, continued]});
+        let read = Verdict::read_result("", Some(&data)).unwrap();
+        assert!(read.pass, "an earlier ID's disposition makes a re-review");
+    }
+
+    /// A first read's gap blocks, as does a re-review's defect or an earlier
+    /// ID it still lists, whatever category it gives that.
+    #[test]
+    fn a_defect_or_a_first_reads_test_gap_still_blocks() {
+        let gap =
+            json!({"title": "No test for the timeout", "blocking": true, "category": "test-gap"});
+        let data = json!({"verdict": "fail", "head": HEAD, "findings": [gap]});
+        let read = Verdict::read_result("", Some(&data)).unwrap();
+        assert!(!read.pass, "the whole read judges the tests");
+        assert_eq!(read.blocking, Some(1));
+
+        let defect =
+            json!({"title": "Lock released twice", "blocking": true, "category": "defect"});
+        let data = json!({
+            "verdict": "fail", "head": HEAD,
+            "resolved_findings": ["agt_prior:1"], "findings": [gap, defect]
+        });
+        let read = Verdict::read_result("", Some(&data)).unwrap();
+        assert!(!read.pass, "a defect blocks");
+        assert_eq!(read.blocking_findings, ["Lock released twice"]);
+
+        let open = json!({"title": "Still untested", "blocking": true, "category": "test-gap", "id": "agt_prior:1"});
+        let data = json!({"verdict": "fail", "head": HEAD, "findings": [open]});
+        let read = Verdict::read_result("", Some(&data)).unwrap();
+        assert!(!read.pass, "an open earlier ID blocks");
+        assert_eq!(read.blocking, Some(1));
     }
 
     /// A pass stands beside follow-ups and falls to a blocking finding; a fail

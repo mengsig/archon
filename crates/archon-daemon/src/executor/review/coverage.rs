@@ -54,6 +54,7 @@ struct FindingClaim {
     id: String,
     continued: Option<String>,
     blocking: bool,
+    description: String,
 }
 
 impl FindingClaims {
@@ -72,6 +73,7 @@ impl FindingClaims {
                     .filter(|id| continued_ids.insert(id.as_str()))
                     .cloned(),
                 blocking: finding.blocking,
+                description: finding.description.clone(),
             })
             .collect::<Vec<_>>();
         assert_eq!(listed.len(), verdict.listed_findings.len());
@@ -671,10 +673,7 @@ fn open_left_out(
     in_play: &[usize],
     head: &str,
 ) -> Result<Option<String>, ArchonError> {
-    let mut reads: Vec<Placed> = in_play.iter().map(|i| placed[*i].clone()).collect();
-    let judged_fail = |read: &Placed| read.left_out || (read.carried && !read.pass);
-    let outside = (0..placed.len()).filter(|i| judged_fail(&placed[*i]) && !in_play.contains(i));
-    reads.extend(outside.map(|i| placed[i].clone()));
+    let reads = beside_play(placed, in_play);
     if reads.len() == in_play.len() {
         return Ok(None);
     }
@@ -693,6 +692,21 @@ fn open_left_out(
         "{why}: the record leaves that reviewer out, but a fail of this attempt or an \
          earlier run stands until a pass reads past it"
     )))
+}
+
+/// The `in_play` reads of `placed`, then the left-out and carried fails outside play,
+/// which stand beside them until a pass reads past them.
+fn beside_play(placed: &[Placed], in_play: &[usize]) -> Vec<Placed> {
+    assert!(
+        in_play.iter().all(|i| *i < placed.len()),
+        "in play indexes placed"
+    );
+    let mut reads: Vec<Placed> = in_play.iter().map(|i| placed[*i].clone()).collect();
+    let judged_fail = |read: &Placed| read.left_out || (read.carried && !read.pass);
+    let outside = (0..placed.len()).filter(|i| judged_fail(&placed[*i]) && !in_play.contains(i));
+    reads.extend(outside.map(|i| placed[i].clone()));
+    assert!(reads.len() >= in_play.len(), "the reads in play lead");
+    reads
 }
 
 /// Indexes of the `reads` that read the whole change on the branch: a pass
@@ -822,20 +836,132 @@ fn open_blocker(
     reads: &[Placed],
     current: &[bool],
 ) -> Result<Option<String>, ArchonError> {
+    let open = open_blockers(history, reads, current)?;
+    Ok(open.first().map(|blocker| {
+        format!(
+            "reviewer {} failed the change at {}, and no subsequent review confirmed blocker {} resolved",
+            blocker.agent,
+            short(&blocker.head),
+            blocker.id
+        )
+    }))
+}
+
+/// A blocking finding no read resolved as [`blocker_resolved`] counts it:
+/// the fail that first lists it and the wording its newest listing gives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct OpenBlocker {
+    pub id: String,
+    pub agent: String,
+    pub head: String,
+    pub description: String,
+}
+
+/// Every blocking finding the `reads` leave open, each once by its ID, in
+/// the order the fails list them; the one source of the gate and the note.
+fn open_blockers(
+    history: &mut impl Ancestry,
+    reads: &[Placed],
+    current: &[bool],
+) -> Result<Vec<OpenBlocker>, ArchonError> {
     assert_eq!(reads.len(), current.len());
+    let mut open: Vec<OpenBlocker> = Vec::new();
+    // The head the kept wording was listed at; a listing at a later head rewords it.
+    let mut worded_at: Vec<String> = Vec::new();
     for fail in reads.iter().filter(|r| !r.pass) {
         for finding in fail.claims.listed.iter().filter(|f| f.blocking) {
             let id = blocker_id(history, reads, fail, finding)?;
-            if !blocker_resolved(history, reads, current, fail, id)? {
-                return Ok(Some(format!(
-                    "reviewer {} failed the change at {}, and no subsequent review confirmed blocker {id} resolved",
-                    fail.agent,
-                    short(&fail.head)
-                )));
+            if let Some(known) = open.iter().position(|b| b.id == id) {
+                let later = !fail.superseded
+                    && worded_at[known] != fail.head
+                    && history.holds(&worded_at[known], &fail.head)?;
+                if later {
+                    open[known].description = finding.description.clone();
+                    worded_at[known] = fail.head.clone();
+                }
+                continue;
+            }
+            if blocker_resolved(history, reads, current, fail, id)? {
+                continue;
+            }
+            open.push(OpenBlocker {
+                id: id.to_owned(),
+                agent: fail.agent.clone(),
+                head: fail.head.clone(),
+                description: finding.description.clone(),
+            });
+            worded_at.push(fail.head.clone());
+        }
+    }
+    assert_eq!(open.len(), worded_at.len(), "one wording head per blocker");
+    assert!(
+        open.iter().all(|b| !b.id.is_empty() && !b.agent.is_empty()),
+        "an open blocker names its ID and the reviewer that found it"
+    );
+    Ok(open)
+}
+
+/// The blocking findings the lead is told are open: the attempt's reads
+/// and those carried from earlier runs, placed and judged as the gate does.
+pub(super) fn note_blockers(
+    history: &mut History,
+    base: Base,
+    attempt: &[(String, Verdict)],
+    carried: &[(String, Verdict)],
+) -> Result<Result<Vec<OpenBlocker>, String>, ArchonError> {
+    let verdicts = Verdicts {
+        named: &[],
+        earlier: attempt,
+        left_out: &[],
+        carried,
+    };
+    let (head, placed) = match place(history, base, verdicts)? {
+        Ok(placed) => placed,
+        Err(why) => return Ok(Err(why)),
+    };
+    assert!(
+        placed.len() <= attempt.len() + carried.len(),
+        "each verdict is placed at most once"
+    );
+    open_for_record(history, placed, &head).map(Ok)
+}
+
+/// What the gate holds open for the record the lead is told to make, naming every
+/// reviewer of its attempt: `placed` as [`place`] places `earlier` and `carried` reads.
+fn open_for_record(
+    history: &mut impl Ancestry,
+    placed: Vec<Placed>,
+    head: &str,
+) -> Result<Vec<OpenBlocker>, ArchonError> {
+    assert!(placed.iter().all(|read| !read.named && !read.left_out));
+    let mut placed: Vec<Placed> = placed
+        .into_iter()
+        .map(|read| Placed {
+            named: !read.carried,
+            ..read
+        })
+        .collect();
+    // As `in_play` keeps them: a read nothing anchors counts for no record, and its fail stands.
+    let (core, anchored) = named_and_carried(history, &placed)?;
+    assert_eq!(core.len(), placed.len(), "every read is named or carried");
+    let in_play: Vec<usize> = (0..placed.len()).filter(|i| anchored[*i]).collect();
+    for (read, held) in placed.iter_mut().zip(&anchored) {
+        read.left_out = read.named && !read.pass && !held;
+    }
+    let reads: Vec<Placed> = in_play.iter().map(|i| placed[*i].clone()).collect();
+    let current = holding_passes(history, &reads, head)?;
+    let mut open = open_blockers(history, &reads, &current)?;
+    // The gate judges the fails outside play beside the reads in play, as `open_left_out` does.
+    let beside = beside_play(&placed, &in_play);
+    if beside.len() > reads.len() {
+        let current = holding_passes(history, &beside, head)?;
+        for blocker in open_blockers(history, &beside, &current)? {
+            if !open.iter().any(|b| b.id == blocker.id) {
+                open.push(blocker);
             }
         }
     }
-    Ok(None)
+    Ok(open)
 }
 
 fn blocker_id<'a>(
@@ -1074,6 +1200,152 @@ mod tests {
             carried: true,
             ..earlier(agent, pass, head, None)
         }
+    }
+
+    /// `c1`..`c3` on one line, `d2` beside `c2` from `c1`, and `m` merging both.
+    struct Forked;
+
+    impl Ancestry for Forked {
+        fn holds(&mut self, ancestor: &str, of: &str) -> Result<bool, ArchonError> {
+            let before: &[&str] = match of {
+                "c2" | "d2" => &["c1"],
+                "c3" => &["c1", "c2"],
+                "m" => &["c1", "c2", "d2"],
+                _ => &[],
+            };
+            Ok(ancestor == of || before.contains(&ancestor))
+        }
+    }
+
+    /// `read` listing a blocker per `(wording, continued ID)` and resolving `resolved`.
+    fn claiming(read: Placed, listed: &[(&str, Option<&str>)], resolved: &[&str]) -> Placed {
+        let listed = listed
+            .iter()
+            .enumerate()
+            .map(|(n, (wording, continued))| FindingClaim {
+                id: format!("{}:{}", read.agent, n + 1),
+                continued: continued.map(Into::into),
+                blocking: true,
+                description: (*wording).into(),
+            })
+            .collect();
+        let resolved = resolved.iter().map(|id| (*id).into()).collect();
+        Placed {
+            claims: Arc::new(FindingClaims { listed, resolved }),
+            ..read
+        }
+    }
+
+    fn ids(open: Vec<OpenBlocker>) -> BTreeSet<String> {
+        open.into_iter().map(|b| b.id).collect()
+    }
+
+    /// What the gate holds open for the record `placed` makes, judged for
+    /// `head`: the reads in play, then the fails beside them, as `counted` judges.
+    fn gate_open(placed: &[Placed], head: &str) -> BTreeSet<String> {
+        let in_play = in_play(&mut Forked, placed).unwrap().unwrap();
+        let mut open = BTreeSet::new();
+        let reads: Vec<Placed> = in_play.iter().map(|i| placed[*i].clone()).collect();
+        for reads in [reads, beside_play(placed, &in_play)] {
+            let current = holding_passes(&mut Forked, &reads, head).unwrap();
+            open.extend(ids(open_blockers(&mut Forked, &reads, &current).unwrap()));
+        }
+        open
+    }
+
+    /// What the note lists: every read as `place` gives the note them, unnamed.
+    fn note_open(placed: &[Placed], head: &str) -> BTreeSet<String> {
+        let reads: Vec<Placed> = placed
+            .iter()
+            .map(|read| Placed {
+                named: false,
+                left_out: false,
+                ..read.clone()
+            })
+            .collect();
+        ids(open_for_record(&mut Forked, reads, head).unwrap())
+    }
+
+    /// The note's open blockers are the gate's: one ID for a blocker carried
+    /// across a retry, a resolution only from a pass that holds for the head and
+    /// that a record can count, ancestry deciding on divergent heads, and fails outside play.
+    #[test]
+    fn the_notes_open_blockers_are_the_gates() {
+        let carried_fail = claiming(carried("agt_x", false, "c1"), &[("race", None)], &[]);
+        let retried = claiming(
+            read("agt_d", false, "c2", Some("c1")),
+            &[("race still there", Some("agt_x:1"))],
+            &[],
+        );
+        let resolving = claiming(read("agt_p", true, "c3", Some("c2")), &[], &["agt_x:1"]);
+        let held_pass = claiming(read("agt_b", true, "c2", Some("c1")), &[], &["agt_a:1"]);
+        let first = claiming(
+            read("agt_a", false, "c1", None),
+            &[("unchecked", None)],
+            &[],
+        );
+        let later_fail = claiming(
+            read("agt_c", false, "c3", Some("c2")),
+            &[("new", None)],
+            &[],
+        );
+        let side = claiming(
+            read("agt_s", false, "d2", Some("c1")),
+            &[("side regression", None), ("unchecked", Some("agt_a:1"))],
+            &[],
+        );
+        let merged = claiming(read("agt_f", true, "m", None), &[], &["agt_s:1"]);
+        // A delta from c2 nothing read up to: no record can count it.
+        let unanchored_pass = claiming(earlier("agt_u", true, "c3", Some("c2")), &[], &["agt_a:1"]);
+        let whole_pass = read("agt_w", true, "c1", None);
+        let unanchored_fail = Placed {
+            left_out: true,
+            ..claiming(
+                earlier("agt_l", false, "c3", Some("c2")),
+                &[("leak", None)],
+                &[],
+            )
+        };
+        let cases: [(&[Placed], &str, &[&str]); 6] = [
+            (&[retried.clone(), carried_fail.clone()], "c2", &["agt_x:1"]),
+            (&[retried, resolving, carried_fail], "c3", &[]),
+            (
+                &[first.clone(), held_pass.clone(), later_fail],
+                "c3",
+                &["agt_a:1", "agt_c:1"],
+            ),
+            (&[first.clone(), side, held_pass, merged], "m", &["agt_a:1"]),
+            (&[first, unanchored_pass], "c3", &["agt_a:1"]),
+            (&[whole_pass, unanchored_fail], "c3", &["agt_l:1"]),
+        ];
+        for (placed, head, open) in cases {
+            let expected: BTreeSet<String> = open.iter().map(|id| (*id).into()).collect();
+            assert_eq!(gate_open(placed, head), expected, "the gate at {head}");
+            assert_eq!(note_open(placed, head), expected, "the note at {head}");
+        }
+    }
+
+    /// The newest listing by ancestry words an open blocker, whatever order
+    /// the fails came in.
+    #[test]
+    fn an_open_blockers_wording_is_its_newest_listing() {
+        let later = claiming(
+            read("agt_b", false, "c2", Some("c1")),
+            &[("still unchecked", Some("agt_a:1"))],
+            &[],
+        );
+        let first = claiming(
+            read("agt_a", false, "c1", None),
+            &[("unchecked", None)],
+            &[],
+        );
+        let open = open_blockers(&mut Forked, &[later, first], &[false, false]).unwrap();
+        assert_eq!(open.len(), 1, "{open:?}");
+        assert_eq!(
+            (open[0].id.as_str(), open[0].agent.as_str()),
+            ("agt_a:1", "agt_b")
+        );
+        assert_eq!(open[0].description, "still unchecked");
     }
 
     /// A strict review carried from a capped run: three whole reads of c3, one

@@ -319,8 +319,8 @@ fn a_failed_refresh_is_named_for_its_cancelled_owners_worktree() {
 
     let settled = plan::settled(&store, ago(-60)).unwrap();
     let of = |id| settled.iter().find(|s| &s.item.id == id).unwrap();
-    assert_eq!(of(&owner.id).failed, [fix.id.clone()]);
-    assert_eq!(of(&fix.id).failed, [fix.id.clone()]);
+    assert_eq!(of(&owner.id).failed, std::slice::from_ref(&fix.id));
+    assert_eq!(of(&fix.id).failed, std::slice::from_ref(&fix.id));
 }
 
 /// The owner's plan as a pass would make it now, for the recheck.
@@ -353,7 +353,7 @@ fn a_change_in_which_sharers_failed_unsettles_the_plan() {
         .unwrap();
 
     let planned = owner_plan(&store, &owner);
-    assert_eq!(planned.found.failed, [first.id.clone()]);
+    assert_eq!(planned.found.failed, std::slice::from_ref(&first.id));
     assert!(plan::still_settled(&store, &planned).unwrap());
     store
         .transition_item(&second.id, QueueState::Queued, ago(900))
